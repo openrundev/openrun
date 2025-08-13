@@ -65,13 +65,13 @@ tests:
 
   basic161: ## Check static files are using optimized fetch path (no compression/decompression)
     ## The data should be streamed directly from sqlite. x-openrun-compressed header should be true
-    command: 'curl -sI -H "Accept-Encoding: br" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-OpenRun-Compressed: true" -e "Content-Encoding: br" -e "Content-Length: 15595" | wc -l'
+    command: 'curl -sI -H "Accept-Encoding: br" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: br" -e "Content-Length: 15595" | wc -l'
     stdout:
       exactly: "3"
     exit-code: 0
 
   basic162: ## Check static files are using are gzipped when only gzip encoding is accepted
-    command: 'curl -sI -H "Accept-Encoding: gzip" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-OpenRun-Compressed: true" -e "Content-Encoding: gzip" | wc -l'
+    command: 'curl -sI -H "Accept-Encoding: gzip" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: gzip" | wc -l'
     stdout:
       exactly: "1" # X-OpenRun-Compressed is not set, content length depends on gzip
     exit-code: 0
