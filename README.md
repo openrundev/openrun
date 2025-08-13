@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://openrun.dev/openrun.png" alt="OpenRun-logo" width="240" />
 
-  <p align="center">App deployment simplified. Application server for deploying containerized web apps. Easily deploy internal tools across a team.</p>
+  <p align="center">App deployment simplified. Open source alternative to Google Cloud Run and AWS AppRunner. Easily deploy internal tools across a team.</p>
 </p>
 
 <p>
@@ -32,7 +32,7 @@
 
 ## Overview
 
-OpenRun is an Apache-2.0 licensed project building a web app deployment platform for internal tools. OpenRun allows you to deploy containerized apps. OpenRun is cross-platform (Linux/Windows/OSX) and provides a GitOps workflow for managing web apps.
+OpenRun is an Apache-2.0 licensed project building an open source alternative to Google Cloud Run and AWS AppRunner. OpenRun allows you to deploy containerized apps. OpenRun is cross-platform (Linux/Windows/OSX) and provides a GitOps workflow for managing web apps.
 
 OpenRun apps are deployed directly from the git repo, no build step required. For example, OpenRun can be used to deploy Streamlit/Gradio apps, adding OAuth authentication for access control across a team.
 
@@ -81,7 +81,7 @@ For building Hypermedia based apps, OpenRun supports:
 
 The feature roadmap for OpenRun is:
 
-- SQLite is used for metadata storage currently. Support for postgres is planned.
+- Suport for deployment to Kubernetes is planned.
 
 ## Setup
 

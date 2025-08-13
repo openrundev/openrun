@@ -54,7 +54,7 @@ builds:
 nfpms:
   - file_name_template: "{{.ProjectName}}-{{.Tag}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}"
     homepage: https://openrun.dev/
-    description: Securely develop and deploy internal applications
+    description: Open source alternative to Google Cloud Run and AWS AppRunner.
     maintainer: Ajay Kidave <contact@clace.io>
     license: Apache 2.0
     vendor: ClaceIO LLC.
