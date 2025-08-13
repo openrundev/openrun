@@ -29,7 +29,7 @@ tests:
     stderr: "git auth entry invalid not found in server config"
     exit-code: 1
   github0100: # Create app, http url, with PAT auth
-    command: ../openrun app create --git-auth testpat --approve github.com/akopenrun/test/disk_usage /ghauthpat1
+    command: ../openrun app create --git-auth testpat --approve github.com/akclace/test/disk_usage /ghauthpat1
     exit-code: 0
 
   github0900: # cleanup
