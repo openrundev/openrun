@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/benbjohnson/hashfs"
-	"github.com/claceio/clace/internal/app/appfs"
-	"github.com/claceio/clace/internal/app/apptype"
-	"github.com/claceio/clace/internal/app/starlark_type"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/go-chi/chi"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
@@ -303,7 +303,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 			}
 
 			if tempDir == "" {
-				tempDir, err = os.MkdirTemp("", "clace-file-upload-*")
+				tempDir, err = os.MkdirTemp("", "openrun-file-upload-*")
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return

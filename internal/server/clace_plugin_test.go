@@ -6,7 +6,7 @@ package server
 import (
 	"testing"
 
-	"github.com/claceio/clace/internal/testutil"
+	"github.com/openrundev/openrun/internal/testutil"
 )
 
 func TestGetSourceUrl(t *testing.T) {
@@ -16,42 +16,42 @@ func TestGetSourceUrl(t *testing.T) {
 		want   string
 	}{
 		{
-			url:    "github.com/claceio/clace/myapp",
+			url:    "github.com/openrundev/openrun/myapp",
 			branch: "main",
-			want:   "https://github.com/claceio/clace/tree/main/myapp",
+			want:   "https://github.com/openrundev/openrun/tree/main/myapp",
 		},
 		{
-			url:    "https://github.com/claceio/clace/myapp",
+			url:    "https://github.com/openrundev/openrun/myapp",
 			branch: "main",
-			want:   "https://github.com/claceio/clace/tree/main/myapp",
+			want:   "https://github.com/openrundev/openrun/tree/main/myapp",
 		},
 		{
-			url:    "https://github.com/claceio/clace/myapp",
+			url:    "https://github.com/openrundev/openrun/myapp",
 			branch: "main",
-			want:   "https://github.com/claceio/clace/tree/main/myapp",
+			want:   "https://github.com/openrundev/openrun/tree/main/myapp",
 		},
 		{
-			url:    "/claceio/clace/myapp",
+			url:    "/openrundev/openrun/myapp",
 			branch: "main",
 			want:   "",
 		},
 		{
-			url:    "git@github.com/claceio/clace.git/myapp/t1/t2",
+			url:    "git@github.com/openrundev/openrun.git/myapp/t1/t2",
 			branch: "develop",
 			want:   "",
 		},
 		{
-			url:    "git@github.com:claceio/clace.git/myapp/t1/t2",
+			url:    "git@github.com:openrundev/openrun.git/myapp/t1/t2",
 			branch: "develop",
-			want:   "https://github.com/claceio/clace/tree/develop/myapp/t1/t2",
+			want:   "https://github.com/openrundev/openrun/tree/develop/myapp/t1/t2",
 		},
 		{
-			url:    "github.com/claceio",
+			url:    "github.com/openrundev",
 			branch: "main",
 			want:   "",
 		},
 		{
-			url:    "https://github.com/claceio/clace/myapp",
+			url:    "https://github.com/openrundev/openrun/myapp",
 			branch: "",
 			want:   "",
 		},

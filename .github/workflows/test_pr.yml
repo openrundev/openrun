@@ -35,12 +35,12 @@ jobs:
           CL_GITHUB_SECRET: ${{ secrets.CL_GITHUB_SECRET }}
           TEST_PAT: ${{ secrets.TEST_PAT }}
         run: |
-          export CL_HOME=`pwd`
+          export OPENRUN_HOME=`pwd`
           export GOAMD64=v3
           rm -rf internal/server/appspecs && cd internal/server
-          git clone --single-branch --depth 1 https://github.com/claceio/appspecs.git
+          git clone --single-branch --depth 1 https://github.com/openrundev/appspecs.git
           rm -rf appspecs/.git
-          cd $CL_HOME
+          cd $OPENRUN_HOME
 
           go install github.com/commander-cli/commander/v2/cmd/commander@latest
           export CL_CONTAINER_COMMANDS=disable # pull requests uses github runner, docker/podman does not run

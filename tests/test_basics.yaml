@@ -5,39 +5,39 @@ config:
 
 tests:
   basic010:
-    command: ../clace app list /invalid # Connects over UDS
+    command: ../openrun app list /invalid # Connects over UDS
     stdout:
       line-count: 1 # Only header is printed
     exit-code: 0
 
   basic020:
-    command: CL_CONFIG_FILE=config_basic_client_np.toml ../clace app list /invalid
+    command: CL_CONFIG_FILE=config_basic_client_np.toml ../openrun app list /invalid
     stderr: "error: 404 page not found" # admin api's are disabled over http
     stdout:
       line-count: 0
     exit-code: 1
 
   basic030:
-    command: CL_CONFIG_FILE=config_basic_client.toml ../clace app list /invalid # No app
+    command: CL_CONFIG_FILE=config_basic_client.toml ../openrun app list /invalid # No app
     stderr: "error: 404 page not found" # admin api's are disabled over http
     stdout:
       line-count: 0
     exit-code: 1
 
   basic040:
-    command: CL_CONFIG_FILE=config_basic_client_https.toml ../clace app list /invalid # Test TLS
+    command: CL_CONFIG_FILE=config_basic_client_https.toml ../openrun app list /invalid # Test TLS
     stderr: "error: 404 page not found"
     exit-code: 1
 
   basic050:
-    command: CL_CONFIG_FILE=config_basic_client_https_skip.toml ../clace app list /invalid # TLS with skip_cert_check
+    command: CL_CONFIG_FILE=config_basic_client_https_skip.toml ../openrun app list /invalid # TLS with skip_cert_check
     stderr: "error: 404 page not found" # admin api's are disabled over http
     stdout:
       line-count: 0
     exit-code: 1
 
   basic060: ## create test1 app with default of authentication enabled
-    command: ../clace app create ./testapp /test1
+    command: ../openrun app create ./testapp /test1
     exit-code: 0
 
   basic070: # check curl works with password
@@ -60,26 +60,26 @@ tests:
       exactly: "Authentication failed"
 
   basic160: ## create test2 app with authentication disabled
-    command: ../clace app create --auth=none ./testapp /test2
+    command: ../openrun app create --auth=none ./testapp /test2
     exit-code: 0
 
   basic161: ## Check static files are using optimized fetch path (no compression/decompression)
-    ## The data should be streamed directly from sqlite. x-clace-compressed header should be true
-    command: 'curl -sI -H "Accept-Encoding: br" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Clace-Compressed: true" -e "Content-Encoding: br" -e "Content-Length: 15595" | wc -l'
+    ## The data should be streamed directly from sqlite. x-openrun-compressed header should be true
+    command: 'curl -sI -H "Accept-Encoding: br" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-OpenRun-Compressed: true" -e "Content-Encoding: br" -e "Content-Length: 15595" | wc -l'
     stdout:
       exactly: "3"
     exit-code: 0
 
   basic162: ## Check static files are using are gzipped when only gzip encoding is accepted
-    command: 'curl -sI -H "Accept-Encoding: gzip" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Clace-Compressed: true" -e "Content-Encoding: gzip" | wc -l'
+    command: 'curl -sI -H "Accept-Encoding: gzip" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-OpenRun-Compressed: true" -e "Content-Encoding: gzip" | wc -l'
     stdout:
-      exactly: "1" # X-Clace-Compressed is not set, content length depends on gzip
+      exactly: "1" # X-OpenRun-Compressed is not set, content length depends on gzip
     exit-code: 0
 
   basic163: ## Check static files are not compressed if no encoding is accepted
-    command: 'curl -sI localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Clace-Compressed: true" -e "Content-Encoding: " -e "Content-Length: 50387" | wc -l'
+    command: 'curl -sI localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-OpenRun-Compressed: true" -e "Content-Encoding: " -e "Content-Length: 50387" | wc -l'
     stdout:
-      exactly: "1" # X-Clace-Compressed is not set, encoding is not set
+      exactly: "1" # X-OpenRun-Compressed is not set, encoding is not set
     exit-code: 0
 
   basic164: ## Check HTTP early hints
@@ -103,15 +103,15 @@ tests:
     stdout: "Test app body"
 
   basic250: # Clear generated files
-    command: rm -rf ./testapp/static/gen ./testapp/index_gen.go.html ./testapp/config_gen.lock ./testapp/clace_gen.go.html
+    command: rm -rf ./testapp/static/gen ./testapp/index_gen.go.html ./testapp/config_gen.lock ./testapp/openrun_gen.go.html
     exit-code: 0
 
   basic260: # create test3 app with auth specifically enabled. dev is used to check if files are created fine
-    command: ../clace app create --dev --auth=default ./testapp /test3
+    command: ../openrun app create --dev --auth=default ./testapp /test3
     exit-code: 0
 
   basic260a: # List shows auth as DEFAULT
-    command: "../clace app list --format csv /test3 | grep DEFAULT | wc -l"
+    command: "../openrun app list --format csv /test3 | grep DEFAULT | wc -l"
     stdout:
       exactly: "1"
     exit-code: 0
@@ -136,14 +136,14 @@ tests:
       exactly: "Authentication failed"
 
   basic400: # check version command output
-    command: ../clace --version
-    stdout: "Clace version"
+    command: ../openrun --version
+    stdout: "OpenRun version"
     stderr:
       line-count: 0
     exit-code: 0
 
   basic500: # Test app list command
-    command: ../clace app list
+    command: ../openrun app list
     stderr:
       line-count: 0
     stdout:
@@ -153,7 +153,7 @@ tests:
         - "PROD        1 DEFAULT"
     exit-code: 0
   basic501: # Test app list command
-    command: ../clace app list
+    command: ../openrun app list
     stderr:
       line-count: 0
     stdout:
@@ -161,7 +161,7 @@ tests:
         - "TestApp                        app_prd_"
     exit-code: 0
   basic510: # Test app list command with internal
-    command: ../clace app list --internal
+    command: ../openrun app list --internal
     stderr:
       line-count: 0
     stdout:
@@ -172,79 +172,79 @@ tests:
     exit-code: 0
 
   basic520: # Test app list command with filter
-    command: ../clace app list "*"
+    command: ../openrun app list "*"
     stdout:
       line-count: 4
   basic530: # Test app list command with domain filter
-    command: ../clace app list "invalid:*"
+    command: ../openrun app list "invalid:*"
     stdout:
       line-count: 1
     exit-code: 0
   basic540: # Test app list command with app filter
-    command: ../clace app list /test2*
+    command: ../openrun app list /test2*
     stdout:
       line-count: 2
     exit-code: 0
   basic550: # Test app list command with jsonl format
-    command: ../clace app list --format jsonl /test2*
+    command: ../openrun app list --format jsonl /test2*
     stdout:
       contains:
         - '"is_dev":false,'
       line-count: 1
     exit-code: 0
   basic560: # Test app list command with csv format
-    command: ../clace app list --format csv /test2*
+    command: ../openrun app list --format csv /test2*
     stdout:
       contains:
         - "PROD,1"
       line-count: 1
     exit-code: 0
   basic570: # Test app list command with json format
-    command: ../clace app list --format json /test2*
+    command: ../openrun app list --format json /test2*
     stdout:
       contains:
         - '"is_dev": false,'
     exit-code: 0
   basic580: # Test app list command with jsonl_pretty format
-    command: ../clace app list --format jsonl_pretty /test2
+    command: ../openrun app list --format jsonl_pretty /test2
     stdout:
       contains:
         - '"is_dev": false,'
     exit-code: 0
   basic590: # Reload one app
-    command: ../clace app reload /test2
+    command: ../openrun app reload /test2
     exit-code: 0
   basic600: # After reload, prod app should be at version 1
-    command: '../clace app list --format csv /test2 | grep ",1," | wc -l'
+    command: '../openrun app list --format csv /test2 | grep ",1," | wc -l'
     stdout:
       exactly: "1"
     exit-code: 0
   basic601: # After reload, stage app should be at version 2
-    command: '../clace app list --internal --format csv /test2 | grep _stage | grep ",2," | wc -l'
+    command: '../openrun app list --internal --format csv /test2 | grep _stage | grep ",2," | wc -l'
     stdout:
       exactly: "1"
     exit-code: 0
   basic610: # Promote the change
-    command: ../clace app promote /test2
+    command: ../openrun app promote /test2
     exit-code: 0
   basic620: # After promote, both are on version 2
-    command: '../clace app list --internal --format csv /test2 | grep ",2," | wc -l'
+    command: '../openrun app list --internal --format csv /test2 | grep ",2," | wc -l'
     stdout:
       exactly: "2"
     exit-code: 0
   basic630: # Promote the change again, no op
-    command: ../clace app promote /test2
+    command: ../openrun app promote /test2
     exit-code: 0
   basic640: # After promote, both are on version 2
-    command: '../clace app list --internal --format csv /test2* | grep ",2," | wc -l'
+    command: '../openrun app list --internal --format csv /test2* | grep ",2," | wc -l'
     stdout:
       exactly: "2"
     exit-code: 0
   basic650: # Reload with promote option
-    command: ../clace app reload --promote /test2
+    command: ../openrun app reload --promote /test2
     exit-code: 0
   basic660: # Both are on version 3
-    command: '../clace app list --internal --format csv /test2 | grep ",3," | wc -l'
+    command: '../openrun app list --internal --format csv /test2 | grep ",3," | wc -l'
     stdout:
       exactly: "2"
     exit-code: 0

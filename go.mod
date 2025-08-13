@@ -1,7 +1,7 @@
 // Copyright (c) ClaceIO, LLC
 // SPDX-License-Identifier: Apache-2.0
 
-module github.com/claceio/clace
+module github.com/openrundev/openrun
 
 go 1.24.2
 

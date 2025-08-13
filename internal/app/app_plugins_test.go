@@ -5,9 +5,9 @@ package app
 import (
 	"testing"
 
-	"github.com/claceio/clace/internal/plugin"
-	"github.com/claceio/clace/internal/testutil"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/testutil"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestGetPlugin(t *testing.T) {

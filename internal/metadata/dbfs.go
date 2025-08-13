@@ -18,8 +18,8 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/claceio/clace/internal/app/appfs"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 type DbFs struct {
@@ -292,7 +292,7 @@ func (d *DbFs) FileHash(excludeGlob []string) (string, error) {
 			return "", err
 		}
 		if matched {
-			// Name is excluded from the hash, must be a file used by the clace hypermedia based UI
+			// Name is excluded from the hash, must be a file used by the openrun hypermedia based UI
 			// We don't want a UI only change to cause a container rebuild
 			continue
 		}
@@ -315,7 +315,7 @@ func (d *DbFs) FileHash(excludeGlob []string) (string, error) {
 			return "", err
 		}
 		if matched {
-			// Name is excluded from the hash, must be a file used by the clace hypermedia based UI
+			// Name is excluded from the hash, must be a file used by the openrun hypermedia based UI
 			// We don't want a UI only change to cause a container rebuild
 			continue
 		}

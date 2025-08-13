@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/claceio/clace/internal/app"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 )
 

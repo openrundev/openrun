@@ -24,7 +24,7 @@ func NewLogger(config *LogConfig) *Logger {
 		writers = append(writers, zerolog.ConsoleWriter{Out: os.Stderr})
 	}
 	if config.File {
-		fileWriter := RollingFileLogger(config, "clace.json")
+		fileWriter := RollingFileLogger(config, "openrun.json")
 		if fileWriter != nil {
 			writers = append(writers, fileWriter)
 		}
@@ -54,7 +54,7 @@ func NewLogger(config *LogConfig) *Logger {
 }
 
 func RollingFileLogger(config *LogConfig, logType string) io.Writer {
-	dir := os.ExpandEnv("$CL_HOME/logs")
+	dir := os.ExpandEnv("$OPENRUN_HOME/logs")
 	if err := os.MkdirAll(dir, 0744); err != nil {
 		log.Error().Err(err).Str("path", dir).Msg("cannot create logging directory")
 		return nil

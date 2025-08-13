@@ -18,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/claceio/clace/internal/app"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 )
@@ -62,7 +62,7 @@ var (
 )
 
 const (
-	REALM = "clace"
+	REALM = "openrun"
 )
 
 type Handler struct {
@@ -246,7 +246,7 @@ func validatePathForCreate(inp string) error {
 	parts := strings.Split(inp, "/")
 	lastPart := parts[len(parts)-1]
 	if strings.Contains(lastPart, "_cl_") {
-		return fmt.Errorf("last section of path cannot contain _cl_, clace reserved path")
+		return fmt.Errorf("last section of path cannot contain _cl_, openrun reserved path")
 	}
 	return nil
 }
@@ -1075,7 +1075,7 @@ func (h *Handler) listSyncEntries(r *http.Request) (any, error) {
 
 // serveInternal returns a handler for the internal APIs for app admin and management
 func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
-	// These API's are mounted at /_clace
+	// These API's are mounted at /_openrun
 	r := chi.NewRouter()
 
 	// Get apps
@@ -1205,7 +1205,7 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 // webhooks are always mounted, even if admin over TCP is not enabled. At the app
 // level, webhooks are disabled by default and need to be enabled by the user
 func (h *Handler) serveWebhooks() http.Handler {
-	// These API's are mounted at /_clace_webhook
+	// These API's are mounted at /_openrun_webhook
 	r := chi.NewRouter()
 
 	// Reload app

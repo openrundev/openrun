@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/claceio/clace/internal/app/apptype"
-	"github.com/claceio/clace/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"go.starlark.net/starlark"
 )
 
@@ -112,7 +112,7 @@ func (e *Entry) Unpack(value starlark.Value) error {
 	return nil
 }
 
-// Store is the interface for a Clace document store. These API are exposed by the db plugin
+// Store is the interface for a OpenRun document store. These API are exposed by the db plugin
 type Store interface {
 	// Begin starts a new transaction
 	Begin(ctx context.Context) (*sql.Tx, error)

@@ -21,20 +21,20 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/claceio/clace/internal/app/action"
-	"github.com/claceio/clace/internal/app/appfs"
-	"github.com/claceio/clace/internal/app/apptype"
-	"github.com/claceio/clace/internal/app/dev"
-	"github.com/claceio/clace/internal/app/starlark_type"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
 	"github.com/fsnotify/fsnotify"
 	"github.com/go-chi/chi"
+	"github.com/openrundev/openrun/internal/app/action"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/app/dev"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
 
-// App is the main object that represents a Clace app. It is created when the app is loaded
+// App is the main object that represents a OpenRun app. It is created when the app is loaded
 type App struct {
 	*types.Logger
 	*types.AppEntry
@@ -141,7 +141,7 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 
 	newApp.funcMap = funcMap
 
-	clHome := cmp.Or(os.Getenv("CL_HOME"), "./")
+	clHome := cmp.Or(os.Getenv("OPENRUN_HOME"), "./")
 	newApp.AppRunPath = fmt.Sprintf("%s/run/app/%s", clHome, appEntry.Id)
 	if err := os.MkdirAll(newApp.AppRunPath, 0700); err != nil {
 		return nil, err
@@ -376,7 +376,7 @@ func (a *App) loadContainerManager(stripAppPath bool) error {
 	}
 
 	if a.systemConfig.ContainerCommand == "" {
-		return fmt.Errorf("app requires container support. Container management is not enabled in Clace server config. " +
+		return fmt.Errorf("app requires container support. Container management is not enabled in OpenRun server config. " +
 			"Install Docker/Podman and set the container_command in system config or set to auto (default) and ensure that " +
 			"the container manager command is in the PATH")
 	}
@@ -726,7 +726,7 @@ func (a *App) removeSSEClient(chanRemove chan SSEMessage) {
 func (a *App) notifyClients() {
 	a.Trace().Msg("Notifying clients for reload")
 	reloadMessage := SSEMessage{
-		event: "clace_reload",
+		event: "openrun_reload",
 		data:  "App reloaded after file updates",
 	}
 	for _, ch := range a.sseListeners {

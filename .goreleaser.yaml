@@ -1,9 +1,9 @@
-project_name: clace
+project_name: openrun
 
 release:
   github:
-    owner: claceio
-    name: clace
+    owner: openrundev
+    name: openrun
   name_template: "Release {{.Tag}}"
   draft: false
   prerelease: "auto"
@@ -12,21 +12,21 @@ before:
   hooks:
     - go mod download
     - go mod tidy
-    - git clone --single-branch --depth 1 https://github.com/claceio/appspecs.git
+    - git clone --single-branch --depth 1 https://github.com/openrundev/appspecs.git
     - rm -rf appspecs/.git
     - rm -rf internal/server/appspecs
     - mv appspecs internal/server
-    - git clone --single-branch --depth 1 https://github.com/claceio/apps.git
+    - git clone --single-branch --depth 1 https://github.com/openrundev/apps.git
     - cp internal/server/list_apps/embed.go .
     - rm -rf internal/server/list_apps
-    - mv apps/clace/list_apps internal/server
+    - mv apps/openrun/list_apps internal/server
     - mv embed.go internal/server/list_apps/
     - rm -rf apps
     - go test -race ./...
 
 builds:
-  - main: ./cmd/clace
-    binary: clace
+  - main: ./cmd/openrun
+    binary: openrun
     flags:
       - -trimpath
     ldflags:
@@ -53,7 +53,7 @@ builds:
 
 nfpms:
   - file_name_template: "{{.ProjectName}}-{{.Tag}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}"
-    homepage: https://clace.io/
+    homepage: https://openrun.dev/
     description: Securely develop and deploy internal applications
     maintainer: Ajay Kidave <contact@clace.io>
     license: Apache 2.0
@@ -62,8 +62,8 @@ nfpms:
       - deb
       - rpm
     contents:
-      - src: /usr/bin/clace
-        dst: /usr/local/bin/clace
+      - src: /usr/bin/openrun
+        dst: /usr/local/bin/openrun
         type: "symlink"
 
 checksum:
@@ -104,35 +104,35 @@ changelog:
       order: 999
 
 brews:
-  - name: clace
-    homepage: https://clace.io
+  - name: openrun
+    homepage: https://openrun.dev
     ids: [targz-archives]
     repository:
-      owner: claceio
-      name: homebrew-clace
+      owner: openrundev
+      name: homebrew-openrun
     dependencies:
       - name: "mkcert"
     service: |
-      run [ opt_bin/"clace", "server", "start" ]
+      run [ opt_bin/"openrun", "server", "start" ]
       keep_alive true
       working_dir HOMEBREW_PREFIX
-      log_path var/"log/clace.log"
-      error_log_path var/"log/clace.log"
+      log_path var/"log/openrun.log"
+      error_log_path var/"log/openrun.log"
     skip_upload: auto
     install: |-
-      bin.install "clace"
+      bin.install "openrun"
     post_install: |-
-      unless File.exist?("#{etc}/clace.toml")
-        pid = spawn("#{opt_bin}/clace password", out: "#{etc}/clace.toml")
+      unless File.exist?("#{etc}/openrun.toml")
+        pid = spawn("#{opt_bin}/openrun password", out: "#{etc}/openrun.toml")
         puts "********** Initializing \"admin\" user **********"
         Process.wait(pid)
         puts "************* Save this password ****************"
 
         mkcert_path = `which mkcert`.chomp
         unless mkcert_path.empty?
-          system("mkdir -p #{HOMEBREW_PREFIX}/var/clace/config/certificates")
+          system("mkdir -p #{HOMEBREW_PREFIX}/var/openrun/config/certificates")
           system("#{mkcert_path} -install")
-          system("#{mkcert_path} -cert-file #{HOMEBREW_PREFIX}/var/clace/config/certificates/default.crt -key-file #{HOMEBREW_PREFIX}/var/clace/config/certificates/default.key localhost 127.0.0.1 \"*.localhost\"")
+          system("#{mkcert_path} -cert-file #{HOMEBREW_PREFIX}/var/openrun/config/certificates/default.crt -key-file #{HOMEBREW_PREFIX}/var/openrun/config/certificates/default.key localhost 127.0.0.1 \"*.localhost\"")
           puts "Created localhost TLS certificates"
         end
       end

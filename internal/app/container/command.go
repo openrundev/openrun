@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 type Container struct {
@@ -234,7 +234,7 @@ func (c ContainerCommand) StartContainer(config *types.SystemConfig, name Contai
 	return nil
 }
 
-const LABEL_PREFIX = "io.clace."
+const LABEL_PREFIX = "io.openrun."
 
 func (c ContainerCommand) RunContainer(config *types.SystemConfig, appEntry *types.AppEntry, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,

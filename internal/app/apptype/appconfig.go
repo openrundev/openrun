@@ -48,7 +48,7 @@ func NewCodeConfig() *CodeConfig {
 // CompatibleCodeConfig -> LockFile -> StarlarkCodeConfig
 //
 // The goal is that if the application has a lock file, then all settings will attempt to be locked
-// such that there should not be any change in behavior when the Clace version is updated.
+// such that there should not be any change in behavior when the OpenRun version is updated.
 // Removing the lock file will result in new config defaults getting applied, which can be
 // done when the app developer wants to do an application refresh. Refresh will require additional
 // testing to ensure that UI functionality is not changed..

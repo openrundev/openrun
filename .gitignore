@@ -1,8 +1,8 @@
 dist/
 .vscode
-/clace
+/openrun
 metadata/
-clace.toml
+openrun.toml
 *.swp
 .sw*
 logs/

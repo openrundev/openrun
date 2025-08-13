@@ -119,7 +119,7 @@ func (f *SourceFs) Glob(pattern string) ([]string, error) {
 }
 
 func (f *SourceFs) ParseFS(funcMap template.FuncMap, patterns ...string) (*template.Template, error) {
-	return template.New("claceapp").Funcs(funcMap).ParseFS(f.ReadableFS, patterns...)
+	return template.New("openrunapp").Funcs(funcMap).ParseFS(f.ReadableFS, patterns...)
 }
 
 func (f *SourceFs) Stat(name string) (fs.FileInfo, error) {
@@ -372,7 +372,7 @@ func (h *fsHandler) serveCompressed(w http.ResponseWriter, r *http.Request, file
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Encoding", COMPRESSION_TYPE)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-	w.Header().Set("X-Clace-Compressed", "true")
+	w.Header().Set("X-OpenRun-Compressed", "true")
 	w.Header().Add("Vary", "Accept-Encoding")
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)

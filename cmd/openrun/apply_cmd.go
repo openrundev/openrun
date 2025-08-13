@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -41,10 +41,10 @@ func initApplyCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 ` + PATH_SPEC_HELP +
 			`
 Examples:
-  Apply app config, reloading all apps: clace apply ./app.ace
-  Apply app config for example.com domain apps: clace apply --reload=updated ./app.ace example.com:**
-  Apply app config from git for all apps: clace apply --promote --approve github.com/claceio/apps/apps.ace all
-  Apply app config from git for all apps, overwriting changes: clace apply --promote --clobber github.com/claceio/apps/apps.ace all
+  Apply app config, reloading all apps: openrun apply ./app.ace
+  Apply app config for example.com domain apps: openrun apply --reload=updated ./app.ace example.com:**
+  Apply app config from git for all apps: openrun apply --promote --approve github.com/openrundev/apps/apps.ace all
+  Apply app config from git for all apps, overwriting changes: openrun apply --promote --clobber github.com/openrundev/apps/apps.ace all
 `,
 
 		Action: func(cCtx *cli.Context) error {
@@ -77,7 +77,7 @@ Examples:
 
 			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
 			var applyResponse types.AppApplyResponse
-			err = client.Post("/_clace/apply", values, nil, &applyResponse)
+			err = client.Post("/_openrun/apply", values, nil, &applyResponse)
 			if err != nil {
 				return err
 			}

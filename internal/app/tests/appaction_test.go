@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/claceio/clace/internal/app"
-	"github.com/claceio/clace/internal/testutil"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/testutil"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func actionTester(t *testing.T, rootPath bool, actionPath string) {

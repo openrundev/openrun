@@ -6,7 +6,7 @@ set -e
 # is disabled by default.
 #export CL_TEST_VERBOSE="--verbose"
 
-cd $CL_HOME
+cd $OPENRUN_HOME
 export GOCOVERDIR=$GOCOVERDIR
 
 # Setup app specs
@@ -17,9 +17,9 @@ if [[ -d internal/server/appspecs/dummy ]]; then
 fi 
 
 if [[ -n "$GOCOVERDIR" ]]; then
-    go build -cover ./cmd/clace
+    go build -cover ./cmd/openrun
 else 
-    go build ./cmd/clace
+    go build ./cmd/openrun
 fi
 
 if [[ -d appspecs_bk ]]; then
@@ -31,7 +31,7 @@ fi
 cd tests
 rm -rf metadata
 
-export CL_HOME=.
+export OPENRUN_HOME=.
 unset CL_CONFIG_FILE
 unset SSH_AUTH_SOCK
 
@@ -46,7 +46,7 @@ error_handler () {
 
 cleanup() {
   rm -rf metadata
-  rm -rf logs/ clace.toml config_container.toml server.stdout flaskapp
+  rm -rf logs/ openrun.toml config_container.toml server.stdout flaskapp
 
   if [[ -d ../appspecs_bk ]]; then
     rm -rf ../internal/server/appspecs
@@ -54,14 +54,14 @@ cleanup() {
   fi 
 
   set +e
-  ps -ax | grep "clace server start" | grep -v grep | cut -c1-6 | xargs kill -9
+  ps -ax | grep "openrun server start" | grep -v grep | cut -c1-6 | xargs kill -9
 
   # Github Actions does not seem to allow kill, the last echo is to allow the exit code to be zero
   echo "Done with cleanup"
 }
 
 # Test basic functionality
-rm -f run/clace.sock
+rm -f run/openrun.sock
 # Use password hash for "abcd"
 cat <<EOF > config_basic_test.toml
 [security]
@@ -80,7 +80,7 @@ enable_compression = true
 default_format = "table"
 EOF
 
-CL_CONFIG_FILE=config_basic_test.toml GOCOVERDIR=$GOCOVERDIR ../clace server start &
+CL_CONFIG_FILE=config_basic_test.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
 sleep 2
 
 cat <<EOF > config_basic_client_np.toml
@@ -109,8 +109,8 @@ EOF
 if [[ -z $CL_SINGLE_TEST ]]; then
     commander test $CL_TEST_VERBOSE test_basics.yaml
 fi
-CL_CONFIG_FILE=config_basic_test.toml GOCOVERDIR=$GOCOVERDIR/../client ../clace server stop
-rm -rf metadata run/clace.sock config_basic_*.toml
+CL_CONFIG_FILE=config_basic_test.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+rm -rf metadata run/openrun.sock config_basic_*.toml
 
 cat <<EOF > config_np.toml
 [http]
@@ -120,14 +120,14 @@ port = 9157
 EOF
 
 # Test server prints a password when started without config
-CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR ../clace server start > server.stdout &
+CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start > server.stdout &
 sleep 2
 grep "Admin password" server.stdout
-CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR/../client ../clace server stop
-rm -f run/clace.sock config_np.toml
+CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+rm -f run/openrun.sock config_np.toml
 
 # Run all other automated tests, use password hash for "qwerty"
-export CL_CONFIG_FILE=clace.toml
+export CL_CONFIG_FILE=openrun.toml
 cat <<EOF > $CL_CONFIG_FILE
 [security]
 admin_password_bcrypt = "\$2a\$10\$PMaPsOVMBfKuDG04RsqJbeKIOJjlYi1Ie1KQbPCZRQx38bqYfernm"
@@ -136,16 +136,16 @@ EOF
 
 if [[ -n "$CL_INFOCLACE_SSH" ]]; then
   # CL_INFOCLACE_SSH env is set, test authenticated git access with ssh key
-  # infoclace user has read only access to clace repo, which is anyway public
-  echo "$CL_INFOCLACE_SSH" > ./infoclace_ssh
-  chmod 600 ./infoclace_ssh
+  # infoopenrun user has read only access to openrun repo, which is anyway public
+  echo "$CL_INFOCLACE_SSH" > ./infoopenrun_ssh
+  chmod 600 ./infoopenrun_ssh
 
   cat <<EOF >> $CL_CONFIG_FILE
-  [git_auth.infoclace]
-  key_file_path = "./infoclace_ssh"
+  [git_auth.infoopenrun]
+  key_file_path = "./infoopenrun_ssh"
 
   [git_auth.testpat]
-  user_id = "akclace"
+  user_id = "akopenrun"
   password="$TEST_PAT"
 EOF
 fi
@@ -187,7 +187,7 @@ EOF
 
 export TESTENV=abc
 export c1c2_c3=xyz
-GOCOVERDIR=$GOCOVERDIR ../clace server start &
+GOCOVERDIR=$GOCOVERDIR ../openrun server start &
 sleep 2
 
 if [[ -z $CL_SINGLE_TEST ]]; then
@@ -202,7 +202,7 @@ echo $?
 if [[ -n "$CL_INFOCLACE_SSH" ]]; then
   # test git ssh key access
   commander test $CL_TEST_VERBOSE test_github_auth.yaml
-  rm ./infoclace_ssh
+  rm ./infoopenrun_ssh
 fi
 
 if [[ -n "$CL_GITHUB_SECRET" ]]; then
@@ -210,7 +210,7 @@ if [[ -n "$CL_GITHUB_SECRET" ]]; then
   commander test $CL_TEST_VERBOSE test_oauth.yaml
 fi
 
-GOCOVERDIR=$GOCOVERDIR/../client ../clace server stop
+GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
 
 
 # Test containerized apps
@@ -238,14 +238,14 @@ app_default_auth_type="none"
 container_command="$cmd"
 [secret.env]
 EOF
-    rm -rf metadata run/clace.sock
-    CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR ../clace server start &
+    rm -rf metadata run/openrun.sock
+    CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
     sleep 2
 
     export HTTP_PORT=$http_port
     echo "********Testing containerized apps with $cmd*********"
     commander test $CL_TEST_VERBOSE test_containers.yaml
-    CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR/../client ../clace server stop
+    CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
 done
 
 cleanup

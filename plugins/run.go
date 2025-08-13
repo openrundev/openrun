@@ -13,8 +13,8 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/claceio/clace/internal/app"
-	"github.com/claceio/clace/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"go.starlark.net/starlark"
 )
 
@@ -93,7 +93,7 @@ func execCommand(containerManager *app.ContainerManager, thread *starlark.Thread
 	var tempFile *os.File
 
 	if stdoutToFileBool {
-		tempFile, err = os.CreateTemp("", "clace-exec-stdout-*")
+		tempFile, err = os.CreateTemp("", "openrun-exec-stdout-*")
 		if err != nil {
 			return nil, fmt.Errorf("error creating temporary file: %w", err)
 		}

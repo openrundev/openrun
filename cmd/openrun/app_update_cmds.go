@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -17,7 +17,7 @@ import (
 func appUpdateSettingsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	return &cli.Command{
 		Name:  "update-settings",
-		Usage: "Update Clace apps settings. Settings changes are NOT staged, they apply immediately to matched stage, prod and preview apps.",
+		Usage: "Update OpenRun apps settings. Settings changes are NOT staged, they apply immediately to matched stage, prod and preview apps.",
 		Subcommands: []*cli.Command{
 			appUpdateStageWrite(commonFlags, clientConfig),
 			appUpdatePreviewWrite(commonFlags, clientConfig),
@@ -45,8 +45,8 @@ The first required argument <value> is a boolean value, true or false.
 The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 
 	Examples:
-	  Update all apps, across domains: clace app update-settings stage-write-access true all
-	  Update apps in the example.com domain: clace app update-settings stage-write-access false "example.com:**"`,
+	  Update all apps, across domains: openrun app update-settings stage-write-access true all
+	  Update apps in the example.com domain: openrun app update-settings stage-write-access false "example.com:**"`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
@@ -70,7 +70,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			}
 
 			var updateResponse types.AppUpdateSettingsResponse
-			err = client.Post("/_clace/app_settings", values, body, &updateResponse)
+			err = client.Post("/_openrun/app_settings", values, body, &updateResponse)
 			if err != nil {
 				return err
 			}
@@ -107,8 +107,8 @@ The first required argument <value> is a boolean value, true or false.
 The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 
 	Examples:
-	  Update all apps, across domains: clace app update-settings preview-write-access true all 
-	  Update apps in the example.com domain: clace app update-settings preview-write-access false "example.com:**"`,
+	  Update all apps, across domains: openrun app update-settings preview-write-access true all 
+	  Update apps in the example.com domain: openrun app update-settings preview-write-access false "example.com:**"`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
@@ -132,7 +132,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			}
 
 			var updateResponse types.AppUpdateSettingsResponse
-			err = client.Post("/_clace/app_settings", values, body, &updateResponse)
+			err = client.Post("/_openrun/app_settings", values, body, &updateResponse)
 			if err != nil {
 				return err
 			}
@@ -169,8 +169,8 @@ The first required argument <value> is a string, system, default, none or OAuth 
 The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 
 	Examples:
-	  Update all apps, across domains: clace app update-settings auth default all
-	  Update apps in the example.com domain: clace app update-settings auth none "example.com:**"`,
+	  Update all apps, across domains: openrun app update-settings auth default all
+	  Update apps in the example.com domain: openrun app update-settings auth none "example.com:**"`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
@@ -186,7 +186,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			body.AuthnType = types.StringValue(cCtx.Args().Get(0))
 
 			var updateResponse types.AppUpdateSettingsResponse
-			if err := client.Post("/_clace/app_settings", values, body, &updateResponse); err != nil {
+			if err := client.Post("/_openrun/app_settings", values, body, &updateResponse); err != nil {
 				return err
 			}
 
@@ -218,13 +218,13 @@ func appUpdateGitAuth(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 
 		UsageText: `args: <entryName> <appPathGlob> 
 
-The first required argument <entryName> is a string. Specify the git_auth entry key name as configured in the clace.toml config.
+The first required argument <entryName> is a string. Specify the git_auth entry key name as configured in the openrun.toml config.
 Set to "-" to remove the git_auth entry.
 The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 
 	Examples:
-	  Update all apps, across domains: clace app update-settings git-auth mygit all
-	  Update apps in the example.com domain: clace app git-auth gitentrykey "example.com:**"`,
+	  Update all apps, across domains: openrun app update-settings git-auth mygit all
+	  Update apps in the example.com domain: openrun app git-auth gitentrykey "example.com:**"`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
@@ -240,7 +240,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			body.GitAuthName = types.StringValue(cCtx.Args().Get(0))
 
 			var updateResponse types.AppUpdateSettingsResponse
-			if err := client.Post("/_clace/app_settings", values, body, &updateResponse); err != nil {
+			if err := client.Post("/_openrun/app_settings", values, body, &updateResponse); err != nil {
 				return err
 			}
 
@@ -261,7 +261,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 func appUpdateMetadataCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	return &cli.Command{
 		Name:  "update-metadata",
-		Usage: `Update Clace app metadata. Metadata updates are staged and have to be promoted to prod. Use "clace param" to update app parameter metadata.`,
+		Usage: `Update OpenRun app metadata. Metadata updates are staged and have to be promoted to prod. Use "openrun param" to update app parameter metadata.`,
 		Subcommands: []*cli.Command{
 			appUpdateAppSpec(commonFlags, clientConfig),
 			appUpdateConfig(commonFlags, clientConfig, "container-option", "copt", types.AppMetadataContainerOptions),
@@ -291,8 +291,8 @@ The first required argument <value> is a string, a valid app spec name or - (to 
 The last required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 
 	Examples:
-	  Update all apps, across domains: clace app update-metadata spec - all
-	  Update apps in the example.com domain: clace app update-metadata spec proxy "example.com:**"`,
+	  Update all apps, across domains: openrun app update-metadata spec - all
+	  Update apps in the example.com domain: openrun app update-metadata spec proxy "example.com:**"`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
@@ -309,7 +309,7 @@ The last required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			body.Spec = types.StringValue(cCtx.Args().Get(0))
 
 			var updateResponse types.AppUpdateMetadataResponse
-			if err := client.Post("/_clace/app_metadata", values, body, &updateResponse); err != nil {
+			if err := client.Post("/_openrun/app_metadata", values, body, &updateResponse); err != nil {
 				return err
 			}
 
@@ -359,8 +359,8 @@ The initial arguments key=value are strings, the key to set and the value to use
 container options. The last argument is <appPathGlob>. `+PATH_SPEC_HELP+`
 
 	Examples:
-	  Update all apps, across domains: clace app update-metadata %s key=value all
-	  Update apps in the example.com domain: clace app update-metadata %s key=value "example.com:**"`, arg, arg),
+	  Update all apps, across domains: openrun app update-metadata %s key=value all
+	  Update apps in the example.com domain: openrun app update-metadata %s key=value "example.com:**"`, arg, arg),
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() < 2 {
@@ -379,7 +379,7 @@ container options. The last argument is <appPathGlob>. `+PATH_SPEC_HELP+`
 			body.ConfigEntries = cCtx.Args().Slice()[:cCtx.NArg()-1]
 
 			var updateResponse types.AppUpdateMetadataResponse
-			if err := client.Post("/_clace/app_metadata", values, body, &updateResponse); err != nil {
+			if err := client.Post("/_openrun/app_metadata", values, body, &updateResponse); err != nil {
 				return err
 			}
 

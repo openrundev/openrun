@@ -1,19 +1,19 @@
-load("clace.in", "clace")
+load("openrun.in", "openrun")
 
 def handler(req):
-    ret = clace.list_audit_events(app_glob="/audittestapp")
+    ret = openrun.list_audit_events(app_glob="/audittestapp")
     events = ret.value
     if len(events) != 2:
         return "Error: expected 2 audit events, got %d %s" % (len(events), events)
     if events[0]["operation"] != "testop2" or events[0]["target"] != "testtarget2" or events[0]["detail"] != "did op 2":
         return "Invalid event1 %s" % events[0]
 
-    ret = clace.list_audit_events(target="invalid")
+    ret = openrun.list_audit_events(target="invalid")
     events = ret.value
     if len(events) != 0:
         return "Error: expected no audit events, got %d %s" % (len(events), events)
 
-    ret = clace.list_audit_events(operation="reload_apps")
+    ret = openrun.list_audit_events(operation="reload_apps")
     events = ret.value
     if len(events) == 0:
         return "Error: expected some audit events, got %d %s" % (len(events), events)
@@ -33,5 +33,5 @@ app = ace.app("audit app",
                ace.api("/", type=ace.TEXT),
                ace.api("/audit", audit_handler, type=ace.TEXT)
               ],
-              permissions = [ace.permission("clace.in", "list_audit_events")],
+              permissions = [ace.permission("openrun.in", "list_audit_events")],
             )

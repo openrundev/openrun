@@ -1,6 +1,6 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
 tests:
   versions0001: # clearn test app
@@ -9,11 +9,11 @@ tests:
     command: cp -r ./testapp versionstest
 
   versions0020: # create dev app
-    command: ../clace app create --dev ./versionstest /versions_dev
+    command: ../openrun app create --dev ./versionstest /versions_dev
   versions0030: # create local1 app
-    command: ../clace app create ./versionstest /versions_local1
+    command: ../openrun app create ./versionstest /versions_local1
   versions0040: # create local2 app
-    command: ../clace app create ./versionstest /versions_local2
+    command: ../openrun app create ./versionstest /versions_local2
   versions0050: # check curl
     command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
     stdout: "1"
@@ -21,10 +21,10 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/versions_local1/abc/def/test.txt
     stdout: "abc"
   versions0060: # check list, four apps on version 1
-    command: ../clace app list -i "/versions*" | grep "1 DEFAULT" | wc -l
+    command: ../openrun app list -i "/versions*" | grep "1 DEFAULT" | wc -l
     stdout: "4"
   versions0070: # check list, one dev app on version 0
-    command: ../clace app list -i "/versions*" | grep "0 DEFAULT" | wc -l
+    command: ../openrun app list -i "/versions*" | grep "0 DEFAULT" | wc -l
     stdout: "1"
   versions0080: # update static file
     command: echo "22" > ./versionstest/static_root/rootfile.txt
@@ -35,7 +35,7 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/versions_dev/rootfile.txt
     stdout: "22"
   versions0110: # reload local1 app without promotion
-    command: ../clace app reload /versions_local1
+    command: ../openrun app reload /versions_local1
   versions0120: # local1 stage is updated
     command: curl -su "admin:qwerty" localhost:25222/versions_local1_cl_stage/rootfile.txt
     stdout: "22"
@@ -43,121 +43,121 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
     stdout: "1"
   versions0140: # version list
-    command: ../clace version list /versions_local1 | wc -l
+    command: ../openrun version list /versions_local1 | wc -l
     stdout: "2"
   versions0150: # version list
-    command: ../clace version list /versions_local1_cl_stage | wc -l
+    command: ../openrun version list /versions_local1_cl_stage | wc -l
     stdout: "3" # two versions for stage, plus header
   versions0151: # version list
-    command: ../clace version list /versions_local1_cl_stage | tail -n 1
+    command: ../openrun version list /versions_local1_cl_stage | tail -n 1
     stdout: "=====>        2" # second version is current
   versions0152: # version list
-    command: ../clace version list /versions_local1 | sed -n '2p'
+    command: ../openrun version list /versions_local1 | sed -n '2p'
     stdout: "=====>        1" # first version is current for prod app
   versions0153: # update static file again
     command: echo "33" > ./versionstest/static_root/rootfile.txt
   versions0154: # reload again
-    command: ../clace app reload /versions_local1
+    command: ../openrun app reload /versions_local1
   versions0155: # version list
-    command: ../clace version list /versions_local1_cl_stage | sed -n '4p'
+    command: ../openrun version list /versions_local1_cl_stage | sed -n '4p'
     stdout: "=====>        3" # third version is current
   versions0160: # local1 stage is updated
     command: curl -su "admin:qwerty" localhost:25222/versions_local1_cl_stage/rootfile.txt
     stdout: "33"
   versions0160a: # check indicator
-    command: ../clace app list /versions_local1
+    command: ../openrun app list /versions_local1
     stdout: "PROD* " # staged changes
   versions0161: # promote app
-    command: ../clace app promote /versions_local1
+    command: ../openrun app promote /versions_local1
   versions0161a: # check indicator
-    command: ../clace app list /versions_local1
+    command: ../openrun app list /versions_local1
     stdout: "PROD " # no staged changes
   versions0162: # version list
-    command: ../clace version list /versions_local1 | sed -n '3p'
+    command: ../openrun version list /versions_local1 | sed -n '3p'
     stdout: "=====>        3" # prod is at version 3, same as stage
   versions0163: # local1 prod stage is updated
     command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
     stdout: "33"
   versions0170: # switch stage back
-    command: ../clace version switch previous /versions_local1_cl_stage
+    command: ../openrun version switch previous /versions_local1_cl_stage
     stdout: "Switched /versions_local1_cl_stage from version 3 to version 2"
   versions0171: # local1 stage is updated to version 2
     command: curl -su "admin:qwerty" localhost:25222/versions_local1_cl_stage/rootfile.txt
     stdout: "22"
   versions0173: # switch prod back
-    command: ../clace version switch previous /versions_local1
+    command: ../openrun version switch previous /versions_local1
     stdout: "Switched /versions_local1 from version 3 to version 1"
   versions0173a: # revert prod
-    command: ../clace version revert /versions_local1
+    command: ../openrun version revert /versions_local1
     stdout: "Reverted /versions_local1 from version 1 to version 3"
   versions0173b: # revert prod
-    command: ../clace version revert /versions_local1
+    command: ../openrun version revert /versions_local1
     stdout: "Reverted /versions_local1 from version 3 to version 1"
   versions0174: # local1 prod is updated to back version 1, since version was not promoted
     command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
     stdout: "1"
   versions0175: # version list
-    command: ../clace version list /versions_local1_cl_stage
+    command: ../openrun version list /versions_local1_cl_stage
     stdout: "=====>        2" # second version is current
   versions0176: # version list
-    command: ../clace version list /versions_local1
+    command: ../openrun version list /versions_local1
     stdout: "=====>        1" # first version is current for prod
   versions0177: # switch stage forward
-    command: ../clace version switch next /versions_local1_cl_stage
+    command: ../openrun version switch next /versions_local1_cl_stage
   versions0178: # local1 stage is updated to version 3
     command: curl -su "admin:qwerty" localhost:25222/versions_local1_cl_stage/rootfile.txt
     stdout: "33"
   versions0179: # switch prod forward
-    command: ../clace version switch next /versions_local1
+    command: ../openrun version switch next /versions_local1
   versions0180: # local1 prod is updated to version 3
     command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
     stdout: "33"
   versions0181: # switch stage to version 1
-    command: ../clace version switch 1 /versions_local1_cl_stage
+    command: ../openrun version switch 1 /versions_local1_cl_stage
   versions0182: # local1 stage is updated to version 1
     command: curl -su "admin:qwerty" localhost:25222/versions_local1_cl_stage/rootfile.txt
     stdout: "1"
   versions0183: # promote to prod with existing version
-    command: ../clace app promote /versions_local1
+    command: ../openrun app promote /versions_local1
   versions0184: # version prod version
     command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
     stdout: "1"
 
   versions0190: # files
-    command: ../clace version files -f csv /versions_local1_cl_stage | grep rootfile
+    command: ../openrun version files -f csv /versions_local1_cl_stage | grep rootfile
     stdout: "1,6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
   versions0191: # files
-    command: ../clace version files -f csv /versions_local1_cl_stage 3 | grep rootfile
+    command: ../openrun version files -f csv /versions_local1_cl_stage 3 | grep rootfile
     stdout: "3,19b8d5c59e421f037fe563007c7254eb8d98bc221b278c3db3e5fdbbfd52e273"
   versions0192: # files
-    command: ../clace version files  /versions_local1_cl_stage 3 | grep rootfile
+    command: ../openrun version files  /versions_local1_cl_stage 3 | grep rootfile
     stdout: "3 19b8d5c59e421f037fe563007c7254eb8d98bc221b278c3db3e5fdbbfd52e273 static_root/rootfile.txt"
 
   #error tests
   versions0200:
-    command: ../clace version switch previous /versions_local1_cl_stage
+    command: ../openrun version switch previous /versions_local1_cl_stage
     exit-code: 1
     stderr: "error: no previous version found"
   versions0201:
-    command: ../clace version switch next /versions_local1
+    command: ../openrun version switch next /versions_local1
   versions0201a:
-    command: ../clace version switch next /versions_local1
+    command: ../openrun version switch next /versions_local1
     exit-code: 1
     stderr: "error: no next version found"
   versions0202:
-    command: ../clace version switch 232 /versions_local1
+    command: ../openrun version switch 232 /versions_local1
     exit-code: 1
     stderr: "error: error getting version 232"
   versions0203:
-    command: ../clace version switch abc /versions_local1
+    command: ../openrun version switch abc /versions_local1
     exit-code: 1
     stderr: 'error: strconv.Atoi: parsing "abc"'
   versions0204:
-    command: ../clace version list /versions_dev
+    command: ../openrun version list /versions_dev
     exit-code: 1
     stderr: "error: version commands not supported for dev app"
   versions0205:
-    command: ../clace version switch previous /versions_dev
+    command: ../openrun version switch previous /versions_dev
     exit-code: 1
     stderr: "error: version commands not supported for dev app"
 
@@ -166,31 +166,31 @@ tests:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout: "*"
   versions0301: # change to "origin" setting
-    command: ../clace app update-metadata conf --promote 'cors.allow_origin="origin"' /versions_local1
+    command: ../openrun app update-metadata conf --promote 'cors.allow_origin="origin"' /versions_local1
   versions0302:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout: "http://localhost:25222"
   versions0303: # custom origin
-    command: ../clace app update-metadata conf --promote 'cors.allow_origin="abc"' /versions_local1
+    command: ../openrun app update-metadata conf --promote 'cors.allow_origin="abc"' /versions_local1
   versions0304:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout: "abc"
   versions0305: # custom headers
-    command: ../clace app update-metadata conf --promote 'cors.allow_headers="aa,bb"' /versions_local1
+    command: ../openrun app update-metadata conf --promote 'cors.allow_headers="aa,bb"' /versions_local1
   versions0306:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-headers | cut -f2- -d':'
     stdout: "aa,bb"
   versions0307: # delete custom headers
-    command: ../clace app update-metadata conf --promote cors.allow_headers=- /versions_local1
+    command: ../openrun app update-metadata conf --promote cors.allow_headers=- /versions_local1
   versions0308:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-headers | cut -f2- -d':'
     stdout: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Requested-With"
   versions0309: # disable CORS
-    command: ../clace app update-metadata conf --promote 'cors.setting="disable"' /versions_local1
+    command: ../openrun app update-metadata conf --promote 'cors.setting="disable"' /versions_local1
   versions0310:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout:
       line-count: 0
 
   versions99999: # Cleanup
-    command: (rm -rf ./versionstest; ../clace app delete "*:versions**"; ../clace app delete "versions*:**") || true
+    command: (rm -rf ./versionstest; ../openrun app delete "*:versions**"; ../openrun app delete "versions*:**") || true

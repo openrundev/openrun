@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/claceio/clace/internal/metadata"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/metadata"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func (s *Server) VersionList(ctx context.Context, mainAppPath string) (*types.AppVersionListResponse, error) {

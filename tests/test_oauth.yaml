@@ -1,6 +1,6 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     CL_GITHUB_SECRET: ${CL_GITHUB_SECRET}
     GOCOVERDIR: ${GOCOVERDIR}/../client
 tests:
@@ -8,37 +8,37 @@ tests:
     command: cp -r ../examples/disk_usage .
 
   oauth0020: ## create app with oauth auth
-    command: ../clace app create --auth=github_test --approve ./disk_usage /oauth1
+    command: ../openrun app create --auth=github_test --approve ./disk_usage /oauth1
 
   oauth0030: # check curl redirect to oauth provider
     command: curl localhost:25222/oauth1
     stdout:
-      exactly: '<a href="/_clace/auth/github_test">Temporary Redirect</a>.' # redirect to the auth url
+      exactly: '<a href="/_openrun/auth/github_test">Temporary Redirect</a>.' # redirect to the auth url
 
   oauth0031: # update app to no auth
-    command: ../clace app update-settings auth none /oauth1
+    command: ../openrun app update-settings auth none /oauth1
 
   oauth0032: # check curl
     command: curl localhost:25222/oauth1
     stdout: "Disk Usage"
 
   oauth0040: ## create app with invalid auth
-    command: ../clace app create --auth=github --approve ./disk_usage /oauth2
+    command: ../openrun app create --auth=github --approve ./disk_usage /oauth2
     stderr: "error: invalid authentication type github"
     exit-code: 1
 
   oauth0050: ## create app with invalid auth
-    command: ../clace app create --auth=abc --approve ./disk_usage /oauth2
+    command: ../openrun app create --auth=abc --approve ./disk_usage /oauth2
     stderr: "error: invalid authentication type abc"
     exit-code: 1
 
   oauth0060: ## create app with invalid auth
-    command: ../clace app create --auth=github_abc --approve ./disk_usage /oauth2
+    command: ../openrun app create --auth=github_abc --approve ./disk_usage /oauth2
     stderr: "error: invalid authentication type github_abc"
     exit-code: 1
 
   oauth0070: # update app to invalid
-    command: ../clace app update-settings auth abc /oauth1
+    command: ../openrun app update-settings auth abc /oauth1
     stderr: "error: invalid authentication type abc"
     exit-code: 1
 

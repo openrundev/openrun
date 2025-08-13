@@ -1,3 +1,3 @@
-# Sample Clace App
+# Sample OpenRun App
 
-This folder has a sample Clace app used for tests. More examples are in the [apps repo](https://github.com/claceio/apps). A demo of these apps is running at [apps.demo.clace.io](https://apps.demo.clace.io/).
+This folder has a sample OpenRun app used for tests. More examples are in the [apps repo](https://github.com/openrundev/apps). A demo of these apps is running at [apps.demo.openrun.dev](https://apps.demo.openrun.dev/).

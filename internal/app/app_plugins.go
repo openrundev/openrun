@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/claceio/clace/internal/app/apptype"
-	"github.com/claceio/clace/internal/plugin"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 type AppPlugins struct {
@@ -18,7 +18,7 @@ type AppPlugins struct {
 	plugins map[string]any
 
 	app          *App
-	pluginConfig map[string]types.PluginSettings // pluginName -> accountName -> PluginSettings, from clace.toml
+	pluginConfig map[string]types.PluginSettings // pluginName -> accountName -> PluginSettings, from openrun.toml
 	accountMap   map[string]string               // pluginName -> accountName, from app account links
 }
 

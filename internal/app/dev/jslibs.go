@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/claceio/clace/internal/app/appfs"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/evanw/esbuild/pkg/api"
 	"github.com/evanw/esbuild/pkg/cli"
 )

@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -17,7 +17,7 @@ import (
 func initAccountCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	return &cli.Command{
 		Name:  "account",
-		Usage: "Manage Clace accounts",
+		Usage: "Manage OpenRun accounts",
 		Subcommands: []*cli.Command{
 			accountLinkCommand(commonFlags, clientConfig),
 			accountListCommand(commonFlags, clientConfig),
@@ -43,8 +43,8 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 <accountName> is the required third argument. This is the name of the account to link to for the plugin. Use "-" to unlink the existing account.
 
 	Examples:
-	  Link db plugin: clace account link /myapp store.in temp
-	  Link in dryrun mode: clace account link --dry-run example.com:/ rest.in testaccount`,
+	  Link db plugin: openrun account link /myapp store.in temp
+	  Link in dryrun mode: openrun account link --dry-run example.com:/ rest.in testaccount`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 3 {
 				return fmt.Errorf("requires three arguments: <pluginName> <accountName> <appPathGlob>")
@@ -59,7 +59,7 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			values.Add(PROMOTE_ARG, strconv.FormatBool(cCtx.Bool(PROMOTE_FLAG)))
 
 			var linkResponse types.AppLinkAccountResponse
-			err := client.Post("/_clace/link_account", values, nil, &linkResponse)
+			err := client.Post("/_openrun/link_account", values, nil, &linkResponse)
 			if err != nil {
 				return err
 			}
@@ -106,8 +106,8 @@ func accountListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
     <app_path> is a required first argument. The optional domain and path are separated by a ":". This is the app for which the accounts are to be listed.
 
 	Examples:
-	  List plugins for app: clace account list /myapp
-	  List plugins for app: clace account list example.com:/`,
+	  List plugins for app: openrun account list /myapp
+	  List plugins for app: openrun account list example.com:/`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
 				return fmt.Errorf("requires one argument: <appPath>")
@@ -118,7 +118,7 @@ func accountListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			values.Add("appPath", cCtx.Args().First())
 
 			var response types.AppGetResponse
-			err := client.Get("/_clace/app", values, &response)
+			err := client.Get("/_openrun/app", values, &response)
 			if err != nil {
 				return err
 			}
@@ -168,8 +168,8 @@ func updateParamsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 <appPathGlob> is the third required argument. ` + PATH_SPEC_HELP + `
 
 	Examples:
-	  Update parameter value: clace param update port 8888 /myapp
-	  Delete parameter value: clace param update port - /myapp`,
+	  Update parameter value: openrun param update port 8888 /myapp
+	  Delete parameter value: openrun param update port - /myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 3 {
 				return fmt.Errorf("requires three arguments: <paramName> <paramValue> <appPathGlob>")
@@ -184,7 +184,7 @@ func updateParamsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			values.Add(PROMOTE_ARG, strconv.FormatBool(cCtx.Bool(PROMOTE_FLAG)))
 
 			var updateResponse types.AppLinkAccountResponse
-			err := client.Post("/_clace/update_param", values, nil, &updateResponse)
+			err := client.Post("/_openrun/update_param", values, nil, &updateResponse)
 			if err != nil {
 				return err
 			}
@@ -231,8 +231,8 @@ func paramListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
     <app_path> is a required first argument. The optional domain and path are separated by a ":". This is the app for which the params are to be listed.
 
 	Examples:
-	  List params for app: clace param list /myapp
-	  List params for app: clace param list example.com:/`,
+	  List params for app: openrun param list /myapp
+	  List params for app: openrun param list example.com:/`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
 				return fmt.Errorf("requires one argument: <appPath>")
@@ -243,7 +243,7 @@ func paramListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			values.Add("appPath", cCtx.Args().First())
 
 			var response types.AppGetResponse
-			err := client.Get("/_clace/app", values, &response)
+			err := client.Get("/_openrun/app", values, &response)
 			if err != nil {
 				return err
 			}

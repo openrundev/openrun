@@ -1,6 +1,6 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
     PATH: ${PATH}
 tests:
@@ -8,148 +8,148 @@ tests:
     command: rm -rf /tmp/testapp && cp -r ./testapp /tmp
     exit-code: 0
   apply0010: ## create all apps
-    command: ../clace apply ./apply_files/apply1.ace all
+    command: ../openrun apply ./apply_files/apply1.ace all
     stdout: "4 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   apply0011:
-    command: ../clace param update --promote p3new val /applytest/app4
+    command: ../openrun param update --promote p3new val /applytest/app4
   apply0012:
-    command: ../clace app update-metadata copt --promote co3='[5,6]' /applytest/app4
+    command: ../openrun app update-metadata copt --promote co3='[5,6]' /applytest/app4
     exit-code: 0
   apply0013:
-    command: ../clace app update-metadata cvol --promote "v1:/abc" v2 v3 /applytest/app4
+    command: ../openrun app update-metadata cvol --promote "v1:/abc" v2 v3 /applytest/app4
     exit-code: 0
   apply0020: ## apply update
-    command: ../clace apply --reload=updated ./apply_files/apply2.ace
+    command: ../openrun apply --reload=updated ./apply_files/apply2.ace
     stdout: "0 app(s) created, 1 app(s) updated, 1 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   apply0030: ## verify state
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values | length'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values | length'
     stdout:
       exactly: "2"
   apply0031:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values.p2'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values.p2'
     stdout:
       exactly: '"{\"k\":1}"'
   apply0032:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values.p3new'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values.p3new'
     stdout:
       exactly: '"val"'
   apply0033:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co3'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co3'
     stdout:
       exactly: '"[5,6]"'
   apply0034:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co2'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co2'
     stdout:
       exactly: '"[\"aa\"]"'
   apply0035:
-    command: ../clace app list -i -f json /applytest/app4 | jq -c '.[1].metadata.container_volumes'
+    command: ../openrun app list -i -f json /applytest/app4 | jq -c '.[1].metadata.container_volumes'
     stdout:
       exactly: '["v1:/abc","v3","v4"]'
 
   apply0040: ## Force apply new config apply2 for one app (cli updates are overwritten)
-    command: ../clace apply --clobber ./apply_files/apply2.ace /applytest/app4
+    command: ../openrun apply --clobber ./apply_files/apply2.ace /applytest/app4
     stdout: "0 app(s) created, 1 app(s) updated, 1 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
 
   apply0050: ## verify state
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values | length'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values | length'
     stdout:
       exactly: "1"
   apply0051:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values.p2'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values.p2'
     stdout:
       exactly: '"{\"k\":1}"'
   apply0052:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options | length'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options | length'
     stdout:
       exactly: "2"
   apply0053:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co2'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co2'
     stdout:
       exactly: '"[\"aa\"]"'
   apply0054:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co1'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co1'
     stdout:
       exactly: '"2"'
   apply0055:
-    command: ../clace app list -i -f json /applytest/app4 | jq -c '.[1].metadata.container_volumes'
+    command: ../openrun app list -i -f json /applytest/app4 | jq -c '.[1].metadata.container_volumes'
     stdout:
       exactly: '["v1:/abc","v4"]'
 
   apply0060: ## revert change
-    command: ../clace version switch previous /applytest/app4_cl_stage
+    command: ../openrun version switch previous /applytest/app4_cl_stage
     exit-code: 0
   apply0061: ## verify state
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values | length'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values | length'
     stdout:
       exactly: "2"
   apply0062:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co3'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co3'
     stdout:
       exactly: '"[5,6]"'
   apply0063: ## Force update app3
-    command: ../clace apply --clobber ./apply_files/apply2.ace /applytest/app3
+    command: ../openrun apply --clobber ./apply_files/apply2.ace /applytest/app3
     stdout: "0 app(s) created, 1 app(s) updated, 1 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   apply0064:
-    command: ../clace version list /applytest/app3_cl_stage | wc -l
+    command: ../openrun version list /applytest/app3_cl_stage | wc -l
     stdout:
       exactly: "3"
   apply0065:
-    command: ../clace version list /applytest/app3 | wc -l
+    command: ../openrun version list /applytest/app3 | wc -l
     stdout:
       exactly: "2"
 
   apply0066: ## Promote change, with no reload
-    command: ../clace apply --clobber --promote --reload=none ./apply_files/apply2.ace /applytest/app3
+    command: ../openrun apply --clobber --promote --reload=none ./apply_files/apply2.ace /applytest/app3
     stdout: "0 app(s) created, 2 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 1 app(s) promoted."
   apply0067:
-    command: ../clace version list /applytest/app3_cl_stage | wc -l
+    command: ../openrun version list /applytest/app3_cl_stage | wc -l
     stdout:
       exactly: "4"
   apply0068:
-    command: ../clace version list /applytest/app3 | wc -l
+    command: ../openrun version list /applytest/app3 | wc -l
     stdout:
       exactly: "3"
   apply0069: ## Reset state
-    command: ../clace apply --clobber --promote ./apply_files/apply2.ace all
+    command: ../openrun apply --clobber --promote ./apply_files/apply2.ace all
     stdout: "0 app(s) created, 2 app(s) updated, 7 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 3 app(s) promoted."
   apply0070: ## Check reload all with promote
-    command: ../clace apply --promote ./apply_files/apply2.ace all
+    command: ../openrun apply --promote ./apply_files/apply2.ace all
     stdout: "0 app(s) created, 0 app(s) updated, 7 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 3 app(s) promoted."
   apply0071: ## Check reload all without promote
-    command: ../clace apply ./apply_files/apply2.ace all
+    command: ../openrun apply ./apply_files/apply2.ace all
     stdout: "0 app(s) created, 0 app(s) updated, 4 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
 
   apply0080: ## Setup fresh apply
-    command: ../clace app delete /applytest/app4
+    command: ../openrun app delete /applytest/app4
     exit-code: 0
   apply0081: ## create app
-    command: ../clace app create --approve /tmp/testapp /applytest/app4
+    command: ../openrun app create --approve /tmp/testapp /applytest/app4
     exit-code: 0
   apply0082: ## Apply new config apply2 for one app (cli updates are overwritten)
-    command: ../clace apply ./apply_files/apply2.ace /applytest/app4
+    command: ../openrun apply ./apply_files/apply2.ace /applytest/app4
     stdout: "0 app(s) created, 1 app(s) updated, 1 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
 
   apply0090: ## verify state
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values | length'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values | length'
     stdout:
       exactly: "1"
   apply0091:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values.p2'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.param_values.p2'
     stdout:
       exactly: '"{\"k\":1}"'
   apply0092:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options | length'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options | length'
     stdout:
       exactly: "2"
   apply0093:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co2'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co2'
     stdout:
       exactly: '"[\"aa\"]"'
   apply0094:
-    command: ../clace app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co1'
+    command: ../openrun app list -i -f json /applytest/app4 | jq '.[1].metadata.container_options.co1'
     stdout:
       exactly: '"2"'
   apply0095:
-    command: ../clace app list -i -f json /applytest/app4 | jq -c '.[1].metadata.container_volumes'
+    command: ../openrun app list -i -f json /applytest/app4 | jq -c '.[1].metadata.container_volumes'
     stdout:
       exactly: '["v1:/abc","v4"]'

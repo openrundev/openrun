@@ -4,7 +4,7 @@
 package main
 
 import (
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
 

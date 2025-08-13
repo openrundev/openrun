@@ -16,12 +16,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 const (
-	ApplicationJson      = "application/json"
-	ClaceServiceLocation = "clace"
+	ApplicationJson        = "application/json"
+	OpenRunServiceLocation = "openrun"
 )
 
 type HttpClient struct {
@@ -35,8 +35,8 @@ type HttpClient struct {
 func NewHttpClient(serverUri, user, password string, skipCertCheck bool) *HttpClient {
 	serverUri = os.ExpandEnv(serverUri)
 
-	// Change to CL_HOME directory, helps avoid length limit on UDS file (around 104 chars)
-	clHome := os.Getenv("CL_HOME")
+	// Change to OPENRUN_HOME directory, helps avoid length limit on UDS file (around 104 chars)
+	clHome := os.Getenv("OPENRUN_HOME")
 	if clHome != "" {
 		os.Chdir(clHome)
 	}
@@ -49,7 +49,7 @@ func NewHttpClient(serverUri, user, password string, skipCertCheck bool) *HttpCl
 
 		transport := &Transport{}
 		// Using unix domain sockets
-		transport.RegisterLocation(ClaceServiceLocation, serverUri)
+		transport.RegisterLocation(OpenRunServiceLocation, serverUri)
 		t := &http.Transport{}
 		t.RegisterProtocol(Scheme, transport)
 		client = &http.Client{
@@ -57,7 +57,7 @@ func NewHttpClient(serverUri, user, password string, skipCertCheck bool) *HttpCl
 			Timeout:   time.Duration(180) * time.Second,
 		}
 
-		serverUri = fmt.Sprintf("%s://%s", Scheme, ClaceServiceLocation)
+		serverUri = fmt.Sprintf("%s://%s", Scheme, OpenRunServiceLocation)
 	} else {
 		customTransport := http.DefaultTransport.(*http.Transport).Clone()
 		customTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: skipCertCheck}

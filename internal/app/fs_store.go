@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/segmentio/ksuid"
 	"go.starlark.net/starlark"
 )

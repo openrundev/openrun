@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/claceio/clace/internal/testutil"
+	"github.com/openrundev/openrun/internal/testutil"
 )
 
 func ParseQueryTest(t *testing.T, query map[string]any, expectedConditions string, expectedParams []any) {

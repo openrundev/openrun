@@ -6,7 +6,7 @@ package system
 import (
 	"context"
 
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 )
 

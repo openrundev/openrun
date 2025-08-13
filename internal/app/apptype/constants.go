@@ -16,7 +16,7 @@ const (
 	STARLARK_FILE_SUFFIX  = ".star"
 	INDEX_FILE            = "index.go.html"
 	INDEX_GEN_FILE        = "index_gen.go.html"
-	CLACE_GEN_FILE        = "clace_gen.go.html"
+	CLACE_GEN_FILE        = "openrun_gen.go.html"
 	ACCOUNT_SEPARATOR     = "#"
 )
 

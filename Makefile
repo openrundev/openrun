@@ -7,7 +7,7 @@ SHELL := bash
 .DELETE_ON_ERROR:
 MAKEFLAGS += --warn-undefined-variables
 MAKEFLAGS += --no-builtin-rules
-CL_HOME := `pwd`
+OPENRUN_HOME := `pwd`
 INPUT := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
@@ -25,32 +25,32 @@ help: ## Display this help section
 test: unit int ## Run all tests
 
 covtest: covunit covint ## Run all tests with coverage
-> go tool covdata percent -i=$(CL_HOME)/coverage/client,$(CL_HOME)/coverage/unit,$(CL_HOME)/coverage/int
-> go tool covdata textfmt -i=$(CL_HOME)/coverage/client,$(CL_HOME)/coverage/unit,$(CL_HOME)/coverage/int -o $(CL_HOME)/coverage.txt
+> go tool covdata percent -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/unit,$(OPENRUN_HOME)/coverage/int
+> go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/unit,$(OPENRUN_HOME)/coverage/int -o $(OPENRUN_HOME)/coverage.txt
 > go tool cover -func coverage/profile
 
 unit: ## Run unit tests
 > go test ./...
 
 covunit: ## Run unit tests with coverage
-> rm -rf $(CL_HOME)/coverage/unit && mkdir -p $(CL_HOME)/coverage/unit
-> go test -coverpkg ./... ./... -args -test.gocoverdir="$(CL_HOME)/coverage/unit"
-> go tool covdata percent -i=$(CL_HOME)/coverage/unit
-> go tool covdata textfmt -i=$(CL_HOME)/coverage/unit -o $(CL_HOME)/coverage/profile
+> rm -rf $(OPENRUN_HOME)/coverage/unit && mkdir -p $(OPENRUN_HOME)/coverage/unit
+> go test -coverpkg ./... ./... -args -test.gocoverdir="$(OPENRUN_HOME)/coverage/unit"
+> go tool covdata percent -i=$(OPENRUN_HOME)/coverage/unit
+> go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/unit -o $(OPENRUN_HOME)/coverage/profile
 > go tool cover -func coverage/profile
 
 int: ## Run integration tests
-> CL_HOME=$(CL_HOME) ./tests/run_cli_tests.sh
+> OPENRUN_HOME=$(OPENRUN_HOME) ./tests/run_cli_tests.sh
 
 int_single: ## Run one integration test
-> CL_SINGLE_TEST=${INPUT} CL_HOME=$(CL_HOME) ./tests/run_cli_tests.sh
+> CL_SINGLE_TEST=${INPUT} OPENRUN_HOME=$(OPENRUN_HOME) ./tests/run_cli_tests.sh
 
 covint: ## Run integration tests with coverage
-> rm -rf $(CL_HOME)/coverage/int && mkdir -p $(CL_HOME)/coverage/int
-> rm -rf $(CL_HOME)/coverage/client && mkdir -p $(CL_HOME)/coverage/client
-> CL_HOME=. GOCOVERDIR=$(CL_HOME)/coverage/int ./tests/run_cli_tests.sh
-> go tool covdata percent -i=$(CL_HOME)/coverage/client,$(CL_HOME)/coverage/int
-> go tool covdata textfmt -i=$(CL_HOME)/coverage/client,$(CL_HOME)/coverage/int -o $(CL_HOME)/coverage/profile
+> rm -rf $(OPENRUN_HOME)/coverage/int && mkdir -p $(OPENRUN_HOME)/coverage/int
+> rm -rf $(OPENRUN_HOME)/coverage/client && mkdir -p $(OPENRUN_HOME)/coverage/client
+> OPENRUN_HOME=. GOCOVERDIR=$(OPENRUN_HOME)/coverage/int ./tests/run_cli_tests.sh
+> go tool covdata percent -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/int
+> go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/int -o $(OPENRUN_HOME)/coverage/profile
 > go tool cover -func coverage/profile
 
 release: ## Tag and push a release

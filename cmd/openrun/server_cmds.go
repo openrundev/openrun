@@ -11,9 +11,9 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
-	"github.com/claceio/clace/pkg/api"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
+	"github.com/openrundev/openrun/pkg/api"
 	"github.com/pkg/profile"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
@@ -24,11 +24,11 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 	return []*cli.Command{
 		{
 			Name:  "server",
-			Usage: "Manage the Clace server",
+			Usage: "Manage the OpenRun server",
 			Subcommands: []*cli.Command{
 				{
 					Name:   "start",
-					Usage:  "Start the clace server",
+					Usage:  "Start the openrun server",
 					Flags:  flags,
 					Before: altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 					Action: func(cCtx *cli.Context) error {
@@ -37,7 +37,7 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 				},
 				{
 					Name:   "stop",
-					Usage:  "Stop the clace server",
+					Usage:  "Stop the openrun server",
 					Flags:  flags,
 					Before: altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 					Action: func(cCtx *cli.Context) error {
@@ -71,7 +71,7 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 		fmt.Fprintf(os.Stderr, "Server listening on %s\n", addr)
 	}
 
-	clHome := os.ExpandEnv("$CL_HOME")
+	clHome := os.ExpandEnv("$OPENRUN_HOME")
 	switch serverConfig.ProfileMode {
 	case "cpu":
 		defer profile.Start(profile.CPUProfile, profile.ProfilePath(clHome)).Stop()
@@ -118,7 +118,7 @@ func stopServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
 
 	var response types.AppVersionListResponse
-	err := client.Post("/_clace/stop", nil, nil, &response)
+	err := client.Post("/_openrun/stop", nil, nil, &response)
 	if err == nil {
 		return fmt.Errorf("expected error response when stopping server")
 	}

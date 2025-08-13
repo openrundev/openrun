@@ -10,8 +10,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -44,7 +44,7 @@ func webhookListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
     <app_path> is a required first argument. The optional domain and path are separated by a ":". This is the app for which webhooks are listed.
 
 	Examples:
-		clace app-webhook list example.com:/myapp`,
+		openrun app-webhook list example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
 				return fmt.Errorf("requires one argument: <appPath>")
@@ -55,7 +55,7 @@ func webhookListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			values.Add("appPath", cCtx.Args().First())
 
 			var response types.TokenListResponse
-			err := client.Get("/_clace/app_webhook_token", values, &response)
+			err := client.Get("/_openrun/app_webhook_token", values, &response)
 			if err != nil {
 				return err
 			}
@@ -119,7 +119,7 @@ func webhookCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
     <app_path> is the required second argument. The optional domain and path are separated by a ":". This is the app for which webhooks are created.
 
 	Examples:
-		clace app-webhook create reload example.com:/myapp`,
+		openrun app-webhook create reload example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
 				return fmt.Errorf("requires two arguments: <webhookType> <appPath>")
@@ -132,7 +132,7 @@ func webhookCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			var response types.TokenCreateResponse
-			err := client.Post("/_clace/app_webhook_token", values, map[string]string{}, &response)
+			err := client.Post("/_openrun/app_webhook_token", values, map[string]string{}, &response)
 			if err != nil {
 				return err
 			}
@@ -166,7 +166,7 @@ func webhookDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
     <app_path> is the required second argument. The optional domain and path are separated by a ":". This is the app for which webhooks are deleted.
 
 	Examples:
-		clace app-webhook delete reload example.com:/myapp`,
+		openrun app-webhook delete reload example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
 				return fmt.Errorf("requires two arguments: <webhookType> <appPath>")
@@ -179,7 +179,7 @@ func webhookDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			var response types.TokenDeleteResponse
-			err := client.Delete("/_clace/app_webhook_token", values, &response)
+			err := client.Delete("/_openrun/app_webhook_token", values, &response)
 			if err != nil {
 				return err
 			}

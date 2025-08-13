@@ -1,6 +1,6 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
 tests:
   perms0100: # copy disk usage app
@@ -8,9 +8,9 @@ tests:
   perms0102: # Update code to WRITE type
     command: perl -i -pe 's/"abs"/"abs", type="WRITE"/g' ./perms_disk_usage/app.star
   perms0103: # Create app1
-    command: ../clace app create --approve ./perms_disk_usage /perms1
+    command: ../openrun app create --approve ./perms_disk_usage /perms1
   perms0104: # Create app2
-    command: ../clace app create --approve ./perms_disk_usage /perms2
+    command: ../openrun app create --approve ./perms_disk_usage /perms2
   perms0105: # test prod app
     command: curl -su "admin:qwerty" localhost:25222/perms1
     stdout: "Disk Usage"
@@ -18,12 +18,12 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
     stdout: "Disk Usage"
   perms0107: # Update stage perms
-    command: ../clace app update-settings stage-write-access false "/perms*"
+    command: ../openrun app update-settings stage-write-access false "/perms*"
   perms0108: # test stage app
     command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
     stdout: "Stage app does not have access to write operation"
   perms0109: # Update stage perms again to allow write
-    command: ../clace app update-settings stage-write-access true "/perms*"
+    command: ../openrun app update-settings stage-write-access true "/perms*"
   perms0110: # test stage app
     command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
     stdout: "Disk Usage"
@@ -33,7 +33,7 @@ tests:
   perms0112: # Update code to change plugin call to be READ type
     command: perl -i -pe 's/type="WRITE"/type="READ"/g' ./perms_disk_usage/app.star
   perms0113: # Reload apps
-    command: ../clace app reload --approve "/perms*"
+    command: ../openrun app reload --approve "/perms*"
     stdout: "2 app(s) reloaded, 0 app(s) skipped, 2 app(s) approved, 0 app(s) promoted."
   perms0114: # test stage app
     command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
@@ -42,34 +42,34 @@ tests:
   # Test preview app
   # These tests depend on a commit which has the disk usage app set to write type for the fs plugin. If the app requires
   # updates, these commits have to be recreated. See:
-  # https://github.com/claceio/clace/commit/0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
+  # https://github.com/openrundev/openrun/commit/0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
   perms0200: # Create preview app from git
-    command: ../clace app create --approve github.com/claceio/clace/examples/disk_usage /permsgit1
+    command: ../openrun app create --approve github.com/openrundev/openrun/examples/disk_usage /permsgit1
   perms0201: # Create preview app from git
-    command: ../clace app create --approve github.com/claceio/clace/examples/disk_usage /permsgit2
+    command: ../openrun app create --approve github.com/openrundev/openrun/examples/disk_usage /permsgit2
   perms0202: # Create preview app
-    command: ../clace preview create --approve 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec /permsgit1
+    command: ../openrun preview create --approve 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec /permsgit1
   perms0203: # test preview app
     command: curl -su "admin:qwerty" localhost:25222/permsgit1_cl_preview_0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
     stdout: "Disk Usage"
   perms0204: # Update preview perms
-    command: ../clace app update-settings preview-write-access false "/perms*"
+    command: ../openrun app update-settings preview-write-access false "/perms*"
   perms0205: # test preview app
     command: curl -su "admin:qwerty" localhost:25222/permsgit1_cl_preview_0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
     stdout: "Preview app does not have access to write operation"
   perms0206: # Create preview app for non git
-    command: ../clace preview create 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec /perms1
+    command: ../openrun preview create 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec /perms1
     stderr: "source is not git"
     exit-code: 1
 
   perms0300: # List apps perm1
-    command: "../clace app list -i /permsgit1 | grep app_ | wc -l"
+    command: "../openrun app list -i /permsgit1 | grep app_ | wc -l"
     stdout:
       exactly: "3"
   perms0301: # List apps perm2
-    command: "../clace app list -i /permsgit2 | grep app_ | wc -l"
+    command: "../openrun app list -i /permsgit2 | grep app_ | wc -l"
     stdout:
       exactly: "2"
 
   perms_cleanup: # Cleanup
-    command: rm -rf ./perms_disk_usage && ../clace app delete "/perms*"
+    command: rm -rf ./perms_disk_usage && ../openrun app delete "/perms*"

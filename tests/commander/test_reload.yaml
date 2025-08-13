@@ -1,51 +1,51 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
 tests:
   reload0010: # copy sample app
     command: cp -r ./testapp reloadtest
   reload0020: # create dev app
-    command: ../clace app create --dev ./reloadtest /reload_dev
+    command: ../openrun app create --dev ./reloadtest /reload_dev
   reload0030: # create local1 app
-    command: ../clace app create ./reloadtest /reload_local1
+    command: ../openrun app create ./reloadtest /reload_local1
   reload0040: # create local2 app
-    command: ../clace app create ./reloadtest /reload_local2
+    command: ../openrun app create ./reloadtest /reload_local2
   reload0050: # create domain level app
-    command: ../clace app create ./reloadtest reload.localhost:/
+    command: ../openrun app create ./reloadtest reload.localhost:/
   reload0060: # check curl
     command: curl -su "admin:qwerty" reload.localhost:25222/test1
     stdout: "111"
   reload0070: # Update code
     command: perl -i -pe 's/111/222/g' ./reloadtest/app.star
   reload0080: # Reload one app, without promote
-    command: ../clace app reload reload.localhost:/
+    command: ../openrun app reload reload.localhost:/
   reload0090: # check stage is updated
     command: curl -su "admin:qwerty" reload.localhost:25222/_cl_stage/test1
     stdout: "222"
   reload0091: # check versions
-    command: ../clace app list --internal --format csv reload.localhost:/ | grep reload | grep ",2," | wc -l
+    command: ../openrun app list --internal --format csv reload.localhost:/ | grep reload | grep ",2," | wc -l
     stdout:
       exactly: "1"
   reload0100: # check prod is still old
     command: curl -su "admin:qwerty" reload.localhost:25222/test1
     stdout: "111"
   reload0110: # Promote app
-    command: ../clace app promote reload.localhost:/
+    command: ../openrun app promote reload.localhost:/
   reload0120: # check prod is updated now
     command: curl -su "admin:qwerty" reload.localhost:25222/test1
     stdout: "222"
   reload0130: # check versions
-    command: ../clace app list --internal --format csv reload.localhost:/ | grep reload | grep ",2," | wc -l
+    command: ../openrun app list --internal --format csv reload.localhost:/ | grep reload | grep ",2," | wc -l
     stdout:
       exactly: "2"
   reload0200: # check curl
     command: curl -su "admin:qwerty" localhost:25222/reload_local1/test1
     stdout: "111"
   reload0210: # Reload apps with promote
-    command: ../clace app reload --promote "*:/reload*"
+    command: ../openrun app reload --promote "*:/reload*"
   reload0220: # Check versions
-    command: ../clace app list --format csv "*:/reload*" | grep -v Path | grep ",2," | wc -l
+    command: ../openrun app list --format csv "*:/reload*" | grep -v Path | grep ",2," | wc -l
     stdout:
       exactly: "2" # two apps are at version 2, dev stays at version 1
   reload0230: #Check static file hash
@@ -63,47 +63,47 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/reload_local1_cl_stage/test1
     stdout: "222"
   reload0330: # app reload without approve
-    command: ../clace app reload /reload_local1
+    command: ../openrun app reload /reload_local1
     exit-code: 1
   reload0340: # check curl
     command: curl -su "admin:qwerty" localhost:25222/reload_local1_cl_stage/test1
     stdout: "222"
   reload0350: # app reload with approve
-    command: ../clace app reload --approve /reload_local1
+    command: ../openrun app reload --approve /reload_local1
   reload0360: # check curl is updated now
     command: curl -su "admin:qwerty" localhost:25222/reload_local1_cl_stage/test1
     stdout: "333"
   reload0370: # Check versions
-    command: ../clace app list --format csv "/reload_local*" | grep -v Path | grep ",2," | wc -l
+    command: ../openrun app list --format csv "/reload_local*" | grep -v Path | grep ",2," | wc -l
     stdout:
       exactly: "2" # both prod apps are still at version 2
   reload0375: # check curl for prod is still old
     command: curl -su "admin:qwerty" localhost:25222/reload_local1/test1
     stdout: "222"
   reload0380: # promote app
-    command: ../clace app promote  /reload_local1
+    command: ../openrun app promote  /reload_local1
   reload0390: # check curl for prod is updated now
     command: curl -su "admin:qwerty" localhost:25222/reload_local1/test1
     stdout: "333"
   reload0391: # Check versions
-    command: ../clace app list --format csv "/reload_local*" | grep -v Path | grep ",3," | wc -l
+    command: ../openrun app list --format csv "/reload_local*" | grep -v Path | grep ",3," | wc -l
     stdout:
       exactly: "1" # local1 prod app is at version 3 now
   reload0392: # app reload with approve and promote
-    command: ../clace app reload --approve --promote "/reload_local*"
+    command: ../openrun app reload --approve --promote "/reload_local*"
   reload0393: # check curl for local2 prod is updated now
     command: curl -su "admin:qwerty" localhost:25222/reload_local2/test1
     stdout: "333"
   reload0394: # Check versions
-    command: ../clace app list --format csv "/reload_local2" | grep -v Path | grep ",3," | wc -l
+    command: ../openrun app list --format csv "/reload_local2" | grep -v Path | grep ",3," | wc -l
     stdout:
       exactly: "1" # local2 prod app is at version 3 now
 
   # Test git based apps. This requires a previous commit which has the test app returning 555 instead of 111
   reload0400: # create git app from commit
-    command: ../clace app create --commit 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec https://github.com/claceio/clace/tests/testapp /reload_git1
+    command: ../openrun app create --commit 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec https://github.com/openrundev/openrun/tests/testapp /reload_git1
   reload0410: # create git app from main
-    command: ../clace app create https://github.com/claceio/clace/tests/testapp /reload_git2
+    command: ../openrun app create https://github.com/openrundev/openrun/tests/testapp /reload_git2
   reload0420: # check curl for app1 stage
     command: curl -su "admin:qwerty" localhost:25222/reload_git1_cl_stage/test1
     stdout: "555"
@@ -117,11 +117,11 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/reload_git2/test1
     stdout: "111"
   reload0432: # check app list
-    command: '../clace app list --internal "/reload_git*" | grep 0e23273f | grep -v main | wc -l'
+    command: '../openrun app list --internal "/reload_git*" | grep 0e23273f | grep -v main | wc -l'
     stdout:
       exactly: "2" # first app and its stage are at 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec, branch name is not included
   reload0440: # app reload
-    command: ../clace app reload "/reload_git*"
+    command: ../openrun app reload "/reload_git*"
   reload0441: # check curl for app1 stage, updated
     command: curl -su "admin:qwerty" localhost:25222/reload_git1_cl_stage/test1
     stdout: "111"
@@ -135,98 +135,98 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/reload_git2/test1
     stdout: "111"
   reload0445: # check app list
-    command: '../clace app list --internal "/reload_git*" | grep 0e23273f | wc -l'
+    command: '../openrun app list --internal "/reload_git*" | grep 0e23273f | wc -l'
     stdout:
       exactly: "1" # prod apps at 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
   reload0446: # app reload
-    command: ../clace app promote "/reload_git*"
+    command: ../openrun app promote "/reload_git*"
   reload0447: # check app list
-    command: '../clace app list --internal "/reload_git*" | grep 0e23273f | wc -l'
+    command: '../openrun app list --internal "/reload_git*" | grep 0e23273f | wc -l'
     stdout:
       exactly: "0" # no apps at 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
   reload0448: # check app list
-    command: '../clace app list --internal "/reload_git*" | grep reload_git | wc -l'
+    command: '../openrun app list --internal "/reload_git*" | grep reload_git | wc -l'
     stdout:
       exactly: "4" # all apps are on main
   reload0500: # app reload with commit id
-    command: ../clace app reload --commit 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec --promote "/reload_git*"
+    command: ../openrun app reload --commit 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec --promote "/reload_git*"
   reload0501: # check app list
-    command: '../clace app list --internal "/reload_git*" | grep 0e23273f | wc -l'
+    command: '../openrun app list --internal "/reload_git*" | grep 0e23273f | wc -l'
     stdout:
       exactly: "4" # all apps at 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
   reload0502: # app reload branch name
-    command: ../clace app reload --branch main "/reload_git*"
+    command: ../openrun app reload --branch main "/reload_git*"
   reload0503: # check app list for staging apps
-    command: '../clace app list --internal "/reload_git*" | grep _cl_stage | grep 0e23273f | wc -l'
+    command: '../openrun app list --internal "/reload_git*" | grep _cl_stage | grep 0e23273f | wc -l'
     stdout:
       exactly: "0" # no staging apps at 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
   reload0504: # check app list
-    command: '../clace app list --internal "/reload_git*" | grep -v _cl_stage | grep 0e23273f | wc -l'
+    command: '../openrun app list --internal "/reload_git*" | grep -v _cl_stage | grep 0e23273f | wc -l'
     stdout:
       exactly: "2" # prod apps at 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
   reload0505: # promote changes
-    command: ../clace app promote "/reload_git*"
+    command: ../openrun app promote "/reload_git*"
   reload0506: # check app list
-    command: '../clace app list --internal "/reload_git*" | grep 0e23273f | wc -l'
+    command: '../openrun app list --internal "/reload_git*" | grep 0e23273f | wc -l'
     stdout:
       exactly: "0" # no apps at 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
   reload0506a: # check app list auth listing
-    command: '../clace app list --internal "/reload_git*" | grep DEFAULT | wc -l'
+    command: '../openrun app list --internal "/reload_git*" | grep DEFAULT | wc -l'
     stdout:
       exactly: "4"
 
   # Verify stdout messages
   reload0507: # reload stdout
-    command: ../clace app reload "/reload_git*"
+    command: ../openrun app reload "/reload_git*"
     stdout: "0 app(s) reloaded, 2 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   reload0507a: # reload stdout
-    command: ../clace app reload --force-reload "/reload_git*"
+    command: ../openrun app reload --force-reload "/reload_git*"
     stdout: "2 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   reload0508: # promote stdout
-    command: ../clace app promote "/reload_git*"
+    command: ../openrun app promote "/reload_git*"
     stdout: "2 app(s) promoted."
   reload0509: # reload with promote stdout
-    command: ../clace app reload --promote --force-reload "/reload_git*"
+    command: ../openrun app reload --promote --force-reload "/reload_git*"
     stdout: "4 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 2 app(s) promoted."
   reload0510: # audit stdout
-    command: ../clace app approve --promote "/reload_git*"
+    command: ../openrun app approve --promote "/reload_git*"
     stdout: "2 app(s) audited, 0 app(s) approved, 2 app(s) promoted."
   reload0511: # delete stdout
-    command: ../clace app delete /reload_git1
+    command: ../openrun app delete /reload_git1
     stdout: "1 app(s) deleted."
 
   # Test dry-run mode
   reload061: # Save stdout
-    command: "../clace app list --internal -f jsonl all > dryrun_out1.log"
+    command: "../openrun app list --internal -f jsonl all > dryrun_out1.log"
   reload062: # Approve dryrun
-    command: ../clace app approve --dry-run "/reload_local*"
+    command: ../openrun app approve --dry-run "/reload_local*"
     stdout: "dry-run mode"
   reload063: # Promote dryrun
-    command: ../clace app promote --dry-run "/reload_local*"
+    command: ../openrun app promote --dry-run "/reload_local*"
     stdout: "dry-run mode"
   reload064: # Reload dryrun
-    command: ../clace app reload --dry-run "/reload_local*"
+    command: ../openrun app reload --dry-run "/reload_local*"
     stdout: "dry-run mode"
   reload065: # Reload promote dryrun
-    command: ../clace app reload --approve --promote --dry-run "/reload_local*"
+    command: ../openrun app reload --approve --promote --dry-run "/reload_local*"
     stdout: "dry-run mode"
   reload066: # Delete dryrun
-    command: ../clace app delete --dry-run "/reload_local*"
+    command: ../openrun app delete --dry-run "/reload_local*"
     stdout: "dry-run mode"
   reload067: # Update stage-write-access dryrun
-    command: ../clace app update-settings stage-write-access --dry-run true "/reload_local*"
+    command: ../openrun app update-settings stage-write-access --dry-run true "/reload_local*"
     stdout: "dry-run mode"
   reload068: # Update preview write access dryrun
-    command: ../clace app update-settings preview-write-access --dry-run true "/reload_local*"
+    command: ../openrun app update-settings preview-write-access --dry-run true "/reload_local*"
     stdout: "dry-run mode"
   reload069: # Update git-auth dryrun
-    command: ../clace app update-settings git-auth --dry-run testgit "/reload_local*"
+    command: ../openrun app update-settings git-auth --dry-run testgit "/reload_local*"
     stdout: "dry-run mode"
   reload070: # Delete auth dryrun
-    command: ../clace app update-settings auth --dry-run none "/reload_local*"
+    command: ../openrun app update-settings auth --dry-run none "/reload_local*"
     stdout: "dry-run mode"
   reload071: # Save stdout
-    command: "../clace app list -i -f jsonl all > dryrun_out2.log"
+    command: "../openrun app list -i -f jsonl all > dryrun_out2.log"
   reload072: # Check diff
     command: diff -cb dryrun_out1.log dryrun_out2.log
   reload073:
@@ -237,54 +237,54 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/reload_git2_cl_stage/test1
     stdout: "111"
   reload_webhook020:
-    command: ../clace app-webhook create reload /reload_git2
+    command: ../openrun app-webhook create reload /reload_git2
   reload_webhook030:
-    command: ../clace app-webhook create reload_promote /reload_git2
+    command: ../openrun app-webhook create reload_promote /reload_git2
   reload_webhook040:
-    command: ../clace app-webhook create promote /reload_git2
+    command: ../openrun app-webhook create promote /reload_git2
   reload_webhook050:
-    command: ../clace app-webhook list /reload_git2
+    command: ../openrun app-webhook list /reload_git2
     stdout:
       line-count: 4
   reload_webhook060:
-    command: ../clace app-webhook delete promote /reload_git2
+    command: ../openrun app-webhook delete promote /reload_git2
   reload_webhook070:
-    command: ../clace app-webhook list /reload_git2
+    command: ../openrun app-webhook list /reload_git2
     stdout:
       line-count: 3
   reload_webhook080:
-    command: ../clace app-webhook create --dry-run promote /reload_git2
+    command: ../openrun app-webhook create --dry-run promote /reload_git2
   reload_webhook081:
-    command: ../clace app-webhook delete --dry-run reload /reload_git2
+    command: ../openrun app-webhook delete --dry-run reload /reload_git2
   reload_webhook082:
-    command: ../clace app-webhook list /reload_git2
+    command: ../openrun app-webhook list /reload_git2
     stdout:
       line-count: 3
   reload_webhook090:
-    command: ../clace app-webhook list /reload_git2
-    stdout: "https://localhost:25223/_clace_webhook/reload?appPath=%2Freload_git2"
+    command: ../openrun app-webhook list /reload_git2
+    stdout: "https://localhost:25223/_openrun_webhook/reload?appPath=%2Freload_git2"
   reload_webhook100:
-    command: ../clace app-webhook list /reload_git2
-    stdout: "https://localhost:25223/_clace_webhook/reload_promote?appPath=%2Freload_git2"
+    command: ../openrun app-webhook list /reload_git2
+    stdout: "https://localhost:25223/_openrun_webhook/reload_promote?appPath=%2Freload_git2"
   reload_webhook110:
-    command: curl -v http://localhost:25222/_clace_webhook/reload?appPath=%2Freload_git2
+    command: curl -v http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2
     stderr: 405 Method Not Allowed
   reload_webhook120:
-    command: curl -v -XPOST http://localhost:25222/_clace_webhook/reload?appPath=%2Freload_git2
+    command: curl -v -XPOST http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2
     stdout: No auth header and no signature found
   reload_webhook130:
-    command: 'curl -v -XPOST -H "Authorization: Basic abc" http://localhost:25222/_clace_webhook/reload?appPath=%2Freload_git2'
+    command: 'curl -v -XPOST -H "Authorization: Basic abc" http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2'
     stdout: Authorization header with bearer token is required
   reload_webhook140:
-    command: 'curl -v -XPOST -H "Authorization: Bearer abc" http://localhost:25222/_clace_webhook/reload?appPath=%2Freload_git2'
+    command: 'curl -v -XPOST -H "Authorization: Bearer abc" http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2'
     stdout: Invalid bearer token
   reload_webhook150:
-    command: 'curl -v -XPOST -H "X-Hub-Signature-256: abc" http://localhost:25222/_clace_webhook/reload?appPath=%2Freload_git2'
+    command: 'curl -v -XPOST -H "X-Hub-Signature-256: abc" http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2'
     stdout: "invalid signature header"
   reload_webhook160:
-    command: "curl -v -XPOST -d'{}' -H 'X-Hub-Signature-256: sha256=abc' http://localhost:25222/_clace_webhook/reload?appPath=%2Freload_git2"
+    command: "curl -v -XPOST -d'{}' -H 'X-Hub-Signature-256: sha256=abc' http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2"
     stdout: "invalid payload, signature match failed"
   # commander does not support output capture to get the token, so there are no success tests currently
 
   reload_cleanup: # Cleanup
-    command: rm -rf ./reloadtest && ../clace app delete "*:reload*" && ../clace app delete "reload*:**"
+    command: rm -rf ./reloadtest && ../openrun app delete "*:reload*" && ../openrun app delete "reload*:**"

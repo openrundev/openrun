@@ -14,9 +14,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/claceio/clace/internal/app/apptype"
-	"github.com/claceio/clace/internal/plugin"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
@@ -39,7 +39,7 @@ func init() {
 	initFS()
 }
 
-// RegisterPlugin registers a plugin with Clace
+// RegisterPlugin registers a plugin with OpenRun
 func RegisterPlugin(name string, builder plugin.NewPluginFunc, funcs []plugin.PluginFunc) {
 	loaderInitMutex.Lock()
 	defer loaderInitMutex.Unlock()
@@ -114,7 +114,7 @@ func CreatePluginApi(f StarlarkFunction, opType PluginFunctionType) plugin.Plugi
 	return CreatePluginApiName(f, opType, strings.ToLower(funcName))
 }
 
-// CreatePluginApiName creates a Clace plugin function
+// CreatePluginApiName creates a OpenRun plugin function
 func CreatePluginApiName(
 	f func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error),
 	opType PluginFunctionType,

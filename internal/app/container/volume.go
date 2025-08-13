@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func GenVolumeName(appId types.AppId, dirName string) VolumeName {

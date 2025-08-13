@@ -12,19 +12,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/claceio/clace/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
 )
 
 const (
-	CL_HOME                 = "CL_HOME"
+	OPENRUN_HOME            = "OPENRUN_HOME"
 	ID_PREFIX_APP_PROD      = "app_prd_"
 	ID_PREFIX_APP_DEV       = "app_dev_"
 	ID_PREFIX_APP_STAGE     = "app_stg_"
 	ID_PREFIX_APP_PREVIEW   = "app_pre_"
 	ID_PREFIX_SERVER        = "srv_id_"
-	INTERNAL_URL_PREFIX     = "/_clace"
-	WEBHOOK_URL_PREFIX      = "/_clace_webhook"
-	APP_INTERNAL_URL_PREFIX = "/_clace_app"
+	INTERNAL_URL_PREFIX     = "/_openrun"
+	WEBHOOK_URL_PREFIX      = "/_openrun_webhook"
+	APP_INTERNAL_URL_PREFIX = "/_openrun_app"
 	INTERNAL_APP_DELIM      = "_cl_"
 	STAGE_SUFFIX            = INTERNAL_APP_DELIM + "stage"
 	PREVIEW_SUFFIX          = INTERNAL_APP_DELIM + "preview"
@@ -72,7 +72,7 @@ type GlobalConfig struct {
 	ServerUri  string `toml:"server_uri"`
 }
 
-// ServerConfig is the configuration for the Clace Server
+// ServerConfig is the configuration for the OpenRun Server
 type ServerConfig struct {
 	GlobalConfig
 	Http        HttpConfig                  `toml:"http"`
@@ -248,13 +248,13 @@ type ClientCertConfig struct {
 	RootCAs    *x509.CertPool `toml:"-"`
 }
 
-// ClientConfig is the configuration for the Clace Client
+// ClientConfig is the configuration for the OpenRun Client
 type ClientConfig struct {
 	GlobalConfig
 	Client ClientConfigStruct `toml:"client"`
 }
 
-// ClientConfigStruct is the configuration for the Clace Client
+// ClientConfigStruct is the configuration for the OpenRun Client
 type ClientConfigStruct struct {
 	SkipCertCheck bool   `toml:"skip_cert_check"`
 	AdminPassword string `toml:"admin_password"`
@@ -474,7 +474,7 @@ const (
 type StringValue string
 
 const (
-	StringValueUndefined StringValue = "<CL_UNDEFINED>"
+	StringValueUndefined StringValue = "<OPENRUN_UNDEFINED>"
 )
 
 type AppMetadataConfigType string

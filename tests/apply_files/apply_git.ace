@@ -1,3 +1,3 @@
-app("/applytest/test1", "github.com/claceio/apps/system/disk_usage")
-app("/applytest/test2", "github.com/claceio/apps/system/memory_usage")
-app("/applytest/test3", "github.com/claceio/apps/system/list_files")
+app("/applytest/test1", "github.com/openrundev/apps/system/disk_usage")
+app("/applytest/test2", "github.com/openrundev/apps/system/memory_usage")
+app("/applytest/test3", "github.com/openrundev/apps/system/list_files")

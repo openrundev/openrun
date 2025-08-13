@@ -1,119 +1,119 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
 tests:
   domain010: ## create test1 domain app
-    command: ../clace app create ./testapp test1.clace.io:/
-    stdout: "App: test1.clace.io:/"
+    command: ../openrun app create ./testapp test1.openrun.dev:/
+    stdout: "App: test1.openrun.dev:/"
     exit-code: 0
   domain020: # create test2 app
-    command: ../clace app create ./testapp test2.clace.io:/
-    stdout: "App: test2.clace.io:/"
+    command: ../openrun app create ./testapp test2.openrun.dev:/
+    stdout: "App: test2.openrun.dev:/"
     exit-code: 0
   domain030: # create test3 app in /test
-    command: ../clace app create ./testapp test3.clace.io:/test
-    stdout: "App: test3.clace.io:/test"
+    command: ../openrun app create ./testapp test3.openrun.dev:/test
+    stdout: "App: test3.openrun.dev:/test"
     exit-code: 0
   domain040: # create new app should fail since root path is already used
-    command: ../clace app create ./testapp test1.clace.io:/test2
-    stderr: "error: App already exists at test1.clace.io:/"
+    command: ../openrun app create ./testapp test1.openrun.dev:/test2
+    stderr: "error: App already exists at test1.openrun.dev:/"
     stdout:
       line-count: 0
     exit-code: 1
   domain041: # create new app should fail since root path is already used
-    command: ../clace app create ./testapp test1.clace.io:/
-    stderr: "error: App already exists at test1.clace.io:/"
+    command: ../openrun app create ./testapp test1.openrun.dev:/
+    stderr: "error: App already exists at test1.openrun.dev:/"
     stdout:
       line-count: 0
     exit-code: 1
   domain042: # create new app for test3 domain works
-    command: ../clace app create ./testapp test3.clace.io:/test2
-    stdout: "App: test3.clace.io:/test2"
+    command: ../openrun app create ./testapp test3.openrun.dev:/test2
+    stdout: "App: test3.openrun.dev:/test2"
     exit-code: 0
   domain050: # create new app for test3 domain works
-    command: ../clace app create ./testapp test3.clace.io:/te
-    stdout: "App: test3.clace.io:/te"
+    command: ../openrun app create ./testapp test3.openrun.dev:/te
+    stdout: "App: test3.openrun.dev:/te"
     exit-code: 0
   domain060: # create new app should fail since /test is already used
-    command: ../clace app create ./testapp test3.clace.io:/
-    stderr: "error: App already exists at test3.clace.io:/te"
+    command: ../openrun app create ./testapp test3.openrun.dev:/
+    stderr: "error: App already exists at test3.openrun.dev:/te"
     stdout:
       line-count: 0
     exit-code: 1
   domain070: # delete app
-    command: ../clace app delete test3.clace.io:/test
+    command: ../openrun app delete test3.openrun.dev:/test
     exit-code: 0
   domain080: # create new app works after delete
-    command: ../clace app create ./testapp test3.clace.io:/test/other
-    stdout: "App: test3.clace.io:/test/other"
+    command: ../openrun app create ./testapp test3.openrun.dev:/test/other
+    stdout: "App: test3.openrun.dev:/test/other"
     exit-code: 0
 
   # Test secret loading
   secret0300: # Create app, with secret param
-    command: ../clace app create --approve --param secret_provider=env --param secret_key=TESTENV ./env_app  /secret1
+    command: ../openrun app create --approve --param secret_provider=env --param secret_key=TESTENV ./env_app  /secret1
     stdout: "secrets=c1,c2,c3;TESTENV"
   secret0310:
     command: curl -su "admin:qwerty" localhost:25222/secret1
     stdout: abc
   secret0320: # Create app, with invalid provider
-    command: ../clace app create --approve --param secret_provider=vault --param secret_key=TESTENV ./env_app  /secret2
+    command: ../openrun app create --approve --param secret_provider=vault --param secret_key=TESTENV ./env_app  /secret2
   secret0330:
     command: curl -su "admin:qwerty" localhost:25222/secret2
     stdout: unknown secret provider vault
   secret0340: # Create app, with secret param
-    command: ../clace app create --approve --param secret_provider=default ./env_app  /secret3
+    command: ../openrun app create --approve --param secret_provider=default ./env_app  /secret3
   secret0350:
     command: curl -su "admin:qwerty" localhost:25222/secret3/multi
     stdout: xyz # value of c1c2_c3 env
 
   # Test errors
   createerror0100:
-    command: ../clace app create --approve ./env_app  /test/../test1
+    command: ../openrun app create --approve ./env_app  /test/../test1
     stderr: path cannot contain
     exit-code: 1
   createerror0200:
-    command: ../clace app create --approve ./env_app  ../test1
+    command: ../openrun app create --approve ./env_app  ../test1
     stderr: 'expected path to start with "/"'
     exit-code: 1
   createerror0300:
-    command: ../clace app create --approve ./env_app  /test/./test1
+    command: ../openrun app create --approve ./env_app  /test/./test1
     stderr: path cannot contain
     exit-code: 1
   createerror0400:
-    command: ../clace app create --approve ./env_app  /test/.
+    command: ../openrun app create --approve ./env_app  /test/.
     stderr: path cannot end with
     exit-code: 1
   createerror0500:
-    command: ../clace app create --approve ./env_app  /test_cl_abc
-    stderr: clace reserved path
+    command: ../openrun app create --approve ./env_app  /test_cl_abc
+    stderr: openrun reserved path
     exit-code: 1
 
   # Test params
   param0100:
-    command: ../clace app create --approve ./testapp  /test_param1
+    command: ../openrun app create --approve ./testapp  /test_param1
   param0110:
-    command: ../clace param list /test_param1
+    command: ../openrun param list /test_param1
     stdout: No param values
   param0130:
-    command: ../clace param update --promote abc xyz /test_param1
+    command: ../openrun param update --promote abc xyz /test_param1
   param0140:
-    command: ../clace param list /test_param1
+    command: ../openrun param list /test_param1
     stdout: xyz
   param0150:
-    command: ../clace param update --promote abc aaa /test_param1
+    command: ../openrun param update --promote abc aaa /test_param1
   param0160:
-    command: ../clace param list /test_param1
+    command: ../openrun param list /test_param1
     stdout: aaa
   param0170:
-    command: ../clace param update --promote abc - /test_param1
+    command: ../openrun param update --promote abc - /test_param1
   param0180:
-    command: ../clace param list /test_param1
+    command: ../openrun param list /test_param1
     stdout: No param values
 
   # Test static spec
   static0100: # Create app, with test folder user as input
-    command: ../clace app create --approve  --spec static --param index=test_misc.yaml ./commander /static_app1
+    command: ../openrun app create --approve  --spec static --param index=test_misc.yaml ./commander /static_app1
   static0200:
     command: curl -su "admin:qwerty" localhost:25222/static_app1
     stdout: static0100
@@ -121,7 +121,7 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/static_app1/test_certs.yaml
     stdout: certs010
   static0400: # Create app, with test folder user as input
-    command: ../clace app create --approve  --spec static --param index=test_misc.yaml --param single_file=True ./commander /static_app2
+    command: ../openrun app create --approve  --spec static --param index=test_misc.yaml --param single_file=True ./commander /static_app2
   static0500:
     command: curl -su "admin:qwerty" localhost:25222/static_app2
     stdout: static0100
@@ -131,7 +131,7 @@ tests:
 
   # Test actions file handling
   actions0100: # Create app
-    command: ../clace app create --approve github.com/claceio/apps/misc/num_lines /numlines
+    command: ../openrun app create --approve github.com/openrundev/apps/misc/num_lines /numlines
   actions0200:
     command: curl -su "admin:qwerty" localhost:25222/numlines
     stdout: type="file"
@@ -139,20 +139,20 @@ tests:
     command: echo "abc" > action_inp.txt
   actions0400:
     command: curl -su "admin:qwerty" -vX POST -F "file=@action_inp.txt" localhost:25222/numlines
-    stdout: /numlines/_clace_app/file/usr_file_
+    stdout: /numlines/_openrun_app/file/usr_file_
   actions0500:
     command: rm action_inp.txt
   actions1000: # Create app
-    command: ../clace app create --auth=none --approve ./file_app /file_app
+    command: ../openrun app create --auth=none --approve ./file_app /file_app
   actions1100:
     command: curl localhost:25222/file_app
     stdout: Success
 
   # Test audit APIs
   audit0100: # Create app
-    command: ../clace app create --auth=none --approve ./audit_app /audittestapp
+    command: ../openrun app create --auth=none --approve ./audit_app /audittestapp
   audit0110: # reload
-    command: ../clace app reload --promote /audittestapp
+    command: ../openrun app reload --promote /audittestapp
   audit0200:
     command: curl localhost:25222/audittestapp/audit
     stdout: OK

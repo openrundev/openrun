@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/claceio/clace/internal/testutil"
+	"github.com/openrundev/openrun/internal/testutil"
 )
 
 func TestStyleNone(t *testing.T) {
@@ -156,7 +156,7 @@ func TestStyleCustom(t *testing.T) {
 		"app.star": `
 app = ace.app("testApp", custom_layout=False, routes = [ace.html("/")])`,
 		"static/css/style.css": "body { background-color: red; }",
-		"app.go.html":          `{{block "clace_body" .}}ABC{{end}}`,
+		"app.go.html":          `{{block "openrun_body" .}}ABC{{end}}`,
 	}
 
 	a, _, err := CreateDevModeTestApp(logger, fileData)

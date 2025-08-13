@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/claceio/clace/internal/system"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -120,7 +120,7 @@ func newBoolFlag(name, alias, usage string, value bool) *cli.BoolFlag {
 
 // makeAbsolute converts a relative path to an absolute path.
 // This needs to be called in the client before the call to system.NewHttpClient
-// since that changes the cwd to $CL_HOME
+// since that changes the cwd to $OPENRUN_HOME
 func makeAbsolute(sourceUrl string) (string, error) {
 	if sourceUrl == "-" || system.IsGit(sourceUrl) {
 		return sourceUrl, nil

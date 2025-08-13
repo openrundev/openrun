@@ -8,12 +8,12 @@ import (
 	"embed"
 
 	"github.com/BurntSushi/toml"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 )
 
-const DEFAULT_CONFIG = "clace.default.toml"
+const DEFAULT_CONFIG = "openrun.default.toml"
 
-//go:embed "clace.default.toml"
+//go:embed "openrun.default.toml"
 var f embed.FS
 
 func getEmbeddedToml() (string, error) {

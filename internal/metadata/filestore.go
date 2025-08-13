@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/andybalholm/brotli"
-	"github.com/claceio/clace/internal/app/appfs"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 const (

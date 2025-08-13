@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/claceio/clace/internal/app"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 // AppStore is a store of apps. List of apps is stored in memory. Apps are initialized lazily,

@@ -8,8 +8,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/claceio/clace/internal/testutil"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/testutil"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestParseAppPathGlob(t *testing.T) {

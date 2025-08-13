@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/claceio/clace/internal/app/starlark_type"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func (s *SqlStore) initStore(ctx context.Context) error {

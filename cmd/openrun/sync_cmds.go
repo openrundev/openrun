@@ -10,8 +10,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -53,10 +53,10 @@ func syncScheduleCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 <filePath> is the path to the apply file containing the app configuration.
 
 Examples:
-  Create scheduled sync, reloading apps with code changes: clace sync schedule ./app.ace
-  Create scheduled sync, reloading only apps with a config change: clace sync schedule --reload=updated github.com/claceio/apps/apps.ace
-  Create scheduled sync, promoting changes: clace sync schedule --promote --approve github.com/claceio/apps/apps.ace
-  Create scheduled sync, overwriting changes: clace sync schedule --promote --clobber github.com/claceio/apps/apps.ace
+  Create scheduled sync, reloading apps with code changes: openrun sync schedule ./app.ace
+  Create scheduled sync, reloading only apps with a config change: openrun sync schedule --reload=updated github.com/openrundev/apps/apps.ace
+  Create scheduled sync, promoting changes: openrun sync schedule --promote --approve github.com/openrundev/apps/apps.ace
+  Create scheduled sync, overwriting changes: openrun sync schedule --promote --clobber github.com/openrundev/apps/apps.ace
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -88,7 +88,7 @@ Examples:
 
 			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
 			var syncResponse types.SyncCreateResponse
-			err = client.Post("/_clace/sync", values, sync, &syncResponse)
+			err = client.Post("/_openrun/sync", values, sync, &syncResponse)
 			if err != nil {
 				return err
 			}
@@ -123,7 +123,7 @@ func syncListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 		ArgsUsage: "",
 		UsageText: `
 	Examples:
-	  List sync jobs: clace sync list`,
+	  List sync jobs: openrun sync list`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() > 0 {
 				return fmt.Errorf("no args expected")
@@ -134,7 +134,7 @@ func syncListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 			values.Add("appPath", cCtx.Args().First())
 
 			var response types.SyncListResponse
-			err := client.Get("/_clace/sync", values, &response)
+			err := client.Get("/_openrun/sync", values, &response)
 			if err != nil {
 				return err
 			}
@@ -158,7 +158,7 @@ func syncRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 		ArgsUsage: "args: <syncId>",
 		UsageText: `
 	Examples:
-	  Run sync job: clace sync run cl_sync_44asd232`,
+	  Run sync job: openrun sync run cl_sync_44asd232`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
 				return fmt.Errorf("expected one args: <syncId>")
@@ -170,7 +170,7 @@ func syncRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			var response types.SyncJobStatus
-			err := client.Post("/_clace/sync/run", values, nil, &response)
+			err := client.Post("/_openrun/sync/run", values, nil, &response)
 			if err != nil {
 				return err
 			}
@@ -202,7 +202,7 @@ func syncDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 		ArgsUsage: "args: <syncId>",
 		UsageText: `
 	Examples:
-	  Delete sync jobs: clace sync delete cl_sync_44asd232`,
+	  Delete sync jobs: openrun sync delete cl_sync_44asd232`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
 				return fmt.Errorf("expected one args: <syncId>")
@@ -213,7 +213,7 @@ func syncDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			values.Add("id", cCtx.Args().First())
 
 			var response types.SyncDeleteResponse
-			err := client.Delete("/_clace/sync", values, &response)
+			err := client.Delete("/_openrun/sync", values, &response)
 			if err != nil {
 				return err
 			}

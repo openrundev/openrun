@@ -6,7 +6,7 @@ package apptype
 import (
 	"fmt"
 
-	"github.com/claceio/clace/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"go.starlark.net/starlark"
 )
 

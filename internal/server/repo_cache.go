@@ -38,7 +38,7 @@ type RepoCache struct {
 }
 
 func NewRepoCache(server *Server) (*RepoCache, error) {
-	tmpDir, err := os.MkdirTemp("", "clace_git_")
+	tmpDir, err := os.MkdirTemp("", "openrun_git_")
 	if err != nil {
 		return nil, err
 	}

@@ -1,9 +1,9 @@
-# The default configuration used by the Clace server and client
+# The default configuration used by the OpenRun server and client
 
-server_uri = "$CL_HOME/run/clace.sock" # the unix domain socket (UDS) path or URL to the Clace server
+server_uri = "$OPENRUN_HOME/run/openrun.sock" # the unix domain socket (UDS) path or URL to the OpenRun server
 admin_user = "admin"
 
-# Properties use by the Clace client to connect to the server
+# Properties use by the OpenRun client to connect to the server
 [client]
 admin_password = ""      # the password for the admin user. Required only if admin over TCP is enabled
 skip_cert_check = false
@@ -23,8 +23,8 @@ enable_cert_lookup = true                      # enable looking for certificate 
 mkcert_path = ""                               # mkcert binary path, set to disable to disable mkcert
 service_email = ""                             # email address for registering with Let's Encrypt. Set a value to enable automatic certs
 use_staging = true                             # use Let's Encrypt staging server
-cert_location = "$CL_HOME/config/certificates" # where to look for existing certificate files
-storage_location = "$CL_HOME/run/certmagic"    # where to cache dynamically created certificates
+cert_location = "$OPENRUN_HOME/config/certificates" # where to look for existing certificate files
+storage_location = "$OPENRUN_HOME/run/certmagic"    # where to cache dynamically created certificates
 disable_client_certs = true                    # disable client certs for HTTPS
 
 [security]
@@ -51,9 +51,9 @@ access_logging = true
 
 # Metadata Storage Config
 [metadata]
-db_connection = "sqlite:$CL_HOME/metadata/clace_metadata.db"
+db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_metadata.db"
 auto_upgrade = true
-audit_db_connection = "sqlite:$CL_HOME/metadata/clace_audit.db"
+audit_db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_audit.db"
 
 [system]
 tailwindcss_command = "tailwindcss"
@@ -69,17 +69,17 @@ max_sync_failure_count = 5          # max number of sync failures before sync is
 
 http_event_retention_days = 90      # number of days to retain http events
 non_http_event_retention_days = 180 # number of days to retain non-http (system, action, custom) events
-allowed_env = ["HOME", "CL_HOME", "PATH"] # env values allowed for use in node config
+allowed_env = ["HOME", "OPENRUN_HOME", "PATH"] # env values allowed for use in node config
 
 [plugin."store.in"]
-db_connection = "sqlite:$CL_HOME/metadata/clace_app_store.db"
+db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_app_store.db"
 
 [plugin."fs.in"]
-db_connection = "sqlite:$CL_HOME/metadata/clace_fs.db"
+db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_fs.db"
 
 [app_config]
 # app config can be set at the app level using a metadata config update. For example:
-#  clace app update-metadata conf --promote 'cors.allow_methods="GET, POST"' /myapp
+#  openrun app update-metadata conf --promote 'cors.allow_methods="GET, POST"' /myapp
 
 # ==== CORS related Config ====
 # Default setting is to add CORS headers with * as allow_origin header. If cors.allow_origin is set to empty string,

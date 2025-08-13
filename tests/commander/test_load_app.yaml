@@ -1,19 +1,19 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
-    CL_HOME: ${CL_HOME}
+    OPENRUN_HOME: ${OPENRUN_HOME}
 tests:
   load0010: # copy sample app
     command: cp -r ../examples/disk_usage .
   load0020: # create dev app
-    command: ../clace app create --dev ./disk_usage /disk_usage_dev
+    command: ../openrun app create --dev ./disk_usage /disk_usage_dev
     stderr:
       line-count: 0
     stdout: "App: /disk_usage_dev"
     exit-code: 0
   load0030: # create prod app
-    command: ../clace app create ./disk_usage /disk_usage_prod
+    command: ../openrun app create ./disk_usage /disk_usage_prod
     stderr:
       line-count: 0
     stdout: "App: /disk_usage_prod"
@@ -22,14 +22,14 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev
     stdout: "app /disk_usage_dev is not permitted to load plugin fs.in. Audit the app and approve permissions"
   load0041: # check audit output
-    command: '../clace app approve --dry-run /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
+    command: '../openrun app approve --dry-run /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
     stdout: "dry-run mode, changes have NOT been committed."
     exit-code: 0
   load0041a: # test dev app, make sure dry run did not update the in memory cache
     command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev
     stdout: "app /disk_usage_dev is not permitted to load plugin fs.in. Audit the app and approve permissions"
   load0042: # approve audit
-    command: '../clace app approve /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
+    command: '../openrun app approve /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
     stdout:
       exactly: "App permissions have been approved /disk_usage_dev - YYY\n  Plugins :\n    fs.in\n  Permissions:\n    fs.in.abs [] \n    fs.in.list [] \n    fs.in.find [] \n1 app(s) audited, 1 app(s) approved, 0 app(s) promoted.\n"
     exit-code: 0
@@ -42,7 +42,7 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev/
     stdout: "Disk Usage"
   load0046: # approve audit, no more permissions
-    command: '../clace app approve /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
+    command: '../openrun app approve /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
     stdout:
       exactly: "App permissions have been approved /disk_usage_dev - YYY\n  Plugins :\n    fs.in\n  Permissions:\n1 app(s) audited, 1 app(s) approved, 0 app(s) promoted.\n"
     exit-code: 0
@@ -52,7 +52,7 @@ tests:
   load0051: # update config
     command: cp ./disk_usage/app.star.bk ./disk_usage/app.star
   load0052: # approve audit
-    command: '../clace app approve /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
+    command: '../openrun app approve /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
   load0053: # check curl after approval
     command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev/
     stdout: "Disk Usage"
@@ -65,7 +65,7 @@ tests:
     stdout: "Disallow: /"
     exit-code: 0
   load0060: # audit prod app
-    command: '../clace app approve /disk_usage_prod | sed "s/app_stg_.*/YYY/g"'
+    command: '../openrun app approve /disk_usage_prod | sed "s/app_stg_.*/YYY/g"'
     stdout:
       exactly: "App permissions have been approved /disk_usage_prod_cl_stage - YYY\n  Plugins :\n    fs.in\n  Permissions:\n    fs.in.abs [] \n    fs.in.list [] \n    fs.in.find [] \n1 app(s) audited, 1 app(s) approved, 0 app(s) promoted.\n"
     exit-code: 0
@@ -73,7 +73,7 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/disk_usage_prod/
     stdout: "/disk_usage_prod is not permitted to load plugin fs.in"
   load0062: # promote prod app
-    command: "../clace app reload --approve --promote /disk_usage_prod"
+    command: "../openrun app reload --approve --promote /disk_usage_prod"
   load0063: # test prod app
     command: curl -su "admin:qwerty" localhost:25222/disk_usage_prod/
     stdout: "Disk Usage"
@@ -94,27 +94,27 @@ tests:
       line-count: 0
     stdout: "Disk Usage"
   load0100: # Create app with duplicate path
-    command: ../clace app create ./disk_usage /disk_usage_dev/
+    command: ../openrun app create ./disk_usage /disk_usage_dev/
     stdout:
       line-count: 0
     stderr: "error: App already exists at /disk_usage_dev"
     exit-code: 1
   load0110: # Create app without granting approval
-    command: ../clace app create ./disk_usage /load1
+    command: ../openrun app create ./disk_usage /load1
     stdout: "App created. Permissions need to be approved"
     exit-code: 0
   load0120: # Create app, invalid path, app should not be created
-    command: ../clace app create ./invalid /load2
+    command: ../openrun app create ./invalid /load2
     stderr: "path does not exist"
     exit-code: 1
   load0130: # Create app, granting approval
-    command: ../clace app create --approve ./disk_usage /load2
+    command: ../openrun app create --approve ./disk_usage /load2
     stdout: "App created. Permissions have been approved"
     exit-code: 0
 
   # Test github load
   load0210: # Create app granting approval
-    command: ../clace app create --approve github.com/claceio/clace/examples/disk_usage /ghload1
+    command: ../openrun app create --approve github.com/openrundev/openrun/examples/disk_usage /ghload1
     stdout: "App created. Permissions have been approved"
     exit-code: 0
   load0220: # test calling app
@@ -123,31 +123,31 @@ tests:
       line-count: 0
     stdout: "Disk Usage"
   load0230: # Create app granting approval
-    command: ../clace app create --approve https://github.com/claceio/clace/examples/disk_usage /ghload2
+    command: ../openrun app create --approve https://github.com/openrundev/openrun/examples/disk_usage /ghload2
     stdout: "App created. Permissions have been approved"
     exit-code: 0
   load0240: # Create app, invalid path
-    command: ../clace app create --approve https://github.com/claceio/clace/examples/disk_usagebad /ghload3
+    command: ../openrun app create --approve https://github.com/openrundev/openrun/examples/disk_usagebad /ghload3
     stderr: "audit failed: error reading app.star file: file does not exist"
     exit-code: 1
   load0260: # Create app, invalid branch
-    command: ../clace app create --approve --branch invalid https://github.com/claceio/clace/examples/disk_usage /ghload3
+    command: ../openrun app create --approve --branch invalid https://github.com/openrundev/openrun/examples/disk_usage /ghload3
     stderr: 'find remote ref "refs/heads/invalid"'
     exit-code: 1
   load0270: # Create app, valid branch
-    command: ../clace app create --approve --branch main https://github.com/claceio/clace/examples/disk_usage /ghload3
+    command: ../openrun app create --approve --branch main https://github.com/openrundev/openrun/examples/disk_usage /ghload3
     stdout: "HTTPS Url: https://localhost:25223/ghload3"
     exit-code: 0
   load0280: # Create app, invalid commit id.
-    command: ../clace app create --approve --commit invalid https://github.com/claceio/clace/examples/disk_usage /ghload4
+    command: ../openrun app create --approve --commit invalid https://github.com/openrundev/openrun/examples/disk_usage /ghload4
     stderr: "reference not found"
     exit-code: 1
   load0290: # Create app, valid commit id
-    command: ../clace app create --approve --commit 6574d08b47abb71636665fbcbad51c2f7e8cab71 https://github.com/claceio/clace/examples/disk_usage /ghload5
+    command: ../openrun app create --approve --commit 6574d08b47abb71636665fbcbad51c2f7e8cab71 https://github.com/openrundev/openrun/examples/disk_usage /ghload5
     stdout: "HTTP Url: http://localhost:25222/ghload5"
     exit-code: 0
   load0300: # Create app with custom domain (domain ending in . becomes .localhost)
-    command: "../clace app create --approve github.com/claceio/clace/examples/disk_usage ghload3.:"
+    command: "../openrun app create --approve github.com/openrundev/openrun/examples/disk_usage ghload3.:"
     stdout: "App created. Permissions have been approved"
     exit-code: 0
   load0310: # test calling app
@@ -155,7 +155,7 @@ tests:
     stderr:
       line-count: 0
   load0320: # check certificates
-    command: ls -l ${CL_HOME}/config/certificates/ghload3.localhost*
+    command: ls -l ${OPENRUN_HOME}/config/certificates/ghload3.localhost*
     exit-code: 0
 
   load0900: # cleanup

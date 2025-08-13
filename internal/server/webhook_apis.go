@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/claceio/clace/internal/passwd"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/passwd"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func (s *Server) getServerUri() string {

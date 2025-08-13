@@ -23,19 +23,19 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
-	"github.com/claceio/clace/internal/app"
-	"github.com/claceio/clace/internal/metadata"
-	"github.com/claceio/clace/internal/passwd"
-	"github.com/claceio/clace/internal/server/list_apps"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
 	"github.com/go-chi/chi/middleware"
+	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/metadata"
+	"github.com/openrundev/openrun/internal/passwd"
+	"github.com/openrundev/openrun/internal/server/list_apps"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/segmentio/ksuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/claceio/clace/internal/app/appfs"
-	_ "github.com/claceio/clace/internal/app/store" // Register db plugin
-	_ "github.com/claceio/clace/plugins"            // Register builtin plugins
+	"github.com/openrundev/openrun/internal/app/appfs"
+	_ "github.com/openrundev/openrun/internal/app/store" // Register db plugin
+	_ "github.com/openrundev/openrun/plugins"            // Register builtin plugins
 )
 
 const (
@@ -93,7 +93,7 @@ func init() {
 func (s *Server) GetAppSpec(name types.AppSpec) types.SpecFiles {
 	// Add custom app type config from conf folder
 
-	customSpecsDir := path.Clean((path.Join(os.ExpandEnv("$CL_HOME/config"), APPSPECS, string(name))))
+	customSpecsDir := path.Clean((path.Join(os.ExpandEnv("$OPENRUN_HOME/config"), APPSPECS, string(name))))
 	entries, err := os.ReadDir(customSpecsDir)
 	if err != nil {
 		// Use bundled app if present
@@ -117,7 +117,7 @@ func (s *Server) GetAppSpec(name types.AppSpec) types.SpecFiles {
 	return newAppType
 }
 
-// Server is the instance of the Clace Server
+// Server is the instance of the OpenRun Server
 type Server struct {
 	*types.Logger
 	config         *types.ServerConfig
@@ -138,9 +138,9 @@ type Server struct {
 	syncTimer      *time.Ticker
 }
 
-// NewServer creates a new instance of the Clace Server
+// NewServer creates a new instance of the OpenRun Server
 func NewServer(config *types.ServerConfig) (*Server, error) {
-	metadataDir := os.ExpandEnv("$CL_HOME/metadata")
+	metadataDir := os.ExpandEnv("$OPENRUN_HOME/metadata")
 	if err := os.MkdirAll(metadataDir, 0700); err != nil {
 		return nil, fmt.Errorf("error creating metadata directory %s : %w", metadataDir, err)
 	}
@@ -201,7 +201,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	server.Trace().Str("cmd", config.System.ContainerCommand).Msg("Container management command")
 	go server.handleAppClose()
 
-	initClacePlugin(server)
+	initOpenRunPlugin(server)
 
 	// Start the idle shutdown check
 	server.syncTimer = time.NewTicker(time.Minute) // run sync every minute
@@ -323,7 +323,7 @@ func (s *Server) setupAdminAccount() (string, error) {
 	return password, nil
 }
 
-// Start starts the Clace Server
+// Start starts the OpenRun Server
 func (s *Server) Start() error {
 	s.handler = NewTCPHandler(s.Logger, s.config, s)
 	serverUri := strings.TrimSpace(os.ExpandEnv(s.config.GlobalConfig.ServerUri))
@@ -331,8 +331,8 @@ func (s *Server) Start() error {
 		return errors.New("server_uri is not set")
 	}
 
-	// Change to CL_HOME directory, helps avoid length limit on UDS file (around 104 chars)
-	clHome := os.Getenv("CL_HOME")
+	// Change to OPENRUN_HOME directory, helps avoid length limit on UDS file (around 104 chars)
+	clHome := os.Getenv("OPENRUN_HOME")
 	os.Chdir(clHome)
 
 	// Start unix domain socket server
@@ -620,7 +620,7 @@ func loadRootCAs(rootCertFile string) (*x509.CertPool, error) {
 	return roots, nil
 }
 
-// Stop stops the Clace Server
+// Stop stops the OpenRun Server
 func (s *Server) Stop(ctx context.Context) error {
 	s.Info().Msg("Stopping service")
 	var err1, err2, err3 error
@@ -675,9 +675,9 @@ func (s *Server) GetListAppsApp() (*app.App, error) {
 		},
 		Metadata: types.AppMetadata{
 			Name:  "List Apps",
-			Loads: []string{"clace.in"},
+			Loads: []string{"openrun.in"},
 			Permissions: []types.Permission{
-				{Plugin: "clace.in", Method: "list_apps"},
+				{Plugin: "openrun.in", Method: "list_apps"},
 			},
 		},
 	}

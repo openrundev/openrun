@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -33,7 +33,7 @@ type Metadata struct {
 	AppNotifyFunc func(types.AppUpdatePayload)
 }
 
-const pg_listen_channel = "clace_events"
+const pg_listen_channel = "openrun_events"
 
 // NewMetadata creates a new metadata persistence layer
 func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, error) {
@@ -141,7 +141,7 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 	}
 
 	if !config.Metadata.IgnoreHigherVersion && version > CURRENT_DB_VERSION {
-		return fmt.Errorf("DB version is newer than server version, upgrade Clace server version. Server %d, DB %d", CURRENT_DB_VERSION, version)
+		return fmt.Errorf("DB version is newer than server version, upgrade OpenRun server version. Server %d, DB %d", CURRENT_DB_VERSION, version)
 	}
 
 	if version == CURRENT_DB_VERSION {

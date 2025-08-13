@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 // createPathDomain creates a slice of AppPathDomain from a slice of AppInfo

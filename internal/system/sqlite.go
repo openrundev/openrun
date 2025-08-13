@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 const (

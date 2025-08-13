@@ -1,6 +1,6 @@
 
 # Declarative app config for Streamlit apps, install by running
-#    clace apply --approve github.com/claceio/clace/examples/streamlit.star
+#    openrun apply --approve github.com/openrundev/openrun/examples/streamlit.star
 
 sl_args = {"container_opts": {"cpus": "2", "memory": "512m"}, "spec": "python-streamlit"}
 app("/streamlit/spirals", "github.com/streamlit/streamlit-example", git_branch="master", params={"app_name": "Spirals"}, **sl_args)

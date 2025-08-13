@@ -10,8 +10,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/claceio/clace/internal/testutil"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/testutil"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestStoreBasics(t *testing.T) {
@@ -143,9 +143,9 @@ indexes=[
 	}
 
 	// Remove old db file if exists
-	os.Remove("/tmp/clace_app.db")
-	os.Remove("/tmp/clace_app.db-wal")
-	os.Remove("/tmp/clace_app.db-shm")
+	os.Remove("/tmp/openrun_app.db")
+	os.Remove("/tmp/openrun_app.db-wal")
+	os.Remove("/tmp/openrun_app.db-shm")
 
 	a, _, err := CreateTestAppPlugin(logger, fileData, []string{"store.in"},
 		[]types.Permission{
@@ -159,7 +159,7 @@ indexes=[
 			{Plugin: "store.in", Method: "select_one"},
 		}, map[string]types.PluginSettings{
 			"store.in": {
-				"db_connection": "sqlite:/tmp/clace_app.db?_journal_mode=WAL",
+				"db_connection": "sqlite:/tmp/openrun_app.db?_journal_mode=WAL",
 			},
 		})
 	if err != nil {
@@ -288,9 +288,9 @@ type("mytype", fields=[
 	}
 
 	// Remove old db file if exists
-	os.Remove("/tmp/clace_app.db")
-	os.Remove("/tmp/clace_app.db-wal")
-	os.Remove("/tmp/clace_app.db-shm")
+	os.Remove("/tmp/openrun_app.db")
+	os.Remove("/tmp/openrun_app.db-wal")
+	os.Remove("/tmp/openrun_app.db-shm")
 
 	a, _, err := CreateTestAppPlugin(logger, fileData, []string{"store.in"},
 		[]types.Permission{
@@ -304,7 +304,7 @@ type("mytype", fields=[
 			{Plugin: "store.in", Method: "select_one"},
 		}, map[string]types.PluginSettings{
 			"store.in": {
-				"db_connection": "sqlite:/tmp/clace_app.db?_journal_mode=WAL",
+				"db_connection": "sqlite:/tmp/openrun_app.db?_journal_mode=WAL",
 			},
 		})
 	if err != nil {

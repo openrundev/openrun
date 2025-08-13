@@ -26,7 +26,7 @@ func GenerateSelfSignedCertificate(certPath, keyPath string, validityDuration ti
 
 	template := x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{Organization: []string{"Clace Server"}},
+		Subject:               pkix.Name{Organization: []string{"OpenRun Server"}},
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,

@@ -17,11 +17,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/claceio/clace/internal/app"
-	"github.com/claceio/clace/internal/app/appfs"
-	"github.com/claceio/clace/internal/metadata"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/metadata"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/segmentio/ksuid"
 )
 
@@ -342,7 +342,7 @@ func (s *Server) setupApp(appEntry *types.AppEntry, tx types.Transaction) (*app.
 		}
 	}
 
-	appPath := fmt.Sprintf(os.ExpandEnv("$CL_HOME/run/app/%s"), appEntry.Id)
+	appPath := fmt.Sprintf(os.ExpandEnv("$OPENRUN_HOME/run/app/%s"), appEntry.Id)
 	workFS := appfs.NewWorkFs(appPath,
 		&appfs.DiskWriteFS{
 			DiskReadFS: appfs.NewDiskReadFS(&appLogger, appPath, *appEntry.Metadata.SpecFiles),
@@ -475,7 +475,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	} else if appAuthString == "cert" || strings.HasPrefix(appAuthString, "cert_") {
 		// Use client certificate authentication
 		if s.config.Https.DisableClientCerts {
-			http.Error(w, "Client certificates are disabled in clace.config, update https.disable_client_certs", http.StatusInternalServerError)
+			http.Error(w, "Client certificates are disabled in openrun.config, update https.disable_client_certs", http.StatusInternalServerError)
 			return
 		}
 		err = s.verifyClientCerts(r, appAuthString)
@@ -699,7 +699,7 @@ func parseGithubUrl(sourceUrl string, usingSSH bool) (repo, folder string, err e
 	split := strings.SplitN(url.Path, "/", 4)
 	if len(split) == 4 {
 		if usingSSH {
-			// Use git url like git@github.com:claceio/clace.git
+			// Use git url like git@github.com:openrundev/openrun.git
 			gitUrl := fmt.Sprintf("git@%s:%s/%s.git", url.Host, split[1], split[2])
 			return gitUrl, split[3], nil
 		}

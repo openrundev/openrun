@@ -1,33 +1,33 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
     PATH: ${PATH}
 tests:
   sync0001: ## setup
-    command: ../clace sync schedule --approve --promote github.com/claceio/clace/examples/utils.star
+    command: ../openrun sync schedule --approve --promote github.com/openrundev/openrun/examples/utils.star
     stdout: "Sync job created with Id"
   sync0010:
-    command: ../clace sync list
+    command: ../openrun sync list
     stdout:
       line-count: 2
       contains:
         - "examples/utils.star"
   sync0020:
-    command: ../clace sync list -f json | jq -r '.[0].id' > sync_test_id.tmp
+    command: ../openrun sync list -f json | jq -r '.[0].id' > sync_test_id.tmp
   sync0030:
-    command: sh -c 'id=$(cat sync_test_id.tmp); ../clace sync run "$id"'
+    command: sh -c 'id=$(cat sync_test_id.tmp); ../openrun sync run "$id"'
     stdout: "0 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted"
   sync0040:
-    command: ../clace app delete /utils/disk_usage
+    command: ../openrun app delete /utils/disk_usage
     exit-code: 0
   sync0050:
-    command: sh -c 'id=$(cat sync_test_id.tmp); ../clace sync run "$id"'
+    command: sh -c 'id=$(cat sync_test_id.tmp); ../openrun sync run "$id"'
     stdout: "1 app(s) created, 0 app(s) updated, 2 app(s) reloaded, 5 app(s) skipped, 0 app(s) approved, 1 app(s) promoted"
   sync0060:
-    command: sh -c 'id=$(cat sync_test_id.tmp); ../clace sync delete "$id"'
+    command: sh -c 'id=$(cat sync_test_id.tmp); ../openrun sync delete "$id"'
     stdout: "deleted"
   sync0070:
-    command: ../clace sync list
+    command: ../openrun sync list
     stdout:
       line-count: 1

@@ -6,7 +6,7 @@ package system
 import (
 	"testing"
 
-	"github.com/claceio/clace/internal/testutil"
+	"github.com/openrundev/openrun/internal/testutil"
 )
 
 func TestServerConfig(t *testing.T) {
@@ -15,7 +15,7 @@ func TestServerConfig(t *testing.T) {
 		t.Fatalf("failed to load embedded config: %v", err)
 	}
 
-	// The default value are read from the embedded clace.default.toml file,
+	// The default value are read from the embedded openrun.default.toml file,
 	// verify if the expected values are read correctly
 
 	// HTTP listen related settings
@@ -30,7 +30,7 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsInt(t, "max size MB", 50, c.Log.MaxSizeMB)
 
 	// Metadata related settings
-	testutil.AssertEqualsString(t, "db connection", "sqlite:$CL_HOME/metadata/clace_metadata.db", c.Metadata.DBConnection)
+	testutil.AssertEqualsString(t, "db connection", "sqlite:$OPENRUN_HOME/metadata/clace_metadata.db", c.Metadata.DBConnection)
 	testutil.AssertEqualsBool(t, "auto upgrade", true, c.Metadata.AutoUpgrade)
 
 	// HTTPS listen related settings
@@ -39,8 +39,8 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsBool(t, "https cert lookup", true, c.Https.EnableCertLookup)
 	testutil.AssertEqualsString(t, "email", "", c.Https.ServiceEmail)
 	testutil.AssertEqualsBool(t, "https staging", true, c.Https.UseStaging)
-	testutil.AssertEqualsString(t, "storage", "$CL_HOME/run/certmagic", c.Https.StorageLocation)
-	testutil.AssertEqualsString(t, "cache", "$CL_HOME/config/certificates", c.Https.CertLocation)
+	testutil.AssertEqualsString(t, "storage", "$OPENRUN_HOME/run/certmagic", c.Https.StorageLocation)
+	testutil.AssertEqualsString(t, "cache", "$OPENRUN_HOME/config/certificates", c.Https.CertLocation)
 
 	// System settings
 	testutil.AssertEqualsString(t, "tailwind command", "tailwindcss", c.System.TailwindCSSCommand)
@@ -49,7 +49,7 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsString(t, "default domain", "localhost", c.System.DefaultDomain)
 
 	// Global Settings
-	testutil.AssertEqualsString(t, "server uri", "$CL_HOME/run/clace.sock", c.ServerUri)
+	testutil.AssertEqualsString(t, "server uri", "$OPENRUN_HOME/run/openrun.sock", c.ServerUri)
 	testutil.AssertEqualsString(t, "admin user", "admin", c.AdminUser)
 
 	// Security Settings
@@ -87,7 +87,7 @@ func TestClientConfig(t *testing.T) {
 	}
 	testutil.AssertEqualsBool(t, "cert check", false, c.Client.SkipCertCheck)
 	testutil.AssertEqualsString(t, "admin password", "", c.Client.AdminPassword)
-	testutil.AssertEqualsString(t, "server uri", "$CL_HOME/run/clace.sock", c.ServerUri)
+	testutil.AssertEqualsString(t, "server uri", "$OPENRUN_HOME/run/openrun.sock", c.ServerUri)
 	testutil.AssertEqualsString(t, "admin user", "admin", c.AdminUser)
 	testutil.AssertEqualsString(t, "default format", "basic", c.Client.DefaultFormat)
 }

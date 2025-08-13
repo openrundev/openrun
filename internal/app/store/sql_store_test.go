@@ -6,7 +6,7 @@ package store
 import (
 	"testing"
 
-	"github.com/claceio/clace/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
 )
 
 func TestGenTableName(t *testing.T) {

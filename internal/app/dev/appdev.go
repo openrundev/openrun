@@ -12,26 +12,26 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/claceio/clace/internal/app/appfs"
-	"github.com/claceio/clace/internal/app/apptype"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/types"
 )
 
-//go:embed index_gen.go.html clace_gen.go.html
+//go:embed index_gen.go.html openrun_gen.go.html
 var embedHtml embed.FS
-var indexEmbed, claceGenEmbed []byte
+var indexEmbed, openrunGenEmbed []byte
 
 func init() {
 	var err error
 	if indexEmbed, err = embedHtml.ReadFile(apptype.INDEX_GEN_FILE); err != nil {
 		panic(err)
 	}
-	if claceGenEmbed, err = embedHtml.ReadFile(apptype.CLACE_GEN_FILE); err != nil {
+	if openrunGenEmbed, err = embedHtml.ReadFile(apptype.CLACE_GEN_FILE); err != nil {
 		panic(err)
 	}
 }
 
-// AppDev is the main object that represents a Clace app in dev mode. It is created when the app is loaded with is_dev true
+// AppDev is the main object that represents a OpenRun app in dev mode. It is created when the app is loaded with is_dev true
 // and handles the styling and js library related functionalities. Access to this is synced through the initMutex in App.
 // The reload method in App is the main access point to this object
 type AppDev struct {
@@ -181,9 +181,9 @@ func (a *AppDev) GenerateHTML() error {
 		}
 	}
 
-	claceGenData, err := a.sourceFS.ReadFile(apptype.CLACE_GEN_FILE)
-	if err != nil || !bytes.Equal(claceGenData, claceGenEmbed) {
-		if err := a.sourceFS.Write(apptype.CLACE_GEN_FILE, claceGenEmbed); err != nil {
+	openrunGenData, err := a.sourceFS.ReadFile(apptype.CLACE_GEN_FILE)
+	if err != nil || !bytes.Equal(openrunGenData, openrunGenEmbed) {
+		if err := a.sourceFS.Write(apptype.CLACE_GEN_FILE, openrunGenEmbed); err != nil {
 			return err
 		}
 	}

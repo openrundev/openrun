@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/go-chi/chi"
 	"github.com/gorilla/sessions"
 	"github.com/markbates/goth"
@@ -30,7 +30,7 @@ import (
 
 const (
 	PROVIDER_NAME_DELIMITER = "_"
-	SESSION_COOKIE          = "clace_session"
+	SESSION_COOKIE          = "openrun_session"
 	AUTH_KEY                = "authenticated"
 	USER_ID_KEY             = "user"
 	USER_EMAIL_KEY          = "email"

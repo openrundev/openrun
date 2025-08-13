@@ -1,1 +1,1 @@
-app("/applytest/ctest1", "github.com/claceio/apps/system/disk_usage", git_branch=config("_branch", "main"))
+app("/applytest/ctest1", "github.com/openrundev/apps/system/disk_usage", git_branch=config("_branch", "main"))

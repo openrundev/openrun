@@ -1,17 +1,17 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
     PATH: ${PATH}
 tests:
   apply_git0010: ## create all apps
-    command: ../clace apply ./apply_files/apply_git.ace all
+    command: ../openrun apply ./apply_files/apply_git.ace all
     stdout: "3 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   apply_git0020:
-    command: ../clace apply --approve --promote --reload=matched ./apply_files/apply_git.ace all
+    command: ../openrun apply --approve --promote --reload=matched ./apply_files/apply_git.ace all
     stdout: "0 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 3 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   apply_git0021:
-    command: ../clace apply --approve --promote --reload=matched --force-reload ./apply_files/apply_git.ace all
+    command: ../openrun apply --approve --promote --reload=matched --force-reload ./apply_files/apply_git.ace all
     stdout: "0 app(s) created, 0 app(s) updated, 6 app(s) reloaded, 0 app(s) skipped, 3 app(s) approved, 3 app(s) promoted."
   apply_git0030: # check curl after approval
     command: curl -su "admin:qwerty" localhost:25222/applytest/test1/
@@ -24,37 +24,37 @@ tests:
     stdout: "List Files"
 
   apply_git0050: ## check auth error
-    command: ../clace apply ./apply_files/apply_git2.ace /applytest/test1
+    command: ../openrun apply ./apply_files/apply_git2.ace /applytest/test1
     stderr: "app /applytest/test1 authentication changed, cannot apply changes"
     exit-code: 1
   apply_git0051: ## check git auth error
-    command: ../clace apply ./apply_files/apply_git2.ace /applytest/test2
+    command: ../openrun apply ./apply_files/apply_git2.ace /applytest/test2
     stderr: "app /applytest/test2 git auth changed, cannot apply changes"
     exit-code: 1
   apply_git0052: ## check spec update
-    command: ../clace apply --approve ./apply_files/apply_git2.ace /applytest/test3
+    command: ../openrun apply --approve ./apply_files/apply_git2.ace /applytest/test3
     stdout: "0 app(s) created, 1 app(s) updated, 0 app(s) reloaded, 1 app(s) skipped, 0 app(s) approved, 0 app(s) promoted"
   apply_git0053: ## check spec update
-    command: ../clace apply --approve --force-reload ./apply_files/apply_git2.ace /applytest/test3
+    command: ../openrun apply --approve --force-reload ./apply_files/apply_git2.ace /applytest/test3
     stdout: "0 app(s) created, 1 app(s) updated, 1 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted"
   apply_git0054: ## check git apply
-    command: ../clace apply github.com/claceio/clace/tests/apply_files/apply_git.ace /applytest/test2
+    command: ../openrun apply github.com/openrundev/openrun/tests/apply_files/apply_git.ace /applytest/test2
     stdout: "0 app(s) created, 0 app(s) updated"
   apply_git0055: ## check git apply
-    command: ../clace apply github.com/claceio/clace/tests/apply_files/apply_invalid.ace /applytest/test2
+    command: ../openrun apply github.com/openrundev/openrun/tests/apply_files/apply_invalid.ace /applytest/test2
     stderr: "no matching files found in"
     exit-code: 1
 
   apply_git0060: ## create apps without branch
-    command: ../clace apply github.com/claceio/clace/tests/apply_files/apply_git_config.ace
+    command: ../openrun apply github.com/openrundev/openrun/tests/apply_files/apply_git_config.ace
     stdout: "1 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   apply_git0061: ## create apps with branch
-    command: ../clace apply --branch main github.com/claceio/clace/tests/apply_files/apply_git_config.ace
+    command: ../openrun apply --branch main github.com/openrundev/openrun/tests/apply_files/apply_git_config.ace
     stdout: "0 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 1 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   apply_git0062: ## create apps with branch which is invalid for app
-    command: ../clace apply --branch test github.com/claceio/clace/tests/apply_files/apply_git_config.ace
+    command: ../openrun apply --branch test github.com/openrundev/openrun/tests/apply_files/apply_git_config.ace
     stderr: "error checking out branch test"
     exit-code: 1
   apply_git0063: ## create apps without git
-    command: ../clace apply ./apply_files/apply_git_config.ace
+    command: ../openrun apply ./apply_files/apply_git_config.ace
     stdout: "0 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 1 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/claceio/clace/internal/passwd"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/passwd"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
@@ -70,7 +70,7 @@ func generatePassword(cCtx *cli.Context) error {
 		return cli.Exit(err, 1)
 	}
 
-	fmt.Printf("# Auto generated password hash, add to clace.toml\n")
+	fmt.Printf("# Auto generated password hash, add to openrun.toml\n")
 	fmt.Printf("[security]\n")
 	fmt.Printf("admin_password_bcrypt = \"%s\"\n", bcryptPassword)
 	return nil
@@ -118,6 +118,6 @@ func printVersion(cCtx *cli.Context) error {
 	if gitVersion == "" {
 		version = "dev"
 	}
-	fmt.Printf("Clace version %s build %s\n", version, gitCommit)
+	fmt.Printf("OpenRun version %s build %s\n", version, gitCommit)
 	return nil
 }

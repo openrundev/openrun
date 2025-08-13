@@ -10,15 +10,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/claceio/clace/internal/app"
-	"github.com/claceio/clace/internal/plugin"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 )
 
-func initClacePlugin(server *Server) {
-	c := &clacePlugin{}
+func initOpenRunPlugin(server *Server) {
+	c := &openrunPlugin{}
 	pluginFuncs := []plugin.PluginFunc{
 		app.CreatePluginApiName(c.ListApps, app.READ, "list_apps"),
 		app.CreatePluginApiName(c.ListAllApps, app.READ, "list_all_apps"),
@@ -26,18 +26,18 @@ func initClacePlugin(server *Server) {
 		app.CreatePluginApiName(c.ListOperations, app.READ, "list_operations"),
 	}
 
-	newClacePlugin := func(pluginContext *types.PluginContext) (any, error) {
-		return &clacePlugin{server: server}, nil
+	newOpenRunPlugin := func(pluginContext *types.PluginContext) (any, error) {
+		return &openrunPlugin{server: server}, nil
 	}
 
-	app.RegisterPlugin("clace", newClacePlugin, pluginFuncs)
+	app.RegisterPlugin("openrun", newOpenRunPlugin, pluginFuncs)
 }
 
-type clacePlugin struct {
+type openrunPlugin struct {
 	server *Server
 }
 
-func (c *clacePlugin) verifyHasAccess(userId string, appAuth types.AppAuthnType) bool {
+func (c *openrunPlugin) verifyHasAccess(userId string, appAuth types.AppAuthnType) bool {
 	if appAuth == types.AppAuthnDefault {
 		appAuth = types.AppAuthnType(c.server.config.Security.AppDefaultAuthType)
 	}
@@ -71,15 +71,15 @@ func getAppUrl(app types.AppInfo, server *Server) string {
 	}
 }
 
-func (c *clacePlugin) ListAllApps(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func (c *openrunPlugin) ListAllApps(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	return c.listAppsImpl(thread, builtin, args, kwargs, false, "list_all_apps")
 }
 
-func (c *clacePlugin) ListApps(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func (c *openrunPlugin) ListApps(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	return c.listAppsImpl(thread, builtin, args, kwargs, true, "list_apps")
 }
 
-func (c *clacePlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple, permCheck bool, apiName string) (starlark.Value, error) {
+func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple, permCheck bool, apiName string) (starlark.Value, error) {
 	var query, path starlark.String
 	var include_internal starlark.Bool
 	if err := starlark.UnpackArgs(apiName, args, kwargs, "query?", &query, "path?", &path, "include_internal?", &include_internal); err != nil {
@@ -247,7 +247,7 @@ func getSourceUrl(sourceUrl, branch string) string {
 	return fmt.Sprintf("https://github.com/%s/%s/tree/%s/%s", splitPath[0], repo, branch, folder)
 }
 
-func (c *clacePlugin) ListAuditEvents(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var appGlob, userId, eventType, operation, target, status, rid, detail starlark.String
 	var startDate, endDate, beforeTimestamp starlark.String
 	limit := starlark.MakeInt(50)
@@ -419,7 +419,7 @@ func (c *clacePlugin) ListAuditEvents(thread *starlark.Thread, builtin *starlark
 	return &ret, nil
 }
 
-func (c *clacePlugin) ListOperations(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func (c *openrunPlugin) ListOperations(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	if err := starlark.UnpackArgs("list_operations", args, kwargs); err != nil {
 		return nil, err
 	}

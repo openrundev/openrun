@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/claceio/clace/internal/testutil"
+	"github.com/openrundev/openrun/internal/testutil"
 )
 
 func TestParseGithub(t *testing.T) {

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/claceio/clace/internal/plugin"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"golang.org/x/sync/errgroup"
 )

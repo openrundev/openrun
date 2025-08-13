@@ -10,8 +10,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -45,7 +45,7 @@ func versionListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
     <app_path> is a required first argument. The optional domain and path are separated by a ":". This is the app for which versions are listed.
 
 	Examples:
-		clace version list example.com:/myapp`,
+		openrun version list example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
 				return fmt.Errorf("requires one argument: <appPath>")
@@ -56,7 +56,7 @@ func versionListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			values.Add("appPath", cCtx.Args().First())
 
 			var response types.AppVersionListResponse
-			err := client.Get("/_clace/version", values, &response)
+			err := client.Get("/_openrun/version", values, &response)
 			if err != nil {
 				return err
 			}
@@ -133,7 +133,7 @@ func versionFilesCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 	<version> is an optional second argument. This is the version of the app for which files are listed. Lists current version by default.
 
 	Examples:
-		clace version files example.com:/myapp`,
+		openrun version files example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() == 0 {
 				return fmt.Errorf("requires argument: <appPath> [<version>]")
@@ -147,7 +147,7 @@ func versionFilesCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			}
 
 			var response types.AppVersionFilesResponse
-			err := client.Get("/_clace/version/files", values, &response)
+			err := client.Get("/_openrun/version/files", values, &response)
 			if err != nil {
 				return err
 			}
@@ -211,9 +211,9 @@ func versionSwitchCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <app_path> is a required second argument. The optional domain and path are separated by a ":". This is the app for which versions are listed.
 
 	Examples:
-		clace version switch next example.com:/myapp
-		clace version switch 123 /myapp_cl_stage
-		clace version switch previous /test`,
+		openrun version switch next example.com:/myapp
+		openrun version switch 123 /myapp_cl_stage
+		openrun version switch previous /test`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
@@ -227,7 +227,7 @@ func versionSwitchCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			var response types.AppVersionSwitchResponse
-			err := client.Post("/_clace/version", values, nil, &response)
+			err := client.Post("/_openrun/version", values, nil, &response)
 			if err != nil {
 				return err
 			}
@@ -259,8 +259,8 @@ func versionRevertCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <app_path> is a required first argument. The optional domain and path are separated by a ":". This is the app for which versions are listed.
 
 	Examples:
-		clace version revert example.com:/myapp
-		clace version revert /myapp_cl_stage`,
+		openrun version revert example.com:/myapp
+		openrun version revert /myapp_cl_stage`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -274,7 +274,7 @@ func versionRevertCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			var response types.AppVersionSwitchResponse
-			err := client.Post("/_clace/version", values, nil, &response)
+			err := client.Post("/_openrun/version", values, nil, &response)
 			if err != nil {
 				return err
 			}

@@ -12,13 +12,13 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/claceio/clace/internal/app"
-	"github.com/claceio/clace/internal/app/appfs"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 
-	_ "github.com/claceio/clace/internal/app/store" // Register db plugin
-	_ "github.com/claceio/clace/plugins"            // Register builtin plugins
+	_ "github.com/openrundev/openrun/internal/app/store" // Register db plugin
+	_ "github.com/openrundev/openrun/plugins"            // Register builtin plugins
 )
 
 func CreateDevModeTestApp(logger *types.Logger, fileData map[string]string) (*app.App, *appfs.WorkFs, error) {
@@ -219,7 +219,7 @@ func (f *TestReadFS) Glob(pattern string) ([]string, error) {
 }
 
 func (f *TestReadFS) ParseFS(funcMap template.FuncMap, patterns ...string) (*template.Template, error) {
-	return template.New("clacetestapp").Funcs(funcMap).ParseFS(f, patterns...)
+	return template.New("openruntestapp").Funcs(funcMap).ParseFS(f, patterns...)
 }
 
 func (f *TestReadFS) Stat(name string) (fs.FileInfo, error) {

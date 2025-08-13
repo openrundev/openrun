@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -35,7 +35,7 @@ To prevent shell expansion for *, placing the path in quotes is recommended.
 func initAppCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	return &cli.Command{
 		Name:  "app",
-		Usage: "Manage Clace apps",
+		Usage: "Manage OpenRun apps",
 		Subcommands: []*cli.Command{
 			appCreateCommand(commonFlags, clientConfig),
 			appListCommand(commonFlags, clientConfig),
@@ -112,21 +112,21 @@ func appCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		ArgsUsage: "<app_source_url> <app_path>",
 		UsageText: `args: <app_source_url> <app_path>
 
-<app_source_url> is required first argument. The source url can be a git url or a local disk path on the Clace server. If no source is required, use "-" as the
- source url. For local path, the path can be absolute or relative to the Clace server home directory CL_HOME. If using a non public git repo, the git_auth flag must be
- specified, which points to the git key as configured in the Clace server config file.
+<app_source_url> is required first argument. The source url can be a git url or a local disk path on the OpenRun server. If no source is required, use "-" as the
+ source url. For local path, the path can be absolute or relative to the OpenRun server home directory OPENRUN_HOME. If using a non public git repo, the git_auth flag must be
+ specified, which points to the git key as configured in the OpenRun server config file.
 
 <app_path> is a required second argument. The optional domain and path are separated by a ":". If no domain is specified, the app is created for the default domain.
 
 Examples:
-  Create app from github source: clace app create --approve github.com/claceio/clace/examples/memory_usage/ /memory_usage
-  Create app from local disk: clace app create --approve $HOME/clace_source/clace/examples/memory_usage/ /memory_usage
-  Create app for development (source has to be disk): clace app create --approve --dev $HOME/clace_source/clace/examples/memory_usage/ /memory_usage
-  Create app from a git commit: clace app create --approve --commit 1234567890  github.com/claceio/clace/examples/memory_usage/ /memory_usage
-  Create app from a git branch: clace app create --approve --branch main github.com/claceio/clace/examples/memory_usage/ /memory_usage
-  Create app using git url: clace app create --approve git@github.com:claceio/clace.git/examples/disk_usage /disk_usage
-  Create app using git url, with git private key auth: clace app create --approve --git-auth mykey git@github.com:claceio/privaterepo.git/examples/disk_usage /disk_usage
-  Create app for specified domain, no auth : clace app create --approve --auth=none github.com/claceio/clace/examples/memory_usage/ clace.example.com:/`,
+  Create app from github source: openrun app create --approve github.com/openrundev/openrun/examples/memory_usage/ /memory_usage
+  Create app from local disk: openrun app create --approve $HOME/openrun_source/openrun/examples/memory_usage/ /memory_usage
+  Create app for development (source has to be disk): openrun app create --approve --dev $HOME/openrun_source/openrun/examples/memory_usage/ /memory_usage
+  Create app from a git commit: openrun app create --approve --commit 1234567890  github.com/openrundev/openrun/examples/memory_usage/ /memory_usage
+  Create app from a git branch: openrun app create --approve --branch main github.com/openrundev/openrun/examples/memory_usage/ /memory_usage
+  Create app using git url: openrun app create --approve git@github.com:openrundev/openrun.git/examples/disk_usage /disk_usage
+  Create app using git url, with git private key auth: openrun app create --approve --git-auth mykey git@github.com:openrundev/privaterepo.git/examples/disk_usage /disk_usage
+  Create app for specified domain, no auth : openrun app create --approve --auth=none github.com/openrundev/openrun/examples/memory_usage/ openrun.example.com:/`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
 				return fmt.Errorf("require two arguments: <app_source_url> <app_path>")
@@ -206,7 +206,7 @@ Examples:
 			}
 			var createResult types.AppCreateResponse
 			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
-			err = client.Post("/_clace/app", values, body, &createResult)
+			err = client.Post("/_openrun/app", values, body, &createResult)
 			if err != nil {
 				return err
 			}
@@ -261,13 +261,13 @@ func appListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 ` + PATH_SPEC_HELP +
 			`
 Examples:
-  List all apps, across domains: clace app list
-  List apps at the lop level with no domain specified: clace app list "*"
-  List all apps in the domain clace.example.com: clace app list "clace.example.com:**"
-  List all apps with no domain specified: clace app list "**"
-  List all apps with no domain, under the /utils folder: clace app list "/utils/**"
-  List all apps with no domain, including staging apps, under the /utils folder: clace app list --internal "/utils/**"
-  List apps at the lop level with no domain specified, with jsonl format: clace app list --format jsonl "*"`,
+  List all apps, across domains: openrun app list
+  List apps at the lop level with no domain specified: openrun app list "*"
+  List all apps in the domain openrun.example.com: openrun app list "openrun.example.com:**"
+  List all apps with no domain specified: openrun app list "**"
+  List all apps with no domain, under the /utils folder: openrun app list "/utils/**"
+  List all apps with no domain, including staging apps, under the /utils folder: openrun app list --internal "/utils/**"
+  List apps at the lop level with no domain specified, with jsonl format: openrun app list --format jsonl "*"`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() > 1 {
 				return fmt.Errorf("only one argument expected: <appPathGlob>")
@@ -280,7 +280,7 @@ Examples:
 
 			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
 			var appListResponse types.AppListResponse
-			err := client.Get("/_clace/apps", values, &appListResponse)
+			err := client.Get("/_openrun/apps", values, &appListResponse)
 			if err != nil {
 				return err
 			}
@@ -426,8 +426,8 @@ func appDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 <appPathGlob> is a required argument. ` + PATH_SPEC_HELP + `
 
 Examples:
-  Delete all apps, across domains, in dry-run mode: clace app delete --dry-run all
-  Delete apps in the example.com domain: clace app delete "example.com:**"`,
+  Delete all apps, across domains, in dry-run mode: openrun app delete --dry-run all
+  Delete apps in the example.com domain: openrun app delete "example.com:**"`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -440,7 +440,7 @@ Examples:
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			var deleteResult types.AppDeleteResponse
-			err := client.Delete("/_clace/app", values, &deleteResult)
+			err := client.Delete("/_openrun/app", values, &deleteResult)
 			if err != nil {
 				return err
 			}
@@ -476,8 +476,8 @@ func appApproveCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 	<appPathGlob> is a required argument. ` + PATH_SPEC_HELP + `
 
 	Examples:
-	  Approve all apps, across domains: clace app approve all
-	  Approve apps in the example.com domain: clace app approve "example.com:**"
+	  Approve all apps, across domains: openrun app approve all
+	  Approve apps in the example.com domain: openrun app approve "example.com:**"
 		`,
 
 		Action: func(cCtx *cli.Context) error {
@@ -492,7 +492,7 @@ func appApproveCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			values.Add(PROMOTE_ARG, strconv.FormatBool(cCtx.Bool(PROMOTE_FLAG)))
 
 			var approveResponse types.AppApproveResponse
-			err := client.Post("/_clace/approve", values, nil, &approveResponse)
+			err := client.Post("/_openrun/approve", values, nil, &approveResponse)
 			if err != nil {
 				return err
 			}
@@ -558,12 +558,12 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 	the stage app is reloaded but not promoted. If --approve and --promote are both specified, the stage app is promoted to prod after approval.
 
 	Examples:
-	  Reload all apps, across domains: clace app reload all
-	  Reload apps in the example.com domain: clace app reload "example.com:**"
-	  Reload and promote apps in the example.com domain: clace app reload --promote "example.com:**"
-	  Reload, approve and promote apps in the example.com domain: clace app reload --approve --promote "example.com:**"
-	  Reload all apps from main branch: clace app reload --branch main all
-	  Reload an app from particular commit: clace app reload --commit 1c119e7c5845e19845dd1d794268b350ced5b71b /myapp1`,
+	  Reload all apps, across domains: openrun app reload all
+	  Reload apps in the example.com domain: openrun app reload "example.com:**"
+	  Reload and promote apps in the example.com domain: openrun app reload --promote "example.com:**"
+	  Reload, approve and promote apps in the example.com domain: openrun app reload --approve --promote "example.com:**"
+	  Reload all apps from main branch: openrun app reload --branch main all
+	  Reload an app from particular commit: openrun app reload --commit 1c119e7c5845e19845dd1d794268b350ced5b71b /myapp1`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -582,7 +582,7 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			var reloadResponse types.AppReloadResponse
-			err := client.Post("/_clace/reload", values, nil, &reloadResponse)
+			err := client.Post("/_openrun/reload", values, nil, &reloadResponse)
 			if err != nil {
 				return err
 			}
@@ -661,8 +661,8 @@ func appPromoteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 <appPathGlob> is a required argument. ` + PATH_SPEC_HELP + `
 
 	Examples:
-	  Promote all apps, across domains: clace app promote all
-	  Promote apps in the example.com domain: clace app promote "example.com:**"`,
+	  Promote all apps, across domains: openrun app promote all
+	  Promote apps in the example.com domain: openrun app promote "example.com:**"`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -675,7 +675,7 @@ func appPromoteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			var promoteResponse types.AppPromoteResponse
-			err := client.Post("/_clace/promote", values, nil, &promoteResponse)
+			err := client.Post("/_openrun/promote", values, nil, &promoteResponse)
 			if err != nil {
 				return err
 			}

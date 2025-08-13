@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -17,7 +17,7 @@ import (
 func initPreviewCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	return &cli.Command{
 		Name:  "preview",
-		Usage: "Manage Clace preview apps",
+		Usage: "Manage OpenRun preview apps",
 		Subcommands: []*cli.Command{
 			previewCreateCommand(commonFlags, clientConfig),
 		},
@@ -42,8 +42,8 @@ func previewCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <app_path> is the required second argument. The optional domain and path are separated by a ":". This is the app for which the preview app is to be created.
 
 	Examples:
-	  Preview and approve: clace preview create --approve 86c24c88ceda21589801895e9f871617a716ad47 /myapp
-	  Preview app in dryrun mode: clace preview create --dry-run 86c24c88ceda21589801895e9f871617a716ad47 example.com:/myapp`,
+	  Preview and approve: openrun preview create --approve 86c24c88ceda21589801895e9f871617a716ad47 /myapp
+	  Preview app in dryrun mode: openrun preview create --dry-run 86c24c88ceda21589801895e9f871617a716ad47 example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
 				return fmt.Errorf("requires two arguments: <gitCommitId> <appPath>")
@@ -57,7 +57,7 @@ func previewCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			var previewResponse types.AppPreviewResponse
-			err := client.Post("/_clace/preview", values, nil, &previewResponse)
+			err := client.Post("/_openrun/preview", values, nil, &previewResponse)
 			if err != nil {
 				return err
 			}

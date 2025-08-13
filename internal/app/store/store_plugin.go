@@ -8,11 +8,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/claceio/clace/internal/app"
-	"github.com/claceio/clace/internal/app/apptype"
-	"github.com/claceio/clace/internal/app/starlark_type"
-	"github.com/claceio/clace/internal/plugin"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 )
 

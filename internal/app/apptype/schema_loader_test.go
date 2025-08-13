@@ -6,8 +6,8 @@ package apptype
 import (
 	"testing"
 
-	"github.com/claceio/clace/internal/app/starlark_type"
-	"github.com/claceio/clace/internal/testutil"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/testutil"
 )
 
 func TestValidateStoreInfo(t *testing.T) {

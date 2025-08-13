@@ -1,6 +1,6 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     CL_INFOCLACE_SSH: ${CL_INFOCLACE_SSH}
     TEST_PAT: ${TEST_PAT}
     GOCOVERDIR: ${GOCOVERDIR}/../client
@@ -9,27 +9,27 @@ tests:
     command: cp -r ../examples/disk_usage .
 
   github0020: # Create app, git url, no auth fails
-    command: ../clace app create --approve git@github.com:claceio/clace.git/examples/disk_usage /ghauth1
+    command: ../openrun app create --approve git@github.com:openrundev/openrun.git/examples/disk_usage /ghauth1
     stderr: "SSH_AUTH_SOCK not-specified"
     exit-code: 1
   github0030: # Create app, git url, with auth
-    command: ../clace app create --git-auth infoclace --approve git@github.com:claceio/clace.git/examples/disk_usage /ghauth2
+    command: ../openrun app create --git-auth infoopenrun --approve git@github.com:openrundev/openrun.git/examples/disk_usage /ghauth2
     stderr: ""
     exit-code: 0
   github0031: # Create app, http url, with auth
-    command: ../clace app create --git-auth infoclace --approve github.com/claceio/clace/examples/disk_usage /ghauth22
+    command: ../openrun app create --git-auth infoopenrun --approve github.com/openrundev/openrun/examples/disk_usage /ghauth22
     stderr: ""
     exit-code: 0
   github0040: # Create app, git url with commit id, with auth
-    command: ../clace app create --git-auth infoclace --approve --commit 6574d08b47abb71636665fbcbad51c2f7e8cab71 git@github.com:claceio/clace.git/examples/disk_usage /ghauth3
+    command: ../openrun app create --git-auth infoopenrun --approve --commit 6574d08b47abb71636665fbcbad51c2f7e8cab71 git@github.com:openrundev/openrun.git/examples/disk_usage /ghauth3
     stderr: ""
     exit-code: 0
   github0050: # Create app, git url with commit id, with invalid auth
-    command: ../clace app create --git-auth invalid --approve --commit 6574d08b47abb71636665fbcbad51c2f7e8cab71 git@github.com:claceio/clace.git/examples/disk_usage /ghauth4
+    command: ../openrun app create --git-auth invalid --approve --commit 6574d08b47abb71636665fbcbad51c2f7e8cab71 git@github.com:openrundev/openrun.git/examples/disk_usage /ghauth4
     stderr: "git auth entry invalid not found in server config"
     exit-code: 1
   github0100: # Create app, http url, with PAT auth
-    command: ../clace app create --git-auth testpat --approve github.com/akclace/test/disk_usage /ghauthpat1
+    command: ../openrun app create --git-auth testpat --approve github.com/akopenrun/test/disk_usage /ghauthpat1
     exit-code: 0
 
   github0900: # cleanup

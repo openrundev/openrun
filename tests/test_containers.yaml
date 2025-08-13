@@ -1,22 +1,22 @@
 config:
   env:
-    CL_CONFIG_FILE: clace.toml
+    CL_CONFIG_FILE: openrun.toml
     HTTP_PORT: ${HTTP_PORT}
     GOCOVERDIR: ${GOCOVERDIR}/../client
 tests:
   container0010: # setup flask app
     command: rm -rf ./flaskapp && mkdir flaskapp && cp flask.py flaskapp/app.py
   container0020: # setup flask dev app
-    command: ../clace app create --dev --spec python-flask --approve ./flaskapp /cont_flaskdev
+    command: ../openrun app create --dev --spec python-flask --approve ./flaskapp /cont_flaskdev
   container0030: # setup flask prod app
-    command: ../clace app create --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpu-shares=1000 --approve ./flaskapp /cont_flaskprod
+    command: ../openrun app create --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpu-shares=1000 --approve ./flaskapp /cont_flaskprod
   container0031: # invalid python version carg fails
-    command: ../clace app create --spec python-flask --cvol /tmp:/atmp --cvol /testvol --container-arg PYTHON_VERSION=4invalid-slim --approve ./flaskapp /cont_flaskdev2
+    command: ../openrun app create --spec python-flask --cvol /tmp:/atmp --cvol /testvol --container-arg PYTHON_VERSION=4invalid-slim --approve ./flaskapp /cont_flaskdev2
   container0032: # check curl
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskdev2
     stdout: 4invalid
   container0033: # invalid container run option fails
-    command: ../clace app create --spec python-flask --container-option invalid=abc --approve ./flaskapp /cont_flaskdev3
+    command: ../openrun app create --spec python-flask --container-option invalid=abc --approve ./flaskapp /cont_flaskdev3
   container0034: # check curl
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskdev3
     stdout: invalid
@@ -32,7 +32,7 @@ tests:
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskprod_cl_stage
     stdout: "hello"
   container0080: # do reload
-    command: ../clace app reload /cont_flaskprod
+    command: ../openrun app reload /cont_flaskprod
   container0090: # stage is updated
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskprod_cl_stage
     stdout: "updated"
@@ -40,13 +40,13 @@ tests:
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskprod
     stdout: "hello"
   container0110: # do promote
-    command: ../clace app promote /cont_flaskprod
+    command: ../openrun app promote /cont_flaskprod
   container0120: # prod is updated
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskprod
     stdout: "updated"
 
   container0200: # setup streamlit app
-    command: ../clace app create --spec python-streamlit --branch master --approve github.com/streamlit/streamlit-example /cont_streamlit
+    command: ../openrun app create --spec python-streamlit --branch master --approve github.com/streamlit/streamlit-example /cont_streamlit
   container0210: # check stage
     command: curl -sS localhost:${HTTP_PORT}/cont_streamlit_cl_stage/_stcore/health
     stdout: ok
@@ -55,7 +55,7 @@ tests:
     stdout: ok
 
   container0300: # setup proxy
-    command: ../clace app create --spec proxy --approve -param url=https://www.google.com - /cont_proxy
+    command: ../openrun app create --spec proxy --approve -param url=https://www.google.com - /cont_proxy
   container0310: # check stage
     command: curl -sS localhost:${HTTP_PORT}/cont_proxy_cl_stage
     stdout: doctype
@@ -64,7 +64,7 @@ tests:
     stdout: doctype
 
   container0400: # setup nginx image
-    command: ../clace app create --spec image --approve --param image=nginx --param port=80 - /cont_image_nginx
+    command: ../openrun app create --spec image --approve --param image=nginx --param port=80 - /cont_image_nginx
   container0410: # check stage
     command: curl -sS localhost:${HTTP_PORT}/cont_image_nginx_cl_stage
     stdout: Welcome to nginx
@@ -72,13 +72,13 @@ tests:
     command: curl -sS localhost:${HTTP_PORT}/cont_image_nginx
     stdout: Welcome to nginx
   container0430: # error check
-    command: ../clace app create --spec image --approve --param image=nginx - /cont_image_error
+    command: ../openrun app create --spec image --approve --param image=nginx - /cont_image_error
     stderr: param port is a required param, a value has to be provided
     exit-code: 1
 
   # Test http plugin call without proxy
   container0500: # setup app
-    command: ../clace app create --spec python-flask --approve --param PASSWD=xyz ./flaskhttp /cont_fh
+    command: ../openrun app create --spec python-flask --approve --param PASSWD=xyz ./flaskhttp /cont_fh
   container0510: # check curl
     command: curl -sS localhost:${HTTP_PORT}/cont_fh
     stdout: '"v1":"hello"'
@@ -88,7 +88,7 @@ tests:
 
   # Test go spec
   container0600: # setup app
-    command: ../clace app create --approve --spec go --param port=8080 --param APP_ARGS="-addr 0.0.0.0:8080" --branch master github.com/golang/example/helloserver /cont_goapp
+    command: ../openrun app create --approve --spec go --param port=8080 --param APP_ARGS="-addr 0.0.0.0:8080" --branch master github.com/golang/example/helloserver /cont_goapp
   container0610: # check curl
     command: curl -sS localhost:${HTTP_PORT}/cont_goapp
     stdout: "Hello, Gopher!"

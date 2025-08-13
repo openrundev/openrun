@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 	"golang.org/x/crypto/bcrypt"
 )
 

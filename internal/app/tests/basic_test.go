@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/claceio/clace/internal/app/apptype"
-	"github.com/claceio/clace/internal/testutil"
+	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/testutil"
 )
 
 func TestAppLoadError(t *testing.T) {
@@ -259,7 +259,7 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
 
 def handler(req):
 	return {"key": "myvalue"}`,
-		"index.go.html": `Template contents {{template "clace_gen.go.html"}}.`,
+		"index.go.html": `Template contents {{template "openrun_gen.go.html"}}.`,
 	}
 	a, _, err := CreateDevModeTestApp(logger, fileData)
 	if err != nil {
@@ -290,7 +290,7 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.api("/")])
 
 def handler(req):
 	return {"key": "myvalue"}`,
-		"index.go.html": `Template contents {{template "clace_gen.go.html"}}.`,
+		"index.go.html": `Template contents {{template "openrun_gen.go.html"}}.`,
 	}
 	a, _, err := CreateDevModeTestApp(logger, fileData)
 	if err != nil {
@@ -322,7 +322,7 @@ def handler(req):
 	a.ServeHTTP(response, request)
 
 	testutil.AssertEqualsInt(t, "code", 500, response.Code)
-	testutil.AssertStringContains(t, response.Body.String(), "no such template \"clace_body\"")
+	testutil.AssertStringContains(t, response.Body.String(), "no such template \"openrun_body\"")
 }
 
 func TestNoHandler(t *testing.T) {
@@ -393,7 +393,7 @@ app = ace.app("testApp", routes = [ace.html("/")])
 
 def handler(req):
 	return {"key": "myvalue"}`,
-		"app.go.html": `{{block "clace_body" .}}ABC{{end}}`,
+		"app.go.html": `{{block "openrun_body" .}}ABC{{end}}`,
 	}
 
 	a, _, err := CreateDevModeTestApp(logger, fileData)
@@ -416,10 +416,10 @@ def handler(req):
 		<script src="/test/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js"></script>
 		<script src="/test/static/gen/lib/sse-83eca6fa0611fe2b0bf1700b424b88b5eced38ef448ef9760a2ea08fbc875611.js"></script>
 		<div id="cl_reload_listener" hx-ext="sse"
-		sse-connect="/test/_clace_app/sse" sse-swap="clace_reload"
-		hx-trigger="sse:clace_reload"></div>
+		sse-connect="/test/_openrun_app/sse" sse-swap="openrun_reload"
+		hx-trigger="sse:openrun_reload"></div>
 	<script>
-		document .getElementById("cl_reload_listener") .addEventListener("sse:clace_reload",
+		document .getElementById("cl_reload_listener") .addEventListener("sse:openrun_reload",
 			function (event) {
 				location.reload();
 			});
@@ -427,7 +427,7 @@ def handler(req):
 	</head>
 
 	<body>
-	  <h1>Clace: testApp</h1>
+	  <h1>OpenRun: testApp</h1>
 	  ABC
 	</body>
 	</html>`

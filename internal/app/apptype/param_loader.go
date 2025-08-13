@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/claceio/clace/internal/app/starlark_type"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )

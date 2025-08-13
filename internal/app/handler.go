@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/claceio/clace/internal/app/action"
-	"github.com/claceio/clace/internal/app/apptype"
-	"github.com/claceio/clace/internal/app/starlark_type"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/action"
+	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/go-chi/chi"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
@@ -31,7 +31,7 @@ var (
 	CONTENT_TYPE_JSON = []string{"application/json"}
 	CONTENT_TYPE_TEXT = []string{"text/plain"}
 
-	SERVER_NAME       = []string{"Clace"}
+	SERVER_NAME       = []string{"OpenRun"}
 	VARY_HEADER_VALUE = []string{"HX-Request"}
 )
 

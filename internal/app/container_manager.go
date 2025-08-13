@@ -22,9 +22,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/claceio/clace/internal/app/appfs"
-	"github.com/claceio/clace/internal/app/container"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/app/container"
+	"github.com/openrundev/openrun/internal/types"
 
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
 )
@@ -538,7 +538,7 @@ func (m *ContainerManager) renderTemplate(srcFilename, targetFilename string, da
 }
 
 // parseVolumeString parses the volume string. It returns four values
-// 1. clace prefix, if present
+// 1. openrun prefix, if present
 // 2. volume name, UNNAMED_VOLUME if unnamed, "" for bind
 // 3. the rest of the volume string
 // 4. error

@@ -1,4 +1,4 @@
-{{ block "clace_gen_import" . }}
+{{ block "openrun_gen_import" . }}
   <!-- Include the generated style file if present -->
   {{ if fileNonEmpty "gen/css/style.css" }}
     <link rel="stylesheet" href="{{ static "gen/css/style.css" }}" />
@@ -23,13 +23,13 @@
     <div
       id="cl_reload_listener"
       hx-ext="sse"
-      sse-connect="{{ .AppPath }}/_clace_app/sse"
-      sse-swap="clace_reload"
-      hx-trigger="sse:clace_reload"></div>
+      sse-connect="{{ .AppPath }}/_openrun_app/sse"
+      sse-swap="openrun_reload"
+      hx-trigger="sse:openrun_reload"></div>
     <script>
       document
         .getElementById("cl_reload_listener")
-        .addEventListener("sse:clace_reload", function (event) {
+        .addEventListener("sse:openrun_reload", function (event) {
           location.reload();
         });
     </script>

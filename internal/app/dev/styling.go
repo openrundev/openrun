@@ -11,11 +11,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/claceio/clace/internal/app/action"
-	"github.com/claceio/clace/internal/app/appfs"
-	"github.com/claceio/clace/internal/app/apptype"
-	"github.com/claceio/clace/internal/system"
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/app/action"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )

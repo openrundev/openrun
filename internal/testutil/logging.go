@@ -6,7 +6,7 @@ package testutil
 import (
 	"os"
 
-	"github.com/claceio/clace/internal/types"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/rs/zerolog"
 )
 
