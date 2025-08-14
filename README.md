@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://openrun.dev/openrun.png" alt="OpenRun-logo" width="200" height="70"/>
+  <img src="https://openrun.dev/openrun.png" alt="OpenRun-logo" width="300" height="150"/>
 
   <p align="center">App deployment simplified. Open source alternative to Google Cloud Run and AWS AppRunner. Easily deploy internal tools across a team.</p>
 </p>
