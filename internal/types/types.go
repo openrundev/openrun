@@ -223,6 +223,8 @@ type SystemConfig struct {
 	AllowedEnv                []string `toml:"allowed_env"`            // List of environment variables that are allowed to be used in the node config
 	DefaultScheduleMins       int      `toml:"default_schedule_mins"`  // Default schedule time in minutes for scheduled sync
 	MaxSyncFailureCount       int      `toml:"max_sync_failure_count"` // Max failure count for sync jobs
+	MaxConcurrentBuilds       int      `toml:"max_concurrent_builds"`  // Max concurrent container builds
+	MaxBuildWaitSecs          int      `toml:"max_build_wait_secs"`    // Max wait time for a build lock
 }
 
 // GitAuth is a github auth config entry

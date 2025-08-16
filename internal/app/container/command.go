@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"container/ring"
+	"context"
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -43,6 +46,32 @@ var base32encoder = base32.StdEncoding.WithPadding(base32.NoPadding)
 func genLowerCaseId(name string) string {
 	// The container id needs to be lower case. Use base32 to encode the name so that it can be lowercased
 	return strings.ToLower(base32encoder.EncodeToString([]byte(name)))
+}
+
+var mu sync.Mutex
+var buildLockChannel chan string // channel to hold the build ids, max size is MaxConcurrentBuilds
+
+// acquireBuildLock acquires a build lock for the given build id. If the lock is not available,
+// it will wait for the lock to be available or the context to be done.
+// The lock is released when the returned function is called.
+func acquireBuildLock(ctx context.Context, config *types.SystemConfig, buildId string) (func(), error) {
+	mu.Lock()
+	if buildLockChannel == nil {
+		buildLockChannel = make(chan string, config.MaxConcurrentBuilds)
+	}
+	mu.Unlock()
+
+	timer := time.NewTimer(time.Duration(config.MaxBuildWaitSecs) * time.Second)
+	defer timer.Stop()
+
+	select {
+	case buildLockChannel <- buildId:
+		return func() { <-buildLockChannel }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return nil, context.DeadlineExceeded
+	}
 }
 
 func GenContainerName(appId types.AppId, contentHash string) ContainerName {
@@ -76,6 +105,12 @@ func (c ContainerCommand) RemoveImage(config *types.SystemConfig, name ImageName
 }
 
 func (c ContainerCommand) BuildImage(config *types.SystemConfig, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
+	releaseLock, err := acquireBuildLock(context.Background(), config, string(name))
+	if err != nil {
+		return fmt.Errorf("error acquiring build lock: %w", err)
+	}
+	defer releaseLock()
+
 	c.Debug().Msgf("Building image %s from %s with %s", name, containerFile, sourceUrl)
 	args := []string{config.ContainerCommand, "build", "-t", string(name), "-f", containerFile}
 
