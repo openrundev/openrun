@@ -38,7 +38,7 @@ OpenRun apps are deployed directly from the git repo, no build step required. Fo
 
 This repo hosts the source code for OpenRun. The source for the documentation site [openrun.dev](https://openrun.dev) is in the [docs](https://github.com/openrundev/docs) repo. App specifications, which are templates to create apps, are defined in the [appspecs](https://github.com/openrundev/appspecs) repo. Sample apps are in the [apps](https://github.com/openrundev/apps) repo.
 
-<img alt="OpenRun intro gif" src="https://openrun.dev/intro_dark_small.gif"/>
+<img alt="OpenRun intro gif" src="https://openrun.dev/demo_dark.gif"/>
 
 ## Features
 
