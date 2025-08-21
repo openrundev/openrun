@@ -81,7 +81,7 @@ For building Hypermedia based apps, OpenRun supports:
 
 The feature roadmap for OpenRun is:
 
-- Suport for deployment to Kubernetes is planned.
+- Support for deployment to Kubernetes is planned.
 
 ## Setup
 
