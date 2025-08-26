@@ -675,10 +675,13 @@ func (a *App) startWatcher() error {
 					inReload.Store(true)
 					defer inReload.Store(false)
 					_, err := a.Reload(true, false, types.DryRun(false))
+					a.reloadError = err
 					if err != nil {
 						a.Error().Err(err).Msg("Error reloading app")
+						if a.IsDev {
+							a.notifyClients() // Force clients to refresh if reload failed
+						}
 					}
-					a.reloadError = err
 					a.Trace().Msg("Reloaded app after file changes")
 					reloadEndTime.Store(time.Now().UnixMilli())
 				}()
