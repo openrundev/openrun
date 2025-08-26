@@ -21,12 +21,12 @@ import (
 	"time"
 
 	"github.com/benbjohnson/hashfs"
+	"github.com/go-chi/chi"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"github.com/go-chi/chi"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
@@ -496,7 +496,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	errorKeys := []string{}
 	for _, param := range a.params {
 		// "" error messages have to be sent to overwrite previous values in form UI
-		if !strings.HasPrefix(param.Name, OPTIONS_PREFIX) {
+		if !strings.HasPrefix(param.Name, OPTIONS_PREFIX) && !strings.HasPrefix(param.Name, OPTIONS_PREFIX_UNDERSCORE) {
 			if paramErrors[param.Name] == nil {
 				errorMsgs[param.Name] = ""
 			} else {
@@ -719,7 +719,9 @@ type ParamDef struct {
 }
 
 const (
-	OPTIONS_PREFIX = "options-"
+	OPTIONS_PREFIX            = "options-"
+	OPTIONS_PREFIX_UNDERSCORE = "options_"
+	// Both are allowed, for backward compatibility. Underscore is preferred since it is a valid starlark identifier
 )
 
 func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
@@ -729,7 +731,7 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 	options := make(map[string][]string)
 	for _, p := range a.params {
 		// params with options-x prefix are treated as select options for x
-		if strings.HasPrefix(p.Name, OPTIONS_PREFIX) {
+		if strings.HasPrefix(p.Name, OPTIONS_PREFIX) || strings.HasPrefix(p.Name, OPTIONS_PREFIX_UNDERSCORE) {
 			name := p.Name[len(OPTIONS_PREFIX):]
 			var vals []string
 			err := json.Unmarshal([]byte(a.paramValuesStr[p.Name]), &vals)
@@ -743,7 +745,7 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 
 	hasFileUpload := false
 	for _, p := range a.params {
-		if strings.HasPrefix(p.Name, OPTIONS_PREFIX) || a.hidden[p.Name] {
+		if strings.HasPrefix(p.Name, OPTIONS_PREFIX) || strings.HasPrefix(p.Name, OPTIONS_PREFIX_UNDERSCORE) || a.hidden[p.Name] {
 			continue
 		}
 
@@ -909,7 +911,7 @@ func (a *Action) handleSuggestResponse(w http.ResponseWriter, paramQS string, re
 	for _, key := range keys {
 		value := retDict[key]
 		p, ok := paramMap[key]
-		if !ok || strings.HasPrefix(key, OPTIONS_PREFIX) {
+		if !ok || strings.HasPrefix(key, OPTIONS_PREFIX) || strings.HasPrefix(key, OPTIONS_PREFIX_UNDERSCORE) {
 			a.Info().Msgf("ignoring suggest response for param: %s", key)
 			continue
 		}

@@ -20,13 +20,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi"
 	"github.com/openrundev/openrun/internal/app/action"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/dev"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/types"
-	"github.com/go-chi/chi"
 	"go.starlark.net/resolve"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
@@ -819,8 +819,8 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	permsHandler := func(p *httputil.ReverseProxy) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// If write API, check if preview/stage app is allowed access
-			isWriteReques := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete
-			if isWriteReques {
+			isWriteRequest := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete
+			if isWriteRequest {
 				if strings.HasPrefix(string(a.Id), types.ID_PREFIX_APP_PREVIEW) && !a.Settings.PreviewWriteAccess {
 					http.Error(w, "Preview app does not have access to proxy write APIs", http.StatusInternalServerError)
 					return
