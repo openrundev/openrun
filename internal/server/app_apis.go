@@ -165,11 +165,7 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 
 func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	appEntry *types.AppEntry, approve, dryRun bool, branch, commit, gitAuth string, applyInfo *types.CreateAppRequest, repoCache *RepoCache) (*types.AppCreateResponse, error) {
-	if system.IsGit(appEntry.SourceUrl) {
-		if appEntry.IsDev {
-			return nil, fmt.Errorf("cannot create dev mode app from git source. For dev mode, manually checkout the git repo and create app from the local path")
-		}
-	} else {
+	if !system.IsGit(appEntry.SourceUrl) {
 		if appEntry.SourceUrl != types.NO_SOURCE {
 			// Make sure the source path is absolute
 			var err error
@@ -258,6 +254,11 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 		return nil, fmt.Errorf("App %s audit failed: %s", workEntry.Id, err)
 	}
 
+	// Persist the source url
+	if err := s.db.UpdateSourceUrl(ctx, tx, workEntry); err != nil {
+		return nil, err
+	}
+
 	// Persist the metadata so that any git info is saved
 	if err := s.db.UpdateAppMetadata(ctx, tx, workEntry); err != nil {
 		return nil, err
@@ -293,6 +294,8 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 		HttpsUrl:       s.getAppHttpsUrl(appEntry),
 		DryRun:         dryRun,
 		ApproveResults: results,
+		OrigSourceUrl:  appEntry.Settings.OrigSourceUrl,
+		SourceUrl:      appEntry.SourceUrl,
 	}
 
 	return ret, nil
@@ -756,9 +759,20 @@ func (s *Server) loadSourceFromGit(ctx context.Context, tx types.Transaction, ap
 	gitAuth = cmp.Or(gitAuth, appEntry.Settings.GitAuthName)
 	branch = cmp.Or(branch, appEntry.Metadata.VersionMetadata.GitBranch, "main")
 
-	repo, folder, message, hash, err := repoCache.CheckoutRepo(appEntry.SourceUrl, branch, commit, gitAuth)
+	repo, folder, message, hash, err := repoCache.CheckoutRepo(appEntry.SourceUrl, branch, commit, gitAuth, appEntry.IsDev)
 	if err != nil {
 		return err
+	}
+
+	if system.IsGit(appEntry.SourceUrl) && appEntry.IsDev {
+		// Dev app from git, we need to point the app to the local checkout location
+		sourcePath := repo
+		if folder != "" {
+			sourcePath = path.Join(repo, folder)
+		}
+		// App metadata points to the local checkout location
+		appEntry.Settings.OrigSourceUrl = appEntry.SourceUrl
+		appEntry.SourceUrl = sourcePath
 	}
 
 	// Update the git info into the appEntry, the caller needs to persist it into the app metadata

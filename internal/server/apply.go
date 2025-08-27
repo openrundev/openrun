@@ -29,7 +29,7 @@ const (
 	APP = "app"
 )
 
-func (s *Server) loadApplyInfo(fileName string, data []byte, branch string) ([]*types.CreateAppRequest, error) {
+func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, dev bool) ([]*types.CreateAppRequest, error) {
 	appDefs := make([]*starlarkstruct.Struct, 0)
 
 	createAppBuiltin := func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -82,6 +82,7 @@ func (s *Server) loadApplyInfo(fileName string, data []byte, branch string) ([]*
 	}
 
 	thread.SetLocal(types.TL_BRANCH, branch)
+	thread.SetLocal(types.TL_DEV, dev)
 
 	options := syntax.FileOptions{}
 	_, err := starlark.ExecFileOptions(&options, thread, fileName, data, builtins)
@@ -203,7 +204,7 @@ func (s *Server) setupSource(applyPath, branch, commit, gitAuth string, repoCach
 	}
 
 	branch = cmp.Or(branch, "main")
-	repo, applyFile, _, _, err := repoCache.CheckoutRepo(applyPath, branch, commit, gitAuth)
+	repo, applyFile, _, _, err := repoCache.CheckoutRepo(applyPath, branch, commit, gitAuth, false)
 	if err != nil {
 		return "", "", err
 	}
@@ -218,7 +219,8 @@ func (s *Server) setupSource(applyPath, branch, commit, gitAuth string, repoCach
 }
 
 func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath string, appPathGlob string, approve, dryRun, promote bool,
-	reload types.AppReloadOption, branch, commit, gitAuth string, clobber, forceReload bool, lastRunCommitId string, repoCache *RepoCache) (*types.AppApplyResponse, []types.AppPathDomain, error) {
+	reload types.AppReloadOption, branch, commit, gitAuth string, clobber,
+	forceReload bool, lastRunCommitId string, repoCache *RepoCache, dev bool) (*types.AppApplyResponse, []types.AppPathDomain, error) {
 	var tx types.Transaction
 	var err error
 	if inputTx.Tx == nil {
@@ -289,7 +291,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 			return nil, nil, fmt.Errorf("error reading file %s: %w", f, err)
 		}
 
-		fileConfig, err := s.loadApplyInfo(f, fileBytes, branch)
+		fileConfig, err := s.loadApplyInfo(f, fileBytes, branch, dev)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -365,6 +367,9 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	for _, newApp := range newApps {
 		s.Trace().Msgf("Applying create app %s", newApp)
 		applyInfo := applyConfig[newApp]
+		if dev {
+			applyInfo.IsDev = dev // Override the dev status from the apply command cli
+		}
 		res, err := s.CreateAppTx(ctx, tx, newApp.String(), approve, dryRun, applyInfo, repoCache)
 		if err != nil {
 			return nil, nil, err

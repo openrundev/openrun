@@ -18,11 +18,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/middleware"
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"github.com/go-chi/chi"
-	"github.com/go-chi/chi/middleware"
 )
 
 const (
@@ -986,10 +986,15 @@ func (h *Handler) apply(r *http.Request) (any, error) {
 	}
 	updateOperationInContext(r, genOperationName("apply", promote, approve))
 
+	dev, err := parseBoolArg(r.URL.Query().Get("dev"), false)
+	if err != nil {
+		return nil, err
+	}
+
 	ret, _, err := h.server.Apply(r.Context(), types.Transaction{}, applyPath, appPathGlob, approve, dryRun, promote,
 		types.AppReloadOption(r.URL.Query().Get("reload")),
 		r.URL.Query().Get("branch"), r.URL.Query().Get("commit"), r.URL.Query().Get("gitAuth"),
-		clobber, forceReload, "", nil)
+		clobber, forceReload, "", nil, dev)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
 	}

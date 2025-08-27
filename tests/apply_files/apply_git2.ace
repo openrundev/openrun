@@ -1,3 +1,6 @@
-app("/applytest/test1", "github.com/openrundev/apps/system/disk_usage", auth="system")
-app("/applytest/test2", "github.com/openrundev/apps/system/memory_usage", git_auth="abc")
-app("/applytest/test3", "github.com/openrundev/apps/system/list_files", spec="python-flask")
+def path(p):
+    return "/dev/" + p if config("_dev", False) else p
+
+app(path("/applytest/test1"), "github.com/openrundev/apps/system/disk_usage", auth="system")
+app(path("/applytest/test2"), "github.com/openrundev/apps/system/memory_usage", git_auth="abc")
+app(path("/applytest/test3"), "github.com/openrundev/apps/system/list_files", spec="python-flask")

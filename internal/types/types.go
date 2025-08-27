@@ -51,6 +51,7 @@ const (
 	TL_AUDIT_DETAIL             = "TL_audit_detail"
 	TL_CONTAINER_MANAGER        = "TL_container_manager"
 	TL_BRANCH                   = "TL_branch"
+	TL_DEV                      = "TL_dev"
 )
 
 const (
@@ -412,6 +413,7 @@ type AppSettings struct {
 	StageWriteAccess   bool          `json:"stage_write_access"`
 	PreviewWriteAccess bool          `json:"preview_write_access"`
 	WebhookTokens      WebhookTokens `json:"webhook_tokens"`
+	OrigSourceUrl      string        `json:"orig_source_url"` // the original source url of the app, used for git create in dev mode
 }
 
 type WebhookTokens struct {

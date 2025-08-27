@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openrundev/openrun/internal/system"
-	"github.com/openrundev/openrun/internal/types"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgxlisten"
+	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	_ "modernc.org/sqlite"
 )
 
@@ -458,6 +458,14 @@ func (m *Metadata) GetLinkedApps(ctx context.Context, tx types.Transaction, main
 	}
 
 	return apps, nil
+}
+
+func (m *Metadata) UpdateSourceUrl(ctx context.Context, tx types.Transaction, app *types.AppEntry) error {
+	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set source_url = ? where path = ? and domain = ?`), app.SourceUrl, app.Path, app.Domain)
+	if err != nil {
+		return fmt.Errorf("error updating app source url: %w", err)
+	}
+	return nil
 }
 
 func (m *Metadata) UpdateAppMetadata(ctx context.Context, tx types.Transaction, app *types.AppEntry) error {

@@ -467,6 +467,18 @@ func CreateConfigBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) func(
 				return defaultVal, nil
 			}
 			return starlark.String(branchStr), nil
+		} else if key == "_dev" {
+			// _dev is a special input that returns the current dev status
+			dev := thread.Local(types.TL_DEV)
+			if dev == nil {
+				return defaultVal, nil
+			}
+
+			devBool, ok := dev.(bool)
+			if !ok {
+				return nil, fmt.Errorf("dev is not a boolean %v", dev)
+			}
+			return starlark.Bool(devBool), nil
 		}
 
 		localVal, ok := nodeConfig[string(key)]

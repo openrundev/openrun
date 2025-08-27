@@ -1,3 +1,6 @@
-app("/applytest/test1", "github.com/openrundev/apps/system/disk_usage")
-app("/applytest/test2", "github.com/openrundev/apps/system/memory_usage")
-app("/applytest/test3", "github.com/openrundev/apps/system/list_files")
+def path(p):
+    return "/dev/" + p if config("_dev", False) else p
+
+app(path("/applytest/test1"), "github.com/openrundev/apps/system/disk_usage")
+app(path("/applytest/test2"), "github.com/openrundev/apps/system/memory_usage")
+app(path("/applytest/test3"), "github.com/openrundev/apps/system/list_files")

@@ -108,6 +108,8 @@ type AppCreateResponse struct {
 	HttpUrl        string          `json:"http_url"`
 	HttpsUrl       string          `json:"https_url"`
 	ApproveResults []ApproveResult `json:"approve_results"`
+	OrigSourceUrl  string          `json:"orig_source_url"`
+	SourceUrl      string          `json:"source_url"`
 }
 
 type AppDeleteResponse struct {

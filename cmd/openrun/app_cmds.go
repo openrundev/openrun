@@ -229,6 +229,9 @@ func printCreateResult(cCtx *cli.Context, createResult types.AppCreateResponse) 
 	if createResult.HttpsUrl != "" {
 		fmt.Printf("HTTPS Url: %s\n", createResult.HttpsUrl)
 	}
+	if createResult.OrigSourceUrl != "" {
+		fmt.Printf("   Source: %s (created from %s)\n", createResult.SourceUrl, createResult.OrigSourceUrl)
+	}
 	approveResult := createResult.ApproveResults[0]
 	printApproveResult(approveResult)
 

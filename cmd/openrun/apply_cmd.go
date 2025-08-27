@@ -18,6 +18,7 @@ import (
 func initApplyCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+2)
 	flags = append(flags, commonFlags...)
+	flags = append(flags, newBoolFlag("dev", "d", "Create apps in development mode", false))
 	flags = append(flags, newStringFlag("branch", "b", "The branch to checkout if using git source", "main"))
 	flags = append(flags, newStringFlag("commit", "c", "The commit SHA to checkout if using git source. This takes precedence over branch", ""))
 	flags = append(flags, newStringFlag("git-auth", "g", "The name of the git_auth entry in server config to use", ""))
@@ -74,6 +75,7 @@ Examples:
 			values.Add("promote", strconv.FormatBool(cCtx.Bool("promote")))
 			values.Add("clobber", strconv.FormatBool(cCtx.Bool("clobber")))
 			values.Add("forceReload", strconv.FormatBool(cCtx.Bool("force-reload")))
+			values.Add("dev", strconv.FormatBool(cCtx.Bool("dev")))
 
 			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
 			var applyResponse types.AppApplyResponse

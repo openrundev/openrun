@@ -242,7 +242,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	}
 
 	applyInfo, updatedApps, applyErr := s.Apply(ctx, tx, entry.Path, "all", entry.Metadata.Approve, dryRun, entry.Metadata.Promote, types.AppReloadOption(entry.Metadata.Reload),
-		entry.Metadata.GitBranch, "", entry.Metadata.GitAuth, entry.Metadata.Clobber, entry.Metadata.ForceReload, lastRunCommitId, repoCache)
+		entry.Metadata.GitBranch, "", entry.Metadata.GitAuth, entry.Metadata.Clobber, entry.Metadata.ForceReload, lastRunCommitId, repoCache, false)
 
 	status := types.SyncJobStatus{
 		LastExecutionTime: time.Now(),

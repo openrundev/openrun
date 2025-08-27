@@ -117,8 +117,17 @@ tests:
     command: ../openrun app create --approve github.com/openrundev/openrun/examples/disk_usage /ghload1
     stdout: "App created. Permissions have been approved"
     exit-code: 0
+  load0211: # Create app in dev mode from git
+    command: ../openrun app create --dev --approve github.com/openrundev/openrun/examples/disk_usage /ghloaddev1
+    stdout: "app_src"
+    exit-code: 0
   load0220: # test calling app
     command: curl -su "admin:qwerty" localhost:25222/ghload1/
+    stderr:
+      line-count: 0
+    stdout: "Disk Usage"
+  load0221: # test calling dev app
+    command: curl -su "admin:qwerty" localhost:25222/ghloaddev1/
     stderr:
       line-count: 0
     stdout: "Disk Usage"

@@ -7,6 +7,8 @@ import (
 	"cmp"
 	"fmt"
 	"os"
+	"path"
+	"path/filepath"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -124,7 +126,7 @@ func latestCommitSHA(repoURL, branch string, auth transport.AuthMethod) (string,
 	return "", fmt.Errorf("branch %q not found", branch)
 }
 
-func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string) (string, string, string, string, error) {
+func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDev bool) (string, string, string, string, error) {
 	gitAuth = cmp.Or(gitAuth, r.server.config.Security.DefaultGitAuth)
 	authEntry, err := r.server.loadGitKey(gitAuth)
 	if err != nil {
@@ -137,7 +139,8 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string) (str
 		return "", "", "", "", err
 	}
 
-	dir, ok := r.cache[Repo{repo, branch, commit, gitAuth}]
+	repoKey := Repo{repo, branch, commit, gitAuth}
+	dir, ok := r.cache[repoKey]
 	if ok {
 		return dir.dir, folder, dir.commitMessage, dir.hash, nil
 	}
@@ -150,7 +153,9 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string) (str
 		// No commit id specified, checkout specified branch
 		cloneOptions.ReferenceName = plumbing.NewBranchReferenceName(branch)
 		cloneOptions.SingleBranch = true
-		cloneOptions.Depth = 1
+		if !isDev {
+			cloneOptions.Depth = 1
+		}
 	}
 
 	if gitAuth != "" {
@@ -162,9 +167,19 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string) (str
 		cloneOptions.Auth = auth
 	}
 
-	targetPath, err := os.MkdirTemp(r.rootDir, "repo_")
-	if err != nil {
-		return "", "", "", "", err
+	var targetPath string
+	if isDev {
+		// We don't have a previous dev checkout for this repo, create a new one
+		repoName := filepath.Base(repo)
+		targetPath = getUnusedRepoPath(os.ExpandEnv("$OPENRUN_HOME/app_src/"), repoName)
+		if err := os.MkdirAll(targetPath, 0744); err != nil {
+			return "", "", "", "", err
+		}
+	} else {
+		targetPath, err = os.MkdirTemp(r.rootDir, "repo_")
+		if err != nil {
+			return "", "", "", "", err
+		}
 	}
 
 	// Configure the repo to Clone
@@ -213,6 +228,20 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string) (str
 	}
 
 	return targetPath, folder, newCommit.Message, newCommit.Hash.String(), nil
+}
+
+func getUnusedRepoPath(targetDir, repoName string) string {
+	if _, err := os.Stat(path.Join(targetDir, repoName)); os.IsNotExist(err) {
+		return path.Join(targetDir, repoName)
+	}
+	count := 2
+	for {
+		unusedName := fmt.Sprintf("%s%d", repoName, count)
+		if _, err := os.Stat(path.Join(targetDir, unusedName)); os.IsNotExist(err) {
+			return path.Join(targetDir, unusedName)
+		}
+		count++
+	}
 }
 
 func (r *RepoCache) Cleanup() {

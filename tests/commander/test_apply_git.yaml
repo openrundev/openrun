@@ -7,6 +7,10 @@ tests:
   apply_git0010: ## create all apps
     command: ../openrun apply ./apply_files/apply_git.ace all
     stdout: "3 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
+  apply_git0011: ## create all apps in dev mode
+    command: ../openrun apply --dev ./apply_files/apply_git.ace all
+    stdout: "app_src"
+    exit-code: 0
   apply_git0020:
     command: ../openrun apply --approve --promote --reload=matched ./apply_files/apply_git.ace all
     stdout: "0 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 3 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
