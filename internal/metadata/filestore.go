@@ -167,7 +167,7 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 	return nil
 }
 
-func (f *FileStore) GetFileByShaTx(sha string) ([]byte, string, error) {
+func (f *FileStore) GetFileBySha(sha string) ([]byte, string, error) {
 	var tx types.Transaction
 	if f.initTx.IsInitialized() {
 		tx = f.initTx
@@ -180,11 +180,11 @@ func (f *FileStore) GetFileByShaTx(sha string) ([]byte, string, error) {
 		defer tx.Rollback()
 	}
 
-	return f.GetFileBySha(context.Background(), tx, sha)
+	return f.GetFileByShaTx(context.Background(), tx, sha)
 }
 
-func (f *FileStore) GetFileBySha(ctx context.Context, tx types.Transaction, sha string) ([]byte, string, error) {
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType, "SELECT compression_type , content FROM files where sha = ?"))
+func (f *FileStore) GetFileByShaTx(ctx context.Context, tx types.Transaction, sha string) ([]byte, string, error) {
+	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType, "SELECT compression_type, content FROM files where sha = ?"))
 	if err != nil {
 		return nil, "", fmt.Errorf("error preparing statement: %w", err)
 	}
@@ -200,7 +200,7 @@ func (f *FileStore) GetFileBySha(ctx context.Context, tx types.Transaction, sha 
 	return content, compressionType, nil
 }
 
-func (f *FileStore) getFileInfoTx() (map[string]DbFileInfo, error) {
+func (f *FileStore) getFileInfo() (map[string]DbFileInfo, error) {
 	var tx types.Transaction
 	if f.initTx.IsInitialized() {
 		tx = f.initTx
@@ -212,10 +212,10 @@ func (f *FileStore) getFileInfoTx() (map[string]DbFileInfo, error) {
 		}
 		defer tx.Rollback()
 	}
-	return f.getFileInfo(context.Background(), tx)
+	return f.getFileInfoTx(context.Background(), tx)
 }
 
-func (f *FileStore) getFileInfo(ctx context.Context, tx types.Transaction) (map[string]DbFileInfo, error) {
+func (f *FileStore) getFileInfoTx(ctx context.Context, tx types.Transaction) (map[string]DbFileInfo, error) {
 	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType, `select name, sha, uncompressed_size, create_time from app_files where appid = ? and version = ?`))
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
@@ -362,7 +362,7 @@ func (f *FileStore) GetAppVersion(ctx context.Context, tx types.Transaction, ver
 }
 
 func (f *FileStore) GetAppFiles(ctx context.Context, tx types.Transaction) ([]types.AppFile, error) {
-	files, err := f.getFileInfo(ctx, tx)
+	files, err := f.getFileInfoTx(ctx, tx)
 	if err != nil {
 		return nil, err
 	}

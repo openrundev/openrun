@@ -32,7 +32,7 @@ type DbFs struct {
 var _ appfs.ReadableFS = (*DbFs)(nil)
 
 func NewDbFs(logger *types.Logger, fileStore *FileStore, specFiles types.SpecFiles) (*DbFs, error) {
-	fileInfo, error := fileStore.getFileInfoTx()
+	fileInfo, error := fileStore.getFileInfo()
 	if error != nil {
 		return nil, error
 	}
@@ -189,7 +189,7 @@ func (d *DbFs) Open(name string) (fs.File, error) {
 		}
 		return nil, fs.ErrNotExist
 	}
-	fileBytes, compressionType, err := d.fileStore.GetFileByShaTx(fi.sha)
+	fileBytes, compressionType, err := d.fileStore.GetFileBySha(fi.sha)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func (d *DbFs) ReadFile(name string) ([]byte, error) {
 		}
 		return nil, fs.ErrNotExist
 	}
-	fileBytes, compressionType, err := d.fileStore.GetFileByShaTx(fi.sha)
+	fileBytes, compressionType, err := d.fileStore.GetFileBySha(fi.sha)
 	if err != nil {
 		return nil, err
 	}
