@@ -325,7 +325,10 @@ func (s *Server) setupApp(appEntry *types.AppEntry, tx types.Transaction) (*app.
 	var sourceFS *appfs.SourceFs
 	if !appEntry.IsDev {
 		// Prod mode, use DB as source
-		fileStore := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+		fileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+		if err != nil {
+			return nil, err
+		}
 		dbFs, err := metadata.NewDbFs(s.Logger, fileStore, *appEntry.Metadata.SpecFiles)
 		if err != nil {
 			return nil, err
@@ -795,7 +798,10 @@ func (s *Server) loadSourceFromGit(ctx context.Context, tx types.Transaction, ap
 
 	s.Info().Msgf("Loading app sources from %s", checkoutFolder)
 	// Walk the local directory and add all files to the database
-	fileStore := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+	fileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+	if err != nil {
+		return err
+	}
 	highestVersion, err := fileStore.GetHighestVersion(ctx, tx, appEntry.Id)
 	if err != nil {
 		return err
@@ -820,7 +826,10 @@ func (s *Server) loadSourceFromDisk(ctx context.Context, tx types.Transaction, a
 	appEntry.Settings.GitAuthName = ""
 	appEntry.Metadata.VersionMetadata.GitMessage = ""
 
-	fileStore := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+	fileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+	if err != nil {
+		return err
+	}
 	highestVersion, err := fileStore.GetHighestVersion(ctx, tx, appEntry.Id)
 	if err != nil {
 		return fmt.Errorf("error getting highest version: %w", err)

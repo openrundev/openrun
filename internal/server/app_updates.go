@@ -264,8 +264,11 @@ func (s *Server) StagedUpdateAppsTx(ctx context.Context, tx types.Transaction, a
 				return nil, nil, nil, err
 			}
 
-			stagingFileStore := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
-			err := stagingFileStore.IncrementAppVersion(ctx, tx, &appEntry.Metadata)
+			stagingFileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("error initializing staging file store: %w", err)
+			}
+			err = stagingFileStore.IncrementAppVersion(ctx, tx, &appEntry.Metadata)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("error incrementing app version: %w", err)
 			}
@@ -368,8 +371,14 @@ func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun boo
 }
 
 func (s *Server) promoteApp(ctx context.Context, tx types.Transaction, stagingApp *types.AppEntry, prodApp *types.AppEntry) error {
-	stagingFileStore := metadata.NewFileStore(stagingApp.Id, stagingApp.Metadata.VersionMetadata.Version, s.db, tx)
-	prodFileStore := metadata.NewFileStore(prodApp.Id, prodApp.Metadata.VersionMetadata.Version, s.db, tx)
+	stagingFileStore, err := metadata.NewFileStore(stagingApp.Id, stagingApp.Metadata.VersionMetadata.Version, s.db, tx)
+	if err != nil {
+		return fmt.Errorf("error initializing staging file store: %w", err)
+	}
+	prodFileStore, err := metadata.NewFileStore(prodApp.Id, prodApp.Metadata.VersionMetadata.Version, s.db, tx)
+	if err != nil {
+		return fmt.Errorf("error initializing prod file store: %w", err)
+	}
 	prevVersion := prodApp.Metadata.VersionMetadata.Version
 	newVersion := stagingApp.Metadata.VersionMetadata.Version
 

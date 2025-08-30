@@ -54,6 +54,7 @@ access_logging = true
 db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_metadata.db"
 auto_upgrade = true
 audit_db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_audit.db"
+file_cache_connection = "sqlite:$OPENRUN_HOME/metadata/file_cache.db"
 
 [system]
 tailwindcss_command = "tailwindcss"

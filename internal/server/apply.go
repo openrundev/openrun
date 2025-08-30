@@ -600,8 +600,12 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		promoteApp = len(reloadResult.PromoteResults) > 0
 	} else if updated {
 		// No reload, increment version and promote (if enabled)
-		stagingFileStore := metadata.NewFileStore(liveApp.Id, liveApp.Metadata.VersionMetadata.Version, s.db, tx)
-		err := stagingFileStore.IncrementAppVersion(ctx, tx, &liveApp.Metadata)
+		stagingFileStore, err := metadata.NewFileStore(liveApp.Id, liveApp.Metadata.VersionMetadata.Version, s.db, tx)
+		if err != nil {
+			return nil, fmt.Errorf("error initializing staging file store: %w", err)
+		}
+
+		err = stagingFileStore.IncrementAppVersion(ctx, tx, &liveApp.Metadata)
 		if err != nil {
 			return nil, fmt.Errorf("error incrementing app version: %w", err)
 		}

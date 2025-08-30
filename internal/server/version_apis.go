@@ -34,7 +34,10 @@ func (s *Server) VersionList(ctx context.Context, mainAppPath string) (*types.Ap
 		return nil, fmt.Errorf("version commands not supported for dev app")
 	}
 
-	fileStore := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+	fileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+	if err != nil {
+		return nil, err
+	}
 	versions, err := fileStore.GetAppVersions(ctx, tx)
 	if err != nil {
 		return nil, err
@@ -80,7 +83,10 @@ func (s *Server) VersionFiles(ctx context.Context, mainAppPath, version string) 
 		}
 	}
 
-	fileStore := metadata.NewFileStore(appEntry.Id, versionInt, s.db, tx)
+	fileStore, err := metadata.NewFileStore(appEntry.Id, versionInt, s.db, tx)
+	if err != nil {
+		return nil, err
+	}
 	files, err := fileStore.GetAppFiles(ctx, tx)
 	if err != nil {
 		return nil, err
@@ -110,7 +116,10 @@ func (s *Server) VersionSwitch(ctx context.Context, mainAppPath string, dryRun b
 		return nil, fmt.Errorf("version commands not supported for dev app")
 	}
 	var versionInt int
-	fileStore := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+	fileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+	if err != nil {
+		return nil, err
+	}
 
 	versionLower := strings.ToLower(version)
 	switch versionLower {

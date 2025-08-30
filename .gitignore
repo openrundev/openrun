@@ -8,6 +8,7 @@ openrun.toml
 logs/
 .DS_Store
 run/
+app_src/
 config/
 internal/server/appspecs/
 internal/server/appspecs/dummy/README

@@ -198,6 +198,7 @@ type MetadataConfig struct {
 	AutoUpgrade         bool   `toml:"auto_upgrade"`
 	AuditDBConnection   string `toml:"audit_db_connection"`
 	IgnoreHigherVersion bool   `toml:"ignore_higher_version"` // If true, ignore higher version of the metadata schema
+	FileCacheConnection string `toml:"file_cache_connection"` // The connection string for the file cache database
 }
 
 // LogConfig is the configuration for the Logger

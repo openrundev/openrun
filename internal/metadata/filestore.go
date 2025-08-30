@@ -39,10 +39,19 @@ type FileStore struct {
 	db       *sql.DB
 	initTx   types.Transaction // This is the transaction for the initial setup of the app, before it is committed to the database.
 	// After app is committed to database, this is not used, auto-commit transactions are used for reads
+	fileCache *FileCache
 }
 
-func NewFileStore(appId types.AppId, version int, metadata *Metadata, tx types.Transaction) *FileStore {
-	return &FileStore{appId: appId, version: version, metadata: metadata, db: metadata.db, initTx: tx}
+func NewFileStore(appId types.AppId, version int, metadata *Metadata, tx types.Transaction) (*FileStore, error) {
+	var fileCache *FileCache
+	var err error
+	if metadata.dbType != system.DB_TYPE_SQLITE {
+		fileCache, err = InitFileCache(metadata.Logger, metadata.config)
+		if err != nil {
+			return nil, fmt.Errorf("error initializing file cache: %w", err)
+		}
+	}
+	return &FileStore{appId: appId, version: version, metadata: metadata, db: metadata.db, initTx: tx, fileCache: fileCache}, nil
 }
 
 func (f *FileStore) IncrementAppVersion(ctx context.Context, tx types.Transaction, metadata *types.AppMetadata) error {
@@ -184,6 +193,17 @@ func (f *FileStore) GetFileBySha(sha string) ([]byte, string, error) {
 }
 
 func (f *FileStore) GetFileByShaTx(ctx context.Context, tx types.Transaction, sha string) ([]byte, string, error) {
+	if f.fileCache != nil {
+		content, compressionType, err := f.fileCache.GetCachedFile(ctx, sha)
+		if err == nil {
+			f.metadata.Trace().Msgf("Got file from cache: %s", sha)
+			return content, compressionType, nil
+		}
+		if err != nil && err != sql.ErrNoRows {
+			return nil, "", fmt.Errorf("error getting cached file: %w", err)
+		}
+	}
+
 	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType, "SELECT compression_type, content FROM files where sha = ?"))
 	if err != nil {
 		return nil, "", fmt.Errorf("error preparing statement: %w", err)
@@ -195,6 +215,14 @@ func (f *FileStore) GetFileByShaTx(ctx context.Context, tx types.Transaction, sh
 	var content []byte
 	if err := row.Scan(&compressionType, &content); err != nil {
 		return nil, "", fmt.Errorf("error querying file table: %w", err)
+	}
+
+	if f.fileCache != nil {
+		f.metadata.Trace().Msgf("Adding file to cache: %s", sha)
+		err = f.fileCache.AddCache(ctx, sha, compressionType, content)
+		if err != nil {
+			return nil, "", fmt.Errorf("error adding file to cache: %w", err)
+		}
 	}
 
 	return content, compressionType, nil
