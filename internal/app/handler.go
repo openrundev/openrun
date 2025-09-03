@@ -14,12 +14,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi"
 	"github.com/openrundev/openrun/internal/app/action"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"github.com/go-chi/chi"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
@@ -104,6 +104,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			thread.SetLocal(types.TL_CONTAINER_MANAGER, a.containerManager)
 			thread.SetLocal(types.TL_CONTAINER_URL, a.containerManager.GetProxyUrl())
 		}
+		thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.AppPathDomain(), a.serverConfig))
 
 		header := r.Header
 		isHtmxRequest := types.GetHTTPHeader(header, "Hx-Request") == "true" && !(types.GetHTTPHeader(header, "Hx-Boosted") == "true")

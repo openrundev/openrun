@@ -67,13 +67,15 @@ type Action struct {
 	auditInsert       func(*types.AuditEvent) error
 	containerManager  any // Container manager, if available, used to run commands in the container
 	esmLibs           []types.JSLibrary
+	appPathDomain     types.AppPathDomain
+	serverConfig      *types.ServerConfig
 }
 
 // NewAction creates a new action
 func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name, description, apath string, run, suggest starlark.Callable,
 	params []apptype.AppParam, paramValuesStr map[string]string, paramDict starlark.StringDict,
 	appPath string, styleType types.StyleType, containerProxyUrl string, hidden []string, showValidate bool,
-	auditInsert func(*types.AuditEvent) error, containerManager any, jsLibs []types.JSLibrary) (*Action, error) {
+	auditInsert func(*types.AuditEvent) error, containerManager any, jsLibs []types.JSLibrary, appPathDomain types.AppPathDomain, serverConfig *types.ServerConfig) (*Action, error) {
 
 	funcMap := system.GetFuncMap()
 
@@ -147,6 +149,8 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 		containerManager:  containerManager,
 		esmLibs:           esmLibs,
 		// Links, AppTemplate and Theme names are initialized later
+		appPathDomain: appPathDomain,
+		serverConfig:  serverConfig,
 	}, nil
 }
 
@@ -258,6 +262,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	if a.containerManager != nil {
 		thread.SetLocal(types.TL_CONTAINER_MANAGER, a.containerManager)
 	}
+	thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.appPathDomain, a.serverConfig))
 	isHtmxRequest := r.Header.Get("HX-Request") == "true"
 
 	r.ParseMultipartForm(10 << 20) // 10 MB max file size

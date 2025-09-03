@@ -4,10 +4,12 @@
 package types
 
 import (
+	"cmp"
 	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -52,6 +54,7 @@ const (
 	TL_CONTAINER_MANAGER        = "TL_container_manager"
 	TL_BRANCH                   = "TL_branch"
 	TL_DEV                      = "TL_dev"
+	TL_APP_URL                  = "TL_app_url"
 )
 
 const (
@@ -579,6 +582,16 @@ func RegexMatch(perm, entry string) (bool, error) {
 	}
 	perm = perm[6:]
 	return regexp.MatchString(perm, entry)
+}
+
+func GetAppUrl(appPathDomain AppPathDomain, serverConfig *ServerConfig) string {
+	useHttps := serverConfig.Https.Port > 0
+	domain := cmp.Or(appPathDomain.Domain, serverConfig.System.DefaultDomain)
+	if useHttps {
+		return fmt.Sprintf("https://%s:%d%s", domain, serverConfig.Https.Port, appPathDomain.Path)
+	} else {
+		return fmt.Sprintf("http://%s:%d%s", domain, serverConfig.Http.Port, appPathDomain.Path)
+	}
 }
 
 type DryRun bool

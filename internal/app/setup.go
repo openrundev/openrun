@@ -49,6 +49,7 @@ func (a *App) loadStarlarkConfig(dryRun types.DryRun) error {
 		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) }, // TODO use logger
 		Load:  a.loader,
 	}
+	thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.AppPathDomain(), a.serverConfig))
 
 	builtin, err := a.createBuiltin()
 	if err != nil {
@@ -556,7 +557,7 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	}
 	action, err := action.NewAction(a.Logger, a.sourceFS, a.IsDev, name, description, path, run, suggest,
 		slices.Collect(maps.Values(a.paramInfo)), a.paramValuesStr, a.paramDict, a.Path, a.appStyle.GetStyleType(),
-		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerManager, a.jsLibs)
+		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerManager, a.jsLibs, a.AppPathDomain(), a.serverConfig)
 	if err != nil {
 		return fmt.Errorf("error creating action %s: %w", name, err)
 	}

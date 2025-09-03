@@ -453,7 +453,8 @@ func CreateConfigBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) func(
 		var err error
 		var outVal starlark.Value = defaultVal
 
-		if key == "_branch" {
+		switch key {
+		case "_branch":
 			// _branch is a special input that returns the current branch name
 			branch := thread.Local(types.TL_BRANCH)
 			if branch == nil {
@@ -467,7 +468,7 @@ func CreateConfigBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) func(
 				return defaultVal, nil
 			}
 			return starlark.String(branchStr), nil
-		} else if key == "_dev" {
+		case "_dev":
 			// _dev is a special input that returns the current dev status
 			dev := thread.Local(types.TL_DEV)
 			if dev == nil {
@@ -479,6 +480,20 @@ func CreateConfigBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) func(
 				return nil, fmt.Errorf("dev is not a boolean %v", dev)
 			}
 			return starlark.Bool(devBool), nil
+		case "_app_url":
+			// app_url is a special input that returns the current appUrl name
+			appUrl := thread.Local(types.TL_APP_URL)
+			if appUrl == nil {
+				return defaultVal, nil
+			}
+			appUrlStr, ok := appUrl.(string)
+			if !ok {
+				return nil, fmt.Errorf("app_url is not a string %v", appUrl)
+			}
+			if appUrlStr == "" {
+				return defaultVal, nil
+			}
+			return starlark.String(appUrlStr), nil
 		}
 
 		localVal, ok := nodeConfig[string(key)]

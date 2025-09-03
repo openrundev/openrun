@@ -4,7 +4,6 @@
 package server
 
 import (
-	"cmp"
 	"fmt"
 	"strconv"
 	"strings"
@@ -58,16 +57,6 @@ func (c *openrunPlugin) verifyHasAccess(userId string, appAuth types.AppAuthnTyp
 		}
 		// Check Oauth provider is the same as the app's provider
 		return provider == string(appAuth)
-	}
-}
-
-func getAppUrl(app types.AppInfo, server *Server) string {
-	useHttps := server.config.Https.Port > 0
-	domain := cmp.Or(app.AppPathDomain.Domain, server.config.System.DefaultDomain)
-	if useHttps {
-		return fmt.Sprintf("https://%s:%d%s", domain, server.config.Https.Port, app.Path)
-	} else {
-		return fmt.Sprintf("http://%s:%d%s", domain, server.config.Http.Port, app.Path)
 	}
 }
 
@@ -156,7 +145,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 
 		v := starlark.Dict{}
 		v.SetKey(starlark.String("name"), starlark.String(app.Name))
-		v.SetKey(starlark.String("url"), starlark.String(getAppUrl(app, c.server)))
+		v.SetKey(starlark.String("url"), starlark.String(types.GetAppUrl(app.AppPathDomain, c.server.config)))
 		v.SetKey(starlark.String("path"), starlark.String(app.AppPathDomain.String()))
 		pathSplit := starlark.List{}
 		pathSplitGlob := starlark.List{}

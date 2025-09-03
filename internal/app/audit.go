@@ -64,6 +64,7 @@ func (a *App) Audit() (*types.ApproveResult, error) {
 		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) }, // TODO use logger
 		Load:  auditLoader,
 	}
+	thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.AppPathDomain(), a.serverConfig))
 
 	err = a.loadSchemaInfo(a.sourceFS)
 	if err != nil {

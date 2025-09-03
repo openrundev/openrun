@@ -45,7 +45,7 @@ error_handler () {
 }
 
 cleanup() {
-  rm -rf metadata
+  rm -rf metadata app_src
   rm -rf logs/ openrun.toml config_container.toml server.stdout flaskapp
 
   if [[ -d ../appspecs_bk ]]; then
