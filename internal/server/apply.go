@@ -29,7 +29,7 @@ const (
 	APP = "app"
 )
 
-func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, dev bool) ([]*types.CreateAppRequest, error) {
+func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, applyDev bool) ([]*types.CreateAppRequest, error) {
 	appDefs := make([]*starlarkstruct.Struct, 0)
 
 	createAppBuiltin := func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -53,7 +53,7 @@ func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, dev 
 		fields := starlark.StringDict{
 			"path":           path,
 			"source":         source,
-			"dev":            dev,
+			"dev":            cmp.Or(dev, starlark.Bool(applyDev)),
 			"auth":           auth,
 			"git_auth":       gitAuth,
 			"git_branch":     gitBranch,
@@ -82,7 +82,7 @@ func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, dev 
 	}
 
 	thread.SetLocal(types.TL_BRANCH, branch)
-	thread.SetLocal(types.TL_DEV, dev)
+	thread.SetLocal(types.TL_DEV, applyDev)
 
 	options := syntax.FileOptions{}
 	_, err := starlark.ExecFileOptions(&options, thread, fileName, data, builtins)
