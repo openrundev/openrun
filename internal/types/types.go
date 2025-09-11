@@ -678,3 +678,29 @@ type JSLibrary struct {
 	EsbuildArgs       [10]string // use an array so that the struct can be used as key in the jsCache map
 	SanitizedFileName string
 }
+
+// DynamicConfig is the configuration which is settable through API and is persisted to metadata
+type DynamicConfig struct {
+	VersionId string     `json:"version_id"`
+	RBAC      RBACConfig `json:"rbac"`
+}
+
+type RBACConfig struct {
+	Groups map[string][]string         `json:"groups"` // groups names to user ids. These groups are appended to the groups info from SAML
+	Roles  map[string][]RBACPermission `json:"roles"`  // roles names to permissions.
+	Grants []RBACGrant                 `json:"grants"` // grants are used to grant permissions to users/groups for specific apps
+}
+
+type RBACGrant struct {
+	Description string   `json:"description"`
+	Users       []string `json:"users"`   // users/groups granted by this rule
+	Roles       []string `json:"roles"`   // the roles granted by this rule
+	Targets     []string `json:"targets"` // the app path globs for which this grant applies
+}
+
+type RBACPermission string
+
+const (
+	PermissionList   RBACPermission = "list"   // list apps
+	PermissionAccess RBACPermission = "access" // access apps
+)

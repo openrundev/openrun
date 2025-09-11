@@ -1078,6 +1078,11 @@ func (h *Handler) listSyncEntries(r *http.Request) (any, error) {
 	return results, nil
 }
 
+func (h *Handler) configUpdate(r *http.Request) (any, error) {
+	// TODO
+	return nil, nil
+}
+
 // serveInternal returns a handler for the internal APIs for app admin and management
 func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// These API's are mounted at /_openrun
@@ -1201,6 +1206,11 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to get sync entries
 	r.Get("/sync", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "list_sync", h.listSyncEntries)
+	}))
+
+	// API to run sync
+	r.Post("/config", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "config_update", h.configUpdate)
 	}))
 
 	return r

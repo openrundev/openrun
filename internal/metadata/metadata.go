@@ -21,7 +21,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 5
+const CURRENT_DB_VERSION = 6
 
 // Metadata is the metadata persistence layer
 type Metadata struct {
@@ -209,6 +209,17 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=5, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 6 {
+		m.Info().Msg("Upgrading to version 6")
+		if _, err := tx.ExecContext(ctx, `create table config(version_id text, user_id text, update_time `+system.MapDataType(m.dbType, "datetime")+", config json)"); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=6, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}
@@ -625,6 +636,88 @@ func (m *Metadata) UpdateSyncStatus(ctx context.Context, tx types.Transaction, i
 	}
 
 	return nil
+}
+
+var ErrConfigAlreadyExists = errors.New("config already exists")
+var ErrConfigNotFound = errors.New("config not found")
+
+func (m *Metadata) InitConfig(ctx context.Context, user string, dynamicConfig *types.DynamicConfig) error {
+	configJson, err := json.Marshal(dynamicConfig)
+	if err != nil {
+		return fmt.Errorf("error marshalling dynamic config: %w", err)
+	}
+
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error beginning transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+	countResult := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType, `select count(*) from config`))
+	var rowCount int
+	err = countResult.Scan(&rowCount)
+	if err != nil {
+		return fmt.Errorf("error scanning config: %w", err)
+	}
+	if rowCount > 0 {
+		return ErrConfigAlreadyExists
+	}
+
+	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`insert into config values (?, ?, `+system.FuncNow(m.dbType)+", ?)"),
+		dynamicConfig.VersionId, user, string(configJson))
+	if err != nil {
+		return fmt.Errorf("error inserting config: %w", err)
+	}
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("error committing transaction: %w", err)
+	}
+	return nil
+}
+
+func (m *Metadata) UpdateConfig(ctx context.Context, user string, oldVersionId string, dynamicConfig *types.DynamicConfig) error {
+	configJson, err := json.Marshal(dynamicConfig)
+	if err != nil {
+		return fmt.Errorf("error marshalling dynamic config: %w", err)
+	}
+
+	result, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`update config set version_id = ?, config = ?, update_time = `+system.FuncNow(m.dbType)+", user_id = ? where version_id = ?"),
+		dynamicConfig.VersionId, string(configJson), user, oldVersionId)
+	if err != nil {
+		return fmt.Errorf("error updating config: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("no config entry found with version id for update: %s", oldVersionId)
+	}
+	return nil
+}
+
+func (m *Metadata) GetConfig() (*types.DynamicConfig, error) {
+	var configStr sql.NullString
+	row := m.db.QueryRow(system.RebindQuery(m.dbType, `select config from config`))
+	err := row.Scan(&configStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrConfigNotFound
+		}
+		return nil, fmt.Errorf("error querying config: %w", err)
+	}
+
+	var config types.DynamicConfig
+	if configStr.Valid && configStr.String != "" {
+		err = json.Unmarshal([]byte(configStr.String), &config)
+		if err != nil {
+			return nil, fmt.Errorf("error unmarshalling config: %w", err)
+		}
+	}
+
+	return &config, nil
 }
 
 // BeginTransaction starts a new Transaction

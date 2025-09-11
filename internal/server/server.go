@@ -136,6 +136,8 @@ type Server struct {
 	auditDB        *sql.DB
 	auditDbType    system.DBType
 	syncTimer      *time.Ticker
+	configMu       sync.RWMutex
+	dynamicConfig  *types.DynamicConfig
 }
 
 // NewServer creates a new instance of the OpenRun Server
@@ -203,10 +205,41 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 
 	initOpenRunPlugin(server)
 
+	server.dynamicConfig, err = server.db.GetConfig()
+	if err != nil && !errors.Is(err, metadata.ErrConfigNotFound) {
+		return nil, fmt.Errorf("error getting dynamic config: %w", err)
+	}
+
+	if server.dynamicConfig == nil || server.dynamicConfig.VersionId == "" {
+		// Initialize dynamic config if not already done
+		if server.dynamicConfig == nil {
+			server.dynamicConfig = &types.DynamicConfig{}
+		}
+		server.dynamicConfig.VersionId = "ver_" + ksuid.New().String()
+		err = server.db.InitConfig(context.Background(), "admin", server.dynamicConfig)
+		if err != nil {
+			if !errors.Is(err, metadata.ErrConfigAlreadyExists) {
+				return nil, fmt.Errorf("error init dynamic config: %w", err)
+			} else {
+				server.dynamicConfig, err = server.db.GetConfig()
+				if err != nil {
+					return nil, fmt.Errorf("error getting dynamic config: %w", err)
+				}
+			}
+		}
+		// TODO : notify other instances about new dynamic config
+	}
+
 	// Start the idle shutdown check
 	server.syncTimer = time.NewTicker(time.Minute) // run sync every minute
 	go server.syncRunner()
 	return server, nil
+}
+
+func (s *Server) GetRBACConfig() types.RBACConfig {
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+	return s.dynamicConfig.RBAC
 }
 
 func (s *Server) appNotifyFunction(updatePayload types.AppUpdatePayload) {
