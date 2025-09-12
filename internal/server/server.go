@@ -249,7 +249,12 @@ func (s *Server) GetDynamicConfig() types.DynamicConfig {
 }
 
 func (s *Server) SaveDynamicConfig(ctx context.Context) error {
-	targetPath := os.ExpandEnv("$OPENRUN_HOME/config/dynamic_config.json")
+	targetDir := os.ExpandEnv("$OPENRUN_HOME/config")
+	if err := os.MkdirAll(targetDir, 0700); err != nil {
+		return fmt.Errorf("error creating config directory %s : %s", targetDir, err)
+	}
+
+	targetPath := path.Join(targetDir, "dynamic_config.json")
 	configJson, err := json.MarshalIndent(s.dynamicConfig, "", "  ")
 	if err != nil {
 		return fmt.Errorf("error marshalling dynamic config: %w", err)
