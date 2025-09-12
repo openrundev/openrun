@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/fsnotify/fsnotify"
 	"github.com/go-chi/chi"
 	"github.com/openrundev/openrun/internal/app/action"
@@ -660,6 +661,24 @@ func (a *App) startWatcher() error {
 				if endTime > 0 && (time.Now().UnixMilli()-endTime) < int64(a.systemConfig.FileWatcherDebounceMillis)*5 {
 					// If a reload has happened recently, ignore the event
 					a.Trace().Str("event", fmt.Sprint(event)).Msg("Ignoring event since reload happened recently")
+					continue
+				}
+				if !(event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)) {
+					// ignore chmod events
+					a.Trace().Str("event", fmt.Sprint(event)).Msg("Ignoring event")
+					continue
+				}
+
+				foundIgnoreMatch := false
+				for _, pattern := range a.systemConfig.WatchIgnorePatterns {
+					if match, err := doublestar.Match(pattern, event.Name); err == nil && match {
+						a.Trace().Str("event", fmt.Sprint(event)).
+							Msgf("Ignoring event on %s since it matches ignore pattern %s", event.Name, pattern)
+						foundIgnoreMatch = true
+						continue
+					}
+				}
+				if foundIgnoreMatch {
 					continue
 				}
 

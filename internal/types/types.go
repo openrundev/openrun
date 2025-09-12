@@ -218,6 +218,7 @@ type LogConfig struct {
 type SystemConfig struct {
 	TailwindCSSCommand        string   `toml:"tailwindcss_command"`
 	FileWatcherDebounceMillis int      `toml:"file_watcher_debounce_millis"`
+	WatchIgnorePatterns       []string `toml:"watch_ignore_patterns"`
 	NodePath                  string   `toml:"node_path"`
 	ContainerCommand          string   `toml:"container_command"`
 	DefaultDomain             string   `toml:"default_domain"`
