@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -230,16 +231,58 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		// TODO : notify other instances about new dynamic config
 	}
 
+	err = server.SaveDynamicConfig(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("error saving dynamic config: %w", err)
+	}
+
 	// Start the idle shutdown check
 	server.syncTimer = time.NewTicker(time.Minute) // run sync every minute
 	go server.syncRunner()
 	return server, nil
 }
 
-func (s *Server) GetRBACConfig() types.RBACConfig {
+func (s *Server) GetDynamicConfig() types.DynamicConfig {
 	s.configMu.RLock()
 	defer s.configMu.RUnlock()
-	return s.dynamicConfig.RBAC
+	return *s.dynamicConfig // return a copy of the dynamic config
+}
+
+func (s *Server) SaveDynamicConfig(ctx context.Context) error {
+	targetPath := os.ExpandEnv("$OPENRUN_HOME/config/dynamic_config.json")
+	configJson, err := json.MarshalIndent(s.dynamicConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshalling dynamic config: %w", err)
+	}
+	err = os.WriteFile(targetPath, configJson, 0600)
+	if err != nil {
+		return fmt.Errorf("error writing dynamic config: %w", err)
+	}
+	return nil
+}
+
+func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.DynamicConfig) (*types.DynamicConfig, error) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
+	currentVersionId := s.dynamicConfig.VersionId
+	if currentVersionId != newConfig.VersionId {
+		// stale update
+		return nil, fmt.Errorf("config version id mismatch, expected %s, got %s", currentVersionId, newConfig.VersionId)
+	}
+
+	newConfig.VersionId = "ver_" + ksuid.New().String()
+	err := s.db.UpdateConfig(ctx, system.GetContextUserId(ctx), currentVersionId, newConfig)
+	if err != nil {
+		return nil, fmt.Errorf("error updating dynamic config: %w", err)
+	}
+	s.dynamicConfig = newConfig
+	err = s.SaveDynamicConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error saving dynamic config: %w", err)
+	}
+	//TODO: notify other instances about new dynamic config
+	return newConfig, nil
 }
 
 func (s *Server) appNotifyFunction(updatePayload types.AppUpdatePayload) {

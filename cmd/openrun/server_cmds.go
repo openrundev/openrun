@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -42,6 +43,24 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 					Before: altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 					Action: func(cCtx *cli.Context) error {
 						return stopServer(cCtx, clientConfig)
+					},
+				},
+				{
+					Name:   "show-config",
+					Usage:  "Show the server dynamic config",
+					Flags:  flags,
+					Before: altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
+					Action: func(cCtx *cli.Context) error {
+						return showConfig(cCtx, clientConfig)
+					},
+				},
+				{
+					Name:   "update-config",
+					Usage:  "Update the server dynamic config",
+					Flags:  flags,
+					Before: altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
+					Action: func(cCtx *cli.Context) error {
+						return updateConfig(cCtx, clientConfig)
 					},
 				},
 			},
@@ -125,5 +144,51 @@ func stopServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	if !errors.Is(err, io.EOF) {
 		return err
 	}
+	return nil
+}
+
+func showConfig(_ *cli.Context, clientConfig *types.ClientConfig) error {
+	client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+
+	var response types.ConfigResponse
+	err := client.Get("/_openrun/config", nil, &response)
+	if err != nil {
+		return err
+	}
+	json, err := json.MarshalIndent(response.DynamicConfig, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", string(json))
+	return nil
+}
+
+func updateConfig(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
+	client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+
+	if cCtx.NArg() != 1 {
+		return fmt.Errorf("expected one argument: <configFilePath>")
+	}
+	configFilePath := cCtx.Args().Get(0)
+	configFile, err := os.ReadFile(configFilePath)
+	if err != nil {
+		return err
+	}
+	var inputConfig types.DynamicConfig
+	err = json.Unmarshal(configFile, &inputConfig)
+	if err != nil {
+		return err
+	}
+	var response types.ConfigResponse
+	err = client.Post("/_openrun/config", nil, &inputConfig, &response)
+	if err != nil {
+		return err
+	}
+
+	json, err := json.MarshalIndent(response.DynamicConfig, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", string(json))
 	return nil
 }

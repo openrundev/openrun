@@ -1078,9 +1078,21 @@ func (h *Handler) listSyncEntries(r *http.Request) (any, error) {
 	return results, nil
 }
 
+func (h *Handler) configGet(r *http.Request) (any, error) {
+	return types.ConfigResponse{DynamicConfig: h.server.GetDynamicConfig()}, nil
+}
+
 func (h *Handler) configUpdate(r *http.Request) (any, error) {
-	// TODO
-	return nil, nil
+	var dynamicConfig types.DynamicConfig
+	err := json.NewDecoder(r.Body).Decode(&dynamicConfig)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	newConfig, err := h.server.UpdateDynamicConfig(r.Context(), &dynamicConfig)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return types.ConfigResponse{DynamicConfig: *newConfig}, nil
 }
 
 // serveInternal returns a handler for the internal APIs for app admin and management
@@ -1208,7 +1220,12 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 		h.apiHandler(w, r, enableBasicAuth, "list_sync", h.listSyncEntries)
 	}))
 
-	// API to run sync
+	// API to get config
+	r.Get("/config", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "config_get", h.configGet)
+	}))
+
+	// API to update config
 	r.Post("/config", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "config_update", h.configUpdate)
 	}))

@@ -253,6 +253,10 @@ type SyncListResponse struct {
 	Entries []*SyncEntry `json:"entries"`
 }
 
+type ConfigResponse struct {
+	DynamicConfig DynamicConfig `json:"dynamic_config"`
+}
+
 type AppReloadOption string
 
 const (

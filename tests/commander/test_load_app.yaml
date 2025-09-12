@@ -82,7 +82,7 @@ tests:
     stdout: "Disallow: /"
     exit-code: 0
   load0070: # Update app code
-    command: perl -pi -e 's/Disk Usage/DiskTest Usage/g' ./disk_usage/app.star && sleep 4
+    command: perl -pi -e 's/Disk Usage/DiskTest Usage/g' ./disk_usage/app.star && sleep 5
   load0080: # with --dev, changes are picked up immediately
     command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev
     stderr:

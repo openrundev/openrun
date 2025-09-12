@@ -1,0 +1,22 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+tests:
+  config0001:
+    command: ../openrun server show-config > config1.json
+  config0002:
+    command: diff -b config/dynamic_config.json config1.json
+    exit-code: 0 # no diff
+  config0003:
+    command: ../openrun server update-config config1.json > config2.json
+  config0004: # version id gets updated after update
+    command: diff -b config/dynamic_config.json config1.json
+    stdout:
+      line-count: 4
+    exit-code: 1
+  config0005: # stale update
+    command: ../openrun server update-config config1.json
+    stderr: "version id mismatch"
+    exit-code: 1
