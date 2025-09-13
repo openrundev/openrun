@@ -675,7 +675,7 @@ func (a *App) startWatcher() error {
 						a.Trace().Str("event", fmt.Sprint(event)).
 							Msgf("Ignoring event on %s since it matches ignore pattern %s", event.Name, pattern)
 						foundIgnoreMatch = true
-						continue
+						break
 					}
 				}
 				if foundIgnoreMatch {
