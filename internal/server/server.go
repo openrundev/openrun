@@ -159,7 +159,8 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		config: config,
 		db:     db,
 	}
-	db.AppNotifyFunc = server.appNotifyFunction
+	db.AppNotifyFunc = server.appNotifyHandler
+	db.ConfigNotifyFunc = server.configNotifyHandler
 	server.apps = NewAppStore(l, server)
 	server.authHandler = NewAdminBasicAuth(l, config)
 	server.notifyClose = make(chan types.AppPathDomain)
@@ -228,7 +229,10 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 				}
 			}
 		}
-		// TODO : notify other instances about new dynamic config
+		err = server.db.NotifyConfigUpdate()
+		if err != nil {
+			return nil, fmt.Errorf("error notifying other instances about new dynamic config: %w", err)
+		}
 	}
 
 	err = server.SaveDynamicConfig(context.Background())
@@ -286,11 +290,14 @@ func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.Dynam
 	if err != nil {
 		return nil, fmt.Errorf("error saving dynamic config: %w", err)
 	}
-	//TODO: notify other instances about new dynamic config
+	err = s.db.NotifyConfigUpdate()
+	if err != nil {
+		return nil, fmt.Errorf("error notifying other instances about new dynamic config: %w", err)
+	}
 	return newConfig, nil
 }
 
-func (s *Server) appNotifyFunction(updatePayload types.AppUpdatePayload) {
+func (s *Server) appNotifyHandler(updatePayload types.AppUpdatePayload) {
 	if updatePayload.ServerId == types.CurrentServerId {
 		s.Trace().Str("server_id", string(updatePayload.ServerId)).Msg("Ignoring app update notification from self")
 		return
@@ -298,6 +305,27 @@ func (s *Server) appNotifyFunction(updatePayload types.AppUpdatePayload) {
 	s.Debug().Str("server_id", string(updatePayload.ServerId)).Msgf(
 		"Received app update notification from %s for %s", updatePayload.ServerId, updatePayload.AppPathDomains)
 	s.apps.ClearAppsNoNotify(updatePayload.AppPathDomains)
+}
+
+func (s *Server) configNotifyHandler(updatePayload types.ConfigUpdatePayload) {
+	if updatePayload.ServerId == types.CurrentServerId {
+		s.Trace().Str("server_id", string(updatePayload.ServerId)).Msg("Ignoring config update notification from self")
+		//return
+	}
+	s.Debug().Str("server_id", string(updatePayload.ServerId)).Msgf(
+		"Received config update notification from %s", updatePayload.ServerId)
+	dynamicConfig, err := s.db.GetConfig() // get the latest dynamic config from database
+	if err != nil {
+		s.Error().Err(err).Msg("error getting dynamic config")
+		return
+	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	s.dynamicConfig = dynamicConfig
+	err = s.SaveDynamicConfig(context.Background())
+	if err != nil {
+		s.Error().Err(err).Msg("error saving dynamic config")
+	}
 }
 
 // updateConfigSecrets updates the secrets in the server config using the evalSecret function

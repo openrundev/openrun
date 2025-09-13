@@ -647,6 +647,7 @@ type ServerId string // the id of the server that sent the notification
 var CurrentServerId ServerId // initialized in server.go init()
 
 const MessageTypeAppUpdate = "app_update"
+const MessageTypeConfigUpdate = "config_update"
 
 type AppUpdatePayload struct {
 	AppPathDomains []AppPathDomain `json:"app_path_domains"`
@@ -656,6 +657,15 @@ type AppUpdatePayload struct {
 type AppUpdateMessage struct {
 	MessageType string           `json:"message_type"`
 	Payload     AppUpdatePayload `json:"payload"`
+}
+
+type ConfigUpdatePayload struct {
+	ServerId ServerId `json:"server_id"`
+}
+
+type ConfigUpdateMessage struct {
+	MessageType string              `json:"message_type"`
+	Payload     ConfigUpdatePayload `json:"payload"`
 }
 
 type LibraryType string

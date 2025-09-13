@@ -26,11 +26,12 @@ const CURRENT_DB_VERSION = 6
 // Metadata is the metadata persistence layer
 type Metadata struct {
 	*types.Logger
-	config        *types.ServerConfig
-	db            *sql.DB
-	dbType        system.DBType
-	pgListener    *pgxlisten.Listener
-	AppNotifyFunc func(types.AppUpdatePayload)
+	config           *types.ServerConfig
+	db               *sql.DB
+	dbType           system.DBType
+	pgListener       *pgxlisten.Listener
+	AppNotifyFunc    func(types.AppUpdatePayload)
+	ConfigNotifyFunc func(types.ConfigUpdatePayload)
 }
 
 const pg_listen_channel = "openrun_events"
@@ -85,6 +86,14 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 					return err
 				}
 				go m.AppNotifyFunc(updateMsg.Payload)
+			} else if msg.MessageType == types.MessageTypeConfigUpdate {
+				updateMsg := types.ConfigUpdateMessage{}
+				err := json.Unmarshal([]byte(notification.Payload), &updateMsg)
+				if err != nil {
+					m.Error().Err(err).Msg("error unmarshalling config update message")
+					return err
+				}
+				go m.ConfigNotifyFunc(updateMsg.Payload)
 			} else {
 				m.Error().Msgf("unknown message type: %s", msg.MessageType)
 			}
@@ -105,7 +114,7 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 	return m, nil
 }
 
-// NotifyAppUpdate sends a notification thrrough the postgres listener that an app has been updated
+// NotifyAppUpdate sends a notification through the postgres listener that an app has been updated
 func (m *Metadata) NotifyAppUpdate(appPathDomains []types.AppPathDomain) error {
 	if m.dbType != system.DB_TYPE_POSTGRES {
 		return nil
@@ -118,6 +127,30 @@ func (m *Metadata) NotifyAppUpdate(appPathDomains []types.AppPathDomain) error {
 
 	msg := types.AppUpdateMessage{
 		MessageType: types.MessageTypeAppUpdate,
+		Payload:     payload,
+	}
+
+	payloadBytes, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	_, err = m.db.Exec("select pg_notify($1,$2)", pg_listen_channel, string(payloadBytes))
+	return err
+}
+
+// NotifyConfigUpdate sends a notification through the postgres listener that the config has been updated
+func (m *Metadata) NotifyConfigUpdate() error {
+	if m.dbType != system.DB_TYPE_POSTGRES {
+		return nil
+	}
+
+	payload := types.ConfigUpdatePayload{
+		ServerId: types.CurrentServerId,
+	}
+
+	msg := types.ConfigUpdateMessage{
+		MessageType: types.MessageTypeConfigUpdate,
 		Payload:     payload,
 	}
 
