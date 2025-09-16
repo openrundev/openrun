@@ -139,6 +139,7 @@ type Server struct {
 	syncTimer      *time.Ticker
 	configMu       sync.RWMutex
 	dynamicConfig  *types.DynamicConfig
+	rbacManager    *RBACManager
 }
 
 // NewServer creates a new instance of the OpenRun Server
@@ -240,6 +241,11 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("error saving dynamic config: %w", err)
 	}
 
+	server.rbacManager, err = NewRBACHandler(l, &server.dynamicConfig.RBAC, config)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing rbac manager: %w", err)
+	}
+
 	// Start the idle shutdown check
 	server.syncTimer = time.NewTicker(time.Minute) // run sync every minute
 	go server.syncRunner()
@@ -286,6 +292,10 @@ func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.Dynam
 		return nil, fmt.Errorf("error updating dynamic config: %w", err)
 	}
 	s.dynamicConfig = newConfig
+	err = s.rbacManager.UpdateRBACConfig(&newConfig.RBAC) // update the rbac config so that it updates its caches
+	if err != nil {
+		return nil, fmt.Errorf("error updating rbac config: %w", err)
+	}
 	err = s.SaveDynamicConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error saving dynamic config: %w", err)

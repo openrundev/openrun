@@ -697,9 +697,10 @@ type DynamicConfig struct {
 }
 
 type RBACConfig struct {
-	Groups map[string][]string         `json:"groups"` // groups names to user ids. These groups are appended to the groups info from SAML
-	Roles  map[string][]RBACPermission `json:"roles"`  // roles names to permissions.
-	Grants []RBACGrant                 `json:"grants"` // grants are used to grant permissions to users/groups for specific apps
+	Enabled bool                        `json:"enabled"` // whether rbac is enabled
+	Groups  map[string][]string         `json:"groups"`  // groups names to user ids. These groups are appended to the groups info from SAML
+	Roles   map[string][]RBACPermission `json:"roles"`   // role names to permissions.
+	Grants  []RBACGrant                 `json:"grants"`  // grants are used to grant permissions to users/groups for specific apps
 }
 
 type RBACGrant struct {
