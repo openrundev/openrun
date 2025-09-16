@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/openrundev/openrun/internal/types"
 	"github.com/go-chi/chi"
 	"github.com/gorilla/sessions"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
+	"github.com/openrundev/openrun/internal/types"
 
 	"github.com/markbates/goth/providers/amazon"
 	"github.com/markbates/goth/providers/auth0"
@@ -282,6 +282,7 @@ func (s *SSOAuth) ValidateProviderName(provider string) bool {
 }
 
 func (s *SSOAuth) ValidateAuthType(authType string) bool {
+	authType = strings.TrimPrefix(authType, RBAC_AUTH_PREFIX)
 	switch authType {
 	case string(types.AppAuthnDefault), string(types.AppAuthnSystem), string(types.AppAuthnNone):
 		return true

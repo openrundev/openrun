@@ -465,11 +465,15 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 
 	userId := ""
-	appAuthString := string(appAuth)
-	if appAuth == types.AppAuthnNone {
+
+	// Remove the RBAC_AUTH_PREFIX rbac: prefix
+	strippedAuthStr := strings.TrimPrefix(string(appAuth), RBAC_AUTH_PREFIX)
+	strippedAuth := types.AppAuthnType(strippedAuthStr)
+
+	if strippedAuth == types.AppAuthnNone {
 		// No authentication required
 		userId = types.ANONYMOUS_USER
-	} else if appAuth == types.AppAuthnSystem {
+	} else if strippedAuth == types.AppAuthnSystem {
 		// Use system admin user for authentication
 		authStatus := s.authHandler.authenticate(r.Header.Get("Authorization"))
 		if !authStatus {
@@ -478,27 +482,27 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		userId = types.ADMIN_USER // not using the actual user id, just a admin placeholder
-	} else if appAuthString == "cert" || strings.HasPrefix(appAuthString, "cert_") {
+	} else if strippedAuthStr == "cert" || strings.HasPrefix(strippedAuthStr, "cert_") {
 		// Use client certificate authentication
 		if s.config.Https.DisableClientCerts {
 			http.Error(w, "Client certificates are disabled in openrun.config, update https.disable_client_certs", http.StatusInternalServerError)
 			return
 		}
-		err = s.verifyClientCerts(r, appAuthString)
+		err = s.verifyClientCerts(r, strippedAuthStr)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		userId = appAuthString
+		userId = strippedAuthStr
 	} else {
 		// Use SSO auth
-		if !s.ssoAuth.ValidateProviderName(appAuthString) {
-			http.Error(w, "Unsupported authentication provider: "+appAuthString, http.StatusInternalServerError)
+		if !s.ssoAuth.ValidateProviderName(strippedAuthStr) {
+			http.Error(w, "Unsupported authentication provider: "+strippedAuthStr, http.StatusInternalServerError)
 			return
 		}
 
 		// Redirect to the auth provider if not logged in
-		userId, err = s.ssoAuth.CheckAuth(w, r, appAuthString, true)
+		userId, err = s.ssoAuth.CheckAuth(w, r, strippedAuthStr, true)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -507,8 +511,19 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
+	s.Trace().Msgf("Authenticated user %s, doing authorization check", userId)
+	authorized, err := s.rbacManager.AuthorizeAccess(userId, app.AppEntry.AppPathDomain(), string(appAuth), types.PermissionAccess)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !authorized {
+		s.Warn().Msgf("User %s is not authorized to access app %s", userId, app.AppEntry.AppPathDomain())
+		http.Error(w, fmt.Sprintf("Unauthorized : %s does not have access to %s", userId, app.AppEntry.AppPathDomain()), http.StatusUnauthorized)
+		return
+	}
+
 	// Create a new context with the user ID
-	s.Trace().Msgf("Authenticated user %s", userId)
 	ctx := context.WithValue(r.Context(), types.USER_ID, userId)
 	ctx = context.WithValue(ctx, types.APP_ID, string(app.Id))
 
