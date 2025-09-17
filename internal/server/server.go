@@ -320,7 +320,7 @@ func (s *Server) appNotifyHandler(updatePayload types.AppUpdatePayload) {
 func (s *Server) configNotifyHandler(updatePayload types.ConfigUpdatePayload) {
 	if updatePayload.ServerId == types.CurrentServerId {
 		s.Trace().Str("server_id", string(updatePayload.ServerId)).Msg("Ignoring config update notification from self")
-		//return
+		return
 	}
 	s.Debug().Str("server_id", string(updatePayload.ServerId)).Msgf(
 		"Received config update notification from %s", updatePayload.ServerId)
