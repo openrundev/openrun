@@ -1084,11 +1084,15 @@ func (h *Handler) configGet(r *http.Request) (any, error) {
 
 func (h *Handler) configUpdate(r *http.Request) (any, error) {
 	var dynamicConfig types.DynamicConfig
-	err := json.NewDecoder(r.Body).Decode(&dynamicConfig)
+	force, err := parseBoolArg(r.URL.Query().Get("force"), false)
+	if err != nil {
+		return nil, err
+	}
+	err = json.NewDecoder(r.Body).Decode(&dynamicConfig)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
-	newConfig, err := h.server.UpdateDynamicConfig(r.Context(), &dynamicConfig)
+	newConfig, err := h.server.UpdateDynamicConfig(r.Context(), &dynamicConfig, force)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}

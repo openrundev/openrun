@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -57,7 +59,7 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 				{
 					Name:   "update-config",
 					Usage:  "Update the server dynamic config",
-					Flags:  flags,
+					Flags:  []cli.Flag{newBoolFlag("force", "f", "Force update even if the config version id is different", false)},
 					Before: altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 					Action: func(cCtx *cli.Context) error {
 						return updateConfig(cCtx, clientConfig)
@@ -179,8 +181,12 @@ func updateConfig(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	if err != nil {
 		return err
 	}
+
+	values := url.Values{}
+	values.Add("force", strconv.FormatBool(cCtx.Bool("force")))
+
 	var response types.ConfigResponse
-	err = client.Post("/_openrun/config", nil, &inputConfig, &response)
+	err = client.Post("/_openrun/config", values, &inputConfig, &response)
 	if err != nil {
 		return err
 	}

@@ -289,12 +289,12 @@ func (s *Server) updateDynamicConfigCache(ctx context.Context, newConfig *types.
 	return nil
 }
 
-func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.DynamicConfig) (*types.DynamicConfig, error) {
+func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.DynamicConfig, force bool) (*types.DynamicConfig, error) {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 
 	currentVersionId := s.dynamicConfig.VersionId
-	if currentVersionId != newConfig.VersionId {
+	if currentVersionId != newConfig.VersionId && !force {
 		// stale update
 		return nil, fmt.Errorf("config version id mismatch, expected %s, got %s", currentVersionId, newConfig.VersionId)
 	}

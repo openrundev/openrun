@@ -20,3 +20,6 @@ tests:
     command: ../openrun server update-config config1.json
     stderr: "version id mismatch"
     exit-code: 1
+  config0006: # force stale update
+    command: ../openrun server update-config --force config1.json
+    exit-code: 0
