@@ -276,6 +276,19 @@ func (s *Server) SaveDynamicConfig(ctx context.Context) error {
 	return nil
 }
 
+func (s *Server) updateDynamicConfigCache(ctx context.Context, newConfig *types.DynamicConfig) error {
+	err := s.rbacManager.UpdateRBACConfig(&newConfig.RBAC) // update the rbac config so that it updates its caches
+	if err != nil {
+		return fmt.Errorf("error updating rbac config: %w", err)
+	}
+	s.dynamicConfig = newConfig
+	err = s.SaveDynamicConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("error saving dynamic config: %w", err)
+	}
+	return nil
+}
+
 func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.DynamicConfig) (*types.DynamicConfig, error) {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
@@ -291,15 +304,12 @@ func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.Dynam
 	if err != nil {
 		return nil, fmt.Errorf("error updating dynamic config: %w", err)
 	}
-	s.dynamicConfig = newConfig
-	err = s.rbacManager.UpdateRBACConfig(&newConfig.RBAC) // update the rbac config so that it updates its caches
+
+	err = s.updateDynamicConfigCache(ctx, newConfig)
 	if err != nil {
-		return nil, fmt.Errorf("error updating rbac config: %w", err)
+		return nil, fmt.Errorf("error updating dynamic config: %w", err)
 	}
-	err = s.SaveDynamicConfig(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("error saving dynamic config: %w", err)
-	}
+
 	err = s.db.NotifyConfigUpdate()
 	if err != nil {
 		return nil, fmt.Errorf("error notifying other instances about new dynamic config: %w", err)
@@ -331,10 +341,10 @@ func (s *Server) configNotifyHandler(updatePayload types.ConfigUpdatePayload) {
 	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
-	s.dynamicConfig = dynamicConfig
-	err = s.SaveDynamicConfig(context.Background())
+	err = s.updateDynamicConfigCache(context.Background(), dynamicConfig)
 	if err != nil {
-		s.Error().Err(err).Msg("error saving dynamic config")
+		s.Error().Err(err).Msg("error updating dynamic config")
+		return
 	}
 }
 
