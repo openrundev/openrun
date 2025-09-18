@@ -36,30 +36,6 @@ type openrunPlugin struct {
 	server *Server
 }
 
-func (c *openrunPlugin) verifyHasAccess(userId string, appAuth types.AppAuthnType) bool {
-	if appAuth == types.AppAuthnDefault {
-		appAuth = types.AppAuthnType(c.server.config.Security.AppDefaultAuthType)
-	}
-
-	// Verify user_id as set in authenticateAndServeApp
-	if appAuth == "" || appAuth == types.AppAuthnNone {
-		// No auth required for this app, allow access
-		return true
-	} else if appAuth == types.AppAuthnSystem {
-		return userId == types.ADMIN_USER
-	} else if appAuth == "cert" || strings.HasPrefix(string(appAuth), "cert_") {
-		return userId == string(appAuth)
-	} else {
-		provider, _, ok := strings.Cut(string(userId), ":")
-		if !ok {
-			c.server.Warn().Str("user_id", userId).Msg("Unknown user_id format")
-			return false
-		}
-		// Check Oauth provider is the same as the app's provider
-		return provider == string(appAuth)
-	}
-}
-
 func (c *openrunPlugin) ListAllApps(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	return c.listAppsImpl(thread, builtin, args, kwargs, false, "list_all_apps")
 }
@@ -102,10 +78,6 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 	userId := system.GetRequestUserId(thread)
 	ret := starlark.List{}
 	for _, app := range apps {
-		if permCheck && !c.verifyHasAccess(userId, app.Auth) {
-			continue
-		}
-
 		// Filter out internal apps
 		if app.MainApp != "" && !bool(include_internal) {
 			continue
@@ -139,6 +111,16 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 				return nil, err
 			}
 			if !match {
+				continue
+			}
+		}
+
+		if permCheck {
+			hasAccess, err := c.server.AuthorizeList(userId, &app)
+			if err != nil {
+				return nil, err
+			}
+			if !hasAccess {
 				continue
 			}
 		}

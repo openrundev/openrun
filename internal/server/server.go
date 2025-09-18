@@ -300,12 +300,12 @@ func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.Dynam
 	}
 
 	newConfig.VersionId = "ver_" + ksuid.New().String()
-	err := s.db.UpdateConfig(ctx, system.GetContextUserId(ctx), currentVersionId, newConfig)
+	err := s.updateDynamicConfigCache(ctx, newConfig)
 	if err != nil {
 		return nil, fmt.Errorf("error updating dynamic config: %w", err)
 	}
 
-	err = s.updateDynamicConfigCache(ctx, newConfig)
+	err = s.db.UpdateConfig(ctx, system.GetContextUserId(ctx), currentVersionId, newConfig)
 	if err != nil {
 		return nil, fmt.Errorf("error updating dynamic config: %w", err)
 	}
@@ -840,4 +840,44 @@ func (s *Server) ParseGlob(appGlob string) ([]types.AppInfo, error) {
 	}
 
 	return matched, nil
+}
+
+// AuthorizeList checks if the user has access to perform list operation on the specified app
+// For RBAC mode, uses RBAC permissions. For non-RBAC mode, look at whether app is using
+// same authentication types as used by the caller
+func (s *Server) AuthorizeList(userId string, app *types.AppInfo) (bool, error) {
+	appAuthStr := string(app.Auth)
+	if s.rbacManager.rbacConfig.Enabled {
+		// RBAC auth is enabled, verify access
+		return s.rbacManager.Authorize(userId, app.AppPathDomain, appAuthStr, types.PermissionList)
+	}
+
+	if userId != "" && userId == types.ADMIN_USER {
+		// Admin user is always authorized
+		return true, nil
+	}
+
+	appAuthStr = strings.TrimPrefix(appAuthStr, RBAC_AUTH_PREFIX)
+	appAuth := types.AppAuthnType(appAuthStr)
+	if appAuth == types.AppAuthnDefault {
+		appAuth = types.AppAuthnType(s.config.Security.AppDefaultAuthType)
+	}
+
+	// Verify user_id as set in authenticateAndServeApp
+	if appAuth == "" || appAuth == types.AppAuthnNone {
+		// No auth required for this app, authorize access
+		return true, nil
+	} else if appAuth == types.AppAuthnSystem {
+		return userId != "" && userId == types.ADMIN_USER, nil
+	} else if appAuth == "cert" || strings.HasPrefix(string(appAuth), "cert_") {
+		return userId == string(appAuth), nil
+	} else {
+		provider, _, ok := strings.Cut(string(userId), ":")
+		if !ok {
+			s.Warn().Str("user_id", userId).Msg("Unknown user_id format")
+			return false, nil
+		}
+		// Check Oauth provider is the same as the app's provider
+		return provider == string(appAuth), nil
+	}
 }

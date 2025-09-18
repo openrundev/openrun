@@ -40,24 +40,29 @@ func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverCo
 	return rbacManager, nil
 }
 
-func (h *RBACManager) AuthorizeAccess(user string, appPathDomain types.AppPathDomain, appAuthSetting string, permission types.RBACPermission) (bool, error) {
+func (h *RBACManager) Authorize(user string, appPathDomain types.AppPathDomain, appAuthSetting string, permission types.RBACPermission) (bool, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	if !h.rbacConfig.Enabled {
-		// rbac is not enabled, authorize all access
+		// rbac is not enabled, authorize all requests
 		return true, nil
 	}
 
-	if user != "" && user == h.serverConfig.AdminUser {
+	if user != "" && user == types.ADMIN_USER {
 		// admin user is always authorized if enabled
 		return true, nil
 	}
 
-	if !strings.HasPrefix(appAuthSetting, RBAC_AUTH_PREFIX) {
-		// if app auth is not rbac enabled, authorize access
+	if !strings.HasPrefix(appAuthSetting, RBAC_AUTH_PREFIX) && permission == types.PermissionAccess {
+		// if app auth does not have rbac enabled, authorize access for Access permission
+		// If authenticated, then app access is allowed
 		return true, nil
 	}
+
+	// Trim stage and preview suffixes, grant check are done on the main app path
+	appPathDomain.Path = strings.TrimSuffix(appPathDomain.Path, types.STAGE_SUFFIX)
+	appPathDomain.Path = strings.TrimSuffix(appPathDomain.Path, types.PREVIEW_SUFFIX)
 
 	return h.checkGrants(user, appPathDomain, permission)
 }

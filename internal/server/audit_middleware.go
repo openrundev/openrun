@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-chi/chi/middleware"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"github.com/go-chi/chi/middleware"
 	"github.com/segmentio/ksuid"
 )
 

@@ -500,7 +500,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.AuthorizeAccess(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.permission)
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.permission)
 
 			if tt.expectError {
 				if err == nil {
@@ -600,7 +600,7 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.AuthorizeAccess(tt.user, tt.appPathDomain, "rbac:test", tt.permission)
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -710,7 +710,7 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.AuthorizeAccess(tt.user, tt.appPathDomain, "rbac:test", tt.permission)
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -833,7 +833,7 @@ func TestUpdateRBACConfig(t *testing.T) {
 			}
 
 			// Test that the update worked by checking authorization
-			result, err := rbacManager.AuthorizeAccess("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionList)
+			result, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionList)
 			if err != nil {
 				t.Errorf("unexpected error during authorization test: %v", err)
 				return
@@ -884,7 +884,7 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 		go func(user string) {
 			defer func() { done <- true }()
 
-			result, err := rbacManager.AuthorizeAccess(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList)
+			result, err := rbacManager.Authorize(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return

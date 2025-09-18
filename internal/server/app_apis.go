@@ -512,7 +512,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 
 	s.Trace().Msgf("Authenticated user %s, doing authorization check", userId)
-	authorized, err := s.rbacManager.AuthorizeAccess(userId, app.AppEntry.AppPathDomain(), string(appAuth), types.PermissionAccess)
+	authorized, err := s.rbacManager.Authorize(userId, app.AppEntry.AppPathDomain(), string(appAuth), types.PermissionAccess)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -916,8 +916,16 @@ func (s *Server) GetApps(ctx context.Context, appPathGlob string, internal bool)
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
+	userId := system.GetContextUserId(ctx)
 	ret := make([]types.AppResponse, 0, len(filteredApps))
 	for _, app := range filteredApps {
+		authorized, err := s.AuthorizeList(userId, &app)
+		if err != nil {
+			return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
+		}
+		if !authorized {
+			continue
+		}
 		retApp, err := s.GetApp(app.AppPathDomain, false)
 		if err != nil {
 			return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
