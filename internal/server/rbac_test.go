@@ -723,6 +723,119 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 	}
 }
 
+func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
+	t.Parallel()
+
+	rbacConfig := &types.RBACConfig{
+		Enabled: true,
+		Groups:  map[string][]string{},
+		Roles: map[string][]types.RBACPermission{
+			"read": {types.PermissionList},
+		},
+		Grants: []types.RBACGrant{
+			{
+				Description: "grant via dynamic group",
+				Users:       []string{"group:sso_devs"},
+				Roles:       []string{"read"},
+				Targets:     []string{"/test"},
+			},
+		},
+	}
+
+	logger := createTestLogger()
+	serverConfig := &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+	}
+
+	rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create RBACManager: %v", err)
+	}
+
+	t.Run("denied when no dynamic groups passed", func(t *testing.T) {
+		t.Parallel()
+		// user is not part of any configured group, and no dynamic groups provided
+		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if allowed {
+			t.Fatalf("expected authorization to be denied without dynamic groups")
+		}
+	})
+
+	t.Run("allowed when dynamic group passed", func(t *testing.T) {
+		t.Parallel()
+		// user is considered part of sso_devs via dynamic groups argument
+		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_devs"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !allowed {
+			t.Fatalf("expected authorization to be allowed with dynamic group membership")
+		}
+	})
+}
+
+func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
+	t.Parallel()
+
+	rbacConfig := &types.RBACConfig{
+		Enabled: true,
+		Groups: map[string][]string{
+			"devs": {"user2"},
+		},
+		Roles: map[string][]types.RBACPermission{
+			"read": {types.PermissionList},
+		},
+		Grants: []types.RBACGrant{
+			{
+				Description: "grant via either configured or dynamic group",
+				Users:       []string{"group:devs", "group:sso_devs"},
+				Roles:       []string{"read"},
+				Targets:     []string{"/test"},
+			},
+		},
+	}
+
+	logger := createTestLogger()
+	serverConfig := &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+	}
+
+	rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create RBACManager: %v", err)
+	}
+
+	// user1 not in configured groups; denied without dynamic groups
+	allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Fatalf("expected user1 to be denied without dynamic groups")
+	}
+
+	// user1 allowed when dynamic group provided
+	allowed, err = rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_devs"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Fatalf("expected user1 to be allowed with dynamic group")
+	}
+
+	// user2 is in configured group; allowed even without dynamic groups
+	allowed, err = rbacManager.Authorize("user2", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Fatalf("expected user2 to be allowed via configured group")
+	}
+}
+
 func TestUpdateRBACConfig(t *testing.T) {
 	t.Parallel()
 
