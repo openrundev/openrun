@@ -500,7 +500,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.permission)
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.permission, []string{})
 
 			if tt.expectError {
 				if err == nil {
@@ -600,7 +600,7 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission)
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{})
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -710,7 +710,7 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission)
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{})
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -833,7 +833,7 @@ func TestUpdateRBACConfig(t *testing.T) {
 			}
 
 			// Test that the update worked by checking authorization
-			result, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionList)
+			result, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionList, []string{})
 			if err != nil {
 				t.Errorf("unexpected error during authorization test: %v", err)
 				return
@@ -884,7 +884,7 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 		go func(user string) {
 			defer func() { done <- true }()
 
-			result, err := rbacManager.Authorize(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList)
+			result, err := rbacManager.Authorize(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{})
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -987,7 +987,7 @@ func TestValidateGrants(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "invalid grant - undefined group reference",
+			name: "valid grant - undefined group reference (no longer validated)",
 			rbacConfig: &types.RBACConfig{
 				Enabled: true,
 				Groups: map[string][]string{
@@ -998,15 +998,14 @@ func TestValidateGrants(t *testing.T) {
 				},
 				Grants: []types.RBACGrant{
 					{
-						Description: "invalid grant",
+						Description: "valid grant with undefined group",
 						Users:       []string{"group:nonexistent"},
 						Roles:       []string{"read"},
 						Targets:     []string{"/test"},
 					},
 				},
 			},
-			expectError: true,
-			errorMsg:    "grant 0 ('invalid grant'): Users references undefined group 'nonexistent'",
+			expectError: false,
 		},
 		{
 			name: "invalid grant - undefined role reference",
@@ -1031,7 +1030,7 @@ func TestValidateGrants(t *testing.T) {
 			errorMsg:    "grant 0 ('invalid grant'): Roles references undefined role 'nonexistent'",
 		},
 		{
-			name: "invalid grant - multiple undefined group references",
+			name: "valid grant - multiple undefined group references (no longer validated)",
 			rbacConfig: &types.RBACConfig{
 				Enabled: true,
 				Groups: map[string][]string{
@@ -1042,15 +1041,14 @@ func TestValidateGrants(t *testing.T) {
 				},
 				Grants: []types.RBACGrant{
 					{
-						Description: "invalid grant",
+						Description: "valid grant with multiple undefined groups",
 						Users:       []string{"group:nonexistent1", "group:nonexistent2"},
 						Roles:       []string{"read"},
 						Targets:     []string{"/test"},
 					},
 				},
 			},
-			expectError: true,
-			errorMsg:    "grant 0 ('invalid grant'): Users references undefined group 'nonexistent1'",
+			expectError: false,
 		},
 		{
 			name: "invalid grant - multiple undefined role references",
@@ -1075,7 +1073,7 @@ func TestValidateGrants(t *testing.T) {
 			errorMsg:    "grant 0 ('invalid grant'): Roles references undefined role 'nonexistent1'",
 		},
 		{
-			name: "invalid grant - multiple grants with errors",
+			name: "valid grants - multiple grants with undefined group (no longer validated)",
 			rbacConfig: &types.RBACConfig{
 				Enabled: true,
 				Groups: map[string][]string{
@@ -1092,15 +1090,14 @@ func TestValidateGrants(t *testing.T) {
 						Targets:     []string{"/test"},
 					},
 					{
-						Description: "invalid grant",
+						Description: "valid grant with undefined group",
 						Users:       []string{"group:nonexistent"},
 						Roles:       []string{"read"},
 						Targets:     []string{"/test"},
 					},
 				},
 			},
-			expectError: true,
-			errorMsg:    "grant 1 ('invalid grant'): Users references undefined group 'nonexistent'",
+			expectError: false,
 		},
 		{
 			name: "empty grants - should be valid",

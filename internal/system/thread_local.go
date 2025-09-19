@@ -37,6 +37,32 @@ func GetRequestUserId(thread *starlark.Thread) string {
 	return GetContextUserId(ctx)
 }
 
+func GetRequestGroups(thread *starlark.Thread) []string {
+	ctxVal := thread.Local(types.TL_CONTEXT)
+	if ctxVal == nil {
+		return []string{}
+	}
+
+	ctx, ok := ctxVal.(context.Context)
+	if !ok {
+		return []string{}
+	}
+
+	return GetContextGroups(ctx)
+}
+
+func GetContextGroups(ctx context.Context) []string {
+	value := ctx.Value(types.GROUPS)
+	if value == nil {
+		return []string{}
+	}
+	valueStr, ok := value.([]string)
+	if !ok {
+		return []string{}
+	}
+	return valueStr
+}
+
 func GetContextValue(ctx context.Context, key types.ContextKey) string {
 	value := ctx.Value(key)
 	if value == nil {

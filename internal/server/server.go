@@ -845,11 +845,11 @@ func (s *Server) ParseGlob(appGlob string) ([]types.AppInfo, error) {
 // AuthorizeList checks if the user has access to perform list operation on the specified app
 // For RBAC mode, uses RBAC permissions. For non-RBAC mode, look at whether app is using
 // same authentication types as used by the caller
-func (s *Server) AuthorizeList(userId string, app *types.AppInfo) (bool, error) {
+func (s *Server) AuthorizeList(userId string, app *types.AppInfo, groups []string) (bool, error) {
 	appAuthStr := string(app.Auth)
 	if s.rbacManager.rbacConfig.Enabled {
 		// RBAC auth is enabled, verify access
-		return s.rbacManager.Authorize(userId, app.AppPathDomain, appAuthStr, types.PermissionList)
+		return s.rbacManager.Authorize(userId, app.AppPathDomain, appAuthStr, types.PermissionList, groups)
 	}
 
 	if userId != "" && userId == types.ADMIN_USER {

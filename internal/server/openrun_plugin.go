@@ -76,6 +76,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 	}
 
 	userId := system.GetRequestUserId(thread)
+	groups := system.GetRequestGroups(thread)
 	ret := starlark.List{}
 	for _, app := range apps {
 		// Filter out internal apps
@@ -116,7 +117,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		}
 
 		if permCheck {
-			hasAccess, err := c.server.AuthorizeList(userId, &app)
+			hasAccess, err := c.server.AuthorizeList(userId, &app, groups)
 			if err != nil {
 				return nil, err
 			}

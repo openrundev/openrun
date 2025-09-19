@@ -5,6 +5,7 @@ package server
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -32,10 +33,12 @@ const (
 	PROVIDER_NAME_DELIMITER = "_"
 	SESSION_COOKIE          = "openrun_session"
 	AUTH_KEY                = "authenticated"
-	USER_ID_KEY             = "user"
+	USER_KEY                = "user" // email/userid/nickname (for git email/nickname/userid)
+	USER_ID_KEY             = "user_id"
 	USER_EMAIL_KEY          = "email"
 	USER_NICKNAME_KEY       = "nickname"
 	PROVIDER_NAME_KEY       = "provider_name"
+	GROUPS_KEY              = "groups"
 	REDIRECT_URL            = "redirect"
 )
 
@@ -144,8 +147,11 @@ func (s *SSOAuth) Setup() error {
 		case "auth0": // auth0 requires a domain
 			provider = auth0.New(key, secret, callbackUrl, auth.Domain, scopes...)
 		case "okta": // okta requires an org url
-			provider = okta.New(key, secret, callbackUrl, auth.OrgUrl, scopes...)
+			provider = okta.New(key, secret, auth.OrgUrl, callbackUrl, scopes...)
 		case "oidc": // openidConnect requires a discovery url
+			if auth.DiscoveryUrl == "" {
+				return fmt.Errorf("discovery_url is required for OIDC provider")
+			}
 			op, err := openidConnect.New(key, secret, callbackUrl, auth.DiscoveryUrl, scopes...)
 			if err != nil {
 				return fmt.Errorf("failed to create OIDC provider: %w", err)
@@ -195,6 +201,41 @@ func (s *SSOAuth) RegisterRoutes(mux *chi.Mux) {
 		session.Values[USER_EMAIL_KEY] = user.Email
 		session.Values[USER_NICKNAME_KEY] = user.NickName
 		session.Values[PROVIDER_NAME_KEY] = providerName
+
+		lookupKeys := []string{USER_EMAIL_KEY, USER_ID_KEY, USER_NICKNAME_KEY}
+		if strings.HasPrefix(providerName, "git") {
+			// For git providers, prefer nickname over userid as it is more meaningful
+			lookupKeys = []string{USER_EMAIL_KEY, USER_NICKNAME_KEY, USER_ID_KEY}
+		}
+		userId := ""
+		ok := false
+		for _, key := range lookupKeys {
+			userId, ok = session.Values[key].(string)
+			if ok && userId != "" {
+				break
+			}
+		}
+
+		if userId == "" {
+			s.Warn().Msg("user id could not be found")
+			http.Error(w, errors.New("user id could not be found").Error(), http.StatusInternalServerError)
+		}
+
+		session.Values[USER_KEY] = userId
+
+		// Get groups from user.RawData
+		groups := make([]string, 0)
+		if raw, ok := user.RawData["groups"]; ok {
+			if arr, ok := raw.([]any); ok {
+				for _, v := range arr {
+					if s, ok := v.(string); ok {
+						groups = append(groups, s)
+					}
+				}
+			}
+		}
+		s.Trace().Str("user_id", user.UserID).Str("email", user.Email).Str("nickname", user.NickName).Str("provider_name", providerName).Msgf("authenticated user with groups %+v", groups)
+		session.Values[GROUPS_KEY] = groups
 		session.Save(r, w)
 
 		// Redirect to the original page, or default to the home page if not specified
@@ -230,7 +271,7 @@ func (s *SSOAuth) RegisterRoutes(mux *chi.Mux) {
 		providerName := chi.URLParam(r, "provider")
 		// try to get the user without re-authenticating
 		if _, err := gothic.CompleteUserAuth(w, r); err == nil {
-			userId, err := s.CheckAuth(w, r, providerName, false)
+			userId, _, err := s.CheckAuth(w, r, providerName, false)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -295,12 +336,12 @@ func (s *SSOAuth) ValidateAuthType(authType string) bool {
 	}
 }
 
-func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider string, updateRedirect bool) (string, error) {
+func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider string, updateRedirect bool) (string, []string, error) {
 	cookieName := genCookieName(appProvider)
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {
 		s.Warn().Err(err).Msg("failed to get session")
-		return "", err
+		return "", nil, err
 	}
 	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || !auth {
 		// Store the target URL before redirecting to login
@@ -314,7 +355,7 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 		} else {
 			http.Redirect(w, r, types.INTERNAL_URL_PREFIX+"/auth/"+appProvider, http.StatusTemporaryRedirect)
 		}
-		return "", nil
+		return "", nil, nil
 	}
 
 	// Check if provider name matches the one in the session
@@ -325,17 +366,22 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 		}
 		s.Warn().Err(err).Msg("provider mismatch, redirecting to login")
 		http.Redirect(w, r, types.INTERNAL_URL_PREFIX+"/auth/"+appProvider, http.StatusTemporaryRedirect)
-		return "", nil
+		return "", nil, nil
 	}
 
-	userId, ok := session.Values[USER_EMAIL_KEY].(string)
+	userId, ok := session.Values[USER_KEY].(string)
 	if !ok || userId == "" {
-		userId, ok = session.Values[USER_NICKNAME_KEY].(string)
-		if !ok || userId == "" {
-			userId, ok = session.Values[USER_ID_KEY].(string)
-			if !ok || userId == "" {
-				s.Warn().Msg("no user id in session")
-				return "", fmt.Errorf("no user id in session")
+		s.Warn().Msg("no user key in session")
+		return "", nil, fmt.Errorf("no user key in session")
+	}
+
+	groups := make([]string, 0)
+	if raw, ok := session.Values[GROUPS_KEY]; ok {
+		if arr, ok := raw.([]any); ok {
+			for _, v := range arr {
+				if s, ok := v.(string); ok {
+					groups = append(groups, s)
+				}
 			}
 		}
 	}
@@ -344,5 +390,5 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 	delete(session.Values, REDIRECT_URL)
 	session.Save(r, w)
 
-	return appProvider + ":" + userId, nil
+	return appProvider + ":" + userId, groups, nil
 }

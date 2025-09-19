@@ -469,6 +469,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	// Remove the RBAC_AUTH_PREFIX rbac: prefix
 	strippedAuthStr := strings.TrimPrefix(string(appAuth), RBAC_AUTH_PREFIX)
 	strippedAuth := types.AppAuthnType(strippedAuthStr)
+	groups := make([]string, 0)
 
 	if strippedAuth == types.AppAuthnNone {
 		// No authentication required
@@ -502,7 +503,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 		}
 
 		// Redirect to the auth provider if not logged in
-		userId, err = s.ssoAuth.CheckAuth(w, r, strippedAuthStr, true)
+		userId, groups, err = s.ssoAuth.CheckAuth(w, r, strippedAuthStr, true)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -512,7 +513,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 
 	s.Trace().Msgf("Authenticated user %s, doing authorization check", userId)
-	authorized, err := s.rbacManager.Authorize(userId, app.AppEntry.AppPathDomain(), string(appAuth), types.PermissionAccess)
+	authorized, err := s.rbacManager.Authorize(userId, app.AppEntry.AppPathDomain(), string(appAuth), types.PermissionAccess, groups)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -526,6 +527,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	// Create a new context with the user ID
 	ctx := context.WithValue(r.Context(), types.USER_ID, userId)
 	ctx = context.WithValue(ctx, types.APP_ID, string(app.Id))
+	ctx = context.WithValue(ctx, types.GROUPS, groups)
 
 	contextShared := ctx.Value(types.SHARED)
 	if contextShared != nil {
@@ -917,9 +919,10 @@ func (s *Server) GetApps(ctx context.Context, appPathGlob string, internal bool)
 	}
 
 	userId := system.GetContextUserId(ctx)
+	groups := system.GetContextGroups(ctx)
 	ret := make([]types.AppResponse, 0, len(filteredApps))
 	for _, app := range filteredApps {
-		authorized, err := s.AuthorizeList(userId, &app)
+		authorized, err := s.AuthorizeList(userId, &app, groups)
 		if err != nil {
 			return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
 		}

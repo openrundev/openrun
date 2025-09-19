@@ -40,7 +40,8 @@ func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverCo
 	return rbacManager, nil
 }
 
-func (h *RBACManager) Authorize(user string, appPathDomain types.AppPathDomain, appAuthSetting string, permission types.RBACPermission) (bool, error) {
+func (h *RBACManager) Authorize(user string, appPathDomain types.AppPathDomain,
+	appAuthSetting string, permission types.RBACPermission, groups []string) (bool, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -64,12 +65,13 @@ func (h *RBACManager) Authorize(user string, appPathDomain types.AppPathDomain, 
 	appPathDomain.Path = strings.TrimSuffix(appPathDomain.Path, types.STAGE_SUFFIX)
 	appPathDomain.Path = strings.TrimSuffix(appPathDomain.Path, types.PREVIEW_SUFFIX)
 
-	return h.checkGrants(user, appPathDomain, permission)
+	return h.checkGrants(user, appPathDomain, permission, groups)
 }
 
-func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathDomain, inputPermission types.RBACPermission) (bool, error) {
+func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathDomain,
+	inputPermission types.RBACPermission, groups []string) (bool, error) {
 	for _, grant := range h.rbacConfig.Grants {
-		match, err := h.checkGrant(grant, inputUser, appPathDomain, inputPermission)
+		match, err := h.checkGrant(grant, inputUser, appPathDomain, inputPermission, groups)
 		if err != nil {
 			return false, err
 		}
@@ -84,12 +86,19 @@ func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathD
 	return false, nil
 }
 
-func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPathDomain types.AppPathDomain, inputPermission types.RBACPermission) (bool, error) {
+func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPathDomain types.AppPathDomain,
+	inputPermission types.RBACPermission, groups []string) (bool, error) {
 	userMatched := false
 	for _, user := range grant.Users {
 		if strings.HasPrefix(user, RBAC_GROUP_PREFIX) {
 			refGroupName := user[len(RBAC_GROUP_PREFIX):]
-			if slices.Contains(h.groups[refGroupName], inputUser) {
+			if slices.Contains(groups, refGroupName) {
+				// granted group name matched group as found from SSO login
+				userMatched = true
+				break
+			}
+			refGroup, ok := h.groups[refGroupName]
+			if ok && slices.Contains(refGroup, inputUser) {
 				userMatched = true
 				break
 			}
@@ -247,16 +256,7 @@ func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig) error {
 	}
 
 	for i, grant := range rbacConfig.Grants {
-		// Validate group references in Users
-		for _, user := range grant.Users {
-			if strings.HasPrefix(user, RBAC_GROUP_PREFIX) {
-				groupName := user[len(RBAC_GROUP_PREFIX):]
-				if _, exists := rbacConfig.Groups[groupName]; !exists {
-					return fmt.Errorf("grant %d ('%s'): Users references undefined group '%s'", i, grant.Description, groupName)
-				}
-			}
-		}
-
+		// groups can be passed dynamically (for SSO login), so we don't need to validate them
 		// Validate role references in Roles
 		for _, role := range grant.Roles {
 			if _, exists := rbacConfig.Roles[role]; !exists {

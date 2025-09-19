@@ -40,6 +40,7 @@ const (
 	SHARED     ContextKey = "shared"
 	REQUEST_ID ContextKey = "request_id"
 	APP_ID     ContextKey = "app_id"
+	GROUPS     ContextKey = "groups"
 )
 
 const (
