@@ -377,12 +377,8 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 
 	groups := make([]string, 0)
 	if raw, ok := session.Values[GROUPS_KEY]; ok {
-		if arr, ok := raw.([]any); ok {
-			for _, v := range arr {
-				if s, ok := v.(string); ok {
-					groups = append(groups, s)
-				}
-			}
+		if arr, ok := raw.([]string); ok {
+			groups = arr
 		}
 	}
 
