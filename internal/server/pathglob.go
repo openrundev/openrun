@@ -58,6 +58,10 @@ func ParseGlob(appPathGlob string, apps []types.AppPathDomain) ([]types.AppPathD
 	if appPathGlob == "" || strings.ToLower(appPathGlob) == "all" {
 		appPathGlob = "*:**"
 	}
+
+	if appPathGlob == "*:**" {
+		return apps, nil // all apps match
+	}
 	split := strings.Split(appPathGlob, ":")
 	if len(split) > 2 {
 		return nil, fmt.Errorf("path glob has to be in the format of domain:path")

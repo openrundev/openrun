@@ -175,6 +175,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		v.SetKey(starlark.String("version_mismatch"), starlark.Bool(versionMismatchMap[app.Id]))
 		v.SetKey(starlark.String("git_sha"), starlark.String(app.GitSha))
 		v.SetKey(starlark.String("git_message"), starlark.String(app.GitMessage))
+		v.SetKey(starlark.String("git_branch"), starlark.String(app.Branch))
 
 		ret.Append(&v)
 	}
