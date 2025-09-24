@@ -64,7 +64,13 @@
                 tabindex="0"
                 class="dropdown-content menu bg-base-100 rounded-box z-[1] w-52 p-2 shadow">
                 {{ range .links }}
-                  <li><a href="{{ .Path }}">{{ .Name }}</a></li>
+                  {{ if .Authorized }}
+                    <li><a class="link" href="{{ .Path }}">{{ .Name }}</a></li>
+                  {{ else }}
+                    <li class="disabled menu-disabled">
+                      <a aria-disabled="true">{{ .Name }}</a>
+                    </li>
+                  {{ end }}
                 {{ end }}
               </ul>
             {{ end }}

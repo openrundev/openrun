@@ -5,6 +5,7 @@ package types
 
 import (
 	"cmp"
+	"context"
 	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
@@ -36,11 +37,13 @@ const (
 type ContextKey string
 
 const (
-	USER_ID    ContextKey = "user_id"
-	SHARED     ContextKey = "shared"
-	REQUEST_ID ContextKey = "request_id"
-	APP_ID     ContextKey = "app_id"
-	GROUPS     ContextKey = "groups"
+	USER_ID         ContextKey = "user_id"
+	SHARED          ContextKey = "shared"
+	REQUEST_ID      ContextKey = "request_id"
+	APP_ID          ContextKey = "app_id"
+	APP_PATH_DOMAIN ContextKey = "app_path_domain"
+	APP_AUTH        ContextKey = "app_auth"
+	GROUPS          ContextKey = "groups"
 )
 
 const (
@@ -717,3 +720,5 @@ const (
 	PermissionList   RBACPermission = "list"   // list apps
 	PermissionAccess RBACPermission = "access" // access apps
 )
+
+type AuthorizerFunc func(ctx context.Context, permissions []string) (bool, error)

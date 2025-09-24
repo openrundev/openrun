@@ -107,7 +107,7 @@ func CreateTestAppInt(logger *types.Logger, path string, fileData map[string]str
 	workFS := appfs.NewWorkFs("", &TestWriteFS{TestReadFS: &TestReadFS{fileData: map[string]string{}}})
 	a, err := app.NewApp(sourceFS, workFS, logger,
 		createTestAppEntry(id, path, isDev, metadata), &systemConfig, pluginConfig, *appConfig,
-		nil, secretManager.AppEvalTemplate, nil, &types.ServerConfig{})
+		nil, secretManager.AppEvalTemplate, nil, &types.ServerConfig{}, nil)
 	if err != nil {
 		return nil, nil, err
 	}

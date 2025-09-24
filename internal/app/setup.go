@@ -521,7 +521,7 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 
 	var name, path, description string
 	var run, suggest starlark.Callable
-	var hidden []string
+	var hidden, permit []string
 	var showValidate bool
 	if name, err = apptype.GetStringAttr(actionDef, "name"); err != nil {
 		return err
@@ -538,6 +538,11 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	if hidden, err = apptype.GetListStringAttr(actionDef, "hidden", true); err != nil {
 		return err
 	}
+
+	if permit, err = apptype.GetListStringAttr(actionDef, "permit", true); err != nil {
+		return err
+	}
+
 	if showValidate, err = apptype.GetBoolAttr(actionDef, "show_validate"); err != nil {
 		return err
 	}
@@ -557,7 +562,7 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	}
 	action, err := action.NewAction(a.Logger, a.sourceFS, a.IsDev, name, description, path, run, suggest,
 		slices.Collect(maps.Values(a.paramInfo)), a.paramValuesStr, a.paramDict, a.Path, a.appStyle.GetStyleType(),
-		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerManager, a.jsLibs, a.AppPathDomain(), a.serverConfig)
+		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerManager, a.jsLibs, a.AppPathDomain(), a.serverConfig, permit, a.authorizer)
 	if err != nil {
 		return fmt.Errorf("error creating action %s: %w", name, err)
 	}

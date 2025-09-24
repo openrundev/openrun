@@ -355,7 +355,7 @@ func (s *Server) setupApp(appEntry *types.AppEntry, tx types.Transaction) (*app.
 		})
 	return app.NewApp(sourceFS, workFS, &appLogger, appEntry, &s.config.System,
 		s.config.Plugins, s.config.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
-		s.InsertAuditEvent, s.config)
+		s.InsertAuditEvent, s.config, s.AuthorizeAny)
 }
 
 func (s *Server) GetAppApi(ctx context.Context, appPath string) (*types.AppGetResponse, error) {
@@ -513,7 +513,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 
 	s.Trace().Msgf("Authenticated user %s, doing authorization check", userId)
-	authorized, err := s.rbacManager.Authorize(userId, app.AppEntry.AppPathDomain(), string(appAuth), types.PermissionAccess, groups)
+	authorized, err := s.rbacManager.Authorize(userId, app.AppEntry.AppPathDomain(), string(appAuth), types.PermissionAccess, groups, false)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -527,6 +527,8 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	// Create a new context with the user ID
 	ctx := context.WithValue(r.Context(), types.USER_ID, userId)
 	ctx = context.WithValue(ctx, types.APP_ID, string(app.Id))
+	ctx = context.WithValue(ctx, types.APP_PATH_DOMAIN, app.AppEntry.AppPathDomain())
+	ctx = context.WithValue(ctx, types.APP_AUTH, appAuth)
 	ctx = context.WithValue(ctx, types.GROUPS, groups)
 
 	contextShared := ctx.Value(types.SHARED)

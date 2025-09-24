@@ -310,16 +310,19 @@ func createLibraryBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark
 func createActionBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var name, desc, path starlark.String
 	var suggest, executor starlark.Callable
-	var hidden *starlark.List
+	var hidden, permit *starlark.List
 	var showValidate starlark.Bool
 	if err := starlark.UnpackArgs(ACTION, args, kwargs, "name", &name, "path", &path,
 		"run", &executor, "suggest?", &suggest, "description?", &desc, "hidden?", &hidden,
-		"show_validate?", &showValidate); err != nil {
+		"show_validate?", &showValidate, "permit?", &permit); err != nil {
 		return nil, fmt.Errorf("error unpacking action args: %w", err)
 	}
 
 	if hidden == nil {
 		hidden = starlark.NewList([]starlark.Value{})
+	}
+	if permit == nil {
+		permit = starlark.NewList([]starlark.Value{})
 	}
 
 	fields := starlark.StringDict{
@@ -329,6 +332,7 @@ func createActionBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.
 		"run":           executor,
 		"hidden":        hidden,
 		"show_validate": showValidate,
+		"permit":        permit,
 	}
 
 	if suggest != nil {

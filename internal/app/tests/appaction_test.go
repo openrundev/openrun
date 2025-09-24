@@ -939,10 +939,10 @@ app = ace.app("testApp",
 
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	body := response.Body.String()
-	if strings.Contains(body, `<li><a href="/test/test1">test1Action</a></li>`) {
+	if strings.Contains(body, `<li><a class="link" href="/test/test1">test1Action</a></li>`) {
 		t.Errorf("actions switcher should not have current action, got %s", body)
 	}
-	testutil.AssertStringContains(t, body, `<li><a href="/test/test2">test2Action</a></li>`)
+	testutil.AssertStringContains(t, body, `<li><a class="link" href="/test/test2">test2Action</a></li>`)
 
 	request = httptest.NewRequest("GET", "/test/test2?param1=abc", nil)
 	response = httptest.NewRecorder()
@@ -950,10 +950,10 @@ app = ace.app("testApp",
 
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	body = response.Body.String()
-	if strings.Contains(body, `<li><a href="/test/test2">test2Action</a></li>`) {
+	if strings.Contains(body, `<li><a class="link" href="/test/test2">test2Action</a></li>`) {
 		t.Errorf("actions switcher should not have current action, got %s", body)
 	}
-	testutil.AssertStringContains(t, body, `<li><a href="/test/test1?param1=abc">test1Action</a></li>`)
+	testutil.AssertStringContains(t, body, `<li><a class="link" href="/test/test1?param1=abc">test1Action</a></li>`)
 
 	values := url.Values{
 		"param1": {"p1val"},
@@ -977,7 +977,7 @@ app = ace.app("testApp",
                         tabindex="0"
                         class="dropdown-content menu bg-base-100 rounded-box z-[1] w-52 p-2 shadow">
                         
-                          <li><a href="/test/test2?param1=p1val">test2Action</a></li>
+                          <li><a class="link" href="/test/test2?param1=p1val">test2Action</a></li>
                         
                       </ul>
 		 <div

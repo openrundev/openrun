@@ -41,7 +41,7 @@ func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverCo
 }
 
 func (h *RBACManager) Authorize(user string, appPathDomain types.AppPathDomain,
-	appAuthSetting string, permission types.RBACPermission, groups []string) (bool, error) {
+	appAuthSetting string, permission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -55,7 +55,7 @@ func (h *RBACManager) Authorize(user string, appPathDomain types.AppPathDomain,
 		return true, nil
 	}
 
-	if !strings.HasPrefix(appAuthSetting, RBAC_AUTH_PREFIX) && permission == types.PermissionAccess {
+	if !strings.HasPrefix(appAuthSetting, RBAC_AUTH_PREFIX) && (permission == types.PermissionAccess || isAppLevelPermission) {
 		// if app auth does not have rbac enabled, authorize access for Access permission
 		// If authenticated, then app access is allowed
 		return true, nil

@@ -500,7 +500,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.permission, []string{})
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.permission, []string{}, false)
 
 			if tt.expectError {
 				if err == nil {
@@ -600,7 +600,7 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{})
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -710,7 +710,7 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{})
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -755,7 +755,7 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 	t.Run("denied when no dynamic groups passed", func(t *testing.T) {
 		t.Parallel()
 		// user is not part of any configured group, and no dynamic groups provided
-		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{})
+		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -767,7 +767,8 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 	t.Run("allowed when dynamic group passed", func(t *testing.T) {
 		t.Parallel()
 		// user is considered part of sso_devs via dynamic groups argument
-		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_devs"})
+		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
+			types.PermissionList, []string{"sso_devs"}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -809,7 +810,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user1 not in configured groups; denied without dynamic groups
-	allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{})
+	allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -818,7 +819,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user1 allowed when dynamic group provided
-	allowed, err = rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_devs"})
+	allowed, err = rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_devs"}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -827,7 +828,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user2 is in configured group; allowed even without dynamic groups
-	allowed, err = rbacManager.Authorize("user2", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{})
+	allowed, err = rbacManager.Authorize("user2", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -946,7 +947,7 @@ func TestUpdateRBACConfig(t *testing.T) {
 			}
 
 			// Test that the update worked by checking authorization
-			result, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionList, []string{})
+			result, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error during authorization test: %v", err)
 				return
@@ -997,7 +998,7 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 		go func(user string) {
 			defer func() { done <- true }()
 
-			result, err := rbacManager.Authorize(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{})
+			result, err := rbacManager.Authorize(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -1015,6 +1016,102 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		<-done
 	}
+}
+
+func TestAuthorizeAppLevelPermissions(t *testing.T) {
+	t.Parallel()
+
+	logger := createTestLogger()
+	serverConfig := &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+	}
+
+	t.Run("non-rbac auth allows app-level permission", func(t *testing.T) {
+		t.Parallel()
+
+		rbacConfig := &types.RBACConfig{Enabled: true}
+		rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
+		if err != nil {
+			t.Fatalf("failed to create RBACManager: %v", err)
+		}
+
+		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "none",
+			types.RBACPermission("action_run"), []string{}, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !allowed {
+			t.Fatalf("expected authorization to be allowed for app-level permission with non-rbac auth")
+		}
+	})
+
+	t.Run("rbac denies when no role includes app-level permission", func(t *testing.T) {
+		t.Parallel()
+
+		rbacConfig := &types.RBACConfig{
+			Enabled: true,
+			Groups:  map[string][]string{},
+			Roles: map[string][]types.RBACPermission{
+				"read": {types.PermissionList},
+			},
+			Grants: []types.RBACGrant{
+				{
+					Description: "grant read only",
+					Users:       []string{"user1"},
+					Roles:       []string{"read"},
+					Targets:     []string{"/test"},
+				},
+			},
+		}
+
+		rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
+		if err != nil {
+			t.Fatalf("failed to create RBACManager: %v", err)
+		}
+
+		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
+			types.RBACPermission("custom"), []string{}, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if allowed {
+			t.Fatalf("expected authorization to be denied when role lacks app-level permission")
+		}
+	})
+
+	t.Run("rbac allows when role includes app-level permission", func(t *testing.T) {
+		t.Parallel()
+
+		rbacConfig := &types.RBACConfig{
+			Enabled: true,
+			Groups:  map[string][]string{},
+			Roles: map[string][]types.RBACPermission{
+				"actor": {types.RBACPermission("action_run"), types.RBACPermission("custom")},
+			},
+			Grants: []types.RBACGrant{
+				{
+					Description: "grant actor",
+					Users:       []string{"user1"},
+					Roles:       []string{"actor"},
+					Targets:     []string{"/test"},
+				},
+			},
+		}
+
+		rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
+		if err != nil {
+			t.Fatalf("failed to create RBACManager: %v", err)
+		}
+
+		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
+			types.RBACPermission("action_run"), []string{}, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !allowed {
+			t.Fatalf("expected authorization to be allowed when role includes app-level permission")
+		}
+	})
 }
 
 func TestValidateGrants(t *testing.T) {

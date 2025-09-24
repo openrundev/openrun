@@ -815,7 +815,7 @@ func (s *Server) GetListAppsApp() (*app.App, error) {
 	appLogger := types.Logger{Logger: &subLogger}
 	s.listAppsApp, err = app.NewApp(sourceFS, nil, &appLogger, &appEntry, &s.config.System,
 		s.config.Plugins, s.config.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
-		s.InsertAuditEvent, s.config)
+		s.InsertAuditEvent, s.config, s.AuthorizeAny)
 	if err != nil {
 		return nil, err
 	}
@@ -842,6 +842,30 @@ func (s *Server) ParseGlob(appGlob string) ([]types.AppInfo, error) {
 	return matched, nil
 }
 
+// AuthorizeAny checks if the user has access to any of the specified permissions
+// Used for app level permissions, like actions access
+func (s *Server) AuthorizeAny(ctx context.Context, permissions []string) (bool, error) {
+	for _, permission := range permissions {
+		authorized, err := s.Authorize(ctx, types.RBACPermission(permission), true)
+		if err != nil {
+			return false, err
+		}
+		if authorized {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Authorize checks if the user has access to the specified permission
+func (s *Server) Authorize(ctx context.Context, permission types.RBACPermission, isAppLevelPermission bool) (bool, error) {
+	userId := ctx.Value(types.USER_ID).(string)
+	groups := ctx.Value(types.GROUPS).([]string)
+	appPathDomain := ctx.Value(types.APP_PATH_DOMAIN).(types.AppPathDomain)
+	appAuth := string(ctx.Value(types.APP_AUTH).(types.AppAuthnType))
+	return s.rbacManager.Authorize(userId, appPathDomain, appAuth, permission, groups, isAppLevelPermission)
+}
+
 // AuthorizeList checks if the user has access to perform list operation on the specified app
 // For RBAC mode, uses RBAC permissions. For non-RBAC mode, look at whether app is using
 // same authentication types as used by the caller
@@ -849,7 +873,7 @@ func (s *Server) AuthorizeList(userId string, app *types.AppInfo, groups []strin
 	appAuthStr := string(app.Auth)
 	if s.rbacManager.rbacConfig.Enabled {
 		// RBAC auth is enabled, verify access
-		return s.rbacManager.Authorize(userId, app.AppPathDomain, appAuthStr, types.PermissionList, groups)
+		return s.rbacManager.Authorize(userId, app.AppPathDomain, appAuthStr, types.PermissionList, groups, false)
 	}
 
 	if userId != "" && userId == types.ADMIN_USER {

@@ -4,6 +4,7 @@
 package action
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -36,8 +37,10 @@ var embedHtml embed.FS
 var embedFS = hashfs.NewFS(embedHtml)
 
 type ActionLink struct {
-	Name string
-	Path string
+	Name       string
+	Path       string
+	Permits    []string
+	Authorized bool
 }
 
 // Action represents a single action that is exposed by the App. Actions
@@ -69,13 +72,16 @@ type Action struct {
 	esmLibs           []types.JSLibrary
 	appPathDomain     types.AppPathDomain
 	serverConfig      *types.ServerConfig
+	permit            []string
+	authorizer        types.AuthorizerFunc // can be null
 }
 
 // NewAction creates a new action
 func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name, description, apath string, run, suggest starlark.Callable,
 	params []apptype.AppParam, paramValuesStr map[string]string, paramDict starlark.StringDict,
 	appPath string, styleType types.StyleType, containerProxyUrl string, hidden []string, showValidate bool,
-	auditInsert func(*types.AuditEvent) error, containerManager any, jsLibs []types.JSLibrary, appPathDomain types.AppPathDomain, serverConfig *types.ServerConfig) (*Action, error) {
+	auditInsert func(*types.AuditEvent) error, containerManager any, jsLibs []types.JSLibrary, appPathDomain types.AppPathDomain,
+	serverConfig *types.ServerConfig, permit []string, authorizer types.AuthorizerFunc) (*Action, error) {
 
 	funcMap := system.GetFuncMap()
 
@@ -151,13 +157,16 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 		// Links, AppTemplate and Theme names are initialized later
 		appPathDomain: appPathDomain,
 		serverConfig:  serverConfig,
+		permit:        permit,
+		authorizer:    authorizer,
 	}, nil
 }
 
 func (a *Action) GetLink() ActionLink {
 	return ActionLink{
-		Name: a.name,
-		Path: a.pagePath,
+		Name:    a.name,
+		Path:    a.pagePath,
+		Permits: a.permit,
 	}
 }
 
@@ -203,7 +212,27 @@ func (a *Action) validateAction(w http.ResponseWriter, r *http.Request) {
 	a.execAction(w, r, false, true, "validate")
 }
 
+func (a *Action) authorizeAction(w http.ResponseWriter, r *http.Request) bool {
+	if a.authorizer != nil && len(a.permit) > 0 {
+		authorized, err := a.authorizer(r.Context(), a.permit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return false
+		}
+		if !authorized {
+			userId := system.GetContextUserId(r.Context())
+			http.Error(w, fmt.Sprintf("Unauthorized : %s does not have access to action %s", userId, a.name), http.StatusUnauthorized)
+			return false
+		}
+	}
+	return true
+}
+
 func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, isValidate bool, op string) {
+	if !a.authorizeAction(w, r) {
+		return
+	}
+
 	if isSuggest && a.suggest == nil {
 		http.Error(w, "suggest not supported for this action", http.StatusNotImplemented)
 		return
@@ -406,7 +435,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	}
 
 	if isSuggest {
-		a.handleSuggestResponse(w, qsParams.Encode(), ret)
+		a.handleSuggestResponse(r.Context(), w, qsParams.Encode(), ret)
 		return
 	}
 
@@ -487,7 +516,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	}
 
 	if len(a.Links) > 1 {
-		linksWithQS := a.getLinksWithQS(qsParams.Encode())
+		linksWithQS := a.getLinksWithQS(r.Context(), qsParams.Encode())
 		input := map[string]any{"links": linksWithQS}
 		err = a.actionTemplate.ExecuteTemplate(w, "dropdown", input)
 		if err != nil {
@@ -730,6 +759,10 @@ const (
 )
 
 func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
+	if !a.authorizeAction(w, r) {
+		return
+	}
+
 	queryParams := r.URL.Query()
 	params := make([]ParamDef, 0, len(a.params))
 
@@ -810,7 +843,7 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 		params = append(params, param)
 	}
 
-	linksWithQS := a.getLinksWithQS(r.URL.RawQuery)
+	linksWithQS := a.getLinksWithQS(r.Context(), r.URL.RawQuery)
 	input := map[string]any{
 		"dev":           a.isDev,
 		"name":          a.name,
@@ -833,20 +866,29 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *Action) getLinksWithQS(qs string) []ActionLink {
+func (a *Action) getLinksWithQS(ctx context.Context, qs string) []ActionLink {
 	linksWithQS := make([]ActionLink, 0, len(a.Links))
 	for _, link := range a.Links {
+		authorized := true
+		if a.authorizer != nil && len(link.Permits) > 0 {
+			var err error
+			authorized, err = a.authorizer(ctx, link.Permits)
+			if err != nil {
+				a.Error().Msgf("error authorizing link %s: %s", link.Name, err)
+			}
+		}
 		if link.Path != a.pagePath { // Don't add self link
 			if qs != "" {
 				link.Path = link.Path + "?" + qs
 			}
+			link.Authorized = authorized // whether this user has access to this action
 			linksWithQS = append(linksWithQS, link)
 		}
 	}
 	return linksWithQS
 }
 
-func (a *Action) handleSuggestResponse(w http.ResponseWriter, paramQS string, retVal starlark.Value) {
+func (a *Action) handleSuggestResponse(ctx context.Context, w http.ResponseWriter, paramQS string, retVal starlark.Value) {
 	ret, err := starlark_type.UnmarshalStarlark(retVal)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("error unmarshalling suggest response: %s", err), http.StatusInternalServerError)
@@ -865,7 +907,7 @@ func (a *Action) handleSuggestResponse(w http.ResponseWriter, paramQS string, re
 	}
 
 	if len(a.Links) > 1 {
-		linksWithQS := a.getLinksWithQS(paramQS)
+		linksWithQS := a.getLinksWithQS(ctx, paramQS)
 		input := map[string]any{"links": linksWithQS}
 		err = a.actionTemplate.ExecuteTemplate(w, "dropdown", input)
 		if err != nil {
