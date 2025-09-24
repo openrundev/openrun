@@ -15,6 +15,7 @@ import (
 const RBAC_AUTH_PREFIX = "rbac:"
 const RBAC_GROUP_PREFIX = "group:"
 const RBAC_ROLE_PREFIX = "role:"
+const RBAC_CUSTOM_PREFIX = "custom:" // used for app level custom permissions
 
 type RBACManager struct {
 	*types.Logger
@@ -65,13 +66,13 @@ func (h *RBACManager) Authorize(user string, appPathDomain types.AppPathDomain,
 	appPathDomain.Path = strings.TrimSuffix(appPathDomain.Path, types.STAGE_SUFFIX)
 	appPathDomain.Path = strings.TrimSuffix(appPathDomain.Path, types.PREVIEW_SUFFIX)
 
-	return h.checkGrants(user, appPathDomain, permission, groups)
+	return h.checkGrants(user, appPathDomain, permission, groups, isAppLevelPermission)
 }
 
 func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathDomain,
-	inputPermission types.RBACPermission, groups []string) (bool, error) {
+	inputPermission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
 	for _, grant := range h.rbacConfig.Grants {
-		match, err := h.checkGrant(grant, inputUser, appPathDomain, inputPermission, groups)
+		match, err := h.checkGrant(grant, inputUser, appPathDomain, inputPermission, groups, isAppLevelPermission)
 		if err != nil {
 			return false, err
 		}
@@ -82,12 +83,13 @@ func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathD
 			return true, nil
 		}
 	}
-	h.Debug().Msgf("Denied user %s access to app %s with permission %s", inputUser, appPathDomain.String(), inputPermission)
+	h.Debug().Msgf("Denied user %s access to app %s with permission %s app level %t",
+		inputUser, appPathDomain.String(), inputPermission, isAppLevelPermission)
 	return false, nil
 }
 
 func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPathDomain types.AppPathDomain,
-	inputPermission types.RBACPermission, groups []string) (bool, error) {
+	inputPermission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
 	userMatched := false
 	for _, user := range grant.Users {
 		if strings.HasPrefix(user, RBAC_GROUP_PREFIX) {
@@ -113,6 +115,10 @@ func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPat
 	}
 
 	// user matched, check if role matches
+	if isAppLevelPermission {
+		// app level permission, look for grant with custom: prefix
+		inputPermission = types.RBACPermission(RBAC_CUSTOM_PREFIX + string(inputPermission))
+	}
 	roleMatched := false
 	for _, role := range grant.Roles {
 		if slices.Contains(h.roles[role], inputPermission) {

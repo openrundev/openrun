@@ -1070,7 +1070,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 		}
 
 		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
-			types.RBACPermission("custom"), []string{}, true)
+			types.RBACPermission("action_run"), []string{}, true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1086,7 +1086,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 			Enabled: true,
 			Groups:  map[string][]string{},
 			Roles: map[string][]types.RBACPermission{
-				"actor": {types.RBACPermission("action_run"), types.RBACPermission("custom")},
+				"actor": {types.RBACPermission("custom:action_run")},
 			},
 			Grants: []types.RBACGrant{
 				{
