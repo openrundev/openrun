@@ -70,6 +70,7 @@ type App struct {
 	template         *template.Template            // unstructured templates, no base_templates defined
 	templateMap      map[string]*template.Template // structured templates, base_templates defined
 	staticOnly       bool                          // app has only static files, no HTML routes
+	redirectBarePath bool                          // whether to redirect bare path requests to the full path with trailing slash
 	jsLibs           []types.JSLibrary             // JS libraries used by the app
 
 	watcher       *fsnotify.Watcher
@@ -588,6 +589,11 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.reloadError != nil {
 		a.Warn().Err(a.reloadError).Msg("Last reload had failed")
 		http.Error(w, a.reloadError.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if a.redirectBarePath && r.URL.Path == a.Path && !strings.HasSuffix(r.URL.Path, "/") {
+		http.Redirect(w, r, a.Path+"/", http.StatusTemporaryRedirect) // some apps like gradio need redirect to the full path with trailing slash
 		return
 	}
 

@@ -83,6 +83,10 @@ func (a *App) loadStarlarkConfig(dryRun types.DryRun) error {
 	if err != nil {
 		return err
 	}
+	a.redirectBarePath, err = apptype.GetBoolAttr(a.appDef, "redirect_bare_path")
+	if err != nil {
+		return err
+	}
 
 	a.jsLibs, err = a.loadLibraryInfo()
 	if err != nil {
@@ -836,7 +840,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 				}
 			}
 
-			r.Header.Set("X-Forwarded-Host", strings.SplitN(r.Host, ":", 1)[0])
+			r.Header.Set("X-Forwarded-Host", strings.SplitN(r.Host, ":", 2)[0])
 			if r.TLS != nil {
 				r.Header.Set("X-Forwarded-Proto", "https")
 			} else {

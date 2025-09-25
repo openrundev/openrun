@@ -70,7 +70,7 @@ var (
 )
 
 func createAppBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var customLayout, staticOnly, singleFile starlark.Bool
+	var customLayout, staticOnly, singleFile, redirectBarePath starlark.Bool
 	var name, index starlark.String
 	var routes, actions *starlark.List
 	var settings *starlark.Dict
@@ -80,7 +80,7 @@ func createAppBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tup
 	if err := starlark.UnpackArgs(APP, args, kwargs, "name", &name,
 		"routes?", &routes, "style?", &style, "permissions?", &permissions, "libraries?", &libraries, "settings?",
 		&settings, "custom_layout?", &customLayout, "container?", &containerConfig, "actions?", &actions,
-		"static_only?", &staticOnly, "index?", &index, "single_file?", &singleFile); err != nil {
+		"static_only?", &staticOnly, "index?", &index, "single_file?", &singleFile, "redirect_bare_path?", &redirectBarePath); err != nil {
 		return nil, fmt.Errorf("error unpacking app args: %w", err)
 	}
 
@@ -102,16 +102,17 @@ func createAppBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tup
 	}
 
 	fields := starlark.StringDict{
-		"name":          name,
-		"custom_layout": customLayout,
-		"routes":        routes,
-		"settings":      settings,
-		"permissions":   permissions,
-		"libraries":     libraries,
-		"actions":       actions,
-		"static_only":   staticOnly,
-		"index":         index,
-		"single_file":   singleFile,
+		"name":               name,
+		"custom_layout":      customLayout,
+		"routes":             routes,
+		"settings":           settings,
+		"permissions":        permissions,
+		"libraries":          libraries,
+		"actions":            actions,
+		"static_only":        staticOnly,
+		"index":              index,
+		"single_file":        singleFile,
+		"redirect_bare_path": redirectBarePath,
 	}
 
 	if style != nil {

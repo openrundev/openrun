@@ -407,6 +407,13 @@ func (m *ContainerManager) GetEnvMap() (map[string]string, string) {
 	hashBuilder.WriteByte(0)
 	ret["PORT"] = portStr
 
+	appUrl := types.GetAppUrl(m.app.AppPathDomain(), m.app.serverConfig)
+	hashBuilder.WriteString("CL_APP_URL")
+	hashBuilder.WriteByte(0)
+	hashBuilder.WriteString(appUrl)
+	hashBuilder.WriteByte(0)
+	ret["CL_APP_URL"] = appUrl
+
 	return ret, hashBuilder.String()
 }
 
