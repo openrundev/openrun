@@ -326,3 +326,33 @@ def handler(req):
 	_, _, err := CreateTestApp(logger, fileData)
 	testutil.AssertErrorContains(t, err, "static_only app cannot have HTML routes")
 }
+
+func TestRedirectBarePath(t *testing.T) {
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")], redirect_bare_path=True)
+
+def handler(req):
+	return {"key": "myvalue"}`,
+		"index.go.html": `abc {{static "file1"}} def {{static "file2.txt"}}`,
+	}
+
+	a, _, err := CreateTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 307, response.Code) // redirect to the full path with trailing slash
+	testutil.AssertStringContains(t, response.Header().Get("Location"), "/test/")
+
+	request = httptest.NewRequest("GET", "/test/", nil)
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code) // no redirect for the full path with trailing slash
+}
