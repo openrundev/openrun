@@ -29,6 +29,19 @@ jobs:
           go-version: ${{ matrix.go-version }}
       - name: Install dependencies
         run: go mod download
+
+      - name: Install dependencies for mkcert
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3-tools
+
+      - name: Install mkcert
+        run: |
+          go install filippo.io/mkcert@latest
+          # Add mkcert to the PATH if not already there
+          echo "PATH=$(go env GOPATH)/bin:$PATH" >> $GITHUB_ENV
+          mkcert -install
+
       - name: Unit and Integration test
         env:
           CL_INFOCLACE_SSH: ${{ secrets.CL_INFOCLACE_SSH }}
