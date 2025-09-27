@@ -30,7 +30,7 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 		}
 	}
 
-	reloaded := true
+	var reloaded bool
 	if reloaded, err = s.loadAppCode(ctx, tx, appEntry, branch, commit, gitAuth, repoCache, forceReload); err != nil {
 		return nil, err
 	}
@@ -68,8 +68,8 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 		if !approve {
 			return nil, fmt.Errorf("app %s needs approval", appEntry)
 		} else {
-			app.AppEntry.Metadata.Loads = auditResult.NewLoads
-			app.AppEntry.Metadata.Permissions = auditResult.NewPermissions
+			app.Metadata.Loads = auditResult.NewLoads
+			app.Metadata.Permissions = auditResult.NewPermissions
 			if err := s.db.UpdateAppMetadata(ctx, tx, app.AppEntry); err != nil {
 				return nil, err
 			}
@@ -128,7 +128,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	repoCache, err := NewRepoCache(s)
 	if err != nil {
@@ -218,7 +218,7 @@ func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, p
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	result, entries, promoteResults, err := s.StagedUpdateAppsTx(ctx, tx, appPathGlob, promote, handler, args)
 	if err != nil {
@@ -328,7 +328,7 @@ func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun boo
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	result := make([]types.AppPathDomain, 0, len(filteredApps))
 	for _, appInfo := range filteredApps {
@@ -414,7 +414,7 @@ func (s *Server) UpdateAppSettings(ctx context.Context, appPathGlob string, dryR
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	results := make([]types.AppPathDomain, 0, len(filteredApps))
 	for _, appInfo := range filteredApps {
@@ -444,7 +444,10 @@ func (s *Server) UpdateAppSettings(ctx context.Context, appPathGlob string, dryR
 		return nil, err
 	}
 
-	s.apps.ClearAppsAudit(ctx, results, "update_settings") // Delete instead of update to avoid having to initialize all the linked apps
+	err = s.apps.ClearAppsAudit(ctx, results, "update_settings") // Delete instead of update to avoid having to initialize all the linked apps
+	if err != nil {
+		return nil, err
+	}
 	// Apps will get reloaded on the next request
 	return ret, nil
 }
@@ -584,7 +587,10 @@ func (s *Server) updateMetadataHandler(ctx context.Context, tx types.Transaction
 	}
 
 	if updateMetadata.ConfigType != "" && updateMetadata.ConfigType != types.AppMetadataConfigType(types.StringValueUndefined) {
-		s.updateAppMetadataConfig(appEntry, updateMetadata.ConfigType, updateMetadata.ConfigEntries)
+		err := s.updateAppMetadataConfig(appEntry, updateMetadata.ConfigType, updateMetadata.ConfigEntries)
+		if err != nil {
+			return nil, appEntry.AppPathDomain(), err
+		}
 	}
 
 	appPathDomain := appEntry.AppPathDomain()

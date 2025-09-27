@@ -34,7 +34,7 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "type", "application/json", response.Header().Get("Content-Type"))
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	testutil.AssertEqualsString(t, "a", ret["a"].(string), "aval")
 	testutil.AssertEqualsInt(t, "b", int(ret["b"].(float64)), 1)
 }
@@ -60,7 +60,7 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "type", "application/json", response.Header().Get("Content-Type"))
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	testutil.AssertEqualsString(t, "a", ret["a"].(string), "aval")
 	testutil.AssertEqualsInt(t, "b", int(ret["b"].(float64)), 1)
 }
@@ -86,7 +86,7 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "type", "application/json", response.Header().Get("Content-Type"))
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	testutil.AssertEqualsString(t, "a", ret["a"].(string), "aval")
 	testutil.AssertEqualsInt(t, "b", int(ret["b"].(float64)), 1)
 }
@@ -112,7 +112,7 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "type", "application/json", response.Header().Get("Content-Type"))
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	testutil.AssertEqualsString(t, "a", ret["a"].(string), "aval")
 	testutil.AssertEqualsInt(t, "b", int(ret["b"].(float64)), 1)
 }
@@ -162,7 +162,7 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "type", "application/json", response.Header().Get("Content-Type"))
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	testutil.AssertEqualsString(t, "a", ret["a"].(string), "aval")
 	testutil.AssertEqualsInt(t, "b", int(ret["b"].(float64)), 1)
 }
@@ -188,7 +188,7 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "type", "application/json", response.Header().Get("Content-Type"))
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	testutil.AssertEqualsString(t, "a", ret["a"].(string), "aval")
 	testutil.AssertEqualsInt(t, "b", int(ret["b"].(float64)), 1)
 }

@@ -10,10 +10,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/openrundev/openrun/internal/app/appfs"
-	"github.com/openrundev/openrun/internal/types"
 	"github.com/evanw/esbuild/pkg/api"
 	"github.com/evanw/esbuild/pkg/cli"
+	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func NewLibrary(url string) *types.JSLibrary {
@@ -46,7 +46,7 @@ type JsLibManager struct {
 }
 
 func (j *JsLibManager) Setup(dev *AppDev, sourceFS *appfs.WritableSourceFs, workFS *appfs.WorkFs) (string, error) {
-	if j.LibType == types.Library {
+	if j.LibType == types.Library { //nolint:staticcheck
 		targetFile := path.Join(types.LIB_PATH, j.SanitizedFileName)
 		targetDir := path.Dir(targetFile)
 		if err := os.MkdirAll(targetDir, 0755); err != nil {

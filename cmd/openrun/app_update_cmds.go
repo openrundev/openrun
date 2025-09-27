@@ -78,7 +78,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			for _, updateResult := range updateResponse.UpdateResults {
 				fmt.Printf("Updating %s\n", updateResult)
 			}
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) updated.\n", len(updateResponse.UpdateResults))
+			printStdout(cCtx, "%d app(s) updated.\n", len(updateResponse.UpdateResults))
 
 			if updateResponse.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)
@@ -140,7 +140,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			for _, updateResult := range updateResponse.UpdateResults {
 				fmt.Printf("Updating %s\n", updateResult)
 			}
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) updated.\n", len(updateResponse.UpdateResults))
+			printStdout(cCtx, "%d app(s) updated.\n", len(updateResponse.UpdateResults))
 
 			if updateResponse.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)
@@ -193,7 +193,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			for _, updateResult := range updateResponse.UpdateResults {
 				fmt.Printf("Updating %s\n", updateResult)
 			}
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) updated.\n", len(updateResponse.UpdateResults))
+			printStdout(cCtx, "%d app(s) updated.\n", len(updateResponse.UpdateResults))
 
 			if updateResponse.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)
@@ -247,7 +247,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			for _, updateResult := range updateResponse.UpdateResults {
 				fmt.Printf("Updating %s\n", updateResult)
 			}
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) updated.\n", len(updateResponse.UpdateResults))
+			printStdout(cCtx, "%d app(s) updated.\n", len(updateResponse.UpdateResults))
 
 			if updateResponse.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)
@@ -318,17 +318,17 @@ The last required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			}
 
 			if len(updateResponse.PromoteResults) > 0 {
-				fmt.Fprintf(cCtx.App.Writer, "Promoted apps: ")
+				printStdout(cCtx, "Promoted apps: ")
 				for i, promoteResult := range updateResponse.PromoteResults {
 					if i > 0 {
-						fmt.Fprintf(cCtx.App.Writer, ", ")
+						printStdout(cCtx, ", ")
 					}
-					fmt.Fprintf(cCtx.App.Writer, "%s", promoteResult)
+					printStdout(cCtx, "%s", promoteResult)
 				}
-				fmt.Fprintln(cCtx.App.Writer)
+				printStdout(cCtx, "\n")
 			}
 
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) updated, %d app(s) promoted.\n", len(updateResponse.StagedUpdateResults), len(updateResponse.PromoteResults))
+			printStdout(cCtx, "%d app(s) updated, %d app(s) promoted.\n", len(updateResponse.StagedUpdateResults), len(updateResponse.PromoteResults))
 
 			if updateResponse.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)
@@ -388,17 +388,17 @@ container options. The last argument is <appPathGlob>. `+PATH_SPEC_HELP+`
 			}
 
 			if len(updateResponse.PromoteResults) > 0 {
-				fmt.Fprintf(cCtx.App.Writer, "Promoted apps: ")
+				printStdout(cCtx, "Promoted apps: ")
 				for i, promoteResult := range updateResponse.PromoteResults {
 					if i > 0 {
-						fmt.Fprintf(cCtx.App.Writer, ", ")
+						printStdout(cCtx, ", ")
 					}
-					fmt.Fprintf(cCtx.App.Writer, "%s", promoteResult)
+					printStdout(cCtx, "%s", promoteResult)
 				}
-				fmt.Fprintln(cCtx.App.Writer)
+				printStdout(cCtx, "\n")
 			}
 
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) updated, %d app(s) promoted.\n", len(updateResponse.StagedUpdateResults), len(updateResponse.PromoteResults))
+			printStdout(cCtx, "%d app(s) updated, %d app(s) promoted.\n", len(updateResponse.StagedUpdateResults), len(updateResponse.PromoteResults))
 
 			if updateResponse.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)

@@ -111,7 +111,7 @@ func LoadParamInfo(fileName string, data []byte, serverConfig *types.ServerConfi
 	paramBuiltin := func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var name, description, dataType, displayType starlark.String
 		var defaultValue starlark.Value = starlark.None
-		var required starlark.Bool = starlark.Bool(true)
+		var required = starlark.Bool(true)
 
 		if err := starlark.UnpackArgs(PARAM, args, kwargs, "name", &name, "type?", &dataType, "default?", &defaultValue,
 			"description?", &description, "required?", &required, "display_type?", &displayType); err != nil {

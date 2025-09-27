@@ -534,7 +534,7 @@ func (m *ContainerManager) renderTemplate(srcFilename, targetFilename string, da
 	if err != nil {
 		return fmt.Errorf("failed to create target file: %w", err)
 	}
-	defer targetFile.Close()
+	defer targetFile.Close() //nolint:errcheck
 
 	// Execute the template with data, writing output to the target file
 	if err := tmpl.Execute(targetFile, data); err != nil {
@@ -694,7 +694,7 @@ func (m *ContainerManager) WaitForHealth(attempts int) error {
 		}
 
 		if resp != nil {
-			resp.Body.Close()
+			resp.Body.Close() //nolint:errcheck
 		}
 
 		m.Debug().Msgf("Attempt %d failed on %s : status %s err %s", attempt, proxyUrl, statusCode, err)

@@ -97,13 +97,13 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 	if insertFileStmt, err = tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType, system.InsertIgnorePrefix(f.metadata.dbType)+" into files (sha, compression_type, content, create_time) values (?, ?, ?, "+system.FuncNow(f.metadata.dbType)+") "+system.InsertIgnoreSuffix(f.metadata.dbType))); err != nil {
 		return err
 	}
-	defer insertFileStmt.Close()
+	defer insertFileStmt.Close() //nolint:errcheck
 
 	var insertAppFileStmt *sql.Stmt
 	if insertAppFileStmt, err = tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType, `insert into app_files (appid, version, name, sha, uncompressed_size, create_time) values (?, ?, ?, ?, ?, `+system.FuncNow(f.metadata.dbType)+")")); err != nil {
 		return err
 	}
-	defer insertAppFileStmt.Close()
+	defer insertAppFileStmt.Close() //nolint:errcheck
 
 	if checkoutDir == types.NO_SOURCE {
 		// No source code to add
@@ -112,7 +112,7 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 
 	fsys := os.DirFS(checkoutDir)
 
-	fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, inErr error) error {
+	return fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, inErr error) error {
 		if inErr != nil {
 			return fmt.Errorf("file walk on %s failed for path %s: %w", checkoutDir, path, inErr)
 		}
@@ -131,7 +131,7 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 		if err != nil {
 			return err
 		}
-		defer file.Close()
+		defer file.Close() //nolint:errcheck
 
 		buf, err := fs.ReadFile(fsys, path)
 		if err != nil {
@@ -152,7 +152,7 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 			br := brotli.NewWriterLevel(&byteBuf, BROTLI_COMPRESSION_LEVEL)
 
 			if _, err := br.Write(buf); err != nil {
-				br.Close()
+				br.Close() //nolint:errcheck
 				return err
 			}
 			if err := br.Close(); err != nil {
@@ -173,7 +173,6 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 
 		return nil
 	})
-	return nil
 }
 
 func (f *FileStore) GetFileBySha(sha string) ([]byte, string, error) {
@@ -186,7 +185,7 @@ func (f *FileStore) GetFileBySha(sha string) ([]byte, string, error) {
 		if err != nil {
 			return nil, "", fmt.Errorf("error starting transaction: %w", err)
 		}
-		defer tx.Rollback()
+		defer tx.Rollback() //nolint:errcheck
 	}
 
 	return f.GetFileByShaTx(context.Background(), tx, sha)
@@ -208,7 +207,7 @@ func (f *FileStore) GetFileByShaTx(ctx context.Context, tx types.Transaction, sh
 	if err != nil {
 		return nil, "", fmt.Errorf("error preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	row := stmt.QueryRow(sha)
 	var compressionType string
@@ -238,7 +237,7 @@ func (f *FileStore) getFileInfo() (map[string]DbFileInfo, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error starting transaction: %w", err)
 		}
-		defer tx.Rollback()
+		defer tx.Rollback() //nolint:errcheck
 	}
 	return f.getFileInfoTx(context.Background(), tx)
 }
@@ -248,14 +247,14 @@ func (f *FileStore) getFileInfoTx(ctx context.Context, tx types.Transaction) (ma
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	rows, err := stmt.Query(f.appId, f.version)
 	if err != nil {
 		return nil, fmt.Errorf("error querying files: %w", err)
 	}
 	fileInfo := make(map[string]DbFileInfo)
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	for rows.Next() {
 		var name, sha string
 		var size int64
@@ -300,7 +299,7 @@ func (f *FileStore) PromoteApp(ctx context.Context, tx types.Transaction, prodAp
 	if err != nil {
 		return fmt.Errorf("error querying files: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	// Collect all file data first to avoid keeping the result set open
 	type fileData struct {
@@ -341,7 +340,7 @@ func (f *FileStore) GetAppVersions(ctx context.Context, tx types.Transaction) ([
 	}
 
 	versions := make([]types.AppVersion, 0)
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	for rows.Next() {
 		v := types.AppVersion{}
 		var metadataStr sql.NullString

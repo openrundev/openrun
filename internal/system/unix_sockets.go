@@ -34,7 +34,7 @@ type Transport struct {
 
 func (t *Transport) initTransport() {
 	t.transport.DialContext = t.dialContext
-	t.transport.DialTLS = t.dialTLS
+	t.transport.DialTLS = t.dialTLS //nolint:staticcheck
 	t.transport.DisableCompression = true
 	t.transport.ResponseHeaderTimeout = t.ResponseHeaderTimeout
 }

@@ -276,7 +276,7 @@ func (h *fsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "500 Error serving static file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	// Fetch file info. Disallow directories from being displayed.
 	fi, err := f.Stat()
@@ -375,7 +375,7 @@ func (h *fsHandler) serveCompressed(w http.ResponseWriter, r *http.Request, file
 	w.Header().Set("X-OpenRun-Compressed", "true")
 	w.Header().Add("Vary", "Accept-Encoding")
 	w.WriteHeader(http.StatusOK)
-	w.Write(data)
+	w.Write(data) //nolint:errcheck
 
 	return true, nil
 }

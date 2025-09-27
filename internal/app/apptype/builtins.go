@@ -456,7 +456,7 @@ func CreateConfigBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) func(
 			return nil, fmt.Errorf("error unpacking config args: %w", err)
 		}
 		var err error
-		var outVal starlark.Value = defaultVal
+		var outVal = defaultVal
 
 		switch key {
 		case "_branch":

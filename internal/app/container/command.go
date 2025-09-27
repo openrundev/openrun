@@ -164,7 +164,7 @@ func (c ContainerCommand) GetContainers(config *types.SystemConfig, name Contain
 		return resp, nil
 	}
 
-	if output[0] == '[' {
+	if output[0] == '[' { //nolint:staticcheck
 		// Podman format (Names and Ports are arrays)
 		type Port struct {
 			// only HostPort is needed
@@ -336,7 +336,7 @@ func (c ContainerCommand) GetImages(config *types.SystemConfig, name ImageName) 
 		return resp, nil
 	}
 
-	if output[0] == '[' {
+	if output[0] == '[' { //nolint:staticcheck
 		// Podman format
 		type ImagePodman struct {
 			Id string `json:"Id"`

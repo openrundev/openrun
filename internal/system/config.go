@@ -22,7 +22,7 @@ func getEmbeddedToml() (string, error) {
 		return "", err
 	}
 
-	defer file.Close()
+	defer file.Close() //nolint:errcheck
 	buf := new(bytes.Buffer)
 	_, err = buf.ReadFrom(file)
 	if err != nil {

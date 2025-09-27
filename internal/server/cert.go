@@ -43,7 +43,7 @@ func GenerateSelfSignedCertificate(certPath, keyPath string, validityDuration ti
 	if err != nil {
 		return err
 	}
-	defer certFile.Close()
+	defer certFile.Close() //nolint:errcheck
 
 	err = pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	if err != nil {
@@ -54,7 +54,7 @@ func GenerateSelfSignedCertificate(certPath, keyPath string, validityDuration ti
 	if err != nil {
 		return err
 	}
-	defer keyFile.Close()
+	defer keyFile.Close() //nolint:errcheck
 
 	privBytes, err := x509.MarshalECPrivateKey(priv)
 	if err != nil {

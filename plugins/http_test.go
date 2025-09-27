@@ -46,7 +46,7 @@ func TestSetBody(t *testing.T) {
 
 		req := httptest.NewRequest("get", "https://example.com", nil)
 		err := setBody(req, c.rawBody, formData, c.formEncoding, c.jsonData)
-		if !(err == nil && c.err == "" || (err != nil && err.Error() == c.err)) {
+		if !(err == nil && c.err == "" || (err != nil && err.Error() == c.err)) { //nolint:staticcheck
 			t.Errorf("case %d error mismatch. expected: %s, got: %s", i, c.err, err)
 			continue
 		}

@@ -38,7 +38,10 @@ func NewHttpClient(serverUri, user, password string, skipCertCheck bool) *HttpCl
 	// Change to OPENRUN_HOME directory, helps avoid length limit on UDS file (around 104 chars)
 	clHome := os.Getenv("OPENRUN_HOME")
 	if clHome != "" {
-		os.Chdir(clHome)
+		err := os.Chdir(clHome)
+		if err != nil {
+			return nil
+		}
 	}
 
 	var client *http.Client
@@ -124,7 +127,7 @@ func (h *HttpClient) request(method, apiPath string, params url.Values, input an
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		errBody, err := io.ReadAll(resp.Body)
 		if err != nil {

@@ -294,11 +294,12 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.appPathDomain, a.serverConfig))
 	isHtmxRequest := r.Header.Get("HX-Request") == "true"
 
-	r.ParseMultipartForm(10 << 20) // 10 MB max file size
-	var err error
+	r.ParseMultipartForm(10 << 20) //nolint:errcheck // 10 MB max file size
+	// ignore error if no form data is passed
+
 	deferredCleanup := func() error {
 		// Check for any deferred cleanups
-		err = RunDeferredCleanup(thread)
+		err := RunDeferredCleanup(thread)
 		if err != nil {
 			a.Error().Err(err).Msg("error cleaning up plugins")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -307,7 +308,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		return nil
 	}
 
-	defer deferredCleanup()
+	defer deferredCleanup() //nolint:errcheck
 
 	args := starlark.StringDict{}
 	// Make a copy of the app level param dict
@@ -356,7 +357,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			defer destFile.Close()
+			defer destFile.Close() //nolint:errcheck
 
 			// Write contents of uploaded file to destFile
 			if _, err = io.Copy(destFile, f); err != nil {
@@ -398,6 +399,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 
 	// Call the handler function
 	var ret starlark.Value
+	var err error
 	ret, err = starlark.Call(thread, callable, callInput, nil)
 
 	if err == nil {

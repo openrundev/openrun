@@ -22,7 +22,7 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	genId, err := ksuid.NewRandom()
 	if err != nil {
@@ -84,7 +84,7 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (*types.Sy
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	syncEntry, err := s.db.GetSyncEntry(ctx, tx, id)
 	if err != nil {
@@ -111,7 +111,7 @@ func (s *Server) DeleteSyncEntry(ctx context.Context, id string, dryRun bool) (*
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	if err := s.db.DeleteSync(ctx, tx, id); err != nil {
 		return nil, err
@@ -137,7 +137,7 @@ func (s *Server) ListSyncEntries(ctx context.Context) (*types.SyncListResponse, 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	entries, err := s.db.GetSyncEntries(ctx, tx)
 	if err != nil {
@@ -172,7 +172,7 @@ func (s *Server) runSyncJobs() error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	// Create a new repo cache if not passed in
 	repoCache, err := NewRepoCache(s)
@@ -219,7 +219,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		if err != nil {
 			return nil, nil, err
 		}
-		defer tx.Rollback()
+		defer tx.Rollback() //nolint:errcheck
 	} else {
 		tx = inputTx
 		// No rollback here if transaction is passed in
@@ -294,7 +294,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		if appMissing {
 			// App has been deleted, run the full apply with the latest commit even if it was already applied
 			if !checkCommitHash {
-				return nil, nil, fmt.Errorf("Unexpected error, sync rerun with no commit hash")
+				return nil, nil, fmt.Errorf("unexpected error, sync rerun with no commit hash")
 			}
 			return s.runSyncJob(ctx, inputTx, entry, dryRun, false, repoCache)
 		} else {
@@ -332,14 +332,14 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	}
 
 	if status.Error != "" {
-		tx.Rollback() // rollback any changes to db done during apply or reload
+		tx.Rollback() //nolint:errcheck // rollback any changes to db done during apply or reload
 		// CreateSyncEntry also aborts if the sync job fails, so rolling back the transaction here is fine
 		// Use a new transaction to update the sync status
 		tx, err = s.db.BeginTransaction(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		defer tx.Rollback()
+		defer tx.Rollback() //nolint:errcheck
 		updatedApps = nil
 	}
 

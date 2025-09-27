@@ -116,7 +116,7 @@ func getConfigPath(cCtx *cli.Context) (string, string, error) {
 	}
 
 	// Running `brew --prefix` would be another option
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" { //nolint:staticcheck
 		// brew OSX specific checks
 		if system.FileExists("/opt/homebrew/etc/openrun.toml") {
 			return "/opt/homebrew/var/openrun", "/opt/homebrew/etc/openrun.toml", nil
@@ -144,7 +144,7 @@ func parseConfig(cCtx *cli.Context, globalConfig *types.GlobalConfig, clientConf
 	if err != nil {
 		return fmt.Errorf("unable to resolve OPENRUN_HOME: %w", err)
 	}
-	os.Setenv(types.OPENRUN_HOME, clHome)
+	os.Setenv(types.OPENRUN_HOME, clHome) //nolint:errcheck
 
 	//fmt.Fprintf(os.Stderr, "Loading config file: %s, clHome %s\n", filePath, clHome)
 	buf, err := os.ReadFile(filePath)
@@ -198,7 +198,7 @@ func main() {
 		},
 		ExitErrHandler: func(c *cli.Context, err error) {
 			if err != nil {
-				fmt.Fprintf(cli.ErrWriter, RED+"error: %s\n"+RESET, err)
+				fmt.Fprintf(cli.ErrWriter, RED+"error: %s\n"+RESET, err) //nolint:errcheck
 				os.Exit(1)
 			}
 		},
@@ -208,13 +208,18 @@ func main() {
 			if ctx.Bool("version") {
 				printVersion(ctx)
 				os.Exit(0)
+				return nil
 			}
 			return cli.ShowAppHelp(ctx)
 		},
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s", err)
+		fmt.Fprintf(os.Stderr, "error: %s", err) //nolint:errcheck
 		os.Exit(1)
 	}
+}
+
+func printStdout(cCtx *cli.Context, format string, a ...any) {
+	fmt.Fprintf(cCtx.App.Writer, format, a...) //nolint:errcheck
 }

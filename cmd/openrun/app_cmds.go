@@ -298,32 +298,32 @@ func printAppList(cCtx *cli.Context, apps []types.AppResponse, format string) {
 	case FORMAT_JSON:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		enc.SetIndent("", "  ")
-		enc.Encode(apps)
+		enc.Encode(apps) //nolint:errcheck
 	case FORMAT_JSONL:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		for _, app := range apps {
-			enc.Encode(app)
+			enc.Encode(app) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		enc.SetIndent("", "  ")
 		for _, app := range apps {
-			enc.Encode(app)
-			fmt.Fprintf(cCtx.App.Writer, "\n")
+			enc.Encode(app) //nolint:errcheck
+			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:
 		formatStrHead := "%-30s %-5s %4s %-7s %-s\n"
 		formatStrData := "%-30s %-5s %4d %-7s %-s\n"
-		fmt.Fprintf(cCtx.App.Writer, formatStrHead, "Name", "Type", "Ver", "Auth", "AppPath")
+		printStdout(cCtx, formatStrHead, "Name", "Type", "Ver", "Auth", "AppPath")
 
 		for _, app := range apps {
-			fmt.Fprintf(cCtx.App.Writer, formatStrData, app.Metadata.Name, appType(app), app.Metadata.VersionMetadata.Version, authType(app),
-				app.AppEntry.AppPathDomain())
+			printStdout(cCtx, formatStrData, app.Metadata.Name, appType(app), app.Metadata.VersionMetadata.Version, authType(app),
+				app.AppPathDomain())
 		}
 	case FORMAT_TABLE:
 		formatStrHead := "%-30s %-35s %-5s %-7s %-15s %-60s %-40s %-30s %-30s\n"
 		formatStrData := "%-30s %-35s %-5s %7d %-15s %-60s %-40s %-30s %-30s\n"
-		fmt.Fprintf(cCtx.App.Writer, formatStrHead, "Name", "Id", "Type", "Version", "Auth",
+		printStdout(cCtx, formatStrHead, "Name", "Id", "Type", "Version", "Auth",
 			"AppPath", "SourceUrl", "Spec", "GitInfo")
 
 		for _, app := range apps {
@@ -331,14 +331,14 @@ func printAppList(cCtx *cli.Context, apps []types.AppResponse, format string) {
 			if app.Metadata.VersionMetadata.GitBranch != "" || app.Metadata.VersionMetadata.GitCommit != "" {
 				gitInfo = fmt.Sprintf("%s:%.20s", app.Metadata.VersionMetadata.GitBranch, app.Metadata.VersionMetadata.GitCommit)
 			}
-			fmt.Fprintf(cCtx.App.Writer, formatStrData, app.Metadata.Name, app.Id, appType(app), app.Metadata.VersionMetadata.Version, authType(app),
-				app.AppEntry.AppPathDomain(), app.SourceUrl, app.Metadata.Spec, gitInfo)
+			printStdout(cCtx, formatStrData, app.Metadata.Name, app.Id, appType(app), app.Metadata.VersionMetadata.Version, authType(app),
+				app.AppPathDomain(), app.SourceUrl, app.Metadata.Spec, gitInfo)
 		}
 	case FORMAT_CSV:
 		for _, app := range apps {
-			fmt.Fprintf(cCtx.App.Writer, "\"%s\",%s,%s,%d,%s,%s,\"%s\",\"%s\", %s, %s, \"%s\"\n", app.Metadata.Name, app.Id, appType(app),
+			printStdout(cCtx, "\"%s\",%s,%s,%d,%s,%s,\"%s\",\"%s\", %s, %s, \"%s\"\n", app.Metadata.Name, app.Id, appType(app),
 				app.Metadata.VersionMetadata.Version, authType(app), app.Metadata.VersionMetadata.GitBranch,
-				app.AppEntry.AppPathDomain(), app.SourceUrl, app.Metadata.Spec, app.Metadata.VersionMetadata.GitBranch, app.Metadata.VersionMetadata.GitCommit)
+				app.AppPathDomain(), app.SourceUrl, app.Metadata.Spec, app.Metadata.VersionMetadata.GitBranch, app.Metadata.VersionMetadata.GitCommit)
 		}
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
@@ -366,13 +366,14 @@ func appType(app types.AppResponse) string {
 }
 
 func authType(app types.AppResponse) string {
-	if app.Settings.AuthnType == types.AppAuthnNone {
+	switch app.Settings.AuthnType {
+	case types.AppAuthnNone:
 		return "NONE"
-	} else if app.Settings.AuthnType == types.AppAuthnSystem {
+	case types.AppAuthnSystem:
 		return "SYSTEM"
-	} else if app.Settings.AuthnType == types.AppAuthnDefault || app.Settings.AuthnType == "" {
+	case types.AppAuthnDefault, "":
 		return "DEFAULT"
-	} else {
+	default:
 		return string(app.Settings.AuthnType)
 	}
 }
@@ -449,9 +450,9 @@ Examples:
 			}
 
 			for _, appInfo := range deleteResult.AppInfo {
-				fmt.Fprintf(cCtx.App.Writer, "Deleting %s - %s\n", appInfo.AppPathDomain, appInfo.Id)
+				printStdout(cCtx, "Deleting %s - %s\n", appInfo.AppPathDomain, appInfo.Id)
 			}
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) deleted.\n", len(deleteResult.AppInfo))
+			printStdout(cCtx, "%d app(s) deleted.\n", len(deleteResult.AppInfo))
 
 			if deleteResult.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)
@@ -512,17 +513,17 @@ func appApproveCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			}
 
 			if len(approveResponse.PromoteResults) > 0 {
-				fmt.Fprintf(cCtx.App.Writer, "Promoted apps: ")
+				printStdout(cCtx, "Promoted apps: ")
 				for i, promoteResult := range approveResponse.PromoteResults {
 					if i > 0 {
-						fmt.Fprintf(cCtx.App.Writer, ", ")
+						printStdout(cCtx, ", ")
 					}
-					fmt.Fprintf(cCtx.App.Writer, "%s", promoteResult)
+					printStdout(cCtx, "%s", promoteResult)
 				}
-				fmt.Fprintln(cCtx.App.Writer)
+				printStdout(cCtx, "\n")
 			}
 
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) audited, %d app(s) approved, %d app(s) promoted.\n",
+			printStdout(cCtx, "%d app(s) audited, %d app(s) approved, %d app(s) promoted.\n",
 				len(approveResponse.StagedUpdateResults), approvedCount, len(approveResponse.PromoteResults))
 
 			if approveResponse.DryRun {
@@ -591,29 +592,29 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			}
 
 			if len(reloadResponse.ReloadResults) > 0 {
-				fmt.Fprintf(cCtx.App.Writer, "Reloaded apps: ")
+				printStdout(cCtx, "Reloaded apps: ")
 				for i, reloadResult := range reloadResponse.ReloadResults {
 					if i > 0 {
-						fmt.Fprintf(cCtx.App.Writer, ", ")
+						printStdout(cCtx, ", ")
 					}
-					fmt.Fprintf(cCtx.App.Writer, "%s", reloadResult)
+					printStdout(cCtx, "%s", reloadResult)
 				}
-				fmt.Fprintln(cCtx.App.Writer)
+				printStdout(cCtx, "\n")
 			}
 
 			if len(reloadResponse.SkippedResults) > 0 {
-				fmt.Fprintf(cCtx.App.Writer, "Skipped apps: ")
+				printStdout(cCtx, "Skipped apps: ")
 				for i, skipResult := range reloadResponse.SkippedResults {
 					if i > 0 {
-						fmt.Fprintf(cCtx.App.Writer, ", ")
+						printStdout(cCtx, ", ")
 					}
-					fmt.Fprintf(cCtx.App.Writer, "%s", skipResult)
+					printStdout(cCtx, "%s", skipResult)
 				}
-				fmt.Fprintln(cCtx.App.Writer)
+				printStdout(cCtx, "\n")
 			}
 
 			if len(reloadResponse.ApproveResults) > 0 {
-				fmt.Fprintf(cCtx.App.Writer, "Approved apps:\n")
+				printStdout(cCtx, "Approved apps:\n")
 				for _, approveResult := range reloadResponse.ApproveResults {
 					if !approveResult.NeedsApproval {
 						// Server does not return these for reload to reduce the noise
@@ -626,17 +627,17 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			}
 
 			if len(reloadResponse.PromoteResults) > 0 {
-				fmt.Fprintf(cCtx.App.Writer, "Promoted apps: ")
+				printStdout(cCtx, "Promoted apps: ")
 				for i, promoteResult := range reloadResponse.PromoteResults {
 					if i > 0 {
-						fmt.Fprintf(cCtx.App.Writer, ", ")
+						printStdout(cCtx, ", ")
 					}
-					fmt.Fprintf(cCtx.App.Writer, "%s", promoteResult)
+					printStdout(cCtx, "%s", promoteResult)
 				}
-				fmt.Fprintln(cCtx.App.Writer)
+				printStdout(cCtx, "\n")
 			}
 
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted.\n",
+			printStdout(cCtx, "%d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted.\n",
 				len(reloadResponse.ReloadResults), len(reloadResponse.SkippedResults), len(reloadResponse.ApproveResults), len(reloadResponse.PromoteResults))
 
 			if reloadResponse.DryRun {
@@ -686,7 +687,7 @@ func appPromoteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			for _, approveResult := range promoteResponse.PromoteResults {
 				fmt.Printf("Promoting %s\n", approveResult)
 			}
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) promoted.\n", len(promoteResponse.PromoteResults))
+			printStdout(cCtx, "%d app(s) promoted.\n", len(promoteResponse.PromoteResults))
 
 			if promoteResponse.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)

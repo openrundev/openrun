@@ -137,7 +137,7 @@ tests:
     exit-code: 0
   load0240: # Create app, invalid path
     command: ../openrun app create --approve https://github.com/openrundev/openrun/examples/disk_usagebad /ghload3
-    stderr: "audit failed: error reading app.star file: file does not exist"
+    stderr: "failed to load source"
     exit-code: 1
   load0260: # Create app, invalid branch
     command: ../openrun app create --approve --branch invalid https://github.com/openrundev/openrun/examples/disk_usage /ghload3

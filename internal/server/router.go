@@ -149,7 +149,7 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	router.HandleFunc("/*", handler.callApp)
 	router.HandleFunc("/testperf", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
 	})
 	return handler
 }
@@ -550,7 +550,10 @@ func (h *Handler) getApps(r *http.Request) (any, error) {
 
 func (h *Handler) stopServer(r *http.Request) (any, error) {
 	h.Warn().Msgf("Server stop called")
-	h.server.Stop(r.Context())
+	err := h.server.Stop(r.Context())
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
 
 	return map[string]any{}, nil
 }

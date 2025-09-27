@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 )
 
 const (
@@ -29,55 +27,6 @@ const (
 	GREEN  = "\033[32m"
 	YELLOW = "\033[33m"
 )
-
-func envString(name string) string {
-	return fmt.Sprintf("CL_%s", strings.ToUpper(strings.ReplaceAll(name, ".", "_")))
-}
-
-func newAltStringFlag(name, alias, usage, value string, destination *string) *altsrc.StringFlag {
-	var aliases []string
-	if alias != "" {
-		aliases = []string{alias}
-	}
-	return altsrc.NewStringFlag(&cli.StringFlag{
-		Name:        name,
-		Aliases:     aliases,
-		Usage:       usage,
-		Value:       value,
-		EnvVars:     []string{envString(name)},
-		Destination: destination,
-	})
-}
-
-func newAltIntFlag(name, alias, usage string, value int, destination *int) *altsrc.IntFlag {
-	var aliases []string
-	if alias != "" {
-		aliases = []string{alias}
-	}
-	return altsrc.NewIntFlag(&cli.IntFlag{
-		Name:        name,
-		Aliases:     aliases,
-		Usage:       usage,
-		Value:       value,
-		EnvVars:     []string{envString(name)},
-		Destination: destination,
-	})
-}
-
-func newAltBoolFlag(name, alias, usage string, value bool, destination *bool) *altsrc.BoolFlag {
-	var aliases []string
-	if alias != "" {
-		aliases = []string{alias}
-	}
-	return altsrc.NewBoolFlag(&cli.BoolFlag{
-		Name:        name,
-		Aliases:     aliases,
-		Usage:       usage,
-		Value:       value,
-		EnvVars:     []string{envString(name)},
-		Destination: destination,
-	})
-}
 
 func newStringFlag(name, alias, usage, value string) *cli.StringFlag {
 	var aliases []string

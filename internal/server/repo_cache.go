@@ -80,6 +80,9 @@ func (r *RepoCache) GetSha(sourceUrl, branch, gitAuth string) (string, error) {
 	}
 
 	sha, err := latestCommitSHA(repo, branch, auth)
+	if err != nil {
+		return "", err
+	}
 	r.shaCache[Repo{repo, branch, "", gitAuth}] = sha
 	return sha, nil
 }
@@ -246,7 +249,7 @@ func getUnusedRepoPath(targetDir, repoName string) string {
 
 func (r *RepoCache) Cleanup() {
 	if r.rootDir != "" {
-		os.RemoveAll(r.rootDir)
+		os.RemoveAll(r.rootDir) //nolint:errcheck
 		r.rootDir = ""
 	}
 }

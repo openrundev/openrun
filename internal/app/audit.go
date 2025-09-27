@@ -159,7 +159,7 @@ func (a *App) createApproveResponse(loads []string, globals starlark.StringDict)
 
 	perms := []types.Permission{}
 	results := types.ApproveResult{
-		AppPathDomain:       a.AppEntry.AppPathDomain(),
+		AppPathDomain:       a.AppPathDomain(),
 		Id:                  a.Id,
 		NewLoads:            loads,
 		NewPermissions:      perms,

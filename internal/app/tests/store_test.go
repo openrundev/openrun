@@ -143,9 +143,9 @@ indexes=[
 	}
 
 	// Remove old db file if exists
-	os.Remove("/tmp/openrun_app.db")
-	os.Remove("/tmp/openrun_app.db-wal")
-	os.Remove("/tmp/openrun_app.db-shm")
+	os.Remove("/tmp/openrun_app.db")     //nolint:errcheck
+	os.Remove("/tmp/openrun_app.db-wal") //nolint:errcheck
+	os.Remove("/tmp/openrun_app.db-shm") //nolint:errcheck
 
 	a, _, err := CreateTestAppPlugin(logger, fileData, []string{"store.in"},
 		[]types.Permission{
@@ -175,7 +175,7 @@ indexes=[
 	ret := make(map[string]any)
 	str := response.Body.String()
 	fmt.Print(str)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
@@ -288,9 +288,9 @@ type("mytype", fields=[
 	}
 
 	// Remove old db file if exists
-	os.Remove("/tmp/openrun_app.db")
-	os.Remove("/tmp/openrun_app.db-wal")
-	os.Remove("/tmp/openrun_app.db-shm")
+	os.Remove("/tmp/openrun_app.db")     //nolint:errcheck
+	os.Remove("/tmp/openrun_app.db-wal") //nolint:errcheck
+	os.Remove("/tmp/openrun_app.db-shm") //nolint:errcheck
 
 	a, _, err := CreateTestAppPlugin(logger, fileData, []string{"store.in"},
 		[]types.Permission{
@@ -317,7 +317,7 @@ type("mytype", fields=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
@@ -334,7 +334,7 @@ type("mytype", fields=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret = make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
@@ -357,7 +357,7 @@ type("mytype", fields=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret = make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
@@ -379,7 +379,7 @@ type("mytype", fields=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret = make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])

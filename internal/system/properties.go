@@ -18,7 +18,7 @@ func LoadProperties(filename string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck
 
 	ret := make(map[string]string)
 	scanner := bufio.NewScanner(file)

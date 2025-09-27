@@ -51,7 +51,7 @@ func (s *Server) versionUpgradeAuditDB() error {
 	version := 0
 	row := s.auditDB.QueryRow("SELECT version, last_upgraded FROM audit_version")
 	var dt time.Time
-	row.Scan(&version, &dt)
+	row.Scan(&version, &dt) //nolint:errcheck // ignore error if no version is found
 
 	if !s.config.Metadata.IgnoreHigherVersion && version > CURRENT_AUDIT_DB_VERSION {
 		return fmt.Errorf("audit DB version is newer than server version, exiting. Server %d, DB %d", CURRENT_AUDIT_DB_VERSION, version)
@@ -66,7 +66,7 @@ func (s *Server) versionUpgradeAuditDB() error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	if version < 1 {
 		s.Info().Msg("No audit version, initializing")

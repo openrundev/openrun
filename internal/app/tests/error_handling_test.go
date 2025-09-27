@@ -48,7 +48,7 @@ app = ace.app("testApp", custom_layout=True,
 	testutil.AssertEqualsInt(t, "code", 500, response.Code)
 
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
@@ -93,7 +93,7 @@ app = ace.app("testApp", custom_layout=True,
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	fmt.Printf("%#v", ret)
 
 	testutil.AssertEqualsString(t, "error", "previous plugin call failed: open /tmp/invalid: no such file or directory : Function test1, Position app.star:6:15", ret["error"].(string))
@@ -137,7 +137,7 @@ app = ace.app("testApp", custom_layout=True,
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	fmt.Printf("%#v", ret)
 
 	// No source code path for prod app
@@ -201,7 +201,7 @@ app = ace.app("testApp", custom_layout=True,
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 
 	testutil.AssertStringContains(t, ret["error"].(string), "open /tmp/invalid: no such file or directory : Function test1_value")
 
@@ -211,7 +211,7 @@ app = ace.app("testApp", custom_layout=True,
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret = make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
 	}
@@ -222,7 +222,7 @@ app = ace.app("testApp", custom_layout=True,
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret = make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
 	}
@@ -233,7 +233,7 @@ app = ace.app("testApp", custom_layout=True,
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret = make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	testutil.AssertStringContains(t, ret["error"].(string), "open /tmp/invalid: no such file or directory")
 
 	request = httptest.NewRequest("GET", "/test/test5_failure", nil)
@@ -242,7 +242,7 @@ app = ace.app("testApp", custom_layout=True,
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret = make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	testutil.AssertStringContains(t, ret["error"].(string), "floating-point division by zero : Function test5_failure, Position")
 }
 

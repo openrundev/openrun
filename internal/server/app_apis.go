@@ -62,7 +62,7 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	repoCache, err := NewRepoCache(s)
 	if err != nil {
@@ -251,7 +251,7 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	s.Debug().Msgf("Created app %s %s", workEntry.Path, workEntry.Id)
 	auditResult, err := s.auditApp(ctx, tx, application, approve)
 	if err != nil {
-		return nil, fmt.Errorf("App %s audit failed: %s", workEntry.Id, err)
+		return nil, fmt.Errorf("app %s audit failed: %s", workEntry.Id, err)
 	}
 
 	// Persist the source url
@@ -283,7 +283,7 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 
 		prodAuditResult, err := s.auditApp(ctx, tx, prodApp, approve)
 		if err != nil {
-			return nil, fmt.Errorf("App %s audit failed: %s", appEntry.Id, err)
+			return nil, fmt.Errorf("app %s audit failed: %s", appEntry.Id, err)
 		}
 		results = append(results, *prodAuditResult)
 	}
@@ -363,7 +363,7 @@ func (s *Server) GetAppApi(ctx context.Context, appPath string) (*types.AppGetRe
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	pathDomain, err := parseAppPath(appPath)
 	if err != nil {
@@ -422,7 +422,7 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	for _, appInfo := range filteredApps {
 		if err := s.db.DeleteApp(ctx, tx, appInfo.Id); err != nil {
@@ -513,21 +513,21 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 
 	s.Trace().Msgf("Authenticated user %s, doing authorization check", userId)
-	authorized, err := s.rbacManager.Authorize(userId, app.AppEntry.AppPathDomain(), string(appAuth), types.PermissionAccess, groups, false)
+	authorized, err := s.rbacManager.Authorize(userId, app.AppPathDomain(), string(appAuth), types.PermissionAccess, groups, false)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if !authorized {
-		s.Warn().Msgf("User %s is not authorized to access app %s", userId, app.AppEntry.AppPathDomain())
-		http.Error(w, fmt.Sprintf("Unauthorized : %s does not have access to %s", userId, app.AppEntry.AppPathDomain()), http.StatusUnauthorized)
+		s.Warn().Msgf("User %s is not authorized to access app %s", userId, app.AppPathDomain())
+		http.Error(w, fmt.Sprintf("Unauthorized : %s does not have access to %s", userId, app.AppPathDomain()), http.StatusUnauthorized)
 		return
 	}
 
 	// Create a new context with the user ID
 	ctx := context.WithValue(r.Context(), types.USER_ID, userId)
 	ctx = context.WithValue(ctx, types.APP_ID, string(app.Id))
-	ctx = context.WithValue(ctx, types.APP_PATH_DOMAIN, app.AppEntry.AppPathDomain())
+	ctx = context.WithValue(ctx, types.APP_PATH_DOMAIN, app.AppPathDomain())
 	ctx = context.WithValue(ctx, types.APP_AUTH, appAuth)
 	ctx = context.WithValue(ctx, types.GROUPS, groups)
 
@@ -647,8 +647,8 @@ func (s *Server) auditApp(ctx context.Context, tx types.Transaction, app *app.Ap
 	}
 
 	if approve {
-		app.AppEntry.Metadata.Loads = auditResult.NewLoads
-		app.AppEntry.Metadata.Permissions = auditResult.NewPermissions
+		app.Metadata.Loads = auditResult.NewLoads
+		app.Metadata.Permissions = auditResult.NewPermissions
 		s.Info().Msgf("Approved app %s %s: %+v %+v", app.Path, app.Domain, auditResult.NewLoads, auditResult.NewPermissions)
 	}
 
@@ -913,7 +913,7 @@ func (s *Server) GetApps(ctx context.Context, appPathGlob string, internal bool)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	filteredApps, err := s.FilterApps(appPathGlob, internal)
 	if err != nil {
@@ -942,7 +942,7 @@ func (s *Server) GetApps(ctx context.Context, appPathGlob string, internal bool)
 			if err != nil {
 				return nil, err
 			}
-			if stageApp.Metadata.VersionMetadata.Version != retApp.AppEntry.Metadata.VersionMetadata.Version {
+			if stageApp.Metadata.VersionMetadata.Version != retApp.Metadata.VersionMetadata.Version {
 				// staging app is at different version than prod app
 				stagedChanges = true
 			}
@@ -962,7 +962,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	repoCache, err := NewRepoCache(s)
 	if err != nil {

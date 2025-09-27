@@ -18,7 +18,7 @@ func IsGit(url string) bool {
 		return true // Git URL
 	}
 	split := strings.Split(url, "/")
-	if strings.Index(split[0], ".") == -1 {
+	if !strings.Contains(split[0], ".") {
 		return false // No dot in the first part, assume not a git URL
 	}
 

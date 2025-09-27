@@ -103,21 +103,10 @@ func readPassword() (string, error) {
 	return strings.TrimSpace(password), nil
 }
 
-func getVersionCommands(clientConfig *types.ClientConfig) ([]*cli.Command, error) {
-	return []*cli.Command{
-		{
-			Action: func(cCtx *cli.Context) error {
-				return printVersion(cCtx)
-			},
-		},
-	}, nil
-}
-
-func printVersion(cCtx *cli.Context) error {
+func printVersion(cCtx *cli.Context) {
 	version := gitVersion
 	if gitVersion == "" {
 		version = "dev"
 	}
 	fmt.Printf("OpenRun version %s build %s\n", version, gitCommit)
-	return nil
 }

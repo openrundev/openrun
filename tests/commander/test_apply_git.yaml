@@ -57,7 +57,7 @@ tests:
     stdout: "0 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 1 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   apply_git0062: ## create apps with branch which is invalid for app
     command: ../openrun apply --branch invalid github.com/openrundev/openrun/tests/apply_files/apply_git_config.ace
-    stderr: "error checking out branch invalid"
+    stderr: 'branch "invalid" not found'
     exit-code: 1
   apply_git0063: ## create apps without git
     command: ../openrun apply ./apply_files/apply_git_config.ace

@@ -246,7 +246,10 @@ func (a *App) Reload(force, immediate bool, dryRun types.DryRun) (bool, error) {
 		a.codeConfig = apptype.NewCodeConfig()
 		if a.IsDev {
 			a.appDev.Config = a.codeConfig
-			a.appDev.SaveConfigLockFile()
+			err = a.appDev.SaveConfigLockFile()
+			if err != nil {
+				return false, err
+			}
 		}
 	} else {
 		// Config lock file is present, read defaults from that
@@ -671,7 +674,7 @@ func (a *App) startWatcher() error {
 					a.Trace().Str("event", fmt.Sprint(event)).Msg("Ignoring event since reload happened recently")
 					continue
 				}
-				if !(event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)) {
+				if !(event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)) { //nolint:staticcheck
 					// ignore chmod events
 					a.Trace().Str("event", fmt.Sprint(event)).Msg("Ignoring event")
 					continue
@@ -722,7 +725,7 @@ func (a *App) startWatcher() error {
 	}()
 
 	// Add watcher path.
-	filepath.WalkDir(a.SourceUrl, func(path string, d fs.DirEntry, err error) error {
+	return filepath.WalkDir(a.SourceUrl, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -732,8 +735,6 @@ func (a *App) startWatcher() error {
 		}
 		return nil
 	})
-
-	return nil
 }
 
 func (a *App) addSSEClient(newChan chan SSEMessage) {
@@ -794,12 +795,12 @@ func (a *App) sseHandler(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case appMessage := <-messageChan:
-			fmt.Fprintf(w, "event: %s\n", appMessage.event)
-			fmt.Fprintf(w, "data: %s\n\n", appMessage.data)
+			fmt.Fprintf(w, "event: %s\n", appMessage.event) //nolint:errcheck
+			fmt.Fprintf(w, "data: %s\n\n", appMessage.data) //nolint:errcheck
 			flusher.Flush()
 		case <-keepAliveTickler.C:
 			a.Trace().Msg("Sending keepalive")
-			fmt.Fprintf(w, "event:keepalive\n\n")
+			fmt.Fprintf(w, "event:keepalive\n\n") //nolint:errcheck
 			flusher.Flush()
 		}
 	}

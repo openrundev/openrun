@@ -37,7 +37,7 @@ func ParseGlobFromInfo(appPathGlob string, apps []types.AppInfo) ([]types.AppInf
 
 	ret := make([]types.AppInfo, 0, len(found))
 	for _, app := range apps {
-		if found[app.AppPathDomain.String()] {
+		if found[app.String()] {
 			ret = append(ret, app)
 		}
 	}
@@ -74,7 +74,7 @@ func ParseGlob(appPathGlob string, apps []types.AppPathDomain) ([]types.AppPathD
 		app = split[0]
 	}
 
-	if app == "*" {
+	if app == "*" { //nolint:staticcheck
 		app = "/*"
 	} else if app == "" {
 		app = "/"

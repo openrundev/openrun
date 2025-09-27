@@ -19,7 +19,7 @@ func TestProxyBasics(t *testing.T) {
 		if r.URL.Path != "/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -55,7 +55,7 @@ func TestProxyBasicsRoot(t *testing.T) {
 		if r.URL.Path != "/abc/def" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -91,7 +91,7 @@ func TestProxyMultiPath(t *testing.T) {
 		if r.URL.Path != "/pp/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -147,7 +147,7 @@ func TestProxyPermsSuccess(t *testing.T) {
 		if r.URL.Path != "/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -183,7 +183,7 @@ func TestProxyPermsFailure(t *testing.T) {
 		if r.URL.Path != "/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -212,7 +212,7 @@ func TestProxyPermsFailureRegex(t *testing.T) {
 		if r.URL.Path != "/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -241,7 +241,7 @@ func TestProxyPermsRegex(t *testing.T) {
 		if r.URL.Path != "/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -269,7 +269,7 @@ func TestProxyStripPath(t *testing.T) {
 		if r.URL.Path != "/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -305,7 +305,7 @@ func TestProxyPostPreview(t *testing.T) {
 		if r.URL.Path != "/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -360,7 +360,7 @@ func TestProxyPostStage(t *testing.T) {
 		if r.URL.Path != "/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -406,7 +406,7 @@ func TestProxyStatic(t *testing.T) {
 		if r.URL.Path != "/static/f1" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -451,7 +451,7 @@ func TestProxyError(t *testing.T) {
 		if r.URL.Path != "/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -476,7 +476,7 @@ permissions=[
 
 func TestProxyNoPreserveHost(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, r.Host)
+		io.WriteString(w, r.Host) //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -511,7 +511,7 @@ func TestProxyPreserveHost(t *testing.T) {
 	// Preserve host is false by default, the Host header is set to the target endpoint host.
 	// Apps like Grafana require the origin host header to be preserved
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, r.Host)
+		io.WriteString(w, r.Host) //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -549,7 +549,7 @@ func TestProxyNoStripApp(t *testing.T) {
 		if r.URL.Path != "/test/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -586,7 +586,7 @@ func TestProxyStripPathNoApp(t *testing.T) {
 		if r.URL.Path != "/abc" {
 			t.Fatalf("Invalid path %s", r.URL.Path)
 		}
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -620,7 +620,7 @@ permissions=[
 func TestProxyRequestHeaders(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ALLOW", "ALLOWED")
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()

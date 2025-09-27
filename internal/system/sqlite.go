@@ -83,7 +83,7 @@ func InitDBConnection(connectString string, invoker string, supportedDBs []DBTyp
 		return nil, "", fmt.Errorf("error opening %s db %s: %w", invoker, connectString, err)
 	}
 
-	if dbType == DB_TYPE_SQLITE {
+	if dbType == DB_TYPE_SQLITE { //nolint:staticcheck
 		if err := SQLItePragmas(db); err != nil {
 			return nil, "", err
 		}
@@ -98,7 +98,7 @@ func InitDBConnection(connectString string, invoker string, supportedDBs []DBTyp
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := db.PingContext(ctx); err != nil {
-			db.Close()
+			db.Close() //nolint:errcheck
 			return nil, "", fmt.Errorf("error connecting to postgres database: %w", err)
 		}
 	}

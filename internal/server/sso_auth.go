@@ -178,7 +178,7 @@ func (s *SSOAuth) RegisterRoutes(mux *chi.Mux) {
 	mux.Get(types.INTERNAL_URL_PREFIX+"/auth/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
 		user, err := gothic.CompleteUserAuth(w, r)
 		if err != nil {
-			fmt.Fprintln(w, err)
+			fmt.Fprintln(w, err) //nolint:errcheck
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -236,7 +236,11 @@ func (s *SSOAuth) RegisterRoutes(mux *chi.Mux) {
 		}
 		s.Trace().Str("user_id", user.UserID).Str("email", user.Email).Str("nickname", user.NickName).Str("provider_name", providerName).Msgf("authenticated user with groups %+v", groups)
 		session.Values[GROUPS_KEY] = groups
-		session.Save(r, w)
+		err = session.Save(r, w)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		// Redirect to the original page, or default to the home page if not specified
 		redirectTo, ok := session.Values[REDIRECT_URL].(string)
@@ -262,7 +266,11 @@ func (s *SSOAuth) RegisterRoutes(mux *chi.Mux) {
 		}
 		// Set user as unauthenticated in session
 		session.Values[AUTH_KEY] = false
-		session.Save(r, w)
+		err = session.Save(r, w)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 	})
@@ -347,7 +355,11 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 		// Store the target URL before redirecting to login
 		if updateRedirect {
 			session.Values[REDIRECT_URL] = r.RequestURI
-			session.Save(r, w)
+			err = session.Save(r, w)
+			if err != nil {
+				s.Warn().Err(err).Msg("failed to save session")
+				return "", nil, err
+			}
 		}
 		s.Warn().Err(err).Msg("no auth, redirecting to login")
 		if r.Header.Get("HX-Request") == "true" {
@@ -362,7 +374,11 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 	if providerName, ok := session.Values[PROVIDER_NAME_KEY].(string); !ok || providerName != appProvider {
 		if updateRedirect {
 			session.Values[REDIRECT_URL] = r.RequestURI
-			session.Save(r, w)
+			err = session.Save(r, w)
+			if err != nil {
+				s.Warn().Err(err).Msg("failed to save session")
+				return "", nil, err
+			}
 		}
 		s.Warn().Err(err).Msg("provider mismatch, redirecting to login")
 		http.Redirect(w, r, types.INTERNAL_URL_PREFIX+"/auth/"+appProvider, http.StatusTemporaryRedirect)
@@ -384,7 +400,11 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 
 	// Clear the redirect target after successful authentication
 	delete(session.Values, REDIRECT_URL)
-	session.Save(r, w)
+	err = session.Save(r, w)
+	if err != nil {
+		s.Warn().Err(err).Msg("failed to save session")
+		return "", nil, err
+	}
 
 	return appProvider + ":" + userId, groups, nil
 }

@@ -22,7 +22,7 @@ fileLevel =   Final#`
 
 func TestLoadProperties(t *testing.T) {
 	tmpFile := "./prop_test_tmp.prop"
-	defer os.Remove(tmpFile)
+	defer os.Remove(tmpFile) //nolint:errcheck
 	err := os.WriteFile(tmpFile, []byte(configTestData), 0644)
 	if err != nil {
 		t.Fatal("Error while writing properties file")

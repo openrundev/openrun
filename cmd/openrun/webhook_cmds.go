@@ -71,31 +71,31 @@ func printWebhookList(cCtx *cli.Context, tokens []types.AppToken, format string)
 	case FORMAT_JSON:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		enc.SetIndent("", "  ")
-		enc.Encode(tokens)
+		enc.Encode(tokens) //nolint:errcheck
 	case FORMAT_JSONL:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		for _, version := range tokens {
-			enc.Encode(version)
+			enc.Encode(version) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		enc.SetIndent("", "  ")
 		for _, f := range tokens {
-			enc.Encode(f)
-			fmt.Fprintf(cCtx.App.Writer, "\n")
+			enc.Encode(f) //nolint:errcheck
+			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:
 		fallthrough
 	case FORMAT_TABLE:
 		formatStrHead := "%-15s %-40s %s\n"
 		formatStrData := "%-15s %-40s %s\n"
-		fmt.Fprintf(cCtx.App.Writer, formatStrHead, "Type", "Token", "Url")
+		printStdout(cCtx, formatStrHead, "Type", "Token", "Url")
 		for _, f := range tokens {
-			fmt.Fprintf(cCtx.App.Writer, formatStrData, f.Type, f.Token, f.Url)
+			printStdout(cCtx, formatStrData, f.Type, f.Token, f.Url)
 		}
 	case FORMAT_CSV:
 		for _, version := range tokens {
-			fmt.Fprintf(cCtx.App.Writer, "%s,%s,%s\n", version.Type, version.Token, version.Url)
+			printStdout(cCtx, "%s,%s,%s\n", version.Type, version.Token, version.Url)
 		}
 	default:
 		panic(fmt.Errorf("unknown format %s", format))

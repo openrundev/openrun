@@ -112,7 +112,7 @@ func (h *httpPlugin) reqMethod(method string) func(thread *starlark.Thread, _ *s
 			basicAuth    starlark.Tuple
 			body         starlark.String
 			jsonBody     starlark.Value
-			errorOnFail  starlark.Bool = starlark.True
+			errorOnFail  = starlark.True
 		)
 
 		if err := starlark.UnpackArgs(method, args, kwargs, "url", &urlv, "params?", &params, "headers",
@@ -432,7 +432,7 @@ func setBody(req *http.Request, body starlark.String, formData *starlark.Dict, f
 		case formEncodingMultipart:
 			var b bytes.Buffer
 			mw := multipart.NewWriter(&b)
-			defer mw.Close()
+			defer mw.Close() //nolint:errcheck
 
 			contentType = mw.FormDataContentType()
 
@@ -498,7 +498,7 @@ func (r *Response) Text(thread *starlark.Thread, _ *starlark.Builtin, args starl
 	if err != nil {
 		return nil, err
 	}
-	r.Body.Close()
+	r.Body.Close() //nolint:errcheck
 	// reset reader to allow multiple calls
 	r.Body = io.NopCloser(bytes.NewReader(data))
 
@@ -517,7 +517,7 @@ func (r *Response) JSON(thread *starlark.Thread, _ *starlark.Builtin, args starl
 	if err := json.Unmarshal(body, &data); err != nil {
 		return nil, err
 	}
-	r.Body.Close()
+	r.Body.Close() //nolint:errcheck
 	// reset reader to allow multiple calls
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	return starlark_type.MarshalStarlark(data)

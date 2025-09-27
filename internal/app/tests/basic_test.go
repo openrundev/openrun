@@ -90,7 +90,7 @@ def handler(req):
 	testutil.AssertEqualsString(t, "body", `Template got myvalue.`, response.Body.String())
 	var config apptype.CodeConfig
 
-	json.Unmarshal([]byte(fileData[apptype.CONFIG_LOCK_FILE_NAME]), &config)
+	json.Unmarshal([]byte(fileData[apptype.CONFIG_LOCK_FILE_NAME]), &config) //nolint:errcheck
 	testutil.AssertEqualsString(t, "config", "2.0.3", config.Htmx.Version)
 }
 
@@ -216,7 +216,7 @@ def handler(req):
 	testutil.AssertEqualsString(t, "body", `Template got myvalue.`, response.Body.String())
 	var config apptype.CodeConfig
 
-	json.Unmarshal([]byte(fileData[apptype.CONFIG_LOCK_FILE_NAME]), &config)
+	json.Unmarshal([]byte(fileData[apptype.CONFIG_LOCK_FILE_NAME]), &config) //nolint:errcheck
 	testutil.AssertEqualsString(t, "config", "1.8", config.Htmx.Version)
 }
 
@@ -247,7 +247,7 @@ def handler(req):
 		strings.TrimSpace(response.Body.String()))
 	var config apptype.CodeConfig
 
-	json.Unmarshal([]byte(fileData[apptype.CONFIG_LOCK_FILE_NAME]), &config)
+	json.Unmarshal([]byte(fileData[apptype.CONFIG_LOCK_FILE_NAME]), &config) //nolint:errcheck
 	testutil.AssertEqualsString(t, "config", "1.8", config.Htmx.Version)
 }
 
@@ -705,7 +705,7 @@ app = ace.app("testApp", routes = [ace.api("/t1", t1, type=ace.TEXT), ace.api("/
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	if strings.Index(response.Body.String(), "$HOME") != -1 {
+	if strings.Contains(response.Body.String(), "$HOME") {
 		t.Errorf("Expected $HOME to be replaced, got %s", response.Body.String())
 	}
 

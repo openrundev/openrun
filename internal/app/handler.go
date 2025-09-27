@@ -87,10 +87,7 @@ var encoderPool = sync.Pool{
 }
 
 func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Callable, rtype string) http.HandlerFunc {
-	hasArgs := false
-	if handler != nil && !strings.HasSuffix(handler.Name(), "_no_args") {
-		hasArgs = true
-	}
+	hasArgs := handler != nil && !strings.HasSuffix(handler.Name(), "_no_args")
 	rtype = strings.ToUpper(rtype)
 	goHandler := func(w http.ResponseWriter, r *http.Request) {
 		thread := &starlark.Thread{
@@ -107,11 +104,13 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 		thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.AppPathDomain(), a.serverConfig))
 
 		header := r.Header
-		isHtmxRequest := types.GetHTTPHeader(header, "Hx-Request") == "true" && !(types.GetHTTPHeader(header, "Hx-Boosted") == "true")
+		isHtmxRequest := types.GetHTTPHeader(header, "Hx-Request") == "true" &&
+			!(types.GetHTTPHeader(header, "Hx-Boosted") == "true") //nolint:staticcheck
 
-		if rtype == apptype.HTML_TYPE && a.codeConfig.Routing.EarlyHints && !a.IsDev && r.Method == http.MethodGet &&
+		if rtype == apptype.HTML_TYPE && a.codeConfig.Routing.EarlyHints && !a.IsDev &&
+			r.Method == http.MethodGet &&
 			types.GetHTTPHeader(header, "Sec-Fetch-Mode") == "navigate" &&
-			!(isHtmxRequest && fragment != "") {
+			!(isHtmxRequest && fragment != "") { //nolint:staticcheck
 			// Prod mode, for a GET request from newer browsers on a top level HTML page, send http early hints
 			a.earlyHints(w, r)
 		}
@@ -151,7 +150,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			}
 			requestData.UrlParams = params
 
-			r.ParseForm()
+			r.ParseForm() //nolint:errcheck // ignore error if no form data is passed
 			requestData.Form = r.Form
 			requestData.Query = r.URL.Query()
 			requestData.PostForm = r.PostForm
@@ -197,7 +196,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				}()
 			}
 
-			defer deferredCleanup()
+			defer deferredCleanup() //nolint:errcheck
 
 			// Call the handler function
 			var ret starlark.Value
@@ -245,7 +244,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 
 				// error handler is defined, call it
 				valueDict := starlark.Dict{}
-				valueDict.SetKey(starlark.String("error"), starlark.String(msg))
+				valueDict.SetKey(starlark.String("error"), starlark.String(msg)) //nolint:errcheck
 				ret, err = starlark.Call(thread, a.errorHandler, starlark.Tuple{requestData, &valueDict}, nil)
 				if err != nil {
 					// error handler itself failed
@@ -309,7 +308,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			return
 		}
 
-		if rtype == apptype.JSON {
+		if rtype == apptype.JSON { //nolint:staticcheck
 			// If the route type is JSON, then return the handler response as JSON
 			respHeader["Content-Type"] = CONTENT_TYPE_JSON
 
@@ -526,7 +525,7 @@ func getRemoteIP(r *http.Request) string {
 
 func (a *App) handleStreamResponse(w http.ResponseWriter, r *http.Request, rtype string, fragment string, streamResponse map[string]any) {
 	// Stream the response to the client
-	if rtype == apptype.JSON {
+	if rtype == apptype.JSON { //nolint:staticcheck
 		w.Header().Set("Content-Type", "application/json")
 	} else if rtype == apptype.TEXT {
 		w.Header().Set("Content-Type", "text/plain")
@@ -589,9 +588,7 @@ func (a *App) handleStreamResponse(w http.ResponseWriter, r *http.Request, rtype
 	}
 
 	if rtype == apptype.HTML_TYPE {
-		w.Write([]byte("<!--cl_stream_end-->\n\n"))
+		w.Write([]byte("<!--cl_stream_end-->\n\n")) //nolint:errcheck
 		flusher.Flush()
 	}
-
-	return
 }

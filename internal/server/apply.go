@@ -35,7 +35,7 @@ func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, appl
 	createAppBuiltin := func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var path, source starlark.String
 		var dev starlark.Bool
-		var params *starlark.Dict = starlark.NewDict(0)
+		var params = starlark.NewDict(0)
 		var auth, gitAuth, gitBranch, gitCommit, appSpec starlark.String
 		var appConfig = starlark.NewDict(0)
 		var containerOpts = starlark.NewDict(0)
@@ -228,7 +228,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		if err != nil {
 			return nil, nil, err
 		}
-		defer tx.Rollback()
+		defer tx.Rollback() //nolint:errcheck
 	} else {
 		tx = inputTx
 		// No rollback here if transaction is passed in
@@ -246,20 +246,23 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		defer repoCache.Cleanup()
 	}
 
-	branch = cmp.Or(branch, "main")
-	newSha, err := repoCache.GetSha(applyPath, branch, gitAuth)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
-	}
-	if !forceReload && lastRunCommitId != "" && newSha == lastRunCommitId && (commit == "" || commit == lastRunCommitId) {
-		// If no commit is specified, and the current version is the same as the latest commit, skip apply
-		// Only schedule sync passes in the lastRunCommitId, so this does not happen for normal apply
-		s.Debug().Msgf("Already applied commit for %s, skipping apply", applyPath)
-		return &types.AppApplyResponse{
-			DryRun:       dryRun,
-			SkippedApply: true,
-			CommitId:     newSha,
-		}, nil, nil
+	newSha := ""
+	if system.IsGit(applyPath) {
+		branch = cmp.Or(branch, "main")
+		newSha, err = repoCache.GetSha(applyPath, branch, gitAuth)
+		if err != nil {
+			return nil, nil, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
+		}
+		if !forceReload && lastRunCommitId != "" && newSha == lastRunCommitId && (commit == "" || commit == lastRunCommitId) {
+			// If no commit is specified, and the current version is the same as the latest commit, skip apply
+			// Only schedule sync passes in the lastRunCommitId, so this does not happen for normal apply
+			s.Debug().Msgf("Already applied commit for %s, skipping apply", applyPath)
+			return &types.AppApplyResponse{
+				DryRun:       dryRun,
+				SkippedApply: true,
+				CommitId:     newSha,
+			}, nil, nil
+		}
 	}
 
 	dir, file, err := s.setupSource(applyPath, branch, commit, gitAuth, repoCache)

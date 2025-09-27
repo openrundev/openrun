@@ -83,7 +83,7 @@ func (a *AppDev) downloadFile(url string, appFS *appfs.WritableSourceFs, path st
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var buf bytes.Buffer
 	if _, err = io.Copy(&buf, resp.Body); err != nil {

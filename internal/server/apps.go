@@ -191,7 +191,7 @@ func (a *AppStore) ClearLinkedApps(pathDomain types.AppPathDomain) error {
 func (a *AppStore) clearApp(pathDomain types.AppPathDomain) {
 	app, ok := a.appMap[pathDomain]
 	if ok {
-		app.Close()
+		app.Close() //nolint:errcheck
 		delete(a.appMap, pathDomain)
 	}
 }
@@ -272,7 +272,7 @@ func (a *AppStore) ClearAppsAudit(ctx context.Context, pathDomains []types.AppPa
 func getAppInfoMap(appInfo []types.AppInfo) map[string]types.AppInfo {
 	ret := make(map[string]types.AppInfo)
 	for _, info := range appInfo {
-		ret[info.AppPathDomain.String()] = info
+		ret[info.AppPathDomain.String()] = info //nolint:staticcheck
 	}
 	return ret
 }

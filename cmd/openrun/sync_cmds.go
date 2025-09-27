@@ -219,7 +219,7 @@ func syncDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			}
 
 			if response.Id != "" {
-				fmt.Fprintf(cCtx.App.Writer, "Sync job with Id %s deleted\n", cCtx.Args().First())
+				printStdout(cCtx, "Sync job with Id %s deleted\n", cCtx.Args().First())
 			}
 
 			if response.DryRun {
@@ -236,37 +236,37 @@ func printSyncList(cCtx *cli.Context, sync []*types.SyncEntry, format string) {
 	case FORMAT_JSON:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		enc.SetIndent("", "  ")
-		enc.Encode(sync)
+		enc.Encode(sync) //nolint:errcheck
 	case FORMAT_JSONL:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		for _, s := range sync {
-			enc.Encode(s)
+			enc.Encode(s) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		enc.SetIndent("", "  ")
 		for _, s := range sync {
-			enc.Encode(s)
+			enc.Encode(s) //nolint:errcheck
 		}
 	case FORMAT_BASIC:
 		formatStr := "%-35s %-9s %-12s %-s\n"
-		fmt.Fprintf(cCtx.App.Writer, formatStr, "Id", "State", "SyncType", "Path")
+		printStdout(cCtx, formatStr, "Id", "State", "SyncType", "Path")
 
 		for _, s := range sync {
-			fmt.Fprintf(cCtx.App.Writer, formatStr, s.Id, s.Status.State, getSyncType(s), s.Path)
+			printStdout(cCtx, formatStr, s.Id, s.Status.State, getSyncType(s), s.Path)
 		}
 	case FORMAT_TABLE:
 		formatStrHead := "%-35s %-9s %-12s %-8s %-8s %-7s %-7s %-10s %-15s %-60s %-s\n"
 		formatStrData := "%-35s %-9s %-12s %-8s %-8t %-7t %-7t %-10s %-15s %-60s %-s\n"
-		fmt.Fprintf(cCtx.App.Writer, formatStrHead, "Id", "State", "SyncType", "Reload", "Promote", "Approve", "Clobber", "GitAuth", "Branch", "Path", "Error")
+		printStdout(cCtx, formatStrHead, "Id", "State", "SyncType", "Reload", "Promote", "Approve", "Clobber", "GitAuth", "Branch", "Path", "Error")
 
 		for _, s := range sync {
-			fmt.Fprintf(cCtx.App.Writer, formatStrData, s.Id, s.Status.State, getSyncType(s), s.Metadata.Reload, s.Metadata.Promote,
+			printStdout(cCtx, formatStrData, s.Id, s.Status.State, getSyncType(s), s.Metadata.Reload, s.Metadata.Promote,
 				s.Metadata.Approve, s.Metadata.Clobber, s.Metadata.GitAuth, s.Metadata.GitBranch, s.Path, s.Status.Error)
 		}
 	case FORMAT_CSV:
 		for _, s := range sync {
-			fmt.Fprintf(cCtx.App.Writer, "%s,%s,%s,%s,%t,%t,%t,%s,%s,%s,%s,%s\n", s.Id, s.Status.State, getSyncType(s), s.Metadata.Reload, s.Metadata.Promote, s.Metadata.Approve, s.Metadata.Clobber,
+			printStdout(cCtx, "%s,%s,%s,%s,%t,%t,%t,%s,%s,%s,%s,%s\n", s.Id, s.Status.State, getSyncType(s), s.Metadata.Reload, s.Metadata.Promote, s.Metadata.Approve, s.Metadata.Clobber,
 				s.Metadata.GitAuth, s.Metadata.GitBranch, s.Path, s.Metadata.WebhookUrl, s.Status.Error)
 		}
 	default:

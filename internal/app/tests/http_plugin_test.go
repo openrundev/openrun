@@ -16,11 +16,11 @@ import (
 
 func TestHttpPluginBasics(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	testServerJson := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"key": "value"}`)
+		io.WriteString(w, `{"key": "value"}`) //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -83,7 +83,7 @@ def handler(req):
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
 	testutil.AssertEqualsString(t, "body", "test contents", ret["key1"].(string))
 	testutil.AssertEqualsString(t, "body", "test contents", ret["key2"].(string))
 	testutil.AssertEqualsString(t, "body", "test contents", ret["key3"].(string))
@@ -96,7 +96,7 @@ def handler(req):
 
 func TestSecretsConfig(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()
@@ -134,7 +134,7 @@ def handler(req):
 
 func TestSecretsAccess(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "test contents")
+		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
 	logger := testutil.TestLogger()

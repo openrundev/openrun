@@ -78,7 +78,8 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 				return err
 			}
 
-			if msg.MessageType == types.MessageTypeAppUpdate {
+			switch msg.MessageType {
+			case types.MessageTypeAppUpdate:
 				updateMsg := types.AppUpdateMessage{}
 				err := json.Unmarshal([]byte(notification.Payload), &updateMsg)
 				if err != nil {
@@ -86,7 +87,7 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 					return err
 				}
 				go m.AppNotifyFunc(updateMsg.Payload)
-			} else if msg.MessageType == types.MessageTypeConfigUpdate {
+			case types.MessageTypeConfigUpdate:
 				updateMsg := types.ConfigUpdateMessage{}
 				err := json.Unmarshal([]byte(notification.Payload), &updateMsg)
 				if err != nil {
@@ -94,7 +95,7 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 					return err
 				}
 				go m.ConfigNotifyFunc(updateMsg.Payload)
-			} else {
+			default:
 				m.Error().Msgf("unknown message type: %s", msg.MessageType)
 			}
 
@@ -167,7 +168,7 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 	version := 0
 	row := m.db.QueryRow("SELECT version, last_upgraded FROM version")
 	var dt time.Time
-	row.Scan(&version, &dt)
+	row.Scan(&version, &dt) //nolint:errcheck // ignore error if no version is found
 
 	if version < CURRENT_DB_VERSION && !m.config.Metadata.AutoUpgrade {
 		return fmt.Errorf("DB autoupgrade is disabled, exiting. Server %d, DB %d", CURRENT_DB_VERSION, version)
@@ -187,7 +188,7 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	if version < 1 {
 		m.Info().Msg("No version, initializing")
@@ -303,7 +304,7 @@ func (m *Metadata) GetApp(pathDomain types.AppPathDomain) (*types.AppEntry, erro
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 	return m.GetAppTx(context.Background(), tx, pathDomain)
 }
 
@@ -312,7 +313,7 @@ func (m *Metadata) GetAppTx(ctx context.Context, tx types.Transaction, pathDomai
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	row := stmt.QueryRow(pathDomain.Path, pathDomain.Domain)
 	var app types.AppEntry
@@ -375,7 +376,7 @@ func (m *Metadata) GetAppsForDomain(domain string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	rows, err := stmt.Query(domain)
 	if err != nil {
@@ -383,7 +384,7 @@ func (m *Metadata) GetAppsForDomain(domain string) ([]string, error) {
 	}
 
 	paths := make([]string, 0)
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	for rows.Next() {
 		var path string
 		err = rows.Scan(&path)
@@ -410,14 +411,14 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	rows, err := stmt.Query()
 	if err != nil {
 		return nil, fmt.Errorf("error querying apps: %w", err)
 	}
 	apps := make([]types.AppInfo, 0)
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	for rows.Next() {
 		var path, domain, id, mainApp, sourceUrl string
 		var isDev bool
@@ -461,14 +462,14 @@ func (m *Metadata) GetLinkedApps(ctx context.Context, tx types.Transaction, main
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	rows, err := stmt.Query(mainAppId)
 	if err != nil {
 		return nil, fmt.Errorf("error querying apps: %w", err)
 	}
 	apps := make([]*types.AppEntry, 0)
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	for rows.Next() {
 		var app types.AppEntry
 		var settings, metadata sql.NullString
@@ -587,14 +588,14 @@ func (m *Metadata) GetSyncEntries(ctx context.Context, tx types.Transaction) ([]
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	rows, err := stmt.Query()
 	if err != nil {
 		return nil, fmt.Errorf("error querying sync: %w", err)
 	}
 	syncEntries := make([]*types.SyncEntry, 0)
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	for rows.Next() {
 		var sync types.SyncEntry
 		var metadata sql.NullString
@@ -685,7 +686,7 @@ func (m *Metadata) InitConfig(ctx context.Context, user string, dynamicConfig *t
 		return fmt.Errorf("error beginning transaction: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 	countResult := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType, `select count(*) from config`))
 	var rowCount int
 	err = countResult.Scan(&rowCount)

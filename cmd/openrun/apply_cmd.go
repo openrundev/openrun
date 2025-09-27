@@ -94,52 +94,52 @@ Examples:
 	}
 }
 
-func printApplyResponse(cCtx *cli.Context, applyResponse *types.AppApplyResponse) error {
+func printApplyResponse(cCtx *cli.Context, applyResponse *types.AppApplyResponse) {
 	if len(applyResponse.CreateResults) > 0 {
-		fmt.Fprintf(cCtx.App.Writer, "Created apps:\n")
+		printStdout(cCtx, "Created apps:\n")
 		for i, createResult := range applyResponse.CreateResults {
 			if i > 0 {
-				fmt.Fprintf(cCtx.App.Writer, "\n")
+				printStdout(cCtx, "\n")
 			}
 			printCreateResult(cCtx, createResult)
 		}
 	}
 
 	if len(applyResponse.UpdateResults) > 0 {
-		fmt.Fprintf(cCtx.App.Writer, "Updated apps: ")
+		printStdout(cCtx, "Updated apps: ")
 		for i, updateResult := range applyResponse.UpdateResults {
 			if i > 0 {
-				fmt.Fprintf(cCtx.App.Writer, ", ")
+				printStdout(cCtx, ", ")
 			}
-			fmt.Fprintf(cCtx.App.Writer, "%s", updateResult)
+			printStdout(cCtx, "%s", updateResult)
 		}
-		fmt.Fprintln(cCtx.App.Writer)
+		printStdout(cCtx, "\n")
 	}
 
 	if len(applyResponse.ReloadResults) > 0 {
-		fmt.Fprintf(cCtx.App.Writer, "Reloaded apps: ")
+		printStdout(cCtx, "Reloaded apps: ")
 		for i, reloadResult := range applyResponse.ReloadResults {
 			if i > 0 {
-				fmt.Fprintf(cCtx.App.Writer, ", ")
+				printStdout(cCtx, ", ")
 			}
-			fmt.Fprintf(cCtx.App.Writer, "%s", reloadResult)
+			printStdout(cCtx, "%s", reloadResult)
 		}
-		fmt.Fprintln(cCtx.App.Writer)
+		printStdout(cCtx, "\n")
 	}
 
 	if len(applyResponse.SkippedResults) > 0 {
-		fmt.Fprintf(cCtx.App.Writer, "Skipped apps: ")
+		printStdout(cCtx, "Skipped apps: ")
 		for i, skipResult := range applyResponse.SkippedResults {
 			if i > 0 {
-				fmt.Fprintf(cCtx.App.Writer, ", ")
+				printStdout(cCtx, ", ")
 			}
-			fmt.Fprintf(cCtx.App.Writer, "%s", skipResult)
+			printStdout(cCtx, "%s", skipResult)
 		}
-		fmt.Fprintln(cCtx.App.Writer)
+		printStdout(cCtx, "\n")
 	}
 
 	if len(applyResponse.ApproveResults) > 0 {
-		fmt.Fprintf(cCtx.App.Writer, "Approved apps:\n")
+		printStdout(cCtx, "Approved apps:\n")
 		for _, approveResult := range applyResponse.ApproveResults {
 			if !approveResult.NeedsApproval {
 				// Server does not return these for reload to reduce the noise
@@ -152,18 +152,16 @@ func printApplyResponse(cCtx *cli.Context, applyResponse *types.AppApplyResponse
 	}
 
 	if len(applyResponse.PromoteResults) > 0 {
-		fmt.Fprintf(cCtx.App.Writer, "Promoted apps: ")
+		printStdout(cCtx, "Promoted apps: ")
 		for i, promoteResult := range applyResponse.PromoteResults {
 			if i > 0 {
-				fmt.Fprintf(cCtx.App.Writer, ", ")
+				printStdout(cCtx, ", ")
 			}
-			fmt.Fprintf(cCtx.App.Writer, "%s", promoteResult)
+			printStdout(cCtx, "%s", promoteResult)
 		}
-		fmt.Fprintln(cCtx.App.Writer)
+		printStdout(cCtx, "\n")
 	}
 
-	fmt.Fprintf(cCtx.App.Writer, "%d app(s) created, %d app(s) updated, %d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted.\n",
+	printStdout(cCtx, "%d app(s) created, %d app(s) updated, %d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted.\n",
 		len(applyResponse.CreateResults), len(applyResponse.UpdateResults), len(applyResponse.ReloadResults), len(applyResponse.SkippedResults), len(applyResponse.ApproveResults), len(applyResponse.PromoteResults))
-
-	return nil
 }

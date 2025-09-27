@@ -98,16 +98,17 @@ func NewDbFileReader(compressionType string, data []byte) *DbFileReader {
 }
 
 func (f *DbFileReader) uncompress() error {
-	if f.compressionType == "" {
+	switch f.compressionType {
+	case "":
 		f.uncompressedReader = f.compressedReader
-	} else if f.compressionType == appfs.COMPRESSION_TYPE {
+	case appfs.COMPRESSION_TYPE:
 		br := brotli.NewReader(f.compressedReader)
 		uncompressed, err := io.ReadAll(br)
 		if err != nil {
 			return err
 		}
 		f.uncompressedReader = bytes.NewReader(uncompressed)
-	} else {
+	default:
 		return fmt.Errorf("unsupported compression type: %s", f.compressionType)
 	}
 	return nil

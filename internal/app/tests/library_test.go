@@ -17,7 +17,7 @@ import (
 func TestLibraryBasic(t *testing.T) {
 	// Create a test server to serve the library file
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "myjs contents")
+		io.WriteString(w, "myjs contents") //nolint:errcheck
 	}))
 	testUrl := testServer.URL + "/abc/mylib.js"
 

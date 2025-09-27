@@ -248,14 +248,14 @@ func listExpiredFile(ctx context.Context) ([]expiredFile, error) {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
 
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	rows, err := stmt.Query(time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("error querying files: %w", err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var expiredFiles []expiredFile
 	for rows.Next() {
@@ -277,7 +277,7 @@ func deleteExpiredFiles(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	_, err = stmt.Exec(time.Now())
 	if err != nil {

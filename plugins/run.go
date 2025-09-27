@@ -23,7 +23,7 @@ func execCommand(containerManager *app.ContainerManager, thread *starlark.Thread
 	var cmdArgs *starlark.List
 	var env *starlark.List
 	var processPartial, stdoutToFile, stream starlark.Bool
-	var includeStderr starlark.Bool = starlark.Bool(true)
+	var includeStderr = starlark.Bool(true)
 	if err := starlark.UnpackArgs("run", args, kwargs, "path", &path, "args?", &cmdArgs, "env?", &env,
 		"process_partial?", &processPartial, "stdout_file", &stdoutToFile, "parse", &parse, "stream", &stream,
 		"include_stderr", &includeStderr, "cwd", &cwd); err != nil {
@@ -97,7 +97,7 @@ func execCommand(containerManager *app.ContainerManager, thread *starlark.Thread
 		if err != nil {
 			return nil, fmt.Errorf("error creating temporary file: %w", err)
 		}
-		defer tempFile.Close()
+		defer tempFile.Close() //nolint:errcheck
 		_, err = io.Copy(tempFile, stdout)
 
 		if err != nil && err != io.EOF {
@@ -202,9 +202,9 @@ func execCommand(containerManager *app.ContainerManager, thread *starlark.Thread
 			if err != nil {
 				return nil, fmt.Errorf("error converting JSON output to starlark: %w", err)
 			}
-			lines.Append(val)
+			lines.Append(val) //nolint:errcheck
 		} else {
-			lines.Append(starlark.String(line))
+			lines.Append(starlark.String(line)) //nolint:errcheck
 		}
 	}
 

@@ -455,14 +455,17 @@ func (s *Server) setupAdminAccount() (string, error) {
 // Start starts the OpenRun Server
 func (s *Server) Start() error {
 	s.handler = NewTCPHandler(s.Logger, s.config, s)
-	serverUri := strings.TrimSpace(os.ExpandEnv(s.config.GlobalConfig.ServerUri))
+	serverUri := strings.TrimSpace(os.ExpandEnv(s.config.ServerUri))
 	if serverUri == "" {
 		return errors.New("server_uri is not set")
 	}
 
 	// Change to OPENRUN_HOME directory, helps avoid length limit on UDS file (around 104 chars)
 	clHome := os.Getenv("OPENRUN_HOME")
-	os.Chdir(clHome)
+	err := os.Chdir(clHome)
+	if err != nil {
+		return fmt.Errorf("error changing to OPENRUN_HOME directory: %w", err)
+	}
 
 	// Start unix domain socket server
 	if !strings.HasPrefix(serverUri, "http://") && !strings.HasPrefix(serverUri, "https://") {
@@ -509,10 +512,10 @@ func (s *Server) Start() error {
 			if err := s.udsServer.Serve(socket); err != nil {
 				s.Error().Err(err).Msg("UDS server error")
 				if s.httpServer != nil {
-					s.httpServer.Shutdown(context.Background())
+					s.httpServer.Shutdown(context.Background()) //nolint:errcheck
 				}
 				if s.httpsServer != nil {
-					s.httpsServer.Shutdown(context.Background())
+					s.httpsServer.Shutdown(context.Background()) //nolint:errcheck
 				}
 				os.Exit(1)
 			}
@@ -563,10 +566,10 @@ func (s *Server) Start() error {
 			if err := s.httpServer.Serve(listener); err != nil {
 				s.Error().Err(err).Msg("HTTP server error")
 				if s.httpsServer != nil {
-					s.httpsServer.Shutdown(context.Background())
+					s.httpsServer.Shutdown(context.Background()) //nolint:errcheck
 				}
 				if s.udsServer != nil {
-					s.udsServer.Shutdown(context.Background())
+					s.udsServer.Shutdown(context.Background()) //nolint:errcheck
 				}
 				os.Exit(1)
 			}
@@ -586,10 +589,10 @@ func (s *Server) Start() error {
 			if err := s.httpsServer.Serve(listener); err != nil {
 				s.Error().Err(err).Msg("HTTPS server error")
 				if s.httpServer != nil {
-					s.httpServer.Shutdown(context.Background())
+					s.httpServer.Shutdown(context.Background()) //nolint:errcheck
 				}
 				if s.udsServer != nil {
-					s.udsServer.Shutdown(context.Background())
+					s.udsServer.Shutdown(context.Background()) //nolint:errcheck
 				}
 				os.Exit(1)
 			}

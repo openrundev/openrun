@@ -69,20 +69,20 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			}
 
 			if len(linkResponse.PromoteResults) > 0 {
-				fmt.Fprintf(cCtx.App.Writer, "Promoted apps: ")
+				printStdout(cCtx, "Promoted apps: ")
 				for i, promoteResult := range linkResponse.PromoteResults {
 					if i > 0 {
-						fmt.Fprintf(cCtx.App.Writer, ", ")
+						printStdout(cCtx, ", ")
 					}
-					fmt.Fprintf(cCtx.App.Writer, "%s", promoteResult)
+					printStdout(cCtx, "%s", promoteResult)
 				}
-				fmt.Fprintln(cCtx.App.Writer)
+				fmt.Fprintln(cCtx.App.Writer) //nolint:errcheck
 			}
 
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) linked, %d app(s) promoted.\n", len(linkResponse.StagedUpdateResults), len(linkResponse.PromoteResults))
+			printStdout(cCtx, "%d app(s) linked, %d app(s) promoted.\n", len(linkResponse.StagedUpdateResults), len(linkResponse.PromoteResults))
 
 			if linkResponse.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				fmt.Print(DRY_RUN_MESSAGE) //nolint:errcheck
 			}
 
 			return nil
@@ -125,12 +125,12 @@ func accountListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 
 			appInfo := response.AppEntry
 			if len(appInfo.Metadata.Accounts) == 0 {
-				fmt.Fprintf(cCtx.App.Writer, "No account links for app %s : %s\n", appInfo.AppPathDomain(), appInfo.Id)
+				printStdout(cCtx, "No account links for app %s : %s\n", appInfo.AppPathDomain(), appInfo.Id)
 				return nil
 			}
-			fmt.Fprintf(cCtx.App.Writer, "Account links for app %s : %s\n", appInfo.AppPathDomain(), appInfo.Id)
+			printStdout(cCtx, "Account links for app %s : %s\n", appInfo.AppPathDomain(), appInfo.Id)
 			for _, plugin := range appInfo.Metadata.Accounts {
-				fmt.Fprintf(cCtx.App.Writer, "  %s: %s\n", plugin.Plugin, plugin.AccountName)
+				printStdout(cCtx, "  %s: %s\n", plugin.Plugin, plugin.AccountName)
 			}
 
 			return nil
@@ -190,24 +190,24 @@ func updateParamsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			}
 
 			for _, app := range updateResponse.StagedUpdateResults {
-				fmt.Printf("Updated app %s\n", app)
+				fmt.Printf("Updated app %s\n", app) //nolint:errcheck
 			}
 
 			if len(updateResponse.PromoteResults) > 0 {
-				fmt.Fprintf(cCtx.App.Writer, "Promoted apps: ")
+				printStdout(cCtx, "Promoted apps: ")
 				for i, promoteResult := range updateResponse.PromoteResults {
 					if i > 0 {
-						fmt.Fprintf(cCtx.App.Writer, ", ")
+						printStdout(cCtx, ", ")
 					}
-					fmt.Fprintf(cCtx.App.Writer, "%s", promoteResult)
+					printStdout(cCtx, "%s", promoteResult)
 				}
-				fmt.Fprintln(cCtx.App.Writer)
+				printStdout(cCtx, "\n")
 			}
 
-			fmt.Fprintf(cCtx.App.Writer, "%d app(s) updated, %d app(s) promoted.\n", len(updateResponse.StagedUpdateResults), len(updateResponse.PromoteResults))
+			printStdout(cCtx, "%d app(s) updated, %d app(s) promoted.\n", len(updateResponse.StagedUpdateResults), len(updateResponse.PromoteResults))
 
 			if updateResponse.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				fmt.Print(DRY_RUN_MESSAGE) //nolint:errcheck
 			}
 
 			return nil
@@ -250,12 +250,12 @@ func paramListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 
 			appInfo := response.AppEntry
 			if len(appInfo.Metadata.ParamValues) == 0 {
-				fmt.Fprintf(cCtx.App.Writer, "No param values for app %s : %s\n", appInfo.AppPathDomain(), appInfo.Id)
+				printStdout(cCtx, "No param values for app %s : %s\n", appInfo.AppPathDomain(), appInfo.Id)
 				return nil
 			}
-			fmt.Fprintf(cCtx.App.Writer, "Param values for app %s : %s\n", appInfo.AppPathDomain(), appInfo.Id)
+			printStdout(cCtx, "Param values for app %s : %s\n", appInfo.AppPathDomain(), appInfo.Id)
 			for name, value := range appInfo.Metadata.ParamValues {
-				fmt.Fprintf(cCtx.App.Writer, "  %s: %s\n", name, value)
+				printStdout(cCtx, "  %s: %s\n", name, value)
 			}
 
 			return nil

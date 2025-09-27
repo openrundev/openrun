@@ -44,7 +44,7 @@ func (f *FileCache) VersionUpgrade(config *types.ServerConfig) error {
 	version := 0
 	row := f.db.QueryRow("SELECT version, last_upgraded FROM version")
 	var dt time.Time
-	row.Scan(&version, &dt)
+	row.Scan(&version, &dt) //nolint:errcheck // ignore error if no version is found
 
 	if version < CURRENT_DB_VERSION && !config.Metadata.AutoUpgrade {
 		return fmt.Errorf("DB autoupgrade is disabled, exiting. Server %d, DB %d", CURRENT_DB_VERSION, version)
@@ -64,7 +64,7 @@ func (f *FileCache) VersionUpgrade(config *types.ServerConfig) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	if version < 1 {
 		f.Info().Msg("No version, initializing file cache")
@@ -91,7 +91,7 @@ func (f *FileCache) GetCachedFile(ctx context.Context, sha string) ([]byte, stri
 	if err != nil {
 		return nil, "", fmt.Errorf("error preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	row := stmt.QueryRow(sha)
 	var compressionType string
@@ -108,7 +108,7 @@ func (f *FileCache) AddCache(ctx context.Context, sha string, compressionType st
 	if err != nil {
 		return fmt.Errorf("error preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 
 	_, err = stmt.ExecContext(ctx, sha, compressionType, content)
 	return err

@@ -37,7 +37,7 @@ settings={"style":{"library": ""}})`,
 func TestStyleOther(t *testing.T) {
 	// Create a test server to serve the css file
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "mystyle contents")
+		io.WriteString(w, "mystyle contents") //nolint:errcheck
 	}))
 	testUrl := testServer.URL + "/static/mystyle.css"
 

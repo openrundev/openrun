@@ -1044,7 +1044,7 @@ func (a *App) userFileHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck
 
 	// Copy the file content to the response writer
 	// This streams the content and uses chunked transfer encoding

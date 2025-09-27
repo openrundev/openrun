@@ -398,7 +398,7 @@ func (a *App) pluginHook(modulePath, accountName, functionName string, pluginInf
 							if err != nil {
 								return nil, err
 							}
-							v.SetIndex(i, starlark.String(evalString))
+							v.SetIndex(i, starlark.String(evalString)) //nolint:errcheck
 						}
 					}
 				case *starlark.Dict:
@@ -413,7 +413,7 @@ func (a *App) pluginHook(modulePath, accountName, functionName string, pluginInf
 							if err != nil {
 								return nil, err
 							}
-							v.SetKey(key, starlark.String(evalString))
+							v.SetKey(key, starlark.String(evalString)) //nolint:errcheck
 						}
 					}
 				}
@@ -437,7 +437,7 @@ func (a *App) pluginHook(modulePath, accountName, functionName string, pluginInf
 							if err != nil {
 								return nil, err
 							}
-							v.SetIndex(i, starlark.String(evalString))
+							v.SetIndex(i, starlark.String(evalString)) //nolint:errcheck
 						}
 					}
 				case *starlark.Dict:
@@ -452,7 +452,7 @@ func (a *App) pluginHook(modulePath, accountName, functionName string, pluginInf
 							if err != nil {
 								return nil, err
 							}
-							v.SetKey(key, starlark.String(evalString))
+							v.SetKey(key, starlark.String(evalString)) //nolint:errcheck
 						}
 					}
 				}

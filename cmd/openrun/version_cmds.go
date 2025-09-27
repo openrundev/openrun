@@ -72,44 +72,44 @@ func printVersionList(cCtx *cli.Context, versions []types.AppVersion, format str
 	case FORMAT_JSON:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		enc.SetIndent("", "  ")
-		enc.Encode(versions)
+		enc.Encode(versions) //nolint:errcheck
 	case FORMAT_JSONL:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		for _, version := range versions {
-			enc.Encode(version)
+			enc.Encode(version) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		enc.SetIndent("", "  ")
 		for _, version := range versions {
-			enc.Encode(version)
-			fmt.Fprintf(cCtx.App.Writer, "\n")
+			enc.Encode(version) //nolint:errcheck
+			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:
 		formatStrHead := "%6s %8s %8s %-20s\n"
 		formatStrData := "%6s %8d %8d %.20s\n"
-		fmt.Fprintf(cCtx.App.Writer, formatStrHead, "Active", "Version", "Previous", "GitCommit")
+		printStdout(cCtx, formatStrHead, "Active", "Version", "Previous", "GitCommit")
 		for _, version := range versions {
 			isLive := ""
 			if version.Active {
 				isLive = "=====>"
 			}
-			fmt.Fprintf(cCtx.App.Writer, formatStrData, isLive, version.Version, version.PreviousVersion, version.Metadata.VersionMetadata.GitCommit)
+			printStdout(cCtx, formatStrData, isLive, version.Version, version.PreviousVersion, version.Metadata.VersionMetadata.GitCommit)
 		}
 	case FORMAT_TABLE:
 		formatStrHead := "%6s %8s %8s %-30s %-20s %-40s\n"
 		formatStrData := "%6s %8d %8d %-30s %.20s %-40s\n"
-		fmt.Fprintf(cCtx.App.Writer, formatStrHead, "Active", "Version", "Previous", "CreateTime", "GitCommit", "GitMessage")
+		printStdout(cCtx, formatStrHead, "Active", "Version", "Previous", "CreateTime", "GitCommit", "GitMessage")
 		for _, version := range versions {
 			isLive := ""
 			if version.Active {
 				isLive = "=====>"
 			}
-			fmt.Fprintf(cCtx.App.Writer, formatStrData, isLive, version.Version, version.PreviousVersion, version.CreateTime, version.Metadata.VersionMetadata.GitCommit, version.Metadata.VersionMetadata.GitMessage)
+			printStdout(cCtx, formatStrData, isLive, version.Version, version.PreviousVersion, version.CreateTime, version.Metadata.VersionMetadata.GitCommit, version.Metadata.VersionMetadata.GitMessage)
 		}
 	case FORMAT_CSV:
 		for _, version := range versions {
-			fmt.Fprintf(cCtx.App.Writer, "%t,%d,%d,\"%s\",%s,\"%s\"\n", version.Active, version.Version, version.PreviousVersion, version.CreateTime, version.Metadata.VersionMetadata.GitCommit, version.Metadata.VersionMetadata.GitMessage)
+			printStdout(cCtx, "%t,%d,%d,\"%s\",%s,\"%s\"\n", version.Active, version.Version, version.PreviousVersion, version.CreateTime, version.Metadata.VersionMetadata.GitCommit, version.Metadata.VersionMetadata.GitMessage)
 		}
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
@@ -163,31 +163,31 @@ func printFileList(cCtx *cli.Context, files []types.AppFile, format string) {
 	case FORMAT_JSON:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		enc.SetIndent("", "  ")
-		enc.Encode(files)
+		enc.Encode(files) //nolint:errcheck
 	case FORMAT_JSONL:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		for _, version := range files {
-			enc.Encode(version)
+			enc.Encode(version) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
 		enc := json.NewEncoder(cCtx.App.Writer)
 		enc.SetIndent("", "  ")
 		for _, f := range files {
-			enc.Encode(f)
-			fmt.Fprintf(cCtx.App.Writer, "\n")
+			enc.Encode(f) //nolint:errcheck
+			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:
 		fallthrough
 	case FORMAT_TABLE:
 		formatStrHead := "%7s %-64s %-50s\n"
 		formatStrData := "%7d %-64s %-50s\n"
-		fmt.Fprintf(cCtx.App.Writer, formatStrHead, "Size", "Etag", "Path")
+		printStdout(cCtx, formatStrHead, "Size", "Etag", "Path")
 		for _, f := range files {
-			fmt.Fprintf(cCtx.App.Writer, formatStrData, f.Size, f.Etag, f.Name)
+			printStdout(cCtx, formatStrData, f.Size, f.Etag, f.Name)
 		}
 	case FORMAT_CSV:
 		for _, version := range files {
-			fmt.Fprintf(cCtx.App.Writer, "%d,%s,\"%s\"\n", version.Size, version.Etag, version.Name)
+			printStdout(cCtx, "%d,%s,\"%s\"\n", version.Size, version.Etag, version.Name)
 		}
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
@@ -232,7 +232,7 @@ func versionSwitchCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 				return err
 			}
 
-			fmt.Fprintf(cCtx.App.Writer, "Switched %s from version %d to version %d\n", cCtx.Args().Get(1), response.FromVersion, response.ToVersion)
+			printStdout(cCtx, "Switched %s from version %d to version %d\n", cCtx.Args().Get(1), response.FromVersion, response.ToVersion)
 
 			if response.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)
@@ -279,7 +279,7 @@ func versionRevertCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 				return err
 			}
 
-			fmt.Fprintf(cCtx.App.Writer, "Reverted %s from version %d to version %d\n", cCtx.Args().First(), response.FromVersion, response.ToVersion)
+			printStdout(cCtx, "Reverted %s from version %d to version %d\n", cCtx.Args().First(), response.FromVersion, response.ToVersion)
 
 			if response.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)

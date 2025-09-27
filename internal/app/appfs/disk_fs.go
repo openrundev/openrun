@@ -85,7 +85,7 @@ func (d *DiskReadFS) ReadFile(name string) ([]byte, error) {
 		return nil, err
 	}
 
-	defer file.Close()
+	defer file.Close() //nolint:errcheck
 
 	buf := new(bytes.Buffer)
 	_, err = io.Copy(buf, file)

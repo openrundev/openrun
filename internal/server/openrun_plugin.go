@@ -78,6 +78,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 	userId := system.GetRequestUserId(thread)
 	groups := system.GetRequestGroups(thread)
 	ret := starlark.List{}
+	//nolint:errcheck
 	for _, app := range apps {
 		// Filter out internal apps
 		if app.MainApp != "" && !bool(include_internal) {
@@ -88,7 +89,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		if query != "" {
 			queryStr := strings.ToLower(query.GoString())
 			if !strings.Contains(strings.ToLower(app.Name), queryStr) &&
-				!strings.Contains(strings.ToLower(app.AppPathDomain.String()), queryStr) &&
+				!strings.Contains(strings.ToLower(app.String()), queryStr) &&
 				!strings.Contains(strings.ToLower(app.SourceUrl), queryStr) {
 				continue
 			}
@@ -129,7 +130,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		v := starlark.Dict{}
 		v.SetKey(starlark.String("name"), starlark.String(app.Name))
 		v.SetKey(starlark.String("url"), starlark.String(types.GetAppUrl(app.AppPathDomain, c.server.config)))
-		v.SetKey(starlark.String("path"), starlark.String(app.AppPathDomain.String()))
+		v.SetKey(starlark.String("path"), starlark.String(app.String()))
 		pathSplit := starlark.List{}
 		pathSplitGlob := starlark.List{}
 		appDomain := ""
@@ -142,15 +143,15 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		splitPath := strings.Split(app.Path, "/")
 		for i, path := range splitPath {
 			if path != "" {
-				pathSplit.Append(starlark.String("/" + path))
+				pathSplit.Append(starlark.String("/" + path)) //nolint:errcheck
 				appPath += "/" + path
 				if i == len(splitPath)-1 {
 					appPath = strings.TrimSuffix(appPath, types.STAGE_SUFFIX)
 					appPath = strings.TrimSuffix(appPath, types.PREVIEW_SUFFIX)
 					// Last path, no glob
-					pathSplitGlob.Append(starlark.String(appDomain + appPath))
+					pathSplitGlob.Append(starlark.String(appDomain + appPath)) //nolint:errcheck
 				} else {
-					pathSplitGlob.Append(starlark.String(appDomain + appPath + "/**"))
+					pathSplitGlob.Append(starlark.String(appDomain + appPath + "/**")) //nolint:errcheck
 				}
 			}
 		}
@@ -353,6 +354,7 @@ func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starla
 	}
 
 	ret := starlark.List{}
+	//nolint:errcheck
 	for rows.Next() {
 		var rid, appId, userId, eventType, operation, target, status, detail string
 		var createTime int64
@@ -368,7 +370,7 @@ func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starla
 		v.SetKey(starlark.String("app_id"), starlark.String(appId))
 		if appInfo, ok := appIdMap[types.AppId(appId)]; ok {
 			v.SetKey(starlark.String("app_name"), starlark.String(appInfo.Name))
-			v.SetKey(starlark.String("app_path"), starlark.String(appInfo.AppPathDomain.String()))
+			v.SetKey(starlark.String("app_path"), starlark.String(appInfo.String()))
 		} else {
 			v.SetKey(starlark.String("app_name"), starlark.String(appId))
 			v.SetKey(starlark.String("app_path"), starlark.String(""))
@@ -392,6 +394,7 @@ func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starla
 	return &ret, nil
 }
 
+//nolint:errcheck
 func (c *openrunPlugin) ListOperations(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	if err := starlark.UnpackArgs("list_operations", args, kwargs); err != nil {
 		return nil, err
