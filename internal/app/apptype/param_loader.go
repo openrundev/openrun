@@ -14,6 +14,7 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
+	"go.starlark.net/syntax"
 )
 
 const (
@@ -191,7 +192,7 @@ func LoadParamInfo(fileName string, data []byte, serverConfig *types.ServerConfi
 		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) },
 	}
 
-	_, err := starlark.ExecFile(thread, fileName, data, builtins)
+	_, err := starlark.ExecFileOptions(&syntax.FileOptions{}, thread, fileName, data, builtins)
 	if err != nil {
 		if evalErr, ok := err.(*starlark.EvalError); ok {
 			fmt.Printf("Error loading app params: %s\n", evalErr.Backtrace()) // TODO: log

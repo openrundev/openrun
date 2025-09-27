@@ -10,6 +10,7 @@ import (
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
+	"go.starlark.net/syntax"
 )
 
 const (
@@ -114,7 +115,7 @@ func LoadStoreInfo(fileName string, data []byte) (*starlark_type.StoreInfo, erro
 		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) },
 	}
 
-	_, err := starlark.ExecFile(thread, fileName, data, builtins)
+	_, err := starlark.ExecFileOptions(&syntax.FileOptions{}, thread, fileName, data, builtins)
 	if err != nil {
 		if evalErr, ok := err.(*starlark.EvalError); ok {
 			fmt.Printf("Error loading app schema: %s\n", evalErr.Backtrace()) // TODO: log

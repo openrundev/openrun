@@ -81,7 +81,7 @@ func (a *App) Audit() (*types.ApproveResult, error) {
 		return nil, err
 	}
 
-	_, prog, err := starlark.SourceProgram(a.getStarPath(apptype.APP_FILE_NAME), buf, builtin.Has)
+	_, prog, err := starlark.SourceProgramOptions(AppFileOptions(), a.getStarPath(apptype.APP_FILE_NAME), buf, builtin.Has)
 	if err != nil {
 		return nil, fmt.Errorf("parsing source failed %v", err)
 	}

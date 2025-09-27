@@ -33,6 +33,7 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
+	"go.starlark.net/syntax"
 )
 
 // App is the main object that represents a OpenRun app. It is created when the app is loaded
@@ -827,12 +828,19 @@ func (a *App) loadStarlark(thread *starlark.Thread, module string, cache map[str
 		if err != nil {
 			return nil, err
 		}
-		globals, err := starlark.ExecFile(thread, module, buf, builtin)
+		globals, err := starlark.ExecFileOptions(AppFileOptions(), thread, module, buf, builtin)
 		cacheEntry = &starlarkCacheEntry{globals, err}
 		// Update the cache.
 		cache[module] = cacheEntry
 	}
 	return cacheEntry.globals, cacheEntry.err
+}
+
+func AppFileOptions() *syntax.FileOptions {
+	return &syntax.FileOptions{
+		While:     true,
+		Recursion: true,
+	}
 }
 
 // updateAppConfig updates the app defaults from the metadata

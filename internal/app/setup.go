@@ -27,14 +27,9 @@ import (
 	"github.com/openrundev/openrun/internal/app/dev"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/resolve"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
-
-func init() {
-	resolve.AllowRecursion = true
-}
 
 func (a *App) loadStarlarkConfig(dryRun types.DryRun) error {
 	a.Info().Str("path", a.Path).Str("domain", a.Domain).Msg("Loading app")
@@ -56,7 +51,7 @@ func (a *App) loadStarlarkConfig(dryRun types.DryRun) error {
 		return err
 	}
 
-	a.globals, err = starlark.ExecFile(thread, a.getStarPath(apptype.APP_FILE_NAME), buf, builtin)
+	a.globals, err = starlark.ExecFileOptions(AppFileOptions(), thread, a.getStarPath(apptype.APP_FILE_NAME), buf, builtin)
 	if err != nil {
 		if evalErr, ok := err.(*starlark.EvalError); ok {
 			a.Error().Err(err).Str("trace", evalErr.Backtrace()).Msg("Error loading app")
