@@ -26,8 +26,7 @@ tests:
 
   basic040:
     command: CL_CONFIG_FILE=config_basic_client_https.toml ../openrun app list /invalid # Test TLS
-    stderr: "error: 404 page not found"
-    exit-code: 1
+    exit-code: 1 # error can be 404 (if mkcert is installed) or cert check failure (if no mkcert)
 
   basic050:
     command: CL_CONFIG_FILE=config_basic_client_https_skip.toml ../openrun app list /invalid # TLS with skip_cert_check

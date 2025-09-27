@@ -17,12 +17,13 @@ endif
 .RECIPEPREFIX = >
 TAG := 
 
-.PHONY: help test unit int release int_single
+.PHONY: help test unit int release int_single lint verify
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 test: unit int ## Run all tests
+verify: lint test ## Run lint and all tests
 
 covtest: covunit covint ## Run all tests with coverage
 > go tool covdata percent -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/unit,$(OPENRUN_HOME)/coverage/int
@@ -31,6 +32,9 @@ covtest: covunit covint ## Run all tests with coverage
 
 unit: ## Run unit tests
 > go test ./...
+
+lint: ## Run lint
+> golangci-lint run
 
 covunit: ## Run unit tests with coverage
 > rm -rf $(OPENRUN_HOME)/coverage/unit && mkdir -p $(OPENRUN_HOME)/coverage/unit
