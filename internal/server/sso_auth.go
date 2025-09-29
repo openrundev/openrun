@@ -349,6 +349,16 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {
 		s.Warn().Err(err).Msg("failed to get session")
+		if session != nil {
+			// delete the session
+			session.Options.MaxAge = -1
+			s.cookieStore.Save(r, w, session)
+		}
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Redirect", r.RequestURI)
+		} else {
+			http.Redirect(w, r, r.RequestURI, http.StatusTemporaryRedirect)
+		}
 		return "", nil, err
 	}
 	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || !auth {
