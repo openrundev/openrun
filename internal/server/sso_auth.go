@@ -352,7 +352,7 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 		if session != nil {
 			// delete the session
 			session.Options.MaxAge = -1
-			s.cookieStore.Save(r, w, session)
+			s.cookieStore.Save(r, w, session) //nolint:errcheck
 		}
 		if r.Header.Get("HX-Request") == "true" {
 			w.Header().Set("HX-Redirect", r.RequestURI)
