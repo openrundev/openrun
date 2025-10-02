@@ -21,12 +21,21 @@ import (
 
 	"github.com/go-chi/chi"
 	"github.com/gorilla/sessions"
+	"github.com/openrundev/openrun/internal/metadata"
+	"github.com/openrundev/openrun/internal/passwd"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	saml2 "github.com/russellhaering/gosaml2"
 	saml_types "github.com/russellhaering/gosaml2/types"
 	dsig "github.com/russellhaering/goxmldsig"
 )
+
+// SAML auth using gosaml2 library. Standard SAML flow, using cookies for saving session state.
+// Two unusual situations are handled:
+// 1. The SAML callback url is on domain a.com while the app is on b.com. The standard flow does not work since the ACS api (on a.com) cannot
+//  set cookies on b.com. This is handled by having a redirect api on b.com which sets the cookies
+// 2. There could be multiple OpenRun server instances. The metadata database is used to save the session info after the user is authenticated.
+//  This db entry is used in the redirect api to create the cookies, and then db entry is deleted.
 
 const SAML_AUTH_PREFIX = "saml_"
 
@@ -37,13 +46,15 @@ type SAMLManager struct {
 	providerConfigs map[string]*types.SAMLConfig
 	providers       map[string]*saml2.SAMLServiceProvider
 	cookieStore     *sessions.CookieStore
+	db              *metadata.Metadata
 }
 
-func NewSAMLManager(logger *types.Logger, config *types.ServerConfig, cookieStore *sessions.CookieStore) *SAMLManager {
+func NewSAMLManager(logger *types.Logger, config *types.ServerConfig, cookieStore *sessions.CookieStore, db *metadata.Metadata) *SAMLManager {
 	return &SAMLManager{
 		Logger:      logger,
 		config:      config,
 		cookieStore: cookieStore,
+		db:          db,
 	}
 }
 
@@ -74,38 +85,41 @@ func (s *SAMLManager) ValidateSAMLProvider(authType string) bool {
 
 func (s *SAMLManager) CheckSAMLAuth(w http.ResponseWriter, r *http.Request, appProvider string) (string, []string, error) {
 	cookieName := genSAMLCookieName(appProvider)
+	requestUrl := system.GetRequestUrl(r)
+
 	session, err := s.cookieStore.Get(r, cookieName)
-	requestUrl := url.QueryEscape(system.GetRequestUrl(r))
-	redirectUrl := s.config.Security.CallbackUrl + types.INTERNAL_URL_PREFIX + "/sso/" + appProvider + "/login?relay=" + requestUrl
 	if err != nil {
 		s.Warn().Err(err).Msg("failed to get saml session")
 		if session != nil {
 			// delete the session
 			session.Options.MaxAge = -1
-			s.cookieStore.Save(r, w, session) //nolint:errcheck
+			session.Save(r, w) //nolint:errcheck
 		}
+
 		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", redirectUrl)
+			w.Header().Set("HX-Redirect", requestUrl)
 		} else {
-			http.Redirect(w, r, redirectUrl, http.StatusTemporaryRedirect)
-		}
-		return "", nil, err
-	}
-	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || !auth {
-		// Store the target URL before redirecting to login
-		s.Warn().Err(err).Msg("no auth, redirecting to login")
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", redirectUrl)
-		} else {
-			http.Redirect(w, r, redirectUrl, http.StatusTemporaryRedirect)
+			http.Redirect(w, r, requestUrl, http.StatusTemporaryRedirect)
 		}
 		return "", nil, nil
 	}
 
+	redirectCaller := false
+	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || !auth {
+		// Store the target URL before redirecting to login
+		s.Debug().Msg("no saml auth cookie, redirecting to login")
+		redirectCaller = true
+	}
+
 	// Check if provider name matches the one in the session
 	if providerName, ok := session.Values[PROVIDER_NAME_KEY].(string); !ok || providerName != appProvider {
-		s.Warn().Err(err).Msg("provider mismatch, redirecting to login")
-		http.Redirect(w, r, redirectUrl, http.StatusTemporaryRedirect)
+		s.Warn().Msg("provider mismatch, redirecting to login")
+		redirectCaller = true
+	}
+
+	if redirectCaller {
+		// do the SAML login flow
+		s.login(w, r, appProvider, requestUrl)
 		return "", nil, nil
 	}
 
@@ -119,6 +133,12 @@ func (s *SAMLManager) CheckSAMLAuth(w http.ResponseWriter, r *http.Request, appP
 	if raw, ok := session.Values[GROUPS_KEY]; ok {
 		if arr, ok := raw.([]string); ok {
 			groups = arr
+		} else if arr, ok := raw.([]any); ok {
+			for _, v := range arr {
+				if s, ok := v.(string); ok {
+					groups = append(groups, s)
+				}
+			}
 		}
 	}
 
@@ -336,14 +356,14 @@ func (s *SAMLManager) RegisterRoutes(mux *chi.Mux) {
 	mux.Get(types.INTERNAL_URL_PREFIX+"/sso/{provider}/metadata", func(w http.ResponseWriter, r *http.Request) {
 		s.metadata(w, r)
 	})
-	mux.Get(types.INTERNAL_URL_PREFIX+"/sso/{provider}/login", func(w http.ResponseWriter, r *http.Request) {
-		s.login(w, r)
-	})
 	mux.Post(types.INTERNAL_URL_PREFIX+"/sso/{provider}/acs", func(w http.ResponseWriter, r *http.Request) {
 		s.acs(w, r)
 	})
 	mux.Post(types.INTERNAL_URL_PREFIX+"/sso/{provider}/slo", func(w http.ResponseWriter, r *http.Request) {
 		s.logout(w, r)
+	})
+	mux.Get(types.INTERNAL_URL_PREFIX+"/sso/{provider}/redirect", func(w http.ResponseWriter, r *http.Request) {
+		s.redirect(w, r)
 	})
 }
 
@@ -370,40 +390,92 @@ func (s *SAMLManager) metadata(w http.ResponseWriter, r *http.Request) {
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
 	if err := enc.Encode(ed); err != nil {
-		http.Error(w, "error encoding metadata: "+err.Error(), 500)
+		http.Error(w, "error encoding metadata: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
 
-func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request) {
-	providerName := chi.URLParam(r, "provider")
+func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
 	sp := s.providers[providerName]
 	if sp == nil {
 		http.Error(w, fmt.Sprintf("provider %s not found", providerName), http.StatusNotFound)
 		return
 	}
 
-	relay := r.URL.Query().Get("relay")
-	if relay == "" {
-		relay = "/"
+	sessionId, nonce, err := passwd.GenerateSessionNonce()
+	if err != nil {
+		http.Error(w, "error generating session nonce: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sessionId = "saml_session_" + sessionId
+	stateMap := make(map[string]any)
+	stateMap[AUTH_KEY] = false
+	stateMap[PROVIDER_NAME_KEY] = providerName
+	stateMap[REDIRECT_URL] = redirectUrl
+	stateMap[NONCE_KEY] = nonce
+
+	// Store the state map in the database with the session id as the key
+	expireAt := time.Now().Add(5 * time.Minute)
+	err = s.db.StoreKV(r.Context(), sessionId, stateMap, &expireAt)
+	if err != nil {
+		http.Error(w, "error storing state: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
+	cookieName := genSAMLCookieName(providerName)
+	session, err := s.cookieStore.Get(r, cookieName)
+	if err != nil {
+		http.Error(w, "error getting session: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Save a cookie with the nonce (this is on the app domain, not the callback domain)
+	session.Values[AUTH_KEY] = false
+	session.Values[PROVIDER_NAME_KEY] = providerName
+	session.Values[NONCE_KEY] = nonce
+	if err := session.Save(r, w); err != nil {
+		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// The relay state is the session id and the redirect url, encoded in base64
+	relayState := generateRelayString(sessionId, redirectUrl)
 	if sp.IdentityProviderSSOBinding == saml2.BindingHttpPost {
-		body, err := sp.BuildAuthBodyPost(relay)
+		body, err := sp.BuildAuthBodyPost(relayState)
 		if err != nil {
-			http.Error(w, "auth body err: "+err.Error(), 500)
+			http.Error(w, "auth body err: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(body)
+		_, err = w.Write(body)
+		if err != nil {
+			http.Error(w, "error writing auth body: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		return
 	}
-	url, err := sp.BuildAuthURL(relay)
+	url, err := sp.BuildAuthURL(relayState)
 	if err != nil {
-		http.Error(w, "auth url err: "+err.Error(), 500)
+		http.Error(w, "auth url err: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, url, http.StatusFound)
+}
+
+func generateRelayString(sessionId, redirectUrl string) string {
+	return base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%s;%s", sessionId, redirectUrl)))
+}
+
+func parseRelayString(relay string) (sessionId, redirecturl string, err error) {
+	relayStr, err := base64.URLEncoding.DecodeString(relay)
+	if err != nil {
+		return "", "", fmt.Errorf("error decoding relay state: %w", err)
+	}
+	sessionId, redirectUrl, ok := strings.Cut(string(relayStr), ";")
+	if !ok {
+		return "", "", fmt.Errorf("error parsing relay state")
+	}
+	return sessionId, redirectUrl, nil
 }
 
 func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
@@ -451,30 +523,116 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		ai.Values.GetAll("roles"),
 		ai.Values.GetAll("http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"),
 	)
+	s.Trace().Str("user_id", ai.NameID).Str("provider_name", providerName).Msgf("authenticated saml user with groups %+v", groups)
 
+	sessionId, redirectUrl, err := parseRelayString(r.PostFormValue("RelayState"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	stateMap, err := s.db.FetchKV(r.Context(), sessionId)
+	if err != nil {
+		http.Error(w, "error fetching KV state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if stateMap[PROVIDER_NAME_KEY] != providerName || stateMap[REDIRECT_URL] != redirectUrl {
+		http.Error(w, "error matching session state", http.StatusInternalServerError)
+		return
+	}
+	if stateMap[AUTH_KEY] != false {
+		http.Error(w, "error matching session state, expected auth to be false", http.StatusInternalServerError)
+		return
+	}
+
+	// Update the state map, set to authenticated and add the user id and groups
+	stateMap[AUTH_KEY] = true
+	stateMap[USER_KEY] = ai.NameID
+	stateMap[GROUPS_KEY] = groups
+	stateMap[SESSION_INDEX_KEY] = ai.SessionIndex
+	err = s.db.UpdateKV(r.Context(), sessionId, stateMap)
+	if err != nil {
+		http.Error(w, "error updating KV state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	redirectParsed, err := url.Parse(redirectUrl)
+	if err != nil {
+		http.Error(w, "error parsing relay: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Redirect to the sso/redirect url on the original app domain, so that the required cookie can be set on the app domain
+	redirectAppDomain := redirectParsed.Scheme + "://" + redirectParsed.Host + types.INTERNAL_URL_PREFIX + "/sso/" + providerName + "/redirect?relay=" + r.PostFormValue("RelayState")
+	http.Redirect(w, r, redirectAppDomain, http.StatusFound)
+}
+
+func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
+	relayStr := r.URL.Query().Get("relay")
+	if relayStr == "" {
+		http.Error(w, "relay is required", http.StatusBadRequest)
+		return
+	}
+	providerName := chi.URLParam(r, "provider")
 	cookieName := genSAMLCookieName(providerName)
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {
 		http.Error(w, "error getting session: "+err.Error(), http.StatusInternalServerError)
+	}
+
+	sessionNonce := session.Values[NONCE_KEY].(string)
+	sessionId, redirectUrl, err := parseRelayString(relayStr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || auth {
+		// already authenticated, redirect to original url
+		http.Redirect(w, r, redirectUrl, http.StatusFound)
+		return
+	}
+
+	// Get the state map, delete the entry from database, validate state, set the session values
+	// in the cookie and then redirect to original url
+	stateMap, err := s.db.FetchKV(r.Context(), sessionId)
+	if err != nil {
+		http.Error(w, "error fetching state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = s.db.DeleteKV(r.Context(), sessionId)
+	if err != nil {
+		http.Error(w, "error deleting state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if stateMap[PROVIDER_NAME_KEY] != providerName || stateMap[REDIRECT_URL] != redirectUrl {
+		http.Error(w, "error matching session state", http.StatusInternalServerError)
+		return
+	}
+	if stateMap[AUTH_KEY] != true {
+		http.Error(w, "error matching session state, expected auth to be true", http.StatusInternalServerError)
+		return
+	}
+	if stateMap[NONCE_KEY] != sessionNonce {
+		http.Error(w, "error matching session state, nonce mismatch", http.StatusInternalServerError)
+		return
+	}
+
+	// Update the session cookie with the new values
 	session.Values[AUTH_KEY] = true
-	session.Values[USER_KEY] = ai.NameID
-	session.Values[PROVIDER_NAME_KEY] = providerName
-	session.Values[GROUPS_KEY] = groups
-	session.Values["sessionIndex"] = ai.SessionIndex
-
-	if err := session.Save(r, w); err != nil {
-		http.Error(w, "save session: "+err.Error(), 500)
+	session.Values[USER_KEY] = stateMap[USER_KEY].(string)
+	session.Values[GROUPS_KEY] = stateMap[GROUPS_KEY].([]any)
+	session.Values[SESSION_INDEX_KEY] = stateMap[SESSION_INDEX_KEY].(string)
+	err = session.Save(r, w)
+	if err != nil {
+		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	relay := r.PostFormValue("RelayState")
-	if relay == "" {
-		relay = "/"
-	}
-	http.Redirect(w, r, relay, http.StatusFound)
+	http.Redirect(w, r, redirectUrl, http.StatusFound)
 }
 
 func (s *SAMLManager) logout(w http.ResponseWriter, r *http.Request) {
@@ -492,13 +650,18 @@ func (s *SAMLManager) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nameID, _ := session.Values["nameID"].(string)
-	sessionIndex, _ := session.Values["sessionIndex"].(string)
+	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || !auth {
+		return // no need to logout if not authenticated
+	}
+
+	nameID, _ := session.Values[USER_KEY].(string)
+	sessionIndex, _ := session.Values[SESSION_INDEX_KEY].(string)
 
 	// clear local session
 	for k := range session.Values {
 		delete(session.Values, k)
 	}
+	session.Options.MaxAge = -1
 	_ = session.Save(r, w)
 
 	// optional IdP SLO (front-channel)

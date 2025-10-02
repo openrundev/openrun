@@ -186,7 +186,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}
 
 	// Setup SAML auth
-	server.samlManager = NewSAMLManager(l, config, server.oAuthManager.cookieStore)
+	server.samlManager = NewSAMLManager(l, config, server.oAuthManager.cookieStore, db)
 	if err = server.samlManager.Setup(context.Background()); err != nil {
 		return nil, err
 	}

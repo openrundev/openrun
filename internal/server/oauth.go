@@ -40,7 +40,10 @@ const (
 	USER_NICKNAME_KEY       = "nickname"
 	PROVIDER_NAME_KEY       = "provider_name"
 	GROUPS_KEY              = "groups"
+	NONCE_KEY               = "nonce"
+	SESSION_ID_KEY          = "session_id"
 	REDIRECT_URL            = "redirect"
+	SESSION_INDEX_KEY       = "session_index"
 )
 
 // OAuthManager manages the OAuth providers and their configurations (also OIDC)
@@ -373,7 +376,7 @@ func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProv
 				return "", nil, err
 			}
 		}
-		s.Warn().Err(err).Msg("no auth, redirecting to login")
+		s.Debug().Msg("no auth cookie, redirecting to login")
 		if r.Header.Get("HX-Request") == "true" {
 			w.Header().Set("HX-Redirect", s.config.Security.CallbackUrl+types.INTERNAL_URL_PREFIX+"/auth/"+appProvider)
 		} else {

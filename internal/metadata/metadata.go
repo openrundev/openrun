@@ -21,7 +21,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 6
+const CURRENT_DB_VERSION = 7
 
 // Metadata is the metadata persistence layer
 type Metadata struct {
@@ -254,6 +254,18 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=6, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 7 {
+		m.Info().Msg("Upgrading to version 7")
+		if _, err := tx.ExecContext(ctx, `create table keystore(key text, value `+system.MapDataType(m.dbType, "blob")+
+			`, create_time `+system.MapDataType(m.dbType, "datetime")+`, delete_at `+system.MapDataType(m.dbType, "datetime")+`, PRIMARY KEY(key))`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=7, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}
@@ -752,6 +764,78 @@ func (m *Metadata) GetConfig() (*types.DynamicConfig, error) {
 	}
 
 	return &config, nil
+}
+
+func (m *Metadata) FetchKV(ctx context.Context, key string) (map[string]any, error) {
+	row := m.db.QueryRowContext(ctx, system.RebindQuery(m.dbType, `select value from keystore where key = ? and (delete_at is null or delete_at > `+system.FuncNow(m.dbType)+`)`), key)
+	var value []byte
+	err := row.Scan(&value)
+	if err != nil {
+		return nil, fmt.Errorf("error querying keystore: %w", err)
+	}
+
+	var valueMap map[string]any
+	err = json.Unmarshal([]byte(value), &valueMap)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshalling value: %w", err)
+	}
+	return valueMap, nil
+}
+
+func (m *Metadata) StoreKV(ctx context.Context, key string, value map[string]any, expireAt *time.Time) error {
+	valueJson, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("error marshalling value: %w", err)
+	}
+	return m.StoreKVBlob(ctx, key, valueJson, expireAt)
+}
+
+func (m *Metadata) StoreKVBlob(ctx context.Context, key string, value []byte, expireAt *time.Time) error {
+	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`insert into keystore values (?, ?, `+system.FuncNow(m.dbType)+`, ?)`), key, value, toNullTime(expireAt))
+	if err != nil {
+		return fmt.Errorf("error storing value: %w", err)
+	}
+	return nil
+}
+
+func (m *Metadata) UpdateKV(ctx context.Context, key string, value map[string]any) error {
+	valueJson, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("error marshalling value: %w", err)
+	}
+	return m.UpdateKVBlob(ctx, key, valueJson)
+}
+
+func (m *Metadata) UpdateKVBlob(ctx context.Context, key string, value []byte) error {
+	result, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`update keystore set value = ? where key = ?`), value, key)
+	if err != nil {
+		return fmt.Errorf("error updating value: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("no key entry found with key for update: %s", key)
+	}
+	return nil
+}
+
+func (m *Metadata) DeleteKV(ctx context.Context, key string) error {
+	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType, `delete from keystore where key = ?`), key)
+	if err != nil {
+		return fmt.Errorf("error deleting value: %w", err)
+	}
+	return nil
+}
+
+func toNullTime(t *time.Time) sql.NullTime {
+	if t == nil {
+		return sql.NullTime{Valid: false}
+	}
+	return sql.NullTime{Time: *t, Valid: true}
 }
 
 // BeginTransaction starts a new Transaction
