@@ -19,10 +19,13 @@ require (
 	github.com/gorilla/sessions v1.4.0
 	github.com/hashicorp/vault/api v1.15.0
 	github.com/jackc/pgx/v5 v5.7.5
+	github.com/jackc/pgxlisten v0.0.0-20241106001234-1d6f6656415c
 	github.com/markbates/goth v1.80.0
 	github.com/moby/buildkit v0.18.1
 	github.com/pkg/profile v1.7.0
 	github.com/rs/zerolog v1.33.0
+	github.com/russellhaering/gosaml2 v0.10.0
+	github.com/russellhaering/goxmldsig v1.5.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/urfave/cli/v2 v2.27.5
 	go.starlark.net v0.0.0-20241125201518-c05ff208a98f
@@ -51,6 +54,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.2 // indirect
 	github.com/aws/smithy-go v1.22.1 // indirect
+	github.com/beevik/etree v1.5.0 // indirect
 	github.com/caddyserver/zerossl v0.1.3 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cloudflare/circl v1.6.1 // indirect
@@ -81,13 +85,14 @@ require (
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgxlisten v0.0.0-20241106001234-1d6f6656415c // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
+	github.com/jonboulle/clockwork v0.5.0 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/libdns/libdns v0.2.2 // indirect
 	github.com/markbates/going v1.0.3 // indirect
+	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
 	github.com/mholt/acmez/v2 v2.0.3 // indirect
 	github.com/miekg/dns v1.1.62 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect

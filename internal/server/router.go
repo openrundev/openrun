@@ -144,7 +144,8 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	// Webhooks are always mounted, they are disabled at the app level by default
 	router.Mount(types.WEBHOOK_URL_PREFIX, handler.serveWebhooks())
 
-	server.ssoAuth.RegisterRoutes(router) // register SSO routes
+	server.oAuthManager.RegisterRoutes(router) // register OAuth routes
+	server.samlManager.RegisterRoutes(router)  // register SAML routes
 
 	router.HandleFunc("/*", handler.callApp)
 	router.HandleFunc("/testperf", func(w http.ResponseWriter, r *http.Request) {

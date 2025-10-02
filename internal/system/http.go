@@ -164,3 +164,19 @@ func MapServerHost(host string) string {
 	}
 	return host
 }
+
+func GetRequestUrl(r *http.Request) string {
+	ret := strings.Builder{}
+	if r.TLS != nil {
+		ret.WriteString("https://")
+	} else {
+		ret.WriteString("http://")
+	}
+	if r.Host == "" {
+		ret.WriteString(r.URL.Host)
+	} else {
+		ret.WriteString(r.Host)
+	}
+	ret.WriteString(r.URL.RequestURI())
+	return ret.String()
+}

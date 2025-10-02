@@ -132,8 +132,8 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 	appEntry.SourceUrl = sourceUrl
 	appEntry.IsDev = appRequest.IsDev
 	if appRequest.AppAuthn != "" {
-		if !s.ssoAuth.ValidateAuthType(string(appRequest.AppAuthn)) {
-			return nil, fmt.Errorf("invalid authentication type %s", appRequest.AppAuthn)
+		if err := s.validateAppAuthnType(string(appRequest.AppAuthn)); err != nil {
+			return nil, err
 		}
 		appEntry.Settings.AuthnType = appRequest.AppAuthn
 	} else {
@@ -161,6 +161,18 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 	}
 
 	return auditResult, nil
+}
+
+func (s *Server) validateAppAuthnType(authStr string) error {
+	if strings.HasPrefix(authStr, SAML_AUTH_PREFIX) || strings.HasPrefix(authStr, RBAC_AUTH_PREFIX+SAML_AUTH_PREFIX) {
+		// saml auth, with or without rbac
+		if !s.samlManager.ValidateSAMLProvider(authStr) {
+			return fmt.Errorf("invalid saml auth type %s", authStr)
+		}
+	} else if !s.oAuthManager.ValidateAuthType(authStr) {
+		return fmt.Errorf("invalid authentication type %s", authStr)
+	}
+	return nil
 }
 
 func (s *Server) createApp(ctx context.Context, tx types.Transaction,
@@ -495,15 +507,28 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		userId = strippedAuthStr
+	} else if strings.HasPrefix(strippedAuthStr, SAML_AUTH_PREFIX) {
+		// Use SAML auth
+		if !s.samlManager.ValidateSAMLProvider(strippedAuthStr) {
+			http.Error(w, "Unsupported saml provider: "+strippedAuthStr, http.StatusInternalServerError)
+			return
+		}
+		userId, groups, err = s.samlManager.CheckSAMLAuth(w, r, strippedAuthStr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		if userId == "" {
+			return // Already redirected to auth provider
+		}
 	} else {
 		// Use SSO auth
-		if !s.ssoAuth.ValidateProviderName(strippedAuthStr) {
+		if !s.oAuthManager.ValidateProviderName(strippedAuthStr) {
 			http.Error(w, "Unsupported authentication provider: "+strippedAuthStr, http.StatusInternalServerError)
 			return
 		}
 
 		// Redirect to the auth provider if not logged in
-		userId, groups, err = s.ssoAuth.CheckAuth(w, r, strippedAuthStr, true)
+		userId, groups, err = s.oAuthManager.CheckAuth(w, r, strippedAuthStr, true)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

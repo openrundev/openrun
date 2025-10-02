@@ -129,7 +129,8 @@ type Server struct {
 	handler        *Handler
 	apps           *AppStore
 	authHandler    *AdminBasicAuth
-	ssoAuth        *SSOAuth
+	oAuthManager   *OAuthManager
+	samlManager    *SAMLManager
 	notifyClose    chan types.AppPathDomain
 	secretsManager *system.SecretManager
 	listAppsApp    *app.App
@@ -178,9 +179,15 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
-	// Setup SSO auth
-	server.ssoAuth = NewSSOAuth(l, config)
-	if err = server.ssoAuth.Setup(); err != nil {
+	// Setup OAuth auth
+	server.oAuthManager = NewOAuthManager(l, config)
+	if err = server.oAuthManager.Setup(); err != nil {
+		return nil, err
+	}
+
+	// Setup SAML auth
+	server.samlManager = NewSAMLManager(l, config, server.oAuthManager.cookieStore)
+	if err = server.samlManager.Setup(context.Background()); err != nil {
 		return nil, err
 	}
 

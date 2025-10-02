@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/sessions"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 
 	"github.com/markbates/goth/providers/amazon"
@@ -42,15 +43,16 @@ const (
 	REDIRECT_URL            = "redirect"
 )
 
-type SSOAuth struct {
+// OAuthManager manages the OAuth providers and their configurations (also OIDC)
+type OAuthManager struct {
 	*types.Logger
 	config          *types.ServerConfig
 	cookieStore     *sessions.CookieStore
 	providerConfigs map[string]*types.AuthConfig
 }
 
-func NewSSOAuth(logger *types.Logger, config *types.ServerConfig) *SSOAuth {
-	return &SSOAuth{
+func NewOAuthManager(logger *types.Logger, config *types.ServerConfig) *OAuthManager {
+	return &OAuthManager{
 		Logger: logger,
 		config: config,
 	}
@@ -77,7 +79,7 @@ func generateRandomKey(length int) (string, error) {
 	return string(key), nil
 }
 
-func (s *SSOAuth) Setup() error {
+func (s *OAuthManager) Setup() error {
 	var err error
 	sessionKey := s.config.Security.SessionSecret
 	if sessionKey == "" {
@@ -167,14 +169,14 @@ func (s *SSOAuth) Setup() error {
 	}
 
 	if len(providers) != 0 && s.config.Security.CallbackUrl == "" {
-		return fmt.Errorf("security.callback_url must be set for enabling SSO auth")
+		return fmt.Errorf("security.callback_url must be set for enabling OAuth")
 	}
 
 	goth.UseProviders(providers...) // Register the providers with goth
 	return nil
 }
 
-func (s *SSOAuth) RegisterRoutes(mux *chi.Mux) {
+func (s *OAuthManager) RegisterRoutes(mux *chi.Mux) {
 	mux.Get(types.INTERNAL_URL_PREFIX+"/auth/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
 		user, err := gothic.CompleteUserAuth(w, r)
 		if err != nil {
@@ -308,7 +310,7 @@ func (s *SSOAuth) RegisterRoutes(mux *chi.Mux) {
 	})
 }
 
-func (s *SSOAuth) validateResponse(providerName string, user goth.User) error {
+func (s *OAuthManager) validateResponse(providerName string, user goth.User) error {
 	providerConfig := s.providerConfigs[providerName]
 	if providerConfig == nil {
 		return fmt.Errorf("provider %s not configured", providerName)
@@ -326,11 +328,11 @@ func (s *SSOAuth) validateResponse(providerName string, user goth.User) error {
 	return nil
 }
 
-func (s *SSOAuth) ValidateProviderName(provider string) bool {
+func (s *OAuthManager) ValidateProviderName(provider string) bool {
 	return s.providerConfigs[provider] != nil
 }
 
-func (s *SSOAuth) ValidateAuthType(authType string) bool {
+func (s *OAuthManager) ValidateAuthType(authType string) bool {
 	authType = strings.TrimPrefix(authType, RBAC_AUTH_PREFIX)
 	switch authType {
 	case string(types.AppAuthnDefault), string(types.AppAuthnSystem), string(types.AppAuthnNone):
@@ -344,7 +346,7 @@ func (s *SSOAuth) ValidateAuthType(authType string) bool {
 	}
 }
 
-func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider string, updateRedirect bool) (string, []string, error) {
+func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider string, updateRedirect bool) (string, []string, error) {
 	cookieName := genCookieName(appProvider)
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {
@@ -355,16 +357,16 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 			s.cookieStore.Save(r, w, session) //nolint:errcheck
 		}
 		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", r.RequestURI)
+			w.Header().Set("HX-Redirect", system.GetRequestUrl(r))
 		} else {
-			http.Redirect(w, r, r.RequestURI, http.StatusTemporaryRedirect)
+			http.Redirect(w, r, system.GetRequestUrl(r), http.StatusTemporaryRedirect)
 		}
 		return "", nil, err
 	}
 	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || !auth {
 		// Store the target URL before redirecting to login
 		if updateRedirect {
-			session.Values[REDIRECT_URL] = r.RequestURI
+			session.Values[REDIRECT_URL] = system.GetRequestUrl(r)
 			err = session.Save(r, w)
 			if err != nil {
 				s.Warn().Err(err).Msg("failed to save session")
@@ -373,9 +375,9 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 		}
 		s.Warn().Err(err).Msg("no auth, redirecting to login")
 		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", types.INTERNAL_URL_PREFIX+"/auth/"+appProvider)
+			w.Header().Set("HX-Redirect", s.config.Security.CallbackUrl+types.INTERNAL_URL_PREFIX+"/auth/"+appProvider)
 		} else {
-			http.Redirect(w, r, types.INTERNAL_URL_PREFIX+"/auth/"+appProvider, http.StatusTemporaryRedirect)
+			http.Redirect(w, r, s.config.Security.CallbackUrl+types.INTERNAL_URL_PREFIX+"/auth/"+appProvider, http.StatusTemporaryRedirect)
 		}
 		return "", nil, nil
 	}
@@ -383,7 +385,7 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 	// Check if provider name matches the one in the session
 	if providerName, ok := session.Values[PROVIDER_NAME_KEY].(string); !ok || providerName != appProvider {
 		if updateRedirect {
-			session.Values[REDIRECT_URL] = r.RequestURI
+			session.Values[REDIRECT_URL] = system.GetRequestUrl(r)
 			err = session.Save(r, w)
 			if err != nil {
 				s.Warn().Err(err).Msg("failed to save session")
@@ -391,7 +393,7 @@ func (s *SSOAuth) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider 
 			}
 		}
 		s.Warn().Err(err).Msg("provider mismatch, redirecting to login")
-		http.Redirect(w, r, types.INTERNAL_URL_PREFIX+"/auth/"+appProvider, http.StatusTemporaryRedirect)
+		http.Redirect(w, r, s.config.Security.CallbackUrl+types.INTERNAL_URL_PREFIX+"/auth/"+appProvider, http.StatusTemporaryRedirect)
 		return "", nil, nil
 	}
 
