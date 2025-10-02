@@ -39,7 +39,7 @@ func GenerateSessionNonce() (string, string, error) {
 	if _, err := rand.Read(buf2); err != nil {
 		return "", "", err
 	}
-	return base64.URLEncoding.EncodeToString(buf1), base64.URLEncoding.EncodeToString(buf1), nil
+	return base64.URLEncoding.EncodeToString(buf1), base64.URLEncoding.EncodeToString(buf2), nil
 }
 
 // GeneratePassword generates a random password
