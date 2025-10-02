@@ -433,13 +433,14 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 	session.Values[AUTH_KEY] = false
 	session.Values[PROVIDER_NAME_KEY] = providerName
 	session.Values[NONCE_KEY] = nonce
+	session.Values[REDIRECT_URL] = redirectUrl
 	if err := session.Save(r, w); err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// The relay state is the session id and the redirect url, encoded in base64
-	relayState := generateRelayString(sessionId, redirectUrl)
+	relayState := base64.URLEncoding.EncodeToString([]byte(sessionId))
 	if sp.IdentityProviderSSOBinding == saml2.BindingHttpPost {
 		body, err := sp.BuildAuthBodyPost(relayState)
 		if err != nil {
@@ -462,22 +463,6 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
-func generateRelayString(sessionId, redirectUrl string) string {
-	return base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%s;%s", sessionId, redirectUrl)))
-}
-
-func parseRelayString(relay string) (sessionId, redirecturl string, err error) {
-	relayStr, err := base64.URLEncoding.DecodeString(relay)
-	if err != nil {
-		return "", "", fmt.Errorf("error decoding relay state: %w", err)
-	}
-	sessionId, redirectUrl, ok := strings.Cut(string(relayStr), ";")
-	if !ok {
-		return "", "", fmt.Errorf("error parsing relay state")
-	}
-	return sessionId, redirectUrl, nil
-}
-
 func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 	providerName := chi.URLParam(r, "provider")
 	sp := s.providers[providerName]
@@ -486,6 +471,8 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	const maxACSBody = 10 << 20 // 10 MiB
+	r.Body = http.MaxBytesReader(w, r.Body, maxACSBody)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "parse form: "+err.Error(), http.StatusBadRequest)
 		return
@@ -525,19 +512,19 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 	)
 	s.Trace().Str("user_id", ai.NameID).Str("provider_name", providerName).Msgf("authenticated saml user with groups %+v", groups)
 
-	sessionId, redirectUrl, err := parseRelayString(r.PostFormValue("RelayState"))
+	sessionIdBytes, err := base64.URLEncoding.DecodeString(r.PostFormValue("RelayState"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
+	sessionId := string(sessionIdBytes)
 	stateMap, err := s.db.FetchKV(r.Context(), sessionId)
 	if err != nil {
 		http.Error(w, "error fetching KV state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if stateMap[PROVIDER_NAME_KEY] != providerName || stateMap[REDIRECT_URL] != redirectUrl {
+	if stateMap[PROVIDER_NAME_KEY] != providerName {
 		http.Error(w, "error matching session state", http.StatusInternalServerError)
 		return
 	}
@@ -545,6 +532,7 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error matching session state, expected auth to be false", http.StatusInternalServerError)
 		return
 	}
+	redirectUrl := stateMap[REDIRECT_URL].(string)
 
 	// Update the state map, set to authenticated and add the user id and groups
 	stateMap[AUTH_KEY] = true
@@ -582,17 +570,12 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionNonce := session.Values[NONCE_KEY].(string)
-	sessionId, redirectUrl, err := parseRelayString(relayStr)
+	sessionIdBytes, err := base64.URLEncoding.DecodeString(relayStr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || auth {
-		// already authenticated, redirect to original url
-		http.Redirect(w, r, redirectUrl, http.StatusFound)
-		return
-	}
+	sessionId := string(sessionIdBytes)
 
 	// Get the state map, delete the entry from database, validate state, set the session values
 	// in the cookie and then redirect to original url
@@ -605,6 +588,17 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 	err = s.db.DeleteKV(r.Context(), sessionId)
 	if err != nil {
 		http.Error(w, "error deleting state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	redirectUrl, ok := session.Values[REDIRECT_URL].(string)
+	if !ok {
+		http.Error(w, "error matching session, redirect url not found", http.StatusInternalServerError)
+		return
+	}
+
+	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || auth {
+		// already authenticated, redirect to original url
+		http.Redirect(w, r, redirectUrl, http.StatusFound)
 		return
 	}
 
