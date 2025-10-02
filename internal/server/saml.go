@@ -426,6 +426,10 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {
 		http.Error(w, "error getting session: "+err.Error(), http.StatusInternalServerError)
+		if session != nil {
+			session.Options.MaxAge = -1
+			_ = session.Save(r, w)
+		}
 		return
 	}
 
@@ -576,6 +580,14 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionId := string(sessionIdBytes)
+	success := false
+
+	defer func() {
+		if !success {
+			session.Options.MaxAge = -1 // delete the session if there is an error
+			_ = session.Save(r, w)
+		}
+	}()
 
 	// Get the state map, delete the entry from database, validate state, set the session values
 	// in the cookie and then redirect to original url
@@ -590,15 +602,20 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error deleting state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	redirectUrl, ok := session.Values[REDIRECT_URL].(string)
+
+	auth, ok := stateMap[AUTH_KEY].(bool)
 	if !ok {
-		http.Error(w, "error matching session, redirect url not found", http.StatusInternalServerError)
+		http.Error(w, "error matching session, auth not found", http.StatusInternalServerError)
+		return
+	}
+	if !auth {
+		http.Error(w, "error matching session, expected auth to be true", http.StatusInternalServerError)
 		return
 	}
 
-	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || auth {
-		// already authenticated, redirect to original url
-		http.Redirect(w, r, redirectUrl, http.StatusFound)
+	redirectUrl, ok := session.Values[REDIRECT_URL].(string)
+	if !ok {
+		http.Error(w, "error matching session, redirect url not found", http.StatusInternalServerError)
 		return
 	}
 
@@ -606,20 +623,19 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error matching session state", http.StatusInternalServerError)
 		return
 	}
-	if stateMap[AUTH_KEY] != true {
-		http.Error(w, "error matching session state, expected auth to be true", http.StatusInternalServerError)
-		return
-	}
+
 	if stateMap[NONCE_KEY] != sessionNonce {
 		http.Error(w, "error matching session state, nonce mismatch", http.StatusInternalServerError)
 		return
 	}
 
 	// Update the session cookie with the new values
+	success = true
 	session.Values[AUTH_KEY] = true
 	session.Values[USER_KEY] = stateMap[USER_KEY].(string)
 	session.Values[GROUPS_KEY] = stateMap[GROUPS_KEY].([]any)
 	session.Values[SESSION_INDEX_KEY] = stateMap[SESSION_INDEX_KEY].(string)
+	delete(session.Values, REDIRECT_URL)
 	err = session.Save(r, w)
 	if err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
