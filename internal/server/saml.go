@@ -477,7 +477,11 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 		http.Error(w, "auth url err: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, url, http.StatusFound)
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", url)
+	} else {
+		http.Redirect(w, r, url, http.StatusFound)
+	}
 }
 
 func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
