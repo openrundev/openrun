@@ -4,7 +4,6 @@
 package server
 
 import (
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
@@ -73,34 +72,8 @@ func genCookieName(provider string) string {
 	return fmt.Sprintf("%s_%s", provider, SESSION_COOKIE)
 }
 
-func generateRandomKey(length int) (string, error) {
-	key := make([]byte, length)
-	_, err := rand.Read(key)
-	if err != nil {
-		return "", err
-	}
-	return string(key), nil
-}
-
-func (s *OAuthManager) Setup() error {
-	var err error
-	sessionKey := s.config.Security.SessionSecret
-	if sessionKey == "" {
-		sessionKey, err = generateRandomKey(32)
-		if err != nil {
-			return err
-		}
-	}
-
-	sessionBlockKey := s.config.Security.SessionBlockKey
-	if sessionBlockKey == "" {
-		sessionBlockKey, err = generateRandomKey(32)
-		if err != nil {
-			return err
-		}
-	}
-
-	s.cookieStore = sessions.NewCookieStore([]byte(sessionKey), []byte(sessionBlockKey))
+func (s *OAuthManager) Setup(sessionKey []byte, sessionBlockKey []byte) error {
+	s.cookieStore = sessions.NewCookieStore(sessionKey, sessionBlockKey)
 	s.cookieStore.MaxAge(s.config.Security.SessionMaxAge)
 	s.cookieStore.Options.Path = "/"
 	s.cookieStore.Options.HttpOnly = true

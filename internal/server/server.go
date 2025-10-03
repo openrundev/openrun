@@ -181,7 +181,20 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 
 	// Setup OAuth auth
 	server.oAuthManager = NewOAuthManager(l, config)
-	if err = server.oAuthManager.Setup(); err != nil {
+	var newSessionSecret, newSessionBlockKey []byte
+	if newSessionSecret, err = passwd.GenerateRandomKey(32); err != nil {
+		return nil, err
+	}
+	if newSessionBlockKey, err = passwd.GenerateRandomKey(32); err != nil {
+		return nil, err
+	}
+	if newSessionSecret, err = server.KVInitConstant(context.Background(), types.COOKIE_SESSION_SECRET_KV, newSessionSecret); err != nil {
+		return nil, err
+	}
+	if newSessionBlockKey, err = server.KVInitConstant(context.Background(), types.COOKIE_SESSION_BLOCK_KEY_KV, newSessionBlockKey); err != nil {
+		return nil, err
+	}
+	if err = server.oAuthManager.Setup(newSessionSecret, newSessionBlockKey); err != nil {
 		return nil, err
 	}
 
@@ -914,6 +927,30 @@ func (s *Server) AuthorizeList(userId string, app *types.AppInfo, groups []strin
 		// Check Oauth provider is the same as the app's provider
 		return provider == string(appAuth), nil
 	}
+}
+
+// KVInitConstant initializes a constant value in the DB. If the value already exists, it returns the existing value.
+// If the value does not exist, it inserts the new value and returns it. If another server inserts the value concurrently,
+// it fetches the value from the DB and returns it.
+func (s *Server) KVInitConstant(ctx context.Context, keyName string, newValue []byte) ([]byte, error) {
+	keyName = types.CONSTANT_KV_PREFIX + keyName
+	dbValue, err := s.db.FetchKVBlob(ctx, keyName)
+	if err == nil {
+		// Value already exists in DB, use it
+		return dbValue, nil
+	}
+	err = s.db.StoreKVBlob(ctx, keyName, newValue, nil)
+	if err == nil {
+		// New value inserted, return it
+		return newValue, nil
+	}
+
+	// Failed to insert, maybe concurrent insert from another server, get the value from the DB
+	dbValue, err = s.db.FetchKVBlob(ctx, keyName)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching constant value: %w", err)
+	}
+	return dbValue, nil
 }
 
 // KVStore is an interface for a key-value store. Implemented by metadata.Metadata

@@ -767,19 +767,26 @@ func (m *Metadata) GetConfig() (*types.DynamicConfig, error) {
 }
 
 func (m *Metadata) FetchKV(ctx context.Context, key string) (map[string]any, error) {
-	row := m.db.QueryRowContext(ctx, system.RebindQuery(m.dbType, `select value from keystore where key = ? and (delete_at is null or delete_at > `+system.FuncNow(m.dbType)+`)`), key)
-	var value []byte
-	err := row.Scan(&value)
+	value, err := m.FetchKVBlob(ctx, key)
 	if err != nil {
-		return nil, fmt.Errorf("error querying keystore: %w", err)
+		return nil, fmt.Errorf("error fetching value: %w", err)
 	}
-
 	var valueMap map[string]any
 	err = json.Unmarshal([]byte(value), &valueMap)
 	if err != nil {
 		return nil, fmt.Errorf("error unmarshalling value: %w", err)
 	}
 	return valueMap, nil
+}
+
+func (m *Metadata) FetchKVBlob(ctx context.Context, key string) ([]byte, error) {
+	row := m.db.QueryRowContext(ctx, system.RebindQuery(m.dbType, `select value from keystore where key = ? and (delete_at is null or delete_at > `+system.FuncNow(m.dbType)+`)`), key)
+	var value []byte
+	err := row.Scan(&value)
+	if err != nil {
+		return nil, fmt.Errorf("error querying keystore: %w", err)
+	}
+	return value, nil
 }
 
 func (m *Metadata) StoreKV(ctx context.Context, key string, value map[string]any, expireAt *time.Time) error {
