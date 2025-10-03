@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"crypto"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -419,7 +420,7 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 		http.Error(w, "error generating session nonce: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	sessionId = "saml_session_" + sessionId
+	sessionId = types.SAML_SESSION_KV_PREFIX + sessionId
 	stateMap := make(map[string]any)
 	stateMap[AUTH_KEY] = false
 	stateMap[PROVIDER_NAME_KEY] = providerName
@@ -636,7 +637,7 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if stateMap[NONCE_KEY] != nonceFromCookie {
+	if subtle.ConstantTimeCompare([]byte(stateMap[NONCE_KEY].(string)), []byte(nonceFromCookie)) != 1 {
 		http.Error(w, "error matching session state, nonce mismatch", http.StatusInternalServerError)
 		return
 	}

@@ -31,7 +31,7 @@ func generateRandString(length int, charsAllowed string) (string, error) {
 }
 
 func GenerateSessionNonce() (string, string, error) {
-	buf1 := make([]byte, 32)
+	buf1 := make([]byte, 24)
 	if _, err := rand.Read(buf1); err != nil {
 		return "", "", err
 	}

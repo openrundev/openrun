@@ -732,3 +732,7 @@ type SAMLConfig struct {
 	SPKeyFile   string `toml:"sp_key_file"`  // the SP key file to use
 	SPCertFile  string `toml:"sp_cert_file"` // the SP cert file to use
 }
+
+const (
+	SAML_SESSION_KV_PREFIX = "saml_session:"
+)
