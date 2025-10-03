@@ -21,7 +21,6 @@ import (
 
 	"github.com/go-chi/chi"
 	"github.com/gorilla/sessions"
-	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/passwd"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -46,10 +45,10 @@ type SAMLManager struct {
 	providerConfigs map[string]*types.SAMLConfig
 	providers       map[string]*saml2.SAMLServiceProvider
 	cookieStore     *sessions.CookieStore
-	db              *metadata.Metadata
+	db              KVStore
 }
 
-func NewSAMLManager(logger *types.Logger, config *types.ServerConfig, cookieStore *sessions.CookieStore, db *metadata.Metadata) *SAMLManager {
+func NewSAMLManager(logger *types.Logger, config *types.ServerConfig, cookieStore *sessions.CookieStore, db KVStore) *SAMLManager {
 	return &SAMLManager{
 		Logger:      logger,
 		config:      config,
