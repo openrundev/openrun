@@ -725,11 +725,10 @@ const (
 type AuthorizerFunc func(ctx context.Context, permissions []string) (bool, error)
 
 type SAMLConfig struct {
-	MetadataURL  string `toml:"metadata_url"`
-	GroupsAttr   string `toml:"groups_attr"`
-	UsePost      bool   `toml:"use_post"`       // whether to use POST binding
-	NameIDFormat string `toml:"name_id_format"` // the name id format to use
-	ForceAuthn   bool   `toml:"force_authn"`    // whether to force authn
-	SPKeyFile    string `toml:"sp_key_file"`    // the SP key file to use
-	SPCertFile   string `toml:"sp_cert_file"`   // the SP cert file to use
+	MetadataURL string `toml:"metadata_url"`
+	GroupsAttr  string `toml:"groups_attr"`
+	UsePost     bool   `toml:"use_post"`     // whether to use POST binding
+	ForceAuthn  bool   `toml:"force_authn"`  // whether to force authn
+	SPKeyFile   string `toml:"sp_key_file"`  // the SP key file to use
+	SPCertFile  string `toml:"sp_cert_file"` // the SP cert file to use
 }

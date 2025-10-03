@@ -36,6 +36,19 @@ import (
 // 2. There could be multiple OpenRun server instances. The metadata database is used to save the session info after the user is authenticated.
 //  This db entry is used in the redirect api to create the cookies, and then db entry is deleted.
 
+// The flow is
+// 1. At service startup, SAMLServiceProvider is initialized
+// 2. For apps using SAML, CheckSAMLAuth is called to check if the user is authenticated
+// 3. CheckSAMLAuth verifies the session cookie to see if the user is authenticated. If yes, done
+// 4. If the user is not authenticated, login function is called (API is currently on the app domain)
+// 5. Login creates a sessionid and nonce. Saves entry in DB with sessionid as key and state map as value
+// 6. Login creates a cookie with the nonce and redirect url. Redirects to the SAML provider's login page, with sessionid in RelayState
+// 7. SAML provider's login page redirects to the ACS api on the callback domain, with sessionid in RelayState
+// 8. ACS api validates the sessionid, and updates the state map in the DB with the user id and groups info
+// 9. ACS api redirects to the redirect API on the app domain, again passing the sessionid in the relay parameter
+// 10. redirect API validates the passed sessionid, nonce from DB statemap against nonce from cookie,
+// 11. redirect sets the session cookie in authenticated state, with the user id and groups info and deletes the DB entry
+// 12. Redirects back to original app url, which will again call CheckSAMLAuth and find the authenticated cookie
 const SAML_AUTH_PREFIX = "saml_"
 
 // SAMLManager manages the SAML providers and their configurations
@@ -212,7 +225,7 @@ func (s *SAMLManager) buildSAMLProvider(ctx context.Context, providerName string
 		sp.SignAuthnRequests = true
 	} else if config.SPKeyFile != "" && config.SPCertFile != "" {
 		var err error
-		ks, err := s.loadSPKeyStore(config.SPKeyFile, config.SPCertFile)
+		ks, err := s.loadSPKeyStore(config.SPCertFile, config.SPKeyFile)
 		if err != nil {
 			return nil, fmt.Errorf("SP keypair error: %w", err)
 		}
@@ -572,21 +585,21 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error getting session: "+err.Error(), http.StatusInternalServerError)
 	}
 
-	sessionNonce := session.Values[NONCE_KEY].(string)
-	sessionIdBytes, err := base64.URLEncoding.DecodeString(relayStr)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	sessionId := string(sessionIdBytes)
 	success := false
-
 	defer func() {
 		if !success {
 			session.Options.MaxAge = -1 // delete the session if there is an error
 			_ = session.Save(r, w)
 		}
 	}()
+
+	nonceFromCookie := session.Values[NONCE_KEY].(string)
+	sessionIdBytes, err := base64.URLEncoding.DecodeString(relayStr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sessionId := string(sessionIdBytes)
 
 	// Get the state map, delete the entry from database, validate state, set the session values
 	// in the cookie and then redirect to original url
@@ -623,12 +636,12 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if stateMap[NONCE_KEY] != sessionNonce {
+	if stateMap[NONCE_KEY] != nonceFromCookie {
 		http.Error(w, "error matching session state, nonce mismatch", http.StatusInternalServerError)
 		return
 	}
 
-	// Update the session cookie with the new values
+	// Update the session cookie to authenticated, with the new values
 	success = true
 	session.Values[AUTH_KEY] = true
 	session.Values[USER_KEY] = stateMap[USER_KEY].(string)
