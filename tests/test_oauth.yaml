@@ -12,8 +12,7 @@ tests:
 
   oauth0030: # check curl redirect to oauth provider
     command: curl localhost:25222/oauth1
-    stdout:
-      exactly: '<a href="https://localhost:25223/_openrun/auth/github_test">Temporary Redirect</a>.' # redirect to the auth url
+    stdout: '<a href="https://localhost:25223/_openrun/auth/github_test/login?state=' # redirect to the auth url
 
   oauth0031: # update app to no auth
     command: ../openrun app update-settings auth none /oauth1
