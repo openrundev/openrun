@@ -34,6 +34,27 @@ import (
 	"github.com/markbates/goth/providers/openidConnect"
 )
 
+// OAuth and OIDC support using goth library. Standard OAuth flow, using cookies for saving session state.
+// Two unusual situations are handled:
+// 1. The OAuth callback url is on domain a.com while the app is on b.com. The standard flow does not work since the callback api (on a.com) cannot
+//  set cookies on b.com. This is handled by having a redirect api on b.com which sets the cookies
+// 2. There could be multiple OpenRun server instances. The metadata database is used to save the session info after the user is authenticated.
+//  This db entry is used in the redirect api to create the cookies, and then db entry is deleted.
+
+// The flow is
+// 1. At service startup, OAuthManager and all the providers are initialized
+// 2. For apps using OAuth/OIDC, CheckAuth is called to check if the user is authenticated
+// 3. CheckAuth verifies the session cookie to see if the user is authenticated. If yes, done
+// 4. If the user is not authenticated, login function is called (API is currently on the app domain)
+// 5. Login creates a sessionid and nonce. Saves entry in DB with sessionid as key and state map as value
+// 6. Login creates a cookie with the nonce and redirect url. Redirects to the OAuth provider's login page, with sessionid in state
+// 7. OAuth provider's login page redirects to the callback api on the callback domain, with sessionid in state
+// 8. Callback api validates the sessionid, and updates the state map in the DB with the user id and groups info
+// 9. Callback api redirects to the redirect API on the app domain, again passing the sessionid in the state parameter
+// 10. redirect API validates the passed sessionid, nonce from DB statemap against nonce from cookie,
+// 11. redirect sets the session cookie in authenticated state, with the user id and groups info and deletes the DB entry
+// 12. Redirects back to original app url, which will again call CheckAuth and find the authenticated cookie
+
 const (
 	PROVIDER_NAME_DELIMITER = "_"
 	SESSION_COOKIE          = "openrun_session"
