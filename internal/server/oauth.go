@@ -45,15 +45,17 @@ import (
 // 1. At service startup, OAuthManager and all the providers are initialized
 // 2. For apps using OAuth/OIDC, CheckAuth is called to check if the user is authenticated
 // 3. CheckAuth verifies the session cookie to see if the user is authenticated. If yes, done
-// 4. If the user is not authenticated, login function is called (API is currently on the app domain)
-// 5. Login creates a sessionid and nonce. Saves entry in DB with sessionid as key and state map as value
-// 6. Login creates a cookie with the nonce and redirect url. Redirects to the OAuth provider's login page, with sessionid in state
-// 7. OAuth provider's login page redirects to the callback api on the callback domain, with sessionid in state
-// 8. Callback api validates the sessionid, and updates the state map in the DB with the user id and groups info
-// 9. Callback api redirects to the redirect API on the app domain, again passing the sessionid in the state parameter
-// 10. redirect API validates the passed sessionid, nonce from DB statemap against nonce from cookie,
-// 11. redirect sets the session cookie in authenticated state, with the user id and groups info and deletes the DB entry
-// 12. Redirects back to original app url, which will again call CheckAuth and find the authenticated cookie
+// 4. If the user is not authenticated, beginLogin function is called (API is currently on the app domain)
+// 5. beginLogin creates a sessionid and nonce. Saves entry in DB with sessionid as key and state map as value
+// 6. beginLogin creates a cookie with the nonce and redirect url. Calls the login API on the callback domain
+// 7. Redirects to the OAuth provider's login page, with sessionid in state
+// 8. Login API calls gothic.BeginAuthHandler to redirect to the OAuth provider's login page
+// 9. OAuth provider's login page redirects to the callback api on the callback domain, with sessionid in state
+// 10. Callback api validates the sessionid, and updates the state map in the DB with the user id and groups info
+// 11. Callback api redirects to the redirect API on the app domain, again passing the sessionid in the state parameter
+// 12. redirect API validates the passed sessionid, nonce from DB statemap against nonce from cookie,
+// 13. redirect sets the session cookie in authenticated state, with the user id and groups info and deletes the DB entry
+// 14. Redirects back to original app url, which will again call CheckAuth and find the authenticated cookie
 
 const (
 	PROVIDER_NAME_DELIMITER = "_"
@@ -259,7 +261,7 @@ func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProv
 
 	if redirectCaller {
 		// do the OAuth login flow
-		s.login(w, r, appProvider, requestUrl)
+		s.beginLogin(w, r, appProvider, requestUrl)
 		return "", nil, nil
 	}
 
@@ -285,7 +287,7 @@ func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProv
 	return appProvider + ":" + userId, groups, nil
 }
 
-func (s *OAuthManager) login(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
+func (s *OAuthManager) beginLogin(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
 	sessionId, nonce, err := passwd.GenerateSessionNonce()
 	if err != nil {
 		http.Error(w, "error generating session nonce: "+err.Error(), http.StatusInternalServerError)

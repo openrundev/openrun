@@ -779,7 +779,7 @@ func TestLogin(t *testing.T) {
 				r.Header.Set("HX-Request", "true")
 			}
 
-			manager.login(w, r, tt.providerName, tt.redirectUrl)
+			manager.beginLogin(w, r, tt.providerName, tt.redirectUrl)
 
 			// Check response code
 			if tt.htmxRequest {
@@ -1422,7 +1422,7 @@ func TestLogin_StoreKVError(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/some-path", nil)
 
-	manager.login(w, r, "github", "https://app.example.com/")
+	manager.beginLogin(w, r, "github", "https://app.example.com/")
 
 	testutil.AssertEqualsInt(t, "status code", http.StatusInternalServerError, w.Code)
 	testutil.AssertStringContains(t, w.Body.String(), "error storing state")
