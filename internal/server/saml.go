@@ -155,14 +155,6 @@ func (s *SAMLManager) CheckSAMLAuth(w http.ResponseWriter, r *http.Request, appP
 		}
 	}
 
-	// Clear the redirect target after successful authentication
-	delete(session.Values, REDIRECT_URL)
-	err = session.Save(r, w)
-	if err != nil {
-		s.Warn().Err(err).Msg("failed to save session")
-		return "", nil, err
-	}
-
 	return appProvider + ":" + userId, groups, nil
 }
 
@@ -456,7 +448,7 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 		return
 	}
 
-	// The relay state is the session id and the redirect url, encoded in base64
+	// The relay state is the session id, encoded in base64
 	relayState := base64.URLEncoding.EncodeToString([]byte(sessionId))
 	if sp.IdentityProviderSSOBinding == saml2.BindingHttpPost {
 		body, err := sp.BuildAuthBodyPost(relayState)

@@ -180,7 +180,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}
 
 	// Setup OAuth auth
-	server.oAuthManager = NewOAuthManager(l, config)
+	server.oAuthManager = NewOAuthManager(l, config, db)
 	var newSessionSecret, newSessionBlockKey []byte
 	if newSessionSecret, err = passwd.GenerateRandomKey(32); err != nil {
 		return nil, err

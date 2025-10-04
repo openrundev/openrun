@@ -4,15 +4,20 @@
 package server
 
 import (
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi"
 	"github.com/gorilla/sessions"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
+	"github.com/openrundev/openrun/internal/passwd"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 
@@ -39,10 +44,9 @@ const (
 	USER_NICKNAME_KEY       = "nickname"
 	PROVIDER_NAME_KEY       = "provider_name"
 	GROUPS_KEY              = "groups"
-	NONCE_KEY               = "nonce"
-	SESSION_ID_KEY          = "session_id"
-	REDIRECT_URL            = "redirect"
 	SESSION_INDEX_KEY       = "session_index"
+	NONCE_KEY               = "nonce"
+	REDIRECT_URL            = "redirect"
 )
 
 // OAuthManager manages the OAuth providers and their configurations (also OIDC)
@@ -51,12 +55,14 @@ type OAuthManager struct {
 	config          *types.ServerConfig
 	cookieStore     *sessions.CookieStore
 	providerConfigs map[string]*types.AuthConfig
+	db              KVStore
 }
 
-func NewOAuthManager(logger *types.Logger, config *types.ServerConfig) *OAuthManager {
+func NewOAuthManager(logger *types.Logger, config *types.ServerConfig, db KVStore) *OAuthManager {
 	return &OAuthManager{
 		Logger: logger,
 		config: config,
+		db:     db,
 	}
 }
 
@@ -96,7 +102,6 @@ func (s *OAuthManager) Setup(sessionKey []byte, sessionBlockKey []byte) error {
 		}
 
 		callbackUrl := s.config.Security.CallbackUrl + types.INTERNAL_URL_PREFIX + "/auth/" + providerName + "/callback"
-
 		providerSplit := strings.SplitN(providerName, PROVIDER_NAME_DELIMITER, 2)
 		providerType := providerSplit[0]
 
@@ -153,87 +158,17 @@ func (s *OAuthManager) Setup(sessionKey []byte, sessionBlockKey []byte) error {
 }
 
 func (s *OAuthManager) RegisterRoutes(mux *chi.Mux) {
-	mux.Get(types.INTERNAL_URL_PREFIX+"/auth/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
-		user, err := gothic.CompleteUserAuth(w, r)
-		if err != nil {
-			fmt.Fprintln(w, err) //nolint:errcheck
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		providerName := chi.URLParam(r, "provider")
-		if err := s.validateResponse(providerName, user); err != nil {
-			http.Error(w, err.Error(), http.StatusForbidden)
-			return
-		}
-
-		// Set user as authenticated in session
-		cookieName := genCookieName(providerName)
-		session, err := s.cookieStore.Get(r, cookieName)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		session.Values[AUTH_KEY] = true
-		session.Values[USER_ID_KEY] = user.UserID
-		session.Values[USER_EMAIL_KEY] = user.Email
-		session.Values[USER_NICKNAME_KEY] = user.NickName
-		session.Values[PROVIDER_NAME_KEY] = providerName
-
-		lookupKeys := []string{USER_EMAIL_KEY, USER_ID_KEY, USER_NICKNAME_KEY}
-		if strings.HasPrefix(providerName, "git") {
-			// For git providers, prefer nickname over userid as it is more meaningful
-			lookupKeys = []string{USER_EMAIL_KEY, USER_NICKNAME_KEY, USER_ID_KEY}
-		}
-		userId := ""
-		ok := false
-		for _, key := range lookupKeys {
-			userId, ok = session.Values[key].(string)
-			if ok && userId != "" {
-				break
-			}
-		}
-
-		if userId == "" {
-			s.Warn().Msg("user id could not be found")
-			http.Error(w, errors.New("user id could not be found").Error(), http.StatusInternalServerError)
-		}
-
-		session.Values[USER_KEY] = userId
-
-		// Get groups from user.RawData
-		groups := make([]string, 0)
-		if raw, ok := user.RawData["groups"]; ok {
-			if arr, ok := raw.([]any); ok {
-				for _, v := range arr {
-					if s, ok := v.(string); ok {
-						groups = append(groups, s)
-					}
-				}
-			}
-		}
-		s.Trace().Str("user_id", user.UserID).Str("email", user.Email).Str("nickname", user.NickName).Str("provider_name", providerName).Msgf("authenticated user with groups %+v", groups)
-		session.Values[GROUPS_KEY] = groups
-		err = session.Save(r, w)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Redirect to the original page, or default to the home page if not specified
-		redirectTo, ok := session.Values[REDIRECT_URL].(string)
-		if !ok || redirectTo == "" {
-			redirectTo = "/"
-		}
-
-		http.Redirect(w, r, redirectTo, http.StatusTemporaryRedirect)
+	mux.Get(types.INTERNAL_URL_PREFIX+"/auth/{provider}/login", func(w http.ResponseWriter, r *http.Request) {
+		// Start login process
+		gothic.BeginAuthHandler(w, r)
 	})
 
+	mux.Get(types.INTERNAL_URL_PREFIX+"/auth/{provider}/callback", s.authCallback)
+
+	mux.Get(types.INTERNAL_URL_PREFIX+"/auth/{provider}/redirect", s.redirect)
+
 	mux.Post(types.INTERNAL_URL_PREFIX+"/logout/{provider}", func(w http.ResponseWriter, r *http.Request) {
-		if err := gothic.Logout(w, r); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		// gothic.Logout(w, r) needs to be called on the callback domain, so not done
 		// Set user as not authenticated in session
 		providerName := chi.URLParam(r, "provider")
 		cookieName := genCookieName(providerName)
@@ -244,64 +179,10 @@ func (s *OAuthManager) RegisterRoutes(mux *chi.Mux) {
 		}
 		// Set user as unauthenticated in session
 		session.Values[AUTH_KEY] = false
-		err = session.Save(r, w)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
+		session.Options.MaxAge = -1
+		_ = session.Save(r, w)
 		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 	})
-
-	mux.Get(types.INTERNAL_URL_PREFIX+"/auth/{provider}", func(w http.ResponseWriter, r *http.Request) {
-		providerName := chi.URLParam(r, "provider")
-		// try to get the user without re-authenticating
-		if _, err := gothic.CompleteUserAuth(w, r); err == nil {
-			userId, _, err := s.CheckAuth(w, r, providerName, false)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if userId != "" {
-				cookieName := genCookieName(providerName)
-				session, err := s.cookieStore.Get(r, cookieName)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-
-				// Redirect to the original page, or default to the home page if not specified
-				redirectTo, ok := session.Values[REDIRECT_URL].(string)
-				if !ok || redirectTo == "" {
-					redirectTo = "/"
-				}
-
-				http.Redirect(w, r, redirectTo, http.StatusTemporaryRedirect)
-				return
-			}
-		}
-
-		// Start login process
-		gothic.BeginAuthHandler(w, r)
-	})
-}
-
-func (s *OAuthManager) validateResponse(providerName string, user goth.User) error {
-	providerConfig := s.providerConfigs[providerName]
-	if providerConfig == nil {
-		return fmt.Errorf("provider %s not configured", providerName)
-	}
-
-	providerType := strings.SplitN(providerName, PROVIDER_NAME_DELIMITER, 2)[0]
-	switch providerType {
-	case "google":
-		if providerConfig.HostedDomain != "" && user.RawData["hd"] != providerConfig.HostedDomain {
-			return fmt.Errorf("user does not belong to the required hosted domain. Found %s, expected %s",
-				user.RawData["hd"], providerConfig.HostedDomain)
-		}
-	}
-
-	return nil
 }
 
 func (s *OAuthManager) ValidateProviderName(provider string) bool {
@@ -322,54 +203,42 @@ func (s *OAuthManager) ValidateAuthType(authType string) bool {
 	}
 }
 
-func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider string, updateRedirect bool) (string, []string, error) {
+func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider string) (string, []string, error) {
 	cookieName := genCookieName(appProvider)
+	requestUrl := system.GetRequestUrl(r)
+
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {
 		s.Warn().Err(err).Msg("failed to get session")
 		if session != nil {
 			// delete the session
 			session.Options.MaxAge = -1
-			s.cookieStore.Save(r, w, session) //nolint:errcheck
+			session.Save(r, w) //nolint:errcheck
 		}
+
 		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", system.GetRequestUrl(r))
+			w.Header().Set("HX-Redirect", requestUrl)
 		} else {
-			http.Redirect(w, r, system.GetRequestUrl(r), http.StatusTemporaryRedirect)
-		}
-		return "", nil, err
-	}
-	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || !auth {
-		// Store the target URL before redirecting to login
-		if updateRedirect {
-			session.Values[REDIRECT_URL] = system.GetRequestUrl(r)
-			err = session.Save(r, w)
-			if err != nil {
-				s.Warn().Err(err).Msg("failed to save session")
-				return "", nil, err
-			}
-		}
-		s.Debug().Msg("no auth cookie, redirecting to login")
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", s.config.Security.CallbackUrl+types.INTERNAL_URL_PREFIX+"/auth/"+appProvider)
-		} else {
-			http.Redirect(w, r, s.config.Security.CallbackUrl+types.INTERNAL_URL_PREFIX+"/auth/"+appProvider, http.StatusTemporaryRedirect)
+			http.Redirect(w, r, requestUrl, http.StatusTemporaryRedirect)
 		}
 		return "", nil, nil
 	}
 
+	redirectCaller := false
+	if auth, ok := session.Values[AUTH_KEY].(bool); !ok || !auth {
+		s.Debug().Msg("no auth cookie, redirecting to login")
+		redirectCaller = true
+	}
+
 	// Check if provider name matches the one in the session
 	if providerName, ok := session.Values[PROVIDER_NAME_KEY].(string); !ok || providerName != appProvider {
-		if updateRedirect {
-			session.Values[REDIRECT_URL] = system.GetRequestUrl(r)
-			err = session.Save(r, w)
-			if err != nil {
-				s.Warn().Err(err).Msg("failed to save session")
-				return "", nil, err
-			}
-		}
-		s.Warn().Err(err).Msg("provider mismatch, redirecting to login")
-		http.Redirect(w, r, s.config.Security.CallbackUrl+types.INTERNAL_URL_PREFIX+"/auth/"+appProvider, http.StatusTemporaryRedirect)
+		s.Warn().Msg("provider mismatch, redirecting to login")
+		redirectCaller = true
+	}
+
+	if redirectCaller {
+		// do the OAuth login flow
+		s.login(w, r, appProvider, requestUrl)
 		return "", nil, nil
 	}
 
@@ -383,16 +252,259 @@ func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProv
 	if raw, ok := session.Values[GROUPS_KEY]; ok {
 		if arr, ok := raw.([]string); ok {
 			groups = arr
+		} else if arr, ok := raw.([]any); ok {
+			for _, v := range arr {
+				if s, ok := v.(string); ok {
+					groups = append(groups, s)
+				}
+			}
 		}
 	}
 
-	// Clear the redirect target after successful authentication
+	return appProvider + ":" + userId, groups, nil
+}
+
+func (s *OAuthManager) login(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
+	sessionId, nonce, err := passwd.GenerateSessionNonce()
+	if err != nil {
+		http.Error(w, "error generating session nonce: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sessionId = types.OAUTH_SESSION_KV_PREFIX + sessionId
+	stateMap := make(map[string]any)
+	stateMap[AUTH_KEY] = false
+	stateMap[PROVIDER_NAME_KEY] = providerName
+	stateMap[REDIRECT_URL] = redirectUrl
+	stateMap[NONCE_KEY] = nonce
+
+	// Store the state map in the database with the session id as the key
+	expireAt := time.Now().Add(5 * time.Minute)
+	err = s.db.StoreKV(r.Context(), sessionId, stateMap, &expireAt)
+	if err != nil {
+		http.Error(w, "error storing state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	cookieName := genCookieName(providerName)
+	session, err := s.cookieStore.Get(r, cookieName)
+	if err != nil {
+		http.Error(w, "error getting session: "+err.Error(), http.StatusInternalServerError)
+		if session != nil {
+			session.Options.MaxAge = -1
+			_ = session.Save(r, w)
+		}
+		return
+	}
+
+	// Save a cookie with the nonce (this is on the app domain, not the callback domain)
+	session.Values[AUTH_KEY] = false
+	session.Values[PROVIDER_NAME_KEY] = providerName
+	session.Values[NONCE_KEY] = nonce
+	session.Values[REDIRECT_URL] = redirectUrl
+	if err := session.Save(r, w); err != nil {
+		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// The state is the session id, encoded in base64
+	state := base64.URLEncoding.EncodeToString([]byte(sessionId))
+	authUrl := fmt.Sprintf("%s%s/auth/%s/login?state=%s", s.config.Security.CallbackUrl, types.INTERNAL_URL_PREFIX, providerName, state)
+
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", authUrl)
+	} else {
+		http.Redirect(w, r, authUrl, http.StatusFound)
+	}
+}
+
+func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
+	state := gothic.GetState(r)
+	sessionId, err := base64.URLEncoding.DecodeString(state)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	user, err := gothic.CompleteUserAuth(w, r)
+	if err != nil {
+		s.Warn().Err(err).Msg("failed to complete user auth")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	stateMap, err := s.db.FetchKV(r.Context(), string(sessionId))
+	if err != nil {
+		http.Error(w, "error fetching KV state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	providerName := chi.URLParam(r, "provider")
+	if stateMap[PROVIDER_NAME_KEY] != providerName {
+		http.Error(w, "error matching session state", http.StatusInternalServerError)
+		return
+	}
+
+	providerConfig := s.providerConfigs[providerName]
+	if providerConfig == nil {
+		http.Error(w, fmt.Sprintf("provider %s not configured", providerName), http.StatusInternalServerError)
+		return
+	}
+
+	providerType := strings.SplitN(providerName, PROVIDER_NAME_DELIMITER, 2)[0]
+	switch providerType {
+	case "google":
+		if providerConfig.HostedDomain != "" && user.RawData["hd"] != providerConfig.HostedDomain {
+			http.Error(w, fmt.Sprintf("user does not belong to the required hosted domain. Found %s, expected %s",
+				user.RawData["hd"], providerConfig.HostedDomain), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if stateMap[AUTH_KEY] != false {
+		http.Error(w, "error matching session state, expected auth to be false", http.StatusInternalServerError)
+		return
+	}
+
+	stateMap[USER_ID_KEY] = user.UserID
+	stateMap[USER_EMAIL_KEY] = user.Email
+	stateMap[USER_NICKNAME_KEY] = user.NickName
+
+	lookupKeys := []string{USER_EMAIL_KEY, USER_ID_KEY, USER_NICKNAME_KEY}
+	if strings.HasPrefix(providerName, "git") {
+		// For git providers, prefer nickname over userid as it is more meaningful
+		lookupKeys = []string{USER_EMAIL_KEY, USER_NICKNAME_KEY, USER_ID_KEY}
+	}
+	userId := ""
+	ok := false
+	for _, key := range lookupKeys {
+		userId, ok = stateMap[key].(string)
+		if ok && userId != "" {
+			break
+		}
+	}
+
+	if userId == "" {
+		s.Warn().Msg("user id could not be found")
+		http.Error(w, errors.New("user id could not be found").Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get groups from user.RawData
+	groups := make([]string, 0)
+	if raw, ok := user.RawData["groups"]; ok {
+		if arr, ok := raw.([]any); ok {
+			for _, v := range arr {
+				if s, ok := v.(string); ok {
+					groups = append(groups, s)
+				}
+			}
+		}
+	}
+	s.Trace().Str("user_id", user.UserID).Str("email", user.Email).Str("nickname", user.NickName).
+		Str("provider_name", providerName).Msgf("authenticated user with groups %+v", groups)
+
+	// Update the state map, set to authenticated and add the user id and groups
+	stateMap[AUTH_KEY] = true
+	stateMap[USER_KEY] = userId
+	stateMap[GROUPS_KEY] = groups
+	err = s.db.UpdateKV(r.Context(), string(sessionId), stateMap)
+	if err != nil {
+		http.Error(w, "error updating KV state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	redirectUrl := stateMap[REDIRECT_URL].(string)
+	redirectParsed, err := url.Parse(redirectUrl)
+	if err != nil {
+		http.Error(w, "error parsing relay: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Redirect to the auth/redirect url on the original app domain, so that the required cookie can be set on the app domain
+	redirectAppDomain := redirectParsed.Scheme + "://" + redirectParsed.Host + types.INTERNAL_URL_PREFIX + "/auth/" + providerName + "/redirect?state=" + state
+	http.Redirect(w, r, redirectAppDomain, http.StatusFound)
+}
+
+func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
+	state := r.URL.Query().Get("state")
+	if state == "" {
+		http.Error(w, "state is required", http.StatusBadRequest)
+		return
+	}
+	providerName := chi.URLParam(r, "provider")
+	cookieName := genCookieName(providerName)
+	session, err := s.cookieStore.Get(r, cookieName)
+	if err != nil {
+		http.Error(w, "error getting session: "+err.Error(), http.StatusInternalServerError)
+	}
+
+	success := false
+	defer func() {
+		if !success {
+			session.Options.MaxAge = -1 // delete the session if there is an error
+			_ = session.Save(r, w)
+		}
+	}()
+
+	nonceFromCookie := session.Values[NONCE_KEY].(string)
+	sessionIdBytes, err := base64.URLEncoding.DecodeString(state)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sessionId := string(sessionIdBytes)
+
+	// Get the state map, delete the entry from database, validate state, set the session values
+	// in the cookie and then redirect to original url
+	stateMap, err := s.db.FetchKV(r.Context(), sessionId)
+	if err != nil {
+		http.Error(w, "error fetching state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = s.db.DeleteKV(r.Context(), sessionId)
+	if err != nil {
+		http.Error(w, "error deleting state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	auth, ok := stateMap[AUTH_KEY].(bool)
+	if !ok {
+		http.Error(w, "error matching session, auth not found", http.StatusInternalServerError)
+		return
+	}
+	if !auth {
+		http.Error(w, "error matching session, expected auth to be true", http.StatusInternalServerError)
+		return
+	}
+
+	redirectUrl, ok := session.Values[REDIRECT_URL].(string)
+	if !ok {
+		http.Error(w, "error matching session, redirect url not found", http.StatusInternalServerError)
+		return
+	}
+
+	if stateMap[PROVIDER_NAME_KEY] != providerName || stateMap[REDIRECT_URL] != redirectUrl {
+		http.Error(w, "error matching session state", http.StatusInternalServerError)
+		return
+	}
+
+	if subtle.ConstantTimeCompare([]byte(stateMap[NONCE_KEY].(string)), []byte(nonceFromCookie)) != 1 {
+		http.Error(w, "error matching session state, nonce mismatch", http.StatusInternalServerError)
+		return
+	}
+
+	// Update the session cookie to authenticated, with the new values
+	success = true
+	session.Values[AUTH_KEY] = true
+	session.Values[USER_KEY] = stateMap[USER_KEY].(string)
+	session.Values[GROUPS_KEY] = stateMap[GROUPS_KEY].([]any)
 	delete(session.Values, REDIRECT_URL)
 	err = session.Save(r, w)
 	if err != nil {
-		s.Warn().Err(err).Msg("failed to save session")
-		return "", nil, err
+		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	return appProvider + ":" + userId, groups, nil
+	http.Redirect(w, r, redirectUrl, http.StatusFound)
 }

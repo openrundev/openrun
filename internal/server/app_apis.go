@@ -528,7 +528,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 		}
 
 		// Redirect to the auth provider if not logged in
-		userId, groups, err = s.oAuthManager.CheckAuth(w, r, strippedAuthStr, true)
+		userId, groups, err = s.oAuthManager.CheckAuth(w, r, strippedAuthStr)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
