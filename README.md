@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://openrun.dev/openrun.png" alt="OpenRun-logo" width="300" height="250"/>
 
-  <p align="center">App deployment simplified. Open source alternative to Google Cloud Run and AWS AppRunner. Easily deploy internal tools across a team.</p>
+  <p align="center">App deployment simplified. Open source alternative to Google Cloud Run and AWS App Runner. Easily deploy internal tools across a team.</p>
 </p>
 
 <p>
@@ -32,9 +32,9 @@
 
 ## Overview
 
-OpenRun is an Apache-2.0 licensed project building an open source alternative to Google Cloud Run and AWS AppRunner. OpenRun allows you to deploy containerized apps. OpenRun is cross-platform (Linux/Windows/OSX) and provides a GitOps workflow for managing web apps.
+OpenRun is an Apache-2.0 licensed project building an open source alternative to Google Cloud Run and AWS App Runner. OpenRun allows you to deploy containerized apps. OpenRun is cross-platform (Linux/Windows/OSX) and provides a GitOps workflow for managing web apps.
 
-OpenRun apps are deployed directly from the git repo, no build step required. For example, OpenRun can be used to deploy Streamlit/Gradio apps, adding OAuth authentication for access control across a team.
+OpenRun apps are deployed directly from the git repo, no build step required. For example, OpenRun can be used to deploy Streamlit/Gradio/NiceGUI/FastHTML apps, adding OAuth/OIDC/SAML based authentication for access control across a team.
 
 This repo hosts the source code for OpenRun. The source for the documentation site [openrun.dev](https://openrun.dev) is in the [docs](https://github.com/openrundev/docs) repo. App specifications, which are templates to create apps, are defined in the [appspecs](https://github.com/openrundev/appspecs) repo. Sample apps are in the [apps](https://github.com/openrundev/apps) repo.
 
@@ -46,6 +46,7 @@ OpenRun can be used to:
 
 - Deploy [containerized applications](https://openrun.dev/docs/container/overview/), OpenRun will build and manage the container lifecycle
 - Automatically generate a form based UI for backend [actions](https://openrun.dev/docs/actions/)
+- Add OAuth/OIDC/SAML based [auth](https://openrun.dev/docs/configuration/authentication/) and [RBAC](https://openrun.dev/docs/configuration/rbac/) for app access
 
 OpenRun supports the following for all apps:
 
@@ -54,7 +55,7 @@ OpenRun supports the following for all apps:
 - [Staging mode](https://openrun.dev/docs/applications/lifecycle/#staging-apps) for app updates, to verify whether code and config changes work on prod before making them live.
 - [Preview app](https://openrun.dev/docs/applications/lifecycle/#preview-apps) creation support, for trying out code changes.
 - Support for [github integration](https://openrun.dev/docs/configuration/security/#private-repository-access), apps being directly deployed from github code.
-- OAuth and SSO based [authentication](https://openrun.dev/docs/configuration/authentication/#oauth-authentication)
+- OAuth/OIDC/SAML based [authentication](https://openrun.dev/docs/configuration/authentication/#oauth-authentication)
 - Support for domain based and path based [routing](https://openrun.dev/docs/applications/routing/#request-routing) at the app level.
 - Integration with [secrets managers](https://openrun.dev/docs/configuration/secrets/), to securely access secrets.
 
@@ -197,7 +198,6 @@ $OPENRUN_HOME/openrun password > $OPENRUN_HOME/openrun.toml
 $OPENRUN_HOME/openrun server start
 ```
 
-This will print a random password on the screen, note that down as the password to use for accessing the applications.
 The service will be started on [https://localhost:25223](https://127.0.0.1:25223) by default (HTTP port 25222).
 
 ## Documentation
