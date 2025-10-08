@@ -12,7 +12,6 @@ After=network.target network-online.target
 Requires=network-online.target
 
 [Service]
-Type=notify
 User=openrun
 Group=openrun
 ExecStart=/var/lib/openrun/bin/openrun server start
