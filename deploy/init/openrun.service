@@ -1,0 +1,25 @@
+# openrun.service
+#
+# Systemd unit file for starting OpenRun service
+#
+# See https://openrun.dev/docs/installation/ for instructions.
+#
+
+[Unit]
+Description=OpenRun
+Documentation=https://openrun.dev/docs/
+After=network.target network-online.target
+Requires=network-online.target
+
+[Service]
+Type=notify
+User=openrun
+Group=openrun
+ExecStart=/home/openrun/bin/openrun server start
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
