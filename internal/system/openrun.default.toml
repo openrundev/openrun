@@ -106,6 +106,8 @@ container.health_timeout_secs = 5
 # Idle Shutdown Config
 container.idle_shutdown_secs = 180
 container.idle_shutdown_dev_apps = false
+container.idle_bytes_high_watermark = 1500 # bytes high watermark for idle shutdown 
+                                           # (1500 bytes sent and recv over 180 seconds)
 
 # Status check Config
 container.status_check_interval_secs = 5

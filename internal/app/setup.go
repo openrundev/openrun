@@ -781,6 +781,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 		return rootWildcard, err
 	}
 
+	originalUrlStr := urlStr
 	if urlStr == apptype.CONTAINER_URL {
 		// proxying to container url
 		if a.containerManager == nil {
@@ -821,7 +822,14 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 		}
 	}
 
-	permsHandler := func(p *httputil.ReverseProxy) http.Handler {
+	var proxyWrapper http.Handler = proxy
+	if originalUrlStr == apptype.CONTAINER_URL {
+		// Wrap the proxy with a tracker to count the bytes sent and received
+		proxyWrapper = NewTracker(proxy, a.AppConfig.Container.IdleShutdownSecs)
+		a.containerManager.proxyTracker = proxyWrapper.(*Tracker)
+	}
+
+	permsHandler := func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// If write API, check if preview/stage app is allowed access
 			isWriteRequest := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete
@@ -861,13 +869,13 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 			}
 
 			// use the reverse proxy to handle the request
-			p.ServeHTTP(w, r)
+			handler.ServeHTTP(w, r)
 		})
 	}
 	if stripApp {
 		stripPath = path.Join(a.Path, stripPath)
 	}
-	router.Mount(pathStr, http.StripPrefix(stripPath, permsHandler(proxy)))
+	router.Mount(pathStr, http.StripPrefix(stripPath, permsHandler(proxyWrapper)))
 	return rootWildcard, nil
 }
 

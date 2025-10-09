@@ -141,8 +141,9 @@ type Container struct {
 	HealthTimeoutSecs          int    `toml:"health_timeout_secs"`
 
 	// Idle shutdown related config
-	IdleShutdownSecs    int  `toml:"idle_shutdown_secs"`
-	IdleShutdownDevApps bool `toml:"idle_shutdown_dev_apps"`
+	IdleShutdownSecs       int  `toml:"idle_shutdown_secs"`
+	IdleShutdownDevApps    bool `toml:"idle_shutdown_dev_apps"`
+	IdleBytesHighWatermark int  `toml:"idle_bytes_high_watermark"`
 
 	// Status check related config
 	StatusCheckIntervalSecs int `toml:"status_check_interval_secs"`

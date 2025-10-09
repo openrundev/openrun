@@ -73,6 +73,7 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsInt(t, "attempts", 30, c.AppConfig.Container.HealthAttemptsAfterStartup)
 	testutil.AssertEqualsInt(t, "timeout", 5, c.AppConfig.Container.HealthTimeoutSecs)
 	testutil.AssertEqualsInt(t, "idle", 180, c.AppConfig.Container.IdleShutdownSecs)
+	testutil.AssertEqualsInt(t, "idle bytes high watermark", 1500, c.AppConfig.Container.IdleBytesHighWatermark)
 	testutil.AssertEqualsInt(t, "status interval", 5, c.AppConfig.Container.StatusCheckIntervalSecs)
 	testutil.AssertEqualsInt(t, "status attempts", 3, c.AppConfig.Container.StatusHealthAttempts)
 

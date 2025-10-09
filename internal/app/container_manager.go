@@ -68,6 +68,7 @@ type ContainerManager struct {
 	stripAppPath      bool
 	mountArgs         []string
 	cargs             map[string]string
+	proxyTracker      *Tracker // Track bytes sent and received by the proxy
 }
 
 func NewContainerManager(logger *types.Logger, app *App, containerFile string,
@@ -173,7 +174,8 @@ func NewContainerManager(logger *types.Logger, app *App, containerFile string,
 		cargs:           cargs_map,
 	}
 
-	if containerConfig.IdleShutdownSecs > 0 && (!app.IsDev || containerConfig.IdleShutdownDevApps) {
+	if containerConfig.IdleShutdownSecs > 0 &&
+		(!app.IsDev || containerConfig.IdleShutdownDevApps) {
 		// Start the idle shutdown check
 		m.idleShutdownTicker = time.NewTicker(time.Duration(containerConfig.IdleShutdownSecs) * time.Second)
 		go m.idleAppShutdown()
@@ -238,6 +240,18 @@ func (m *ContainerManager) idleAppShutdown() {
 			// Not idle
 			m.Trace().Msgf("App %s not idle, last request %d seconds ago", m.app.Id, idleTimeSecs)
 			continue
+		}
+
+		if m.proxyTracker != nil {
+			sent, recv := m.proxyTracker.GetRollingTotals()
+			totalBytes := sent + recv
+			if totalBytes >= uint64(m.containerConfig.IdleBytesHighWatermark) {
+				m.Trace().Msgf("App %s not idle, bytes sent %d, bytes received %d, total bytes %d at high watermark %d",
+					m.app.Id, sent, recv, totalBytes, m.containerConfig.IdleBytesHighWatermark)
+				continue
+			}
+			m.Info().Msgf("App %s idle, bytes sent %d, bytes received %d, total bytes %d below high watermark %d",
+				m.app.Id, sent, recv, totalBytes, m.containerConfig.IdleBytesHighWatermark)
 		}
 
 		m.Debug().Msgf("Shutting down idle app %s after %d seconds", m.app.Id, idleTimeSecs)
