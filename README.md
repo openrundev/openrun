@@ -18,8 +18,6 @@
 
 - [Overview](#overview)
 - [Features](#features)
-  - [Development Features](#development-features)
-  - [Deployment Features](#deployment-features)
 - [Roadmap](#roadmap)
 - [Setup](#setup)
 - [Documentation](#documentation)
