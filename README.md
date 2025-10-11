@@ -22,19 +22,15 @@
   - [Deployment Features](#deployment-features)
 - [Roadmap](#roadmap)
 - [Setup](#setup)
-  - [Build from source](#build-from-source)
-  - [Initial Configuration](#initial-configuration)
-  - [Start Service](#start-service)
-  - [Loading Apps](#loading-apps)
 - [Documentation](#documentation)
 - [Getting help](#getting-help)
 - [Contributing](#contributing)
 
 ## Overview
 
-OpenRun is an Apache-2.0 licensed project building an open source alternative to Google Cloud Run and AWS App Runner. OpenRun allows you to deploy containerized apps. OpenRun is cross-platform (Linux/Windows/OSX) and provides a GitOps workflow for managing web apps.
+OpenRun is an Apache-2.0 licensed open source alternative to Google Cloud Run and AWS App Runner. OpenRun makes it easy to declaratively deploy applications built in frameworks like Streamlit/Gradio/FastHTML/NiceGUI etc.
 
-OpenRun apps are deployed directly from the git repo, no build step required. For example, OpenRun can be used to deploy Streamlit/Gradio/NiceGUI/FastHTML apps, adding OAuth/OIDC/SAML based authentication for access control across a team.
+OpenRun provides **declarative** GitOps based app deployment, OAuth/OIDC/SAML access controls, TLS certs & secrets management. OpenRun is built for teams to easily deploy internal tools, with full RBAC support. OpenRun apps are deployed directly from the git repo, no build step required. OpenRun scales idles apps down to zero and supports atomic updates across multiple apps.
 
 This repo hosts the source code for OpenRun. The source for the documentation site [openrun.dev](https://openrun.dev) is in the [docs](https://github.com/openrundev/docs) repo. App specifications, which are templates to create apps, are defined in the [appspecs](https://github.com/openrundev/appspecs) repo. Sample apps are in the [apps](https://github.com/openrundev/apps) repo.
 
@@ -88,11 +84,9 @@ The feature roadmap for OpenRun is:
 
 ### Certs and Default password
 
-OpenRun manages TLS cert using LetsEncrypt for prod environments. For dev environment, it is recommended to install [mkcert](https://github.com/FiloSottile/mkcert). OpenRun will automatically create local certs using mkcert if it is present. Install mkcert and run `mkcert -install` before starting OpenRun server. Installing OpenRun using brew will automatically install mkcert.
+OpenRun manages TLS cert using LetsEncrypt for prod environments. For dev environment, OpenRun uses [mkcert](https://github.com/FiloSottile/mkcert) for local certs. Installing OpenRun using brew will automatically install mkcert.
 
 For container based apps, Docker or Podman or Orbstack should be installed and running on the machine. OpenRun automatically detects the container manager to use.
-
-OpenRun creates an `admin` user account as teh system auth for accessing apps. A random password is generated for this account during initial OpenRun server installation. Note down this password for accessing apps if using system auth.
 
 ### Install OpenRun On OSX/Linux
 
@@ -135,7 +129,7 @@ openrun apply --approve github.com/openrundev/openrun/examples/utils.star
 To schedule a background sync, which automatically applies the latest app config, run
 
 ```
-openrun sync schedule --approve github.com/openrundev/openrun/examples/utils.star
+openrun sync schedule --approve --promote github.com/openrundev/openrun/examples/utils.star
 ```
 
 To install apps using the CLI (imperative mode), run
@@ -210,6 +204,4 @@ Please use [Github Discussions](https://github.com/openrundev/openrun/discussion
 
 ## Contributing
 
-PRs welcome for bug fixes. For feature enhancements, please first file a ticket with the `feature` label and discuss the change before working on the code changes.
-
-The Google [go style guide](https://google.github.io/styleguide/go/guide) is used for OpenRun. For application behavior related fixes, refer the [app unit test cases](https://github.com/openrundev/openrun/tree/main/internal/app/tests). Those test run as part of regular unit tests `go test ./...`. For API related changes, OpenRun uses the [commander-cli](https://github.com/commander-cli/commander) library for [automated CLI tests](https://github.com/openrundev/openrun/tree/main/tests). To run the CLI test, run `gmake test` from the openrun home directory.
+PRs welcome for bug fixes and enhancements. For application behavior related fixes, refer the [app unit test cases](https://github.com/openrundev/openrun/tree/main/internal/app/tests). Those test run as part of regular unit tests `go test ./...`. For API related changes, OpenRun uses the [commander-cli](https://github.com/commander-cli/commander) library for [automated CLI tests](https://github.com/openrundev/openrun/tree/main/tests). To run the CLI test, run `gmake test` from the openrun home directory.
