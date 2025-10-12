@@ -722,12 +722,23 @@ func (s *Server) getStageApp(ctx context.Context, tx types.Transaction, appEntry
 	return stageAppEntry, nil
 }
 
-func parseGithubUrl(sourceUrl string, usingSSH bool) (repo, folder string, err error) {
+const REPO_FOLDER_SEPERATOR = "//"
+
+func parseGitUrl(sourceUrl string, usingSSH bool) (repo, folder string, err error) {
 	if !strings.HasSuffix(sourceUrl, "/") {
 		sourceUrl = sourceUrl + "/"
 	}
 
+	// GitLab supports groups and subgroups, like gitlab.com/g16004341/g2/pr1/app1
+	// OpenRun requires such urls to be specified with // separator for the folder path
+	// like gitlab.com/g16004341/g2/pr1//app1
+
 	if strings.HasPrefix(sourceUrl, "git@") {
+		if strings.Contains(sourceUrl, REPO_FOLDER_SEPERATOR) {
+			repo, folder, _ := strings.Cut(sourceUrl, REPO_FOLDER_SEPERATOR)
+			return repo, folder, nil
+		}
+
 		// Using git url format
 		split := strings.SplitN(sourceUrl, "/", 3)
 		if len(split) != 3 {
@@ -744,6 +755,17 @@ func parseGithubUrl(sourceUrl string, usingSSH bool) (repo, folder string, err e
 	url, err := url.Parse(sourceUrl)
 	if err != nil {
 		return "", "", err
+	}
+
+	if strings.Contains(url.Path, REPO_FOLDER_SEPERATOR) {
+		repo, folder, _ := strings.Cut(url.Path, REPO_FOLDER_SEPERATOR)
+		if usingSSH {
+			repo = strings.TrimPrefix(repo, "/")
+			// Use git url like git@github.com:openrundev/openrun.git
+			gitUrl := fmt.Sprintf("git@%s:%s.git", url.Host, repo)
+			return gitUrl, folder, nil
+		}
+		return fmt.Sprintf("%s://%s%s", url.Scheme, url.Host, repo), folder, nil
 	}
 
 	split := strings.SplitN(url.Path, "/", 4)

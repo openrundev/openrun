@@ -18,17 +18,17 @@ func TestGetSourceUrl(t *testing.T) {
 		{
 			url:    "github.com/openrundev/openrun/myapp",
 			branch: "main",
-			want:   "https://github.com/openrundev/openrun/tree/main/myapp",
+			want:   "https://github.com/openrundev/openrun/tree/main/myapp/",
 		},
 		{
 			url:    "https://github.com/openrundev/openrun/myapp",
 			branch: "main",
-			want:   "https://github.com/openrundev/openrun/tree/main/myapp",
+			want:   "https://github.com/openrundev/openrun/tree/main/myapp/",
 		},
 		{
 			url:    "https://github.com/openrundev/openrun/myapp",
 			branch: "main",
-			want:   "https://github.com/openrundev/openrun/tree/main/myapp",
+			want:   "https://github.com/openrundev/openrun/tree/main/myapp/",
 		},
 		{
 			url:    "/openrundev/openrun/myapp",
@@ -43,7 +43,7 @@ func TestGetSourceUrl(t *testing.T) {
 		{
 			url:    "git@github.com:openrundev/openrun.git/myapp/t1/t2",
 			branch: "develop",
-			want:   "https://github.com/openrundev/openrun/tree/develop/myapp/t1/t2",
+			want:   "",
 		},
 		{
 			url:    "github.com/openrundev",

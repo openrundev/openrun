@@ -188,37 +188,15 @@ func getSourceUrl(sourceUrl, branch string) string {
 	if branch == "" {
 		return ""
 	}
-	url := sourceUrl
-	if strings.HasPrefix(sourceUrl, "http://") {
-		url = strings.TrimPrefix(sourceUrl, "http://")
-	} else if strings.HasPrefix(sourceUrl, "https://") {
-		url = strings.TrimPrefix(sourceUrl, "https://")
+	if !system.IsGit(sourceUrl) || strings.HasPrefix(sourceUrl, "git@") {
+		return ""
+	}
+	repo, folder, err := parseGitUrl(sourceUrl, false)
+	if err != nil {
+		return ""
 	}
 
-	isGitUrl := false
-	if strings.HasPrefix(url, "github.com/") {
-		url = strings.TrimPrefix(url, "github.com/")
-	} else if strings.HasPrefix(url, "git@github.com:") {
-		url = strings.TrimPrefix(url, "git@github.com:")
-		isGitUrl = true
-	} else {
-		return "" // cannot get full url
-	}
-
-	splitPath := strings.Split(url, "/")
-	if len(splitPath) < 2 {
-		return "" // cannot get full url
-	}
-	folder := ""
-	if len(splitPath) > 2 {
-		folder = strings.Join(splitPath[2:], "/")
-	}
-
-	repo := splitPath[1]
-	if isGitUrl {
-		repo = strings.TrimSuffix(splitPath[1], ".git")
-	}
-	return fmt.Sprintf("https://github.com/%s/%s/tree/%s/%s", splitPath[0], repo, branch, folder)
+	return fmt.Sprintf("%s/tree/%s/%s", repo, branch, folder)
 }
 
 func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

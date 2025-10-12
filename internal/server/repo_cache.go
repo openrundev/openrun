@@ -60,7 +60,7 @@ func (r *RepoCache) GetSha(sourceUrl, branch, gitAuth string) (string, error) {
 	}
 
 	// Figure on which repo to clone
-	repo, _, err := parseGithubUrl(sourceUrl, authEntry.usingSSH)
+	repo, _, err := parseGitUrl(sourceUrl, authEntry.usingSSH)
 	if err != nil {
 		return "", err
 	}
@@ -137,7 +137,7 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 	}
 
 	// Figure on which repo to clone
-	repo, folder, err := parseGithubUrl(sourceUrl, authEntry.usingSSH)
+	repo, folder, err := parseGitUrl(sourceUrl, authEntry.usingSSH)
 	if err != nil {
 		return "", "", "", "", err
 	}
