@@ -12,6 +12,7 @@
   <a href="https://goreportcard.com/report/github.com/openrundev/openrun"><img src="https://goreportcard.com/badge/github.com/openrundev/openrun" alt="Go Report Card"></a>
   <a href="https://github.com/avelino/awesome-go"><img src="https://awesome.re/mentioned-badge.svg" alt="Mentioned in Awesome Go"></a>
   <a href="https://landscape.cncf.io/?item=app-definition-and-development--application-definition-image-build--openrun"><img src="https://img.shields.io/badge/CNCF%20Landscape-0086FF" alt="Listed in CNCF landscape"></a>
+  <a href="https://www.bestpractices.dev/projects/11301"><img src="https://www.bestpractices.dev/projects/11301/badge"></a>
 </p>
 
 ### Menu
