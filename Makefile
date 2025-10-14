@@ -17,7 +17,7 @@ endif
 .RECIPEPREFIX = >
 TAG := 
 
-.PHONY: help test unit int release int_single lint verify
+.PHONY: help test unit int covtest covunit covint release int_single lint verify
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -58,8 +58,8 @@ covint: ## Run integration tests with coverage
 > go tool cover -func coverage/profile
 
 release: ## Tag and push a release
-> @if [ -z "$(TAG)" ]; then \
->    echo "Error: TAG is not set"; \
+> @if [[ -z "$(INPUT)" || "$(INPUT)" == v* ]]; then \
+>    echo "Error: TAG has to be set, without the v prefix"; \
 >    exit 1; \
 > fi
-> git tag -a v$(TAG) -m "Release v$(TAG)"; git push origin v$(TAG)
+> echo git tag -a v$(INPUT) -m "Release v$(INPUT)"; git push origin v$(INPUT)
