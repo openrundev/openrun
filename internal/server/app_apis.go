@@ -566,7 +566,11 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	r = r.WithContext(ctx)
 
 	// Authentication successful, serve the app
-	app.ServeHTTP(w, r)
+	if !app.AppConfig.Security.DisableCSRFProtection {
+		s.csrfMiddleware.Handler(app).ServeHTTP(w, r)
+	} else {
+		app.ServeHTTP(w, r)
+	}
 }
 
 // verifyClientCerts verifies the client certificate, whether it is signed by one

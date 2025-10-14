@@ -115,6 +115,7 @@ type AppConfig struct {
 }
 type Security struct {
 	DefaultSecretsProvider string `toml:"default_secrets_provider"`
+	DisableCSRFProtection  bool   `toml:"disable_csrf_protection"`
 }
 
 type CORS struct {

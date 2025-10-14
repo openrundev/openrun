@@ -141,6 +141,7 @@ type Server struct {
 	configMu       sync.RWMutex
 	dynamicConfig  *types.DynamicConfig
 	rbacManager    *RBACManager
+	csrfMiddleware *http.CrossOriginProtection
 }
 
 // NewServer creates a new instance of the OpenRun Server
@@ -178,6 +179,12 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	csrfMiddleware := http.NewCrossOriginProtection()
+	csrfMiddleware.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Cross origin check failed - CSRF protection", http.StatusForbidden)
+	}))
+	server.csrfMiddleware = csrfMiddleware
 
 	// Setup OAuth auth
 	server.oAuthManager = NewOAuthManager(l, config, db)
