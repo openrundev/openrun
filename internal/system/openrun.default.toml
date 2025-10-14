@@ -126,3 +126,4 @@ audit.redact_url = false
 audit.skip_http_events = false
 
 security.default_secrets_provider = "env" # default secret provider, env if it is enabled
+security.disable_csrf_protection = false # disable CSRF protection for apps
