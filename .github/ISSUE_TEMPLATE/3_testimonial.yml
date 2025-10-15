@@ -1,7 +1,7 @@
 name: "Add a user/testimonial"
-description: Share how you use the project and grant permission to list your company.
+description: Share how you use OpenRun project and grant permission to list your company.
 title: "User/Testimonial: <Company Name>"
-labels: ["community", "testimonial"]
+labels: ["testimonial"]
 body:
   - type: input
     id: name
