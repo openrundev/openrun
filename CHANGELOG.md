@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed an issue where the source path was not set to `$OPENRUN_HOME/app_src` when running `apply` in `dev` mode.
+
 ## [0.15.8] - 2025-10-14
 
 ### Added
@@ -14,4 +18,3 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Enable CSRF protection for internal APIs and for apps. App level CSRF protection is enabled by default.
   Use `security.disable_csrf_protection = true` to disable. Disable in app metadata by running
   `openrun app update-metadata conf --promote 'security.disable_csrf_protection=true' /myapp`
-
