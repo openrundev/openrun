@@ -1,0 +1,53 @@
+name: "Add a user/testimonial"
+description: Share how you use the project and grant permission to list your company.
+title: "User/Testimonial: <Company Name>"
+labels: ["community", "testimonial"]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Your name
+      description: Person to attribute the quote to (optional).
+      placeholder: ""
+  - type: input
+    id: title
+    attributes:
+      label: Role/Title
+      placeholder: ""
+  - type: input
+    id: company
+    attributes:
+      label: Company/Org name
+      placeholder: ""
+    validations:
+      required: true
+  - type: input
+    id: website
+    attributes:
+      label: Company website
+      placeholder: ""
+    validations:
+      required: true
+  - type: checkboxes
+    id: permissions
+    attributes:
+      label: Permissions
+      options:
+        - label: "You may display our company name and link as users of OpenRun."
+          required: true
+  - type: textarea
+    id: usage
+    attributes:
+      label: How you use the project (optional)
+      description: One or two sentences (e.g., team, use case, wins).
+      placeholder: "We use OpenRun to ..."
+  - type: textarea
+    id: quote
+    attributes:
+      label: Testimonial (optional)
+      placeholder: "FoobarDB reduced our build times by 40%..."
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / brand guidelines URL (optional)
+      placeholder: "Logo usage notes, link to press kit, etc."
