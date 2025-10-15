@@ -13,19 +13,16 @@ body:
     id: title
     attributes:
       label: Role/Title
-      placeholder: ""
   - type: input
     id: company
     attributes:
       label: Company/Org name
-      placeholder: ""
     validations:
       required: true
   - type: input
     id: website
     attributes:
       label: Company website
-      placeholder: ""
     validations:
       required: true
   - type: checkboxes
@@ -45,7 +42,6 @@ body:
     id: quote
     attributes:
       label: Testimonial (optional)
-      placeholder: "FoobarDB reduced our build times by 40%..."
   - type: textarea
     id: notes
     attributes:
