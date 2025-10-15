@@ -8,7 +8,6 @@ body:
     attributes:
       label: Your name
       description: Person to attribute the quote to (optional).
-      placeholder: ""
   - type: input
     id: title
     attributes:
