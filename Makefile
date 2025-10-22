@@ -62,4 +62,4 @@ release: ## Tag and push a release
 >    echo "Error: TAG has to be set, without the v prefix"; \
 >    exit 1; \
 > fi
-> echo git tag -a v$(INPUT) -m "Release v$(INPUT)"; git push origin v$(INPUT)
+> git tag -a v$(INPUT) -m "Release v$(INPUT)"; git push origin v$(INPUT)
