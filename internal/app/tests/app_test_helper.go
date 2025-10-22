@@ -22,48 +22,54 @@ import (
 )
 
 func CreateDevModeTestApp(logger *types.Logger, fileData map[string]string) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, true, nil, nil, nil, "app_dev_testapp", types.AppSettings{}, nil, nil)
+	return CreateTestAppInt(logger, "/test", fileData, true, nil, nil, nil, "app_dev_testapp", types.AppSettings{}, nil, nil, nil, nil)
 }
 
 func CreateTestApp(logger *types.Logger, fileData map[string]string) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, nil)
+	return CreateTestAppInt(logger, "/test", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, nil, nil, nil)
 }
 
 func CreateTestAppConfig(logger *types.Logger, fileData map[string]string, appConfig types.AppConfig) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, &appConfig)
+	return CreateTestAppInt(logger, "/test", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, &appConfig, nil, nil)
 }
 
 func CreateTestAppParams(logger *types.Logger, fileData map[string]string, params map[string]string) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, params, nil)
+	return CreateTestAppInt(logger, "/test", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, params, nil, nil, nil)
 }
 
 func CreateTestAppRoot(logger *types.Logger, fileData map[string]string) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, nil)
+	return CreateTestAppInt(logger, "/", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, nil, nil, nil)
 }
 
 func CreateTestAppPlugin(logger *types.Logger, fileData map[string]string,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil)
+	return CreateTestAppInt(logger, "/test", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, nil, nil)
 }
 
 func CreateTestAppPluginRoot(logger *types.Logger, fileData map[string]string,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil)
+	return CreateTestAppInt(logger, "/", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, nil, nil)
 }
 
 func CreateDevAppPlugin(logger *types.Logger, fileData map[string]string, plugins []string,
 	permissions []types.Permission, pluginConfig map[string]types.PluginSettings) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, true, plugins, permissions, pluginConfig, "app_dev_testapp", types.AppSettings{}, nil, nil)
+	return CreateTestAppInt(logger, "/test", fileData, true, plugins, permissions, pluginConfig, "app_dev_testapp", types.AppSettings{}, nil, nil, nil, nil)
 }
 
 func CreateTestAppPluginId(logger *types.Logger, fileData map[string]string,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings, id string, settings types.AppSettings) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, plugins, permissions, pluginConfig, id, settings, nil, nil)
+	return CreateTestAppInt(logger, "/test", fileData, false, plugins, permissions, pluginConfig, id, settings, nil, nil, nil, nil)
+}
+
+func CreateTestAppAuthorizer(logger *types.Logger, fileData map[string]string,
+	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings, authorizer types.AuthorizerFunc, customPermsFunc types.CustomPermsFunc) (*app.App, *appfs.WorkFs, error) {
+	return CreateTestAppInt(logger, "/test", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, authorizer, customPermsFunc)
 }
 
 func CreateTestAppInt(logger *types.Logger, path string, fileData map[string]string, isDev bool,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings,
-	id string, settings types.AppSettings, params map[string]string, appConfig *types.AppConfig) (*app.App, *appfs.WorkFs, error) {
+	id string, settings types.AppSettings, params map[string]string, appConfig *types.AppConfig,
+	authorizer types.AuthorizerFunc, customPermsFunc types.CustomPermsFunc) (*app.App, *appfs.WorkFs, error) {
 	systemConfig := types.SystemConfig{TailwindCSSCommand: "", AllowedEnv: []string{"HOME"}}
 	var fs appfs.ReadableFS
 	if isDev {
@@ -107,7 +113,7 @@ func CreateTestAppInt(logger *types.Logger, path string, fileData map[string]str
 	workFS := appfs.NewWorkFs("", &TestWriteFS{TestReadFS: &TestReadFS{fileData: map[string]string{}}})
 	a, err := app.NewApp(sourceFS, workFS, logger,
 		createTestAppEntry(id, path, isDev, metadata), &systemConfig, pluginConfig, *appConfig,
-		nil, secretManager.AppEvalTemplate, nil, &types.ServerConfig{}, nil)
+		nil, secretManager.AppEvalTemplate, nil, &types.ServerConfig{}, authorizer, customPermsFunc)
 	if err != nil {
 		return nil, nil, err
 	}

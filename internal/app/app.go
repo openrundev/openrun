@@ -87,8 +87,9 @@ type App struct {
 	lastRequestTime atomic.Int64
 	secretEvalFunc  func([][]string, string, string) (string, error)
 	auditInsert     func(*types.AuditEvent) error
-	AppRunPath      string               // path to the app run directory
-	authorizer      types.AuthorizerFunc // the authorizer function to use, can be null
+	AppRunPath      string                // path to the app run directory
+	authorizer      types.AuthorizerFunc  // the authorizer function to use, can be null
+	customPermsFunc types.CustomPermsFunc // the custom permissions function to use, can be null
 }
 
 type starlarkCacheEntry struct {
@@ -105,19 +106,21 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 	appEntry *types.AppEntry, systemConfig *types.SystemConfig,
 	plugins map[string]types.PluginSettings, appConfig types.AppConfig, notifyClose chan<- types.AppPathDomain,
 	secretEvalFunc func([][]string, string, string) (string, error),
-	auditInsert func(*types.AuditEvent) error, serverConfig *types.ServerConfig, authorizer types.AuthorizerFunc) (*App, error) {
+	auditInsert func(*types.AuditEvent) error, serverConfig *types.ServerConfig,
+	authorizer types.AuthorizerFunc, customPermsFunc types.CustomPermsFunc) (*App, error) {
 	newApp := &App{
-		sourceFS:       sourceFS,
-		Logger:         logger,
-		AppEntry:       appEntry,
-		systemConfig:   systemConfig,
-		starlarkCache:  map[string]*starlarkCacheEntry{},
-		notifyClose:    notifyClose,
-		secretEvalFunc: secretEvalFunc,
-		appStyle:       &dev.AppStyle{},
-		auditInsert:    auditInsert,
-		serverConfig:   serverConfig,
-		authorizer:     authorizer,
+		sourceFS:        sourceFS,
+		Logger:          logger,
+		AppEntry:        appEntry,
+		systemConfig:    systemConfig,
+		starlarkCache:   map[string]*starlarkCacheEntry{},
+		notifyClose:     notifyClose,
+		secretEvalFunc:  secretEvalFunc,
+		appStyle:        &dev.AppStyle{},
+		auditInsert:     auditInsert,
+		serverConfig:    serverConfig,
+		authorizer:      authorizer,
+		customPermsFunc: customPermsFunc,
 	}
 	newApp.plugins = NewAppPlugins(newApp, plugins, appEntry.Metadata.Accounts)
 	newApp.AppConfig = appConfig

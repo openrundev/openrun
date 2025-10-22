@@ -723,6 +723,7 @@ const (
 )
 
 type AuthorizerFunc func(ctx context.Context, permissions []string) (bool, error)
+type CustomPermsFunc func(ctx context.Context) ([]string, error)
 
 type SAMLConfig struct {
 	MetadataURL string `toml:"metadata_url"`
@@ -739,4 +740,11 @@ const (
 	CONSTANT_KV_PREFIX          = "constant:"
 	COOKIE_SESSION_SECRET_KV    = "cookie_session_secret"
 	COOKIE_SESSION_BLOCK_KEY_KV = "cookie_session_block_key"
+)
+
+const (
+	// OpenRun headers are used to pass information to the downstream service
+	OPENRUN_HEADER_PREFIX = "X-Openrun-"
+	OPENRUN_HEADER_USER   = OPENRUN_HEADER_PREFIX + "User"
+	OPENRUN_HEADER_PERMS  = OPENRUN_HEADER_PREFIX + "Perms"
 )

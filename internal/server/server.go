@@ -845,7 +845,7 @@ func (s *Server) GetListAppsApp() (*app.App, error) {
 	appLogger := types.Logger{Logger: &subLogger}
 	s.listAppsApp, err = app.NewApp(sourceFS, nil, &appLogger, &appEntry, &s.config.System,
 		s.config.Plugins, s.config.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
-		s.InsertAuditEvent, s.config, s.AuthorizeAny)
+		s.InsertAuditEvent, s.config, s.AuthorizeAny, s.GetCustomPermissions)
 	if err != nil {
 		return nil, err
 	}
@@ -894,6 +894,14 @@ func (s *Server) Authorize(ctx context.Context, permission types.RBACPermission,
 	appPathDomain := ctx.Value(types.APP_PATH_DOMAIN).(types.AppPathDomain)
 	appAuth := string(ctx.Value(types.APP_AUTH).(types.AppAuthnType))
 	return s.rbacManager.Authorize(userId, appPathDomain, appAuth, permission, groups, isAppLevelPermission)
+}
+
+func (s *Server) GetCustomPermissions(ctx context.Context) ([]string, error) {
+	userId := ctx.Value(types.USER_ID).(string)
+	groups := ctx.Value(types.GROUPS).([]string)
+	appPathDomain := ctx.Value(types.APP_PATH_DOMAIN).(types.AppPathDomain)
+	appAuth := string(ctx.Value(types.APP_AUTH).(types.AppAuthnType))
+	return s.rbacManager.GetCustomPermissions(userId, appPathDomain, appAuth, groups)
 }
 
 // AuthorizeList checks if the user has access to perform list operation on the specified app
