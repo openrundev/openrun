@@ -1396,3 +1396,851 @@ func TestValidateGrants(t *testing.T) {
 		})
 	}
 }
+
+func TestRegexSupportInGrants(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		rbacConfig     *types.RBACConfig
+		user           string
+		appPathDomain  types.AppPathDomain
+		permission     types.RBACPermission
+		expectedResult bool
+		expectError    bool
+	}{
+		{
+			name: "regex matches user in grant",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with regex",
+						Users:       []string{"regex:^dev_.*"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "dev_john",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "regex does not match user in grant",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with regex",
+						Users:       []string{"regex:^dev_.*"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "admin_john",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: false,
+			expectError:    false,
+		},
+		{
+			name: "regex with email pattern",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with email regex",
+						Users:       []string{"regex:.*@example\\.com$"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "john@example.com",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "regex with email pattern - no match",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with email regex",
+						Users:       []string{"regex:.*@example\\.com$"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "john@other.com",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: false,
+			expectError:    false,
+		},
+		{
+			name: "multiple regex patterns - first matches",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with multiple regex",
+						Users:       []string{"regex:^dev_.*", "regex:^admin_.*"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "dev_jane",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "multiple regex patterns - second matches",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with multiple regex",
+						Users:       []string{"regex:^dev_.*", "regex:^admin_.*"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "admin_jane",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "mixed regex and direct users",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with mixed users",
+						Users:       []string{"user1", "regex:^dev_.*", "user2"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "dev_bob",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "mixed regex, groups and direct users",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups: map[string][]string{
+					"developers": {"user1", "user2"},
+				},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with mixed users and groups",
+						Users:       []string{"group:developers", "regex:^admin_.*", "user3"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "admin_steve",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "regex with special characters",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with special char regex",
+						Users:       []string{"regex:^[a-z]+\\.[a-z]+@(example|test)\\.com$"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "john.doe@example.com",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "case sensitive regex",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with case sensitive regex",
+						Users:       []string{"regex:^DEV_.*"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "dev_john",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: false,
+			expectError:    false,
+		},
+		{
+			name: "case insensitive regex",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with case insensitive regex",
+						Users:       []string{"regex:(?i)^dev_.*"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "DEV_john",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			logger := createTestLogger()
+			serverConfig := &types.ServerConfig{
+				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+			}
+
+			rbacManager, err := NewRBACHandler(logger, tt.rbacConfig, serverConfig)
+			if err != nil {
+				if !tt.expectError {
+					t.Fatalf("unexpected error creating RBACManager: %v", err)
+				}
+				return
+			}
+
+			if tt.expectError {
+				t.Fatalf("expected error but got none")
+			}
+
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if result != tt.expectedResult {
+				t.Errorf("expected result %v, got %v", tt.expectedResult, result)
+			}
+		})
+	}
+}
+
+func TestRegexSupportInGroups(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		rbacConfig     *types.RBACConfig
+		user           string
+		appPathDomain  types.AppPathDomain
+		permission     types.RBACPermission
+		expectedResult bool
+		expectError    bool
+	}{
+		{
+			name: "regex in group definition",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups: map[string][]string{
+					"developers": {"regex:^dev_.*", "user1"},
+				},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant via group with regex",
+						Users:       []string{"group:developers"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "dev_alice",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "regex in nested group definition",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups: map[string][]string{
+					"juniors": {"regex:^jr_.*"},
+					"seniors": {"regex:^sr_.*", "group:juniors"},
+				},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant via nested group with regex",
+						Users:       []string{"group:seniors"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "jr_bob",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "regex in nested group - senior user",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups: map[string][]string{
+					"juniors": {"regex:^jr_.*"},
+					"seniors": {"regex:^sr_.*", "group:juniors"},
+				},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant via nested group with regex",
+						Users:       []string{"group:seniors"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "sr_alice",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "regex in group does not match",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups: map[string][]string{
+					"developers": {"regex:^dev_.*"},
+				},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant via group with regex",
+						Users:       []string{"group:developers"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "admin_alice",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: false,
+			expectError:    false,
+		},
+		{
+			name: "multiple regex patterns in group",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups: map[string][]string{
+					"staff": {"regex:^dev_.*", "regex:^qa_.*", "regex:^pm_.*"},
+				},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant via group with multiple regex",
+						Users:       []string{"group:staff"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "qa_charlie",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			permission:     types.PermissionList,
+			expectedResult: true,
+			expectError:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			logger := createTestLogger()
+			serverConfig := &types.ServerConfig{
+				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+			}
+
+			rbacManager, err := NewRBACHandler(logger, tt.rbacConfig, serverConfig)
+			if err != nil {
+				if !tt.expectError {
+					t.Fatalf("unexpected error creating RBACManager: %v", err)
+				}
+				return
+			}
+
+			if tt.expectError {
+				t.Fatalf("expected error but got none")
+			}
+
+			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if result != tt.expectedResult {
+				t.Errorf("expected result %v, got %v", tt.expectedResult, result)
+			}
+		})
+	}
+}
+
+func TestRegexValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		rbacConfig  *types.RBACConfig
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "invalid regex in grant - missing closing bracket",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with invalid regex",
+						Users:       []string{"regex:^dev_[.*"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "error compiling regex",
+		},
+		{
+			name: "invalid regex in grant - unmatched parenthesis",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with invalid regex",
+						Users:       []string{"regex:^(dev_.*"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "error compiling regex",
+		},
+		{
+			name: "invalid regex in group",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups: map[string][]string{
+					"developers": {"regex:^dev_[.*"},
+				},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{},
+			},
+			expectError: true,
+			errorMsg:    "error initializing rbac group info",
+		},
+		{
+			name: "valid complex regex in grant",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with valid complex regex",
+						Users:       []string{"regex:^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid complex regex in group",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups: map[string][]string{
+					"emails": {"regex:^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
+				},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{},
+			},
+			expectError: false,
+		},
+		{
+			name: "empty regex pattern in grant",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with empty regex",
+						Users:       []string{"regex:"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			expectError: false, // Empty regex is technically valid, matches empty string
+		},
+		{
+			name: "multiple invalid regexes in grant",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with multiple invalid regex",
+						Users:       []string{"regex:^dev_[.*", "regex:^admin_(.*"},
+						Roles:       []string{"read"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "error compiling regex",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			logger := createTestLogger()
+			serverConfig := &types.ServerConfig{
+				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+			}
+
+			rbacManager, err := NewRBACHandler(logger, tt.rbacConfig, serverConfig)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error but got none")
+					return
+				}
+				if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("expected error message to contain '%s', got '%s'", tt.errorMsg, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if rbacManager == nil {
+				t.Errorf("expected RBACManager but got nil")
+			}
+		})
+	}
+}
+
+func TestRegexCaching(t *testing.T) {
+	t.Parallel()
+
+	// Test that regex patterns are compiled once and cached
+	rbacConfig := &types.RBACConfig{
+		Enabled: true,
+		Groups: map[string][]string{
+			"developers": {"regex:^dev_.*"},
+		},
+		Roles: map[string][]types.RBACPermission{
+			"read": {types.PermissionList},
+		},
+		Grants: []types.RBACGrant{
+			{
+				Description: "grant with regex",
+				Users:       []string{"regex:^admin_.*"},
+				Roles:       []string{"read"},
+				Targets:     []string{"/test"},
+			},
+		},
+	}
+
+	logger := createTestLogger()
+	serverConfig := &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+	}
+
+	rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create RBACManager: %v", err)
+	}
+
+	// Verify that regex cache is populated
+	rbacManager.mu.RLock()
+	cacheSize := len(rbacManager.regexCache)
+	rbacManager.mu.RUnlock()
+
+	// We expect 2 regexes to be cached: one from group and one from grant
+	expectedCacheSize := 2
+	if cacheSize != expectedCacheSize {
+		t.Errorf("expected regex cache size %d, got %d", expectedCacheSize, cacheSize)
+	}
+
+	// Test that the same regex is reused (multiple authorize calls should work)
+	for i := 0; i < 10; i++ {
+		_, err := rbacManager.Authorize("dev_user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		if err != nil {
+			t.Errorf("unexpected error on iteration %d: %v", i, err)
+		}
+	}
+}
+
+func TestRegexWithDynamicGroups(t *testing.T) {
+	t.Parallel()
+
+	rbacConfig := &types.RBACConfig{
+		Enabled: true,
+		Groups:  map[string][]string{},
+		Roles: map[string][]types.RBACPermission{
+			"read": {types.PermissionList},
+		},
+		Grants: []types.RBACGrant{
+			{
+				Description: "grant with regex and dynamic groups",
+				Users:       []string{"regex:^dev_.*", "group:sso_admins"},
+				Roles:       []string{"read"},
+				Targets:     []string{"/test"},
+			},
+		},
+	}
+
+	logger := createTestLogger()
+	serverConfig := &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+	}
+
+	rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create RBACManager: %v", err)
+	}
+
+	t.Run("regex matches user", func(t *testing.T) {
+		t.Parallel()
+		allowed, err := rbacManager.Authorize("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !allowed {
+			t.Fatalf("expected regex to match user dev_alice")
+		}
+	})
+
+	t.Run("dynamic group matches", func(t *testing.T) {
+		t.Parallel()
+		allowed, err := rbacManager.Authorize("bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_admins"}, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !allowed {
+			t.Fatalf("expected dynamic group to match")
+		}
+	})
+
+	t.Run("neither regex nor dynamic group matches", func(t *testing.T) {
+		t.Parallel()
+		allowed, err := rbacManager.Authorize("charlie", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if allowed {
+			t.Fatalf("expected authorization to be denied")
+		}
+	})
+}
+
+func TestRegexUpdateConfig(t *testing.T) {
+	t.Parallel()
+
+	initialConfig := &types.RBACConfig{
+		Enabled: true,
+		Groups: map[string][]string{
+			"developers": {"regex:^dev_.*"},
+		},
+		Roles: map[string][]types.RBACPermission{
+			"read": {types.PermissionList},
+		},
+		Grants: []types.RBACGrant{
+			{
+				Description: "initial grant",
+				Users:       []string{"group:developers"},
+				Roles:       []string{"read"},
+				Targets:     []string{"/test"},
+			},
+		},
+	}
+
+	logger := createTestLogger()
+	serverConfig := &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+	}
+
+	rbacManager, err := NewRBACHandler(logger, initialConfig, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create RBACManager: %v", err)
+	}
+
+	// Verify initial config works
+	allowed, err := rbacManager.Authorize("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Fatalf("expected dev_alice to be authorized with initial config")
+	}
+
+	// Update config with different regex
+	updatedConfig := &types.RBACConfig{
+		Enabled: true,
+		Groups: map[string][]string{
+			"developers": {"regex:^admin_.*"},
+		},
+		Roles: map[string][]types.RBACPermission{
+			"read": {types.PermissionList},
+		},
+		Grants: []types.RBACGrant{
+			{
+				Description: "updated grant",
+				Users:       []string{"group:developers"},
+				Roles:       []string{"read"},
+				Targets:     []string{"/test"},
+			},
+		},
+	}
+
+	err = rbacManager.UpdateRBACConfig(updatedConfig)
+	if err != nil {
+		t.Fatalf("failed to update RBAC config: %v", err)
+	}
+
+	// Verify old regex no longer matches
+	allowed, err = rbacManager.Authorize("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Fatalf("expected dev_alice to not be authorized after config update")
+	}
+
+	// Verify new regex matches
+	allowed, err = rbacManager.Authorize("admin_bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Fatalf("expected admin_bob to be authorized with updated config")
+	}
+}

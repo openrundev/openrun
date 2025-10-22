@@ -5,6 +5,7 @@ package server
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ const RBAC_AUTH_PREFIX = "rbac:"
 const RBAC_GROUP_PREFIX = "group:"
 const RBAC_ROLE_PREFIX = "role:"
 const RBAC_CUSTOM_PREFIX = "custom:" // used for app level custom permissions
+const RBAC_REGEX_PREFIX = "regex:"   // used for regex matching in users list
 
 type RBACManager struct {
 	*types.Logger
@@ -23,8 +25,9 @@ type RBACManager struct {
 	serverConfig *types.ServerConfig
 	mu           sync.RWMutex
 
-	groups map[string][]string               // group name to user ids (with group hierarchy resolved)
-	roles  map[string][]types.RBACPermission // role name to permissions (with role: hierarchy resolved)
+	groups     map[string][]string               // group name to user ids (with group hierarchy resolved)
+	roles      map[string][]types.RBACPermission // role name to permissions (with role: hierarchy resolved)
+	regexCache map[string]*regexp.Regexp         // cache of compiled regex patterns
 }
 
 func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverConfig *types.ServerConfig) (*RBACManager, error) {
@@ -100,7 +103,33 @@ func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPat
 				break
 			}
 			refGroup, ok := h.groups[refGroupName]
-			if ok && slices.Contains(refGroup, inputUser) {
+			if ok {
+				// Check for direct user match
+				if slices.Contains(refGroup, inputUser) {
+					userMatched = true
+					break
+				}
+				// Check for regex patterns in the group
+				for _, groupMember := range refGroup {
+					if strings.HasPrefix(groupMember, RBAC_REGEX_PREFIX) {
+						regex, ok := h.regexCache[groupMember[len(RBAC_REGEX_PREFIX):]]
+						if ok && regex.MatchString(inputUser) {
+							userMatched = true
+							break
+						}
+					}
+				}
+				if userMatched {
+					break
+				}
+			}
+		} else if strings.HasPrefix(user, RBAC_REGEX_PREFIX) {
+			// user in grant  is a regex, match it against the input user
+			regex, ok := h.regexCache[user[len(RBAC_REGEX_PREFIX):]]
+			if !ok {
+				return false, fmt.Errorf("regex not found for user: %s", user)
+			}
+			if regex.MatchString(inputUser) {
 				userMatched = true
 				break
 			}
@@ -183,6 +212,14 @@ func (h *RBACManager) initGroupInfo(rbacConfig *types.RBACConfig) (map[string][]
 				}
 				members = append(members, refMembers...)
 			} else {
+				if strings.HasPrefix(user, RBAC_REGEX_PREFIX) {
+					regexPattern := user[len(RBAC_REGEX_PREFIX):]
+					regex, err := regexp.Compile(regexPattern)
+					if err != nil {
+						return nil, err
+					}
+					h.regexCache[regexPattern] = regex
+				}
 				members = append(members, user)
 			}
 		}
@@ -264,6 +301,16 @@ func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig) error {
 	for i, grant := range rbacConfig.Grants {
 		// groups can be passed dynamically (for SSO login), so we don't need to validate them
 		// Validate role references in Roles
+		for _, user := range grant.Users {
+			if strings.HasPrefix(user, RBAC_REGEX_PREFIX) {
+				regexPattern := user[len(RBAC_REGEX_PREFIX):]
+				regex, err := regexp.Compile(regexPattern)
+				if err != nil {
+					return fmt.Errorf("error compiling regex: %w", err)
+				}
+				h.regexCache[regexPattern] = regex
+			}
+		}
 		for _, role := range grant.Roles {
 			if _, exists := rbacConfig.Roles[role]; !exists {
 				return fmt.Errorf("grant %d ('%s'): Roles references undefined role '%s'", i, grant.Description, role)
@@ -278,6 +325,7 @@ func (h *RBACManager) UpdateRBACConfig(rbacConfig *types.RBACConfig) error {
 	defer h.mu.Unlock()
 
 	h.rbacConfig = rbacConfig
+	h.regexCache = make(map[string]*regexp.Regexp)
 
 	var err error
 	h.groups, err = h.initGroupInfo(rbacConfig)
