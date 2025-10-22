@@ -25,9 +25,10 @@ type RBACManager struct {
 	serverConfig *types.ServerConfig
 	mu           sync.RWMutex
 
-	groups     map[string][]string               // group name to user ids (with group hierarchy resolved)
-	roles      map[string][]types.RBACPermission // role name to permissions (with role: hierarchy resolved)
-	regexCache map[string]*regexp.Regexp         // cache of compiled regex patterns
+	groups      map[string][]string               // group name to user ids (with group hierarchy resolved)
+	roles       map[string][]types.RBACPermission // role name to permissions (with role: hierarchy resolved)
+	regexCache  map[string]*regexp.Regexp         // cache of compiled regex patterns
+	customPerms []string                          // custom permissions are permissions defined by the user. This list does not have the custom: prefix
 }
 
 func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverConfig *types.ServerConfig) (*RBACManager, error) {
@@ -70,6 +71,43 @@ func (h *RBACManager) Authorize(user string, appPathDomain types.AppPathDomain,
 	appPathDomain.Path = strings.TrimSuffix(appPathDomain.Path, types.PREVIEW_SUFFIX)
 
 	return h.checkGrants(user, appPathDomain, permission, groups, isAppLevelPermission)
+}
+
+// GetCustomPermissions returns the custom permissions set for the user for the given app path domain and app auth setting
+// Values in returned list do not have the custom: prefix
+func (h *RBACManager) GetCustomPermissions(user string, appPathDomain types.AppPathDomain, appAuthSetting string,
+	groups []string) ([]string, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if len(h.customPerms) == 0 {
+		return nil, nil
+	}
+
+	if !h.rbacConfig.Enabled {
+		// rbac is not enabled, authorize all requests
+		return h.customPerms, nil
+	}
+
+	if user != "" && user == types.ADMIN_USER {
+		// admin user is always authorized if enabled
+		return h.customPerms, nil
+	}
+
+	customPerms := make([]string, 0)
+	for _, perm := range h.customPerms {
+		authorized, err := h.Authorize(user, appPathDomain, appAuthSetting, types.RBACPermission(perm), groups, true)
+		if err != nil {
+			return nil, err
+		}
+		if authorized {
+			customPerms = append(customPerms, perm)
+		}
+	}
+
+	h.Trace().Msgf("User %s has custom permissions: %v on app %s with auth setting %s groups %v", user,
+		customPerms, appPathDomain.String(), appAuthSetting, groups)
+	return customPerms, nil
 }
 
 func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathDomain,
@@ -290,6 +328,22 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string][]t
 		roles[role] = permissions
 	}
 
+	// Keep track of all custom perms (deduplicated)
+	customPermsMap := make(map[string]bool)
+	for _, role := range roles {
+		for _, permission := range role {
+			if strings.HasPrefix(string(permission), RBAC_CUSTOM_PREFIX) {
+				perm := string(permission)[len(RBAC_CUSTOM_PREFIX):]
+				customPermsMap[perm] = true
+			}
+		}
+	}
+
+	// Convert map to slice
+	for perm := range customPermsMap {
+		h.customPerms = append(h.customPerms, perm)
+	}
+
 	return roles, nil
 }
 func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig) error {
@@ -326,6 +380,7 @@ func (h *RBACManager) UpdateRBACConfig(rbacConfig *types.RBACConfig) error {
 
 	h.rbacConfig = rbacConfig
 	h.regexCache = make(map[string]*regexp.Regexp)
+	h.customPerms = make([]string, 0)
 
 	var err error
 	h.groups, err = h.initGroupInfo(rbacConfig)

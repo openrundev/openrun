@@ -2244,3 +2244,598 @@ func TestRegexUpdateConfig(t *testing.T) {
 		t.Fatalf("expected admin_bob to be authorized with updated config")
 	}
 }
+
+func TestGetCustomPermissions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		rbacConfig     *types.RBACConfig
+		user           string
+		appPathDomain  types.AppPathDomain
+		appAuthSetting string
+		groups         []string
+		expectedPerms  []string
+		expectError    bool
+	}{
+		{
+			name: "no custom permissions defined",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"read": {types.PermissionList},
+				},
+				Grants: []types.RBACGrant{},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  nil,
+			expectError:    false,
+		},
+		{
+			name: "rbac disabled - returns all custom permissions",
+			rbacConfig: &types.RBACConfig{
+				Enabled: false,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+				},
+				Grants: []types.RBACGrant{},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{"action_run", "action_delete"},
+			expectError:    false,
+		},
+		{
+			name: "admin user - returns all custom permissions",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+				},
+				Grants: []types.RBACGrant{},
+			},
+			user:           "admin",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{"action_run", "action_delete"},
+			expectError:    false,
+		},
+		{
+			name: "user with all custom permissions granted",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant all actions",
+						Users:       []string{"user1"},
+						Roles:       []string{"actor"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{"action_run", "action_delete"},
+			expectError:    false,
+		},
+		{
+			name: "user with some custom permissions granted",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"runner":  {types.RBACPermission("custom:action_run")},
+					"deleter": {types.RBACPermission("custom:action_delete")},
+					"updater": {types.RBACPermission("custom:action_update")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant run action",
+						Users:       []string{"user1"},
+						Roles:       []string{"runner"},
+						Targets:     []string{"/test"},
+					},
+					{
+						Description: "grant update action",
+						Users:       []string{"user1"},
+						Roles:       []string{"updater"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{"action_run", "action_update"},
+			expectError:    false,
+		},
+		{
+			name: "user with no custom permissions granted",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant to other user",
+						Users:       []string{"user2"},
+						Roles:       []string{"actor"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{},
+			expectError:    false,
+		},
+		{
+			name: "user in group with custom permissions",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups: map[string][]string{
+					"developers": {"user1", "user2"},
+				},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant to developers",
+						Users:       []string{"group:developers"},
+						Roles:       []string{"actor"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{"action_run", "action_delete"},
+			expectError:    false,
+		},
+		{
+			name: "user with custom permissions via dynamic groups",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant via dynamic group",
+						Users:       []string{"group:sso_devs"},
+						Roles:       []string{"actor"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{"sso_devs"},
+			expectedPerms:  []string{"action_run", "action_delete"},
+			expectError:    false,
+		},
+		{
+			name: "user with custom permissions via regex",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant via regex",
+						Users:       []string{"regex:^dev_.*"},
+						Roles:       []string{"actor"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "dev_alice",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{"action_run", "action_delete"},
+			expectError:    false,
+		},
+		{
+			name: "user with custom permissions but wrong target",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant to different path",
+						Users:       []string{"user1"},
+						Roles:       []string{"actor"},
+						Targets:     []string{"/other"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{},
+			expectError:    false,
+		},
+		{
+			name: "user with custom permissions - glob target matching",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with glob",
+						Users:       []string{"user1"},
+						Roles:       []string{"actor"},
+						Targets:     []string{"/test/*"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test/app1", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{"action_run", "action_delete"},
+			expectError:    false,
+		},
+		{
+			name: "user with mixed standard and custom permissions",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"reader": {types.PermissionList, types.PermissionAccess},
+					"actor":  {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant reader and actor",
+						Users:       []string{"user1"},
+						Roles:       []string{"reader", "actor"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{"action_run", "action_delete"},
+			expectError:    false,
+		},
+		{
+			name: "multiple roles with overlapping custom permissions",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"runner":  {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+					"updater": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_update")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant runner",
+						Users:       []string{"user1"},
+						Roles:       []string{"runner"},
+						Targets:     []string{"/test"},
+					},
+					{
+						Description: "grant updater",
+						Users:       []string{"user1"},
+						Roles:       []string{"updater"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{"action_run", "action_delete", "action_update"},
+			expectError:    false,
+		},
+		{
+			name: "user with custom permissions and domain matching",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with domain",
+						Users:       []string{"user1"},
+						Roles:       []string{"actor"},
+						Targets:     []string{"example.com:/test"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: "example.com"},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{"action_run"},
+			expectError:    false,
+		},
+		{
+			name: "user with custom permissions but domain not matching",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"actor": {types.RBACPermission("custom:action_run")},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant with domain",
+						Users:       []string{"user1"},
+						Roles:       []string{"actor"},
+						Targets:     []string{"example.com:/test"},
+					},
+				},
+			},
+			user:           "user1",
+			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: "other.com"},
+			appAuthSetting: "rbac:test",
+			groups:         []string{},
+			expectedPerms:  []string{},
+			expectError:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			logger := createTestLogger()
+			serverConfig := &types.ServerConfig{
+				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+			}
+
+			rbacManager, err := NewRBACHandler(logger, tt.rbacConfig, serverConfig)
+			if err != nil {
+				t.Fatalf("failed to create RBACManager: %v", err)
+			}
+
+			perms, err := rbacManager.GetCustomPermissions(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.groups)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			// Check if returned permissions match expected
+			if len(perms) != len(tt.expectedPerms) {
+				t.Errorf("expected %d permissions, got %d. Expected: %v, Got: %v",
+					len(tt.expectedPerms), len(perms), tt.expectedPerms, perms)
+				return
+			}
+
+			// Create a map for easier comparison
+			permMap := make(map[string]bool)
+			for _, p := range perms {
+				permMap[p] = true
+			}
+
+			for _, expectedPerm := range tt.expectedPerms {
+				if !permMap[expectedPerm] {
+					t.Errorf("expected permission '%s' not found in result: %v", expectedPerm, perms)
+				}
+			}
+		})
+	}
+}
+
+func TestGetCustomPermissionsWithRoleHierarchy(t *testing.T) {
+	t.Parallel()
+
+	rbacConfig := &types.RBACConfig{
+		Enabled: true,
+		Groups:  map[string][]string{},
+		Roles: map[string][]types.RBACPermission{
+			"runner": {types.RBACPermission("custom:action_run")},
+			"editor": {types.RBACPermission("custom:action_edit"), "role:runner"},
+			"admin":  {types.RBACPermission("custom:action_delete"), "role:editor"},
+		},
+		Grants: []types.RBACGrant{
+			{
+				Description: "grant admin role",
+				Users:       []string{"user1"},
+				Roles:       []string{"admin"},
+				Targets:     []string{"/test"},
+			},
+		},
+	}
+
+	logger := createTestLogger()
+	serverConfig := &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+	}
+
+	rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create RBACManager: %v", err)
+	}
+
+	perms, err := rbacManager.GetCustomPermissions("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have all three permissions due to role hierarchy
+	expectedPerms := map[string]bool{
+		"action_run":    true,
+		"action_edit":   true,
+		"action_delete": true,
+	}
+
+	if len(perms) != len(expectedPerms) {
+		t.Errorf("expected %d permissions, got %d: %v", len(expectedPerms), len(perms), perms)
+	}
+
+	for _, perm := range perms {
+		if !expectedPerms[perm] {
+			t.Errorf("unexpected permission: %s", perm)
+		}
+	}
+}
+
+func TestGetCustomPermissionsWithGroupHierarchy(t *testing.T) {
+	t.Parallel()
+
+	rbacConfig := &types.RBACConfig{
+		Enabled: true,
+		Groups: map[string][]string{
+			"juniors": {"user1"},
+			"seniors": {"group:juniors"},
+		},
+		Roles: map[string][]types.RBACPermission{
+			"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
+		},
+		Grants: []types.RBACGrant{
+			{
+				Description: "grant to seniors",
+				Users:       []string{"group:seniors"},
+				Roles:       []string{"actor"},
+				Targets:     []string{"/test"},
+			},
+		},
+	}
+
+	logger := createTestLogger()
+	serverConfig := &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+	}
+
+	rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create RBACManager: %v", err)
+	}
+
+	perms, err := rbacManager.GetCustomPermissions("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have permissions via nested group membership
+	expectedPerms := map[string]bool{
+		"action_run":    true,
+		"action_delete": true,
+	}
+
+	if len(perms) != len(expectedPerms) {
+		t.Errorf("expected %d permissions, got %d: %v", len(expectedPerms), len(perms), perms)
+	}
+
+	for _, perm := range perms {
+		if !expectedPerms[perm] {
+			t.Errorf("unexpected permission: %s", perm)
+		}
+	}
+}
+
+func TestGetCustomPermissionsEmpty(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		rbacConfig *types.RBACConfig
+		user       string
+	}{
+		{
+			name: "no roles defined",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles:   map[string][]types.RBACPermission{},
+				Grants:  []types.RBACGrant{},
+			},
+			user: "user1",
+		},
+		{
+			name: "only standard permissions, no custom",
+			rbacConfig: &types.RBACConfig{
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles: map[string][]types.RBACPermission{
+					"reader": {types.PermissionList, types.PermissionAccess},
+				},
+				Grants: []types.RBACGrant{
+					{
+						Description: "grant reader",
+						Users:       []string{"user1"},
+						Roles:       []string{"reader"},
+						Targets:     []string{"/test"},
+					},
+				},
+			},
+			user: "user1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			logger := createTestLogger()
+			serverConfig := &types.ServerConfig{
+				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+			}
+
+			rbacManager, err := NewRBACHandler(logger, tt.rbacConfig, serverConfig)
+			if err != nil {
+				t.Fatalf("failed to create RBACManager: %v", err)
+			}
+
+			perms, err := rbacManager.GetCustomPermissions(tt.user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(perms) != 0 {
+				t.Errorf("expected empty permissions, got: %v", perms)
+			}
+		})
+	}
+}
