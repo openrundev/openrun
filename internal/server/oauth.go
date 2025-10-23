@@ -18,6 +18,7 @@ import (
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
 	"github.com/openrundev/openrun/internal/passwd"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 
@@ -213,7 +214,7 @@ func (s *OAuthManager) ValidateProviderName(provider string) bool {
 }
 
 func (s *OAuthManager) ValidateAuthType(authType string) bool {
-	authType = strings.TrimPrefix(authType, RBAC_AUTH_PREFIX)
+	authType = strings.TrimPrefix(authType, rbac.RBAC_AUTH_PREFIX)
 	switch authType {
 	case string(types.AppAuthnDefault), string(types.AppAuthnSystem), string(types.AppAuthnNone):
 		return true

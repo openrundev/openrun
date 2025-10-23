@@ -1,7 +1,7 @@
 // Copyright (c) ClaceIO, LLC
 // SPDX-License-Identifier: Apache-2.0
 
-package server
+package rbac
 
 import (
 	"fmt"

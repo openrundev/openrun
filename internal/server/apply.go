@@ -18,6 +18,7 @@ import (
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/metadata"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
@@ -320,7 +321,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 
 	filteredApps := make([]types.AppPathDomain, 0, len(applyConfig))
 	for appPathDomain := range applyConfig {
-		match, err := MatchGlob(appPathGlob, appPathDomain)
+		match, err := rbac.MatchGlob(appPathGlob, appPathDomain)
 		if err != nil {
 			return nil, nil, err
 		}

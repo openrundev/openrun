@@ -28,6 +28,7 @@ import (
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/passwd"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/server/list_apps"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -140,7 +141,7 @@ type Server struct {
 	syncTimer      *time.Ticker
 	configMu       sync.RWMutex
 	dynamicConfig  *types.DynamicConfig
-	rbacManager    *RBACManager
+	rbacManager    *rbac.RBACManager
 	csrfMiddleware *http.CrossOriginProtection
 }
 
@@ -268,7 +269,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("error saving dynamic config: %w", err)
 	}
 
-	server.rbacManager, err = NewRBACHandler(l, &server.dynamicConfig.RBAC, config)
+	server.rbacManager, err = rbac.NewRBACHandler(l, &server.dynamicConfig.RBAC, config)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing rbac manager: %w", err)
 	}
@@ -845,7 +846,7 @@ func (s *Server) GetListAppsApp() (*app.App, error) {
 	appLogger := types.Logger{Logger: &subLogger}
 	s.listAppsApp, err = app.NewApp(sourceFS, nil, &appLogger, &appEntry, &s.config.System,
 		s.config.Plugins, s.config.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
-		s.InsertAuditEvent, s.config, s.AuthorizeAny, s.GetCustomPermissions)
+		s.InsertAuditEvent, s.config, s.rbacManager)
 	if err != nil {
 		return nil, err
 	}
@@ -864,7 +865,7 @@ func (s *Server) ParseGlob(appGlob string) ([]types.AppInfo, error) {
 		return nil, err
 	}
 
-	matched, err := ParseGlobFromInfo(appGlob, appsInfo)
+	matched, err := rbac.ParseGlobFromInfo(appGlob, appsInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -872,46 +873,14 @@ func (s *Server) ParseGlob(appGlob string) ([]types.AppInfo, error) {
 	return matched, nil
 }
 
-// AuthorizeAny checks if the user has access to any of the specified permissions
-// Used for app level permissions, like actions access
-func (s *Server) AuthorizeAny(ctx context.Context, permissions []string) (bool, error) {
-	for _, permission := range permissions {
-		authorized, err := s.Authorize(ctx, types.RBACPermission(permission), true)
-		if err != nil {
-			return false, err
-		}
-		if authorized {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// Authorize checks if the user has access to the specified permission
-func (s *Server) Authorize(ctx context.Context, permission types.RBACPermission, isAppLevelPermission bool) (bool, error) {
-	userId := ctx.Value(types.USER_ID).(string)
-	groups := ctx.Value(types.GROUPS).([]string)
-	appPathDomain := ctx.Value(types.APP_PATH_DOMAIN).(types.AppPathDomain)
-	appAuth := string(ctx.Value(types.APP_AUTH).(types.AppAuthnType))
-	return s.rbacManager.Authorize(userId, appPathDomain, appAuth, permission, groups, isAppLevelPermission)
-}
-
-func (s *Server) GetCustomPermissions(ctx context.Context) ([]string, error) {
-	userId := ctx.Value(types.USER_ID).(string)
-	groups := ctx.Value(types.GROUPS).([]string)
-	appPathDomain := ctx.Value(types.APP_PATH_DOMAIN).(types.AppPathDomain)
-	appAuth := string(ctx.Value(types.APP_AUTH).(types.AppAuthnType))
-	return s.rbacManager.GetCustomPermissions(userId, appPathDomain, appAuth, groups)
-}
-
 // AuthorizeList checks if the user has access to perform list operation on the specified app
 // For RBAC mode, uses RBAC permissions. For non-RBAC mode, look at whether app is using
 // same authentication types as used by the caller
 func (s *Server) AuthorizeList(userId string, app *types.AppInfo, groups []string) (bool, error) {
 	appAuthStr := string(app.Auth)
-	if s.rbacManager.rbacConfig.Enabled {
+	if s.rbacManager.RbacConfig.Enabled {
 		// RBAC auth is enabled, verify access
-		return s.rbacManager.Authorize(userId, app.AppPathDomain, appAuthStr, types.PermissionList, groups, false)
+		return s.rbacManager.AuthorizeInt(userId, app.AppPathDomain, appAuthStr, types.PermissionList, groups, false)
 	}
 
 	if userId != "" && userId == types.ADMIN_USER {
@@ -919,7 +888,7 @@ func (s *Server) AuthorizeList(userId string, app *types.AppInfo, groups []strin
 		return true, nil
 	}
 
-	appAuthStr = strings.TrimPrefix(appAuthStr, RBAC_AUTH_PREFIX)
+	appAuthStr = strings.TrimPrefix(appAuthStr, rbac.RBAC_AUTH_PREFIX)
 	appAuth := types.AppAuthnType(appAuthStr)
 	if appAuth == types.AppAuthnDefault {
 		appAuth = types.AppAuthnType(s.config.Security.AppDefaultAuthType)

@@ -1,22 +1,15 @@
 // Copyright (c) ClaceIO, LLC
 // SPDX-License-Identifier: Apache-2.0
 
-package server
+package rbac
 
 import (
-	"io"
 	"strings"
 	"testing"
 
+	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
-	"github.com/rs/zerolog"
 )
-
-// createTestLogger creates a logger that discards all output for testing
-func createTestLogger() *types.Logger {
-	logger := zerolog.New(io.Discard).Level(zerolog.InfoLevel)
-	return &types.Logger{Logger: &logger}
-}
 
 func TestNewRBACHandler(t *testing.T) {
 	t.Parallel()
@@ -115,7 +108,7 @@ func TestNewRBACHandler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{
 					AdminUser: "admin",
@@ -494,13 +487,13 @@ func TestAuthorizeAccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			rbacManager, err := NewRBACHandler(logger, tt.rbacConfig, tt.serverConfig)
 			if err != nil {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.permission, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.permission, []string{}, false)
 
 			if tt.expectError {
 				if err == nil {
@@ -590,7 +583,7 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 			}
@@ -600,7 +593,7 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -700,7 +693,7 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 			}
@@ -710,7 +703,7 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -742,7 +735,7 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 		},
 	}
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	serverConfig := &types.ServerConfig{
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
@@ -755,7 +748,7 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 	t.Run("denied when no dynamic groups passed", func(t *testing.T) {
 		t.Parallel()
 		// user is not part of any configured group, and no dynamic groups provided
-		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -767,7 +760,7 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 	t.Run("allowed when dynamic group passed", func(t *testing.T) {
 		t.Parallel()
 		// user is considered part of sso_devs via dynamic groups argument
-		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
 			types.PermissionList, []string{"sso_devs"}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -799,7 +792,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 		},
 	}
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	serverConfig := &types.ServerConfig{
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
@@ -810,7 +803,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user1 not in configured groups; denied without dynamic groups
-	allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -819,7 +812,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user1 allowed when dynamic group provided
-	allowed, err = rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_devs"}, false)
+	allowed, err = rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_devs"}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -828,7 +821,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user2 is in configured group; allowed even without dynamic groups
-	allowed, err = rbacManager.Authorize("user2", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	allowed, err = rbacManager.AuthorizeInt("user2", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -923,7 +916,7 @@ func TestUpdateRBACConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 			}
@@ -947,7 +940,7 @@ func TestUpdateRBACConfig(t *testing.T) {
 			}
 
 			// Test that the update worked by checking authorization
-			result, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+			result, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error during authorization test: %v", err)
 				return
@@ -982,7 +975,7 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 		},
 	}
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	serverConfig := &types.ServerConfig{
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
@@ -998,7 +991,7 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 		go func(user string) {
 			defer func() { done <- true }()
 
-			result, err := rbacManager.Authorize(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -1021,7 +1014,7 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 func TestAuthorizeAppLevelPermissions(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	serverConfig := &types.ServerConfig{
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
@@ -1035,7 +1028,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 			t.Fatalf("failed to create RBACManager: %v", err)
 		}
 
-		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "none",
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "none",
 			types.RBACPermission("action_run"), []string{}, true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1069,7 +1062,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 			t.Fatalf("failed to create RBACManager: %v", err)
 		}
 
-		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
 			types.RBACPermission("action_run"), []string{}, true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1103,7 +1096,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 			t.Fatalf("failed to create RBACManager: %v", err)
 		}
 
-		allowed, err := rbacManager.Authorize("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
 			types.RBACPermission("action_run"), []string{}, true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1367,7 +1360,7 @@ func TestValidateGrants(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 			}
@@ -1670,7 +1663,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 			}
@@ -1687,7 +1680,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				t.Fatalf("expected error but got none")
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -1845,7 +1838,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 			}
@@ -1862,7 +1855,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 				t.Fatalf("expected error but got none")
 			}
 
-			result, err := rbacManager.Authorize(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -2017,7 +2010,7 @@ func TestRegexValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 			}
@@ -2069,7 +2062,7 @@ func TestRegexCaching(t *testing.T) {
 		},
 	}
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	serverConfig := &types.ServerConfig{
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
@@ -2092,7 +2085,7 @@ func TestRegexCaching(t *testing.T) {
 
 	// Test that the same regex is reused (multiple authorize calls should work)
 	for i := 0; i < 10; i++ {
-		_, err := rbacManager.Authorize("dev_user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		_, err := rbacManager.AuthorizeInt("dev_user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 		if err != nil {
 			t.Errorf("unexpected error on iteration %d: %v", i, err)
 		}
@@ -2118,7 +2111,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 		},
 	}
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	serverConfig := &types.ServerConfig{
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
@@ -2130,7 +2123,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 
 	t.Run("regex matches user", func(t *testing.T) {
 		t.Parallel()
-		allowed, err := rbacManager.Authorize("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		allowed, err := rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2141,7 +2134,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 
 	t.Run("dynamic group matches", func(t *testing.T) {
 		t.Parallel()
-		allowed, err := rbacManager.Authorize("bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_admins"}, false)
+		allowed, err := rbacManager.AuthorizeInt("bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_admins"}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2152,7 +2145,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 
 	t.Run("neither regex nor dynamic group matches", func(t *testing.T) {
 		t.Parallel()
-		allowed, err := rbacManager.Authorize("charlie", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		allowed, err := rbacManager.AuthorizeInt("charlie", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2183,7 +2176,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 		},
 	}
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	serverConfig := &types.ServerConfig{
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
@@ -2194,7 +2187,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 	}
 
 	// Verify initial config works
-	allowed, err := rbacManager.Authorize("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	allowed, err := rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2227,7 +2220,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 	}
 
 	// Verify old regex no longer matches
-	allowed, err = rbacManager.Authorize("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	allowed, err = rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2236,7 +2229,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 	}
 
 	// Verify new regex matches
-	allowed, err = rbacManager.Authorize("admin_bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	allowed, err = rbacManager.AuthorizeInt("admin_bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2621,7 +2614,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 			}
@@ -2631,7 +2624,7 @@ func TestGetCustomPermissions(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			perms, err := rbacManager.GetCustomPermissions(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.groups)
+			perms, err := rbacManager.GetCustomPermissionsInt(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.groups)
 
 			if tt.expectError {
 				if err == nil {
@@ -2688,7 +2681,7 @@ func TestGetCustomPermissionsWithRoleHierarchy(t *testing.T) {
 		},
 	}
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	serverConfig := &types.ServerConfig{
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
@@ -2698,7 +2691,7 @@ func TestGetCustomPermissionsWithRoleHierarchy(t *testing.T) {
 		t.Fatalf("failed to create RBACManager: %v", err)
 	}
 
-	perms, err := rbacManager.GetCustomPermissions("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
+	perms, err := rbacManager.GetCustomPermissionsInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2743,7 +2736,7 @@ func TestGetCustomPermissionsWithGroupHierarchy(t *testing.T) {
 		},
 	}
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	serverConfig := &types.ServerConfig{
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
@@ -2753,7 +2746,7 @@ func TestGetCustomPermissionsWithGroupHierarchy(t *testing.T) {
 		t.Fatalf("failed to create RBACManager: %v", err)
 	}
 
-	perms, err := rbacManager.GetCustomPermissions("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
+	perms, err := rbacManager.GetCustomPermissionsInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2818,7 +2811,7 @@ func TestGetCustomPermissionsEmpty(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 			}
@@ -2828,7 +2821,7 @@ func TestGetCustomPermissionsEmpty(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			perms, err := rbacManager.GetCustomPermissions(tt.user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
+			perms, err := rbacManager.GetCustomPermissionsInt(tt.user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

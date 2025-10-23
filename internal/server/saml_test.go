@@ -182,7 +182,7 @@ func TestFirstNonEmpty(t *testing.T) {
 func TestNewSAMLManager(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{
 		GlobalConfig: types.GlobalConfig{
 			AdminUser: "admin",
@@ -267,7 +267,7 @@ func TestSAMLManager_ValidateSAMLProvider(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			config := &types.ServerConfig{}
 			cookieStore := sessions.NewCookieStore([]byte("test-key"))
 			db := &metadata.Metadata{}
@@ -292,7 +292,7 @@ func TestSAMLManager_Metadata(t *testing.T) {
 	t.Run("provider not found", func(t *testing.T) {
 		t.Parallel()
 
-		logger := createTestLogger()
+		logger := testutil.TestLogger()
 		config := &types.ServerConfig{}
 		cookieStore := sessions.NewCookieStore([]byte("test-key"))
 		db := &metadata.Metadata{}
@@ -344,7 +344,7 @@ func TestSAMLManager_Setup(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			config := &types.ServerConfig{
 				SAML: tt.samlConfigs,
 			}
@@ -370,7 +370,7 @@ func TestSAMLManager_Setup(t *testing.T) {
 func TestSAMLManager_SetupInitializationState(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{
 		SAML: map[string]types.SAMLConfig{},
 	}
@@ -402,7 +402,7 @@ func TestSAMLManager_SetupInitializationState(t *testing.T) {
 func TestSAMLManager_CheckSAMLAuth_AuthenticatedUser(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := &metadata.Metadata{}
@@ -448,7 +448,7 @@ func TestSAMLManager_CheckSAMLAuth_AuthenticatedUser(t *testing.T) {
 func TestSAMLManager_CheckSAMLAuth_SessionError(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	// Use invalid key to trigger session error
 	cookieStore := sessions.NewCookieStore([]byte("short"))
@@ -479,7 +479,7 @@ func TestSAMLManager_CheckSAMLAuth_SessionError(t *testing.T) {
 func TestSAMLManager_CheckSAMLAuth_EmptyUserID(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 
@@ -523,7 +523,7 @@ func TestSAMLManager_CheckSAMLAuth_EmptyUserID(t *testing.T) {
 func TestSAMLManager_CheckSAMLAuth_MissingUserKey(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := &metadata.Metadata{}
@@ -598,7 +598,7 @@ func TestSAMLManager_CheckSAMLAuth_GroupsParsing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			logger := createTestLogger()
+			logger := testutil.TestLogger()
 			config := &types.ServerConfig{}
 			cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 			db := &metadata.Metadata{}
@@ -648,7 +648,7 @@ func TestSAMLManager_CheckSAMLAuth_GroupsParsing(t *testing.T) {
 func TestSAMLManager_CheckSAMLAuth_HTMXRequest(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	// Use invalid key to trigger session error
 	cookieStore := sessions.NewCookieStore([]byte("short"))
@@ -686,7 +686,7 @@ func TestSAMLManager_CheckSAMLAuth_HTMXRequest(t *testing.T) {
 func TestSAMLManager_Login_ProviderNotFound(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -709,7 +709,7 @@ func TestSAMLManager_Login_ProviderNotFound(t *testing.T) {
 func TestSAMLManager_Login_Success(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -746,7 +746,7 @@ func TestSAMLManager_Login_Success(t *testing.T) {
 func TestSAMLManager_ACS_ProviderNotFound(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -772,7 +772,7 @@ func TestSAMLManager_ACS_ProviderNotFound(t *testing.T) {
 func TestSAMLManager_ACS_MissingSAMLResponse(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -805,7 +805,7 @@ func TestSAMLManager_ACS_MissingSAMLResponse(t *testing.T) {
 func TestSAMLManager_Redirect_MissingRelay(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -835,7 +835,7 @@ func TestSAMLManager_Routes_Metadata(t *testing.T) {
 	}))
 	defer idpServer.Close()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{
 		Security: types.SecurityConfig{
 			CallbackUrl: "http://example.com",
@@ -898,7 +898,7 @@ func TestSAMLManager_Routes_Metadata(t *testing.T) {
 func TestSAMLManager_Routes_MetadataProviderNotFound(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -925,7 +925,7 @@ func TestSAMLManager_Routes_MetadataProviderNotFound(t *testing.T) {
 func TestSAMLManager_Routes_ACSMissingSAMLResponse(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -958,7 +958,7 @@ func TestSAMLManager_Routes_ACSMissingSAMLResponse(t *testing.T) {
 func TestSAMLManager_Routes_RedirectMissingRelay(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -984,7 +984,7 @@ func TestSAMLManager_Routes_RedirectMissingRelay(t *testing.T) {
 func TestSAMLManager_Routes_RedirectSuccess(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -1050,7 +1050,7 @@ func TestSAMLManager_Routes_RedirectSuccess(t *testing.T) {
 func TestSAMLManager_Routes_RedirectNonceMismatch(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -1108,7 +1108,7 @@ func TestSAMLManager_Routes_RedirectNonceMismatch(t *testing.T) {
 func TestSAMLManager_Routes_LogoutProviderNotFound(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -1135,7 +1135,7 @@ func TestSAMLManager_Routes_LogoutProviderNotFound(t *testing.T) {
 func TestSAMLManager_Routes_LogoutNotAuthenticated(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -1180,7 +1180,7 @@ func TestSAMLManager_Routes_LogoutNotAuthenticated(t *testing.T) {
 func TestSAMLManager_Routes_LogoutSuccess(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -1232,7 +1232,7 @@ func TestSAMLManager_Routes_LogoutSuccess(t *testing.T) {
 func TestSAMLManager_CheckSAMLAuth_ProviderMismatch(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()
@@ -1278,7 +1278,7 @@ func TestSAMLManager_CheckSAMLAuth_ProviderMismatch(t *testing.T) {
 func TestSAMLManager_CheckSAMLAuth_NoAuthKey(t *testing.T) {
 	t.Parallel()
 
-	logger := createTestLogger()
+	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
 	db := NewInmemoryKVStore()

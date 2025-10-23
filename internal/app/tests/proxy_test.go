@@ -15,6 +15,23 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
+// testRBAC is a minimal RBACAPI implementation for tests
+type testRBAC struct {
+	perms []string
+}
+
+func (t *testRBAC) AuthorizeAny(ctx context.Context, permissions []string) (bool, error) {
+	return true, nil
+}
+
+func (t *testRBAC) Authorize(ctx context.Context, permission types.RBACPermission, isAppLevelPermission bool) (bool, error) {
+	return true, nil
+}
+
+func (t *testRBAC) GetCustomPermissions(ctx context.Context) ([]string, error) {
+	return t.perms, nil
+}
+
 func TestProxyBasics(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/abc" {
@@ -677,21 +694,23 @@ permissions=[
 )`, testServer.URL),
 	}
 
-	// Create custom authorizer and perms func
-	authorizer := func(ctx context.Context, permissions []string) (bool, error) {
-		// Always allow
-		return true, nil
-	}
+	/*
+		// Create custom authorizer and perms func
+		_ := func(ctx context.Context, permissions []string) (bool, error) {
+			// Always allow
+			return true, nil
+		}
 
-	customPermsFunc := func(ctx context.Context) ([]string, error) {
-		// Return custom permissions
-		return []string{"read:data", "write:data", "admin"}, nil
-	}
+		_ := func(ctx context.Context) ([]string, error) {
+			// Return custom permissions
+			return []string{"read:data", "write:data", "admin"}, nil
+		}
+	*/
 
 	a, _, err := CreateTestAppAuthorizer(logger, fileData, []string{"proxy.in"},
 		[]types.Permission{
 			{Plugin: "proxy.in", Method: "config"},
-		}, map[string]types.PluginSettings{}, authorizer, customPermsFunc)
+		}, map[string]types.PluginSettings{}, &testRBAC{perms: []string{"read:data", "write:data", "admin"}})
 	if err != nil {
 		t.Fatalf("Error %s", err)
 	}
@@ -733,21 +752,23 @@ permissions=[
 )`, testServer.URL),
 	}
 
-	// Create custom authorizer that sets a user in context
-	authorizer := func(ctx context.Context, permissions []string) (bool, error) {
-		// Always allow
-		return true, nil
-	}
+	/*
+		// Create custom authorizer that sets a user in context
+		authorizer := func(ctx context.Context, permissions []string) (bool, error) {
+			// Always allow
+			return true, nil
+		}
 
-	customPermsFunc := func(ctx context.Context) ([]string, error) {
-		// Return empty custom permissions
-		return []string{}, nil
-	}
+		customPermsFunc := func(ctx context.Context) ([]string, error) {
+			// Return empty custom permissions
+			return []string{}, nil
+		}
+	*/
 
 	a, _, err := CreateTestAppAuthorizer(logger, fileData, []string{"proxy.in"},
 		[]types.Permission{
 			{Plugin: "proxy.in", Method: "config"},
-		}, map[string]types.PluginSettings{}, authorizer, customPermsFunc)
+		}, map[string]types.PluginSettings{}, &testRBAC{perms: []string{}})
 	if err != nil {
 		t.Fatalf("Error %s", err)
 	}

@@ -561,7 +561,7 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	}
 	action, err := action.NewAction(a.Logger, a.sourceFS, a.IsDev, name, description, path, run, suggest,
 		slices.Collect(maps.Values(a.paramInfo)), a.paramValuesStr, a.paramDict, a.Path, a.appStyle.GetStyleType(),
-		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerManager, a.jsLibs, a.AppPathDomain(), a.serverConfig, permit, a.authorizer)
+		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerManager, a.jsLibs, a.AppPathDomain(), a.serverConfig, permit, a.rbacApi)
 	if err != nil {
 		return fmt.Errorf("error creating action %s: %w", name, err)
 	}
@@ -861,8 +861,8 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 			}
 
 			customPerms := make([]string, 0)
-			if a.customPermsFunc != nil {
-				customPerms, err = a.customPermsFunc(r.Context())
+			if a.rbacApi != nil {
+				customPerms, err = a.rbacApi.GetCustomPermissions(r.Context())
 			}
 			// Add the user and custom permissions to the request headers
 			r.Header.Set(types.OPENRUN_HEADER_PERMS, strings.Join(customPerms, ","))

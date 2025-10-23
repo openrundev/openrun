@@ -20,6 +20,7 @@ import (
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/metadata"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/segmentio/ksuid"
@@ -164,7 +165,7 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 }
 
 func (s *Server) validateAppAuthnType(authStr string) error {
-	if strings.HasPrefix(authStr, SAML_AUTH_PREFIX) || strings.HasPrefix(authStr, RBAC_AUTH_PREFIX+SAML_AUTH_PREFIX) {
+	if strings.HasPrefix(authStr, SAML_AUTH_PREFIX) || strings.HasPrefix(authStr, rbac.RBAC_AUTH_PREFIX+SAML_AUTH_PREFIX) {
 		// saml auth, with or without rbac
 		if !s.samlManager.ValidateSAMLProvider(authStr) {
 			return fmt.Errorf("invalid saml auth type %s", authStr)
@@ -367,7 +368,7 @@ func (s *Server) setupApp(appEntry *types.AppEntry, tx types.Transaction) (*app.
 		})
 	return app.NewApp(sourceFS, workFS, &appLogger, appEntry, &s.config.System,
 		s.config.Plugins, s.config.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
-		s.InsertAuditEvent, s.config, s.AuthorizeAny, s.GetCustomPermissions)
+		s.InsertAuditEvent, s.config, s.rbacManager)
 }
 
 func (s *Server) GetAppApi(ctx context.Context, appPath string) (*types.AppGetResponse, error) {
@@ -479,7 +480,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	userId := ""
 
 	// Remove the RBAC_AUTH_PREFIX rbac: prefix
-	strippedAuthStr := strings.TrimPrefix(string(appAuth), RBAC_AUTH_PREFIX)
+	strippedAuthStr := strings.TrimPrefix(string(appAuth), rbac.RBAC_AUTH_PREFIX)
 	strippedAuth := types.AppAuthnType(strippedAuthStr)
 	groups := make([]string, 0)
 
@@ -538,7 +539,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 
 	s.Trace().Msgf("Authenticated user %s, doing authorization check", userId)
-	authorized, err := s.rbacManager.Authorize(userId, app.AppPathDomain(), string(appAuth), types.PermissionAccess, groups, false)
+	authorized, err := s.rbacManager.AuthorizeInt(userId, app.AppPathDomain(), string(appAuth), types.PermissionAccess, groups, false)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -940,7 +941,7 @@ func (s *Server) FilterApps(appappPathGlob string, includeInternal bool) ([]type
 		mainApps = apps
 	}
 	// Filter based on path spec. This is done on the main apps path only.
-	filteredApps, err := ParseGlobFromInfo(appappPathGlob, mainApps)
+	filteredApps, err := rbac.ParseGlobFromInfo(appappPathGlob, mainApps)
 	if err != nil {
 		return nil, err
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/gorilla/sessions"
 	"github.com/openrundev/openrun/internal/passwd"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	saml2 "github.com/russellhaering/gosaml2"
@@ -92,7 +93,7 @@ func (s *SAMLManager) Setup(ctx context.Context) error {
 }
 
 func (s *SAMLManager) ValidateSAMLProvider(authType string) bool {
-	providerName := strings.TrimPrefix(authType, RBAC_AUTH_PREFIX)
+	providerName := strings.TrimPrefix(authType, rbac.RBAC_AUTH_PREFIX)
 	return s.providers[providerName] != nil
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
@@ -108,7 +109,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 				Path:   appPath,
 			}
 
-			match, err := MatchGlob(path.GoString(), tmpPath)
+			match, err := rbac.MatchGlob(path.GoString(), tmpPath)
 			if err != nil {
 				return nil, err
 			}

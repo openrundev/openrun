@@ -1,7 +1,7 @@
 // Copyright (c) ClaceIO, LLC
 // SPDX-License-Identifier: Apache-2.0
 
-package server
+package rbac
 
 import (
 	"fmt"
@@ -21,7 +21,7 @@ const RBAC_REGEX_PREFIX = "regex:"   // used for regex matching in users list
 
 type RBACManager struct {
 	*types.Logger
-	rbacConfig   *types.RBACConfig
+	RbacConfig   *types.RBACConfig
 	serverConfig *types.ServerConfig
 	mu           sync.RWMutex
 
@@ -34,7 +34,7 @@ type RBACManager struct {
 func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverConfig *types.ServerConfig) (*RBACManager, error) {
 	rbacManager := &RBACManager{
 		Logger:       logger,
-		rbacConfig:   rbacConfig,
+		RbacConfig:   rbacConfig,
 		serverConfig: serverConfig,
 	}
 
@@ -45,12 +45,12 @@ func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverCo
 	return rbacManager, nil
 }
 
-func (h *RBACManager) Authorize(user string, appPathDomain types.AppPathDomain,
+func (h *RBACManager) AuthorizeInt(user string, appPathDomain types.AppPathDomain,
 	appAuthSetting string, permission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	if !h.rbacConfig.Enabled {
+	if !h.RbacConfig.Enabled {
 		// rbac is not enabled, authorize all requests
 		return true, nil
 	}
@@ -75,7 +75,7 @@ func (h *RBACManager) Authorize(user string, appPathDomain types.AppPathDomain,
 
 // GetCustomPermissions returns the custom permissions set for the user for the given app path domain and app auth setting
 // Values in returned list do not have the custom: prefix
-func (h *RBACManager) GetCustomPermissions(user string, appPathDomain types.AppPathDomain, appAuthSetting string,
+func (h *RBACManager) GetCustomPermissionsInt(user string, appPathDomain types.AppPathDomain, appAuthSetting string,
 	groups []string) ([]string, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -84,7 +84,7 @@ func (h *RBACManager) GetCustomPermissions(user string, appPathDomain types.AppP
 		return nil, nil
 	}
 
-	if !h.rbacConfig.Enabled {
+	if !h.RbacConfig.Enabled {
 		// rbac is not enabled, authorize all requests
 		return h.customPerms, nil
 	}
@@ -96,7 +96,7 @@ func (h *RBACManager) GetCustomPermissions(user string, appPathDomain types.AppP
 
 	customPerms := make([]string, 0)
 	for _, perm := range h.customPerms {
-		authorized, err := h.Authorize(user, appPathDomain, appAuthSetting, types.RBACPermission(perm), groups, true)
+		authorized, err := h.AuthorizeInt(user, appPathDomain, appAuthSetting, types.RBACPermission(perm), groups, true)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +112,7 @@ func (h *RBACManager) GetCustomPermissions(user string, appPathDomain types.AppP
 
 func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathDomain,
 	inputPermission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
-	for _, grant := range h.rbacConfig.Grants {
+	for _, grant := range h.RbacConfig.Grants {
 		match, err := h.checkGrant(grant, inputUser, appPathDomain, inputPermission, groups, isAppLevelPermission)
 		if err != nil {
 			return false, err
@@ -378,7 +378,7 @@ func (h *RBACManager) UpdateRBACConfig(rbacConfig *types.RBACConfig) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.rbacConfig = rbacConfig
+	h.RbacConfig = rbacConfig
 	h.regexCache = make(map[string]*regexp.Regexp)
 	h.customPerms = make([]string, 0)
 
