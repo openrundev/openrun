@@ -32,6 +32,9 @@ func (t *testRBAC) GetCustomPermissions(ctx context.Context) ([]string, error) {
 	return t.perms, nil
 }
 
+func (t *testRBAC) IsAppRBACEnabled(ctx context.Context) bool {
+	return true
+}
 func TestProxyBasics(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/abc" {
@@ -676,9 +679,11 @@ func TestProxyUserAndPermsHeaders(t *testing.T) {
 	// Test that X-Openrun-User and X-Openrun-Perms headers are passed to proxied endpoint
 	var receivedUser string
 	var receivedPerms string
+	var receivedRBACEnabled string
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedUser = r.Header.Get("X-Openrun-User")
 		receivedPerms = r.Header.Get("X-Openrun-Perms")
+		receivedRBACEnabled = r.Header.Get("X-Openrun-Rbac-Enabled")
 		io.WriteString(w, "test contents") //nolint:errcheck
 	}))
 
@@ -693,19 +698,6 @@ permissions=[
 ]
 )`, testServer.URL),
 	}
-
-	/*
-		// Create custom authorizer and perms func
-		_ := func(ctx context.Context, permissions []string) (bool, error) {
-			// Always allow
-			return true, nil
-		}
-
-		_ := func(ctx context.Context) ([]string, error) {
-			// Return custom permissions
-			return []string{"read:data", "write:data", "admin"}, nil
-		}
-	*/
 
 	a, _, err := CreateTestAppAuthorizer(logger, fileData, []string{"proxy.in"},
 		[]types.Permission{
@@ -728,6 +720,7 @@ permissions=[
 	// Verify the headers were passed to the proxied endpoint
 	testutil.AssertEqualsString(t, "X-Openrun-User", types.ANONYMOUS_USER, receivedUser)
 	testutil.AssertEqualsString(t, "X-Openrun-Perms", "read:data,write:data,admin", receivedPerms)
+	testutil.AssertEqualsString(t, "X-Openrun-Rbac-Enabled", "true", receivedRBACEnabled)
 }
 
 func TestProxyUserHeaderWithAuthentication(t *testing.T) {
@@ -751,19 +744,6 @@ permissions=[
 ]
 )`, testServer.URL),
 	}
-
-	/*
-		// Create custom authorizer that sets a user in context
-		authorizer := func(ctx context.Context, permissions []string) (bool, error) {
-			// Always allow
-			return true, nil
-		}
-
-		customPermsFunc := func(ctx context.Context) ([]string, error) {
-			// Return empty custom permissions
-			return []string{}, nil
-		}
-	*/
 
 	a, _, err := CreateTestAppAuthorizer(logger, fileData, []string{"proxy.in"},
 		[]types.Permission{

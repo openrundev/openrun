@@ -860,6 +860,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 				}
 			}
 
+			// Add X-Openrun- headers to request
 			customPerms := make([]string, 0)
 			if a.rbacApi != nil {
 				customPerms, err = a.rbacApi.GetCustomPermissions(r.Context())
@@ -875,6 +876,11 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 				}
 			}
 			r.Header.Set(types.OPENRUN_HEADER_USER, userId)
+			appRBACEnabled := false
+			if a.rbacApi != nil {
+				appRBACEnabled = a.rbacApi.IsAppRBACEnabled(r.Context())
+			}
+			r.Header.Set(types.OPENRUN_HEADER_APP_RBAC_ENABLED, strconv.FormatBool(appRBACEnabled))
 
 			// Set the response headers
 			for key, value := range responseHeaders {

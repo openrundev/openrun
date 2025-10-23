@@ -5,6 +5,7 @@ package rbac
 
 import (
 	"context"
+	"strings"
 
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -46,10 +47,29 @@ func (h *RBACManager) GetCustomPermissions(ctx context.Context) ([]string, error
 	return h.GetCustomPermissionsInt(userId, appPathDomain, appAuth, groups)
 }
 
+// IsAppRBACEnabled checks if the RBAC is enabled for the current app
+func (h *RBACManager) IsAppRBACEnabled(ctx context.Context) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.RbacConfig.Enabled {
+		// rbac is not enabled at the config level
+		return false
+	}
+
+	appAuth := string(ctx.Value(types.APP_AUTH).(types.AppAuthnType))
+	if !strings.HasPrefix(appAuth, RBAC_AUTH_PREFIX) {
+		// app auth does not have rbac enabled
+		return false
+	}
+
+	return true
+}
+
 type RBACAPI interface {
 	AuthorizeAny(ctx context.Context, permissions []string) (bool, error)
 	Authorize(ctx context.Context, permission types.RBACPermission, isAppLevelPermission bool) (bool, error)
 	GetCustomPermissions(ctx context.Context) ([]string, error)
+	IsAppRBACEnabled(ctx context.Context) bool
 }
 
 var _ RBACAPI = (*RBACManager)(nil)

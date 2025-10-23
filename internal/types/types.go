@@ -744,7 +744,8 @@ const (
 
 const (
 	// OpenRun headers are used to pass information to the downstream service
-	OPENRUN_HEADER_PREFIX = "X-Openrun-"
-	OPENRUN_HEADER_USER   = OPENRUN_HEADER_PREFIX + "User"
-	OPENRUN_HEADER_PERMS  = OPENRUN_HEADER_PREFIX + "Perms"
+	OPENRUN_HEADER_PREFIX           = "X-Openrun-"
+	OPENRUN_HEADER_USER             = OPENRUN_HEADER_PREFIX + "User"
+	OPENRUN_HEADER_PERMS            = OPENRUN_HEADER_PREFIX + "Perms"
+	OPENRUN_HEADER_APP_RBAC_ENABLED = OPENRUN_HEADER_PREFIX + "Rbac-Enabled"
 )
