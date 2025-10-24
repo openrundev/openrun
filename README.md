@@ -81,7 +81,9 @@ This repo hosts the source code for OpenRun. The source for the documentation si
 <details>
   <summary><b>How is OpenRun deployed?</b></summary>
 
-> OpenRun can be deployed on a single node easily (Linux, Windows or OSX), using a SQLite database for storing metadata. Docker/Podman is the only dependency. OpenRun can be deployed across multiple machines, using an external Postgres database for storing metadata. Support for Kubernetes based deployment is being implemented. On Kubernetes, OpenRun will avoid the need to setup a build system like Jenkins, CD with ArgoCD and an IDP like BackStage.
+> OpenRun can be deployed on a single node easily (Linux, Windows or OSX), using a SQLite database for storing metadata. Docker/Podman is the only dependency. OpenRun can be deployed across multiple machines, using an external Postgres database for storing metadata.
+>
+> Support for Kubernetes based deployment is being implemented. On Kubernetes, OpenRun will avoid the need to setup a build system like Jenkins, CD with ArgoCD and an IDP like BackStage.
 
 </details>
 
