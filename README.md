@@ -18,6 +18,7 @@
 ### Menu
 
 - [Overview](#overview)
+- [FAQ](#faq)
 - [Features](#features)
 - [Roadmap](#roadmap)
 - [Setup](#setup)
@@ -34,6 +35,55 @@ OpenRun provides **declarative** GitOps based app deployment, OAuth/OIDC/SAML ac
 This repo hosts the source code for OpenRun. The source for the documentation site [openrun.dev](https://openrun.dev) is in the [docs](https://github.com/openrundev/docs) repo. App specifications, which are templates to create apps, are defined in the [appspecs](https://github.com/openrundev/appspecs) repo. Sample apps are in the [apps](https://github.com/openrundev/apps) repo.
 
 <img alt="OpenRun intro gif" src="https://openrun.dev/intro_dark_small.gif"/>
+
+## FAQ
+
+<details open>
+  <summary><b>How does OpenRun compare to other deployment solutions like Coolify/Dokku etc?</b></summary>
+
+> The main differences are:
+>
+> - OpenRun is declarative. After initial OpenRun setup. Instead of using CLI commands or UI operations, all operations including creating new app and updating config for existing apps can be doing by updating a config file in Git. With most other solution, app creation/update is through CLI or UI. Only app source code update can be done through Git.
+> - OpenRun is implemented as a web server, it does not depend on external web server like Nginx/Traefik. This simplifies end-user usage and allows OpenRun to implement features like scale down to zero (for app containers) and OAuth/SAML/Cert based auth with RBAC.
+> - OpenRun implements features like staged deployment and automatic dev env setup which are not available in other solutions.
+
+</details>
+
+<details>
+  <summary><b>Why is declarative configuration useful?</b></summary>
+
+> Imperative CLI or UI operation are easy to start with, but they make it difficult to track changes and rollback updates. With a declarative config, all changes are version controlled. It is easy to create a new environment, since everything is in Git. If multiple folks are making config changes in a team, declarative systems are easier to manage.
+>
+> Declarative configuration is what makes Kubernetes and Terraform useful. OpenRun brings declarative configuration to web app deployment. Instead of writing pages of YAML, each app is specified as a couple of lines of Starlark (python-like) config. For example, see [utils.star](https://github.com/openrundev/openrun/blob/main/examples/utils.star).
+
+</details>
+
+<details>
+  <summary><b>What types of apps can be deployed with OpenRun?</b></summary>
+
+> OpenRun can deploy any web app which runs in a single container. OpenRun supports [AppSpecs](https://openrun.dev/docs/container/overview/#app-specs) which allow zero-config deployment of frameworks like Streamlit/Gradio/FastHTML/NiceGUI/Shiny/Reflex based apps. For frameworks which have a AppSpec, no Dockerfile is required, no code changes are required in the app source code. For frameworks which do not have an AppSpec defined, a Dockerfile needs to be present in the app source repo.
+>
+> OpenRun does NOT support apps which require multiple containers using Docker Compose. The target use case is internal tools talking to existing API endpoints and web apps where the database is externally managed.
+
+</details>
+
+<details>
+  <summary><b>Does OpenRun support deployment of internal tools by teams?</b></summary>
+
+> Yes, deployment of internal tools by teams is a target [use case](https://openrun.dev/docs/use-cases/team/). Features which are built for this use case include:
+>
+> - **Declarative Config**: Manage apps by [declaratively](https://openrun.dev/docs/applications/overview/#declarative-app-management) in git, allowing team to do follow regular SDLC for config
+> - **OAuth/OIDC/SAML with RBAC**: Manage who can access which app using [RBAC](https://openrun.dev/docs/configuration/rbac/)
+> - **Audit Logs**: All operations and API calls are automatically logged in [audit trail](https://openrun.dev/docs/applications/audit/)
+
+</details>
+
+<details>
+  <summary><b>How is OpenRun deployed?</b></summary>
+
+> OpenRun can be deployed on a single node easily (Linux, Windows or OSX), using a SQLite database for storing metadata. Docker/Podman is the only dependency. OpenRun can be deployed across multiple machines, using an external Postgres database for storing metadata. Support for Kubernetes based deployment is being implemented. On Kubernetes, OpenRun will avoid the need to setup a build system like Jenkins, CD with ArgoCD and an IDP like BackStage.
+
+</details>
 
 ## Features
 
