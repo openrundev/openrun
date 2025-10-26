@@ -306,6 +306,7 @@ type AppInfo struct {
 	GitMessage string
 	Branch     string
 	StarBase   string
+	UpdateTime time.Time
 }
 
 func CreateAppPathDomain(path, domain string) AppPathDomain {
@@ -317,7 +318,7 @@ func CreateAppPathDomain(path, domain string) AppPathDomain {
 
 func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppId,
 	auth AppAuthnType, sourceUrl string, spec AppSpec,
-	version int, gitSha, gitMessage, branch, starBase string) AppInfo {
+	version int, gitSha, gitMessage, branch, starBase string, updatedAt time.Time) AppInfo {
 	return AppInfo{
 		AppPathDomain: AppPathDomain{
 			Path:   path,
@@ -335,6 +336,7 @@ func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppI
 		GitMessage: gitMessage,
 		Branch:     branch,
 		StarBase:   starBase,
+		UpdateTime: updatedAt,
 	}
 }
 

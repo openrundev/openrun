@@ -178,6 +178,8 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		v.SetKey(starlark.String("git_sha"), starlark.String(app.GitSha))
 		v.SetKey(starlark.String("git_message"), starlark.String(app.GitMessage))
 		v.SetKey(starlark.String("git_branch"), starlark.String(app.Branch))
+		v.SetKey(starlark.String("update_age"), starlark.String(system.HumanDuration(time.Since(app.UpdateTime))))
+		v.SetKey(starlark.String("update_time"), starlark.String(app.UpdateTime.Format(time.RFC3339)))
 
 		ret.Append(&v)
 	}

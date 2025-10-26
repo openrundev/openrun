@@ -3,7 +3,9 @@
 
 package system
 
-import "strings"
+import (
+	"strings"
+)
 
 // IsGit returns true if the sourceURL is a git URL
 func IsGit(url string) bool {

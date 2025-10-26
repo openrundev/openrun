@@ -392,7 +392,7 @@ func (m *Metadata) GetAppsForDomain(domain string) ([]string, error) {
 
 	rows, err := stmt.Query(domain)
 	if err != nil {
-		return nil, fmt.Errorf("error querying apps: %w", err)
+		return nil, fmt.Errorf("error querying domain apps: %w", err)
 	}
 
 	paths := make([]string, 0)
@@ -401,7 +401,7 @@ func (m *Metadata) GetAppsForDomain(domain string) ([]string, error) {
 		var path string
 		err = rows.Scan(&path)
 		if err != nil {
-			return nil, fmt.Errorf("error querying apps: %w", err)
+			return nil, fmt.Errorf("error scanning domain app: %w", err)
 		}
 		paths = append(paths, path)
 	}
@@ -413,7 +413,7 @@ func (m *Metadata) GetAppsForDomain(domain string) ([]string, error) {
 }
 
 func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
-	sqlStr := `select domain, path, is_dev, id, main_app, settings, metadata, source_url from apps`
+	sqlStr := `select domain, path, is_dev, id, main_app, settings, metadata, source_url, update_time from apps`
 	if !includeInternal {
 		sqlStr += ` where main_app = ''`
 	}
@@ -427,7 +427,7 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 
 	rows, err := stmt.Query()
 	if err != nil {
-		return nil, fmt.Errorf("error querying apps: %w", err)
+		return nil, fmt.Errorf("error querying all apps: %w", err)
 	}
 	apps := make([]types.AppInfo, 0)
 	defer rows.Close() //nolint:errcheck
@@ -435,9 +435,10 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 		var path, domain, id, mainApp, sourceUrl string
 		var isDev bool
 		var settingsStr, metadataStr sql.NullString
-		err = rows.Scan(&domain, &path, &isDev, &id, &mainApp, &settingsStr, &metadataStr, &sourceUrl)
+		var updateTime *time.Time
+		err = rows.Scan(&domain, &path, &isDev, &id, &mainApp, &settingsStr, &metadataStr, &sourceUrl, &updateTime)
 		if err != nil {
-			return nil, fmt.Errorf("error querying apps: %w", err)
+			return nil, fmt.Errorf("error querying next app: %w", err)
 		}
 
 		var metadata types.AppMetadata
@@ -460,7 +461,7 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 		apps = append(apps, types.CreateAppInfo(types.AppId(id), metadata.Name, path, domain, isDev,
 			types.AppId(mainApp), settings.AuthnType, sourceUrl, metadata.Spec,
 			metadata.VersionMetadata.Version, metadata.VersionMetadata.GitCommit, metadata.VersionMetadata.GitMessage,
-			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"])))
+			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"]), *updateTime))
 	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
@@ -478,7 +479,7 @@ func (m *Metadata) GetLinkedApps(ctx context.Context, tx types.Transaction, main
 
 	rows, err := stmt.Query(mainAppId)
 	if err != nil {
-		return nil, fmt.Errorf("error querying apps: %w", err)
+		return nil, fmt.Errorf("error querying linked apps: %w", err)
 	}
 	apps := make([]*types.AppEntry, 0)
 	defer rows.Close() //nolint:errcheck
@@ -531,7 +532,7 @@ func (m *Metadata) UpdateAppMetadata(ctx context.Context, tx types.Transaction, 
 		return fmt.Errorf("error marshalling metadata: %w", err)
 	}
 
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set metadata = ? where path = ? and domain = ?`), string(metadataJson), app.Path, app.Domain)
+	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set metadata = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ? and domain = ?`), string(metadataJson), app.Path, app.Domain)
 	if err != nil {
 		return fmt.Errorf("error updating app metadata: %w", err)
 	}
@@ -552,7 +553,7 @@ func (m *Metadata) UpdateAppSettings(ctx context.Context, tx types.Transaction, 
 		return fmt.Errorf("error marshalling settings: %w", err)
 	}
 
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set settings = ? where path = ? and domain = ?`), string(settingsJson), app.Path, app.Domain)
+	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set settings = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ? and domain = ?`), string(settingsJson), app.Path, app.Domain)
 	if err != nil {
 		return fmt.Errorf("error updating app settings: %w", err)
 	}
