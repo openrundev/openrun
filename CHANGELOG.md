@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.12] - 2025-10-27
+
+### Changed
+
+- HTTP early hints is disabled by default since that seems to cause issues with HTTP/2 proxies
+
 ## [0.15.11] - 2025-10-27
 
 ### Added

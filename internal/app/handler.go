@@ -107,7 +107,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 		isHtmxRequest := types.GetHTTPHeader(header, "Hx-Request") == "true" &&
 			!(types.GetHTTPHeader(header, "Hx-Boosted") == "true") //nolint:staticcheck
 
-		if rtype == apptype.HTML_TYPE && a.codeConfig.Routing.EarlyHints && !a.IsDev &&
+		if a.serverConfig.System.EarlyHints && rtype == apptype.HTML_TYPE && a.codeConfig.Routing.EarlyHints && !a.IsDev &&
 			r.Method == http.MethodGet &&
 			types.GetHTTPHeader(header, "Sec-Fetch-Mode") == "navigate" &&
 			!(isHtmxRequest && fragment != "") { //nolint:staticcheck

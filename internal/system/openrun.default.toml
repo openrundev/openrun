@@ -68,6 +68,7 @@ root_serve_list_apps = "auto"       # "auto" means serve list_apps app for defau
 enable_compression = false          # enable compression for HTTP responses
 default_schedule_mins = 15          # default sync schedule interval in minutes
 max_sync_failure_count = 5          # max number of sync failures before sync is marked as disabled
+early_hints = false                 # enable early hints for HTML responses
 
 http_event_retention_days = 90      # number of days to retain http events
 non_http_event_retention_days = 180 # number of days to retain non-http (system, action, custom) events

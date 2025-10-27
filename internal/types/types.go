@@ -236,6 +236,7 @@ type SystemConfig struct {
 	MaxSyncFailureCount       int      `toml:"max_sync_failure_count"` // Max failure count for sync jobs
 	MaxConcurrentBuilds       int      `toml:"max_concurrent_builds"`  // Max concurrent container builds
 	MaxBuildWaitSecs          int      `toml:"max_build_wait_secs"`    // Max wait time for a build lock
+	EarlyHints                bool     `toml:"early_hints"`            // enable early hints for HTML responses
 }
 
 // GitAuth is a github auth config entry
