@@ -148,6 +148,11 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	server.samlManager.RegisterRoutes(router)  // register SAML routes
 
 	router.HandleFunc("/*", handler.callApp)
+	router.HandleFunc(types.INTERNAL_URL_PREFIX+"/health",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			w.Write([]byte("OK")) //nolint:errcheck
+		})
 	router.HandleFunc("/testperf", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck

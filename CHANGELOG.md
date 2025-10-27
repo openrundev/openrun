@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.11] - 2025-10-27
+
+### Added
+
+- Added `/_openrun/health` health check endpoint
+
 ## [0.15.10] - 2025-10-26
 
 ### Added
