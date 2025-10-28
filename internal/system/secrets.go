@@ -16,8 +16,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
-	"github.com/openrundev/openrun/internal/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/hashicorp/vault/api"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 // SecretManager provides access to the secrets for the system
@@ -35,6 +36,8 @@ func NewSecretManager(ctx context.Context, secretConfig map[string]types.SecretC
 		var provider secretProvider
 		if name == "asm" || strings.HasPrefix(name, "asm_") {
 			provider = &awsSecretProvider{}
+		} else if name == "ssm" || strings.HasPrefix(name, "ssm_") {
+			provider = &awsSSMProvider{}
 		} else if name == "vault" || strings.HasPrefix(name, "vault_") {
 			provider = &vaultSecretProvider{}
 		} else if name == "env" || strings.HasPrefix(name, "env_") {
@@ -266,6 +269,57 @@ func (a *awsSecretProvider) GetJoinDelimiter() string {
 }
 
 var _ secretProvider = &awsSecretProvider{}
+
+// awsSSMProvider is a secret provider that reads secrets from AWS SSM
+type awsSSMProvider struct {
+	client *ssm.Client
+}
+
+func (a *awsSSMProvider) Configure(ctx context.Context, conf map[string]any) error {
+	profileStr := ""
+	profile, ok := conf["profile"]
+	if ok {
+		profileStr, ok = profile.(string)
+		if !ok {
+			return fmt.Errorf("profile must be a string")
+		}
+	}
+
+	var cfg aws.Config
+	var err error
+	// IAM is automatically supported by config load
+	if profileStr != "" {
+		cfg, err = config.LoadDefaultConfig(ctx, config.WithSharedConfigProfile(profileStr))
+	} else {
+		cfg, err = config.LoadDefaultConfig(ctx)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	a.client = ssm.NewFromConfig(cfg)
+	return nil
+}
+
+func (a *awsSSMProvider) GetSecret(ctx context.Context, secretName string) (string, error) {
+	input := &ssm.GetParameterInput{
+		Name:           aws.String(secretName),
+		WithDecryption: aws.Bool(true),
+	}
+
+	out, err := a.client.GetParameter(ctx, input)
+	if err != nil {
+		return "", err
+	}
+	return aws.ToString(out.Parameter.Value), nil
+}
+
+func (a *awsSSMProvider) GetJoinDelimiter() string {
+	return "/"
+}
+
+var _ secretProvider = &awsSSMProvider{}
 
 // vaultSecretProvider is a secret provider that reads secrets from HashiCorp Vault
 type vaultSecretProvider struct {

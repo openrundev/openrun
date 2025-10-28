@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.13] - 2025-10-28
+
+### Added
+
+- Added AWS Systems Manager (SSM) based secrets provider
+
 ## [0.15.12] - 2025-10-27
 
 ### Changed
