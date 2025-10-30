@@ -4,6 +4,7 @@
 package starlark_type
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"go.starlark.net/starlark"
@@ -87,4 +88,27 @@ func (s *StarlarkType) UnmarshalStarlarkType() (any, error) {
 		}
 	}
 	return ret, nil
+}
+
+// ConvertToMap converts a struct to a map[string]any
+func ConvertToMap(p any) (map[string]any, error) {
+	jsonBytes, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func ConvertToStarlark(p any) (starlark.Value, error) {
+	mapVal, err := ConvertToMap(p)
+	if err != nil {
+		return nil, err
+	}
+
+	return MarshalStarlark(mapVal)
 }

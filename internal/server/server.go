@@ -235,6 +235,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	go server.handleAppClose()
 
 	initOpenRunPlugin(server)
+	initAdminPlugin(server)
 
 	server.dynamicConfig, err = server.db.GetConfig()
 	if err != nil && !errors.Is(err, metadata.ErrConfigNotFound) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
@@ -24,6 +25,7 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ListAllApps, app.READ, "list_all_apps"),
 		app.CreatePluginApiName(c.ListAuditEvents, app.READ, "list_audit_events"),
 		app.CreatePluginApiName(c.ListOperations, app.READ, "list_operations"),
+		app.CreatePluginApiName(c.ListSync, app.READ, "list_sync"),
 	}
 
 	newOpenRunPlugin := func(pluginContext *types.PluginContext) (any, error) {
@@ -452,4 +454,23 @@ func getOpList(op string) ([]any, string) {
 		queryParams = append(queryParams, "?")
 	}
 	return opList, strings.Join(queryParams, ",")
+}
+
+func (c *openrunPlugin) ListSync(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	ctx := system.GetRequestContext(thread)
+	sync, err := c.server.ListSyncEntries(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	ret := starlark.List{}
+	for _, entry := range sync.Entries {
+		entryMap, err := starlark_type.ConvertToStarlark(entry)
+		if err != nil {
+			return nil, err
+		}
+		ret.Append(entryMap) //nolint:errcheck
+	}
+
+	return &ret, nil
 }
