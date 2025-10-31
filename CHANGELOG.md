@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.14] - 2025-10-31
+
 ### Added
 
 - Added `openrun_admin` plugin with apis to manage `sync` jobs, for use by manage_sync app
