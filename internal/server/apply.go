@@ -496,16 +496,16 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 
 	authChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
 		return info.AppAuthn
-	}, newInfo.AppAuthn, liveApp.Settings.AuthnType, clobber)
+	}, newInfo.AppAuthn, liveApp.Metadata.AuthnType, clobber)
 	if authChanged {
-		return nil, fmt.Errorf("app %s authentication changed, cannot apply changes. Use \"app update-settings\"", appPathDomain)
+		liveApp.Metadata.AuthnType = newInfo.AppAuthn
 	}
 
 	gitAuthChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
 		return info.GitAuthName
-	}, newInfo.GitAuthName, liveApp.Settings.GitAuthName, clobber)
+	}, newInfo.GitAuthName, liveApp.Metadata.GitAuthName, clobber)
 	if gitAuthChanged {
-		return nil, fmt.Errorf("app %s git auth changed, cannot apply changes. Use \"app update-settings\"", appPathDomain)
+		liveApp.Metadata.GitAuthName = newInfo.GitAuthName
 	}
 
 	specChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
@@ -572,7 +572,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	appConfigChanged := mergeMap(oldAppConfig, newInfo.AppConfig, liveApp.Metadata.AppConfig, clobber)
 
 	updated := specChanged || gitBranchChanged || gitCommitChanged || paramsChanged ||
-		contConfigChanged || contArgsChanged || contVolsChanged || appConfigChanged
+		contConfigChanged || contArgsChanged || contVolsChanged || appConfigChanged || authChanged || gitAuthChanged
 	updatedApps := make([]types.AppPathDomain, 0)
 	if updated {
 		liveApp.Metadata.VersionMetadata.ApplyInfo, err = json.Marshal(newInfo)

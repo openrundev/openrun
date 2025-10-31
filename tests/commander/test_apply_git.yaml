@@ -27,13 +27,12 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/applytest/test3/
     stdout: "List Files"
 
-  apply_git0050: ## check auth error
+  apply_git0050: ## check auth apply
     command: ../openrun apply ./apply_files/apply_git2.ace /applytest/test1
-    stderr: "app /applytest/test1 authentication changed, cannot apply changes"
-    exit-code: 1
-  apply_git0051: ## check git auth error
+    stdout: "0 app(s) created, 1 app(s) updated, 0 app(s) reloaded, 1 app(s) skipped, 0 app(s) approved, 0 app(s) promoted"
+  apply_git0051: ## check git auth apply
     command: ../openrun apply ./apply_files/apply_git2.ace /applytest/test2
-    stderr: "app /applytest/test2 git auth changed, cannot apply changes"
+    stderr: "git auth entry abc not found in server config"
     exit-code: 1
   apply_git0052: ## check spec update
     command: ../openrun apply --approve ./apply_files/apply_git2.ace /applytest/test3

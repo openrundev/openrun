@@ -21,7 +21,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 7
+const CURRENT_DB_VERSION = 8
 
 // Metadata is the metadata persistence layer
 type Metadata struct {
@@ -270,6 +270,18 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 	}
 
+	if version < 8 {
+		m.Info().Msg("Upgrading to version 8")
+		err := m.migrateAuthSettings(ctx, tx)
+		if err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=8, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -286,6 +298,88 @@ func (m *Metadata) initFileTables(ctx context.Context, tx types.Transaction) err
 	}
 	if _, err := tx.ExecContext(ctx, `create table app_files (appid text, version int, name text, sha text, uncompressed_size int, create_time `+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(appid, version, name))"); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+type appMetadataAndSettings struct {
+	path     string
+	domain   string
+	metadata *types.AppMetadata
+	settings *types.AppSettings
+}
+
+func (m *Metadata) getAppMetadataAndSettings(ctx context.Context, tx types.Transaction) ([]appMetadataAndSettings, error) {
+	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select domain, path, settings, metadata from apps`))
+	if err != nil {
+		return nil, fmt.Errorf("error preparing statement: %w", err)
+	}
+	defer stmt.Close() //nolint:errcheck
+
+	rows, err := stmt.Query()
+	if err != nil {
+		return nil, fmt.Errorf("error querying apps metadata: %w", err)
+	}
+	apps := make([]appMetadataAndSettings, 0)
+	defer rows.Close() //nolint:errcheck
+	for rows.Next() {
+		var path, domain string
+		var settingsStr, metadataStr sql.NullString
+		err = rows.Scan(&domain, &path, &settingsStr, &metadataStr)
+		if err != nil {
+			return nil, fmt.Errorf("error querying next app: %w", err)
+		}
+
+		var metadata types.AppMetadata
+		var settings types.AppSettings
+
+		if metadataStr.Valid && metadataStr.String != "" {
+			err = json.Unmarshal([]byte(metadataStr.String), &metadata)
+			if err != nil {
+				return nil, fmt.Errorf("error unmarshalling metadata: %w", err)
+			}
+		}
+
+		if settingsStr.Valid && settingsStr.String != "" {
+			err = json.Unmarshal([]byte(settingsStr.String), &settings)
+			if err != nil {
+				return nil, fmt.Errorf("error unmarshalling settings: %w", err)
+			}
+		}
+
+		apps = append(apps, appMetadataAndSettings{
+			path:     path,
+			domain:   domain,
+			metadata: &metadata,
+			settings: &settings,
+		})
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return nil, fmt.Errorf("error closing rows: %w", closeErr)
+	}
+	return apps, nil
+}
+
+// migrateAuthSettings migrates the auth settings (app auth and git auth) from the app settings to the app metadata
+func (m *Metadata) migrateAuthSettings(ctx context.Context, tx types.Transaction) error {
+	allApps, err := m.getAppMetadataAndSettings(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("error getting app metadata and settings: %w", err)
+	}
+	for _, app := range allApps {
+		app.metadata.AuthnType = app.settings.AuthnType
+		app.settings.AuthnType = ""
+		app.metadata.GitAuthName = app.settings.GitAuthName
+		app.settings.GitAuthName = ""
+		err := m.updateAppMetadata(ctx, tx, app.path, app.domain, app.metadata)
+		if err != nil {
+			return fmt.Errorf("error updating app metadata: %w", err)
+		}
+		err = m.updateAppSettings(ctx, tx, app.path, app.domain, app.settings)
+		if err != nil {
+			return fmt.Errorf("error updating app settings: %w", err)
+		}
 	}
 
 	return nil
@@ -459,7 +553,7 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 		}
 
 		apps = append(apps, types.CreateAppInfo(types.AppId(id), metadata.Name, path, domain, isDev,
-			types.AppId(mainApp), settings.AuthnType, sourceUrl, metadata.Spec,
+			types.AppId(mainApp), metadata.AuthnType, sourceUrl, metadata.Spec,
 			metadata.VersionMetadata.Version, metadata.VersionMetadata.GitCommit, metadata.VersionMetadata.GitMessage,
 			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"]), *updateTime))
 	}
@@ -527,14 +621,14 @@ func (m *Metadata) UpdateSourceUrl(ctx context.Context, tx types.Transaction, ap
 }
 
 func (m *Metadata) UpdateAppMetadata(ctx context.Context, tx types.Transaction, app *types.AppEntry) error {
+	err := m.updateAppMetadata(ctx, tx, app.Path, app.Domain, &app.Metadata)
+	if err != nil {
+		return fmt.Errorf("error updating app metadata: %w", err)
+	}
+
 	metadataJson, err := json.Marshal(app.Metadata)
 	if err != nil {
 		return fmt.Errorf("error marshalling metadata: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set metadata = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ? and domain = ?`), string(metadataJson), app.Path, app.Domain)
-	if err != nil {
-		return fmt.Errorf("error updating app metadata: %w", err)
 	}
 
 	if strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_PROD) || strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_STAGE) {
@@ -547,13 +641,31 @@ func (m *Metadata) UpdateAppMetadata(ctx context.Context, tx types.Transaction, 
 	return nil
 }
 
+func (m *Metadata) updateAppMetadata(ctx context.Context, tx types.Transaction, path, domain string, metadata *types.AppMetadata) error {
+	metadataJson, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("error marshalling metadata: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set metadata = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ? and domain = ?`), string(metadataJson), path, domain)
+	if err != nil {
+		return fmt.Errorf("error updating app metadata: %w", err)
+	}
+
+	return nil
+}
+
 func (m *Metadata) UpdateAppSettings(ctx context.Context, tx types.Transaction, app *types.AppEntry) error {
-	settingsJson, err := json.Marshal(app.Settings)
+	return m.updateAppSettings(ctx, tx, app.Path, app.Domain, &app.Settings)
+}
+
+func (m *Metadata) updateAppSettings(ctx context.Context, tx types.Transaction, path, domain string, settings *types.AppSettings) error {
+	settingsJson, err := json.Marshal(settings)
 	if err != nil {
 		return fmt.Errorf("error marshalling settings: %w", err)
 	}
 
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set settings = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ? and domain = ?`), string(settingsJson), app.Path, app.Domain)
+	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set settings = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ? and domain = ?`), string(settingsJson), path, domain)
 	if err != nil {
 		return fmt.Errorf("error updating app settings: %w", err)
 	}

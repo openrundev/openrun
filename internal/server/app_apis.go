@@ -136,9 +136,9 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 		if err := s.validateAppAuthnType(string(appRequest.AppAuthn)); err != nil {
 			return nil, err
 		}
-		appEntry.Settings.AuthnType = appRequest.AppAuthn
+		appEntry.Metadata.AuthnType = appRequest.AppAuthn
 	} else {
-		appEntry.Settings.AuthnType = types.AppAuthnDefault
+		appEntry.Metadata.AuthnType = types.AppAuthnDefault
 	}
 	// Set the default for write access by staging and preview apps
 	appEntry.Settings.StageWriteAccess = s.config.Security.StageEnableWriteAccess
@@ -468,7 +468,7 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 
 func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request, app *app.App) {
 	var err error
-	appAuth := app.Settings.AuthnType
+	appAuth := app.Metadata.AuthnType
 	if appAuth == "" || appAuth == types.AppAuthnDefault {
 		appAuth = types.AppAuthnType(s.config.Security.AppDefaultAuthType)
 	}
@@ -830,7 +830,7 @@ func (s *Server) loadGitKey(gitAuth string) (*gitAuthEntry, error) {
 }
 
 func (s *Server) loadSourceFromGit(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, branch, commit, gitAuth string, repoCache *RepoCache) error {
-	gitAuth = cmp.Or(gitAuth, appEntry.Settings.GitAuthName)
+	gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
 	branch = cmp.Or(branch, appEntry.Metadata.VersionMetadata.GitBranch, "main")
 
 	repo, folder, message, hash, err := repoCache.CheckoutRepo(appEntry.SourceUrl, branch, commit, gitAuth, appEntry.IsDev)
@@ -858,7 +858,7 @@ func (s *Server) loadSourceFromGit(ctx context.Context, tx types.Transaction, ap
 	} else {
 		appEntry.Metadata.VersionMetadata.GitBranch = branch
 	}
-	appEntry.Settings.GitAuthName = gitAuth
+	appEntry.Metadata.GitAuthName = gitAuth
 
 	s.Info().Msgf("Cloned git repo %s %s:%s folder %s to %s, commit %s: %s", repo,
 		appEntry.Metadata.VersionMetadata.GitBranch, appEntry.Metadata.VersionMetadata.GitCommit, folder, repo, hash, message)
@@ -894,7 +894,7 @@ func (s *Server) loadSourceFromDisk(ctx context.Context, tx types.Transaction, a
 	s.Info().Msgf("Loading app sources from %s", appEntry.SourceUrl)
 	appEntry.Metadata.VersionMetadata.GitBranch = ""
 	appEntry.Metadata.VersionMetadata.GitCommit = ""
-	appEntry.Settings.GitAuthName = ""
+	appEntry.Metadata.GitAuthName = ""
 	appEntry.Metadata.VersionMetadata.GitMessage = ""
 
 	fileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
@@ -1051,7 +1051,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	}
 
 	// Checkout the git repo locally and load into database
-	if err := s.loadSourceFromGit(ctx, tx, &previewAppEntry, "", commitId, previewAppEntry.Settings.GitAuthName, repoCache); err != nil {
+	if err := s.loadSourceFromGit(ctx, tx, &previewAppEntry, "", commitId, previewAppEntry.Metadata.GitAuthName, repoCache); err != nil {
 		return nil, fmt.Errorf("failed to load source %s from git: %w", previewAppEntry.SourceUrl, err)
 	}
 

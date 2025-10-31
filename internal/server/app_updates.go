@@ -483,21 +483,6 @@ func (s *Server) updateAppSettings(ctx context.Context, tx types.Transaction, ap
 			}
 		}
 
-		if updateAppRequest.AuthnType != types.StringValueUndefined {
-			if err := s.validateAppAuthnType(string(updateAppRequest.AuthnType)); err != nil {
-				return nil, err
-			}
-			linkedApp.Settings.AuthnType = types.AppAuthnType(updateAppRequest.AuthnType)
-		}
-
-		if updateAppRequest.GitAuthName != types.StringValueUndefined {
-			if updateAppRequest.GitAuthName == "-" {
-				linkedApp.Settings.GitAuthName = ""
-			} else {
-				linkedApp.Settings.GitAuthName = string(updateAppRequest.GitAuthName)
-			}
-		}
-
 		if err := s.db.UpdateAppSettings(ctx, tx, linkedApp); err != nil {
 			return nil, err
 		}
@@ -602,16 +587,31 @@ func (s *Server) updateAppMetadataConfig(appEntry *types.AppEntry, configType ty
 	if len(configEntries) == 0 {
 		return nil
 	}
+	value := configEntries[0]
+	if configType == types.AppMetadataAuthnType || configType == types.AppMetadataGitAuthName {
+		if len(configEntries) > 1 {
+			return fmt.Errorf("expected only one value for %s, got %d", configType, len(configEntries))
+		}
+	}
 
-	if configType == types.AppMetadataContainerVolumes {
+	switch configType {
+	case types.AppMetadataContainerVolumes:
 		appEntry.Metadata.ContainerVolumes = configEntries
+		return nil
+	case types.AppMetadataAuthnType:
+		if err := s.validateAppAuthnType(string(value)); err != nil {
+			return err
+		}
+		appEntry.Metadata.AuthnType = types.AppAuthnType(value)
+		return nil
+	case types.AppMetadataGitAuthName:
+		appEntry.Metadata.GitAuthName = string(value)
 		return nil
 	}
 
 	for _, entry := range configEntries {
 		key, value, ok := strings.Cut(entry, "=")
-
-		if !ok && configType != types.AppMetadataContainerOptions {
+		if !ok {
 			return fmt.Errorf("invalid %s %s, need key=value", configType, entry)
 		}
 
@@ -649,7 +649,6 @@ func (s *Server) updateAppMetadataConfig(appEntry *types.AppEntry, configType ty
 			} else {
 				delete(appEntry.Metadata.AppConfig, key)
 			}
-		// case AppMetadataContainerVolumes not expected here, already handled
 		default:
 			return fmt.Errorf("invalid config type %s", configType)
 		}

@@ -32,7 +32,7 @@ tests:
     command: curl http://localhost:25222/certs_test1
     stdout: client certificate required
   certs110: ## update app1 to use auth2
-    command: ../openrun app update-settings auth cert_test2 /certs_test1
+    command: ../openrun app update auth --promote  cert_test2 /certs_test1
   certs120: ## test auth1 with auth1 key a, fails now
     command: curl -k --cert certs/testcerts1/client.a.crt --key certs/testcerts1/client.a.key https://localhost:25223/certs_test1
     stdout: client certificate verification failed
@@ -40,7 +40,7 @@ tests:
     command: curl -k --cert certs/testcerts2/client.a.crt --key certs/testcerts2/client.a.key https://localhost:25223/certs_test1
     stdout: Test app body
   certs140: ## update app1 to no auth
-    command: ../openrun app update-settings auth none /certs_test1
+    command: ../openrun app update auth --promote  none /certs_test1
   certs150: ## no key works
     command: curl -k https://localhost:25223/certs_test1
     stdout: Test app body
@@ -48,6 +48,6 @@ tests:
     command: curl http://localhost:25222/certs_test1
     stdout: Test app body
   certs170: ## invalid conf fails
-    command: ../openrun app update-settings auth cert_invalid /certs_test1
+    command: ../openrun app update auth --promote  cert_invalid /certs_test1
     exit-code: 1
     stderr: invalid authentication type cert_invalid

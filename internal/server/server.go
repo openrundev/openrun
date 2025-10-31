@@ -831,12 +831,11 @@ func (s *Server) GetListAppsApp() (*app.App, error) {
 		Domain:    s.config.System.DefaultDomain,
 		SourceUrl: "-",
 		UserID:    "admin",
-		Settings: types.AppSettings{
-			AuthnType: authnType,
-		},
+		Settings:  types.AppSettings{},
 		Metadata: types.AppMetadata{
-			Name:  "List Apps",
-			Loads: []string{"openrun.in"},
+			Name:      "List Apps",
+			AuthnType: authnType,
+			Loads:     []string{"openrun.in"},
 			Permissions: []types.Permission{
 				{Plugin: "openrun.in", Method: "list_apps"},
 			},

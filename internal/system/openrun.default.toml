@@ -85,7 +85,7 @@ db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_fs.db"
 
 [app_config]
 # app config can be set at the app level using a metadata config update. For example:
-#  openrun app update-metadata conf --promote 'cors.allow_methods="GET, POST"' /myapp
+#  openrun app update conf --promote 'cors.allow_methods="GET, POST"' /myapp
 
 # ==== CORS related Config ====
 # Default setting is to add CORS headers with * as allow_origin header. If cors.allow_origin is set to empty string,

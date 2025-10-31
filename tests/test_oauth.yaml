@@ -15,7 +15,7 @@ tests:
     stdout: '<a href="https://localhost:25223/_openrun/auth/github_test/login?state=' # redirect to the auth url
 
   oauth0031: # update app to no auth
-    command: ../openrun app update-settings auth none /oauth1
+    command: ../openrun app update auth --promote none /oauth1
 
   oauth0032: # check curl
     command: curl localhost:25222/oauth1
@@ -37,7 +37,7 @@ tests:
     exit-code: 1
 
   oauth0070: # update app to invalid
-    command: ../openrun app update-settings auth abc /oauth1
+    command: ../openrun app update auth --promote abc /oauth1
     stderr: "error: invalid authentication type abc"
     exit-code: 1
 

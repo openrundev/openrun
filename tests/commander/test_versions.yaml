@@ -166,27 +166,27 @@ tests:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout: "*"
   versions0301: # change to "origin" setting
-    command: ../openrun app update-metadata conf --promote 'cors.allow_origin="origin"' /versions_local1
+    command: ../openrun app update conf --promote 'cors.allow_origin="origin"' /versions_local1
   versions0302:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout: "http://localhost:25222"
   versions0303: # custom origin
-    command: ../openrun app update-metadata conf --promote 'cors.allow_origin="abc"' /versions_local1
+    command: ../openrun app update conf --promote 'cors.allow_origin="abc"' /versions_local1
   versions0304:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout: "abc"
   versions0305: # custom headers
-    command: ../openrun app update-metadata conf --promote 'cors.allow_headers="aa,bb"' /versions_local1
+    command: ../openrun app update conf --promote 'cors.allow_headers="aa,bb"' /versions_local1
   versions0306:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-headers | cut -f2- -d':'
     stdout: "aa,bb"
   versions0307: # delete custom headers
-    command: ../openrun app update-metadata conf --promote cors.allow_headers=- /versions_local1
+    command: ../openrun app update conf --promote cors.allow_headers=- /versions_local1
   versions0308:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-headers | cut -f2- -d':'
     stdout: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Requested-With"
   versions0309: # disable CORS
-    command: ../openrun app update-metadata conf --promote 'cors.setting="disable"' /versions_local1
+    command: ../openrun app update conf --promote 'cors.setting="disable"' /versions_local1
   versions0310:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout:

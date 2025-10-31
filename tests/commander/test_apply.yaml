@@ -13,10 +13,10 @@ tests:
   apply0011:
     command: ../openrun param update --promote p3new val /applytest/app4
   apply0012:
-    command: ../openrun app update-metadata copt --promote co3='[5,6]' /applytest/app4
+    command: ../openrun app update copt --promote co3='[5,6]' /applytest/app4
     exit-code: 0
   apply0013:
-    command: ../openrun app update-metadata cvol --promote "v1:/abc" v2 v3 /applytest/app4
+    command: ../openrun app update cvol --promote "v1:/abc" v2 v3 /applytest/app4
     exit-code: 0
   apply0020: ## apply update
     command: ../openrun apply --reload=updated ./apply_files/apply2.ace

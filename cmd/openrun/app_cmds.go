@@ -366,7 +366,7 @@ func appType(app types.AppResponse) string {
 }
 
 func authType(app types.AppResponse) string {
-	switch app.Settings.AuthnType {
+	switch app.Metadata.AuthnType {
 	case types.AppAuthnNone:
 		return "NONE"
 	case types.AppAuthnSystem:
@@ -374,7 +374,7 @@ func authType(app types.AppResponse) string {
 	case types.AppAuthnDefault, "":
 		return "DEFAULT"
 	default:
-		return string(app.Settings.AuthnType)
+		return string(app.Metadata.AuthnType)
 	}
 }
 

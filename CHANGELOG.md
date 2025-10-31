@@ -11,6 +11,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Added `openrun_admin` plugin with apis to manage `sync` jobs, for use by manage_sync app
 
+### Changed
+
+- Changed app authentication setting and git auth setting to be stored in app metadata instead of in app settings. This allows those properties to be updated through declarative config. The property is moved over as part of a migration. Also, `app update-metadata` CLI command is renamed to `app update`.
+
 ## [0.15.13] - 2025-10-28
 
 ### Added
@@ -54,4 +58,4 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Enable CSRF protection for internal APIs and for apps. App level CSRF protection is enabled by default.
   Use `security.disable_csrf_protection = true` to disable. Disable in app metadata by running
-  `openrun app update-metadata conf --promote 'security.disable_csrf_protection=true' /myapp`
+  `openrun app update conf --promote 'security.disable_csrf_protection=true' /myapp`

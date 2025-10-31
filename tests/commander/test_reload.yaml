@@ -220,10 +220,10 @@ tests:
     command: ../openrun app update-settings preview-write-access --dry-run true "/reload_local*"
     stdout: "dry-run mode"
   reload069: # Update git-auth dryrun
-    command: ../openrun app update-settings git-auth --dry-run testgit "/reload_local*"
+    command: ../openrun app update git-auth --dry-run testgit "/reload_local*"
     stdout: "dry-run mode"
   reload070: # Delete auth dryrun
-    command: ../openrun app update-settings auth --dry-run none "/reload_local*"
+    command: ../openrun app update auth --dry-run none "/reload_local*"
     stdout: "dry-run mode"
   reload071: # Save stdout
     command: "../openrun app list -i -f jsonl all > dryrun_out2.log"

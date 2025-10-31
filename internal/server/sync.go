@@ -303,7 +303,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 				app := appMap[appPath]
 				var reloadResult *types.AppReloadResult
 				reloadResult, reloadErr = s.ReloadApp(ctx, tx, app, nil, entry.Metadata.Approve, false, entry.Metadata.Promote,
-					app.Metadata.VersionMetadata.GitBranch, "", app.Settings.GitAuthName, repoCache, entry.Metadata.ForceReload)
+					app.Metadata.VersionMetadata.GitBranch, "", app.Metadata.GitAuthName, repoCache, entry.Metadata.ForceReload)
 				if reloadErr != nil {
 					s.Error().Err(reloadErr).Msgf("Error reloading app %s sync job %s", appPath, entry.Id)
 					status.Error = reloadErr.Error()
