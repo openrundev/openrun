@@ -214,10 +214,10 @@ tests:
     command: ../openrun app delete --dry-run "/reload_local*"
     stdout: "dry-run mode"
   reload067: # Update stage-write-access dryrun
-    command: ../openrun app update-settings stage-write-access --dry-run true "/reload_local*"
+    command: ../openrun app settings stage-write-access --dry-run true "/reload_local*"
     stdout: "dry-run mode"
   reload068: # Update preview write access dryrun
-    command: ../openrun app update-settings preview-write-access --dry-run true "/reload_local*"
+    command: ../openrun app settings preview-write-access --dry-run true "/reload_local*"
     stdout: "dry-run mode"
   reload069: # Update git-auth dryrun
     command: ../openrun app update git-auth --dry-run testgit "/reload_local*"

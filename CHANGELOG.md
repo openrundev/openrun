@@ -14,6 +14,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Changed app authentication setting and git auth setting to be stored in app metadata instead of in app settings. This allows those properties to be updated through declarative config. The property is moved over as part of a migration. Also, `app update-metadata` CLI command is renamed to `app update`.
+- Changed `app update-settings` CLI command to `app settings`.
 
 ## [0.15.13] - 2025-10-28
 

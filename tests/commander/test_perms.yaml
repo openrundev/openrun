@@ -18,12 +18,12 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
     stdout: "Disk Usage"
   perms0107: # Update stage perms
-    command: ../openrun app update-settings stage-write-access false "/perms*"
+    command: ../openrun app settings stage-write-access false "/perms*"
   perms0108: # test stage app
     command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
     stdout: "Stage app does not have access to write operation"
   perms0109: # Update stage perms again to allow write
-    command: ../openrun app update-settings stage-write-access true "/perms*"
+    command: ../openrun app settings stage-write-access true "/perms*"
   perms0110: # test stage app
     command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
     stdout: "Disk Usage"
@@ -53,7 +53,7 @@ tests:
     command: curl -su "admin:qwerty" localhost:25222/permsgit1_cl_preview_0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
     stdout: "Disk Usage"
   perms0204: # Update preview perms
-    command: ../openrun app update-settings preview-write-access false "/perms*"
+    command: ../openrun app settings preview-write-access false "/perms*"
   perms0205: # test preview app
     command: curl -su "admin:qwerty" localhost:25222/permsgit1_cl_preview_0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
     stdout: "Preview app does not have access to write operation"

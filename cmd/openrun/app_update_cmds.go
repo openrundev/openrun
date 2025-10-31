@@ -16,7 +16,7 @@ import (
 
 func appUpdateSettingsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	return &cli.Command{
-		Name:  "update-settings",
+		Name:  "settings",
 		Usage: "Update OpenRun apps settings. Settings changes are NOT staged, they apply immediately to matched stage, prod and preview apps.",
 		Subcommands: []*cli.Command{
 			appUpdateStageWrite(commonFlags, clientConfig),
@@ -43,8 +43,8 @@ The first required argument <value> is a boolean value, true or false.
 The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 
 	Examples:
-	  Update all apps, across domains: openrun app update-settings stage-write-access true all
-	  Update apps in the example.com domain: openrun app update-settings stage-write-access false "example.com:**"`,
+	  Update all apps, across domains: openrun app settings stage-write-access true all
+	  Update apps in the example.com domain: openrun app settings stage-write-access false "example.com:**"`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
@@ -105,8 +105,8 @@ The first required argument <value> is a boolean value, true or false.
 The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 
 	Examples:
-	  Update all apps, across domains: openrun app update-settings preview-write-access true all 
-	  Update apps in the example.com domain: openrun app update-settings preview-write-access false "example.com:**"`,
+	  Update all apps, across domains: openrun app settings preview-write-access true all 
+	  Update apps in the example.com domain: openrun app settings preview-write-access false "example.com:**"`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
