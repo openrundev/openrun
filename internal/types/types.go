@@ -423,7 +423,9 @@ type AppMetadata struct {
 
 // AppSettings contains the settings for an app. Settings are not version controlled.
 type AppSettings struct {
-	AuthnType          AppAuthnType  `json:"authn_type"`
+	//Deprecated: use AppMetadata.AuthnType instead
+	AuthnType AppAuthnType `json:"authn_type"`
+	//Deprecated: use AppMetadata.GitAuthName instead
 	GitAuthName        string        `json:"git_auth_name"`
 	StageWriteAccess   bool          `json:"stage_write_access"`
 	PreviewWriteAccess bool          `json:"preview_write_access"`

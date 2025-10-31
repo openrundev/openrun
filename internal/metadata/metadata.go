@@ -368,10 +368,10 @@ func (m *Metadata) migrateAuthSettings(ctx context.Context, tx types.Transaction
 		return fmt.Errorf("error getting app metadata and settings: %w", err)
 	}
 	for _, app := range allApps {
-		app.metadata.AuthnType = app.settings.AuthnType
-		app.settings.AuthnType = ""
-		app.metadata.GitAuthName = app.settings.GitAuthName
-		app.settings.GitAuthName = ""
+		app.metadata.AuthnType = app.settings.AuthnType     //nolint:staticcheck // deprecated
+		app.settings.AuthnType = ""                         //nolint:staticcheck // deprecated
+		app.metadata.GitAuthName = app.settings.GitAuthName // nolint:staticcheck // deprecated
+		app.settings.GitAuthName = ""                       //nolint:staticcheck // deprecated
 		err := m.updateAppMetadata(ctx, tx, app.path, app.domain, app.metadata)
 		if err != nil {
 			return fmt.Errorf("error updating app metadata: %w", err)
