@@ -10,6 +10,11 @@ MAKEFLAGS += --no-builtin-rules
 OPENRUN_HOME := `pwd`
 INPUT := $(word 2,$(MAKECMDGOALS))
 
+ARCH        := $(shell uname -m)
+TARGET_DIR  := dist/linux/$(ARCH)
+BINARY      := openrun
+IMAGE_TAG   := openrun:latest
+
 .DEFAULT_GOAL := help
 ifeq ($(origin .RECIPEPREFIX), undefined)
   $(error This Make does not support .RECIPEPREFIX. Please use GNU Make 4.0 or later)
@@ -17,13 +22,20 @@ endif
 .RECIPEPREFIX = >
 TAG := 
 
-.PHONY: help test unit int covtest covunit covint release int_single lint verify
+.PHONY: help test unit int covtest covunit covint release int_single lint verify build-linux image
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 test: unit int ## Run all tests
 verify: lint test ## Run lint and all tests
+
+build-linux: ## Build linux binary into dist/
+> mkdir -p $(TARGET_DIR)
+> CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o $(TARGET_DIR)/$(BINARY) ./cmd/openrun
+
+image: build-linux ## Build docker image
+> docker build -f deploy/Dockerfile -t $(IMAGE_TAG) dist
 
 covtest: covunit covint ## Run all tests with coverage
 > go tool covdata percent -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/unit,$(OPENRUN_HOME)/coverage/int
