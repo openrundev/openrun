@@ -26,7 +26,8 @@ before:
     - go test -race ./...
 
 builds:
-  - main: ./cmd/openrun
+  - id: openrun
+    main: ./cmd/openrun
     binary: openrun
     flags:
       - -trimpath
@@ -37,7 +38,6 @@ builds:
     env:
       - GO111MODULE=on
       - CGO_ENABLED=0
-      - GOAMD64=v3
     goos:
       - darwin
       - linux
@@ -88,7 +88,6 @@ archives:
 
 # https://goreleaser.com/customization/changelog/
 changelog:
-  skip: false
   use: github
   sort: asc
   groups:

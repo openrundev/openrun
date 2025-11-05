@@ -11,11 +11,9 @@ RUN addgroup -S openrun \
  && mkdir -p  "${OPENRUN_HOME}" \
  && chown -R openrun:openrun "${OPENRUN_HOME}"
 
-COPY linux/${TARGETARCH}/openrun /usr/bin/openrun
+COPY --chmod=0555 linux/${TARGETARCH}/openrun /usr/bin/openrun
 
 USER openrun
-EXPOSE 25222
-EXPOSE 25223
-
-CMD ["/usr/bin/openrun", "server", "start"]
+EXPOSE 25222 25223
+ENTRYPOINT ["/usr/bin/openrun", "server", "start"]
 
