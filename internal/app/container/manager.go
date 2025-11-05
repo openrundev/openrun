@@ -4,6 +4,11 @@
 package container
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strings"
+
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -41,4 +46,26 @@ type ContainerManager interface {
 	GetContainerLogs(name ContainerName) (string, error)
 	VolumeExists(name VolumeName) bool
 	VolumeCreate(name VolumeName) error
+}
+
+func GenContainerName(appId types.AppId, contentHash string) ContainerName {
+	if contentHash == "" {
+		return ContainerName(fmt.Sprintf("clc-%s", appId))
+	} else {
+		return ContainerName(fmt.Sprintf("clc-%s-%s", appId, genLowerCaseId(contentHash)))
+	}
+}
+
+func GenImageName(appId types.AppId, contentHash string) ImageName {
+	if contentHash == "" {
+		return ImageName(fmt.Sprintf("cli-%s", appId))
+	} else {
+		return ImageName(fmt.Sprintf("cli-%s-%s", appId, genLowerCaseId(contentHash)))
+	}
+}
+
+func GenVolumeName(appId types.AppId, dirName string) VolumeName {
+	dirHash := sha256.Sum256([]byte(dirName))
+	hashHex := hex.EncodeToString(dirHash[:])
+	return VolumeName(fmt.Sprintf("clv-%s-%s", appId, strings.ToLower(hashHex)))
 }

@@ -54,22 +54,6 @@ func acquireBuildLock(ctx context.Context, config *types.SystemConfig, buildId s
 	}
 }
 
-func GenContainerName(appId types.AppId, contentHash string) ContainerName {
-	if contentHash == "" {
-		return ContainerName(fmt.Sprintf("clc-%s", appId))
-	} else {
-		return ContainerName(fmt.Sprintf("clc-%s-%s", appId, genLowerCaseId(contentHash)))
-	}
-}
-
-func GenImageName(appId types.AppId, contentHash string) ImageName {
-	if contentHash == "" {
-		return ImageName(fmt.Sprintf("cli-%s", appId))
-	} else {
-		return ImageName(fmt.Sprintf("cli-%s-%s", appId, genLowerCaseId(contentHash)))
-	}
-}
-
 type ContainerCommand struct {
 	*types.Logger
 	config *types.SystemConfig
@@ -405,4 +389,25 @@ func (c ContainerCommand) ExecTailN(command string, args []string, n int) ([]str
 	})
 
 	return ret, nil
+}
+
+func (c ContainerCommand) VolumeExists(name VolumeName) bool {
+	c.Debug().Msgf("Checking volume exists %s", name)
+	cmd := exec.Command(c.config.ContainerCommand, "volume", "inspect", string(name))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		c.Debug().Msgf("volume exists check failed %s %s %s", name, err, output)
+	}
+	c.Debug().Msgf("volume exists %s %t", name, err == nil)
+	return err == nil
+}
+
+func (c ContainerCommand) VolumeCreate(name VolumeName) error {
+	c.Debug().Msgf("Creating volume %s", name)
+	cmd := exec.Command(c.config.ContainerCommand, "volume", "create", string(name))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("error creating volume %s: %w %s", name, err, output)
+	}
+	return nil
 }
