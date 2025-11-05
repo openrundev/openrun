@@ -69,7 +69,7 @@ type Action struct {
 	Links             []ActionLink    // links to other actions
 	showValidate      bool
 	auditInsert       func(*types.AuditEvent) error
-	containerManager  any // Container manager, if available, used to run commands in the container
+	containerHandler  any // Container manager, if available, used to run commands in the container
 	esmLibs           []types.JSLibrary
 	appPathDomain     types.AppPathDomain
 	serverConfig      *types.ServerConfig
@@ -153,7 +153,7 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 		hidden:            hiddenParams,
 		showValidate:      showValidate,
 		auditInsert:       auditInsert,
-		containerManager:  containerManager,
+		containerHandler:  containerManager,
 		esmLibs:           esmLibs,
 		// Links, AppTemplate and Theme names are initialized later
 		appPathDomain: appPathDomain,
@@ -289,8 +289,8 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	if a.containerProxyUrl != "" {
 		thread.SetLocal(types.TL_CONTAINER_URL, a.containerProxyUrl)
 	}
-	if a.containerManager != nil {
-		thread.SetLocal(types.TL_CONTAINER_MANAGER, a.containerManager)
+	if a.containerHandler != nil {
+		thread.SetLocal(types.TL_CONTAINER_HANDLER, a.containerHandler)
 	}
 	thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.appPathDomain, a.serverConfig))
 	isHtmxRequest := r.Header.Get("HX-Request") == "true"

@@ -18,7 +18,7 @@ import (
 	"go.starlark.net/starlark"
 )
 
-func execCommand(containerManager *app.ContainerHandler, thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func execCommand(containerHandler *app.ContainerHandler, thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var path, parse, cwd starlark.String
 	var cmdArgs *starlark.List
 	var env *starlark.List
@@ -61,8 +61,8 @@ func execCommand(containerManager *app.ContainerHandler, thread *starlark.Thread
 	ctx := app.GetContext(thread)
 	var cmd *exec.Cmd
 	var err error
-	if containerManager != nil {
-		cmd, err = containerManager.Run(ctx, pathStr, argsList, envList)
+	if containerHandler != nil {
+		cmd, err = containerHandler.Run(ctx, pathStr, argsList, envList)
 		if err != nil {
 			return nil, fmt.Errorf("error running command in container: %w", err)
 		}

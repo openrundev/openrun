@@ -97,9 +97,9 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 
 		// Save the request context in the starlark thread local
 		thread.SetLocal(types.TL_CONTEXT, r.Context())
-		if a.containerManager != nil {
-			thread.SetLocal(types.TL_CONTAINER_MANAGER, a.containerManager)
-			thread.SetLocal(types.TL_CONTAINER_URL, a.containerManager.GetProxyUrl())
+		if a.containerHandler != nil {
+			thread.SetLocal(types.TL_CONTAINER_HANDLER, a.containerHandler)
+			thread.SetLocal(types.TL_CONTAINER_URL, a.containerHandler.GetProxyUrl())
 		}
 		thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.AppPathDomain(), a.serverConfig))
 

@@ -39,15 +39,15 @@ func NewContainerPlugin(pluginContext *types.PluginContext) (any, error) {
 }
 
 func (c *containerPlugin) Run(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	cm := thread.Local(types.TL_CONTAINER_MANAGER)
-	if cm == nil {
+	ch := thread.Local(types.TL_CONTAINER_HANDLER)
+	if ch == nil {
 		panic(errors.New("container config not initialized"))
 	}
-	manager, ok := cm.(*app.ContainerHandler)
+	handler, ok := ch.(*app.ContainerHandler)
 	if !ok {
-		return nil, fmt.Errorf("expected container manager, got %T", cm)
+		return nil, fmt.Errorf("expected container manager, got %T", ch)
 	}
-	return execCommand(manager, thread, builtin, args, kwargs)
+	return execCommand(handler, thread, builtin, args, kwargs)
 }
 
 func (c *containerPlugin) Config(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

@@ -71,7 +71,7 @@ type ContainerHandler struct {
 	proxyTracker      *Tracker // Track bytes sent and received by the proxy
 }
 
-func NewContainerManager(logger *types.Logger, app *App, containerFile string,
+func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	systemConfig *types.SystemConfig, configPort int64, lifetime, scheme, health, buildDir string, sourceFS appfs.ReadableFS,
 	paramMap map[string]string, containerConfig types.Container, stripAppPath bool,
 	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any) (*ContainerHandler, error) {
@@ -890,7 +890,7 @@ func (m *ContainerHandler) ProdReload(dryRun bool) error {
 }
 
 func (m *ContainerHandler) Close() error {
-	m.Debug().Msgf("Closing container manager for app %s", m.app.Id)
+	m.Debug().Msgf("Closing container handler for app %s", m.app.Id)
 	if m.idleShutdownTicker != nil {
 		m.idleShutdownTicker.Stop()
 	}

@@ -55,7 +55,7 @@ const (
 	TL_AUDIT_OPERATION          = "TL_audit_operation"
 	TL_AUDIT_TARGET             = "TL_audit_target"
 	TL_AUDIT_DETAIL             = "TL_audit_detail"
-	TL_CONTAINER_MANAGER        = "TL_container_manager"
+	TL_CONTAINER_HANDLER        = "TL_container_handler"
 	TL_BRANCH                   = "TL_branch"
 	TL_DEV                      = "TL_dev"
 	TL_APP_URL                  = "TL_app_url"

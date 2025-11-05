@@ -59,7 +59,7 @@ type App struct {
 	paramValuesStr   map[string]string   // the param values for the app, from metadata and defaults
 	paramDict        starlark.StringDict // the Starlark param values for the app
 	plugins          *AppPlugins
-	containerManager *ContainerHandler
+	containerHandler *ContainerHandler
 	serverConfig     *types.ServerConfig
 
 	globals      starlark.StringDict    // global variables defined in starlark code
@@ -185,8 +185,8 @@ func (a *App) Close() error {
 		_ = a.appDev.Close()
 	}
 
-	if a.containerManager != nil {
-		if err := a.containerManager.Close(); err != nil {
+	if a.containerHandler != nil {
+		if err := a.containerHandler.Close(); err != nil {
 			return err
 		}
 	}
@@ -500,18 +500,18 @@ func (a *App) loadContainerManager(stripAppPath bool) error {
 		return fmt.Errorf("no container file found, source is set to %s", src)
 	}
 
-	if a.containerManager != nil {
-		if err := a.containerManager.Close(); err != nil {
+	if a.containerHandler != nil {
+		if err := a.containerHandler.Close(); err != nil {
 			return fmt.Errorf("error shutting down previous container manager: %w", err)
 		}
 	}
 
-	a.containerManager, err = NewContainerManager(a.Logger, a,
+	a.containerHandler, err = NewContainerHandler(a.Logger, a,
 		fileName, a.systemConfig, port, lifetime, scheme, health, buildDir,
 		a.sourceFS, a.paramValuesStr, a.AppConfig.Container, stripAppPath, volumes,
 		a.getSecretsAllowed("container.in", "config"), cargs)
 	if err != nil {
-		return fmt.Errorf("error creating container manager: %w", err)
+		return fmt.Errorf("error creating container handler: %w", err)
 	}
 
 	return nil

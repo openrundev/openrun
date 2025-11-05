@@ -131,14 +131,14 @@ func (a *App) loadStarlarkConfig(dryRun types.DryRun) error {
 		return err
 	}
 
-	if a.containerManager != nil {
-		// Container manager is present, reload the container
+	if a.containerHandler != nil {
+		// Container handler is present, reload the container
 		if a.IsDev {
-			if err = a.containerManager.DevReload(bool(dryRun)); err != nil {
+			if err = a.containerHandler.DevReload(bool(dryRun)); err != nil {
 				return err
 			}
 		} else {
-			if err := a.containerManager.ProdReload(bool(dryRun)); err != nil {
+			if err := a.containerHandler.ProdReload(bool(dryRun)); err != nil {
 				return err
 			}
 		}
@@ -556,12 +556,12 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 		path = "/" + path
 	}
 	containerProxyUrl := ""
-	if a.containerManager != nil {
-		containerProxyUrl = a.containerManager.GetProxyUrl()
+	if a.containerHandler != nil {
+		containerProxyUrl = a.containerHandler.GetProxyUrl()
 	}
 	action, err := action.NewAction(a.Logger, a.sourceFS, a.IsDev, name, description, path, run, suggest,
 		slices.Collect(maps.Values(a.paramInfo)), a.paramValuesStr, a.paramDict, a.Path, a.appStyle.GetStyleType(),
-		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerManager, a.jsLibs, a.AppPathDomain(), a.serverConfig, permit, a.rbacApi)
+		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerHandler, a.jsLibs, a.AppPathDomain(), a.serverConfig, permit, a.rbacApi)
 	if err != nil {
 		return fmt.Errorf("error creating action %s: %w", name, err)
 	}
@@ -784,11 +784,11 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	originalUrlStr := urlStr
 	if urlStr == apptype.CONTAINER_URL {
 		// proxying to container url
-		if a.containerManager == nil {
-			return rootWildcard, fmt.Errorf("container manager not initialized")
+		if a.containerHandler == nil {
+			return rootWildcard, fmt.Errorf("container handler not initialized")
 		}
 
-		urlStr = a.containerManager.GetProxyUrl()
+		urlStr = a.containerHandler.GetProxyUrl()
 	}
 
 	urlParsed, err := url.Parse(urlStr)
@@ -826,7 +826,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	if originalUrlStr == apptype.CONTAINER_URL {
 		// Wrap the proxy with a tracker to count the bytes sent and received
 		proxyWrapper = NewTracker(proxy, a.AppConfig.Container.IdleShutdownSecs)
-		a.containerManager.proxyTracker = proxyWrapper.(*Tracker)
+		a.containerHandler.proxyTracker = proxyWrapper.(*Tracker)
 	}
 
 	permsHandler := func(handler http.Handler) http.Handler {
