@@ -21,26 +21,6 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-type Container struct {
-	ID         string `json:"ID"`
-	Names      string `json:"Names"`
-	Image      string `json:"Image"`
-	State      string `json:"State"`
-	Status     string `json:"Status"`
-	PortString string `json:"Ports"`
-	Port       int
-}
-
-type Image struct {
-	Repository string `json:"Repository"`
-}
-
-type ContainerName string
-
-type ImageName string
-
-type VolumeName string
-
 var base32encoder = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 func genLowerCaseId(name string) string {
@@ -92,10 +72,17 @@ func GenImageName(appId types.AppId, contentHash string) ImageName {
 
 type ContainerCommand struct {
 	*types.Logger
+	config *types.SystemConfig
 }
 
-func (c ContainerCommand) RemoveImage(config *types.SystemConfig, name ImageName) error {
-	cmd := exec.Command(config.ContainerCommand, "rmi", string(name))
+var _ ContainerManager = ContainerCommand{}
+
+func NewContainerCommand(logger *types.Logger, config *types.SystemConfig) ContainerCommand {
+	return ContainerCommand{Logger: logger, config: config}
+}
+
+func (c ContainerCommand) RemoveImage(name ImageName) error {
+	cmd := exec.Command(c.config.ContainerCommand, "rmi", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error removing image: %s : %s", output, err)
@@ -104,15 +91,15 @@ func (c ContainerCommand) RemoveImage(config *types.SystemConfig, name ImageName
 	return nil
 }
 
-func (c ContainerCommand) BuildImage(config *types.SystemConfig, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
-	releaseLock, err := acquireBuildLock(context.Background(), config, string(name))
+func (c ContainerCommand) BuildImage(name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
+	releaseLock, err := acquireBuildLock(context.Background(), c.config, string(name))
 	if err != nil {
 		return fmt.Errorf("error acquiring build lock: %w", err)
 	}
 	defer releaseLock()
 
 	c.Debug().Msgf("Building image %s from %s with %s", name, containerFile, sourceUrl)
-	args := []string{config.ContainerCommand, "build", "-t", string(name), "-f", containerFile}
+	args := []string{c.config.ContainerCommand, "build", "-t", string(name), "-f", containerFile}
 
 	for k, v := range containerArgs {
 		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", k, v))
@@ -131,9 +118,9 @@ func (c ContainerCommand) BuildImage(config *types.SystemConfig, name ImageName,
 	return nil
 }
 
-func (c ContainerCommand) RemoveContainer(config *types.SystemConfig, name ContainerName) error {
+func (c ContainerCommand) RemoveContainer(name ContainerName) error {
 	c.Debug().Msgf("Removing container %s", name)
-	cmd := exec.Command(config.ContainerCommand, "rm", string(name))
+	cmd := exec.Command(c.config.ContainerCommand, "rm", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error removing image: %s : %s", output, err)
@@ -142,7 +129,7 @@ func (c ContainerCommand) RemoveContainer(config *types.SystemConfig, name Conta
 	return nil
 }
 
-func (c ContainerCommand) GetContainers(config *types.SystemConfig, name ContainerName, getAll bool) ([]Container, error) {
+func (c ContainerCommand) GetContainers(name ContainerName, getAll bool) ([]Container, error) {
 	c.Debug().Msgf("Getting containers with name %s, getAll %t", name, getAll)
 	args := []string{"ps", "--format", "json"}
 	if name != "" {
@@ -152,7 +139,7 @@ func (c ContainerCommand) GetContainers(config *types.SystemConfig, name Contain
 	if getAll {
 		args = append(args, "--all")
 	}
-	cmd := exec.Command(config.ContainerCommand, args...)
+	cmd := exec.Command(c.config.ContainerCommand, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("error listing containers: %s : %s", output, err)
@@ -230,16 +217,16 @@ func (c ContainerCommand) GetContainers(config *types.SystemConfig, name Contain
 			resp = append(resp, c)
 		}
 	} else {
-		return nil, fmt.Errorf("\"%s ps\" returned unknown output: %s", config.ContainerCommand, output)
+		return nil, fmt.Errorf("\"%s ps\" returned unknown output: %s", c.config.ContainerCommand, output)
 	}
 
 	c.Debug().Msgf("Found containers: %+v", resp)
 	return resp, nil
 }
 
-func (c ContainerCommand) GetContainerLogs(config *types.SystemConfig, name ContainerName) (string, error) {
+func (c ContainerCommand) GetContainerLogs(name ContainerName) (string, error) {
 	c.Debug().Msgf("Getting container logs %s", name)
-	lines, err := c.ExecTailN(config.ContainerCommand, []string{"logs", string(name)}, 1000)
+	lines, err := c.ExecTailN(c.config.ContainerCommand, []string{"logs", string(name)}, 1000)
 	if err != nil {
 		return "", fmt.Errorf("error getting container %s logs: %s", name, err)
 	}
@@ -247,9 +234,9 @@ func (c ContainerCommand) GetContainerLogs(config *types.SystemConfig, name Cont
 	return strings.Join(lines, "\n"), nil
 }
 
-func (c ContainerCommand) StopContainer(config *types.SystemConfig, name ContainerName) error {
+func (c ContainerCommand) StopContainer(name ContainerName) error {
 	c.Debug().Msgf("Stopping container %s", name)
-	cmd := exec.Command(config.ContainerCommand, "stop", "-t", "1", string(name))
+	cmd := exec.Command(c.config.ContainerCommand, "stop", "-t", "1", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error stopping container: %s : %s", output, err)
@@ -258,9 +245,9 @@ func (c ContainerCommand) StopContainer(config *types.SystemConfig, name Contain
 	return nil
 }
 
-func (c ContainerCommand) StartContainer(config *types.SystemConfig, name ContainerName) error {
+func (c ContainerCommand) StartContainer(name ContainerName) error {
 	c.Debug().Msgf("Starting container %s", name)
-	cmd := exec.Command(config.ContainerCommand, "start", string(name))
+	cmd := exec.Command(c.config.ContainerCommand, "start", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error starting container: %s : %s", output, err)
@@ -271,7 +258,7 @@ func (c ContainerCommand) StartContainer(config *types.SystemConfig, name Contai
 
 const LABEL_PREFIX = "dev.openrun."
 
-func (c ContainerCommand) RunContainer(config *types.SystemConfig, appEntry *types.AppEntry, containerName ContainerName,
+func (c ContainerCommand) RunContainer(appEntry *types.AppEntry, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
 	containerOptions map[string]string) error {
 	c.Debug().Msgf("Running container %s from image %s with port %d env %+v mountArgs %+v",
@@ -310,7 +297,7 @@ func (c ContainerCommand) RunContainer(config *types.SystemConfig, appEntry *typ
 	args = append(args, string(imageName))
 
 	c.Debug().Msgf("Running container with args: %v", args)
-	cmd := exec.Command(config.ContainerCommand, args...)
+	cmd := exec.Command(c.config.ContainerCommand, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error running container: %s : %s", output, err)
@@ -319,13 +306,13 @@ func (c ContainerCommand) RunContainer(config *types.SystemConfig, appEntry *typ
 	return nil
 }
 
-func (c ContainerCommand) GetImages(config *types.SystemConfig, name ImageName) ([]Image, error) {
+func (c ContainerCommand) GetImages(name ImageName) ([]Image, error) {
 	c.Debug().Msgf("Getting images with name %s", name)
 	args := []string{"images", "--format", "json"}
 	if name != "" {
 		args = append(args, string(name))
 	}
-	cmd := exec.Command(config.ContainerCommand, args...)
+	cmd := exec.Command(c.config.ContainerCommand, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("error listing images: %s : %s", output, err)
@@ -366,7 +353,7 @@ func (c ContainerCommand) GetImages(config *types.SystemConfig, name ImageName) 
 			resp = append(resp, i)
 		}
 	} else {
-		return nil, fmt.Errorf("\"%s ps\" returned unknown output: %s", config.ContainerCommand, output)
+		return nil, fmt.Errorf("\"%s ps\" returned unknown output: %s", c.config.ContainerCommand, output)
 	}
 
 	c.Debug().Msgf("Found images: %+v", resp)

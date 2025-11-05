@@ -43,7 +43,7 @@ func (c *containerPlugin) Run(thread *starlark.Thread, builtin *starlark.Builtin
 	if cm == nil {
 		panic(errors.New("container config not initialized"))
 	}
-	manager, ok := cm.(*app.ContainerManager)
+	manager, ok := cm.(*app.ContainerHandler)
 	if !ok {
 		return nil, fmt.Errorf("expected container manager, got %T", cm)
 	}

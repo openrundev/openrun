@@ -19,9 +19,9 @@ func GenVolumeName(appId types.AppId, dirName string) VolumeName {
 	return VolumeName(fmt.Sprintf("clv-%s-%s", appId, strings.ToLower(hashHex)))
 }
 
-func (c ContainerCommand) VolumeExists(config *types.SystemConfig, name VolumeName) bool {
+func (c ContainerCommand) VolumeExists(name VolumeName) bool {
 	c.Debug().Msgf("Checking volume exists %s", name)
-	cmd := exec.Command(config.ContainerCommand, "volume", "inspect", string(name))
+	cmd := exec.Command(c.config.ContainerCommand, "volume", "inspect", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		c.Debug().Msgf("volume exists check failed %s %s %s", name, err, output)
@@ -30,9 +30,9 @@ func (c ContainerCommand) VolumeExists(config *types.SystemConfig, name VolumeNa
 	return err == nil
 }
 
-func (c ContainerCommand) VolumeCreate(config *types.SystemConfig, name VolumeName) error {
+func (c ContainerCommand) VolumeCreate(name VolumeName) error {
 	c.Debug().Msgf("Creating volume %s", name)
-	cmd := exec.Command(config.ContainerCommand, "volume", "create", string(name))
+	cmd := exec.Command(c.config.ContainerCommand, "volume", "create", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error creating volume %s: %w %s", name, err, output)

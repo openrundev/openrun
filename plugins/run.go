@@ -18,7 +18,7 @@ import (
 	"go.starlark.net/starlark"
 )
 
-func execCommand(containerManager *app.ContainerManager, thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func execCommand(containerManager *app.ContainerHandler, thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var path, parse, cwd starlark.String
 	var cmdArgs *starlark.List
 	var env *starlark.List

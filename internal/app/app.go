@@ -59,7 +59,7 @@ type App struct {
 	paramValuesStr   map[string]string   // the param values for the app, from metadata and defaults
 	paramDict        starlark.StringDict // the Starlark param values for the app
 	plugins          *AppPlugins
-	containerManager *ContainerManager
+	containerManager *ContainerHandler
 	serverConfig     *types.ServerConfig
 
 	globals      starlark.StringDict    // global variables defined in starlark code
