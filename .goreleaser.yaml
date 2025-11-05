@@ -136,3 +136,24 @@ brews:
           puts "Created localhost TLS certificates"
         end
       end
+
+# New images builder
+dockers_v2:
+  - id: openrun_img
+    ids: [openrun]
+    dockerfile: deploy/Dockerfile
+    # Build both platforms and publish a single multi-arch manifest
+    platforms: [linux/amd64, linux/arm64]
+    images:
+      - ghcr.io/openrundev/openrun
+    tags:
+      - "{{ .Tag }}" # e.g. v1.2.3
+      - "sha-{{ .ShortCommit }}"
+      - latest
+    labels:
+      "org.opencontainers.image.title": "openrun"
+      "org.opencontainers.image.description": "OpenRun: Declarative Web App Deployment"
+      "org.opencontainers.image.source": "{{ .GitURL }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.created": "{{ .Date }}"

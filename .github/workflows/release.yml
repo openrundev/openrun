@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  packages: write # required to push to GHCR
 
 jobs:
   goreleaser:
@@ -21,6 +22,16 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: "1.25.0"
+      # Buildx is required for multi-arch (dockers_v2 uses buildx)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      # Login to GHCR
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
