@@ -47,7 +47,7 @@ type ContainerHandler struct {
 	image           string              // image name as specified
 	GenImageName    container.ImageName // generated image name
 	port            int64               // Port number within the container
-	hostPort        int                 // Port number on the host
+	hostNamePort    string              // host name : port number for the container
 	lifetime        string
 	scheme          string
 	health          string
@@ -233,85 +233,85 @@ func dedupVolumes(volumes []string) []string {
 	return ret
 }
 
-func (m *ContainerHandler) idleAppShutdown() {
-	for range m.idleShutdownTicker.C {
-		idleTimeSecs := time.Now().Unix() - m.app.lastRequestTime.Load()
-		if m.currentState != ContainerStateRunning || idleTimeSecs < int64(m.containerConfig.IdleShutdownSecs) {
+func (h *ContainerHandler) idleAppShutdown() {
+	for range h.idleShutdownTicker.C {
+		idleTimeSecs := time.Now().Unix() - h.app.lastRequestTime.Load()
+		if h.currentState != ContainerStateRunning || idleTimeSecs < int64(h.containerConfig.IdleShutdownSecs) {
 			// Not idle
-			m.Trace().Msgf("App %s not idle, last request %d seconds ago", m.app.Id, idleTimeSecs)
+			h.Trace().Msgf("App %s not idle, last request %d seconds ago", h.app.Id, idleTimeSecs)
 			continue
 		}
 
-		if m.proxyTracker != nil {
-			sent, recv := m.proxyTracker.GetRollingTotals()
+		if h.proxyTracker != nil {
+			sent, recv := h.proxyTracker.GetRollingTotals()
 			totalBytes := sent + recv
-			if totalBytes >= uint64(m.containerConfig.IdleBytesHighWatermark) {
-				m.Trace().Msgf("App %s not idle, bytes sent %d, bytes received %d, total bytes %d at high watermark %d",
-					m.app.Id, sent, recv, totalBytes, m.containerConfig.IdleBytesHighWatermark)
+			if totalBytes >= uint64(h.containerConfig.IdleBytesHighWatermark) {
+				h.Trace().Msgf("App %s not idle, bytes sent %d, bytes received %d, total bytes %d at high watermark %d",
+					h.app.Id, sent, recv, totalBytes, h.containerConfig.IdleBytesHighWatermark)
 				continue
 			}
-			m.Info().Msgf("App %s idle, bytes sent %d, bytes received %d, total bytes %d below high watermark %d",
-				m.app.Id, sent, recv, totalBytes, m.containerConfig.IdleBytesHighWatermark)
+			h.Info().Msgf("App %s idle, bytes sent %d, bytes received %d, total bytes %d below high watermark %d",
+				h.app.Id, sent, recv, totalBytes, h.containerConfig.IdleBytesHighWatermark)
 		}
 
-		m.Debug().Msgf("Shutting down idle app %s after %d seconds", m.app.Id, idleTimeSecs)
+		h.Debug().Msgf("Shutting down idle app %s after %d seconds", h.app.Id, idleTimeSecs)
 
-		fullHash, err := m.getAppHash()
+		fullHash, err := h.getAppHash()
 		if err != nil {
-			m.Error().Err(err).Msgf("Error getting app hash for %s", m.app.Id)
+			h.Error().Err(err).Msgf("Error getting app hash for %s", h.app.Id)
 			break
 		}
 
-		if m.app.notifyClose != nil {
+		if h.app.notifyClose != nil {
 			// Notify the server to close the app so that it gets reinitialized on next API call
-			m.app.notifyClose <- m.app.AppPathDomain()
+			h.app.notifyClose <- h.app.AppPathDomain()
 		}
 
-		m.stateLock.Lock()
-		m.currentState = ContainerStateIdleShutdown
+		h.stateLock.Lock()
+		h.currentState = ContainerStateIdleShutdown
 
-		err = m.manager.StopContainer(container.GenContainerName(m.app.Id, fullHash))
+		err = h.manager.StopContainer(container.GenContainerName(h.app.Id, fullHash))
 		if err != nil {
-			m.Error().Err(err).Msgf("Error stopping idle app %s", m.app.Id)
+			h.Error().Err(err).Msgf("Error stopping idle app %s", h.app.Id)
 		}
-		m.stateLock.Unlock()
+		h.stateLock.Unlock()
 		break
 	}
 
-	m.Debug().Msgf("Idle checker stopped for app %s", m.app.Id)
+	h.Debug().Msgf("Idle checker stopped for app %s", h.app.Id)
 }
 
-func (m *ContainerHandler) healthChecker() {
-	for range m.healthCheckTicker.C {
-		err := m.WaitForHealth(m.containerConfig.StatusHealthAttempts)
+func (h *ContainerHandler) healthChecker() {
+	for range h.healthCheckTicker.C {
+		err := h.WaitForHealth(h.containerConfig.StatusHealthAttempts)
 		if err == nil {
 			continue
 		}
-		m.Info().Msgf("Health check failed for app %s: %s", m.app.Id, err)
+		h.Info().Msgf("Health check failed for app %s: %s", h.app.Id, err)
 
-		fullHash, err := m.getAppHash()
+		fullHash, err := h.getAppHash()
 		if err != nil {
-			m.Error().Err(err).Msgf("Error getting app hash for %s", m.app.Id)
+			h.Error().Err(err).Msgf("Error getting app hash for %s", h.app.Id)
 			break
 		}
 
-		if m.app.notifyClose != nil {
+		if h.app.notifyClose != nil {
 			// Notify the server to close the app so that it gets reinitialized on next API call
-			m.app.notifyClose <- m.app.AppPathDomain()
+			h.app.notifyClose <- h.app.AppPathDomain()
 		}
 
-		m.stateLock.Lock()
-		m.currentState = ContainerStateHealthFailure
+		h.stateLock.Lock()
+		h.currentState = ContainerStateHealthFailure
 
-		err = m.manager.StopContainer(container.GenContainerName(m.app.Id, fullHash))
+		err = h.manager.StopContainer(container.GenContainerName(h.app.Id, fullHash))
 		if err != nil {
-			m.Error().Err(err).Msgf("Error stopping app %s after health failure", m.app.Id)
+			h.Error().Err(err).Msgf("Error stopping app %s after health failure", h.app.Id)
 		}
-		m.stateLock.Unlock()
+		h.stateLock.Unlock()
 		break
 	}
 
-	m.Debug().Msgf("Health checker stopped for app %s", m.app.Id)
+	h.Debug().Msgf("Health checker stopped for app %s", h.app.Id)
 }
 
 func extractVolumes(node *parser.Node) []string {
@@ -323,12 +323,12 @@ func extractVolumes(node *parser.Node) []string {
 	return ret
 }
 
-func (m *ContainerHandler) GetProxyUrl() string {
-	return fmt.Sprintf("%s://127.0.0.1:%d", m.scheme, m.hostPort)
+func (h *ContainerHandler) GetProxyUrl() string {
+	return fmt.Sprintf("%s://%s", h.scheme, h.hostNamePort)
 }
 
-func (m *ContainerHandler) GetHealthUrl(appHealthUrl string) string {
-	healthUrl := m.containerConfig.HealthUrl
+func (h *ContainerHandler) GetHealthUrl(appHealthUrl string) string {
+	healthUrl := h.containerConfig.HealthUrl
 	if appHealthUrl != "" && appHealthUrl != "/" {
 		// Health check URL is specified in the app code, use that
 		healthUrl = appHealthUrl
@@ -382,9 +382,9 @@ func getSliceHash(input []string) (string, error) {
 	return hex.EncodeToString(sha.Sum(nil)), nil
 }
 
-func (m *ContainerHandler) GetEnvMap() (map[string]string, string) {
+func (h *ContainerHandler) GetEnvMap() (map[string]string, string) {
 	paramKeys := []string{}
-	for k := range m.paramMap {
+	for k := range h.paramMap {
 		paramKeys = append(paramKeys, k)
 	}
 	slices.Sort(paramKeys) // Sort the keys to ensure consistent hash
@@ -392,7 +392,7 @@ func (m *ContainerHandler) GetEnvMap() (map[string]string, string) {
 	ret := map[string]string{}
 	hashBuilder := strings.Builder{}
 	for _, paramName := range paramKeys {
-		paramVal := m.paramMap[paramName]
+		paramVal := h.paramMap[paramName]
 		// Default to string
 		hashBuilder.WriteString(paramName)
 		hashBuilder.WriteByte(0)
@@ -402,7 +402,7 @@ func (m *ContainerHandler) GetEnvMap() (map[string]string, string) {
 	}
 
 	// Add the app path to the return map and hash
-	pathValue := m.app.Path
+	pathValue := h.app.Path
 	if pathValue == "/" {
 		pathValue = ""
 	}
@@ -416,12 +416,12 @@ func (m *ContainerHandler) GetEnvMap() (map[string]string, string) {
 	// Using PORT instead of CL_PORT since that seems to be the most common convention across apps
 	hashBuilder.WriteString("PORT")
 	hashBuilder.WriteByte(0)
-	portStr := strconv.FormatInt(m.port, 10)
+	portStr := strconv.FormatInt(h.port, 10)
 	hashBuilder.WriteString(portStr)
 	hashBuilder.WriteByte(0)
 	ret["PORT"] = portStr
 
-	appUrl := types.GetAppUrl(m.app.AppPathDomain(), m.app.serverConfig)
+	appUrl := types.GetAppUrl(h.app.AppPathDomain(), h.app.serverConfig)
 	hashBuilder.WriteString("CL_APP_URL")
 	hashBuilder.WriteByte(0)
 	hashBuilder.WriteString(appUrl)
@@ -431,11 +431,11 @@ func (m *ContainerHandler) GetEnvMap() (map[string]string, string) {
 	return ret, hashBuilder.String()
 }
 
-func (m *ContainerHandler) createSpecFiles() ([]string, error) {
+func (h *ContainerHandler) createSpecFiles() ([]string, error) {
 	// Create the spec files if they are not already present
 	created := []string{}
-	for name, data := range *m.app.Metadata.SpecFiles {
-		diskFile := path.Join(m.app.SourceUrl, name)
+	for name, data := range *h.app.Metadata.SpecFiles {
+		diskFile := path.Join(h.app.SourceUrl, name)
 		_, err := os.Stat(diskFile)
 		if err != nil {
 			if err = os.WriteFile(diskFile, []byte(data), 0644); err != nil {
@@ -450,9 +450,9 @@ func (m *ContainerHandler) createSpecFiles() ([]string, error) {
 
 const UNNAMED_VOLUME = "<UNNAMED>"
 
-func (m *ContainerHandler) createVolumes() error {
-	for _, vol := range m.volumes {
-		_, volName, volStr, err := m.parseVolumeString(vol)
+func (h *ContainerHandler) createVolumes() error {
+	for _, vol := range h.volumes {
+		_, volName, volStr, err := h.parseVolumeString(vol)
 		if err != nil {
 			return fmt.Errorf("error parsing volume %s: %w", vol, err)
 		}
@@ -465,10 +465,10 @@ func (m *ContainerHandler) createVolumes() error {
 			dir = volStr
 		}
 
-		genVolumeName := container.GenVolumeName(m.app.Id, dir)
-		m.Info().Msgf("Applying volume %s for app %s dir %s", genVolumeName, m.app.Id, dir)
-		if !m.manager.VolumeExists(genVolumeName) {
-			err := m.manager.VolumeCreate(genVolumeName)
+		genVolumeName := container.GenVolumeName(h.app.Id, dir)
+		h.Info().Msgf("Applying volume %s for app %s dir %s", genVolumeName, h.app.Id, dir)
+		if !h.manager.VolumeExists(genVolumeName) {
+			err := h.manager.VolumeCreate(genVolumeName)
 			if err != nil {
 				return fmt.Errorf("error creating volume %s: %w", genVolumeName, err)
 			}
@@ -477,11 +477,11 @@ func (m *ContainerHandler) createVolumes() error {
 	return nil
 }
 
-func (m *ContainerHandler) genMountArgs(sourceDir string) ([]string, error) {
+func (h *ContainerHandler) genMountArgs(sourceDir string) ([]string, error) {
 	args := []string{}
 
-	for _, vol := range m.volumes {
-		clPrefix, volName, volStr, err := m.parseVolumeString(vol)
+	for _, vol := range h.volumes {
+		clPrefix, volName, volStr, err := h.parseVolumeString(vol)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing volume %s: %w", vol, err)
 		}
@@ -496,16 +496,16 @@ func (m *ContainerHandler) genMountArgs(sourceDir string) ([]string, error) {
 			}
 			tmplFileName := split[0]
 			srcFile := path.Join(sourceDir, tmplFileName)
-			destFile := path.Join(m.app.AppRunPath, path.Base(tmplFileName)+".gen")
-			data := map[string]any{"params": m.paramMap}
+			destFile := path.Join(h.app.AppRunPath, path.Base(tmplFileName)+".gen")
+			data := map[string]any{"params": h.paramMap}
 			if sourceDir != "" {
-				err = m.renderTemplate(srcFile, destFile, data)
+				err = h.renderTemplate(srcFile, destFile, data)
 				if err != nil {
 					return nil, fmt.Errorf("error rendering template %s: %w", srcFile, err)
 				}
 			}
 			volStr = fmt.Sprintf("%s:%s", destFile, strings.Join(split[1:], ":"))
-			m.Info().Msgf("Mounting secret %s for app %s src %s dest %s", volStr, m.app.Id, srcFile, destFile)
+			h.Info().Msgf("Mounting secret %s for app %s src %s dest %s", volStr, h.app.Id, srcFile, destFile)
 		}
 
 		if volName == "" {
@@ -518,7 +518,7 @@ func (m *ContainerHandler) genMountArgs(sourceDir string) ([]string, error) {
 				dir = volStr
 			}
 
-			genVolumeName := container.GenVolumeName(m.app.Id, dir)
+			genVolumeName := container.GenVolumeName(h.app.Id, dir)
 			split := strings.Split(volStr, ":")
 			var volCliStr string
 			if len(split) > 1 {
@@ -527,7 +527,7 @@ func (m *ContainerHandler) genMountArgs(sourceDir string) ([]string, error) {
 			} else {
 				volCliStr = string(genVolumeName) + ":" + volStr
 			}
-			m.Info().Msgf("Mounting volume %s for app %s dir %s, mount arg %s", genVolumeName, m.app.Id, dir, volCliStr)
+			h.Info().Msgf("Mounting volume %s for app %s dir %s, mount arg %s", genVolumeName, h.app.Id, dir, volCliStr)
 			args = append(args, fmt.Sprintf("--volume=%s", volCliStr))
 		}
 	}
@@ -536,7 +536,7 @@ func (m *ContainerHandler) genMountArgs(sourceDir string) ([]string, error) {
 
 // renderTemplate reads the source template file, executes it with the given data,
 // and writes the output to the target file.
-func (m *ContainerHandler) renderTemplate(srcFilename, targetFilename string, data map[string]any) error {
+func (h *ContainerHandler) renderTemplate(srcFilename, targetFilename string, data map[string]any) error {
 	// Parse the source file as a template
 	tmpl, err := template.ParseFiles(srcFilename)
 	if err != nil {
@@ -563,7 +563,7 @@ func (m *ContainerHandler) renderTemplate(srcFilename, targetFilename string, da
 // 2. volume name, UNNAMED_VOLUME if unnamed, "" for bind
 // 3. the rest of the volume string
 // 4. error
-func (m *ContainerHandler) parseVolumeString(vol string) (string, string, string, error) {
+func (h *ContainerHandler) parseVolumeString(vol string) (string, string, string, error) {
 	if strings.HasPrefix(vol, VOL_PREFIX_SECRET) {
 		split := strings.Split(vol[len(VOL_PREFIX_SECRET):], ":")
 		if len(split) == 1 {
@@ -585,16 +585,10 @@ func (m *ContainerHandler) parseVolumeString(vol string) (string, string, string
 	return "", firstPart, vol, nil // named volume
 }
 
-func (m *ContainerHandler) DevReload(dryRun bool) error {
-	m.GenImageName = container.ImageName(m.image)
-	if m.GenImageName == "" {
-		m.GenImageName = container.GenImageName(m.app.Id, "")
-	}
-	containerName := container.GenContainerName(m.app.Id, "")
-
-	containers, err := m.manager.GetContainers(containerName, false)
-	if err != nil {
-		return fmt.Errorf("error getting running containers: %w", err)
+func (h *ContainerHandler) DevReload(dryRun bool) error {
+	devCM, ok := h.manager.(container.DevContainerManager)
+	if !ok {
+		return fmt.Errorf("container manager does not support dev operations")
 	}
 
 	if dryRun {
@@ -604,23 +598,34 @@ func (m *ContainerHandler) DevReload(dryRun bool) error {
 		return nil
 	}
 
-	if len(containers) != 0 {
-		err := m.manager.StopContainer(containerName)
+	h.GenImageName = container.ImageName(h.image)
+	if h.GenImageName == "" {
+		h.GenImageName = container.GenImageName(h.app.Id, "")
+	}
+	containerName := container.GenContainerName(h.app.Id, "")
+
+	_, running, err := devCM.GetContainerState(containerName)
+	if err != nil {
+		return fmt.Errorf("error checking container status: %w", err)
+	}
+
+	if running {
+		err := h.manager.StopContainer(containerName)
 		if err != nil {
 			return fmt.Errorf("error stopping container: %w", err)
 		}
 	}
 
-	if m.image == "" {
+	if h.image == "" {
 		// Using a container file, rebuild the image
-		_ = m.manager.RemoveImage(m.GenImageName)
+		_ = devCM.RemoveImage(h.GenImageName)
 
-		_, err := m.createSpecFiles()
+		_, err := h.createSpecFiles()
 		if err != nil {
 			return err
 		}
-		buildDir := path.Join(m.app.SourceUrl, m.buildDir)
-		err = m.manager.BuildImage(m.GenImageName, buildDir, m.containerFile, m.cargs)
+		buildDir := path.Join(h.app.SourceUrl, h.buildDir)
+		err = h.manager.BuildImage(h.GenImageName, buildDir, h.containerFile, h.cargs)
 		if err != nil {
 			return err
 		}
@@ -628,47 +633,47 @@ func (m *ContainerHandler) DevReload(dryRun bool) error {
 		// Makes the app independent of changes in the spec files
 	}
 
-	_ = m.manager.RemoveContainer(containerName)
+	_ = devCM.RemoveContainer(containerName)
 
-	if err = m.createVolumes(); err != nil {
+	if err = h.createVolumes(); err != nil {
 		// Create named volumes for the container
 		return err
 	}
 
-	m.stateLock.Lock()
-	defer m.stateLock.Unlock()
+	h.stateLock.Lock()
+	defer h.stateLock.Unlock()
 
-	m.mountArgs, err = m.genMountArgs(m.app.SourceUrl)
+	h.mountArgs, err = h.genMountArgs(h.app.SourceUrl)
 	if err != nil {
 		return err
 	}
 
-	if m.lifetime == types.CONTAINER_LIFETIME_COMMAND {
+	if h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
 		// Command lifetime, service is not started, commands will be run with the image
 		return nil
 	}
-	envMap, _ := m.GetEnvMap()
-	err = m.manager.RunContainer(m.app.AppEntry, containerName,
-		m.GenImageName, m.port, envMap, m.mountArgs, m.app.Metadata.ContainerOptions)
+	envMap, _ := h.GetEnvMap()
+	err = devCM.RunContainer(h.app.AppEntry, containerName,
+		h.GenImageName, h.port, envMap, h.mountArgs, h.app.Metadata.ContainerOptions)
 	if err != nil {
 		return fmt.Errorf("error running container: %w", err)
 	}
 
-	containers, err = m.manager.GetContainers(containerName, false)
+	hostNamePort, running, err := devCM.GetContainerState(containerName)
 	if err != nil {
 		return fmt.Errorf("error getting running containers: %w", err)
 	}
-	if len(containers) == 0 {
-		logs, _ := m.manager.GetContainerLogs(containerName)
+	if hostNamePort == "" || !running {
+		logs, _ := devCM.GetContainerLogs(containerName)
 		return fmt.Errorf("container %s not running. Logs\n %s", containerName, logs)
 	}
-	m.currentState = ContainerStateRunning
-	m.hostPort = containers[0].Port
+	h.currentState = ContainerStateRunning
+	h.hostNamePort = hostNamePort
 
-	if m.health != "" {
-		err = m.WaitForHealth(m.containerConfig.HealthAttemptsAfterStartup)
+	if h.health != "" {
+		err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup)
 		if err != nil {
-			logs, _ := m.manager.GetContainerLogs(containerName)
+			logs, _ := h.manager.GetContainerLogs(containerName)
 			return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
 		}
 	}
@@ -676,23 +681,23 @@ func (m *ContainerHandler) DevReload(dryRun bool) error {
 	return nil
 }
 
-func (m *ContainerHandler) WaitForHealth(attempts int) error {
+func (h *ContainerHandler) WaitForHealth(attempts int) error {
 	client := &http.Client{
-		Timeout: time.Duration(m.containerConfig.HealthTimeoutSecs) * time.Second,
+		Timeout: time.Duration(h.containerConfig.HealthTimeoutSecs) * time.Second,
 	}
 
 	var err error
 	var resp *http.Response
-	proxyUrl, err := url.Parse(m.GetProxyUrl())
+	proxyUrl, err := url.Parse(h.GetProxyUrl())
 	if err != nil {
 		return err
 	}
-	if !m.stripAppPath {
+	if !h.stripAppPath {
 		// Apps like Streamlit require the app path to be present
-		proxyUrl = proxyUrl.JoinPath(m.app.Path)
+		proxyUrl = proxyUrl.JoinPath(h.app.Path)
 	}
 
-	proxyUrl = proxyUrl.JoinPath(m.health)
+	proxyUrl = proxyUrl.JoinPath(h.health)
 	if err != nil {
 		return err
 	}
@@ -711,33 +716,33 @@ func (m *ContainerHandler) WaitForHealth(attempts int) error {
 			resp.Body.Close() //nolint:errcheck
 		}
 
-		m.Debug().Msgf("Attempt %d failed on %s : status %s err %s", attempt, proxyUrl, statusCode, err)
+		h.Debug().Msgf("Attempt %d failed on %s : status %s err %s", attempt, proxyUrl, statusCode, err)
 		time.Sleep(1 * time.Second)
 	}
 	return err
 }
 
-func (m *ContainerHandler) getAppHash() (string, error) {
-	if m.app.IsDev {
+func (h *ContainerHandler) getAppHash() (string, error) {
+	if h.app.IsDev {
 		return "", nil
 	}
 
-	sourceHash, err := m.sourceFS.FileHash(m.excludeGlob)
+	sourceHash, err := h.sourceFS.FileHash(h.excludeGlob)
 	if err != nil {
 		return "", fmt.Errorf("error getting file hash: %w", err)
 	}
 
-	_, envHash := m.GetEnvMap()
+	_, envHash := h.GetEnvMap()
 
-	coptHash, err := getMapHash(m.app.Metadata.ContainerOptions)
+	coptHash, err := getMapHash(h.app.Metadata.ContainerOptions)
 	if err != nil {
 		return "", fmt.Errorf("error getting copt hash: %w", err)
 	}
-	cargHash, err := getMapHash(m.cargs)
+	cargHash, err := getMapHash(h.cargs)
 	if err != nil {
 		return "", fmt.Errorf("error getting carg hash: %w", err)
 	}
-	cvolHash, err := getSliceHash(m.app.Metadata.ContainerVolumes)
+	cvolHash, err := getSliceHash(h.app.Metadata.ContainerVolumes)
 	if err != nil {
 		return "", fmt.Errorf("error getting cvol hash: %w", err)
 	}
@@ -747,89 +752,91 @@ func (m *ContainerHandler) getAppHash() (string, error) {
 		return "", err
 	}
 	fullHash := hex.EncodeToString(sha.Sum(nil))
-	m.Debug().Msgf("Source hash %s Env hash %s copt hash %s args hash %s cvol hash %s Full hash %s",
+	h.Debug().Msgf("Source hash %s Env hash %s copt hash %s args hash %s cvol hash %s Full hash %s",
 		sourceHash, envHash, coptHash, cargHash, cvolHash, fullHash)
 	return fullHash, nil
 }
 
-func (m *ContainerHandler) ProdReload(dryRun bool) error {
-	fullHash, err := m.getAppHash()
+func (h *ContainerHandler) ProdReload(dryRun bool) error {
+	fullHash, err := h.getAppHash()
 	if err != nil {
 		return err
 	}
 
-	m.GenImageName = container.ImageName(m.image)
-	if m.GenImageName == "" {
-		m.GenImageName = container.GenImageName(m.app.Id, fullHash)
+	h.GenImageName = container.ImageName(h.image)
+	if h.GenImageName == "" {
+		h.GenImageName = container.GenImageName(h.app.Id, fullHash)
 	}
 
-	containerName := container.GenContainerName(m.app.Id, fullHash)
+	if dryRun {
+		// The image could be rebuild in case of a dry run, without touching the container.
+		// But a temp image id will have to be used to avoid conflict with the existing image.
+		// Dryrun is a no-op for now for containers
+		return nil
+	}
 
-	if m.lifetime != types.CONTAINER_LIFETIME_COMMAND {
-		containers, err := m.manager.GetContainers(containerName, true)
+	containerName := container.GenContainerName(h.app.Id, fullHash)
+
+	if h.lifetime != types.CONTAINER_LIFETIME_COMMAND {
+		hostNamePort, running, err := h.manager.GetContainerState(containerName)
 		if err != nil {
 			return fmt.Errorf("error getting running containers: %w", err)
 		}
 
-		if dryRun {
-			// The image could be rebuild in case of a dry run, without touching the container.
-			// But a temp image id will have to be used to avoid conflict with the existing image.
-			// Dryrun is a no-op for now for containers
-			return nil
-		}
+		if hostNamePort != "" {
+			h.stateLock.Lock()
+			defer h.stateLock.Unlock()
 
-		if len(containers) != 0 {
-			m.stateLock.Lock()
-			defer m.stateLock.Unlock()
-
-			if containers[0].State != "running" {
+			if !running {
 				// This does not handle the case where volume list has changed
-				m.Debug().Msgf("container state %s, starting", containers[0].State)
-				err = m.manager.StartContainer(containerName)
+				h.Debug().Msgf("container not running, starting")
+				err = h.manager.StartContainer(containerName)
 				if err != nil {
 					return fmt.Errorf("error starting container: %w", err)
 				}
 
 				// Fetch port number after starting the container
-				containers, err = m.manager.GetContainers(containerName, true)
+				hostNamePort, running, err = h.manager.GetContainerState(containerName)
 				if err != nil {
 					return fmt.Errorf("error getting running containers: %w", err)
 				}
-				m.hostPort = containers[0].Port
-
-				if m.health != "" {
-					err = m.WaitForHealth(m.containerConfig.HealthAttemptsAfterStartup)
+				if hostNamePort == "" || !running {
+					return fmt.Errorf("container not running after starting")
+				}
+				h.hostNamePort = hostNamePort
+				if h.health != "" {
+					err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup)
 					if err != nil {
 						return fmt.Errorf("error waiting for health: %w", err)
 					}
 				}
 			} else {
 				// TODO handle case where image name is specified and param values change, need to restart container in that case
-				m.hostPort = containers[0].Port
-				m.Debug().Msg("container already running")
+				h.hostNamePort = hostNamePort
+				h.Debug().Msg("container already running")
 			}
 
-			m.currentState = ContainerStateRunning
-			m.Debug().Msgf("updating port to %d", m.hostPort)
+			h.currentState = ContainerStateRunning
+			h.Debug().Msgf("updating port to %s", h.hostNamePort)
 			return nil
 		}
 	}
 
 	sourceDir := ""
-	if m.image == "" {
+	if h.image == "" {
 		// Using a container file, build the image if required
-		images, err := m.manager.GetImages(m.GenImageName)
+		images, err := h.manager.GetImages(h.GenImageName)
 		if err != nil {
 			return fmt.Errorf("error getting images: %w", err)
 		}
 
 		if len(images) == 0 {
-			sourceDir, err = m.sourceFS.CreateTempSourceDir()
+			sourceDir, err = h.sourceFS.CreateTempSourceDir()
 			if err != nil {
 				return fmt.Errorf("error creating temp source dir: %w", err)
 			}
-			buildDir := path.Join(sourceDir, m.buildDir)
-			buildErr := m.manager.BuildImage(m.GenImageName, buildDir, m.containerFile, m.cargs)
+			buildDir := path.Join(sourceDir, h.buildDir)
+			buildErr := h.manager.BuildImage(h.GenImageName, buildDir, h.containerFile, h.cargs)
 
 			if buildErr != nil {
 				return fmt.Errorf("error building image: %w", buildErr)
@@ -837,16 +844,16 @@ func (m *ContainerHandler) ProdReload(dryRun bool) error {
 		}
 	}
 
-	if err = m.createVolumes(); err != nil {
+	if err = h.createVolumes(); err != nil {
 		// Create named volumes for the container
 		return err
 	}
 
-	m.stateLock.Lock()
-	defer m.stateLock.Unlock()
+	h.stateLock.Lock()
+	defer h.stateLock.Unlock()
 	// Start the container with newly built image
 
-	m.mountArgs, err = m.genMountArgs(sourceDir)
+	h.mountArgs, err = h.genMountArgs(sourceDir)
 	if err != nil {
 		return err
 	}
@@ -857,30 +864,34 @@ func (m *ContainerHandler) ProdReload(dryRun bool) error {
 		}
 	}
 
-	if m.lifetime == types.CONTAINER_LIFETIME_COMMAND {
+	if h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
 		// Command lifetime, service is not started, commands will be run with the image
 		return nil
 	}
-	envMap, _ := m.GetEnvMap()
-
-	err = m.manager.RunContainer(m.app.AppEntry, containerName,
-		m.GenImageName, m.port, envMap, m.mountArgs, m.app.Metadata.ContainerOptions)
+	envMap, _ := h.GetEnvMap()
+	if h.manager.SupportsInPlaceContainerUpdate(containerName) {
+		err = h.manager.InPlaceContainerUpdate(h.app.AppEntry, containerName,
+			h.GenImageName, h.port, envMap, h.mountArgs, h.app.Metadata.ContainerOptions)
+	} else {
+		err = h.manager.RunContainer(h.app.AppEntry, containerName,
+			h.GenImageName, h.port, envMap, h.mountArgs, h.app.Metadata.ContainerOptions)
+	}
 	if err != nil {
-		return fmt.Errorf("error starting container: %w", err)
+		return fmt.Errorf("error starting container after update: %w", err)
 	}
 
-	containers, err := m.manager.GetContainers(containerName, false)
+	hostNamePort, running, err := h.manager.GetContainerState(containerName)
 	if err != nil {
 		return fmt.Errorf("error getting running containers: %w", err)
 	}
-	if len(containers) == 0 {
+	if hostNamePort == "" || !running {
 		return fmt.Errorf("container not running") // todo add logs
 	}
-	m.currentState = ContainerStateRunning
-	m.hostPort = containers[0].Port
+	h.currentState = ContainerStateRunning
+	h.hostNamePort = hostNamePort
 
-	if m.health != "" {
-		err = m.WaitForHealth(m.containerConfig.HealthAttemptsAfterStartup)
+	if h.health != "" {
+		err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup)
 		if err != nil {
 			return fmt.Errorf("error waiting for health: %w", err)
 		}
@@ -889,21 +900,21 @@ func (m *ContainerHandler) ProdReload(dryRun bool) error {
 	return nil
 }
 
-func (m *ContainerHandler) Close() error {
-	m.Debug().Msgf("Closing container handler for app %s", m.app.Id)
-	if m.idleShutdownTicker != nil {
-		m.idleShutdownTicker.Stop()
+func (h *ContainerHandler) Close() error {
+	h.Debug().Msgf("Closing container handler for app %s", h.app.Id)
+	if h.idleShutdownTicker != nil {
+		h.idleShutdownTicker.Stop()
 	}
 
-	if m.healthCheckTicker != nil {
-		m.healthCheckTicker.Stop()
+	if h.healthCheckTicker != nil {
+		h.healthCheckTicker.Stop()
 	}
 	return nil
 }
 
-func (m *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []string, env []string) (*exec.Cmd, error) {
+func (h *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []string, env []string) (*exec.Cmd, error) {
 	args := []string{"run", "--rm"}
-	envMap, _ := m.GetEnvMap()
+	envMap, _ := h.GetEnvMap()
 
 	// Add env args
 	for k, v := range envMap {
@@ -911,7 +922,7 @@ func (m *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []strin
 	}
 
 	// Add container related args
-	for k, v := range m.app.Metadata.ContainerOptions {
+	for k, v := range h.app.Metadata.ContainerOptions {
 		if v == "" {
 			args = append(args, fmt.Sprintf("--%s", k))
 		} else {
@@ -919,14 +930,14 @@ func (m *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []strin
 		}
 	}
 
-	if len(m.mountArgs) > 0 {
-		args = append(args, m.mountArgs...)
+	if len(h.mountArgs) > 0 {
+		args = append(args, h.mountArgs...)
 	}
 
-	args = append(args, string(m.GenImageName), path)
+	args = append(args, string(h.GenImageName), path)
 	args = append(args, cmdArgs...)
-	m.Debug().Msgf("Running command with args: %v", args)
+	h.Debug().Msgf("Running command with args: %v", args)
 
-	cmd := exec.CommandContext(ctx, m.systemConfig.ContainerCommand, args...)
+	cmd := exec.CommandContext(ctx, h.systemConfig.ContainerCommand, args...)
 	return cmd, nil
 }

@@ -59,10 +59,20 @@ type ContainerCommand struct {
 	config *types.SystemConfig
 }
 
-var _ ContainerManager = ContainerCommand{}
+var _ DevContainerManager = ContainerCommand{}
 
 func NewContainerCommand(logger *types.Logger, config *types.SystemConfig) ContainerCommand {
 	return ContainerCommand{Logger: logger, config: config}
+}
+
+func (c ContainerCommand) SupportsInPlaceContainerUpdate(name ContainerName) bool {
+	return false
+}
+
+func (c ContainerCommand) InPlaceContainerUpdate(appEntry *types.AppEntry, containerName ContainerName,
+	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
+	containerOptions map[string]string) error {
+	return fmt.Errorf("in place container update not supported")
 }
 
 func (c ContainerCommand) RemoveImage(name ImageName) error {
@@ -113,7 +123,20 @@ func (c ContainerCommand) RemoveContainer(name ContainerName) error {
 	return nil
 }
 
-func (c ContainerCommand) GetContainers(name ContainerName, getAll bool) ([]Container, error) {
+// GetContainerState returns the host:port of the running container, "" if not running. running is true if the container is running.
+func (c ContainerCommand) GetContainerState(name ContainerName) (string, bool, error) {
+	containers, err := c.getContainers(name, false)
+	if err != nil {
+		return "", false, fmt.Errorf("error getting containers: %w", err)
+	}
+	if len(containers) == 0 {
+		return "", false, nil
+	}
+
+	return "127.0.0.1:" + strconv.Itoa(containers[0].Port), containers[0].State == "running", nil
+}
+
+func (c ContainerCommand) getContainers(name ContainerName, getAll bool) ([]Container, error) {
 	c.Debug().Msgf("Getting containers with name %s, getAll %t", name, getAll)
 	args := []string{"ps", "--format", "json"}
 	if name != "" {
