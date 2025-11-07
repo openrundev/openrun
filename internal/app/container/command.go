@@ -65,7 +65,7 @@ func NewContainerCommand(logger *types.Logger, config *types.SystemConfig) Conta
 	return ContainerCommand{Logger: logger, config: config}
 }
 
-func (c ContainerCommand) SupportsInPlaceContainerUpdate(name ContainerName) bool {
+func (c ContainerCommand) SupportsInPlaceContainerUpdate() bool {
 	return false
 }
 
@@ -313,58 +313,21 @@ func (c ContainerCommand) RunContainer(appEntry *types.AppEntry, containerName C
 	return nil
 }
 
-func (c ContainerCommand) GetImages(name ImageName) ([]Image, error) {
+func (c ContainerCommand) ImageExists(name ImageName) (bool, error) {
 	c.Debug().Msgf("Getting images with name %s", name)
-	args := []string{"images", "--format", "json"}
-	if name != "" {
-		args = append(args, string(name))
-	}
+	args := []string{"images", string(name)}
 	cmd := exec.Command(c.config.ContainerCommand, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("error listing images: %s : %s", output, err)
+		return false, fmt.Errorf("error listing images: %s : %s", output, err)
 	}
 
-	resp := []Image{}
-	if len(output) == 0 {
-		return resp, nil
+	split := strings.SplitN(string(output), "\n", 3)
+	if len(split) > 1 && len(strings.TrimSpace(split[1])) > 0 {
+		return true, nil
 	}
 
-	if output[0] == '[' { //nolint:staticcheck
-		// Podman format
-		type ImagePodman struct {
-			Id string `json:"Id"`
-		}
-		result := []ImagePodman{}
-
-		// JSON output (podman)
-		err = json.Unmarshal(output, &result)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, i := range result {
-			resp = append(resp, Image{
-				Repository: i.Id,
-			})
-		}
-	} else if output[0] == '{' {
-		// Newline separated JSON (Docker)
-		decoder := json.NewDecoder(bytes.NewReader(output))
-		for decoder.More() {
-			var i Image
-			if err := decoder.Decode(&i); err != nil {
-				return nil, fmt.Errorf("error decoding image output: %v", err)
-			}
-
-			resp = append(resp, i)
-		}
-	} else {
-		return nil, fmt.Errorf("\"%s ps\" returned unknown output: %s", c.config.ContainerCommand, output)
-	}
-
-	c.Debug().Msgf("Found images: %+v", resp)
-	return resp, nil
+	return false, nil
 }
 
 // ExecTailN executes a command and returns the last n lines of output

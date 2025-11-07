@@ -270,7 +270,7 @@ func (h *ContainerHandler) idleAppShutdown() {
 		h.stateLock.Lock()
 		h.currentState = ContainerStateIdleShutdown
 
-		err = h.manager.StopContainer(container.GenContainerName(h.app.Id, fullHash))
+		err = h.manager.StopContainer(container.GenContainerName(h.app.Id, h.manager, fullHash))
 		if err != nil {
 			h.Error().Err(err).Msgf("Error stopping idle app %s", h.app.Id)
 		}
@@ -303,7 +303,7 @@ func (h *ContainerHandler) healthChecker() {
 		h.stateLock.Lock()
 		h.currentState = ContainerStateHealthFailure
 
-		err = h.manager.StopContainer(container.GenContainerName(h.app.Id, fullHash))
+		err = h.manager.StopContainer(container.GenContainerName(h.app.Id, h.manager, fullHash))
 		if err != nil {
 			h.Error().Err(err).Msgf("Error stopping app %s after health failure", h.app.Id)
 		}
@@ -602,7 +602,7 @@ func (h *ContainerHandler) DevReload(dryRun bool) error {
 	if h.GenImageName == "" {
 		h.GenImageName = container.GenImageName(h.app.Id, "")
 	}
-	containerName := container.GenContainerName(h.app.Id, "")
+	containerName := container.GenContainerName(h.app.Id, h.manager, "")
 
 	_, running, err := devCM.GetContainerState(containerName)
 	if err != nil {
@@ -775,7 +775,7 @@ func (h *ContainerHandler) ProdReload(dryRun bool) error {
 		return nil
 	}
 
-	containerName := container.GenContainerName(h.app.Id, fullHash)
+	containerName := container.GenContainerName(h.app.Id, h.manager, fullHash)
 
 	if h.lifetime != types.CONTAINER_LIFETIME_COMMAND {
 		hostNamePort, running, err := h.manager.GetContainerState(containerName)
@@ -825,12 +825,12 @@ func (h *ContainerHandler) ProdReload(dryRun bool) error {
 	sourceDir := ""
 	if h.image == "" {
 		// Using a container file, build the image if required
-		images, err := h.manager.GetImages(h.GenImageName)
+		imageExists, err := h.manager.ImageExists(h.GenImageName)
 		if err != nil {
 			return fmt.Errorf("error getting images: %w", err)
 		}
 
-		if len(images) == 0 {
+		if !imageExists {
 			sourceDir, err = h.sourceFS.CreateTempSourceDir()
 			if err != nil {
 				return fmt.Errorf("error creating temp source dir: %w", err)
@@ -869,7 +869,7 @@ func (h *ContainerHandler) ProdReload(dryRun bool) error {
 		return nil
 	}
 	envMap, _ := h.GetEnvMap()
-	if h.manager.SupportsInPlaceContainerUpdate(containerName) {
+	if h.manager.SupportsInPlaceContainerUpdate() {
 		err = h.manager.InPlaceContainerUpdate(h.app.AppEntry, containerName,
 			h.GenImageName, h.port, envMap, h.mountArgs, h.app.Metadata.ContainerOptions)
 	} else {

@@ -28,16 +28,12 @@ type Container struct {
 	Port       int
 }
 
-type Image struct {
-	Repository string `json:"Repository"`
-}
-
 // ContainerManager is the interface for managing containers
 type ContainerManager interface {
 	BuildImage(name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error
-	GetImages(name ImageName) ([]Image, error)
+	ImageExists(name ImageName) (bool, error)
 	GetContainerState(name ContainerName) (string, bool, error)
-	SupportsInPlaceContainerUpdate(name ContainerName) bool
+	SupportsInPlaceContainerUpdate() bool
 	InPlaceContainerUpdate(appEntry *types.AppEntry, containerName ContainerName,
 		imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
 		containerOptions map[string]string) error
@@ -58,8 +54,8 @@ type DevContainerManager interface {
 	RemoveContainer(name ContainerName) error
 }
 
-func GenContainerName(appId types.AppId, contentHash string) ContainerName {
-	if contentHash == "" {
+func GenContainerName(appId types.AppId, cm ContainerManager, contentHash string) ContainerName {
+	if cm.SupportsInPlaceContainerUpdate() || contentHash == "" {
 		return ContainerName(fmt.Sprintf("clc-%s", appId))
 	} else {
 		return ContainerName(fmt.Sprintf("clc-%s-%s", appId, genLowerCaseId(contentHash)))
