@@ -66,6 +66,8 @@ const (
 	CONTAINER_SOURCE_NIXPACKS     = "nixpacks"
 	CONTAINER_SOURCE_IMAGE_PREFIX = "image:"
 	CONTAINER_LIFETIME_COMMAND    = "command"
+
+	CONTAINER_KUBERNETES = "kubernetes"
 )
 
 const (
@@ -89,6 +91,7 @@ type ServerConfig struct {
 	Metadata    MetadataConfig              `toml:"metadata"`
 	Log         LogConfig                   `toml:"logging"`
 	System      SystemConfig                `toml:"system"`
+	Regsitry    RegistryConfig              `toml:"registry"`
 	GitAuth     map[string]GitAuthEntry     `toml:"git_auth"`
 	Plugins     map[string]PluginSettings   `toml:"plugin"`
 	Auth        map[string]AuthConfig       `toml:"auth"`
@@ -226,6 +229,7 @@ type SystemConfig struct {
 	WatchIgnorePatterns       []string `toml:"watch_ignore_patterns"`
 	NodePath                  string   `toml:"node_path"`
 	ContainerCommand          string   `toml:"container_command"`
+	ContainerBuilder          string   `toml:"container_builder"`
 	DefaultDomain             string   `toml:"default_domain"`
 	RootServeListApps         string   `toml:"root_serve_list_apps"`
 	EnableCompression         bool     `toml:"enable_compression"`
@@ -237,6 +241,19 @@ type SystemConfig struct {
 	MaxConcurrentBuilds       int      `toml:"max_concurrent_builds"`  // Max concurrent container builds
 	MaxBuildWaitSecs          int      `toml:"max_build_wait_secs"`    // Max wait time for a build lock
 	EarlyHints                bool     `toml:"early_hints"`            // enable early hints for HTML responses
+}
+
+type RegistryConfig struct {
+	URL            string `toml:"url"`
+	Type           string `toml:"type"` // "", "ecr"
+	Username       string `toml:"username"`
+	Password       string `toml:"password"`
+	PasswordFile   string `toml:"password_file"`
+	CAFile         string `toml:"ca_file"`
+	ClientCertFile string `toml:"client_cert_file"`
+	ClientKeyFile  string `toml:"client_key_file"`
+	Insecure       bool   `toml:"insecure"`
+	AWSRegion      string `toml:"aws_region"`
 }
 
 // GitAuth is a github auth config entry

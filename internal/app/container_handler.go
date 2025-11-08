@@ -76,6 +76,14 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	paramMap map[string]string, containerConfig types.Container, stripAppPath bool,
 	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any) (*ContainerHandler, error) {
 
+	var containerManager container.ContainerManager
+	switch systemConfig.ContainerCommand {
+	case types.CONTAINER_KUBERNETES:
+		containerManager = container.NewKubernetesContainerManager(logger, systemConfig)
+	default:
+		containerManager = container.NewContainerCommand(logger, systemConfig)
+	}
+
 	image := ""
 	volumes := []string{}
 	if strings.HasPrefix(containerFile, types.CONTAINER_SOURCE_IMAGE_PREFIX) {
@@ -164,7 +172,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		scheme:          scheme,
 		buildDir:        buildDir,
 		sourceFS:        sourceFS,
-		manager:         container.NewContainerCommand(logger, systemConfig),
+		manager:         containerManager,
 		paramMap:        paramMap,
 		volumes:         volumes,
 		containerConfig: containerConfig,

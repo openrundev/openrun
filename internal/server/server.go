@@ -231,6 +231,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		config.System.ContainerCommand = server.lookupContainerCommand()
 		// if command is empty string, that means either containers are disabled in config or no container command found
 	}
+
 	server.Trace().Str("cmd", config.System.ContainerCommand).Msg("Container management command")
 	go server.handleAppClose()
 
@@ -438,7 +439,19 @@ func (s *Server) handleAppClose() {
 	s.Debug().Msg("App close handler stopped")
 }
 
+const (
+	kubeHostEnv = "KUBERNETES_SERVICE_HOST"
+	kubePortEnv = "KUBERNETES_SERVICE_PORT"
+)
+
 func (s *Server) lookupContainerCommand() string {
+	// Check if running in Kubernetes
+	_, hasHost := os.LookupEnv(kubeHostEnv)
+	_, hasPort := os.LookupEnv(kubePortEnv)
+	if hasHost || hasPort {
+		return types.CONTAINER_KUBERNETES
+	}
+
 	podmanExec := system.FindExec(PODMAN_COMMAND)
 	if podmanExec != "" {
 		return podmanExec

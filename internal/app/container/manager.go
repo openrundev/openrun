@@ -66,7 +66,7 @@ func GenImageName(appId types.AppId, contentHash string) ImageName {
 	if contentHash == "" {
 		return ImageName(fmt.Sprintf("cli-%s", appId))
 	} else {
-		return ImageName(fmt.Sprintf("cli-%s-%s", appId, genLowerCaseId(contentHash)))
+		return ImageName(fmt.Sprintf("cli-%s:%s", appId, genLowerCaseId(contentHash)))
 	}
 }
 
