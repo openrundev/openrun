@@ -5,6 +5,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,7 +32,7 @@ import (
 	"go.starlark.net/starlarkstruct"
 )
 
-func (a *App) loadStarlarkConfig(dryRun types.DryRun) error {
+func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun) error {
 	a.Info().Str("path", a.Path).Str("domain", a.Domain).Msg("Loading app")
 
 	buf, err := a.sourceFS.ReadFile(a.getStarPath(apptype.APP_FILE_NAME))
@@ -127,18 +128,18 @@ func (a *App) loadStarlarkConfig(dryRun types.DryRun) error {
 	}
 
 	// Load container config. The proxy config in routes depends on this being loaded first
-	if err = a.loadContainerManager(stripAppPath); err != nil {
+	if err = a.loadContainerManager(ctx, stripAppPath); err != nil {
 		return err
 	}
 
 	if a.containerHandler != nil {
 		// Container handler is present, reload the container
 		if a.IsDev {
-			if err = a.containerHandler.DevReload(bool(dryRun)); err != nil {
+			if err = a.containerHandler.DevReload(ctx, bool(dryRun)); err != nil {
 				return err
 			}
 		} else {
-			if err := a.containerHandler.ProdReload(bool(dryRun)); err != nil {
+			if err := a.containerHandler.ProdReload(ctx, bool(dryRun)); err != nil {
 				return err
 			}
 		}

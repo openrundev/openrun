@@ -811,7 +811,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	return cmp.Or(err1, err2, err3)
 }
 
-func (s *Server) GetListAppsApp() (*app.App, error) {
+func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 	s.mu.RLock()
 	if s.listAppsApp != nil {
 		s.mu.RUnlock()
@@ -864,7 +864,7 @@ func (s *Server) GetListAppsApp() (*app.App, error) {
 		return nil, err
 	}
 
-	_, err = s.listAppsApp.Reload(true, true, false)
+	_, err = s.listAppsApp.Reload(ctx, true, true, types.DryRunFalse)
 	if err != nil {
 		return nil, err
 	}

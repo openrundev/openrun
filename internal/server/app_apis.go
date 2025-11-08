@@ -397,7 +397,7 @@ func (s *Server) GetAppEntry(ctx context.Context, tx types.Transaction, pathDoma
 	return s.db.GetAppTx(ctx, tx, pathDomain)
 }
 
-func (s *Server) GetApp(pathDomain types.AppPathDomain, init bool) (*app.App, error) {
+func (s *Server) GetApp(ctx context.Context, pathDomain types.AppPathDomain, init bool) (*app.App, error) {
 	application, err := s.apps.GetApp(pathDomain)
 	if err != nil {
 		// App not found in cache, get from DB
@@ -418,7 +418,7 @@ func (s *Server) GetApp(pathDomain types.AppPathDomain, init bool) (*app.App, er
 	}
 
 	// Initialize the app
-	if err := application.Initialize(types.DryRunFalse); err != nil {
+	if err := application.Initialize(ctx, types.DryRunFalse); err != nil {
 		return nil, fmt.Errorf("error initializing app: %w", err)
 	}
 
@@ -983,7 +983,7 @@ func (s *Server) GetApps(ctx context.Context, appPathGlob string, internal bool)
 		if !authorized {
 			continue
 		}
-		retApp, err := s.GetApp(app.AppPathDomain, false)
+		retApp, err := s.GetApp(ctx, app.AppPathDomain, false)
 		if err != nil {
 			return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
 		}

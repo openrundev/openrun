@@ -163,6 +163,14 @@ func BuildHTTPTransport(r *types.RegistryConfig) (*http.Transport, error) {
 
 // ----- Image existence check -----
 
+func ImageExists(ctx context.Context, imageRef string, r *types.RegistryConfig, dockerCfgJSON []byte) (bool, error) {
+	exists, err := HeadWithDockerConfig(ctx, imageRef, r, dockerCfgJSON)
+	if err != nil {
+		return false, err
+	}
+	return exists.Exists, nil
+}
+
 type ExistsResult struct {
 	Exists bool
 	Digest string

@@ -91,7 +91,7 @@ type ServerConfig struct {
 	Metadata    MetadataConfig              `toml:"metadata"`
 	Log         LogConfig                   `toml:"logging"`
 	System      SystemConfig                `toml:"system"`
-	Regsitry    RegistryConfig              `toml:"registry"`
+	Registry    RegistryConfig              `toml:"registry"`
 	GitAuth     map[string]GitAuthEntry     `toml:"git_auth"`
 	Plugins     map[string]PluginSettings   `toml:"plugin"`
 	Auth        map[string]AuthConfig       `toml:"auth"`

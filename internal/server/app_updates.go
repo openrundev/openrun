@@ -78,7 +78,7 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 	}
 	reloadResults := make([]types.AppPathDomain, 0)
 	promoteResults := make([]types.AppPathDomain, 0)
-	if _, err := app.Reload(true, true, types.DryRun(dryRun)); err != nil {
+	if _, err := app.Reload(ctx, true, true, types.DryRun(dryRun)); err != nil {
 		return nil, fmt.Errorf("error reloading app %s: %w", appEntry, err)
 	}
 	// Persist name in metadata
@@ -97,7 +97,7 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 			return nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
 		}
 
-		if _, err := prodApp.Reload(true, true, types.DryRun(dryRun)); err != nil {
+		if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun)); err != nil {
 			return nil, fmt.Errorf("error reloading prod app %s: %w", appEntry, err)
 		}
 		// Persist name in metadata
@@ -355,7 +355,7 @@ func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun boo
 		if err != nil {
 			return nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
 		}
-		if _, err := prodApp.Reload(true, true, types.DryRun(dryRun)); err != nil {
+		if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun)); err != nil {
 			return nil, fmt.Errorf("error reloading prod app %s: %w", prodApp.AppEntry, err)
 		}
 		result = append(result, appInfo.AppPathDomain)

@@ -218,14 +218,14 @@ func (h *Handler) callApp(w http.ResponseWriter, r *http.Request) {
 	var serveApp *app.App
 	var err error
 	if !serveListApps {
-		serveApp, err = h.server.GetApp(matchedApp.AppPathDomain, true)
+		serveApp, err = h.server.GetApp(r.Context(), matchedApp.AppPathDomain, true)
 		if err != nil {
 			h.Error().Err(err).Str("path", r.URL.Path).Msg("Error getting app")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	} else {
-		serveApp, err = h.server.GetListAppsApp()
+		serveApp, err = h.server.GetListAppsApp(r.Context())
 		if err != nil {
 			h.Error().Err(err).Str("path", r.URL.Path).Msg("Error getting list_apps app")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -336,7 +336,7 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 		return
 	}
 
-	app, err := h.server.GetApp(appPathDomain, false)
+	app, err := h.server.GetApp(r.Context(), appPathDomain, false)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

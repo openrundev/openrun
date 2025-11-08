@@ -4,6 +4,7 @@
 package app_test
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,7 +43,7 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 
 	// File is cached, should be served from cache even if file server is closed
 	testServer.Close()
-	ok, err := a.Reload(true, true, types.DryRunFalse)
+	ok, err := a.Reload(context.Background(), true, true, types.DryRunFalse)
 	if !ok || err != nil {
 		t.Fatalf("Error %s", err)
 	}
