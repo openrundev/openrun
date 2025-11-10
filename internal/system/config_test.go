@@ -81,6 +81,9 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsInt(t, "proxy idle timeout", 15, c.AppConfig.Proxy.IdleConnTimeoutSecs)
 	testutil.AssertEqualsBool(t, "proxy disable compression", true, c.AppConfig.Proxy.DisableCompression)
 	testutil.AssertEqualsString(t, "secrets provider", "env", c.AppConfig.Security.DefaultSecretsProvider)
+
+	testutil.AssertEqualsString(t, "kubernetes namespace", "openrun", c.Kubernetes.Namespace)
+	testutil.AssertEqualsString(t, "kaniko image", "ghcr.io/kaniko-build/dist/chainguard-dev-kaniko/executor:v1.25.3-slim", c.Kubernetes.KanikoImage)
 }
 
 func TestClientConfig(t *testing.T) {

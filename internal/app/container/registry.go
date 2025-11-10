@@ -1,6 +1,9 @@
 package container
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -8,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -29,7 +33,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
+	k8sscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 type dockerAuthEntry struct {
@@ -46,12 +55,12 @@ type dockerConfig struct {
 // ----- Helpers -----
 
 func mustHost(rawurl string) (string, error) {
+	if !strings.HasPrefix(rawurl, "http://") && !strings.HasPrefix(rawurl, "https://") {
+		rawurl = "https://" + rawurl
+	}
 	u, err := url.Parse(rawurl)
 	if err != nil {
 		return "", fmt.Errorf("parse url %q: %w", rawurl, err)
-	}
-	if u.Scheme == "" {
-		u, _ = url.Parse("https://" + rawurl)
 	}
 	if u.Host == "" {
 		return "", fmt.Errorf("no host in url %q", rawurl)
@@ -163,8 +172,8 @@ func BuildHTTPTransport(r *types.RegistryConfig) (*http.Transport, error) {
 
 // ----- Image existence check -----
 
-func ImageExists(ctx context.Context, imageRef string, r *types.RegistryConfig, dockerCfgJSON []byte) (bool, error) {
-	exists, err := HeadWithDockerConfig(ctx, imageRef, r, dockerCfgJSON)
+func ImageExists(ctx context.Context, logger *types.Logger, imageRef string, r *types.RegistryConfig, dockerCfgJSON []byte) (bool, error) {
+	exists, err := HeadWithDockerConfig(ctx, logger, imageRef, r, dockerCfgJSON)
 	if err != nil {
 		return false, err
 	}
@@ -176,7 +185,7 @@ type ExistsResult struct {
 	Digest string
 }
 
-func HeadWithDockerConfig(ctx context.Context, imageRef string, r *types.RegistryConfig, dockerCfgJSON []byte) (ExistsResult, error) {
+func HeadWithDockerConfig(ctx context.Context, logger *types.Logger, imageRef string, r *types.RegistryConfig, dockerCfgJSON []byte) (ExistsResult, error) {
 	tmpDir, err := os.MkdirTemp("", "dockercfg-*")
 	if err != nil {
 		return ExistsResult{}, err
@@ -192,16 +201,17 @@ func HeadWithDockerConfig(ctx context.Context, imageRef string, r *types.Registr
 	_ = os.Setenv("DOCKER_CONFIG", tmpDir)
 
 	var parseOpts []name.Option
-	needInsecure := false
-	hostToReg := map[string]*types.RegistryConfig{}
-	h, _ := mustHost(r.URL)
-	hostToReg[h] = r
 	if r.Insecure {
-		needInsecure = true
-	}
-	if needInsecure {
 		parseOpts = append(parseOpts, name.Insecure)
 	}
+
+	host, err := mustHost(r.URL)
+	if err != nil {
+		return ExistsResult{}, err
+	}
+	// Strip any leading slashes from imageRef
+	imageRef = strings.TrimPrefix(imageRef, "/")
+	imageRef = host + "/" + imageRef
 	ref, err := name.ParseReference(imageRef, parseOpts...)
 	if err != nil {
 		return ExistsResult{}, fmt.Errorf("parse ref: %w", err)
@@ -212,13 +222,12 @@ func HeadWithDockerConfig(ctx context.Context, imageRef string, r *types.Registr
 		return ExistsResult{}, err
 	}
 
-	host := ref.Context().RegistryStr()
-	reg := hostToReg[host]
+	registryHost := ref.Context().RegistryStr()
 
 	var opts = []remote.Option{remote.WithTransport(tr), remote.WithContext(ctx)}
 
-	if strings.EqualFold(reg.Type, "ecr") {
-		region := inferECRRegion(host, reg.AWSRegion)
+	if strings.EqualFold(r.Type, "ecr") {
+		region := inferECRRegion(registryHost, r.AWSRegion)
 		awsCfg, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region))
 		if err != nil {
 			return ExistsResult{}, fmt.Errorf("aws config: %w", err)
@@ -246,14 +255,23 @@ func HeadWithDockerConfig(ctx context.Context, imageRef string, r *types.Registr
 	if err != nil {
 		var terr *transport.Error
 		if errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound {
+			logger.Info().Msgf("image %s does not exist", imageRef)
 			return ExistsResult{Exists: false}, nil
 		}
+		logger.Info().Msgf("image %s head error: %v", imageRef, err)
 		return ExistsResult{}, fmt.Errorf("manifest head: %w", err)
 	}
+	logger.Info().Msgf("image %s exists with digest %s", imageRef, desc.Digest.String())
 	return ExistsResult{Exists: true, Digest: desc.Digest.String()}, nil
 }
 
 // ----- K8s: create-or-update Secret -----
+
+func sanitizeName(name string) string {
+	name = strings.ReplaceAll(name, "_", "-")
+	name = strings.ReplaceAll(name, ":", "-")
+	return name
+}
 
 func CreateOrUpdateSecret(ctx context.Context, cs *kubernetes.Clientset, ns, name string, data map[string][]byte, typ corev1.SecretType) error {
 	existing, err := cs.CoreV1().Secrets(ns).Get(ctx, name, meta.GetOptions{})
@@ -279,31 +297,23 @@ type KanikoBuild struct {
 	Namespace   string
 	JobName     string
 	Image       string // e.g. "cgr.dev/chainguard/kaniko:latest"
-	Context     string // e.g. "/workspace" or "git://..."
+	SourceDir   string // Local directory to tar up and send to Kaniko (only used when Context is "tar://stdin")
 	Dockerfile  string
 	Destination string
 	ExtraArgs   []string
 }
 
-func SubmitKanikoJob(ctx context.Context, cs *kubernetes.Clientset, r *types.RegistryConfig, dockerCfgJSON []byte, kb KanikoBuild) (*batchv1.Job, error) {
+func KanikoJob(ctx context.Context, logger *types.Logger, cs *kubernetes.Clientset, cfg *rest.Config, r *types.RegistryConfig, dockerCfgJSON []byte, kb KanikoBuild) error {
+	kb.JobName = sanitizeName(kb.JobName)
 	ns := kb.Namespace
-	if ns == "" {
-		ns = "default"
-	}
-	if kb.Image == "" {
-		kb.Image = "cgr.dev/chainguard/kaniko:latest"
-	}
-	if kb.JobName == "" {
-		kb.JobName = "kaniko-build-" + fmt.Sprint(time.Now().Unix())
-	}
 
 	// Secret with docker config
-	dcfgSecretName := kb.JobName + "-dockercfg"
+	dcfgSecretName := sanitizeName(kb.JobName + "-dockercfg")
 	if err := CreateOrUpdateSecret(ctx, cs, ns, dcfgSecretName,
 		map[string][]byte{".dockerconfigjson": dockerCfgJSON},
 		corev1.SecretTypeDockerConfigJson,
 	); err != nil {
-		return nil, fmt.Errorf("create/update docker cfg secret: %w", err)
+		return fmt.Errorf("create/update docker cfg secret: %w", err)
 	}
 
 	// Optional certs secret + per-registry flags
@@ -313,7 +323,7 @@ func SubmitKanikoJob(ctx context.Context, cs *kubernetes.Clientset, r *types.Reg
 	if r.CAFile != "" {
 		b, err := os.ReadFile(r.CAFile)
 		if err != nil {
-			return nil, fmt.Errorf("registry config: read ca_file: %w", err)
+			return fmt.Errorf("registry config: read ca_file: %w", err)
 		}
 		fn := fmt.Sprintf("%s-ca.crt", strings.ReplaceAll(host, ":", "_"))
 		certData[fn] = b
@@ -322,11 +332,11 @@ func SubmitKanikoJob(ctx context.Context, cs *kubernetes.Clientset, r *types.Reg
 	if r.ClientCertFile != "" && r.ClientKeyFile != "" {
 		certB, err := os.ReadFile(r.ClientCertFile)
 		if err != nil {
-			return nil, fmt.Errorf("registry config: read client_cert_file: %w", err)
+			return fmt.Errorf("registry config: read client_cert_file: %w", err)
 		}
 		keyB, err := os.ReadFile(r.ClientKeyFile)
 		if err != nil {
-			return nil, fmt.Errorf("registry config: read client_key_file: %w", err)
+			return fmt.Errorf("registry config: read client_key_file: %w", err)
 		}
 		cfn := fmt.Sprintf("%s-client.crt", strings.ReplaceAll(host, ":", "_"))
 		kfn := fmt.Sprintf("%s-client.key", strings.ReplaceAll(host, ":", "_"))
@@ -335,7 +345,7 @@ func SubmitKanikoJob(ctx context.Context, cs *kubernetes.Clientset, r *types.Reg
 		registryArgs = append(registryArgs, fmt.Sprintf("--registry-client-cert %s=/certs/%s,/certs/%s", host, cfn, kfn))
 	}
 	if r.Insecure {
-		registryArgs = append(registryArgs, fmt.Sprintf("--insecure-registry %s", host))
+		registryArgs = append(registryArgs, "--insecure-registry")
 	}
 
 	vols := []corev1.Volume{
@@ -351,9 +361,9 @@ func SubmitKanikoJob(ctx context.Context, cs *kubernetes.Clientset, r *types.Reg
 	}
 
 	if len(certData) > 0 {
-		certSecretName := kb.JobName + "-certs"
+		certSecretName := sanitizeName(kb.JobName + "-certs")
 		if err := CreateOrUpdateSecret(ctx, cs, ns, certSecretName, certData, corev1.SecretTypeOpaque); err != nil {
-			return nil, fmt.Errorf("create/update cert secret: %w", err)
+			return fmt.Errorf("create/update cert secret: %w", err)
 		}
 		vols = append(vols, corev1.Volume{
 			Name: "certs",
@@ -365,12 +375,15 @@ func SubmitKanikoJob(ctx context.Context, cs *kubernetes.Clientset, r *types.Reg
 	}
 
 	args := []string{
-		fmt.Sprintf("--context=%s", kb.Context),
+		"--context=tar://stdin",
 		fmt.Sprintf("--dockerfile=%s", kb.Dockerfile),
 		fmt.Sprintf("--destination=%s", kb.Destination),
 	}
+
 	args = append(args, registryArgs...)
 	args = append(args, kb.ExtraArgs...)
+
+	logger.Info().Msgf("submitting kaniko job %s, destination %s, args %v", kb.JobName, kb.Destination, args)
 
 	backoff := int32(0)
 	job := &batchv1.Job{
@@ -389,24 +402,362 @@ func SubmitKanikoJob(ctx context.Context, cs *kubernetes.Clientset, r *types.Reg
 					RestartPolicy: corev1.RestartPolicyNever,
 					Volumes:       vols,
 					Containers: []corev1.Container{{
-						Name:  "executor",
-						Image: kb.Image,
-						Args:  args,
-						ReadinessProbe: &corev1.Probe{
-							ProbeHandler: corev1.ProbeHandler{
-								Exec: &corev1.ExecAction{Command: []string{"sh", "-c", "echo ok"}},
-							},
-							InitialDelaySeconds: 5,
-							PeriodSeconds:       5,
-							FailureThreshold:    6,
-							TimeoutSeconds:      2,
-							SuccessThreshold:    1,
-						},
+						Name:         "executor",
+						Image:        kb.Image,
+						Args:         args,
+						Stdin:        true,
+						StdinOnce:    true,
 						VolumeMounts: vmounts,
 					}},
 				},
 			},
 		},
 	}
-	return cs.BatchV1().Jobs(ns).Create(ctx, job, meta.CreateOptions{})
+	_, err := cs.BatchV1().Jobs(ns).Create(ctx, job, meta.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("submit build job failed: %w", err)
+	}
+
+	// Wait for pod to be created and reach a terminal or running state
+	err = waitForJobContainerStartOrExit(ctx, logger, cs, ns, kb.JobName, "executor", 3*time.Minute)
+	if err != nil {
+		return fmt.Errorf("error waiting for terminal phase: %w", err)
+	}
+
+	// Get the actual pod name once (job creates pod with suffix)
+	pod, err := getPodForJob(ctx, cs, ns, kb.JobName)
+	if err != nil {
+		return fmt.Errorf("error getting pod for job: %w", err)
+	}
+	podName := pod.Name
+	phase := pod.Status.Phase
+	logger.Debug().Msgf("kaniko job %s pod %s phase %s", kb.JobName, podName, phase)
+	if phase == corev1.PodSucceeded || phase == corev1.PodFailed {
+		logs, err := tailLogs(ctx, cs, ns, kb.JobName, 1000)
+		if err != nil {
+			return fmt.Errorf("build failed: pod phase: %s", phase)
+		}
+		return fmt.Errorf("build failed: pod phase: %s\nLogs:\n%s", phase, logs)
+	}
+
+	err = attachAndStream(ctx, cfg, cs, ns, podName, kb.SourceDir)
+	if err != nil {
+		return fmt.Errorf("error sending build context: %w", err)
+	}
+	logger.Debug().Msgf("kaniko job %s pod %s attached and streaming context", kb.JobName, podName)
+
+	finalPhase, err := waitForTerminalPhase(ctx, cs, ns, podName)
+	if err != nil {
+		return fmt.Errorf("error waiting for terminal phase: %w", err)
+	}
+	logger.Info().Msgf("kaniko job %s pod %s final phase %s", kb.JobName, podName, finalPhase)
+	if finalPhase != corev1.PodSucceeded {
+		return fmt.Errorf("build failed: pod phase: %s", finalPhase)
+	}
+
+	return nil
 }
+
+func getPodForJob(ctx context.Context, cs *kubernetes.Clientset, ns, jobName string) (*corev1.Pod, error) {
+	listOpts := meta.ListOptions{
+		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
+	}
+	pods, err := cs.CoreV1().Pods(ns).List(ctx, listOpts)
+	if err != nil {
+		return nil, err
+	}
+	if len(pods.Items) == 0 {
+		return nil, fmt.Errorf("no pod found for job %s", jobName)
+	}
+	// Return the first pod (jobs typically create one pod)
+	return &pods.Items[0], nil
+}
+
+func tailLogs(ctx context.Context, cs *kubernetes.Clientset, ns, jobName string, lines int64) (string, error) {
+	pod, err := getPodForJob(ctx, cs, ns, jobName)
+	if err != nil {
+		return "", err
+	}
+
+	opts := &corev1.PodLogOptions{
+		TailLines:  &lines,
+		LimitBytes: ptr[int64](1 << 20), // 1 MiB
+	}
+
+	req := cs.CoreV1().Pods(ns).GetLogs(pod.Name, opts)
+
+	rc, err := req.Stream(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close() //nolint:errcheck
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, rc); err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
+}
+
+func waitForJobContainerStartOrExit(
+	ctx context.Context,
+	logger *types.Logger,
+	cs kubernetes.Interface,
+	ns, jobName, containerName string,
+	timeout time.Duration,
+) error {
+	// This avoids matching old pods if the Job re-creates.
+	job, err := cs.BatchV1().Jobs(ns).Get(ctx, jobName, meta.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get job %q: %w", jobName, err)
+	}
+	sel := labels.Set{
+		"job-name":       jobName,
+		"controller-uid": string(job.UID),
+	}.AsSelector().String()
+
+	to := int64(timeout.Seconds())
+	w, err := cs.CoreV1().Pods(ns).Watch(ctx, meta.ListOptions{
+		LabelSelector:  sel,
+		TimeoutSeconds: &to,
+	})
+	if err != nil {
+		return fmt.Errorf("watch pods for job %q: %w", jobName, err)
+	}
+	defer w.Stop()
+
+	// Helper to check a single pod for a decisive state.
+	checkPod := func(p *corev1.Pod) (done bool, outErr error) {
+		// Fail fast if unschedulable
+		for _, c := range p.Status.Conditions {
+			if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
+				return true, fmt.Errorf("pod %s unschedulable: %s", p.Name, c.Message)
+			}
+		}
+
+		// Look at init containers and main containers
+		statuses := append(append([]corev1.ContainerStatus{}, p.Status.InitContainerStatuses...), p.Status.ContainerStatuses...)
+
+		for _, cs := range statuses {
+			if containerName != "" && cs.Name != containerName {
+				continue
+			}
+			// Running => logs available; Terminated => job finished (success or failure)
+			if cs.State.Running != nil {
+				return true, nil
+			}
+			if t := cs.State.Terminated; t != nil {
+				// Exit 0 is success; non-zero bubble up with reason/message.
+				if t.ExitCode == 0 {
+					return true, nil
+				}
+				return true, fmt.Errorf("container %s terminated (exit=%d): %s: %s",
+					cs.Name, t.ExitCode, t.Reason, t.Message)
+			}
+			if w := cs.State.Waiting; w != nil {
+				switch w.Reason {
+				// Terminal-ish waiting reasons we should surface immediately
+				case "ErrImagePull", "ImagePullBackOff", "CreateContainerConfigError", "CreateContainerError",
+					"InvalidImageName", "CrashLoopBackOff":
+					return true, fmt.Errorf("container %s waiting: %s: %s", cs.Name, w.Reason, w.Message)
+				}
+				// "ContainerCreating" and friends: just keep waiting
+			}
+		}
+
+		// Also exit if Pod reached a terminal phase (covers jobs with no long-running container)
+		switch p.Status.Phase {
+		case corev1.PodSucceeded:
+			return true, nil
+		case corev1.PodFailed:
+			return true, fmt.Errorf("pod %s failed: %s", p.Name, p.Status.Message)
+		}
+
+		return false, nil
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return fmt.Errorf("timeout waiting for container %q in job %q to start or exit", containerName, jobName)
+		case ev, ok := <-w.ResultChan():
+			if !ok {
+				return fmt.Errorf("watch closed while waiting for job %q", jobName)
+			}
+			switch ev.Type {
+			case watch.Added, watch.Modified:
+				pod, ok := ev.Object.(*corev1.Pod)
+				if !ok {
+					continue
+				}
+				if done, e := checkPod(pod); done {
+					return e
+				}
+			case watch.Deleted:
+				// If the current pod is deleted, the Job controller may spin a new one; keep watching.
+				continue
+			case watch.Error:
+				// The Object is typically *metav1.Status; surface it as an error.
+				st, _ := ev.Object.(*meta.Status)
+				if st != nil && st.Message != "" {
+					return fmt.Errorf("watch error: %s", st.Message)
+				}
+				return fmt.Errorf("watch error")
+			}
+		}
+	}
+}
+
+func waitForTerminalPhase(ctx context.Context, cs *kubernetes.Clientset, ns, name string) (corev1.PodPhase, error) {
+	t := time.NewTicker(100 * time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-t.C:
+			p, err := cs.CoreV1().Pods(ns).Get(ctx, name, meta.GetOptions{})
+			if err != nil {
+				return "", err
+			}
+			switch p.Status.Phase {
+			case corev1.PodSucceeded, corev1.PodFailed:
+				return p.Status.Phase, nil
+			}
+		}
+	}
+}
+
+func attachAndStream(ctx context.Context, cfg *rest.Config, cs *kubernetes.Clientset,
+	ns, pod string, contextDir string) error {
+	req := cs.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Namespace(ns).
+		Name(pod).
+		SubResource("attach").
+		VersionedParams(&corev1.PodAttachOptions{
+			Container: "executor",
+			Stdin:     true,
+			Stdout:    true,
+			Stderr:    true,
+			TTY:       false,
+		}, k8sscheme.ParameterCodec)
+
+	// Create tar gzip stream of contextDir
+	tarGz, err := tarGzDir(contextDir)
+	if err != nil {
+		return fmt.Errorf("create tar gzip: %w", err)
+	}
+	defer tarGz.Close() //nolint:errcheck
+
+	exec, err := remotecommand.NewSPDYExecutor(cfg, "POST", req.URL())
+	if err != nil {
+		return fmt.Errorf("new executor: %w", err)
+	}
+
+	// Create buffers to capture stdout/stderr
+	var stdout, stderr bytes.Buffer
+
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdin:  tarGz,
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Tty:    false,
+	})
+
+	if err != nil {
+		// Include captured output in error for debugging
+		if stderr.Len() > 0 {
+			return fmt.Errorf("attach stream error: %w\nstderr: %s", err, stderr.String())
+		}
+		return fmt.Errorf("attach stream error: %w", err)
+	}
+
+	return nil
+}
+
+// TarGzDir returns an io.ReadCloser that streams a tar.gz of the *contents*
+// of srcDir (not including the directory itself).
+// Callers must Close() the returned reader when done.
+func tarGzDir(srcDir string) (io.ReadCloser, error) {
+	// Basic upfront validation so we can fail fast.
+	info, err := os.Stat(srcDir)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("TarGzDir: %q is not a directory", srcDir)
+	}
+
+	pr, pw := io.Pipe()
+
+	go func() {
+		// Any error here will be propagated to the reader via CloseWithError.
+		err := func() error {
+			gz := gzip.NewWriter(pw)
+			defer gz.Close() //nolint:errcheck
+
+			tw := tar.NewWriter(gz)
+			defer tw.Close() //nolint:errcheck
+
+			root := filepath.Clean(srcDir)
+
+			return filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+
+				relPath, err := filepath.Rel(root, path)
+				if err != nil {
+					return err
+				}
+				// Skip the root dir itself; we only want its contents.
+				if relPath == "." {
+					return nil
+				}
+
+				hdr, err := tar.FileInfoHeader(info, "")
+				if err != nil {
+					return err
+				}
+				// Use the relative path inside the archive.
+				hdr.Name = relPath
+
+				if err := tw.WriteHeader(hdr); err != nil {
+					return err
+				}
+
+				// Directories have no body.
+				if info.IsDir() {
+					return nil
+				}
+
+				// Only copy regular files.
+				if !info.Mode().IsRegular() {
+					return nil
+				}
+
+				f, err := os.Open(path)
+				if err != nil {
+					return err
+				}
+				_, err = io.Copy(tw, f)
+				_ = f.Close()
+				return err
+			})
+		}()
+
+		// Propagate error (nil or not) to the reader.
+		_ = pw.CloseWithError(err)
+	}()
+
+	return pr, nil
+}
+
+func ptr[T any](v T) *T { return &v }

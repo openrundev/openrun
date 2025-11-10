@@ -77,6 +77,10 @@ allowed_env = ["HOME", "OPENRUN_HOME", "PATH"] # env values allowed for use in n
 max_concurrent_builds = 1 # max number of concurrent container builds
 max_build_wait_secs = 120 # max wait time for a build lock
 
+[kubernetes]
+namespace = "openrun"
+kaniko_image = "ghcr.io/kaniko-build/dist/chainguard-dev-kaniko/executor:v1.25.3-slim"
+
 [plugin."store.in"]
 db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_app_store.db"
 

@@ -92,6 +92,7 @@ type ServerConfig struct {
 	Log         LogConfig                   `toml:"logging"`
 	System      SystemConfig                `toml:"system"`
 	Registry    RegistryConfig              `toml:"registry"`
+	Kubernetes  KubernetesConfig            `toml:"kubernetes"`
 	GitAuth     map[string]GitAuthEntry     `toml:"git_auth"`
 	Plugins     map[string]PluginSettings   `toml:"plugin"`
 	Auth        map[string]AuthConfig       `toml:"auth"`
@@ -245,6 +246,7 @@ type SystemConfig struct {
 
 type RegistryConfig struct {
 	URL            string `toml:"url"`
+	Project        string `toml:"project"`
 	Type           string `toml:"type"` // "", "ecr"
 	Username       string `toml:"username"`
 	Password       string `toml:"password"`
@@ -254,6 +256,11 @@ type RegistryConfig struct {
 	ClientKeyFile  string `toml:"client_key_file"`
 	Insecure       bool   `toml:"insecure"`
 	AWSRegion      string `toml:"aws_region"`
+}
+
+type KubernetesConfig struct {
+	Namespace   string `toml:"namespace"`
+	KanikoImage string `toml:"kaniko_image"`
 }
 
 // GitAuth is a github auth config entry
