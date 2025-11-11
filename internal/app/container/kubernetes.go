@@ -47,7 +47,7 @@ func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerCon
 	}, nil
 }
 
-var _ ContainerManager = KubernetesContainerManager{}
+var _ ContainerManager = (*KubernetesContainerManager)(nil)
 
 func loadConfig() (*rest.Config, error) {
 	// Try in-cluster; fall back to default kubeconfig
@@ -58,13 +58,16 @@ func loadConfig() (*rest.Config, error) {
 	return clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
 }
 
-func (k KubernetesContainerManager) ImageExists(ctx context.Context, name ImageName) (bool, error) {
+func (k *KubernetesContainerManager) ImageExists(ctx context.Context, name ImageName) (bool, error) {
 	return ImageExists(ctx, k.Logger, string(name), &k.config.Registry, k.registryConfigJson)
 }
 
-func (k KubernetesContainerManager) BuildImage(ctx context.Context, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
-	var destination string
+func (k *KubernetesContainerManager) BuildImage(ctx context.Context, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
+	if k.config.Builder.BuilderMode != "kaniko" && k.config.Builder.BuilderMode != "auto" {
+		return fmt.Errorf("invalid builder mode for kubernetes container manager: %s", k.config.Builder.BuilderMode)
+	}
 
+	var destination string
 	if k.config.Registry.Project != "" {
 		destination = k.config.Registry.URL + "/" + k.config.Registry.Project + "/" + string(name)
 	} else {
@@ -75,7 +78,7 @@ func (k KubernetesContainerManager) BuildImage(ctx context.Context, name ImageNa
 	kanikoBuild := KanikoBuild{
 		Namespace:   k.config.Kubernetes.Namespace,
 		JobName:     fmt.Sprintf("%s-builder-%d", appId, time.Now().Unix()),
-		Image:       k.config.Kubernetes.KanikoImage,
+		Image:       k.config.Builder.KanikoImage,
 		SourceDir:   sourceUrl,
 		Dockerfile:  containerFile,
 		Destination: destination,
@@ -84,42 +87,42 @@ func (k KubernetesContainerManager) BuildImage(ctx context.Context, name ImageNa
 	return KanikoJob(ctx, k.Logger, k.clientSet, k.restConfig, &k.config.Registry, k.registryConfigJson, kanikoBuild)
 }
 
-func (k KubernetesContainerManager) GetContainerState(ctx context.Context, name ContainerName) (string, bool, error) {
+func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name ContainerName) (string, bool, error) {
 	return "", false, nil
 }
 
-func (k KubernetesContainerManager) SupportsInPlaceContainerUpdate() bool {
+func (k *KubernetesContainerManager) SupportsInPlaceContainerUpdate() bool {
 	return true
 }
 
-func (k KubernetesContainerManager) InPlaceContainerUpdate(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
+func (k *KubernetesContainerManager) InPlaceContainerUpdate(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
 	containerOptions map[string]string) error {
 	return nil
 }
 
-func (k KubernetesContainerManager) StartContainer(ctx context.Context, name ContainerName) error {
+func (k *KubernetesContainerManager) StartContainer(ctx context.Context, name ContainerName) error {
 	return nil
 }
 
-func (k KubernetesContainerManager) StopContainer(ctx context.Context, name ContainerName) error {
+func (k *KubernetesContainerManager) StopContainer(ctx context.Context, name ContainerName) error {
 	return nil
 }
 
-func (k KubernetesContainerManager) RunContainer(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
+func (k *KubernetesContainerManager) RunContainer(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
 	containerOptions map[string]string) error {
 	return nil
 }
 
-func (k KubernetesContainerManager) GetContainerLogs(ctx context.Context, name ContainerName) (string, error) {
+func (k *KubernetesContainerManager) GetContainerLogs(ctx context.Context, name ContainerName) (string, error) {
 	return "", nil
 }
 
-func (k KubernetesContainerManager) VolumeExists(ctx context.Context, name VolumeName) bool {
+func (k *KubernetesContainerManager) VolumeExists(ctx context.Context, name VolumeName) bool {
 	return false
 }
 
-func (k KubernetesContainerManager) VolumeCreate(ctx context.Context, name VolumeName) error {
+func (k *KubernetesContainerManager) VolumeCreate(ctx context.Context, name VolumeName) error {
 	return nil
 }

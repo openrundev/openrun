@@ -85,7 +85,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 			return nil, fmt.Errorf("error creating kubernetes container manager: %w", err)
 		}
 	default:
-		containerManager = container.NewContainerCommand(logger, &serverConfig.System)
+		containerManager = container.NewContainerCommand(logger, serverConfig)
 	}
 
 	image := ""

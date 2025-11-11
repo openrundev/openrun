@@ -92,6 +92,7 @@ type ServerConfig struct {
 	Log         LogConfig                   `toml:"logging"`
 	System      SystemConfig                `toml:"system"`
 	Registry    RegistryConfig              `toml:"registry"`
+	Builder     BuilderConfig               `toml:"builder"`
 	Kubernetes  KubernetesConfig            `toml:"kubernetes"`
 	GitAuth     map[string]GitAuthEntry     `toml:"git_auth"`
 	Plugins     map[string]PluginSettings   `toml:"plugin"`
@@ -259,7 +260,11 @@ type RegistryConfig struct {
 }
 
 type KubernetesConfig struct {
-	Namespace   string `toml:"namespace"`
+	Namespace string `toml:"namespace"`
+}
+
+type BuilderConfig struct {
+	BuilderMode string `toml:"builder_mode"`
 	KanikoImage string `toml:"kaniko_image"`
 }
 

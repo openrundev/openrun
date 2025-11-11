@@ -56,27 +56,27 @@ func acquireBuildLock(ctx context.Context, config *types.SystemConfig, buildId s
 
 type ContainerCommand struct {
 	*types.Logger
-	config *types.SystemConfig
+	config *types.ServerConfig
 }
 
-var _ DevContainerManager = ContainerCommand{}
+var _ DevContainerManager = (*ContainerCommand)(nil)
 
-func NewContainerCommand(logger *types.Logger, config *types.SystemConfig) ContainerCommand {
-	return ContainerCommand{Logger: logger, config: config}
+func NewContainerCommand(logger *types.Logger, config *types.ServerConfig) *ContainerCommand {
+	return &ContainerCommand{Logger: logger, config: config}
 }
 
-func (c ContainerCommand) SupportsInPlaceContainerUpdate() bool {
+func (c *ContainerCommand) SupportsInPlaceContainerUpdate() bool {
 	return false
 }
 
-func (c ContainerCommand) InPlaceContainerUpdate(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
+func (c *ContainerCommand) InPlaceContainerUpdate(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
 	containerOptions map[string]string) error {
 	return fmt.Errorf("in place container update not supported")
 }
 
-func (c ContainerCommand) RemoveImage(ctx context.Context, name ImageName) error {
-	cmd := exec.CommandContext(ctx, c.config.ContainerCommand, "rmi", string(name))
+func (c *ContainerCommand) RemoveImage(ctx context.Context, name ImageName) error {
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "rmi", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error removing image: %s : %s", output, err)
@@ -85,15 +85,19 @@ func (c ContainerCommand) RemoveImage(ctx context.Context, name ImageName) error
 	return nil
 }
 
-func (c ContainerCommand) BuildImage(ctx context.Context, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
-	releaseLock, err := acquireBuildLock(context.Background(), c.config, string(name))
+func (c *ContainerCommand) BuildImage(ctx context.Context, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
+	if c.config.Builder.BuilderMode != "command" && c.config.Builder.BuilderMode != "auto" {
+		return fmt.Errorf("invalid builder mode for command based container manager: %s", c.config.Builder.BuilderMode)
+	}
+
+	releaseLock, err := acquireBuildLock(context.Background(), &c.config.System, string(name))
 	if err != nil {
 		return fmt.Errorf("error acquiring build lock: %w", err)
 	}
 	defer releaseLock()
 
 	c.Debug().Msgf("Building image %s from %s with %s", name, containerFile, sourceUrl)
-	args := []string{c.config.ContainerCommand, "build", "-t", string(name), "-f", containerFile}
+	args := []string{c.config.System.ContainerCommand, "build", "-t", string(name), "-f", containerFile}
 
 	for k, v := range containerArgs {
 		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", k, v))
@@ -112,9 +116,9 @@ func (c ContainerCommand) BuildImage(ctx context.Context, name ImageName, source
 	return nil
 }
 
-func (c ContainerCommand) RemoveContainer(ctx context.Context, name ContainerName) error {
+func (c *ContainerCommand) RemoveContainer(ctx context.Context, name ContainerName) error {
 	c.Debug().Msgf("Removing container %s", name)
-	cmd := exec.CommandContext(ctx, c.config.ContainerCommand, "rm", string(name))
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "rm", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error removing image: %s : %s", output, err)
@@ -124,7 +128,7 @@ func (c ContainerCommand) RemoveContainer(ctx context.Context, name ContainerNam
 }
 
 // GetContainerState returns the host:port of the running container, "" if not running. running is true if the container is running.
-func (c ContainerCommand) GetContainerState(ctx context.Context, name ContainerName) (string, bool, error) {
+func (c *ContainerCommand) GetContainerState(ctx context.Context, name ContainerName) (string, bool, error) {
 	containers, err := c.getContainers(ctx, name, false)
 	if err != nil {
 		return "", false, fmt.Errorf("error getting containers: %w", err)
@@ -136,7 +140,7 @@ func (c ContainerCommand) GetContainerState(ctx context.Context, name ContainerN
 	return "127.0.0.1:" + strconv.Itoa(containers[0].Port), containers[0].State == "running", nil
 }
 
-func (c ContainerCommand) getContainers(ctx context.Context, name ContainerName, getAll bool) ([]Container, error) {
+func (c *ContainerCommand) getContainers(ctx context.Context, name ContainerName, getAll bool) ([]Container, error) {
 	c.Debug().Msgf("Getting containers with name %s, getAll %t", name, getAll)
 	args := []string{"ps", "--format", "json"}
 	if name != "" {
@@ -146,7 +150,7 @@ func (c ContainerCommand) getContainers(ctx context.Context, name ContainerName,
 	if getAll {
 		args = append(args, "--all")
 	}
-	cmd := exec.CommandContext(ctx, c.config.ContainerCommand, args...)
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("error listing containers: %s : %s", output, err)
@@ -224,16 +228,16 @@ func (c ContainerCommand) getContainers(ctx context.Context, name ContainerName,
 			resp = append(resp, c)
 		}
 	} else {
-		return nil, fmt.Errorf("\"%s ps\" returned unknown output: %s", c.config.ContainerCommand, output)
+		return nil, fmt.Errorf("\"%s ps\" returned unknown output: %s", c.config.System.ContainerCommand, output)
 	}
 
 	c.Debug().Msgf("Found containers: %+v", resp)
 	return resp, nil
 }
 
-func (c ContainerCommand) GetContainerLogs(ctx context.Context, name ContainerName) (string, error) {
+func (c *ContainerCommand) GetContainerLogs(ctx context.Context, name ContainerName) (string, error) {
 	c.Debug().Msgf("Getting container logs %s", name)
-	lines, err := c.ExecTailN(ctx, c.config.ContainerCommand, []string{"logs", string(name)}, 1000)
+	lines, err := c.ExecTailN(ctx, c.config.System.ContainerCommand, []string{"logs", string(name)}, 1000)
 	if err != nil {
 		return "", fmt.Errorf("error getting container %s logs: %s", name, err)
 	}
@@ -241,9 +245,9 @@ func (c ContainerCommand) GetContainerLogs(ctx context.Context, name ContainerNa
 	return strings.Join(lines, "\n"), nil
 }
 
-func (c ContainerCommand) StopContainer(ctx context.Context, name ContainerName) error {
+func (c *ContainerCommand) StopContainer(ctx context.Context, name ContainerName) error {
 	c.Debug().Msgf("Stopping container %s", name)
-	cmd := exec.CommandContext(ctx, c.config.ContainerCommand, "stop", "-t", "1", string(name))
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "stop", "-t", "1", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error stopping container: %s : %s", output, err)
@@ -252,9 +256,9 @@ func (c ContainerCommand) StopContainer(ctx context.Context, name ContainerName)
 	return nil
 }
 
-func (c ContainerCommand) StartContainer(ctx context.Context, name ContainerName) error {
+func (c *ContainerCommand) StartContainer(ctx context.Context, name ContainerName) error {
 	c.Debug().Msgf("Starting container %s", name)
-	cmd := exec.CommandContext(ctx, c.config.ContainerCommand, "start", string(name))
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "start", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error starting container: %s : %s", output, err)
@@ -265,7 +269,7 @@ func (c ContainerCommand) StartContainer(ctx context.Context, name ContainerName
 
 const LABEL_PREFIX = "dev.openrun."
 
-func (c ContainerCommand) RunContainer(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
+func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
 	containerOptions map[string]string) error {
 	c.Debug().Msgf("Running container %s from image %s with port %d env %+v mountArgs %+v",
@@ -304,7 +308,7 @@ func (c ContainerCommand) RunContainer(ctx context.Context, appEntry *types.AppE
 	args = append(args, string(imageName))
 
 	c.Debug().Msgf("Running container with args: %v", args)
-	cmd := exec.CommandContext(ctx, c.config.ContainerCommand, args...)
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error running container: %s : %s", output, err)
@@ -313,10 +317,10 @@ func (c ContainerCommand) RunContainer(ctx context.Context, appEntry *types.AppE
 	return nil
 }
 
-func (c ContainerCommand) ImageExists(ctx context.Context, name ImageName) (bool, error) {
+func (c *ContainerCommand) ImageExists(ctx context.Context, name ImageName) (bool, error) {
 	c.Debug().Msgf("Getting images with name %s", name)
 	args := []string{"images", string(name)}
-	cmd := exec.CommandContext(ctx, c.config.ContainerCommand, args...)
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("error listing images: %s : %s", output, err)
@@ -331,7 +335,7 @@ func (c ContainerCommand) ImageExists(ctx context.Context, name ImageName) (bool
 }
 
 // ExecTailN executes a command and returns the last n lines of output
-func (c ContainerCommand) ExecTailN(ctx context.Context, command string, args []string, n int) ([]string, error) {
+func (c *ContainerCommand) ExecTailN(ctx context.Context, command string, args []string, n int) ([]string, error) {
 	cmd := exec.CommandContext(ctx, command, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -379,7 +383,7 @@ func (c ContainerCommand) ExecTailN(ctx context.Context, command string, args []
 
 func (c ContainerCommand) VolumeExists(ctx context.Context, name VolumeName) bool {
 	c.Debug().Msgf("Checking volume exists %s", name)
-	cmd := exec.CommandContext(ctx, c.config.ContainerCommand, "volume", "inspect", string(name))
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "volume", "inspect", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		c.Debug().Msgf("volume exists check failed %s %s %s", name, err, output)
@@ -390,7 +394,7 @@ func (c ContainerCommand) VolumeExists(ctx context.Context, name VolumeName) boo
 
 func (c ContainerCommand) VolumeCreate(ctx context.Context, name VolumeName) error {
 	c.Debug().Msgf("Creating volume %s", name)
-	cmd := exec.Command(c.config.ContainerCommand, "volume", "create", string(name))
+	cmd := exec.Command(c.config.System.ContainerCommand, "volume", "create", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error creating volume %s: %w %s", name, err, output)
