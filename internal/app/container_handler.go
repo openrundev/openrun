@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/app/appfs"
-	"github.com/openrundev/openrun/internal/app/container"
+	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/types"
 
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
