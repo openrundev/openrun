@@ -83,7 +83,7 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsString(t, "secrets provider", "env", c.AppConfig.Security.DefaultSecretsProvider)
 
 	testutil.AssertEqualsString(t, "kubernetes namespace", "openrun", c.Kubernetes.Namespace)
-	testutil.AssertEqualsString(t, "builder mode", "auto", c.Builder.BuilderMode)
+	testutil.AssertEqualsString(t, "builder mode", "auto", c.Builder.Mode)
 	testutil.AssertEqualsString(t, "kaniko image", "ghcr.io/kaniko-build/dist/chainguard-dev-kaniko/executor:v1.25.3-slim", c.Builder.KanikoImage)
 }
 

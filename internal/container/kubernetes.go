@@ -17,18 +17,12 @@ import (
 
 type KubernetesContainerManager struct {
 	*types.Logger
-	config             *types.ServerConfig
-	registryConfigJson []byte
-	clientSet          *kubernetes.Clientset
-	restConfig         *rest.Config
+	config     *types.ServerConfig
+	clientSet  *kubernetes.Clientset
+	restConfig *rest.Config
 }
 
 func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerConfig) (*KubernetesContainerManager, error) {
-	registryConfigJson, err := GenerateDockerConfigJSON(&config.Registry)
-	if err != nil {
-		return nil, fmt.Errorf("error generating docker config json: %w", err)
-	}
-
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("error loading config: %w", err)
@@ -39,11 +33,10 @@ func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerCon
 	}
 
 	return &KubernetesContainerManager{
-		Logger:             logger,
-		config:             config,
-		registryConfigJson: registryConfigJson,
-		restConfig:         cfg,
-		clientSet:          clientSet,
+		Logger:     logger,
+		config:     config,
+		restConfig: cfg,
+		clientSet:  clientSet,
 	}, nil
 }
 
@@ -59,22 +52,45 @@ func loadConfig() (*rest.Config, error) {
 }
 
 func (k *KubernetesContainerManager) ImageExists(ctx context.Context, name ImageName) (bool, error) {
-	return ImageExists(ctx, k.Logger, string(name), &k.config.Registry, k.registryConfigJson)
+	return ImageExists(ctx, k.Logger, string(name), &k.config.Registry)
 }
 
-func (k *KubernetesContainerManager) BuildImage(ctx context.Context, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
-	if k.config.Builder.BuilderMode != "kaniko" && k.config.Builder.BuilderMode != "auto" {
-		return fmt.Errorf("invalid builder mode for kubernetes container manager: %s", k.config.Builder.BuilderMode)
+func (k *KubernetesContainerManager) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
+	targetUrl, found := strings.CutPrefix(k.config.Builder.Mode, "delegate:")
+	if found {
+		err := sendDelegateBuild(targetUrl, DelegateRequest{
+			ImageTag:       string(imgName),
+			ContainerFile:  containerFile,
+			ContainerArgs:  containerArgs,
+			RegistryConfig: &k.config.Registry,
+		}, sourceUrl)
+		if err != nil {
+			return fmt.Errorf("error sending delegate build: %w", err)
+		}
+		return nil
+	}
+
+	if k.config.Builder.Mode != "kaniko" && k.config.Builder.Mode != "auto" {
+		return fmt.Errorf("invalid builder mode for kubernetes container manager: %s", k.config.Builder.Mode)
+	}
+	if k.config.Registry.URL == "" {
+		return fmt.Errorf("registry url is required for kubernetes container manager")
 	}
 
 	var destination string
 	if k.config.Registry.Project != "" {
-		destination = k.config.Registry.URL + "/" + k.config.Registry.Project + "/" + string(name)
+		destination = k.config.Registry.URL + "/" + k.config.Registry.Project + "/" + string(imgName)
 	} else {
-		destination = k.config.Registry.URL + "/" + string(name)
+		destination = k.config.Registry.URL + "/" + string(imgName)
 	}
 
-	appId, _, _ := strings.Cut(string(name), ":")
+	// Generate Docker config JSON only for Kaniko (which needs it as a Kubernetes secret)
+	dockerCfgJSON, err := GenerateDockerConfigJSON(&k.config.Registry)
+	if err != nil {
+		return fmt.Errorf("error generating docker config json: %w", err)
+	}
+
+	appId, _, _ := strings.Cut(string(imgName), ":")
 	kanikoBuild := KanikoBuild{
 		Namespace:   k.config.Kubernetes.Namespace,
 		JobName:     fmt.Sprintf("%s-builder-%d", appId, time.Now().Unix()),
@@ -84,7 +100,7 @@ func (k *KubernetesContainerManager) BuildImage(ctx context.Context, name ImageN
 		Destination: destination,
 		ExtraArgs:   []string{"--verbosity=debug"},
 	}
-	return KanikoJob(ctx, k.Logger, k.clientSet, k.restConfig, &k.config.Registry, k.registryConfigJson, kanikoBuild)
+	return KanikoJob(ctx, k.Logger, k.clientSet, k.restConfig, &k.config.Registry, dockerCfgJSON, kanikoBuild)
 }
 
 func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name ContainerName) (string, bool, error) {

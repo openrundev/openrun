@@ -21,6 +21,7 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -1241,6 +1242,11 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to update config
 	r.Post("/config", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "config_update", h.configUpdate)
+	}))
+
+	// API to delegate build
+	r.Post("/delegate_build", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		container.DelegateHandler(w, r, h.config, h.Logger)
 	}))
 
 	return r

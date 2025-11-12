@@ -85,19 +85,37 @@ func (c *ContainerCommand) RemoveImage(ctx context.Context, name ImageName) erro
 	return nil
 }
 
-func (c *ContainerCommand) BuildImage(ctx context.Context, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
-	if c.config.Builder.BuilderMode != "command" && c.config.Builder.BuilderMode != "auto" {
-		return fmt.Errorf("invalid builder mode for command based container manager: %s", c.config.Builder.BuilderMode)
+func (c *ContainerCommand) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
+	targetUrl, found := strings.CutPrefix(c.config.Builder.Mode, "delegate:")
+	if found {
+		err := sendDelegateBuild(targetUrl, DelegateRequest{
+			ImageTag:       string(imgName),
+			ContainerFile:  containerFile,
+			ContainerArgs:  containerArgs,
+			RegistryConfig: &c.config.Registry,
+		}, sourceUrl)
+		if err != nil {
+			return fmt.Errorf("error sending delegate build: %w", err)
+		}
+		return nil
 	}
 
-	releaseLock, err := acquireBuildLock(context.Background(), &c.config.System, string(name))
+	if c.config.Builder.Mode != "command" && c.config.Builder.Mode != "auto" {
+		return fmt.Errorf("invalid builder mode for command based container manager: %s", c.config.Builder.Mode)
+	}
+
+	if c.config.Registry.URL != "" {
+		return fmt.Errorf("remote registry in command mode is supported with delegated builds only")
+	}
+
+	releaseLock, err := acquireBuildLock(context.Background(), &c.config.System, string(imgName))
 	if err != nil {
 		return fmt.Errorf("error acquiring build lock: %w", err)
 	}
 	defer releaseLock()
 
-	c.Debug().Msgf("Building image %s from %s with %s", name, containerFile, sourceUrl)
-	args := []string{c.config.System.ContainerCommand, "build", "-t", string(name), "-f", containerFile}
+	c.Debug().Msgf("Building image %s from %s with %s", imgName, containerFile, sourceUrl)
+	args := []string{c.config.System.ContainerCommand, "build", "-t", string(imgName), "-f", containerFile}
 
 	for k, v := range containerArgs {
 		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", k, v))
@@ -276,6 +294,15 @@ func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.App
 		containerName, imageName, port, envMap, mountArgs)
 	publish := fmt.Sprintf("127.0.0.1::%d", port)
 
+	imageUrl := string(imageName)
+	if c.config.Registry.URL != "" {
+		if c.config.Registry.Project != "" {
+			imageUrl = c.config.Registry.URL + "/" + c.config.Registry.Project + "/" + string(imageName)
+		} else {
+			imageUrl = c.config.Registry.URL + "/" + string(imageName)
+		}
+	}
+
 	args := []string{"run", "--name", string(containerName), "--detach", "--publish", publish}
 	if len(mountArgs) > 0 {
 		args = append(args, mountArgs...)
@@ -305,7 +332,7 @@ func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.App
 		}
 	}
 
-	args = append(args, string(imageName))
+	args = append(args, imageUrl)
 
 	c.Debug().Msgf("Running container with args: %v", args)
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, args...)

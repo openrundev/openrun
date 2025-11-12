@@ -81,7 +81,7 @@ max_build_wait_secs = 120 # max wait time for a build lock
 namespace = "openrun"
 
 [builder]
-builder_mode = "auto" # "auto" or "kaniko" or "command"
+mode = "auto" # "auto" or "kaniko" or "command" or "delegate:<url>"
 kaniko_image = "ghcr.io/kaniko-build/dist/chainguard-dev-kaniko/executor:v1.25.3-slim"
 
 [plugin."store.in"]

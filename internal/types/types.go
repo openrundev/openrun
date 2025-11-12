@@ -264,7 +264,7 @@ type KubernetesConfig struct {
 }
 
 type BuilderConfig struct {
-	BuilderMode string `toml:"builder_mode"`
+	Mode        string `toml:"mode"` // "auto", "kaniko", "command", "delegate:<url>"
 	KanikoImage string `toml:"kaniko_image"`
 }
 

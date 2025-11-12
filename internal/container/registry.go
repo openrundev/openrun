@@ -172,8 +172,8 @@ func BuildHTTPTransport(r *types.RegistryConfig) (*http.Transport, error) {
 
 // ----- Image existence check -----
 
-func ImageExists(ctx context.Context, logger *types.Logger, imageRef string, r *types.RegistryConfig, dockerCfgJSON []byte) (bool, error) {
-	exists, err := HeadWithDockerConfig(ctx, logger, imageRef, r, dockerCfgJSON)
+func ImageExists(ctx context.Context, logger *types.Logger, imageRef string, r *types.RegistryConfig) (bool, error) {
+	exists, err := CheckImagesExists(ctx, logger, imageRef, r)
 	if err != nil {
 		return false, err
 	}
@@ -185,58 +185,58 @@ type ExistsResult struct {
 	Digest string
 }
 
-func HeadWithDockerConfig(ctx context.Context, logger *types.Logger, imageRef string, r *types.RegistryConfig, dockerCfgJSON []byte) (ExistsResult, error) {
-	tmpDir, err := os.MkdirTemp("", "dockercfg-*")
-	if err != nil {
-		return ExistsResult{}, err
+// getAuthFromRegistryConfig extracts authentication information directly from RegistryConfig
+func getAuthFromRegistryConfig(registryConfig *types.RegistryConfig) (*authn.Basic, error) {
+	// Read password from file if needed
+	pass := registryConfig.Password
+	if pass == "" && registryConfig.PasswordFile != "" {
+		p, err := readFileIf(registryConfig.PasswordFile)
+		if err != nil {
+			return nil, fmt.Errorf("read password_file: %w", err)
+		}
+		pass = p
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
-		return ExistsResult{}, err
+	// Return basic auth if we have credentials
+	if registryConfig.Username != "" && pass != "" {
+		return &authn.Basic{
+			Username: registryConfig.Username,
+			Password: pass,
+		}, nil
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), dockerCfgJSON, 0o600); err != nil {
-		return ExistsResult{}, err
-	}
-	_ = os.Setenv("DOCKER_CONFIG", tmpDir)
 
+	return nil, nil
+}
+
+func GetDockerConfig(ctx context.Context, imageRef string, registryConfig *types.RegistryConfig) (name.Reference, []remote.Option, error) {
 	var parseOpts []name.Option
-	if r.Insecure {
+	if registryConfig.Insecure {
 		parseOpts = append(parseOpts, name.Insecure)
 	}
 
-	host, err := mustHost(r.URL)
-	if err != nil {
-		return ExistsResult{}, err
-	}
-	// Strip any leading slashes from imageRef
-	imageRef = strings.TrimPrefix(imageRef, "/")
-	imageRef = host + "/" + imageRef
 	ref, err := name.ParseReference(imageRef, parseOpts...)
 	if err != nil {
-		return ExistsResult{}, fmt.Errorf("parse ref: %w", err)
+		return nil, nil, fmt.Errorf("parse ref: %w", err)
 	}
 
-	tr, err := BuildHTTPTransport(r)
+	tr, err := BuildHTTPTransport(registryConfig)
 	if err != nil {
-		return ExistsResult{}, err
+		return nil, nil, fmt.Errorf("build http transport: %w", err)
 	}
-
-	registryHost := ref.Context().RegistryStr()
 
 	var opts = []remote.Option{remote.WithTransport(tr), remote.WithContext(ctx)}
 
-	if strings.EqualFold(r.Type, "ecr") {
-		region := inferECRRegion(registryHost, r.AWSRegion)
+	if strings.EqualFold(registryConfig.Type, "ecr") {
+		region := inferECRRegion(ref.Context().RegistryStr(), registryConfig.AWSRegion)
 		awsCfg, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region))
 		if err != nil {
-			return ExistsResult{}, fmt.Errorf("aws config: %w", err)
+			return nil, nil, fmt.Errorf("aws config: %w", err)
 		}
 		svc := ecr.NewFromConfig(awsCfg)
 		input := &ecr.GetAuthorizationTokenInput{}
 		authOut, err := svc.GetAuthorizationToken(ctx, input)
 		if err != nil || len(authOut.AuthorizationData) == 0 {
-			return ExistsResult{}, fmt.Errorf("ecr auth token: %w", err)
+			return nil, nil, fmt.Errorf("ecr auth token: %w", err)
 		}
 		enc := *authOut.AuthorizationData[0].AuthorizationToken
 		dec, _ := base64.StdEncoding.DecodeString(enc) // "AWS:<password>"
@@ -248,9 +248,27 @@ func HeadWithDockerConfig(ctx context.Context, logger *types.Logger, imageRef st
 		}
 		opts = append(opts, remote.WithAuth(&authn.Basic{Username: user, Password: pass}))
 	} else {
-		opts = append(opts, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+		// Extract authentication directly from registry config
+		auth, err := getAuthFromRegistryConfig(registryConfig)
+		if err != nil {
+			return nil, nil, fmt.Errorf("get auth from registry config: %w", err)
+		}
+		if auth != nil {
+			opts = append(opts, remote.WithAuth(auth))
+		} else {
+			// Fall back to anonymous auth if no credentials found
+			opts = append(opts, remote.WithAuth(authn.Anonymous))
+		}
 	}
 
+	return ref, opts, nil
+}
+
+func CheckImagesExists(ctx context.Context, logger *types.Logger, imageRef string, registryConfig *types.RegistryConfig) (ExistsResult, error) {
+	ref, opts, err := GetDockerConfig(ctx, imageRef, registryConfig)
+	if err != nil {
+		return ExistsResult{}, fmt.Errorf("get remote config: %w", err)
+	}
 	desc, err := remote.Head(ref, opts...)
 	if err != nil {
 		var terr *transport.Error
@@ -264,8 +282,6 @@ func HeadWithDockerConfig(ctx context.Context, logger *types.Logger, imageRef st
 	logger.Info().Msgf("image %s exists with digest %s", imageRef, desc.Digest.String())
 	return ExistsResult{Exists: true, Digest: desc.Digest.String()}, nil
 }
-
-// ----- K8s: create-or-update Secret -----
 
 func sanitizeName(name string) string {
 	name = strings.ReplaceAll(name, "_", "-")
@@ -297,7 +313,7 @@ type KanikoBuild struct {
 	Namespace   string
 	JobName     string
 	Image       string // e.g. "cgr.dev/chainguard/kaniko:latest"
-	SourceDir   string // Local directory to tar up and send to Kaniko (only used when Context is "tar://stdin")
+	SourceDir   string // Local directory to tar up and send to Kaniko
 	Dockerfile  string
 	Destination string
 	ExtraArgs   []string

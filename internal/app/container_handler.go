@@ -610,6 +610,13 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 		return nil
 	}
 
+	if strings.HasPrefix(h.serverConfig.Builder.Mode, "delegate:") {
+		return fmt.Errorf("delegated builds are not supported in dev mode")
+	}
+	if h.serverConfig.Registry.URL != "" {
+		return fmt.Errorf("remote registry is not supported in dev mode")
+	}
+
 	h.GenImageName = container.ImageName(h.image)
 	if h.GenImageName == "" {
 		h.GenImageName = container.GenImageName(h.app.Id, "")
