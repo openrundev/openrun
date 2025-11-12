@@ -147,7 +147,7 @@ func (c *ContainerCommand) RemoveContainer(ctx context.Context, name ContainerNa
 
 // GetContainerState returns the host:port of the running container, "" if not running. running is true if the container is running.
 func (c *ContainerCommand) GetContainerState(ctx context.Context, name ContainerName) (string, bool, error) {
-	containers, err := c.getContainers(ctx, name, false)
+	containers, err := c.getContainers(ctx, name, true)
 	if err != nil {
 		return "", false, fmt.Errorf("error getting containers: %w", err)
 	}
@@ -345,6 +345,10 @@ func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.App
 }
 
 func (c *ContainerCommand) ImageExists(ctx context.Context, name ImageName) (bool, error) {
+	if c.config.Registry.URL != "" {
+		return ImageExists(ctx, c.Logger, string(name), &c.config.Registry)
+	}
+
 	c.Debug().Msgf("Getting images with name %s", name)
 	args := []string{"images", string(name)}
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, args...)

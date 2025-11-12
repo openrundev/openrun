@@ -214,6 +214,7 @@ func GetDockerConfig(ctx context.Context, imageRef string, registryConfig *types
 		parseOpts = append(parseOpts, name.Insecure)
 	}
 
+	imageRef = registryConfig.URL + "/" + imageRef
 	ref, err := name.ParseReference(imageRef, parseOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse ref: %w", err)

@@ -108,7 +108,7 @@ cors.max_age = "2678400"                                                        
 
 # Health check Config
 container.health_url = "/"
-container.health_attempts_after_startup = 30
+container.health_attempts_after_startup = 10
 container.health_timeout_secs = 5
 
 # Idle Shutdown Config
@@ -118,8 +118,8 @@ container.idle_bytes_high_watermark = 1500 # bytes high watermark for idle shutd
                                            # (1500 bytes sent and recv over 180 seconds)
 
 # Status check Config
-container.status_check_interval_secs = 5
-container.status_health_attempts = 3
+container.status_check_interval_secs = 20
+container.status_health_attempts = 10
 
 # Proxy related settings
 proxy.max_idle_conns = 250

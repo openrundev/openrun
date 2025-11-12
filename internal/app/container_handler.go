@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -294,6 +295,8 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 }
 
 func (h *ContainerHandler) healthChecker(ctx context.Context) {
+	time.Sleep(60 * time.Second) // wait for 1 minute to let the app start up
+	h.Debug().Msgf("Health checker started for app %s", h.app.Id)
 	for range h.healthCheckTicker.C {
 		err := h.WaitForHealth(h.containerConfig.StatusHealthAttempts)
 		if err == nil {
@@ -707,21 +710,18 @@ func (h *ContainerHandler) WaitForHealth(attempts int) error {
 
 	var err error
 	var resp *http.Response
-	proxyUrl, err := url.Parse(h.GetProxyUrl())
-	if err != nil {
-		return err
-	}
-	if !h.stripAppPath {
-		// Apps like Streamlit require the app path to be present
-		proxyUrl = proxyUrl.JoinPath(h.app.Path)
-	}
-
-	proxyUrl = proxyUrl.JoinPath(h.health)
-	if err != nil {
-		return err
-	}
-
 	for attempt := 1; attempt <= attempts; attempt++ {
+		proxyUrl, err := url.Parse(h.GetProxyUrl())
+		if err != nil {
+			return err
+		}
+		if !h.stripAppPath {
+			// Apps like Streamlit require the app path to be present
+			proxyUrl = proxyUrl.JoinPath(h.app.Path)
+		}
+
+		proxyUrl = proxyUrl.JoinPath(h.health)
+
 		resp, err = client.Get(proxyUrl.String())
 		statusCode := "N/A"
 		if err == nil {
@@ -736,7 +736,8 @@ func (h *ContainerHandler) WaitForHealth(attempts int) error {
 		}
 
 		h.Debug().Msgf("Attempt %d failed on %s : status %s err %s", attempt, proxyUrl, statusCode, err)
-		time.Sleep(1 * time.Second)
+		sleepSecs := math.Min(float64(attempt), 5)
+		time.Sleep(time.Duration(sleepSecs) * time.Second)
 	}
 	return err
 }

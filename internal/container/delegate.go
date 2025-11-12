@@ -276,7 +276,8 @@ func delegateBuild(ctx context.Context, logger *types.Logger, config *types.Serv
 		return fmt.Errorf("read image from docker daemon: %w", err)
 	}
 
-	remoteRef, remoteOpts, err := GetDockerConfig(ctx, remoteTag, data.RegistryConfig)
+	logger.Debug().Msgf("Getting remote registry config for %s", data.ImageTag)
+	remoteRef, remoteOpts, err := GetDockerConfig(ctx, data.ImageTag, data.RegistryConfig)
 	if err != nil {
 		return fmt.Errorf("get remote registry config: %w", err)
 	}

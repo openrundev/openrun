@@ -52,12 +52,16 @@ func loadConfig() (*rest.Config, error) {
 }
 
 func (k *KubernetesContainerManager) ImageExists(ctx context.Context, name ImageName) (bool, error) {
+	if k.config.Registry.URL == "" {
+		return false, fmt.Errorf("registry url is required for kubernetes container manager")
+	}
 	return ImageExists(ctx, k.Logger, string(name), &k.config.Registry)
 }
 
 func (k *KubernetesContainerManager) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
 	targetUrl, found := strings.CutPrefix(k.config.Builder.Mode, "delegate:")
 	if found {
+		// delegated build
 		err := sendDelegateBuild(targetUrl, DelegateRequest{
 			ImageTag:       string(imgName),
 			ContainerFile:  containerFile,
