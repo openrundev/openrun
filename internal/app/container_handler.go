@@ -248,8 +248,11 @@ func dedupVolumes(volumes []string) []string {
 
 func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 	for range h.idleShutdownTicker.C {
+		if h.currentState != ContainerStateRunning {
+			continue
+		}
 		idleTimeSecs := time.Now().Unix() - h.app.lastRequestTime.Load()
-		if h.currentState != ContainerStateRunning || idleTimeSecs < int64(h.containerConfig.IdleShutdownSecs) {
+		if idleTimeSecs < int64(h.containerConfig.IdleShutdownSecs) {
 			// Not idle
 			h.Trace().Msgf("App %s not idle, last request %d seconds ago", h.app.Id, idleTimeSecs)
 			continue
@@ -711,9 +714,15 @@ func (h *ContainerHandler) WaitForHealth(attempts int) error {
 	var err error
 	var resp *http.Response
 	for attempt := 1; attempt <= attempts; attempt++ {
-		proxyUrl, err := url.Parse(h.GetProxyUrl())
-		if err != nil {
-			return err
+		var proxyUrl *url.URL
+		proxyUrl, err = url.Parse(h.GetProxyUrl())
+		if err != nil || proxyUrl.Host == "" {
+			if err == nil {
+				err = fmt.Errorf("could not find container proxy url")
+			}
+			sleepSecs := math.Min(float64(attempt), 5)
+			time.Sleep(time.Duration(sleepSecs) * time.Second)
+			continue
 		}
 		if !h.stripAppPath {
 			// Apps like Streamlit require the app path to be present
@@ -721,7 +730,6 @@ func (h *ContainerHandler) WaitForHealth(attempts int) error {
 		}
 
 		proxyUrl = proxyUrl.JoinPath(h.health)
-
 		resp, err = client.Get(proxyUrl.String())
 		statusCode := "N/A"
 		if err == nil {
@@ -739,6 +747,8 @@ func (h *ContainerHandler) WaitForHealth(attempts int) error {
 		sleepSecs := math.Min(float64(attempt), 5)
 		time.Sleep(time.Duration(sleepSecs) * time.Second)
 	}
+
+	h.Error().Msgf("Health check failed for app %s after %d attempts: %v", h.app.Id, attempts, err)
 	return err
 }
 
