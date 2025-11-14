@@ -10,9 +10,16 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/types"
+	apps "k8s.io/api/apps/v1"
+	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 )
 
 type KubernetesContainerManager struct {
@@ -20,6 +27,11 @@ type KubernetesContainerManager struct {
 	config     *types.ServerConfig
 	clientSet  *kubernetes.Clientset
 	restConfig *rest.Config
+}
+
+func sanitizeContainerName(name string) string {
+	name = sanitizeName(name)
+	return name[:60] // max length for a Kubernetes object name is 63
 }
 
 func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerConfig) (*KubernetesContainerManager, error) {
@@ -108,30 +120,82 @@ func (k *KubernetesContainerManager) BuildImage(ctx context.Context, imgName Ima
 }
 
 func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name ContainerName) (string, bool, error) {
-	return "", false, nil
+	name = ContainerName(sanitizeContainerName(string(name)))
+	svc, err := k.clientSet.CoreV1().
+		Services(k.config.Kubernetes.Namespace).
+		Get(ctx, string(name), meta.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("get service %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
+	}
+	if len(svc.Spec.Ports) == 0 {
+		return "", false, fmt.Errorf("service %s/%s has no ports", k.config.Kubernetes.Namespace, string(name))
+	}
+
+	svcPort := svc.Spec.Ports[0].Port
+	hostNamePort := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, svcPort)
+
+	// --- Get Deployment & ready pods ---
+	dep, err := k.clientSet.AppsV1().
+		Deployments(k.config.Kubernetes.Namespace).
+		Get(ctx, string(name), meta.GetOptions{})
+	if err != nil {
+		return "", false, fmt.Errorf("get deployment %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
+	}
+
+	return hostNamePort, dep.Status.ReadyReplicas > 0, nil
 }
 
 func (k *KubernetesContainerManager) SupportsInPlaceContainerUpdate() bool {
-	return true
+	return false
 }
 
 func (k *KubernetesContainerManager) InPlaceContainerUpdate(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
 	containerOptions map[string]string) error {
-	return nil
+	// in place upgrade will make it difficult to do atomic upgrade across multiple apps.  Instead create a new
+	// service/deployment during deployment, that will work similar to the way containers are managed in non-k8s scenario.
+	return fmt.Errorf("in place container update is not supported for kubernetes container manager")
 }
 
 func (k *KubernetesContainerManager) StartContainer(ctx context.Context, name ContainerName) error {
-	return nil
+	name = ContainerName(sanitizeContainerName(string(name)))
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		scale, err := k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).GetScale(ctx, string(name), meta.GetOptions{})
+		if err != nil {
+			return err
+		}
+		scale.Spec.Replicas = 1
+		_, err = k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).UpdateScale(ctx, string(name), scale, meta.UpdateOptions{})
+		return err
+	})
 }
 
 func (k *KubernetesContainerManager) StopContainer(ctx context.Context, name ContainerName) error {
-	return nil
+	name = ContainerName(sanitizeContainerName(string(name)))
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		scale, err := k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).GetScale(ctx, string(name), meta.GetOptions{})
+		if err != nil {
+			return err
+		}
+		scale.Spec.Replicas = 0 // scale down to zero
+		_, err = k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).UpdateScale(ctx, string(name), scale, meta.UpdateOptions{})
+		return err
+	})
 }
 
 func (k *KubernetesContainerManager) RunContainer(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
 	containerOptions map[string]string) error {
+	imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
+	containerName = ContainerName(sanitizeContainerName(string(containerName)))
+	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), int32(port))
+	if err != nil {
+		return fmt.Errorf("create app: %w", err)
+	}
+	k.Logger.Info().Msgf("created app service %s with host name port %s", containerName, hostNamePort)
 	return nil
 }
 
@@ -145,4 +209,82 @@ func (k *KubernetesContainerManager) VolumeExists(ctx context.Context, name Volu
 
 func (k *KubernetesContainerManager) VolumeCreate(ctx context.Context, name VolumeName) error {
 	return nil
+}
+
+// createDeployment creates a Deployment + Service and returns the Service URL.
+func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name, image string, port int32) (string, error) {
+	labels := map[string]string{"app": name}
+	replicas := int32(1) // min = max = 1
+
+	dep := &apps.Deployment{
+		ObjectMeta: meta.ObjectMeta{
+			Name:      name,
+			Namespace: k.config.Kubernetes.Namespace,
+			Labels:    labels,
+		},
+		Spec: apps.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &meta.LabelSelector{
+				MatchLabels: labels,
+			},
+			Template: core.PodTemplateSpec{
+				ObjectMeta: meta.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Name:  name,
+							Image: image,
+							Ports: []core.ContainerPort{
+								{
+									ContainerPort: port,
+									Protocol:      core.ProtocolTCP,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if _, err := k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).Create(ctx, dep, meta.CreateOptions{}); err != nil {
+		return "", fmt.Errorf("create deployment: %w", err)
+	}
+
+	svc := &core.Service{
+		ObjectMeta: meta.ObjectMeta{
+			Name:      name,
+			Namespace: k.config.Kubernetes.Namespace,
+			Labels:    labels,
+		},
+		Spec: core.ServiceSpec{
+			Type:     core.ServiceTypeClusterIP,
+			Selector: labels,
+			Ports: []core.ServicePort{
+				{
+					Name:       "http",
+					Port:       port,
+					TargetPort: intstr.FromInt(int(port)),
+					Protocol:   core.ProtocolTCP,
+				},
+			},
+		},
+	}
+
+	svc, err := k.clientSet.CoreV1().Services(k.config.Kubernetes.Namespace).Create(ctx, svc, meta.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("create service: %w", err)
+	}
+
+	if len(svc.Spec.Ports) == 0 {
+		return "", fmt.Errorf("service has no ports")
+	}
+
+	// In-cluster DNS URL
+	servicePort := svc.Spec.Ports[0].Port
+	url := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, servicePort)
+
+	return url, nil
 }
