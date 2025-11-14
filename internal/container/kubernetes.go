@@ -71,6 +71,10 @@ func (k *KubernetesContainerManager) ImageExists(ctx context.Context, name Image
 }
 
 func (k *KubernetesContainerManager) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
+	if k.config.Registry.URL == "" {
+		return fmt.Errorf("registry url is required for kubernetes container manager")
+	}
+
 	targetUrl, found := strings.CutPrefix(k.config.Builder.Mode, "delegate:")
 	if found {
 		// delegated build
@@ -86,11 +90,19 @@ func (k *KubernetesContainerManager) BuildImage(ctx context.Context, imgName Ima
 		return nil
 	}
 
+	if k.config.Builder.Mode == "command" || k.config.Builder.Mode == "podman" || k.config.Builder.Mode == "docker" || strings.HasPrefix(k.config.Builder.Mode, "/") {
+		containerCommand := k.config.Builder.Mode
+		if k.config.Builder.Mode == "command" {
+			containerCommand = LookupContainerCommand(false)
+			if containerCommand == "" {
+				return fmt.Errorf("no container command found, install podman or docker")
+			}
+		}
+		return buildImageCommand(ctx, k.Logger, k.config, imgName, sourceUrl, containerFile, containerArgs, containerCommand)
+	}
+
 	if k.config.Builder.Mode != "kaniko" && k.config.Builder.Mode != "auto" {
 		return fmt.Errorf("invalid builder mode for kubernetes container manager: %s", k.config.Builder.Mode)
-	}
-	if k.config.Registry.URL == "" {
-		return fmt.Errorf("registry url is required for kubernetes container manager")
 	}
 
 	var destination string

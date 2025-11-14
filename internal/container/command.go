@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -104,18 +106,19 @@ func (c *ContainerCommand) BuildImage(ctx context.Context, imgName ImageName, so
 		return fmt.Errorf("invalid builder mode for command based container manager: %s", c.config.Builder.Mode)
 	}
 
-	if c.config.Registry.URL != "" {
-		return fmt.Errorf("remote registry in command mode is supported with delegated builds only")
-	}
+	return buildImageCommand(ctx, c.Logger, c.config, imgName, sourceUrl, containerFile, containerArgs, c.config.System.ContainerCommand)
+}
 
-	releaseLock, err := acquireBuildLock(context.Background(), &c.config.System, string(imgName))
+func buildImageCommand(ctx context.Context, logger *types.Logger, config *types.ServerConfig,
+	imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string, containerCommand string) error {
+	releaseLock, err := acquireBuildLock(ctx, &config.System, string(imgName))
 	if err != nil {
 		return fmt.Errorf("error acquiring build lock: %w", err)
 	}
 	defer releaseLock()
 
-	c.Debug().Msgf("Building image %s from %s with %s", imgName, containerFile, sourceUrl)
-	args := []string{c.config.System.ContainerCommand, "build", "-t", string(imgName), "-f", containerFile}
+	logger.Debug().Msgf("Building image %s from %s with %s", imgName, containerFile, sourceUrl)
+	args := []string{containerCommand, "build", "-t", string(imgName), "-f", containerFile}
 
 	for k, v := range containerArgs {
 		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", k, v))
@@ -124,11 +127,17 @@ func (c *ContainerCommand) BuildImage(ctx context.Context, imgName ImageName, so
 	args = append(args, ".")
 	cmd := exec.Command(args[0], args[1:]...)
 
-	c.Debug().Msgf("Running command: %s", cmd.String())
+	logger.Debug().Msgf("Running command: %s", cmd.String())
 	cmd.Dir = sourceUrl
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error building image: %s : %s", output, err)
+	}
+	if config.Registry.URL != "" {
+		err = pushToRemoteRegistry(ctx, logger, config, string(imgName), &config.Registry)
+		if err != nil {
+			return fmt.Errorf("error pushing image to remote registry: %w", err)
+		}
 	}
 
 	return nil
@@ -431,4 +440,33 @@ func (c ContainerCommand) VolumeCreate(ctx context.Context, name VolumeName) err
 		return fmt.Errorf("error creating volume %s: %w %s", name, err, output)
 	}
 	return nil
+}
+
+const (
+	DOCKER_COMMAND = "docker"
+	PODMAN_COMMAND = "podman"
+
+	kubeHostEnv = "KUBERNETES_SERVICE_HOST"
+	kubePortEnv = "KUBERNETES_SERVICE_PORT"
+)
+
+func LookupContainerCommand(checkKubernetes bool) string {
+	if checkKubernetes {
+		// Check if running in Kubernetes
+		_, hasHost := os.LookupEnv(kubeHostEnv)
+		_, hasPort := os.LookupEnv(kubePortEnv)
+		if hasHost || hasPort {
+			return types.CONTAINER_KUBERNETES
+		}
+	}
+
+	podmanExec := system.FindExec(PODMAN_COMMAND)
+	if podmanExec != "" {
+		return podmanExec
+	}
+	dockerExec := system.FindExec(DOCKER_COMMAND)
+	if dockerExec != "" {
+		return dockerExec
+	}
+	return ""
 }

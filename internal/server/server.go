@@ -26,6 +26,7 @@ import (
 	"github.com/caddyserver/certmagic"
 	"github.com/go-chi/chi/middleware"
 	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/passwd"
 	"github.com/openrundev/openrun/internal/rbac"
@@ -228,7 +229,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}
 
 	if config.System.ContainerCommand == "auto" {
-		config.System.ContainerCommand = server.lookupContainerCommand()
+		config.System.ContainerCommand = container.LookupContainerCommand(true)
 		// if command is empty string, that means either containers are disabled in config or no container command found
 	}
 
@@ -425,11 +426,6 @@ func updateConfigSecrets(config *types.ServerConfig, evalSecret func(string) (st
 	return nil
 }
 
-const (
-	DOCKER_COMMAND = "docker"
-	PODMAN_COMMAND = "podman"
-)
-
 // handleAppClose listens for app close notifications and removes the app from the store
 func (s *Server) handleAppClose() {
 	for appPathDomain := range s.notifyClose {
@@ -437,30 +433,6 @@ func (s *Server) handleAppClose() {
 		s.Debug().Str("app", appPathDomain.String()).Msg("App closed")
 	}
 	s.Debug().Msg("App close handler stopped")
-}
-
-const (
-	kubeHostEnv = "KUBERNETES_SERVICE_HOST"
-	kubePortEnv = "KUBERNETES_SERVICE_PORT"
-)
-
-func (s *Server) lookupContainerCommand() string {
-	// Check if running in Kubernetes
-	_, hasHost := os.LookupEnv(kubeHostEnv)
-	_, hasPort := os.LookupEnv(kubePortEnv)
-	if hasHost || hasPort {
-		return types.CONTAINER_KUBERNETES
-	}
-
-	podmanExec := system.FindExec(PODMAN_COMMAND)
-	if podmanExec != "" {
-		return podmanExec
-	}
-	dockerExec := system.FindExec(DOCKER_COMMAND)
-	if dockerExec != "" {
-		return dockerExec
-	}
-	return ""
 }
 
 // setupAdminAccount sets up the basic auth password for admin account. If admin user is unset,

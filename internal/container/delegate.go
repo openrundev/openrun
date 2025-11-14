@@ -261,12 +261,21 @@ func delegateBuild(ctx context.Context, logger *types.Logger, config *types.Serv
 		return fmt.Errorf("error building image: %s : %s", output, err)
 	}
 
-	remoteTag := data.RegistryConfig.URL + "/" + data.ImageTag
-	if config.Registry.Project != "" {
-		remoteTag = data.RegistryConfig.URL + "/" + data.RegistryConfig.Project + "/" + data.ImageTag
+	err = pushToRemoteRegistry(ctx, logger, config, data.ImageTag, data.RegistryConfig)
+	if err != nil {
+		return fmt.Errorf("error pushing image to remote registry: %w", err)
 	}
 
-	srcRef, err := name.ParseReference(data.ImageTag) // local tags don’t need Insecure
+	return nil
+}
+
+func pushToRemoteRegistry(ctx context.Context, logger *types.Logger, config *types.ServerConfig, imageTag string, registryConfig *types.RegistryConfig) error {
+	remoteTag := registryConfig.URL + "/" + imageTag
+	if config.Registry.Project != "" {
+		remoteTag = registryConfig.URL + "/" + registryConfig.Project + "/" + imageTag
+	}
+
+	srcRef, err := name.ParseReference(imageTag)
 	if err != nil {
 		return fmt.Errorf("parse reference: %w", err)
 	}
@@ -276,8 +285,8 @@ func delegateBuild(ctx context.Context, logger *types.Logger, config *types.Serv
 		return fmt.Errorf("read image from docker daemon: %w", err)
 	}
 
-	logger.Debug().Msgf("Getting remote registry config for %s", data.ImageTag)
-	remoteRef, remoteOpts, err := GetDockerConfig(ctx, data.ImageTag, data.RegistryConfig)
+	logger.Debug().Msgf("Getting remote registry config for %s", imageTag)
+	remoteRef, remoteOpts, err := GetDockerConfig(ctx, imageTag, registryConfig)
 	if err != nil {
 		return fmt.Errorf("get remote registry config: %w", err)
 	}
@@ -288,7 +297,7 @@ func delegateBuild(ctx context.Context, logger *types.Logger, config *types.Serv
 		return fmt.Errorf("write image to remote registry: %w", err)
 	}
 
-	logger.Info().Msgf("Image %s written to remote registry %s", data.ImageTag, remoteTag)
+	logger.Info().Msgf("Image %s written to remote registry %s", imageTag, remoteTag)
 	return nil
 }
 
