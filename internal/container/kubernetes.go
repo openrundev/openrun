@@ -203,7 +203,7 @@ func (k *KubernetesContainerManager) RunContainer(ctx context.Context, appEntry 
 	containerOptions map[string]string) error {
 	imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
 	containerName = ContainerName(sanitizeContainerName(string(containerName)))
-	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), int32(port))
+	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), int32(port), envMap)
 	if err != nil {
 		return fmt.Errorf("create app: %w", err)
 	}
@@ -224,9 +224,18 @@ func (k *KubernetesContainerManager) VolumeCreate(ctx context.Context, name Volu
 }
 
 // createDeployment creates a Deployment + Service and returns the Service URL.
-func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name, image string, port int32) (string, error) {
+func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name, image string, port int32, envMap map[string]string) (string, error) {
 	labels := map[string]string{"app": name}
 	replicas := int32(1) // min = max = 1
+
+	// Convert envMap to Kubernetes EnvVar slice
+	envVars := make([]core.EnvVar, 0, len(envMap))
+	for key, value := range envMap {
+		envVars = append(envVars, core.EnvVar{
+			Name:  key,
+			Value: value,
+		})
+	}
 
 	dep := &apps.Deployment{
 		ObjectMeta: meta.ObjectMeta{
@@ -254,6 +263,7 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 									Protocol:      core.ProtocolTCP,
 								},
 							},
+							Env: envVars,
 						},
 					},
 				},
