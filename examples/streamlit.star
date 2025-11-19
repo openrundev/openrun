@@ -11,4 +11,4 @@ app("/streamlit/snowflake", "github.com/syasini/snowflake_cheatsheet",
     params={"app_file": "app.py", "app_name": "Snowflake Cheatsheet"}, **sl_args)
 app("maps.:", "github.com/chrieke/prettymapp", # uses default domain, eg maps.localhost:/
     params={"app_file": "streamlit-prettymapp/app.py", "app_name": "Prettymapp"}, **sl_args)
-app("/streamlit/mega", "github.com/streamlit/mega-tester", git_branch="master", params={"app_name": "Mega Tester"}, **sl_args)
+app("/streamlit/mega", "github.com/streamlit/mega-tester", params={"app_name": "Mega Tester"}, **sl_args)
