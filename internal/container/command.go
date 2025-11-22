@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,23 +59,20 @@ func acquireBuildLock(ctx context.Context, config *types.SystemConfig, buildId s
 
 type ContainerCommand struct {
 	*types.Logger
-	config *types.ServerConfig
+	appRunDir string
+	appId     types.AppId
+	config    *types.ServerConfig
 }
 
 var _ DevContainerManager = (*ContainerCommand)(nil)
 
-func NewContainerCommand(logger *types.Logger, config *types.ServerConfig) *ContainerCommand {
-	return &ContainerCommand{Logger: logger, config: config}
-}
-
-func (c *ContainerCommand) SupportsInPlaceContainerUpdate() bool {
-	return false
-}
-
-func (c *ContainerCommand) InPlaceContainerUpdate(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
-	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
-	containerOptions map[string]string) error {
-	return fmt.Errorf("in place container update not supported")
+func NewContainerCommand(logger *types.Logger, config *types.ServerConfig, appId types.AppId, appRunDir string) *ContainerCommand {
+	return &ContainerCommand{
+		Logger:    logger,
+		config:    config,
+		appId:     appId,
+		appRunDir: appRunDir,
+	}
 }
 
 func (c *ContainerCommand) RemoveImage(ctx context.Context, name ImageName) error {
@@ -296,11 +294,11 @@ func (c *ContainerCommand) StartContainer(ctx context.Context, name ContainerNam
 
 const LABEL_PREFIX = "dev.openrun."
 
-func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
-	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
-	containerOptions map[string]string) error {
+func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
+	imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
+	containerOptions map[string]string, paramMap map[string]string) error {
 	c.Debug().Msgf("Running container %s from image %s with port %d env %+v mountArgs %+v",
-		containerName, imageName, port, envMap, mountArgs)
+		containerName, imageName, port, envMap, volumes)
 	publish := fmt.Sprintf("127.0.0.1::%d", port)
 
 	imageUrl := string(imageName)
@@ -313,6 +311,10 @@ func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.App
 	}
 
 	args := []string{"run", "--name", string(containerName), "--detach", "--publish", publish}
+	mountArgs, err := c.genMountArgs(sourceDir, volumes, paramMap)
+	if err != nil {
+		return fmt.Errorf("error generating mount args: %w", err)
+	}
 	if len(mountArgs) > 0 {
 		args = append(args, mountArgs...)
 	}
@@ -440,6 +442,61 @@ func (c ContainerCommand) VolumeCreate(ctx context.Context, name VolumeName) err
 		return fmt.Errorf("error creating volume %s: %w %s", name, err, output)
 	}
 	return nil
+}
+
+func (c *ContainerCommand) genMountArgs(sourceDir string, volumeInfo []*VolumeInfo, paramMap map[string]string) ([]string, error) {
+	args := make([]string, 0, len(volumeInfo))
+
+	for _, volInfo := range volumeInfo {
+		if volInfo.IsSecret {
+			// For cl_secret:file.prop:/data/file.prop, pass file.prop through the template
+			// processor, write output to file.prop.gen and then bind mount it as
+			// /source_dir/file.prop.gen:/data/file.prop
+			tmplFileName := volInfo.SourcePath
+			srcFile := path.Join(sourceDir, tmplFileName)
+			destFile := path.Join(c.appRunDir, path.Base(tmplFileName)+".gen")
+			data := map[string]any{"params": paramMap}
+			if sourceDir != "" {
+				err := renderTemplate(srcFile, destFile, data)
+				if err != nil {
+					return nil, fmt.Errorf("error rendering template %s: %w", srcFile, err)
+				}
+			}
+			volStr := fmt.Sprintf("%s:%s", destFile, volInfo.TargetPath)
+			if volInfo.ReadOnly {
+				volStr += ":ro"
+			}
+			c.Info().Msgf("Mounting secret %s for app %s src %s dest %s", volStr, c.appId, srcFile, destFile)
+			args = append(args, fmt.Sprintf("--volume=%s", volStr))
+			continue
+		}
+
+		if volInfo.VolumeName == "" {
+			// bind mount
+			args = append(args, fmt.Sprintf("--volume=%s:%s", volInfo.SourcePath, volInfo.TargetPath))
+			continue
+		}
+
+		dir := volInfo.VolumeName
+		if dir == UNNAMED_VOLUME {
+			// unnamed volume, use the path for generating the volume name
+			dir = volInfo.TargetPath
+		}
+
+		genVolumeName := GenVolumeName(c.appId, dir)
+		volStr := fmt.Sprintf("%s:%s", genVolumeName, volInfo.TargetPath)
+		if volInfo.SourcePath != "" {
+			volStr = fmt.Sprintf("%s:%s:%s", genVolumeName, volInfo.SourcePath, volInfo.TargetPath)
+		}
+
+		if volInfo.ReadOnly {
+			volStr += ":ro"
+		}
+
+		c.Info().Msgf("Mounting volume %s for app %s dir %s, mount arg %s", genVolumeName, c.appId, dir, volStr)
+		args = append(args, fmt.Sprintf("--volume=%s", volStr))
+	}
+	return args, nil
 }
 
 const (

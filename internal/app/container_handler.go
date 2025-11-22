@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"html/template"
 	"io/fs"
 	"math"
 	"net/http"
@@ -55,7 +54,7 @@ type ContainerHandler struct {
 	buildDir        string
 	sourceFS        appfs.ReadableFS
 	paramMap        map[string]string
-	volumes         []string // Volumes to be mounted
+	volumeInfo      []*container.VolumeInfo
 	containerConfig types.Container
 	excludeGlob     []string
 
@@ -86,7 +85,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 			return nil, fmt.Errorf("error creating kubernetes container manager: %w", err)
 		}
 	default:
-		containerManager = container.NewContainerCommand(logger, serverConfig)
+		containerManager = container.NewContainerCommand(logger, serverConfig, app.Id, app.AppRunPath)
 	}
 
 	image := ""
@@ -179,7 +178,6 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		sourceFS:        sourceFS,
 		manager:         containerManager,
 		paramMap:        paramMap,
-		volumes:         volumes,
 		containerConfig: containerConfig,
 		stateLock:       sync.RWMutex{},
 		currentState:    ContainerStateUnknown,
@@ -211,6 +209,16 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		excludeGlob = app.codeConfig.Routing.ContainerExclude
 	}
 	m.excludeGlob = excludeGlob
+
+	volumeInfo := make([]*container.VolumeInfo, 0, len(volumes))
+	for _, vol := range volumes {
+		volInfo, err := m.parseVolumeString(vol)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing volume %s: %w", vol, err)
+		}
+		volumeInfo = append(volumeInfo, volInfo)
+	}
+	m.volumeInfo = volumeInfo
 
 	return m, nil
 }
@@ -466,21 +474,15 @@ func (h *ContainerHandler) createSpecFiles() ([]string, error) {
 	return created, nil
 }
 
-const UNNAMED_VOLUME = "<UNNAMED>"
-
 func (h *ContainerHandler) createVolumes(ctx context.Context) error {
-	for _, vol := range h.volumes {
-		_, volName, volStr, err := h.parseVolumeString(vol)
-		if err != nil {
-			return fmt.Errorf("error parsing volume %s: %w", vol, err)
-		}
-		if volName == "" {
+	for _, volInfo := range h.volumeInfo {
+		if volInfo.VolumeName == "" {
 			continue
 		}
-		dir := volName
-		if volName == UNNAMED_VOLUME {
+		dir := volInfo.VolumeName
+		if dir == container.UNNAMED_VOLUME {
 			// unnamed volume, use the path for generating the volume name
-			dir = volStr
+			dir = volInfo.TargetPath
 		}
 
 		genVolumeName := container.GenVolumeName(h.app.Id, dir)
@@ -495,85 +497,13 @@ func (h *ContainerHandler) createVolumes(ctx context.Context) error {
 	return nil
 }
 
-func (h *ContainerHandler) genMountArgs(sourceDir string) ([]string, error) {
-	args := []string{}
-
-	for _, vol := range h.volumes {
-		clPrefix, volName, volStr, err := h.parseVolumeString(vol)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing volume %s: %w", vol, err)
-		}
-
-		if clPrefix == VOL_PREFIX_SECRET {
-			// For cl_secret:file.prop:/data/file.prop, pass file.prop through the template
-			// processor, write output to file.prop.gen and then bind mount it as
-			// /source_dir/file.prop.gen:/data/file.prop
-			split := strings.Split(volStr, ":")
-			if len(split) < 2 {
-				return nil, fmt.Errorf("expected bind mount (source:target) for cl_secret volume %s", vol)
-			}
-			tmplFileName := split[0]
-			srcFile := path.Join(sourceDir, tmplFileName)
-			destFile := path.Join(h.app.AppRunPath, path.Base(tmplFileName)+".gen")
-			data := map[string]any{"params": h.paramMap}
-			if sourceDir != "" {
-				err = h.renderTemplate(srcFile, destFile, data)
-				if err != nil {
-					return nil, fmt.Errorf("error rendering template %s: %w", srcFile, err)
-				}
-			}
-			volStr = fmt.Sprintf("%s:%s", destFile, strings.Join(split[1:], ":"))
-			h.Info().Msgf("Mounting secret %s for app %s src %s dest %s", volStr, h.app.Id, srcFile, destFile)
-		}
-
-		if volName == "" {
-			// bind mount
-			args = append(args, fmt.Sprintf("--volume=%s", volStr))
-		} else {
-			dir := volName
-			if volName == UNNAMED_VOLUME {
-				// unnamed volume, use the path for generating the volume name
-				dir = volStr
-			}
-
-			genVolumeName := container.GenVolumeName(h.app.Id, dir)
-			split := strings.Split(volStr, ":")
-			var volCliStr string
-			if len(split) > 1 {
-				split[0] = string(genVolumeName)
-				volCliStr = strings.Join(split, ":")
-			} else {
-				volCliStr = string(genVolumeName) + ":" + volStr
-			}
-			h.Info().Msgf("Mounting volume %s for app %s dir %s, mount arg %s", genVolumeName, h.app.Id, dir, volCliStr)
-			args = append(args, fmt.Sprintf("--volume=%s", volCliStr))
-		}
+func parseBindPaths(vol string) (string, string, bool) {
+	vol, readOnly := strings.CutSuffix(vol, ":ro")
+	p1, p2, ok := strings.Cut(vol, ":")
+	if ok {
+		return p1, p2, readOnly
 	}
-	return args, nil
-}
-
-// renderTemplate reads the source template file, executes it with the given data,
-// and writes the output to the target file.
-func (h *ContainerHandler) renderTemplate(srcFilename, targetFilename string, data map[string]any) error {
-	// Parse the source file as a template
-	tmpl, err := template.ParseFiles(srcFilename)
-	if err != nil {
-		return fmt.Errorf("failed to parse template file: %w", err)
-	}
-
-	// Create the target file (overwrite if it exists)
-	targetFile, err := os.Create(targetFilename)
-	if err != nil {
-		return fmt.Errorf("failed to create target file: %w", err)
-	}
-	defer targetFile.Close() //nolint:errcheck
-
-	// Execute the template with data, writing output to the target file
-	if err := tmpl.Execute(targetFile, data); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	return nil
+	return "", p1, readOnly
 }
 
 // parseVolumeString parses the volume string. It returns four values
@@ -581,26 +511,52 @@ func (h *ContainerHandler) renderTemplate(srcFilename, targetFilename string, da
 // 2. volume name, UNNAMED_VOLUME if unnamed, "" for bind
 // 3. the rest of the volume string
 // 4. error
-func (h *ContainerHandler) parseVolumeString(vol string) (string, string, string, error) {
-	if strings.HasPrefix(vol, VOL_PREFIX_SECRET) {
-		split := strings.Split(vol[len(VOL_PREFIX_SECRET):], ":")
-		if len(split) == 1 {
-			return "", "", "", fmt.Errorf("expected bind mount (source:target) for cl_secret volume %s", vol)
+func (h *ContainerHandler) parseVolumeString(vol string) (*container.VolumeInfo, error) {
+	vol, hasSecretPrefix := strings.CutPrefix(vol, VOL_PREFIX_SECRET)
+	if hasSecretPrefix {
+		// Secret passed through bind mount
+		src, dst, readOnly := parseBindPaths(vol)
+		if src == "" || dst == "" {
+			return nil, fmt.Errorf("expected bind mount (source:target) for cl_secret volume %s", vol)
 		}
-		return VOL_PREFIX_SECRET, "", vol[len(VOL_PREFIX_SECRET):], nil
+		return &container.VolumeInfo{
+			IsSecret:   hasSecretPrefix,
+			VolumeName: "",
+			SourcePath: src,
+			TargetPath: dst,
+			ReadOnly:   readOnly,
+		}, nil
 	}
 
-	split := strings.Split(vol, ":")
-	firstPart := split[0]
-	if len(split) > 1 && strings.HasPrefix(firstPart, "/") {
-		return "", "", vol, nil // bind mount
+	src, dst, readOnly := parseBindPaths(vol)
+	if strings.HasPrefix(src, "/") {
+		// Bind mount
+		return &container.VolumeInfo{
+			VolumeName: "",
+			SourcePath: src,
+			TargetPath: dst,
+			ReadOnly:   readOnly,
+		}, nil
 	}
 
-	if len(split) == 1 {
-		return "", UNNAMED_VOLUME, vol, nil // unnamed volume
-	}
+	if src != "" {
+		// Named volume
+		return &container.VolumeInfo{
+			VolumeName: src,
+			SourcePath: "",
+			TargetPath: dst,
+			ReadOnly:   readOnly,
+		}, nil
 
-	return "", firstPart, vol, nil // named volume
+	} else {
+		// Unnamed volume
+		return &container.VolumeInfo{
+			VolumeName: container.UNNAMED_VOLUME,
+			SourcePath: "",
+			TargetPath: dst,
+			ReadOnly:   readOnly,
+		}, nil
+	}
 }
 
 func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
@@ -668,18 +624,13 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 	h.stateLock.Lock()
 	defer h.stateLock.Unlock()
 
-	h.mountArgs, err = h.genMountArgs(h.app.SourceUrl)
-	if err != nil {
-		return err
-	}
-
 	if h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
 		// Command lifetime, service is not started, commands will be run with the image
 		return nil
 	}
 	envMap, _ := h.GetEnvMap()
-	err = devCM.RunContainer(ctx, h.app.AppEntry, containerName,
-		h.GenImageName, h.port, envMap, h.mountArgs, h.app.Metadata.ContainerOptions)
+	err = devCM.RunContainer(ctx, h.app.AppEntry, h.app.SourceUrl, containerName,
+		h.GenImageName, h.port, envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap)
 	if err != nil {
 		return fmt.Errorf("error running container: %w", err)
 	}
@@ -892,31 +843,22 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 	defer h.stateLock.Unlock()
 	// Start the container with newly built image
 
-	h.mountArgs, err = h.genMountArgs(sourceDir)
-	if err != nil {
-		return err
-	}
-	if sourceDir != "" {
-		// Cleanup temp dir after image has been built and mount template file has been generated
-		if err = os.RemoveAll(sourceDir); err != nil {
-			return fmt.Errorf("error removing temp source dir: %w", err)
-		}
-	}
-
 	if h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
 		// Command lifetime, service is not started, commands will be run with the image
 		return nil
 	}
 	envMap, _ := h.GetEnvMap()
-	if h.manager.SupportsInPlaceContainerUpdate() {
-		err = h.manager.InPlaceContainerUpdate(ctx, h.app.AppEntry, containerName,
-			h.GenImageName, h.port, envMap, h.mountArgs, h.app.Metadata.ContainerOptions)
-	} else {
-		err = h.manager.RunContainer(ctx, h.app.AppEntry, containerName,
-			h.GenImageName, h.port, envMap, h.mountArgs, h.app.Metadata.ContainerOptions)
-	}
+	err = h.manager.RunContainer(ctx, h.app.AppEntry, sourceDir, containerName,
+		h.GenImageName, h.port, envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap)
 	if err != nil {
 		return fmt.Errorf("error starting container after update: %w", err)
+	}
+
+	if sourceDir != "" {
+		// Cleanup temp dir after image has been built and mount template file has been generated
+		if err = os.RemoveAll(sourceDir); err != nil {
+			return fmt.Errorf("error removing temp source dir: %w", err)
+		}
 	}
 
 	if h.health != "" {

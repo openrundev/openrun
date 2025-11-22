@@ -160,18 +160,6 @@ func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name
 	return hostNamePort, dep.Status.ReadyReplicas > 0, nil
 }
 
-func (k *KubernetesContainerManager) SupportsInPlaceContainerUpdate() bool {
-	return false
-}
-
-func (k *KubernetesContainerManager) InPlaceContainerUpdate(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
-	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
-	containerOptions map[string]string) error {
-	// in place upgrade will make it difficult to do atomic upgrade across multiple apps.  Instead create a new
-	// service/deployment during deployment, that will work similar to the way containers are managed in non-k8s scenario.
-	return fmt.Errorf("in place container update is not supported for kubernetes container manager")
-}
-
 func (k *KubernetesContainerManager) StartContainer(ctx context.Context, name ContainerName) error {
 	name = ContainerName(sanitizeContainerName(string(name)))
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -198,9 +186,9 @@ func (k *KubernetesContainerManager) StopContainer(ctx context.Context, name Con
 	})
 }
 
-func (k *KubernetesContainerManager) RunContainer(ctx context.Context, appEntry *types.AppEntry, containerName ContainerName,
-	imageName ImageName, port int64, envMap map[string]string, mountArgs []string,
-	containerOptions map[string]string) error {
+func (k *KubernetesContainerManager) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
+	imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
+	containerOptions map[string]string, paramMap map[string]string) error {
 	imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
 	containerName = ContainerName(sanitizeContainerName(string(containerName)))
 	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), int32(port), envMap)
