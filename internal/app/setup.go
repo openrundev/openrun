@@ -32,7 +32,7 @@ import (
 	"go.starlark.net/starlarkstruct"
 )
 
-func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun) error {
+func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, reloadContainer bool) error {
 	a.Info().Str("path", a.Path).Str("domain", a.Domain).Msg("Loading app")
 
 	buf, err := a.sourceFS.ReadFile(a.getStarPath(apptype.APP_FILE_NAME))
@@ -132,7 +132,7 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun) error
 		return err
 	}
 
-	if a.containerHandler != nil {
+	if reloadContainer && a.containerHandler != nil {
 		// Container handler is present, reload the container
 		if a.IsDev {
 			if err = a.containerHandler.DevReload(ctx, bool(dryRun)); err != nil {

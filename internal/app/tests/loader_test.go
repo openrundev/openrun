@@ -93,7 +93,7 @@ app = ace.app("testApp", custom_layout=True, routes = testroutes)`,
 
 	// Now add a loop in the graph
 	fileData["test1.star"] = `load ("app.star", "mypage")`
-	r, err := a.Reload(context.Background(), true, true, types.DryRunFalse)
+	r, err := a.Reload(context.Background(), true, true, types.DryRunFalse, true)
 	testutil.AssertErrorContains(t, err, "cycle in starlark load graph during load of test1.star")
 	testutil.AssertEqualsBool(t, "reload", false, r) // reload should have failed
 }

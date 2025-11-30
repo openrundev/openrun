@@ -160,7 +160,7 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 func (a *App) Initialize(ctx context.Context, dryRun types.DryRun) error {
 	var reloaded bool
 	var err error
-	if reloaded, err = a.Reload(ctx, false, true, dryRun); err != nil {
+	if reloaded, err = a.Reload(ctx, false, true, dryRun, true); err != nil {
 		return err
 	}
 
@@ -199,7 +199,7 @@ func (a *App) ResetFS() {
 	a.sourceFS.Reset()
 }
 
-func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.DryRun) (bool, error) {
+func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.DryRun, reloadContainer bool) (bool, error) {
 	requestTime := time.Now()
 
 	a.initMutex.Lock()
@@ -265,7 +265,7 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 	}
 
 	// Load Starlark config, AppConfig is updated with the settings contents
-	if err = a.loadStarlarkConfig(ctx, dryRun); err != nil {
+	if err = a.loadStarlarkConfig(ctx, dryRun, reloadContainer); err != nil {
 		return false, fmt.Errorf("error loading starlark config: %w", err)
 	}
 	a.Metadata.Name = a.Name
@@ -708,7 +708,7 @@ func (a *App) startWatcher() error {
 
 					inReload.Store(true)
 					defer inReload.Store(false)
-					_, err := a.Reload(context.Background(), true, false, types.DryRun(false))
+					_, err := a.Reload(context.Background(), true, false, types.DryRun(false), true)
 					a.reloadError = err
 					if err != nil {
 						a.Error().Err(err).Msg("Error reloading app")

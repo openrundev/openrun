@@ -836,7 +836,7 @@ func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 		return nil, err
 	}
 
-	_, err = s.listAppsApp.Reload(ctx, true, true, types.DryRunFalse)
+	_, err = s.listAppsApp.Reload(ctx, true, true, types.DryRunFalse, true)
 	if err != nil {
 		return nil, err
 	}
