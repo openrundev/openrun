@@ -129,6 +129,9 @@ func getConfigPath(cCtx *cli.Context) (string, string, bool, error) {
 			return "/home/linuxbrew/.linuxbrew/var/openrun", "/home/linuxbrew/.linuxbrew/etc/openrun.toml", false, nil
 		} else if system.FileExists("/usr/local/etc/openrun.toml") {
 			return "/usr/local/var/openrun", "/usr/local/etc/openrun.toml", false, nil
+		} else if system.FileExists("/var/lib/openrun/openrun.toml") {
+			// Linux system level installation
+			return "/var/lib/openrun", "/var/lib/openrun/openrun.toml", false, nil
 		}
 	}
 	return "", "", false, fmt.Errorf("unable to find OPENRUN_HOME or config file")
