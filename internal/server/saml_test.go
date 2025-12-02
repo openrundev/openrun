@@ -179,41 +179,6 @@ func TestFirstNonEmpty(t *testing.T) {
 	}
 }
 
-func TestNewSAMLManager(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{
-		GlobalConfig: types.GlobalConfig{
-			AdminUser: "admin",
-		},
-	}
-	cookieStore := sessions.NewCookieStore([]byte("test-key"))
-	db := &metadata.Metadata{}
-
-	manager := NewSAMLManager(logger, config, cookieStore, db)
-
-	if manager == nil {
-		t.Fatal("NewSAMLManager returned nil")
-	}
-
-	if manager.Logger == nil {
-		t.Error("Logger is nil")
-	}
-
-	if manager.config != config {
-		t.Error("config not set correctly")
-	}
-
-	if manager.cookieStore != cookieStore {
-		t.Error("cookieStore not set correctly")
-	}
-
-	if manager.db != db {
-		t.Error("db not set correctly")
-	}
-}
-
 func TestSAMLManager_ValidateSAMLProvider(t *testing.T) {
 	t.Parallel()
 

@@ -132,13 +132,14 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, reloa
 		return err
 	}
 
-	if reloadContainer && a.containerHandler != nil {
+	if a.containerHandler != nil {
 		// Container handler is present, reload the container
 		if a.IsDev {
 			if err = a.containerHandler.DevReload(ctx, bool(dryRun)); err != nil {
 				return err
 			}
-		} else {
+		} else if reloadContainer {
+			// In prod mode, reload only when initializing an app
 			if err := a.containerHandler.ProdReload(ctx, bool(dryRun)); err != nil {
 				return err
 			}
