@@ -266,7 +266,7 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 
 	// Load Starlark config, AppConfig is updated with the settings contents
 	if err = a.loadStarlarkConfig(ctx, dryRun, reloadContainer); err != nil {
-		return false, fmt.Errorf("error loading starlark config: %w", err)
+		return false, fmt.Errorf("error during initial setup: %w", err)
 	}
 	a.Metadata.Name = a.Name
 

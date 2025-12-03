@@ -121,6 +121,10 @@ container.idle_bytes_high_watermark = 1500 # bytes high watermark for idle shutd
 container.status_check_interval_secs = 20
 container.status_health_attempts = 10
 
+# Show logs for container startup failures in prod mode (dev is always true)
+container.log_lines_to_show = 1000
+container.show_logs_for_failure = true
+
 # Kubernetes related settings
 kubernetes.default_volume_size = "10Gi"
 

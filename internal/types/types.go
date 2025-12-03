@@ -147,6 +147,9 @@ type Container struct {
 	HealthAttemptsAfterStartup int    `toml:"health_attempts_after_startup"`
 	HealthTimeoutSecs          int    `toml:"health_timeout_secs"`
 
+	LogLinesToShow     int  `toml:"log_lines_to_show"`
+	ShowLogsForFailure bool `toml:"show_logs_for_failure"`
+
 	// Idle shutdown related config
 	IdleShutdownSecs       int  `toml:"idle_shutdown_secs"`
 	IdleShutdownDevApps    bool `toml:"idle_shutdown_dev_apps"`

@@ -260,9 +260,9 @@ func (c *ContainerCommand) getContainers(ctx context.Context, name ContainerName
 	return resp, nil
 }
 
-func (c *ContainerCommand) GetContainerLogs(ctx context.Context, name ContainerName) (string, error) {
+func (c *ContainerCommand) GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error) {
 	c.Debug().Msgf("Getting container logs %s", name)
-	lines, err := c.ExecTailN(ctx, c.config.System.ContainerCommand, []string{"logs", string(name)}, 1000)
+	lines, err := c.ExecTailN(ctx, c.config.System.ContainerCommand, []string{"logs", string(name)}, linesToShow)
 	if err != nil {
 		return "", fmt.Errorf("error getting container %s logs: %s", name, err)
 	}

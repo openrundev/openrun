@@ -6,6 +6,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -43,7 +44,10 @@ type KubernetesContainerManager struct {
 
 func sanitizeContainerName(name string) string {
 	name = sanitizeName(name)
-	return name[:50] // max length for a Kubernetes object name is 63, leave space for the suffix
+	if len(name) > 50 {
+		name = name[:50] // max length for a Kubernetes object name is 63, leave space for the suffix
+	}
+	return name
 }
 
 func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerConfig, appConfig *types.AppConfig, appRunDir string) (*KubernetesContainerManager, error) {
@@ -213,8 +217,48 @@ func (k *KubernetesContainerManager) RunContainer(ctx context.Context, appEntry 
 	return nil
 }
 
-func (k *KubernetesContainerManager) GetContainerLogs(ctx context.Context, name ContainerName) (string, error) {
-	return "", nil
+func (k *KubernetesContainerManager) GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error) {
+	name = ContainerName(sanitizeContainerName(string(name)))
+
+	// List pods with the matching label
+	pods, err := k.clientSet.CoreV1().Pods(k.config.Kubernetes.Namespace).List(ctx, meta.ListOptions{
+		LabelSelector: fmt.Sprintf("app=%s", string(name)),
+	})
+	if err != nil {
+		return "", fmt.Errorf("list pods for %s: %w", name, err)
+	}
+
+	if len(pods.Items) == 0 {
+		return "", fmt.Errorf("no pods found for %s", name)
+	}
+
+	// Get the first pod
+	pod := pods.Items[0]
+	if len(pod.Spec.Containers) == 0 {
+		return "", fmt.Errorf("no containers found in pod %s", pod.Name)
+	}
+
+	// Get logs from the first container
+	containerName := pod.Spec.Containers[0].Name
+	tailLines := int64(linesToShow)
+	logOptions := &core.PodLogOptions{
+		Container: containerName,
+		TailLines: &tailLines,
+	}
+
+	req := k.clientSet.CoreV1().Pods(k.config.Kubernetes.Namespace).GetLogs(pod.Name, logOptions)
+	logStream, err := req.Stream(ctx)
+	if err != nil {
+		return "", fmt.Errorf("get logs for pod %s container %s: %w", pod.Name, containerName, err)
+	}
+	defer logStream.Close() //nolint:errcheck
+
+	buf := new(strings.Builder)
+	if _, err := io.Copy(buf, logStream); err != nil {
+		return "", fmt.Errorf("read logs for pod %s container %s: %w", pod.Name, containerName, err)
+	}
+
+	return buf.String(), nil
 }
 
 func (k *KubernetesContainerManager) VolumeExists(ctx context.Context, name VolumeName) bool {
