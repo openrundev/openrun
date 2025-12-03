@@ -80,7 +80,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	var err error
 	switch serverConfig.System.ContainerCommand {
 	case types.CONTAINER_KUBERNETES:
-		containerManager, err = container.NewKubernetesContainerManager(logger, serverConfig)
+		containerManager, err = container.NewKubernetesContainerManager(logger, serverConfig, &app.AppConfig, app.AppRunPath)
 		if err != nil {
 			return nil, fmt.Errorf("error creating kubernetes container manager: %w", err)
 		}
@@ -477,6 +477,7 @@ func (h *ContainerHandler) createSpecFiles() ([]string, error) {
 func (h *ContainerHandler) createVolumes(ctx context.Context) error {
 	for _, volInfo := range h.volumeInfo {
 		if volInfo.VolumeName == "" {
+			// bind mount
 			continue
 		}
 		dir := volInfo.VolumeName

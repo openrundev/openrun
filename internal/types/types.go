@@ -110,13 +110,14 @@ type SecretConfig map[string]any
 type NodeConfig map[string]any
 
 type AppConfig struct {
-	CORS      CORS      `toml:"cors"`
-	Container Container `toml:"container"`
-	Proxy     Proxy     `toml:"proxy"`
-	FS        FS        `toml:"fs"`
-	Audit     Audit     `toml:"audit"`
-	Security  Security  `toml:"security"`
-	StarBase  string    `toml:"star_base"` // The base directory for starlark config files
+	CORS       CORS       `toml:"cors"`
+	Container  Container  `toml:"container"`
+	Kubernetes Kubernetes `toml:"kubernetes"`
+	Proxy      Proxy      `toml:"proxy"`
+	FS         FS         `toml:"fs"`
+	Audit      Audit      `toml:"audit"`
+	Security   Security   `toml:"security"`
+	StarBase   string     `toml:"star_base"` // The base directory for starlark config files
 }
 type Security struct {
 	DefaultSecretsProvider string `toml:"default_secrets_provider"`
@@ -154,6 +155,10 @@ type Container struct {
 	// Status check related config
 	StatusCheckIntervalSecs int `toml:"status_check_interval_secs"`
 	StatusHealthAttempts    int `toml:"status_health_attempts"`
+}
+
+type Kubernetes struct {
+	DefaultVolumeSize string `toml:"default_volume_size"`
 }
 
 type Proxy struct {

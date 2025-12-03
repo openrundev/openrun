@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/template"
 
@@ -101,6 +102,13 @@ func renderTemplate(srcFilename, targetFilename string, data map[string]any) err
 	}
 
 	return nil
+}
+
+func makeAbsolute(sourceDir, path string) string {
+	if strings.HasPrefix(path, "/") {
+		return path
+	}
+	return filepath.Join(sourceDir, path)
 }
 
 const UNNAMED_VOLUME = "<UNNAMED>"

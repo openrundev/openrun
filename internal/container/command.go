@@ -453,7 +453,7 @@ func (c *ContainerCommand) genMountArgs(sourceDir string, volumeInfo []*VolumeIn
 			// processor, write output to file.prop.gen and then bind mount it as
 			// /source_dir/file.prop.gen:/data/file.prop
 			tmplFileName := volInfo.SourcePath
-			srcFile := path.Join(sourceDir, tmplFileName)
+			srcFile := makeAbsolute(sourceDir, tmplFileName)
 			destFile := path.Join(c.appRunDir, path.Base(tmplFileName)+".gen")
 			data := map[string]any{"params": paramMap}
 			if sourceDir != "" {
