@@ -108,7 +108,7 @@ cors.max_age = "2678400"                                                        
 
 # Health check Config
 container.health_url = "/"
-container.health_attempts_after_startup = 10
+container.health_attempts_after_startup = 30
 container.health_timeout_secs = 5
 
 # Idle Shutdown Config

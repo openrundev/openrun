@@ -44,7 +44,7 @@ type VolumeInfo struct {
 type ContainerManager interface {
 	BuildImage(ctx context.Context, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error
 	ImageExists(ctx context.Context, name ImageName) (bool, error)
-	GetContainerState(ctx context.Context, name ContainerName) (hostPort string, running bool, versionHash string, err error)
+	GetContainerState(ctx context.Context, name ContainerName, expectHash string) (hostPort string, running bool, err error)
 	StartContainer(ctx context.Context, name ContainerName) error
 	StopContainer(ctx context.Context, name ContainerName) error
 	RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,

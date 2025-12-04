@@ -325,7 +325,7 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 	}
 	containerName := container.GenContainerName(h.app.Id, h.manager, fullHash, h.manager.SupportsInPlaceUpdate())
 	for range h.healthCheckTicker.C {
-		err := h.WaitForHealth(h.containerConfig.StatusHealthAttempts, containerName)
+		err := h.WaitForHealth(h.containerConfig.StatusHealthAttempts, containerName, "")
 		if err == nil {
 			continue
 		}
@@ -596,7 +596,7 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 	}
 	containerName := container.GenContainerName(h.app.Id, h.manager, "", h.manager.SupportsInPlaceUpdate())
 
-	_, running, _, err := devCM.GetContainerState(ctx, containerName)
+	_, running, err := devCM.GetContainerState(ctx, containerName, "")
 	if err != nil {
 		return fmt.Errorf("error checking container status: %w", err)
 	}
@@ -646,7 +646,7 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 		return fmt.Errorf("error running container: %w", err)
 	}
 
-	hostNamePort, running, _, err := devCM.GetContainerState(ctx, containerName)
+	hostNamePort, running, err := devCM.GetContainerState(ctx, containerName, "")
 	if err != nil {
 		return fmt.Errorf("error getting running containers: %w", err)
 	}
@@ -658,7 +658,7 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 	h.hostNamePort = hostNamePort
 
 	if h.health != "" {
-		err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName)
+		err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName, "")
 		if err != nil {
 			logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
 			return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
@@ -668,7 +668,7 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 	return nil
 }
 
-func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.ContainerName) error {
+func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.ContainerName, expectHash string) error {
 	client := &http.Client{
 		Timeout: time.Duration(h.containerConfig.HealthTimeoutSecs) * time.Second,
 	}
@@ -679,7 +679,7 @@ func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.C
 	var running bool
 	sleepMillis := 50
 	for attempt := 1; attempt <= attempts; attempt++ {
-		hostNamePort, running, _, err = h.manager.GetContainerState(context.Background(), containerName)
+		hostNamePort, running, err = h.manager.GetContainerState(context.Background(), containerName, expectHash)
 		if err != nil {
 			return fmt.Errorf("error getting running containers: %w", err)
 		}
@@ -698,8 +698,9 @@ func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.C
 				err = fmt.Errorf("could not find container proxy url")
 			}
 			sleepMillis *= 2
-			sleepTimeMillis := math.Min(float64(sleepMillis), 5000)
-			time.Sleep(time.Duration(sleepTimeMillis) * time.Millisecond)
+			sleepMillis = int(math.Min(float64(sleepMillis), 2000))
+			h.Debug().Msgf("Sleeping for %d milliseconds, attempt %d, err %v", sleepMillis, attempt, err)
+			time.Sleep(time.Duration(sleepMillis) * time.Millisecond)
 			continue
 		}
 		if !h.stripAppPath {
@@ -723,7 +724,7 @@ func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.C
 
 		h.Debug().Msgf("Attempt %d failed on %s : status %s err %s", attempt, proxyUrl, statusCode, err)
 		sleepMillis *= 2
-		sleepTimeMillis := math.Min(float64(sleepMillis), 5000)
+		sleepTimeMillis := math.Min(float64(sleepMillis), 2000)
 		time.Sleep(time.Duration(sleepTimeMillis) * time.Millisecond)
 	}
 
@@ -787,14 +788,14 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 	containerName := container.GenContainerName(h.app.Id, h.manager, fullHash, h.manager.SupportsInPlaceUpdate())
 
 	if h.lifetime != types.CONTAINER_LIFETIME_COMMAND {
-		hostNamePort, running, versionHash, err := h.manager.GetContainerState(ctx, containerName)
+		hostNamePort, running, err := h.manager.GetContainerState(ctx, containerName, fullHash)
 		if err != nil {
 			return fmt.Errorf("error getting running containers: %w", err)
 		}
 
-		h.Debug().Msgf("current state: hostNamePort %s running %t versionHash %s expectHash %s", hostNamePort, running, versionHash, fullHash)
-		if hostNamePort != "" && (h.manager.SupportsInPlaceUpdate() && versionHash == container.TrimLabelValue(fullHash)) {
-			// Container is present, make sure it is in the correct state
+		h.Debug().Msgf("current state: hostNamePort %s running %t expectHash %s", hostNamePort, running, fullHash)
+		if hostNamePort != "" {
+			// Service is present, make sure deployment it is in the correct state
 			h.stateLock.Lock()
 			defer h.stateLock.Unlock()
 
@@ -807,7 +808,7 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 				}
 
 				if h.health != "" {
-					err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName)
+					err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName, fullHash)
 					if err != nil {
 						if h.containerConfig.ShowLogsForFailure {
 							logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
@@ -877,45 +878,33 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 		}
 	}
 
-	for i := 1; ; i++ {
-		if h.health != "" {
-			err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName)
-			if err != nil {
-				if h.containerConfig.ShowLogsForFailure {
-					logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
-					return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
-				}
-				return fmt.Errorf("error waiting for health: %w", err)
-			}
-		}
-
-		hostNamePort, running, runningHash, err := h.manager.GetContainerState(ctx, containerName)
+	if h.health != "" {
+		err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName, fullHash)
 		if err != nil {
-			return fmt.Errorf("error getting running containers: %w", err)
-		}
-
-		if h.manager.SupportsInPlaceUpdate() && runningHash != "" && runningHash != container.TrimLabelValue(fullHash) {
-			h.Debug().Msgf("container hash mismatch: expected %s, got %s", container.TrimLabelValue(fullHash), runningHash)
-			if i > MAX_RETRIES_FOR_VERSION_MISMATCH {
-				return fmt.Errorf("container version mismatch: expected hash %s, got %s", container.TrimLabelValue(fullHash), runningHash)
-			}
-			if h.health != "" {
-				time.Sleep(time.Duration(i) * time.Second)
-				continue
-			}
-			return fmt.Errorf("container version mismatch: expected hash %s, got %s", container.TrimLabelValue(fullHash), runningHash)
-		}
-		if hostNamePort == "" || !running {
 			if h.containerConfig.ShowLogsForFailure {
 				logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
-				return fmt.Errorf("container not running. Logs\n %s", logs)
+				return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
 			}
-			return fmt.Errorf("container not running")
+			return fmt.Errorf("error waiting for health: %w", err)
 		}
-		h.currentState = ContainerStateRunning
-		h.hostNamePort = hostNamePort
-		return nil
 	}
+
+	hostNamePort, running, err := h.manager.GetContainerState(ctx, containerName, fullHash)
+	if err != nil {
+		return fmt.Errorf("error getting running containers: %w", err)
+	}
+
+	h.Debug().Msgf("containerState hostNamePort %s running %t expectedHash %s", hostNamePort, running, container.TrimLabelValue(fullHash))
+	if hostNamePort == "" || !running {
+		if h.containerConfig.ShowLogsForFailure {
+			logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
+			return fmt.Errorf("container not running. Logs\n %s", logs)
+		}
+		return fmt.Errorf("container not running")
+	}
+	h.currentState = ContainerStateRunning
+	h.hostNamePort = hostNamePort
+	return nil
 }
 
 func (h *ContainerHandler) Close() error {

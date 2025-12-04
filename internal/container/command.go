@@ -157,17 +157,18 @@ func (c *ContainerCommand) RemoveContainer(ctx context.Context, name ContainerNa
 }
 
 // GetContainerState returns the host:port of the running container, "" if not running. running is true if the container is running.
-func (c *ContainerCommand) GetContainerState(ctx context.Context, name ContainerName) (string, bool, string, error) {
+func (c *ContainerCommand) GetContainerState(ctx context.Context, name ContainerName, expectHash string) (string, bool, error) {
+	// expectedHash is ignored for command based container manager, since it does not do in place updates
 	containers, err := c.getContainers(ctx, name, true)
 	if err != nil {
-		return "", false, "", fmt.Errorf("error getting containers: %w", err)
+		return "", false, fmt.Errorf("error getting containers: %w", err)
 	}
 	if len(containers) == 0 {
-		return "", false, "", nil
+		return "", false, nil
 	}
 
 	// version hash is not used for command based container manager, since it does not do in place updates
-	return "127.0.0.1:" + strconv.Itoa(containers[0].Port), containers[0].State == "running", "", nil
+	return "127.0.0.1:" + strconv.Itoa(containers[0].Port), containers[0].State == "running", nil
 }
 
 func (c *ContainerCommand) getContainers(ctx context.Context, name ContainerName, getAll bool) ([]Container, error) {

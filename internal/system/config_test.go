@@ -70,7 +70,7 @@ func TestServerConfig(t *testing.T) {
 
 	// Container Settings
 	testutil.AssertEqualsString(t, "health", "/", c.AppConfig.Container.HealthUrl)
-	testutil.AssertEqualsInt(t, "attempts", 10, c.AppConfig.Container.HealthAttemptsAfterStartup)
+	testutil.AssertEqualsInt(t, "attempts", 30, c.AppConfig.Container.HealthAttemptsAfterStartup)
 	testutil.AssertEqualsInt(t, "timeout", 5, c.AppConfig.Container.HealthTimeoutSecs)
 	testutil.AssertEqualsInt(t, "idle", 180, c.AppConfig.Container.IdleShutdownSecs)
 	testutil.AssertEqualsInt(t, "idle bytes high watermark", 1500, c.AppConfig.Container.IdleBytesHighWatermark)

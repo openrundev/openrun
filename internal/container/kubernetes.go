@@ -163,19 +163,19 @@ func (k *KubernetesContainerManager) BuildImage(ctx context.Context, imgName Ima
 	return KanikoJob(ctx, k.Logger, k.clientSet, k.restConfig, &k.config.Registry, dockerCfgJSON, kanikoBuild)
 }
 
-func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name ContainerName) (string, bool, string, error) {
+func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name ContainerName, expectHash string) (string, bool, error) {
 	name = ContainerName(sanitizeContainerName(string(name)))
 	svc, err := k.clientSet.CoreV1().
 		Services(k.config.Kubernetes.Namespace).
 		Get(ctx, string(name), meta.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return "", false, "", nil
+			return "", false, nil
 		}
-		return "", false, "", fmt.Errorf("get service %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
+		return "", false, fmt.Errorf("get service %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
 	}
 	if len(svc.Spec.Ports) == 0 {
-		return "", false, "", fmt.Errorf("service %s/%s has no ports", k.config.Kubernetes.Namespace, string(name))
+		return "", false, fmt.Errorf("service %s/%s has no ports", k.config.Kubernetes.Namespace, string(name))
 	}
 
 	svcPort := svc.Spec.Ports[0].Port
@@ -185,10 +185,32 @@ func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name
 		Deployments(k.config.Kubernetes.Namespace).
 		Get(ctx, string(name), meta.GetOptions{})
 	if err != nil {
-		return "", false, "", fmt.Errorf("get deployment %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
+		return "", false, fmt.Errorf("get deployment %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
 	}
 
-	return hostNamePort, dep.Status.ReadyReplicas > 0, dep.Labels[LABEL_PREFIX+"version.hash"], nil
+	if expectHash != "" && dep.Spec.Template.Labels[VERSION_HASH_LABEL] != TrimLabelValue(expectHash) {
+		// version hash mismatch, deployment is not in the correct state
+		k.Logger.Warn().Msgf("deployment version hash mismatch: expected %s, got %s", TrimLabelValue(expectHash), dep.Spec.Template.Labels[VERSION_HASH_LABEL])
+		return "", false, nil
+	}
+
+	// Get the pods which are part of this deployment
+	pods, err := k.clientSet.CoreV1().Pods(k.config.Kubernetes.Namespace).List(ctx, meta.ListOptions{
+		LabelSelector: fmt.Sprintf("app=%s", string(name)),
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("list pods for deployment %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
+	}
+
+	runningCount := 0
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == core.PodRunning && (expectHash == "" || pod.Labels[VERSION_HASH_LABEL] == TrimLabelValue(expectHash)) {
+			runningCount++
+		}
+	}
+
+	k.Logger.Debug().Msgf("GetContainerState hostNamePort %s runningCount %d", hostNamePort, runningCount)
+	return hostNamePort, runningCount > 0, nil
 }
 
 func (k *KubernetesContainerManager) StartContainer(ctx context.Context, name ContainerName) error {
@@ -417,6 +439,8 @@ func (k *KubernetesContainerManager) processVolumes(ctx context.Context, name st
 	return podVolumes, volumeMounts, nil
 }
 
+const VERSION_HASH_LABEL = LABEL_PREFIX + "version.hash"
+
 // createDeployment creates a Deployment + Service using server-side apply and returns the Service URL.
 func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name, image string,
 	port int32, envMap map[string]string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string, appEntry *types.AppEntry, versionHash string) (string, error) {
@@ -427,7 +451,7 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 	metadata[LABEL_PREFIX+"git.sha"] = TrimLabelValue(appEntry.Metadata.VersionMetadata.GitCommit)
 	metadata[LABEL_PREFIX+"git.message"] = TrimLabelValue(appEntry.Metadata.VersionMetadata.GitMessage)
 	metadata[LABEL_PREFIX+"app.version"] = strconv.Itoa(appEntry.Metadata.VersionMetadata.Version)
-	metadata[LABEL_PREFIX+"version.hash"] = TrimLabelValue(versionHash)
+	metadata[VERSION_HASH_LABEL] = TrimLabelValue(versionHash)
 	replicas := int32(1) // min = max = 1
 
 	// Convert envMap to Kubernetes EnvVar apply configurations
@@ -459,7 +483,6 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 
 	podSpec := corev1apply.PodSpec().
 		WithContainers(containerConfig)
-
 	if len(podVolumes) > 0 {
 		podSpec = podSpec.WithVolumes(podVolumes...)
 	}
@@ -467,7 +490,7 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 	// Set deployment strategy
 	strategy := appsv1apply.DeploymentStrategy().
 		//WithType(appsv1.RecreateDeploymentStrategyType)
-		WithType(appsv1.RollingUpdateDeploymentStrategyType) // default for now
+		WithType(appsv1.RollingUpdateDeploymentStrategyType)
 
 	dep := appsv1apply.Deployment(name, k.config.Kubernetes.Namespace).
 		WithLabels(labels).
