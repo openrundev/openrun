@@ -10,10 +10,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/openrundev/openrun/internal/types"
+	appsv1 "k8s.io/api/apps/v1"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -50,6 +52,14 @@ func sanitizeContainerName(name string) string {
 	return name
 }
 
+// TrimLabelValue trims the input string to 63 characters so that it can be used as a Kubernetes label value
+func TrimLabelValue(input string) string {
+	if len(input) > 63 {
+		input = input[:63]
+	}
+	return input
+}
+
 func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerConfig, appConfig *types.AppConfig, appRunDir string) (*KubernetesContainerManager, error) {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -79,6 +89,10 @@ func loadConfig() (*rest.Config, error) {
 		return cfg, nil
 	}
 	return clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+}
+
+func (k *KubernetesContainerManager) SupportsInPlaceUpdate() bool {
+	return true
 }
 
 func (k *KubernetesContainerManager) ImageExists(ctx context.Context, name ImageName) (bool, error) {
@@ -149,33 +163,32 @@ func (k *KubernetesContainerManager) BuildImage(ctx context.Context, imgName Ima
 	return KanikoJob(ctx, k.Logger, k.clientSet, k.restConfig, &k.config.Registry, dockerCfgJSON, kanikoBuild)
 }
 
-func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name ContainerName) (string, bool, error) {
+func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name ContainerName) (string, bool, string, error) {
 	name = ContainerName(sanitizeContainerName(string(name)))
 	svc, err := k.clientSet.CoreV1().
 		Services(k.config.Kubernetes.Namespace).
 		Get(ctx, string(name), meta.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return "", false, nil
+			return "", false, "", nil
 		}
-		return "", false, fmt.Errorf("get service %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
+		return "", false, "", fmt.Errorf("get service %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
 	}
 	if len(svc.Spec.Ports) == 0 {
-		return "", false, fmt.Errorf("service %s/%s has no ports", k.config.Kubernetes.Namespace, string(name))
+		return "", false, "", fmt.Errorf("service %s/%s has no ports", k.config.Kubernetes.Namespace, string(name))
 	}
 
 	svcPort := svc.Spec.Ports[0].Port
 	hostNamePort := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, svcPort)
 
-	// --- Get Deployment & ready pods ---
 	dep, err := k.clientSet.AppsV1().
 		Deployments(k.config.Kubernetes.Namespace).
 		Get(ctx, string(name), meta.GetOptions{})
 	if err != nil {
-		return "", false, fmt.Errorf("get deployment %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
+		return "", false, "", fmt.Errorf("get deployment %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
 	}
 
-	return hostNamePort, dep.Status.ReadyReplicas > 0, nil
+	return hostNamePort, dep.Status.ReadyReplicas > 0, dep.Labels[LABEL_PREFIX+"version.hash"], nil
 }
 
 func (k *KubernetesContainerManager) StartContainer(ctx context.Context, name ContainerName) error {
@@ -206,10 +219,10 @@ func (k *KubernetesContainerManager) StopContainer(ctx context.Context, name Con
 
 func (k *KubernetesContainerManager) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
-	containerOptions map[string]string, paramMap map[string]string) error {
+	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
 	imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
 	containerName = ContainerName(sanitizeContainerName(string(containerName)))
-	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), int32(port), envMap, volumes, sourceDir, paramMap)
+	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), int32(port), envMap, volumes, sourceDir, paramMap, appEntry, versionHash)
 	if err != nil {
 		return fmt.Errorf("create app: %w", err)
 	}
@@ -406,8 +419,15 @@ func (k *KubernetesContainerManager) processVolumes(ctx context.Context, name st
 
 // createDeployment creates a Deployment + Service using server-side apply and returns the Service URL.
 func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name, image string,
-	port int32, envMap map[string]string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string) (string, error) {
+	port int32, envMap map[string]string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string, appEntry *types.AppEntry, versionHash string) (string, error) {
 	labels := map[string]string{"app": name}
+
+	metadata := map[string]string{}
+	metadata["app"] = name
+	metadata[LABEL_PREFIX+"git.sha"] = TrimLabelValue(appEntry.Metadata.VersionMetadata.GitCommit)
+	metadata[LABEL_PREFIX+"git.message"] = TrimLabelValue(appEntry.Metadata.VersionMetadata.GitMessage)
+	metadata[LABEL_PREFIX+"app.version"] = strconv.Itoa(appEntry.Metadata.VersionMetadata.Version)
+	metadata[LABEL_PREFIX+"version.hash"] = TrimLabelValue(versionHash)
 	replicas := int32(1) // min = max = 1
 
 	// Convert envMap to Kubernetes EnvVar apply configurations
@@ -444,14 +464,20 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 		podSpec = podSpec.WithVolumes(podVolumes...)
 	}
 
+	// Set deployment strategy
+	strategy := appsv1apply.DeploymentStrategy().
+		//WithType(appsv1.RecreateDeploymentStrategyType)
+		WithType(appsv1.RollingUpdateDeploymentStrategyType) // default for now
+
 	dep := appsv1apply.Deployment(name, k.config.Kubernetes.Namespace).
 		WithLabels(labels).
 		WithSpec(appsv1apply.DeploymentSpec().
 			WithReplicas(replicas).
 			WithSelector(metav1apply.LabelSelector().
 				WithMatchLabels(labels)).
+			WithStrategy(strategy).
 			WithTemplate(corev1apply.PodTemplateSpec().
-				WithLabels(labels).
+				WithLabels(metadata).
 				WithSpec(podSpec)))
 
 	if _, err := k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).Apply(ctx, dep, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
@@ -460,7 +486,7 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 
 	serviceType := core.ServiceTypeClusterIP
 	svcApply := corev1apply.Service(name, k.config.Kubernetes.Namespace).
-		WithLabels(labels).
+		WithLabels(metadata).
 		WithSpec(corev1apply.ServiceSpec().
 			WithType(serviceType).
 			WithSelector(labels).

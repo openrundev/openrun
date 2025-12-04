@@ -75,6 +75,10 @@ func NewContainerCommand(logger *types.Logger, config *types.ServerConfig, appId
 	}
 }
 
+func (k *ContainerCommand) SupportsInPlaceUpdate() bool {
+	return false
+}
+
 func (c *ContainerCommand) RemoveImage(ctx context.Context, name ImageName) error {
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "rmi", string(name))
 	output, err := cmd.CombinedOutput()
@@ -153,16 +157,17 @@ func (c *ContainerCommand) RemoveContainer(ctx context.Context, name ContainerNa
 }
 
 // GetContainerState returns the host:port of the running container, "" if not running. running is true if the container is running.
-func (c *ContainerCommand) GetContainerState(ctx context.Context, name ContainerName) (string, bool, error) {
+func (c *ContainerCommand) GetContainerState(ctx context.Context, name ContainerName) (string, bool, string, error) {
 	containers, err := c.getContainers(ctx, name, true)
 	if err != nil {
-		return "", false, fmt.Errorf("error getting containers: %w", err)
+		return "", false, "", fmt.Errorf("error getting containers: %w", err)
 	}
 	if len(containers) == 0 {
-		return "", false, nil
+		return "", false, "", nil
 	}
 
-	return "127.0.0.1:" + strconv.Itoa(containers[0].Port), containers[0].State == "running", nil
+	// version hash is not used for command based container manager, since it does not do in place updates
+	return "127.0.0.1:" + strconv.Itoa(containers[0].Port), containers[0].State == "running", "", nil
 }
 
 func (c *ContainerCommand) getContainers(ctx context.Context, name ContainerName, getAll bool) ([]Container, error) {
@@ -296,7 +301,7 @@ const LABEL_PREFIX = "dev.openrun."
 
 func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
-	containerOptions map[string]string, paramMap map[string]string) error {
+	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
 	c.Debug().Msgf("Running container %s from image %s with port %d env %+v mountArgs %+v",
 		containerName, imageName, port, envMap, volumes)
 	publish := fmt.Sprintf("127.0.0.1::%d", port)
@@ -327,6 +332,7 @@ func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.App
 		args = append(args, "--label", LABEL_PREFIX+"app.version="+strconv.Itoa(appEntry.Metadata.VersionMetadata.Version))
 		args = append(args, "--label", LABEL_PREFIX+"git.sha="+appEntry.Metadata.VersionMetadata.GitCommit)
 		args = append(args, "--label", LABEL_PREFIX+"git.message="+appEntry.Metadata.VersionMetadata.GitMessage)
+		args = append(args, "--label", LABEL_PREFIX+"version.hash="+versionHash)
 	}
 
 	// Add env args

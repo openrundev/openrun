@@ -44,15 +44,16 @@ type VolumeInfo struct {
 type ContainerManager interface {
 	BuildImage(ctx context.Context, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error
 	ImageExists(ctx context.Context, name ImageName) (bool, error)
-	GetContainerState(ctx context.Context, name ContainerName) (string, bool, error)
+	GetContainerState(ctx context.Context, name ContainerName) (hostPort string, running bool, versionHash string, err error)
 	StartContainer(ctx context.Context, name ContainerName) error
 	StopContainer(ctx context.Context, name ContainerName) error
 	RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 		imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
-		containerOptions map[string]string, paramMap map[string]string) error
+		containerOptions map[string]string, paramMap map[string]string, versionHash string) error
 	GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error)
 	VolumeExists(ctx context.Context, name VolumeName) bool
 	VolumeCreate(ctx context.Context, name VolumeName) error
+	SupportsInPlaceUpdate() bool
 }
 
 // DevContainerManager is the interface for managing containers in dev mode
@@ -62,8 +63,12 @@ type DevContainerManager interface {
 	RemoveContainer(ctx context.Context, name ContainerName) error
 }
 
-func GenContainerName(appId types.AppId, cm ContainerManager, contentHash string) ContainerName {
-	return ContainerName(fmt.Sprintf("clc-%s-%s", appId, genLowerCaseId(contentHash)))
+func GenContainerName(appId types.AppId, cm ContainerManager, contentHash string, supportsInPlaceUpdate bool) ContainerName {
+	if supportsInPlaceUpdate {
+		return ContainerName(fmt.Sprintf("clc-%s", appId))
+	} else {
+		return ContainerName(fmt.Sprintf("clc-%s-%s", appId, genLowerCaseId(contentHash)))
+	}
 }
 
 func GenImageName(appId types.AppId, contentHash string) ImageName {
