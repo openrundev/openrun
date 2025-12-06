@@ -181,6 +181,9 @@ func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name
 
 	svcPort := svc.Spec.Ports[0].Port
 	hostNamePort := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, svcPort)
+	if k.config.Kubernetes.UseNodeHost {
+		hostNamePort = fmt.Sprintf("127.0.0.1:%d", svc.Spec.Ports[0].NodePort)
+	}
 
 	dep, err := k.clientSet.AppsV1().
 		Deployments(k.config.Kubernetes.Namespace).
@@ -539,7 +542,7 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 	servicePort := svc.Spec.Ports[0].Port
 	url := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, servicePort)
 	if k.config.Kubernetes.UseNodeHost {
-		url = fmt.Sprintf("127.0.0.1:%d", servicePort)
+		url = fmt.Sprintf("127.0.0.1:%d", svc.Spec.Ports[0].NodePort)
 	}
 
 	return url, nil
