@@ -48,6 +48,8 @@ jobs:
 
           go install github.com/commander-cli/commander/v2/cmd/commander@latest
           export CL_CONTAINER_COMMANDS=docker # using self-hosted runner, use Docker for container tests
+          export KUBE_REGISTRY_URL=127.0.0.1:30500
+          kubectl delete namespace openrun; kubectl create namespace openrun
           gmake covtest
           docker stop -t 1 $(docker ps -a -q)
           docker system prune -f
