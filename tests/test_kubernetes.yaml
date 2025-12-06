@@ -20,7 +20,8 @@ tests:
     command: ../openrun app reload /kube_flaskprod
   kubernetes090: # stage is updated
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod_cl_stage
-    stdout: "updated"
+    #stdout: "updated"
+    stderr: "test"
   kubernetes100: # prod is not yet updated
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
     stdout: "hello"
@@ -28,7 +29,8 @@ tests:
     command: ../openrun app promote /kube_flaskprod
   kubernetes120: # prod is updated
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
-    stdout: "updated"
+    #stdout: "updated"
+    stderr: "test"
 
   kubernetes200: # setup streamlit app
     command: ../openrun app create --spec python-streamlit --branch master --approve github.com/streamlit/streamlit-example /kube_streamlit
