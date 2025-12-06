@@ -232,8 +232,6 @@ for cmd in ${CL_CONTAINER_COMMANDS}; do
 port = $http_port
 [https]
 port = $https_port
-[security]
-app_default_auth_type="none"
 [system]
 container_command="$cmd"
 [secret.env]
@@ -247,6 +245,31 @@ EOF
     commander test $CL_TEST_VERBOSE test_containers.yaml
     CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
 done
+
+if [[ $KUBE_REGISTRY_URL != "" ]]; then
+  # test kubernetes container manager
+  cat <<EOF > config_k8s.toml
+[http]
+port = 9100
+[https]
+port = 9101
+[secret.env]
+[system]
+container_command="kubernetes"
+[registry]
+url="$KUBE_REGISTRY_URL"
+insecure = true
+EOF
+
+    rm -rf metadata run/openrun.sock
+    CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
+    sleep 2
+
+    export HTTP_PORT=9100
+    echo "********Testing containerized apps with kubernetes *********"
+    commander test $CL_TEST_VERBOSE test_kubernetes.yaml
+    CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+fi
 
 cleanup
 echo "Test $CL_SINGLE_TEST completed"

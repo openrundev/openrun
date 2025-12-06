@@ -311,13 +311,14 @@ func CreateOrUpdateSecret(ctx context.Context, cs *kubernetes.Clientset, ns, nam
 }
 
 type KanikoBuild struct {
-	Namespace   string
-	JobName     string
-	Image       string // e.g. "cgr.dev/chainguard/kaniko:latest"
-	SourceDir   string // Local directory to tar up and send to Kaniko
-	Dockerfile  string
-	Destination string
-	ExtraArgs   []string
+	Namespace     string
+	JobName       string
+	Image         string // e.g. "cgr.dev/chainguard/kaniko:latest"
+	SourceDir     string // Local directory to tar up and send to Kaniko
+	Dockerfile    string
+	Destination   string
+	ContainerArgs map[string]string
+	ExtraArgs     []string
 }
 
 func KanikoJob(ctx context.Context, logger *types.Logger, cs *kubernetes.Clientset, cfg *rest.Config, r *types.RegistryConfig, dockerCfgJSON []byte, kb KanikoBuild) error {
@@ -395,6 +396,11 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs *kubernetes.Clients
 		"--context=tar://stdin",
 		fmt.Sprintf("--dockerfile=%s", kb.Dockerfile),
 		fmt.Sprintf("--destination=%s", kb.Destination),
+	}
+
+	for k, v := range kb.ContainerArgs {
+		args = append(args, "--build-arg")
+		args = append(args, fmt.Sprintf("%s=%s", k, v))
 	}
 
 	args = append(args, registryArgs...)

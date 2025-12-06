@@ -1,0 +1,70 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    HTTP_PORT: ${HTTP_PORT}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+tests:
+  kubernetes010: # setup flask app
+    command: rm -rf ./flaskapp && mkdir flaskapp && cp flask.py flaskapp/app.py
+  kubernetes030: # setup flask prod app
+    command: ../openrun app create --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpu-shares=1000 --approve ./flaskapp /kube_flaskprod
+  kubernetes034: # check curl
+    command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
+    stdout: hello
+  kubernetes050: # update app code
+    command: perl -i -pe 's/"hello"/"updated"/g' flaskapp/app.py
+  kubernetes070: # stage is not yet updated
+    command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod_cl_stage
+    stdout: "hello"
+  kubernetes080: # do reload
+    command: ../openrun app reload /kube_flaskprod
+  kubernetes090: # stage is updated
+    command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod_cl_stage
+    stdout: "updated"
+  kubernetes100: # prod is not yet updated
+    command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
+    stdout: "hello"
+  kubernetes110: # do promote
+    command: ../openrun app promote /kube_flaskprod
+  kubernetes120: # prod is updated
+    command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
+    stdout: "updated"
+
+  kubernetes200: # setup streamlit app
+    command: ../openrun app create --spec python-streamlit --branch master --approve github.com/streamlit/streamlit-example /kube_streamlit
+  kubernetes210: # check stage
+    command: curl -sS localhost:${HTTP_PORT}/kube_streamlit_cl_stage/_stcore/health
+    stdout: ok
+  kubernetes220: # check prod
+    command: curl -sS localhost:${HTTP_PORT}/kube_streamlit/_stcore/health
+    stdout: ok
+
+  kubernetes400: # setup nginx image
+    command: ../openrun app create --spec image --approve --param image=nginx --param port=80 - /kube_image_nginx
+  kubernetes410: # check stage
+    command: curl -sS localhost:${HTTP_PORT}/kube_image_nginx_cl_stage
+    stdout: Welcome to nginx
+  kubernetes420: # check prod
+    command: curl -sS localhost:${HTTP_PORT}/kube_image_nginx
+    stdout: Welcome to nginx
+  kubernetes430: # error check
+    command: ../openrun app create --spec image --approve --param image=nginx - /kube_image_error
+    stderr: param port is a required param, a value has to be provided
+    exit-code: 1
+
+  # Test http plugin call without proxy
+  kubernetes500: # setup app
+    command: ../openrun app create --spec python-flask --approve --param PASSWD=xyz ./flaskhttp /kube_fh
+  kubernetes510: # check curl
+    command: curl -sS localhost:${HTTP_PORT}/kube_fh
+    stdout: '"v1":"hello"'
+  kubernetes520: # check curl
+    command: curl -sS localhost:${HTTP_PORT}/kube_fh
+    stdout: '"v2":"xyz"'
+
+  # Test go spec
+  kubernetes600: # setup app
+    command: ../openrun app create --approve --spec go --param port=8080 --param APP_ARGS="-addr 0.0.0.0:8080" --branch master github.com/golang/example/helloserver /kube_goapp
+  kubernetes610: # check curl
+    command: curl -sS localhost:${HTTP_PORT}/kube_goapp
+    stdout: "Hello, Gopher!"

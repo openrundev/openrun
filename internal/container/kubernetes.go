@@ -152,13 +152,14 @@ func (k *KubernetesContainerManager) BuildImage(ctx context.Context, imgName Ima
 
 	appId, _, _ := strings.Cut(string(imgName), ":")
 	kanikoBuild := KanikoBuild{
-		Namespace:   k.config.Kubernetes.Namespace,
-		JobName:     fmt.Sprintf("%s-builder-%d", appId, time.Now().Unix()),
-		Image:       k.config.Builder.KanikoImage,
-		SourceDir:   sourceUrl,
-		Dockerfile:  containerFile,
-		Destination: destination,
-		ExtraArgs:   []string{"--verbosity=debug"},
+		Namespace:     k.config.Kubernetes.Namespace,
+		JobName:       fmt.Sprintf("%s-builder-%d", appId, time.Now().Unix()),
+		Image:         k.config.Builder.KanikoImage,
+		SourceDir:     sourceUrl,
+		Dockerfile:    containerFile,
+		Destination:   destination,
+		ContainerArgs: containerArgs,
+		ExtraArgs:     []string{"--verbosity=debug"},
 	}
 	return KanikoJob(ctx, k.Logger, k.clientSet, k.restConfig, &k.config.Registry, dockerCfgJSON, kanikoBuild)
 }
@@ -242,7 +243,9 @@ func (k *KubernetesContainerManager) StopContainer(ctx context.Context, name Con
 func (k *KubernetesContainerManager) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
 	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
-	imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
+	if strings.HasPrefix(string(imageName), IMAGE_NAME_PREFIX) {
+		imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
+	}
 	containerName = ContainerName(sanitizeContainerName(string(containerName)))
 	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), int32(port), envMap, volumes, sourceDir, paramMap, appEntry, versionHash)
 	if err != nil {
@@ -449,7 +452,6 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 	metadata := map[string]string{}
 	metadata["app"] = name
 	metadata[LABEL_PREFIX+"git.sha"] = TrimLabelValue(appEntry.Metadata.VersionMetadata.GitCommit)
-	metadata[LABEL_PREFIX+"git.message"] = TrimLabelValue(appEntry.Metadata.VersionMetadata.GitMessage)
 	metadata[LABEL_PREFIX+"app.version"] = strconv.Itoa(appEntry.Metadata.VersionMetadata.Version)
 	metadata[VERSION_HASH_LABEL] = TrimLabelValue(versionHash)
 	replicas := int32(1) // min = max = 1

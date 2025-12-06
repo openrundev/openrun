@@ -308,7 +308,7 @@ func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.App
 	publish := fmt.Sprintf("127.0.0.1::%d", port)
 
 	imageUrl := string(imageName)
-	if c.config.Registry.URL != "" {
+	if strings.HasPrefix(string(imageName), IMAGE_NAME_PREFIX) && c.config.Registry.URL != "" {
 		if c.config.Registry.Project != "" {
 			imageUrl = c.config.Registry.URL + "/" + c.config.Registry.Project + "/" + string(imageName)
 		} else {

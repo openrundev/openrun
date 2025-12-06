@@ -71,11 +71,13 @@ func GenContainerName(appId types.AppId, cm ContainerManager, contentHash string
 	}
 }
 
+const IMAGE_NAME_PREFIX = "cli-"
+
 func GenImageName(appId types.AppId, contentHash string) ImageName {
 	if contentHash == "" {
-		return ImageName(fmt.Sprintf("cli-%s", appId))
+		return ImageName(fmt.Sprintf("%s%s", IMAGE_NAME_PREFIX, appId))
 	} else {
-		return ImageName(fmt.Sprintf("cli-%s:%s", appId, genLowerCaseId(contentHash)))
+		return ImageName(fmt.Sprintf("%s%s:%s", IMAGE_NAME_PREFIX, appId, genLowerCaseId(contentHash)))
 	}
 }
 
