@@ -510,6 +510,9 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 	}
 
 	serviceType := core.ServiceTypeClusterIP
+	if k.config.Kubernetes.UseNodeHost {
+		serviceType = core.ServiceTypeNodePort
+	}
 	svcApply := corev1apply.Service(name, k.config.Kubernetes.Namespace).
 		WithLabels(metadata).
 		WithSpec(corev1apply.ServiceSpec().
@@ -535,6 +538,9 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 	// In-cluster DNS URL
 	servicePort := svc.Spec.Ports[0].Port
 	url := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, servicePort)
+	if k.config.Kubernetes.UseNodeHost {
+		url = fmt.Sprintf("127.0.0.1:%d", servicePort)
+	}
 
 	return url, nil
 }
