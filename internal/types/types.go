@@ -160,8 +160,10 @@ type Container struct {
 	StatusHealthAttempts    int `toml:"status_health_attempts"`
 }
 
+// Kubernetes related settings in the App Config
 type Kubernetes struct {
-	DefaultVolumeSize string `toml:"default_volume_size"`
+	DefaultVolumeSize  string `toml:"default_volume_size"`
+	StrictVersionCheck bool   `toml:"strict_version_check"` // If true, only return true if the version hash is the same as the expected hash
 }
 
 type Proxy struct {

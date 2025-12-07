@@ -198,6 +198,20 @@ func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name
 		return "", false, nil
 	}
 
+	updateCompleted := false
+	if k.appConfig.Kubernetes.StrictVersionCheck {
+		if dep.Spec.Replicas != nil {
+			desired := *dep.Spec.Replicas
+			updateCompleted = dep.Status.ObservedGeneration == dep.Generation &&
+				dep.Status.UpdatedReplicas == desired &&
+				dep.Status.ReadyReplicas == desired &&
+				dep.Status.UnavailableReplicas == 0 &&
+				dep.Status.Replicas == *dep.Spec.Replicas
+		}
+	} else {
+		updateCompleted = true
+	}
+
 	// Get the pods which are part of this deployment
 	pods, err := k.clientSet.CoreV1().Pods(k.config.Kubernetes.Namespace).List(ctx, meta.ListOptions{
 		LabelSelector: fmt.Sprintf("app=%s", string(name)),
@@ -213,8 +227,8 @@ func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name
 		}
 	}
 
-	k.Logger.Debug().Msgf("GetContainerState hostNamePort %s runningCount %d", hostNamePort, runningCount)
-	return hostNamePort, runningCount > 0, nil
+	k.Logger.Debug().Msgf("GetContainerState hostNamePort %s runningCount %d updateCompleted %t", hostNamePort, runningCount, updateCompleted)
+	return hostNamePort, updateCompleted && runningCount > 0, nil
 }
 
 func (k *KubernetesContainerManager) StartContainer(ctx context.Context, name ContainerName) error {
