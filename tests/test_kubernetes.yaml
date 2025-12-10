@@ -68,3 +68,28 @@ tests:
   kubernetes610: # check curl
     command: curl -sS localhost:${HTTP_PORT}/kube_goapp
     stdout: "Hello, Gopher!"
+
+  # Test volumes
+  kubernetes700: # setup flask app
+    command: rm -rf ./sqlite_tmp && cp -rf sqlite sqlite_tmp
+  kubernetes701: # setup app
+    command: ../openrun app create --approve --spec python-flask -cvol aaa:/tmp/data ./sqlite_tmp /kube_sql
+  kubernetes702: # check version
+    command: curl -sS localhost:${HTTP_PORT}/kube_sql/version
+    stdout: "VERSION1"
+  kubernetes703: # update val
+    command: |
+      curl -X POST "localhost:${HTTP_PORT}/kube_sql/value" -H "Content-Type: application/json" -d '{"value": "testval1"}'
+  kubernetes704: # check val
+    command: curl -sS localhost:${HTTP_PORT}/kube_sql/value
+    stdout: "testval1"
+  kubernetes705: # update app code
+    command: perl -i -pe 's/"VERSION1"/"VERSION2"/g' sqlite_tmp/app.py
+  kubernetes706: # reload
+    command: ../openrun app reload --promote /kube_sql
+  kubernetes707: # check version is updated
+    command: curl -sS localhost:${HTTP_PORT}/kube_sql/version
+    stdout: "VERSION2"
+  kubernetes708: # check new val is retained after reload (mount was used)
+    command: curl -sS localhost:${HTTP_PORT}/kube_sql/value
+    stdout: "testval1"

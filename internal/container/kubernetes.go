@@ -42,6 +42,7 @@ type KubernetesContainerManager struct {
 	restConfig *rest.Config
 	appConfig  *types.AppConfig
 	appRunDir  string
+	appId      types.AppId
 }
 
 func sanitizeContainerName(name string) string {
@@ -60,7 +61,7 @@ func TrimLabelValue(input string) string {
 	return input
 }
 
-func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerConfig, appConfig *types.AppConfig, appRunDir string) (*KubernetesContainerManager, error) {
+func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerConfig, appConfig *types.AppConfig, appRunDir string, appId types.AppId) (*KubernetesContainerManager, error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("error loading config: %w", err)
@@ -77,6 +78,7 @@ func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerCon
 		clientSet:  clientSet,
 		appConfig:  appConfig,
 		appRunDir:  appRunDir,
+		appId:      appId,
 	}, nil
 }
 
@@ -440,8 +442,15 @@ func (k *KubernetesContainerManager) processVolumes(ctx context.Context, name st
 			continue
 		}
 
+		dir := vol.VolumeName
+		if dir == UNNAMED_VOLUME {
+			// unnamed volume, use the path for generating the volume name
+			dir = vol.TargetPath
+		}
+
 		// PVC-based volume (already created via VolumeCreate)
-		pvcName := sanitizeContainerName(vol.VolumeName)
+		genVolumeName := GenVolumeName(k.appId, dir)
+		pvcName := sanitizeContainerName(string(genVolumeName))
 		volumeName := pvcName // use the same name for the volume reference
 
 		podVolumes = append(podVolumes, corev1apply.Volume().

@@ -84,7 +84,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	var err error
 	switch serverConfig.System.ContainerCommand {
 	case types.CONTAINER_KUBERNETES:
-		containerManager, err = container.NewKubernetesContainerManager(logger, serverConfig, &app.AppConfig, app.AppRunPath)
+		containerManager, err = container.NewKubernetesContainerManager(logger, serverConfig, &app.AppConfig, app.AppRunPath, app.Id)
 		if err != nil {
 			return nil, fmt.Errorf("error creating kubernetes container manager: %w", err)
 		}
@@ -540,7 +540,7 @@ func (h *ContainerHandler) parseVolumeString(vol string) (*container.VolumeInfo,
 	}
 
 	src, dst, readOnly := parseBindPaths(vol)
-	if strings.HasPrefix(src, "/") {
+	if strings.HasPrefix(src, "/") || strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") {
 		// Bind mount
 		return &container.VolumeInfo{
 			VolumeName: "",

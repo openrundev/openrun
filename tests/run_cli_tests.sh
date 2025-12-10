@@ -263,7 +263,7 @@ url="$KUBE_REGISTRY_URL"
 insecure = true
 EOF
 
-    CL_CONFIG_FILE=config_k8s.toml ../openrun server stop || true
+    rm -rf metadata run/openrun.sock
     CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
     sleep 2
 
