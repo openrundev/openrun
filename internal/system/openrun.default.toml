@@ -79,7 +79,7 @@ max_build_wait_secs = 120 # max wait time for a build lock
 
 [kubernetes]
 namespace = "openrun"
-use_node_host = false
+use_node_port = false
 
 [builder]
 mode = "auto" # "auto" or "kaniko" or "command" or "delegate:<url>"

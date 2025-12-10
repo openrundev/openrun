@@ -271,7 +271,7 @@ type RegistryConfig struct {
 
 type KubernetesConfig struct {
 	Namespace   string `toml:"namespace"`
-	UseNodeHost bool   `toml:"use_node_host"` // Use NodeHost mode instead of default ClusterIP mode
+	UseNodePort bool   `toml:"use_node_port"` // Use NodePort mode instead of default ClusterIP mode
 	// Can be used with k3s for single node cluster where the OpenRun server is not running as a pod
 }
 

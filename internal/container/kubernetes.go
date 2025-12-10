@@ -61,6 +61,20 @@ func TrimLabelValue(input string) string {
 	return input
 }
 
+// isPodReady checks if a pod is both running and has the Ready condition set to True.
+// This is important because Kubernetes Services only route traffic to Ready pods.
+func isPodReady(pod *core.Pod) bool {
+	if pod.Status.Phase != core.PodRunning {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == core.PodReady && condition.Status == core.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
 func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerConfig, appConfig *types.AppConfig, appRunDir string, appId types.AppId) (*KubernetesContainerManager, error) {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -183,7 +197,7 @@ func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name
 
 	svcPort := svc.Spec.Ports[0].Port
 	hostNamePort := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, svcPort)
-	if k.config.Kubernetes.UseNodeHost {
+	if k.config.Kubernetes.UseNodePort {
 		hostNamePort = fmt.Sprintf("127.0.0.1:%d", svc.Spec.Ports[0].NodePort)
 	}
 
@@ -224,7 +238,7 @@ func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name
 
 	runningCount := 0
 	for _, pod := range pods.Items {
-		if pod.Status.Phase == core.PodRunning && (expectHash == "" || pod.Labels[VERSION_HASH_LABEL] == TrimLabelValue(expectHash)) {
+		if isPodReady(&pod) && (expectHash == "" || pod.Labels[VERSION_HASH_LABEL] == TrimLabelValue(expectHash)) {
 			runningCount++
 		}
 	}
@@ -536,7 +550,7 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 	}
 
 	serviceType := core.ServiceTypeClusterIP
-	if k.config.Kubernetes.UseNodeHost {
+	if k.config.Kubernetes.UseNodePort {
 		serviceType = core.ServiceTypeNodePort
 	}
 	svcApply := corev1apply.Service(name, k.config.Kubernetes.Namespace).
@@ -564,7 +578,7 @@ func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name,
 	// In-cluster DNS URL
 	servicePort := svc.Spec.Ports[0].Port
 	url := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, servicePort)
-	if k.config.Kubernetes.UseNodeHost {
+	if k.config.Kubernetes.UseNodePort {
 		url = fmt.Sprintf("127.0.0.1:%d", svc.Spec.Ports[0].NodePort)
 	}
 

@@ -257,7 +257,7 @@ port = 9101
 [system]
 container_command="kubernetes"
 [kubernetes]
-use_node_host = true
+use_node_port = true
 [registry]
 url="$KUBE_REGISTRY_URL"
 insecure = true
