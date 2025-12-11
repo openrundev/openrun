@@ -35,7 +35,7 @@ const (
 	OPENRUN_FIELD_MANAGER = "openrun"
 )
 
-type KubernetesContainerManager struct {
+type KubernetesCM struct {
 	*types.Logger
 	config     *types.ServerConfig
 	clientSet  *kubernetes.Clientset
@@ -75,7 +75,7 @@ func isPodReady(pod *core.Pod) bool {
 	return false
 }
 
-func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerConfig, appConfig *types.AppConfig, appRunDir string, appId types.AppId) (*KubernetesContainerManager, error) {
+func NewKubernetesCM(logger *types.Logger, config *types.ServerConfig, appConfig *types.AppConfig, appRunDir string, appId types.AppId) (*KubernetesCM, error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("error loading config: %w", err)
@@ -85,7 +85,7 @@ func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerCon
 		return nil, fmt.Errorf("error creating clientset: %w", err)
 	}
 
-	return &KubernetesContainerManager{
+	return &KubernetesCM{
 		Logger:     logger,
 		config:     config,
 		restConfig: cfg,
@@ -96,7 +96,7 @@ func NewKubernetesContainerManager(logger *types.Logger, config *types.ServerCon
 	}, nil
 }
 
-var _ ContainerManager = (*KubernetesContainerManager)(nil)
+var _ ContainerManager = (*KubernetesCM)(nil)
 
 func loadConfig() (*rest.Config, error) {
 	// Try in-cluster; fall back to default kubeconfig
@@ -107,18 +107,18 @@ func loadConfig() (*rest.Config, error) {
 	return clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
 }
 
-func (k *KubernetesContainerManager) SupportsInPlaceUpdate() bool {
+func (k *KubernetesCM) SupportsInPlaceUpdate() bool {
 	return true
 }
 
-func (k *KubernetesContainerManager) ImageExists(ctx context.Context, name ImageName) (bool, error) {
+func (k *KubernetesCM) ImageExists(ctx context.Context, name ImageName) (bool, error) {
 	if k.config.Registry.URL == "" {
 		return false, fmt.Errorf("registry url is required for kubernetes container manager")
 	}
 	return ImageExists(ctx, k.Logger, string(name), &k.config.Registry)
 }
 
-func (k *KubernetesContainerManager) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
+func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
 	if k.config.Registry.URL == "" {
 		return fmt.Errorf("registry url is required for kubernetes container manager")
 	}
@@ -180,7 +180,7 @@ func (k *KubernetesContainerManager) BuildImage(ctx context.Context, imgName Ima
 	return KanikoJob(ctx, k.Logger, k.clientSet, k.restConfig, &k.config.Registry, dockerCfgJSON, kanikoBuild)
 }
 
-func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name ContainerName, expectHash string) (string, bool, error) {
+func (k *KubernetesCM) GetContainerState(ctx context.Context, name ContainerName, expectHash string) (string, bool, error) {
 	name = ContainerName(sanitizeContainerName(string(name)))
 	svc, err := k.clientSet.CoreV1().
 		Services(k.config.Kubernetes.Namespace).
@@ -247,7 +247,7 @@ func (k *KubernetesContainerManager) GetContainerState(ctx context.Context, name
 	return hostNamePort, updateCompleted && runningCount > 0, nil
 }
 
-func (k *KubernetesContainerManager) StartContainer(ctx context.Context, name ContainerName) error {
+func (k *KubernetesCM) StartContainer(ctx context.Context, name ContainerName) error {
 	name = ContainerName(sanitizeContainerName(string(name)))
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		scale, err := k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).GetScale(ctx, string(name), meta.GetOptions{})
@@ -260,7 +260,7 @@ func (k *KubernetesContainerManager) StartContainer(ctx context.Context, name Co
 	})
 }
 
-func (k *KubernetesContainerManager) StopContainer(ctx context.Context, name ContainerName) error {
+func (k *KubernetesCM) StopContainer(ctx context.Context, name ContainerName) error {
 	name = ContainerName(sanitizeContainerName(string(name)))
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		scale, err := k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).GetScale(ctx, string(name), meta.GetOptions{})
@@ -273,7 +273,7 @@ func (k *KubernetesContainerManager) StopContainer(ctx context.Context, name Con
 	})
 }
 
-func (k *KubernetesContainerManager) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
+func (k *KubernetesCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
 	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
 	if strings.HasPrefix(string(imageName), IMAGE_NAME_PREFIX) {
@@ -288,7 +288,7 @@ func (k *KubernetesContainerManager) RunContainer(ctx context.Context, appEntry 
 	return nil
 }
 
-func (k *KubernetesContainerManager) GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error) {
+func (k *KubernetesCM) GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error) {
 	name = ContainerName(sanitizeContainerName(string(name)))
 
 	// List pods with the matching label
@@ -332,7 +332,7 @@ func (k *KubernetesContainerManager) GetContainerLogs(ctx context.Context, name 
 	return buf.String(), nil
 }
 
-func (k *KubernetesContainerManager) VolumeExists(ctx context.Context, name VolumeName) bool {
+func (k *KubernetesCM) VolumeExists(ctx context.Context, name VolumeName) bool {
 	pvcName := sanitizeContainerName(string(name))
 	_, err := k.clientSet.CoreV1().
 		PersistentVolumeClaims(k.config.Kubernetes.Namespace).
@@ -347,7 +347,7 @@ func (k *KubernetesContainerManager) VolumeExists(ctx context.Context, name Volu
 	return true
 }
 
-func (k *KubernetesContainerManager) VolumeCreate(ctx context.Context, name VolumeName) error {
+func (k *KubernetesCM) VolumeCreate(ctx context.Context, name VolumeName) error {
 	size, err := resource.ParseQuantity(k.appConfig.Kubernetes.DefaultVolumeSize)
 	if err != nil {
 		return fmt.Errorf("error parsing default volume size %s: %w", k.appConfig.Kubernetes.DefaultVolumeSize, err)
@@ -373,7 +373,7 @@ func (k *KubernetesContainerManager) VolumeCreate(ctx context.Context, name Volu
 // processVolumes converts VolumeInfo entries to Kubernetes Volume and VolumeMount configurations.
 // It creates Secrets for secret volumes, ConfigMaps for volumes without a VolumeName, and
 // references existing PVCs for named volumes.
-func (k *KubernetesContainerManager) processVolumes(ctx context.Context, name string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string) (
+func (k *KubernetesCM) processVolumes(ctx context.Context, name string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string) (
 	[]*corev1apply.VolumeApplyConfiguration, []*corev1apply.VolumeMountApplyConfiguration, error) {
 
 	var podVolumes []*corev1apply.VolumeApplyConfiguration
@@ -485,7 +485,7 @@ func (k *KubernetesContainerManager) processVolumes(ctx context.Context, name st
 const VERSION_HASH_LABEL = LABEL_PREFIX + "version.hash"
 
 // createDeployment creates a Deployment + Service using server-side apply and returns the Service URL.
-func (k *KubernetesContainerManager) createDeployment(ctx context.Context, name, image string,
+func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 	port int32, envMap map[string]string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string, appEntry *types.AppEntry, versionHash string) (string, error) {
 	labels := map[string]string{"app": name}
 

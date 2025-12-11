@@ -57,17 +57,17 @@ func acquireBuildLock(ctx context.Context, config *types.SystemConfig, buildId s
 	}
 }
 
-type ContainerCommand struct {
+type CommandCM struct {
 	*types.Logger
 	appRunDir string
 	appId     types.AppId
 	config    *types.ServerConfig
 }
 
-var _ DevContainerManager = (*ContainerCommand)(nil)
+var _ DevContainerManager = (*CommandCM)(nil)
 
-func NewContainerCommand(logger *types.Logger, config *types.ServerConfig, appId types.AppId, appRunDir string) *ContainerCommand {
-	return &ContainerCommand{
+func NewCommandCM(logger *types.Logger, config *types.ServerConfig, appId types.AppId, appRunDir string) *CommandCM {
+	return &CommandCM{
 		Logger:    logger,
 		config:    config,
 		appId:     appId,
@@ -75,11 +75,11 @@ func NewContainerCommand(logger *types.Logger, config *types.ServerConfig, appId
 	}
 }
 
-func (k *ContainerCommand) SupportsInPlaceUpdate() bool {
+func (k *CommandCM) SupportsInPlaceUpdate() bool {
 	return false
 }
 
-func (c *ContainerCommand) RemoveImage(ctx context.Context, name ImageName) error {
+func (c *CommandCM) RemoveImage(ctx context.Context, name ImageName) error {
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "rmi", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -89,7 +89,7 @@ func (c *ContainerCommand) RemoveImage(ctx context.Context, name ImageName) erro
 	return nil
 }
 
-func (c *ContainerCommand) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
+func (c *CommandCM) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
 	targetUrl, found := strings.CutPrefix(c.config.Builder.Mode, "delegate:")
 	if found {
 		err := sendDelegateBuild(targetUrl, DelegateRequest{
@@ -145,7 +145,7 @@ func buildImageCommand(ctx context.Context, logger *types.Logger, config *types.
 	return nil
 }
 
-func (c *ContainerCommand) RemoveContainer(ctx context.Context, name ContainerName) error {
+func (c *CommandCM) RemoveContainer(ctx context.Context, name ContainerName) error {
 	c.Debug().Msgf("Removing container %s", name)
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "rm", string(name))
 	output, err := cmd.CombinedOutput()
@@ -157,7 +157,7 @@ func (c *ContainerCommand) RemoveContainer(ctx context.Context, name ContainerNa
 }
 
 // GetContainerState returns the host:port of the running container, "" if not running. running is true if the container is running.
-func (c *ContainerCommand) GetContainerState(ctx context.Context, name ContainerName, expectHash string) (string, bool, error) {
+func (c *CommandCM) GetContainerState(ctx context.Context, name ContainerName, expectHash string) (string, bool, error) {
 	// expectedHash is ignored for command based container manager, since it does not do in place updates
 	containers, err := c.getContainers(ctx, name, true)
 	if err != nil {
@@ -171,7 +171,7 @@ func (c *ContainerCommand) GetContainerState(ctx context.Context, name Container
 	return "127.0.0.1:" + strconv.Itoa(containers[0].Port), containers[0].State == "running", nil
 }
 
-func (c *ContainerCommand) getContainers(ctx context.Context, name ContainerName, getAll bool) ([]Container, error) {
+func (c *CommandCM) getContainers(ctx context.Context, name ContainerName, getAll bool) ([]Container, error) {
 	c.Debug().Msgf("Getting containers with name %s, getAll %t", name, getAll)
 	args := []string{"ps", "--format", "json"}
 	if name != "" {
@@ -266,7 +266,7 @@ func (c *ContainerCommand) getContainers(ctx context.Context, name ContainerName
 	return resp, nil
 }
 
-func (c *ContainerCommand) GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error) {
+func (c *CommandCM) GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error) {
 	c.Debug().Msgf("Getting container logs %s", name)
 	lines, err := c.ExecTailN(ctx, c.config.System.ContainerCommand, []string{"logs", string(name)}, linesToShow)
 	if err != nil {
@@ -276,7 +276,7 @@ func (c *ContainerCommand) GetContainerLogs(ctx context.Context, name ContainerN
 	return strings.Join(lines, "\n"), nil
 }
 
-func (c *ContainerCommand) StopContainer(ctx context.Context, name ContainerName) error {
+func (c *CommandCM) StopContainer(ctx context.Context, name ContainerName) error {
 	c.Debug().Msgf("Stopping container %s", name)
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "stop", "-t", "1", string(name))
 	output, err := cmd.CombinedOutput()
@@ -287,7 +287,7 @@ func (c *ContainerCommand) StopContainer(ctx context.Context, name ContainerName
 	return nil
 }
 
-func (c *ContainerCommand) StartContainer(ctx context.Context, name ContainerName) error {
+func (c *CommandCM) StartContainer(ctx context.Context, name ContainerName) error {
 	c.Debug().Msgf("Starting container %s", name)
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "start", string(name))
 	output, err := cmd.CombinedOutput()
@@ -300,7 +300,7 @@ func (c *ContainerCommand) StartContainer(ctx context.Context, name ContainerNam
 
 const LABEL_PREFIX = "dev.openrun."
 
-func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
+func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
 	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
 	c.Debug().Msgf("Running container %s from image %s with port %d env %+v mountArgs %+v",
@@ -362,7 +362,7 @@ func (c *ContainerCommand) RunContainer(ctx context.Context, appEntry *types.App
 	return nil
 }
 
-func (c *ContainerCommand) ImageExists(ctx context.Context, name ImageName) (bool, error) {
+func (c *CommandCM) ImageExists(ctx context.Context, name ImageName) (bool, error) {
 	if c.config.Registry.URL != "" {
 		return ImageExists(ctx, c.Logger, string(name), &c.config.Registry)
 	}
@@ -384,7 +384,7 @@ func (c *ContainerCommand) ImageExists(ctx context.Context, name ImageName) (boo
 }
 
 // ExecTailN executes a command and returns the last n lines of output
-func (c *ContainerCommand) ExecTailN(ctx context.Context, command string, args []string, n int) ([]string, error) {
+func (c *CommandCM) ExecTailN(ctx context.Context, command string, args []string, n int) ([]string, error) {
 	cmd := exec.CommandContext(ctx, command, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -430,7 +430,7 @@ func (c *ContainerCommand) ExecTailN(ctx context.Context, command string, args [
 	return ret, nil
 }
 
-func (c ContainerCommand) VolumeExists(ctx context.Context, name VolumeName) bool {
+func (c CommandCM) VolumeExists(ctx context.Context, name VolumeName) bool {
 	c.Debug().Msgf("Checking volume exists %s", name)
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "volume", "inspect", string(name))
 	output, err := cmd.CombinedOutput()
@@ -441,7 +441,7 @@ func (c ContainerCommand) VolumeExists(ctx context.Context, name VolumeName) boo
 	return err == nil
 }
 
-func (c ContainerCommand) VolumeCreate(ctx context.Context, name VolumeName) error {
+func (c CommandCM) VolumeCreate(ctx context.Context, name VolumeName) error {
 	c.Debug().Msgf("Creating volume %s", name)
 	cmd := exec.Command(c.config.System.ContainerCommand, "volume", "create", string(name))
 	output, err := cmd.CombinedOutput()
@@ -451,7 +451,7 @@ func (c ContainerCommand) VolumeCreate(ctx context.Context, name VolumeName) err
 	return nil
 }
 
-func (c *ContainerCommand) genMountArgs(sourceDir string, volumeInfo []*VolumeInfo, paramMap map[string]string) ([]string, error) {
+func (c *CommandCM) genMountArgs(sourceDir string, volumeInfo []*VolumeInfo, paramMap map[string]string) ([]string, error) {
 	args := make([]string, 0, len(volumeInfo))
 
 	for _, volInfo := range volumeInfo {
