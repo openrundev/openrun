@@ -16,7 +16,7 @@ tests:
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskdev2
     stdout: 4invalid
   container0033: # invalid container run option fails
-    command: ../openrun app create --spec python-flask --container-option invalid=abc --approve ./flaskapp /cont_flaskdev3
+    command: ../openrun app create --spec python-flask --container-option command.invalid=abc --approve ./flaskapp /cont_flaskdev3
   container0034: # check curl
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskdev3
     stdout: invalid
