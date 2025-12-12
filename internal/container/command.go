@@ -15,10 +15,13 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/go-viper/mapstructure/v2"
 
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -55,6 +58,48 @@ func acquireBuildLock(ctx context.Context, config *types.SystemConfig, buildId s
 	case <-timer.C:
 		return nil, context.DeadlineExceeded
 	}
+}
+
+type CommandOptions struct {
+	cpus   string         `mapstructure:"cpus"`
+	memory string         `mapstructure:"memory"`
+	Other  map[string]any `mapstructure:",remain"`
+}
+
+func parseCommandOptions(command string, options map[string]string) (CommandOptions, error) {
+	var ret CommandOptions
+	updatedOptions := make(map[string]string)
+	commandPrefix := command + "."
+
+	allPrefixes := []string{"docker.", "podman.", "container.", "kubernetes."}
+	removePrefixes := slices.DeleteFunc(allPrefixes, func(p string) bool {
+		return p == commandPrefix
+	})
+	for k, v := range options {
+		if strings.HasPrefix(k, "command.") {
+			updatedOptions[strings.TrimPrefix(k, "command.")] = v
+		} else if strings.HasPrefix(k, commandPrefix) {
+			updatedOptions[strings.TrimPrefix(k, commandPrefix)] = v
+		} else {
+			keep := true
+			for _, p := range removePrefixes {
+				if strings.HasPrefix(k, p) {
+					keep = false
+					break
+				}
+			}
+			// This is a option which does not have a prefix specific to any other container manager, keep it
+			if keep {
+				updatedOptions[k] = v
+			}
+		}
+	}
+
+	err := mapstructure.Decode(updatedOptions, &ret)
+	if err != nil {
+		return CommandOptions{}, err
+	}
+	return ret, nil
 }
 
 type CommandCM struct {
@@ -342,7 +387,17 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 	}
 
 	// Add container related args
-	for k, v := range containerOptions {
+	commandOptions, err := parseCommandOptions(path.Base(c.config.System.ContainerCommand), containerOptions)
+	if err != nil {
+		return fmt.Errorf("error parsing command options: %w", err)
+	}
+	if commandOptions.cpus != "" {
+		args = append(args, "--cpus", commandOptions.cpus)
+	}
+	if commandOptions.memory != "" {
+		args = append(args, "--memory", commandOptions.memory)
+	}
+	for k, v := range commandOptions.Other {
 		if v == "" {
 			args = append(args, fmt.Sprintf("--%s", k))
 		} else {
