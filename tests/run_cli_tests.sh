@@ -261,6 +261,8 @@ use_node_port = true
 [registry]
 url="$KUBE_REGISTRY_URL"
 insecure = true
+[appconfig]
+container.health_attempts_after_startup = 40
 EOF
 
     rm -rf metadata run/openrun.sock
