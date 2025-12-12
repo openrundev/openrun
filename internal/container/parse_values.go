@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	reIntOnly    = regexp.MustCompile(`^\d+$`)
-	reDockerLike = regexp.MustCompile(`^\d+(\.\d+)?\s*[bkmgte]b?\s*$`) // e.g. 512m, 1g, 1gb, 0.5g (case-insensitive handled below)
+	reIntOnly     = regexp.MustCompile(`^\d+$`)
+	reDockerLike  = regexp.MustCompile(`^\d+(\.\d+)?\s*[bkmgte]b?\s*$`) // e.g. 512m, 1g, 1gb, 0.5g (case-insensitive handled below)
+	KNOWN_OPTIONS = []string{"cpus", "memory"}
 )
 
 // BytesString parses s and returns bytes as a base-10 integer string.

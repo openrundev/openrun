@@ -10,10 +10,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/openrundev/openrun/internal/types"
 	appsv1 "k8s.io/api/apps/v1"
 	core "k8s.io/api/core/v1"
@@ -34,6 +36,32 @@ import (
 const (
 	OPENRUN_FIELD_MANAGER = "openrun"
 )
+
+type KubernetesOptions struct {
+	Cpus   string         `mapstructure:"cpus"`
+	Memory string         `mapstructure:"memory"`
+	Other  map[string]any `mapstructure:",remain"`
+}
+
+func parseKubernetesOptions(options map[string]string) (KubernetesOptions, error) {
+	var ret KubernetesOptions
+	updatedOptions := make(map[string]string)
+	kubernetesPrefix := "kubernetes."
+
+	for k, v := range options {
+		if strings.HasPrefix(k, kubernetesPrefix) {
+			updatedOptions[strings.TrimPrefix(k, kubernetesPrefix)] = v
+		} else if slices.Contains(KNOWN_OPTIONS, k) {
+			updatedOptions[k] = v
+		}
+	}
+
+	err := mapstructure.Decode(updatedOptions, &ret)
+	if err != nil {
+		return KubernetesOptions{}, err
+	}
+	return ret, nil
+}
 
 type KubernetesCM struct {
 	*types.Logger
@@ -279,8 +307,13 @@ func (k *KubernetesCM) RunContainer(ctx context.Context, appEntry *types.AppEntr
 	if strings.HasPrefix(string(imageName), IMAGE_NAME_PREFIX) {
 		imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
 	}
+	kubernetesOptions, err := parseKubernetesOptions(containerOptions)
+	if err != nil {
+		return fmt.Errorf("error parsing kubernetes options: %w", err)
+	}
 	containerName = ContainerName(sanitizeContainerName(string(containerName)))
-	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), int32(port), envMap, volumes, sourceDir, paramMap, appEntry, versionHash)
+	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), int32(port), envMap,
+		volumes, sourceDir, paramMap, appEntry, versionHash, kubernetesOptions)
 	if err != nil {
 		return fmt.Errorf("create app: %w", err)
 	}
@@ -486,7 +519,8 @@ const VERSION_HASH_LABEL = LABEL_PREFIX + "version.hash"
 
 // createDeployment creates a Deployment + Service using server-side apply and returns the Service URL.
 func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
-	port int32, envMap map[string]string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string, appEntry *types.AppEntry, versionHash string) (string, error) {
+	port int32, envMap map[string]string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string,
+	appEntry *types.AppEntry, versionHash string, kubernetesOptions KubernetesOptions) (string, error) {
 	labels := map[string]string{"app": name}
 
 	metadata := map[string]string{}
@@ -521,6 +555,39 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 
 	if len(volumeMounts) > 0 {
 		containerConfig = containerConfig.WithVolumeMounts(volumeMounts...)
+	}
+
+	// Add resource requirements if cpus or memory are specified
+	if kubernetesOptions.Cpus != "" || kubernetesOptions.Memory != "" {
+		resources := corev1apply.ResourceRequirements()
+		resourceList := core.ResourceList{}
+
+		if kubernetesOptions.Cpus != "" {
+			cpus, err := CPUString(kubernetesOptions.Cpus, false)
+			if err != nil {
+				return "", fmt.Errorf("error parsing cpus value %q: %w", kubernetesOptions.Cpus, err)
+			}
+			cpuQuantity, err := resource.ParseQuantity(cpus + "m") // convert to millicores
+			if err != nil {
+				return "", fmt.Errorf("invalid cpus value %q: %w", kubernetesOptions.Cpus, err)
+			}
+			resourceList[core.ResourceCPU] = cpuQuantity
+		}
+
+		if kubernetesOptions.Memory != "" {
+			memory, err := BytesString(kubernetesOptions.Memory)
+			if err != nil {
+				return "", fmt.Errorf("error parsing memory value %q: %w", kubernetesOptions.Memory, err)
+			}
+			memQuantity, err := resource.ParseQuantity(memory)
+			if err != nil {
+				return "", fmt.Errorf("invalid memory value %q: %w", kubernetesOptions.Memory, err)
+			}
+			resourceList[core.ResourceMemory] = memQuantity
+		}
+
+		resources = resources.WithRequests(resourceList).WithLimits(resourceList)
+		containerConfig = containerConfig.WithResources(resources)
 	}
 
 	podSpec := corev1apply.PodSpec().

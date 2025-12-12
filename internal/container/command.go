@@ -71,27 +71,13 @@ func parseCommandOptions(command string, options map[string]string) (CommandOpti
 	updatedOptions := make(map[string]string)
 	commandPrefix := command + "."
 
-	allPrefixes := []string{"docker.", "podman.", "container.", "kubernetes."}
-	removePrefixes := slices.DeleteFunc(allPrefixes, func(p string) bool {
-		return p == commandPrefix
-	})
 	for k, v := range options {
 		if strings.HasPrefix(k, "command.") {
 			updatedOptions[strings.TrimPrefix(k, "command.")] = v
 		} else if strings.HasPrefix(k, commandPrefix) {
 			updatedOptions[strings.TrimPrefix(k, commandPrefix)] = v
-		} else {
-			keep := true
-			for _, p := range removePrefixes {
-				if strings.HasPrefix(k, p) {
-					keep = false
-					break
-				}
-			}
-			// This is a option which does not have a prefix specific to any other container manager, keep it
-			if keep {
-				updatedOptions[k] = v
-			}
+		} else if slices.Contains(KNOWN_OPTIONS, k) {
+			updatedOptions[k] = v
 		}
 	}
 
@@ -392,10 +378,18 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 		return fmt.Errorf("error parsing command options: %w", err)
 	}
 	if commandOptions.cpus != "" {
-		args = append(args, "--cpus", commandOptions.cpus)
+		cpus, err := CPUString(commandOptions.cpus, true)
+		if err != nil {
+			return fmt.Errorf("error parsing cpus value %q: %w", commandOptions.cpus, err)
+		}
+		args = append(args, "--cpus", cpus)
 	}
 	if commandOptions.memory != "" {
-		args = append(args, "--memory", commandOptions.memory)
+		memory, err := BytesString(commandOptions.memory)
+		if err != nil {
+			return fmt.Errorf("error parsing memory value %q: %w", commandOptions.memory, err)
+		}
+		args = append(args, "--memory", memory)
 	}
 	for k, v := range commandOptions.Other {
 		if v == "" {
