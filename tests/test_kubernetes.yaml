@@ -7,7 +7,7 @@ tests:
   kubernetes010: # setup flask app
     command: rm -rf ./flaskapp && mkdir flaskapp && cp flask.py flaskapp/app.py
   kubernetes030: # setup flask prod app
-    command: ../openrun app create --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpus=2 --copt memory=2g --approve ./flaskapp /kube_flaskprod
+    command: ../openrun app create --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpus=2 --copt memory=0.5g --approve ./flaskapp /kube_flaskprod
   kubernetes034: # check curl
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
     stdout: hello
@@ -31,7 +31,7 @@ tests:
     stdout: "updated"
 
   kubernetes200: # setup streamlit app
-    command: ../openrun app create --spec python-streamlit --branch master --approve --copt cpus=0.8 --copt memory=2000m  github.com/streamlit/streamlit-example /kube_streamlit
+    command: ../openrun app create --spec python-streamlit --branch master --approve --copt cpus=0.8 --copt kubernetes.memory=300m  github.com/streamlit/streamlit-example /kube_streamlit
   kubernetes210: # check stage
     command: curl -sS localhost:${HTTP_PORT}/kube_streamlit_cl_stage/_stcore/health
     stdout: ok
