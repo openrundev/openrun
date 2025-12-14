@@ -81,7 +81,15 @@ func parseCommandOptions(command string, options map[string]string) (CommandOpti
 		}
 	}
 
-	err := mapstructure.Decode(updatedOptions, &ret)
+	config := &mapstructure.DecoderConfig{
+		WeaklyTypedInput: true,
+		Result:           &ret,
+	}
+	decoder, err := mapstructure.NewDecoder(config)
+	if err != nil {
+		return CommandOptions{}, err
+	}
+	err = decoder.Decode(updatedOptions)
 	if err != nil {
 		return CommandOptions{}, err
 	}

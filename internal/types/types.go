@@ -162,8 +162,9 @@ type Container struct {
 
 // Kubernetes related settings in the App Config
 type Kubernetes struct {
-	DefaultVolumeSize  string `toml:"default_volume_size"`
-	StrictVersionCheck bool   `toml:"strict_version_check"` // If true, only return true if the version hash is the same as the expected hash
+	DefaultVolumeSize   string `toml:"default_volume_size"`
+	StrictVersionCheck  bool   `toml:"strict_version_check"`  // If true, only return true if the version hash is the same as the expected hash
+	ScalingThresholdCPU int32  `toml:"scaling_threshold_cpu"` // CPU utilization threshold for HPA scaling
 }
 
 type Proxy struct {

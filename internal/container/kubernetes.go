@@ -18,6 +18,7 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/openrundev/openrun/internal/types"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -25,6 +26,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1apply "k8s.io/client-go/applyconfigurations/apps/v1"
+	autoscalingv2apply "k8s.io/client-go/applyconfigurations/autoscaling/v2"
 	corev1apply "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1apply "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -38,9 +40,11 @@ const (
 )
 
 type KubernetesOptions struct {
-	Cpus   string         `mapstructure:"cpus"`
-	Memory string         `mapstructure:"memory"`
-	Other  map[string]any `mapstructure:",remain"`
+	Cpus        string         `mapstructure:"cpus"`
+	Memory      string         `mapstructure:"memory"`
+	MinReplicas int32          `mapstructure:"min_replicas"` // min number of replicas to run the app on
+	MaxReplicas int32          `mapstructure:"max_replicas"` // max number of replicas to run the app on
+	Other       map[string]any `mapstructure:",remain"`
 }
 
 func parseKubernetesOptions(options map[string]string) (KubernetesOptions, error) {
@@ -56,7 +60,15 @@ func parseKubernetesOptions(options map[string]string) (KubernetesOptions, error
 		}
 	}
 
-	err := mapstructure.Decode(updatedOptions, &ret)
+	config := &mapstructure.DecoderConfig{
+		WeaklyTypedInput: true,
+		Result:           &ret,
+	}
+	decoder, err := mapstructure.NewDecoder(config)
+	if err != nil {
+		return KubernetesOptions{}, err
+	}
+	err = decoder.Decode(updatedOptions)
 	if err != nil {
 		return KubernetesOptions{}, err
 	}
@@ -528,7 +540,15 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 	metadata[LABEL_PREFIX+"git.sha"] = TrimLabelValue(appEntry.Metadata.VersionMetadata.GitCommit)
 	metadata[LABEL_PREFIX+"app.version"] = strconv.Itoa(appEntry.Metadata.VersionMetadata.Version)
 	metadata[VERSION_HASH_LABEL] = TrimLabelValue(versionHash)
-	replicas := int32(1) // min = max = 1
+
+	// Set replicas from kubernetesOptions, defaulting to 1
+	replicas := int32(1)
+	if kubernetesOptions.MinReplicas > 0 {
+		replicas = kubernetesOptions.MinReplicas
+	}
+	if kubernetesOptions.MaxReplicas > 0 && kubernetesOptions.MaxReplicas < replicas {
+		replicas = kubernetesOptions.MaxReplicas
+	}
 
 	// Convert envMap to Kubernetes EnvVar apply configurations
 	envVars := make([]*corev1apply.EnvVarApplyConfiguration, 0, len(envMap))
@@ -614,6 +634,36 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 
 	if _, err := k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).Apply(ctx, dep, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
 		return "", fmt.Errorf("apply deployment: %w", err)
+	}
+
+	// Create HPA if MaxReplicas > 1
+	if kubernetesOptions.MaxReplicas > 1 {
+		minReplicas := kubernetesOptions.MinReplicas
+		if minReplicas < 1 {
+			minReplicas = 1
+		}
+		hpa := autoscalingv2apply.HorizontalPodAutoscaler(name, k.config.Kubernetes.Namespace).
+			WithLabels(labels).
+			WithSpec(autoscalingv2apply.HorizontalPodAutoscalerSpec().
+				WithScaleTargetRef(autoscalingv2apply.CrossVersionObjectReference().
+					WithAPIVersion("apps/v1").
+					WithKind("Deployment").
+					WithName(name)).
+				WithMinReplicas(minReplicas).
+				WithMaxReplicas(kubernetesOptions.MaxReplicas).
+				WithMetrics(autoscalingv2apply.MetricSpec().
+					WithType(autoscalingv2.ResourceMetricSourceType).
+					WithResource(autoscalingv2apply.ResourceMetricSource().
+						WithName(core.ResourceCPU).
+						WithTarget(autoscalingv2apply.MetricTarget().
+							WithType(autoscalingv2.UtilizationMetricType).
+							WithAverageUtilization(k.appConfig.Kubernetes.ScalingThresholdCPU)))))
+
+		if _, err := k.clientSet.AutoscalingV2().HorizontalPodAutoscalers(k.config.Kubernetes.Namespace).Apply(
+			ctx, hpa, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
+			return "", fmt.Errorf("apply hpa: %w", err)
+		}
+		k.Logger.Info().Msgf("created HPA for %s with min=%d max=%d", name, minReplicas, kubernetesOptions.MaxReplicas)
 	}
 
 	serviceType := core.ServiceTypeClusterIP
