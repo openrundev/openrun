@@ -580,7 +580,8 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 	// Add resource requirements if cpus or memory are specified
 	if kubernetesOptions.Cpus != "" || kubernetesOptions.Memory != "" {
 		resources := corev1apply.ResourceRequirements()
-		resourceList := core.ResourceList{}
+		requestsList := core.ResourceList{}
+		limitsList := core.ResourceList{}
 
 		if kubernetesOptions.Cpus != "" {
 			cpus, err := CPUString(kubernetesOptions.Cpus, false)
@@ -591,7 +592,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 			if err != nil {
 				return "", fmt.Errorf("invalid cpus value %q: %w", kubernetesOptions.Cpus, err)
 			}
-			resourceList[core.ResourceCPU] = cpuQuantity
+			requestsList[core.ResourceCPU] = cpuQuantity
 		}
 
 		if kubernetesOptions.Memory != "" {
@@ -603,10 +604,11 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 			if err != nil {
 				return "", fmt.Errorf("invalid memory value %q: %w", kubernetesOptions.Memory, err)
 			}
-			resourceList[core.ResourceMemory] = memQuantity
+			requestsList[core.ResourceMemory] = memQuantity
+			limitsList[core.ResourceMemory] = memQuantity
 		}
 
-		resources = resources.WithRequests(resourceList).WithLimits(resourceList)
+		resources = resources.WithRequests(requestsList).WithLimits(limitsList)
 		containerConfig = containerConfig.WithResources(resources)
 	}
 
