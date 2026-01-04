@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://openrun.dev/openrun.png" alt="OpenRun-logo" width="300" height="250"/>
 
-  <p align="center">App deployment simplified. Open source alternative to Google Cloud Run and AWS App Runner. Easily deploy internal tools across a team.</p>
+  <p align="center">App deployment simplified. Open source alternative to Google Cloud Run and AWS App Runner. Easily deploy internal tools, on a single node with Docker/Podman or onto a Kubernetes cluster.</p>
 </p>
 
 <p>
@@ -28,7 +28,7 @@
 
 ## Overview
 
-OpenRun is an Apache-2.0 licensed open source alternative to Google Cloud Run and AWS App Runner. OpenRun makes it easy to declaratively deploy applications built in frameworks like Streamlit/Gradio/FastHTML/NiceGUI etc.
+OpenRun is an Apache-2.0 licensed open source alternative to Google Cloud Run and AWS App Runner. OpenRun makes it easy to declaratively deploy applications built in frameworks like Streamlit/Gradio/FastHTML/NiceGUI etc. Apps can be deployed on a single node with Docker/Podman or onto a Kubernetes cluster.
 
 OpenRun provides **declarative** GitOps based app deployment, OAuth/OIDC/SAML access controls, TLS certs & secrets management. OpenRun is built for teams to easily deploy internal tools, with full RBAC support. OpenRun apps are deployed directly from the git repo, no build step required. OpenRun scales idles apps down to zero and supports atomic updates across multiple apps.
 
@@ -39,13 +39,14 @@ This repo hosts the source code for OpenRun. The source for the documentation si
 ## FAQ
 
 <details open>
-  <summary><b>How does OpenRun compare to other deployment solutions like Coolify/Dokku etc?</b></summary>
+  <summary><b>How does OpenRun compare to other deployment solutions like Coolify/Dokku/CapRover etc?</b></summary>
 
 > The main differences are:
 >
-> - OpenRun is declarative. After initial OpenRun setup. Instead of using CLI commands or UI operations, all operations including creating new app and updating config for existing apps can be doing by updating a config file in Git. With most other solution, app creation/update is through CLI or UI. Only app source code update can be done through Git.
+> - OpenRun is declarative. After initial OpenRun setup. Instead of using CLI commands or UI operations, all operations including creating new app and updating config for existing apps can be doing by updating a config file in Git. With most other solution, app creation/update is done manually through CLI or UI. Only app source code update can be done through Git.
+> - OpenRun can deploy apps on a single machine with Docker/Podman or it can deploy apps onto a Kubernetes cluster. Most other solutions do not support deployment to Kubernetes.
 > - OpenRun is implemented as a web server, it does not depend on external web server like Nginx/Traefik. This simplifies end-user usage and allows OpenRun to implement features like scale down to zero (for app containers) and OAuth/SAML/Cert based auth with RBAC.
-> - OpenRun implements features like staged deployment and automatic dev env setup which are not available in other solutions.
+> - OpenRun supports features like staged deployment and automatic dev env setup which are not available in other solutions.
 
 </details>
 
@@ -102,6 +103,7 @@ OpenRun supports the following for all apps:
 - [Staging mode](https://openrun.dev/docs/applications/lifecycle/#staging-apps) for app updates, to verify whether code and config changes work on prod before making them live.
 - [Preview app](https://openrun.dev/docs/applications/lifecycle/#preview-apps) creation support, for trying out code changes.
 - Support for [github integration](https://openrun.dev/docs/configuration/security/#private-repository-access), apps being directly deployed from github code.
+- [Automatic SSL](https://openrun.dev/docs/configuration/networking/#enable-automatic-signed-certificate) certificate creation based on [certmagic](https://github.com/caddyserver/certmagic).
 - OAuth/OIDC/SAML based [authentication](https://openrun.dev/docs/configuration/authentication/#oauth-authentication)
 - Support for domain based and path based [routing](https://openrun.dev/docs/applications/routing/#request-routing) at the app level.
 - Integration with [secrets managers](https://openrun.dev/docs/configuration/secrets/), to securely access secrets.
@@ -116,12 +118,11 @@ For containerized apps, OpenRun supports:
 For building Hypermedia based apps, OpenRun supports:
 
 - Automatic [error handling support](https://openrun.dev/docs/plugins/overview/#automatic-error-handling)
-- Automatic creation of ECMAScript modules using [esbuild](https://esbuild.github.io/).
+- Automatic creation of ECMAScript modules using [esbuild](https://esbuild.github.io/) for dependencies.
 - Support for [TailwindCSS](https://tailwindcss.com/) and [DaisyUI](https://daisyui.com/) watcher integration.
-- [Automatic SSL](https://openrun.dev/docs/configuration/networking/#enable-automatic-signed-certificate) certificate creation based on [certmagic](https://github.com/caddyserver/certmagic).
 - Backend app code runs in a [security sandbox](https://openrun.dev/docs/applications/appsecurity/#security-model), with allowlist based permissions.
 - [No build step](https://openrun.dev/docs/develop/#app-lifecycle), the development artifacts are ready for production use.
-- Support for application data persistance using SQLite
+- Support for application data persistence using SQLite
 - Virtual filesystem with [content hash based file names](https://openrun.dev/docs/develop/templates/#static-function) backed by SQLite database, enabling aggressive static content caching.
 - Brotli compression for static artifacts, HTTP early hints support for performance.
 
@@ -129,7 +130,7 @@ For building Hypermedia based apps, OpenRun supports:
 
 The feature roadmap for OpenRun is:
 
-- Support for deployment to Kubernetes is planned.
+- Adding more app specs, to support additional frameworks out of the box
 
 ## Setup
 
