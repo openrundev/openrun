@@ -56,7 +56,7 @@ nfpms:
   - file_name_template: "{{.ProjectName}}-{{.Tag}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}"
     homepage: https://openrun.dev/
     description: Open source alternative to Google Cloud Run and AWS App Runner.
-    maintainer: Ajay Kidave <contact@clace.io>
+    maintainer: Ajay Kidave <contact@openrun.dev>
     license: Apache 2.0
     vendor: ClaceIO LLC.
     formats:
