@@ -116,6 +116,25 @@ func isPodReady(pod *core.Pod) bool {
 	return false
 }
 
+func currentNamespace() (string, error) {
+	b, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
+func namespaceExists(ctx context.Context, client kubernetes.Interface, name string) (bool, error) {
+	_, err := client.CoreV1().Namespaces().Get(ctx, name, meta.GetOptions{})
+	if err == nil {
+		return true, nil
+	}
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	return false, err // real error (RBAC, network, etc.)
+}
+
 func NewKubernetesCM(logger *types.Logger, config *types.ServerConfig, appConfig *types.AppConfig, appRunDir string, appId types.AppId) (*KubernetesCM, error) {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -126,9 +145,26 @@ func NewKubernetesCM(logger *types.Logger, config *types.ServerConfig, appConfig
 		return nil, fmt.Errorf("error creating clientset: %w", err)
 	}
 
+	namespace, err := currentNamespace()
+	if err != nil {
+		logger.Warn().Msgf("error getting current namespace: %v", err)
+		namespace = config.Kubernetes.Namespace
+	}
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace not specified and not running in cluster")
+	}
+	appNamespace := namespace + "-apps"
+	appNamespaceExists, err := namespaceExists(context.Background(), clientSet, appNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("error checking if app namespace exists: %w", err)
+	}
+	if !appNamespaceExists {
+		return nil, fmt.Errorf("app namespace %s does not exist", appNamespace)
+	}
+
 	return &KubernetesCM{
 		Logger:       logger,
-		appNamespace: config.Kubernetes.Namespace + "-apps",
+		appNamespace: appNamespace,
 		config:       config,
 		restConfig:   cfg,
 		clientSet:    clientSet,
