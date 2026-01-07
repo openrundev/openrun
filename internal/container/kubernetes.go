@@ -77,12 +77,13 @@ func parseKubernetesOptions(options map[string]string) (KubernetesOptions, error
 
 type KubernetesCM struct {
 	*types.Logger
-	config     *types.ServerConfig
-	clientSet  *kubernetes.Clientset
-	restConfig *rest.Config
-	appConfig  *types.AppConfig
-	appRunDir  string
-	appId      types.AppId
+	appNamespace string
+	config       *types.ServerConfig
+	clientSet    *kubernetes.Clientset
+	restConfig   *rest.Config
+	appConfig    *types.AppConfig
+	appRunDir    string
+	appId        types.AppId
 }
 
 func sanitizeContainerName(name string) string {
@@ -126,13 +127,14 @@ func NewKubernetesCM(logger *types.Logger, config *types.ServerConfig, appConfig
 	}
 
 	return &KubernetesCM{
-		Logger:     logger,
-		config:     config,
-		restConfig: cfg,
-		clientSet:  clientSet,
-		appConfig:  appConfig,
-		appRunDir:  appRunDir,
-		appId:      appId,
+		Logger:       logger,
+		appNamespace: config.Kubernetes.Namespace + "-apps",
+		config:       config,
+		restConfig:   cfg,
+		clientSet:    clientSet,
+		appConfig:    appConfig,
+		appRunDir:    appRunDir,
+		appId:        appId,
 	}, nil
 }
 
@@ -208,7 +210,7 @@ func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, source
 
 	appId, _, _ := strings.Cut(string(imgName), ":")
 	kanikoBuild := KanikoBuild{
-		Namespace:     k.config.Kubernetes.Namespace,
+		Namespace:     k.appNamespace,
 		JobName:       fmt.Sprintf("%s-builder-%d", appId, time.Now().Unix()),
 		Image:         k.config.Builder.KanikoImage,
 		SourceDir:     sourceUrl,
@@ -223,16 +225,16 @@ func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, source
 func (k *KubernetesCM) GetContainerState(ctx context.Context, name ContainerName, expectHash string) (string, bool, error) {
 	name = ContainerName(sanitizeContainerName(string(name)))
 	svc, err := k.clientSet.CoreV1().
-		Services(k.config.Kubernetes.Namespace).
+		Services(k.appNamespace).
 		Get(ctx, string(name), meta.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return "", false, nil
 		}
-		return "", false, fmt.Errorf("get service %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
+		return "", false, fmt.Errorf("get service %s/%s: %w", k.appNamespace, string(name), err)
 	}
 	if len(svc.Spec.Ports) == 0 {
-		return "", false, fmt.Errorf("service %s/%s has no ports", k.config.Kubernetes.Namespace, string(name))
+		return "", false, fmt.Errorf("service %s/%s has no ports", k.appNamespace, string(name))
 	}
 
 	svcPort := svc.Spec.Ports[0].Port
@@ -242,10 +244,10 @@ func (k *KubernetesCM) GetContainerState(ctx context.Context, name ContainerName
 	}
 
 	dep, err := k.clientSet.AppsV1().
-		Deployments(k.config.Kubernetes.Namespace).
+		Deployments(k.appNamespace).
 		Get(ctx, string(name), meta.GetOptions{})
 	if err != nil {
-		return "", false, fmt.Errorf("get deployment %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
+		return "", false, fmt.Errorf("get deployment %s/%s: %w", k.appNamespace, string(name), err)
 	}
 
 	if expectHash != "" && dep.Spec.Template.Labels[VERSION_HASH_LABEL] != TrimLabelValue(expectHash) {
@@ -269,11 +271,11 @@ func (k *KubernetesCM) GetContainerState(ctx context.Context, name ContainerName
 	}
 
 	// Get the pods which are part of this deployment
-	pods, err := k.clientSet.CoreV1().Pods(k.config.Kubernetes.Namespace).List(ctx, meta.ListOptions{
+	pods, err := k.clientSet.CoreV1().Pods(k.appNamespace).List(ctx, meta.ListOptions{
 		LabelSelector: fmt.Sprintf("app=%s", string(name)),
 	})
 	if err != nil {
-		return "", false, fmt.Errorf("list pods for deployment %s/%s: %w", k.config.Kubernetes.Namespace, string(name), err)
+		return "", false, fmt.Errorf("list pods for deployment %s/%s: %w", k.appNamespace, string(name), err)
 	}
 
 	runningCount := 0
@@ -290,12 +292,12 @@ func (k *KubernetesCM) GetContainerState(ctx context.Context, name ContainerName
 func (k *KubernetesCM) StartContainer(ctx context.Context, name ContainerName) error {
 	name = ContainerName(sanitizeContainerName(string(name)))
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		scale, err := k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).GetScale(ctx, string(name), meta.GetOptions{})
+		scale, err := k.clientSet.AppsV1().Deployments(k.appNamespace).GetScale(ctx, string(name), meta.GetOptions{})
 		if err != nil {
 			return err
 		}
 		scale.Spec.Replicas = 1
-		_, err = k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).UpdateScale(ctx, string(name), scale, meta.UpdateOptions{})
+		_, err = k.clientSet.AppsV1().Deployments(k.appNamespace).UpdateScale(ctx, string(name), scale, meta.UpdateOptions{})
 		return err
 	})
 }
@@ -303,12 +305,12 @@ func (k *KubernetesCM) StartContainer(ctx context.Context, name ContainerName) e
 func (k *KubernetesCM) StopContainer(ctx context.Context, name ContainerName) error {
 	name = ContainerName(sanitizeContainerName(string(name)))
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		scale, err := k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).GetScale(ctx, string(name), meta.GetOptions{})
+		scale, err := k.clientSet.AppsV1().Deployments(k.appNamespace).GetScale(ctx, string(name), meta.GetOptions{})
 		if err != nil {
 			return err
 		}
 		scale.Spec.Replicas = 0 // scale down to zero
-		_, err = k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).UpdateScale(ctx, string(name), scale, meta.UpdateOptions{})
+		_, err = k.clientSet.AppsV1().Deployments(k.appNamespace).UpdateScale(ctx, string(name), scale, meta.UpdateOptions{})
 		return err
 	})
 }
@@ -337,7 +339,7 @@ func (k *KubernetesCM) GetContainerLogs(ctx context.Context, name ContainerName,
 	name = ContainerName(sanitizeContainerName(string(name)))
 
 	// List pods with the matching label
-	pods, err := k.clientSet.CoreV1().Pods(k.config.Kubernetes.Namespace).List(ctx, meta.ListOptions{
+	pods, err := k.clientSet.CoreV1().Pods(k.appNamespace).List(ctx, meta.ListOptions{
 		LabelSelector: fmt.Sprintf("app=%s", string(name)),
 	})
 	if err != nil {
@@ -362,7 +364,7 @@ func (k *KubernetesCM) GetContainerLogs(ctx context.Context, name ContainerName,
 		TailLines: &tailLines,
 	}
 
-	req := k.clientSet.CoreV1().Pods(k.config.Kubernetes.Namespace).GetLogs(pod.Name, logOptions)
+	req := k.clientSet.CoreV1().Pods(k.appNamespace).GetLogs(pod.Name, logOptions)
 	logStream, err := req.Stream(ctx)
 	if err != nil {
 		return "", fmt.Errorf("get logs for pod %s container %s: %w", pod.Name, containerName, err)
@@ -380,7 +382,7 @@ func (k *KubernetesCM) GetContainerLogs(ctx context.Context, name ContainerName,
 func (k *KubernetesCM) VolumeExists(ctx context.Context, name VolumeName) bool {
 	pvcName := sanitizeContainerName(string(name))
 	_, err := k.clientSet.CoreV1().
-		PersistentVolumeClaims(k.config.Kubernetes.Namespace).
+		PersistentVolumeClaims(k.appNamespace).
 		Get(ctx, pvcName, meta.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -398,7 +400,7 @@ func (k *KubernetesCM) VolumeCreate(ctx context.Context, name VolumeName) error 
 		return fmt.Errorf("error parsing default volume size %s: %w", k.appConfig.Kubernetes.DefaultVolumeSize, err)
 	}
 	pvcName := sanitizeContainerName(string(name))
-	pvc := corev1apply.PersistentVolumeClaim(pvcName, k.config.Kubernetes.Namespace).
+	pvc := corev1apply.PersistentVolumeClaim(pvcName, k.appNamespace).
 		WithSpec(corev1apply.PersistentVolumeClaimSpec().
 			WithAccessModes(core.ReadWriteOnce). // TODO: support other access modes
 			WithResources(corev1apply.VolumeResourceRequirements().
@@ -407,7 +409,7 @@ func (k *KubernetesCM) VolumeCreate(ctx context.Context, name VolumeName) error 
 				})))
 
 	_, err = k.clientSet.CoreV1().
-		PersistentVolumeClaims(k.config.Kubernetes.Namespace).
+		PersistentVolumeClaims(k.appNamespace).
 		Apply(ctx, pvc, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER})
 	if err != nil {
 		return fmt.Errorf("apply PersistentVolumeClaim %s: %w", pvcName, err)
@@ -447,10 +449,10 @@ func (k *KubernetesCM) processVolumes(ctx context.Context, name string, volumes 
 			}
 
 			fileName := filepath.Base(vol.TargetPath)
-			secretApply := corev1apply.Secret(secretName, k.config.Kubernetes.Namespace).
+			secretApply := corev1apply.Secret(secretName, k.appNamespace).
 				WithData(map[string][]byte{fileName: secretData})
 
-			if _, err := k.clientSet.CoreV1().Secrets(k.config.Kubernetes.Namespace).Apply(
+			if _, err := k.clientSet.CoreV1().Secrets(k.appNamespace).Apply(
 				ctx, secretApply, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
 				return nil, nil, fmt.Errorf("apply secret %s: %w", secretName, err)
 			}
@@ -480,10 +482,10 @@ func (k *KubernetesCM) processVolumes(ctx context.Context, name string, volumes 
 			}
 
 			fileName := filepath.Base(vol.TargetPath)
-			configMapApply := corev1apply.ConfigMap(configMapName, k.config.Kubernetes.Namespace).
+			configMapApply := corev1apply.ConfigMap(configMapName, k.appNamespace).
 				WithData(map[string]string{fileName: string(data)})
 
-			if _, err := k.clientSet.CoreV1().ConfigMaps(k.config.Kubernetes.Namespace).Apply(
+			if _, err := k.clientSet.CoreV1().ConfigMaps(k.appNamespace).Apply(
 				ctx, configMapApply, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
 				return nil, nil, fmt.Errorf("apply configmap %s: %w", configMapName, err)
 			}
@@ -623,7 +625,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 		//WithType(appsv1.RecreateDeploymentStrategyType)
 		WithType(appsv1.RollingUpdateDeploymentStrategyType)
 
-	dep := appsv1apply.Deployment(name, k.config.Kubernetes.Namespace).
+	dep := appsv1apply.Deployment(name, k.appNamespace).
 		WithLabels(labels).
 		WithSpec(appsv1apply.DeploymentSpec().
 			WithReplicas(replicas).
@@ -634,7 +636,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 				WithLabels(metadata).
 				WithSpec(podSpec)))
 
-	if _, err := k.clientSet.AppsV1().Deployments(k.config.Kubernetes.Namespace).Apply(ctx, dep, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
+	if _, err := k.clientSet.AppsV1().Deployments(k.appNamespace).Apply(ctx, dep, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
 		return "", fmt.Errorf("apply deployment: %w", err)
 	}
 
@@ -644,7 +646,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 		if minReplicas < 1 {
 			minReplicas = 1
 		}
-		hpa := autoscalingv2apply.HorizontalPodAutoscaler(name, k.config.Kubernetes.Namespace).
+		hpa := autoscalingv2apply.HorizontalPodAutoscaler(name, k.appNamespace).
 			WithLabels(labels).
 			WithSpec(autoscalingv2apply.HorizontalPodAutoscalerSpec().
 				WithScaleTargetRef(autoscalingv2apply.CrossVersionObjectReference().
@@ -661,7 +663,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 							WithType(autoscalingv2.UtilizationMetricType).
 							WithAverageUtilization(k.appConfig.Kubernetes.ScalingThresholdCPU)))))
 
-		if _, err := k.clientSet.AutoscalingV2().HorizontalPodAutoscalers(k.config.Kubernetes.Namespace).Apply(
+		if _, err := k.clientSet.AutoscalingV2().HorizontalPodAutoscalers(k.appNamespace).Apply(
 			ctx, hpa, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
 			return "", fmt.Errorf("apply hpa: %w", err)
 		}
@@ -672,7 +674,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 	if k.config.Kubernetes.UseNodePort {
 		serviceType = core.ServiceTypeNodePort
 	}
-	svcApply := corev1apply.Service(name, k.config.Kubernetes.Namespace).
+	svcApply := corev1apply.Service(name, k.appNamespace).
 		WithLabels(metadata).
 		WithSpec(corev1apply.ServiceSpec().
 			WithType(serviceType).
@@ -684,7 +686,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 				WithProtocol(protocol)))
 
 	svc, err := k.clientSet.CoreV1().Services(
-		k.config.Kubernetes.Namespace).Apply(ctx, svcApply,
+		k.appNamespace).Apply(ctx, svcApply,
 		meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER})
 	if err != nil {
 		return "", fmt.Errorf("apply service: %w", err)
