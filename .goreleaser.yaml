@@ -147,7 +147,7 @@ dockers_v2:
     images:
       - ghcr.io/openrundev/openrun
     tags:
-      - "{{ .Tag }}" # e.g. v1.2.3
+      - "{{ .Version }}" # e.g. 1.2.3
       - "sha-{{ .ShortCommit }}"
       - latest
     labels:
