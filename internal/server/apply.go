@@ -254,7 +254,8 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		if err != nil {
 			return nil, nil, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
 		}
-		if !forceReload && lastRunCommitId != "" && newSha == lastRunCommitId && (commit == "" || commit == lastRunCommitId) {
+		if !forceReload && (reload != types.AppReloadOptionMatched) &&
+			lastRunCommitId != "" && newSha == lastRunCommitId && (commit == "" || commit == lastRunCommitId) {
 			// If no commit is specified, and the current version is the same as the latest commit, skip apply
 			// Only schedule sync passes in the lastRunCommitId, so this does not happen for normal apply
 			s.Debug().Msgf("Already applied commit for %s, skipping apply", applyPath)

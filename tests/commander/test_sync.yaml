@@ -17,7 +17,7 @@ tests:
     command: ../openrun sync list -f json | jq -r '.[0].id' > sync_test_id.tmp
   sync0030:
     command: sh -c 'id=$(cat sync_test_id.tmp); ../openrun sync run "$id"'
-    stdout: "0 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted"
+    stdout: "0 app(s) created, 0 app(s) updated, 2 app(s) reloaded, 6 app(s) skipped, 0 app(s) approved, 1 app(s) promoted" # proxy app is always reloaded because there is no source to check against
   sync0040:
     command: ../openrun app delete /utils/disk_usage
     exit-code: 0
