@@ -73,10 +73,11 @@ covint: ## Run integration tests with coverage
 show_tags: ## Show current release version tags
 > @echo "OpenRun   : " `git tag -l --sort=-creatordate | head -n 1`
 > @cd ../openrun-helm-charts/
+> @git pull
 > @echo "Helm Chart: " `git tag -l --sort=-creatordate | head -n 1`
 > @cd - > /dev/null
 
-release: ## Tag and push a release, requires app_version and helm_version
+release: ## Tag and push a release; args: <app_version> <helm_version>
 > @if [[ -z "$(INPUT)" || "$(INPUT)" == v* ]]; then \
 >    echo "Error: OpenRun version has to be set, without the v prefix"; \
 >    exit 1; \
