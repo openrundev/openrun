@@ -189,6 +189,7 @@ func (s *Server) loadAppCode(ctx context.Context, tx types.Transaction, appEntry
 		}
 
 		branch = cmp.Or(branch, appEntry.Metadata.VersionMetadata.GitBranch, "main")
+		gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
 		newSha, err := repoCache.GetSha(appEntry.SourceUrl, branch, gitAuth)
 		if err != nil {
 			return false, fmt.Errorf("error getting git commit sha for %s: %w", appEntry.SourceUrl, err)
