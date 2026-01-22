@@ -94,5 +94,8 @@ release: ## Tag and push a release; args: <app_version> <helm_version>
 > mv charts/openrun/Chart.yaml.bak /tmp/chart.bak2
 > git add charts/openrun/Chart.yaml
 > git commit -m "Updated Helm chart to $(INPUT2), app version to $(INPUT)"
-> git push
+> echo "************************************************** "
+> echo "   cd ../openrun-helm-charts/ && git push"
+> echo "************************************************** "
+> echo "Run above command to push the Helm chart after the OpenRun release job is done"
 > @cd - > /dev/null
