@@ -59,6 +59,12 @@ variable "eks_public_access_cidrs" {
   }
 }
 
+variable "aws_load_balancer_controller_chart_version" {
+  description = "AWS Load Balancer Controller chart version (empty for latest)."
+  type        = string
+  default     = ""
+}
+
 variable "node_instance_types" {
   description = "EC2 instance types for the EKS managed node group."
   type        = list(string)
