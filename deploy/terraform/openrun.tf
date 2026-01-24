@@ -76,11 +76,11 @@ locals {
       system = {
         defaultDomain = var.openrun_default_domain
       }
-      kubernetes = {
-        namespace = var.openrun_apps_namespace
-      }
+    kubernetes = {
+      namespace = var.openrun_namespace
+    }
       http = {
-        redirectToHttps = true
+        redirectToHttps = false
       }
       https = {
         enabled      = true
@@ -167,6 +167,7 @@ resource "helm_release" "openrun" {
   namespace  = var.openrun_namespace
 
   version = var.openrun_chart_version != "" ? var.openrun_chart_version : null
+  timeout = 1800
 
   values = [yamlencode(local.openrun_helm_values)]
 

@@ -13,8 +13,9 @@ dist/
 /internal/server/appspecs/
 /internal/server/appspecs/dummy/README
 /coverage/
-/deploy/terraform/.terraform*
+/deploy/terraform/.terraform/
 /deploy/terraform/terraform.*
 /deploy/terraform/terraform.tfstate*
 /deploy/terraform/*.plan
+/deploy/terraform/*.plan.backup
 /deploy/terraform/modules
