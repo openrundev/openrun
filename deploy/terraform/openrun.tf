@@ -53,8 +53,7 @@ locals {
       name   = var.openrun_service_account_name
     }
     service = {
-      type        = "LoadBalancer"
-      annotations = local.openrun_service_annotations
+      type = "ClusterIP"
     }
     postgres = {
       enabled = false
@@ -76,9 +75,9 @@ locals {
       system = {
         defaultDomain = var.openrun_default_domain
       }
-    kubernetes = {
-      namespace = var.openrun_namespace
-    }
+      kubernetes = {
+        namespace = var.openrun_namespace
+      }
       http = {
         redirectToHttps = false
       }
@@ -181,6 +180,42 @@ resource "helm_release" "openrun" {
   depends_on = [helm_release.lb_controller, kubernetes_service_account_v1.openrun, kubernetes_secret_v1.openrun_postgres]
 }
 
+resource "kubernetes_service_v1" "openrun_external" {
+  metadata {
+    name        = "${var.openrun_release_name}-external"
+    namespace   = var.openrun_namespace
+    annotations = local.openrun_service_annotations
+    labels = {
+      "app.kubernetes.io/name"     = var.openrun_chart_name
+      "app.kubernetes.io/instance" = var.openrun_release_name
+    }
+  }
+
+  spec {
+    type = "LoadBalancer"
+    selector = {
+      "app.kubernetes.io/name"     = var.openrun_chart_name
+      "app.kubernetes.io/instance" = var.openrun_release_name
+    }
+
+    port {
+      name        = "http"
+      port        = 80
+      target_port = "http"
+      protocol    = "TCP"
+    }
+
+    port {
+      name        = "https"
+      port        = 443
+      target_port = "https"
+      protocol    = "TCP"
+    }
+  }
+
+  depends_on = [helm_release.openrun]
+}
+
 data "kubernetes_service_v1" "openrun" {
   metadata {
     name      = var.openrun_release_name
@@ -190,9 +225,18 @@ data "kubernetes_service_v1" "openrun" {
   depends_on = [helm_release.openrun]
 }
 
+data "kubernetes_service_v1" "openrun_external" {
+  metadata {
+    name      = kubernetes_service_v1.openrun_external.metadata[0].name
+    namespace = var.openrun_namespace
+  }
+
+  depends_on = [kubernetes_service_v1.openrun_external]
+}
+
 output "openrun_load_balancer_hostname" {
   description = "Hostname of the OpenRun service load balancer."
-  value       = try(data.kubernetes_service_v1.openrun.status[0].load_balancer[0].ingress[0].hostname, "")
+  value       = try(data.kubernetes_service_v1.openrun_external.status[0].load_balancer[0].ingress[0].hostname, "")
 }
 
 output "openrun_load_balancer_ips" {
@@ -205,8 +249,8 @@ output "openrun_dns_records" {
   value = {
     root_a         = "${var.openrun_default_domain} -> ${join(", ", [for eip in aws_eip.openrun_nlb : eip.public_ip])}"
     wildcard_a     = "*.${var.openrun_default_domain} -> ${join(", ", [for eip in aws_eip.openrun_nlb : eip.public_ip])}"
-    root_cname     = "${var.openrun_default_domain} -> ${try(data.kubernetes_service_v1.openrun.status[0].load_balancer[0].ingress[0].hostname, "")}"
-    wildcard_cname = "*.${var.openrun_default_domain} -> ${try(data.kubernetes_service_v1.openrun.status[0].load_balancer[0].ingress[0].hostname, "")}"
+    root_cname     = "${var.openrun_default_domain} -> ${try(data.kubernetes_service_v1.openrun_external.status[0].load_balancer[0].ingress[0].hostname, "")}"
+    wildcard_cname = "*.${var.openrun_default_domain} -> ${try(data.kubernetes_service_v1.openrun_external.status[0].load_balancer[0].ingress[0].hostname, "")}"
   }
 }
 

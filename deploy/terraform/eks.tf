@@ -24,21 +24,40 @@ module "eks" {
     }
   }
 
+  node_security_group_additional_rules = {
+    openrun_nlb_http = {
+      description = "Allow NLB to reach OpenRun HTTP"
+      protocol    = "tcp"
+      from_port   = 80
+      to_port     = 80
+      type        = "ingress"
+      cidr_blocks = local.vpc_public_subnets
+    }
+    openrun_nlb_https = {
+      description = "Allow NLB to reach OpenRun HTTPS"
+      protocol    = "tcp"
+      from_port   = 443
+      to_port     = 443
+      type        = "ingress"
+      cidr_blocks = local.vpc_public_subnets
+    }
+  }
+
   enable_cluster_creator_admin_permissions = var.eks_enable_cluster_creator_admin_permissions
 
-  enable_irsa = true
+  enable_irsa                        = true
   create_primary_security_group_tags = false
 
   eks_managed_node_groups = {
     default = {
-      create         = true
-      name           = "${local.cluster_name}-ng"
-      instance_types = var.node_instance_types
-      min_size       = var.node_min_size
-      max_size       = var.node_max_size
-      desired_size   = var.node_desired_size
-      subnet_ids     = module.network.private_subnets
-      enable_bootstrap_user_data = true
+      create                                = true
+      name                                  = "${local.cluster_name}-ng"
+      instance_types                        = var.node_instance_types
+      min_size                              = var.node_min_size
+      max_size                              = var.node_max_size
+      desired_size                          = var.node_desired_size
+      subnet_ids                            = module.network.private_subnets
+      enable_bootstrap_user_data            = true
       attach_cluster_primary_security_group = true
       cloudinit_pre_nodeadm = [
         {
