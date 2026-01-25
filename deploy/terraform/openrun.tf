@@ -111,6 +111,9 @@ resource "kubernetes_namespace_v1" "openrun" {
   metadata {
     name = var.openrun_namespace
   }
+
+  # Ensure AWS LB controller stays until namespace cleanup is complete.
+  depends_on = [helm_release.lb_controller]
 }
 
 resource "kubernetes_namespace_v1" "openrun_apps" {
@@ -130,6 +133,9 @@ resource "kubernetes_namespace_v1" "openrun_apps" {
   lifecycle {
     ignore_changes = [metadata[0].labels, metadata[0].annotations]
   }
+
+  # Ensure AWS LB controller stays until namespace cleanup is complete.
+  depends_on = [helm_release.lb_controller]
 }
 
 resource "kubernetes_service_account_v1" "openrun" {
@@ -171,7 +177,8 @@ resource "helm_release" "openrun" {
 
   values = [yamlencode(local.openrun_helm_values)]
 
-  depends_on = [kubernetes_service_account_v1.openrun, kubernetes_secret_v1.openrun_postgres]
+  # Keep the AWS LB controller alive until this release is fully removed to avoid finalizer hangs.
+  depends_on = [helm_release.lb_controller, kubernetes_service_account_v1.openrun, kubernetes_secret_v1.openrun_postgres]
 }
 
 data "kubernetes_service_v1" "openrun" {
