@@ -58,7 +58,8 @@ module "eks" {
       desired_size                          = var.node_desired_size
       subnet_ids                            = module.network.private_subnets
       enable_bootstrap_user_data            = true
-      attach_cluster_primary_security_group = true
+      # Avoid multiple kubernetes.io/cluster/* tagged SGs on node ENIs (breaks LB controller).
+      attach_cluster_primary_security_group = false
       cloudinit_pre_nodeadm = [
         {
           content      = <<-EOT

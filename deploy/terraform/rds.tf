@@ -89,9 +89,10 @@ resource "aws_db_instance" "rds" {
 }
 
 resource "aws_secretsmanager_secret" "rds" {
-  name        = "${var.name_prefix}-postgres"
-  description = "OpenRun RDS credentials"
-  tags        = local.tags
+  name                    = "${var.name_prefix}-postgres"
+  description             = "OpenRun RDS credentials"
+  recovery_window_in_days = var.rds_secret_recovery_window_days
+  tags                    = local.tags
 }
 
 resource "aws_secretsmanager_secret_version" "rds" {

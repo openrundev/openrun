@@ -149,6 +149,12 @@ variable "rds_skip_final_snapshot" {
   default     = false
 }
 
+variable "rds_secret_recovery_window_days" {
+  description = "Recovery window in days when deleting the RDS credentials secret (0 = delete immediately, 7-30 = scheduled deletion)."
+  type        = number
+  default     = 0
+}
+
 variable "rds_force_ssl" {
   description = "Force SSL connections to Postgres via parameter group."
   type        = bool

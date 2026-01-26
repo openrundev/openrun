@@ -21,6 +21,7 @@ locals {
       "service.beta.kubernetes.io/aws-load-balancer-scheme"          = "internet-facing"
       "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
       "service.beta.kubernetes.io/aws-load-balancer-type"            = "external"
+      "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled" = "true"
       "service.beta.kubernetes.io/aws-load-balancer-subnets"         = join(",", module.network.public_subnets)
     },
     var.openrun_enable_nlb_eips ? {
@@ -180,6 +181,21 @@ resource "helm_release" "openrun" {
   depends_on = [helm_release.lb_controller, kubernetes_service_account_v1.openrun, kubernetes_secret_v1.openrun_postgres]
 }
 
+resource "null_resource" "openrun_lb_cleanup_wait" {
+  triggers = {
+    name      = "${var.openrun_release_name}-external"
+    namespace = var.openrun_namespace
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "if kubectl get svc/${self.triggers.name} -n ${self.triggers.namespace} >/dev/null 2>&1; then kubectl wait --for=delete svc/${self.triggers.name} -n ${self.triggers.namespace} --timeout=15m; fi"
+  }
+
+  # Ensure the LB controller is still present while we wait on service finalizers.
+  depends_on = [helm_release.lb_controller]
+}
+
 resource "kubernetes_service_v1" "openrun_external" {
   metadata {
     name        = "${var.openrun_release_name}-external"
@@ -213,7 +229,7 @@ resource "kubernetes_service_v1" "openrun_external" {
     }
   }
 
-  depends_on = [helm_release.openrun]
+  depends_on = [helm_release.openrun, null_resource.openrun_lb_cleanup_wait]
 }
 
 data "kubernetes_service_v1" "openrun" {
