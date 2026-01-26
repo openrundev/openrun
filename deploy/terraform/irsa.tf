@@ -20,7 +20,10 @@ data "aws_iam_policy_document" "openrun_assume_role" {
     condition {
       test     = "StringEquals"
       variable = "${local.irsa_oidc_host}:sub"
-      values   = ["system:serviceaccount:${var.openrun_namespace}:${var.openrun_service_account_name}"]
+      values = [
+        "system:serviceaccount:${var.openrun_namespace}:${var.openrun_service_account_name}",
+        "system:serviceaccount:${var.openrun_namespace}:default"
+      ]
     }
   }
 }
@@ -49,14 +52,16 @@ resource "aws_iam_policy" "openrun_ecr" {
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
           "ecr:BatchGetImage",
+          "ecr:DescribeImages",
+          "ecr:DescribeRepositories",
+          "ecr:CreateRepository",
           "ecr:PutImage",
           "ecr:InitiateLayerUpload",
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
-          "ecr:DescribeRepositories",
           "ecr:ListImages"
         ],
-        Resource = aws_ecr_repository.openrun.arn
+        Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/*"
       }
     ]
   })

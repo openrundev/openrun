@@ -246,7 +246,7 @@ func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, source
 
 	appId, _, _ := strings.Cut(string(imgName), ":")
 	kanikoBuild := KanikoBuild{
-		Namespace:     k.appNamespace,
+		Namespace:     k.config.Kubernetes.Namespace,
 		JobName:       fmt.Sprintf("%s-builder-%d", appId, time.Now().Unix()),
 		Image:         k.config.Builder.KanikoImage,
 		SourceDir:     sourceUrl,

@@ -9,6 +9,15 @@ resource "aws_ecr_repository" "openrun" {
   tags = local.tags
 }
 
+resource "aws_ecr_repository_creation_template" "apps" {
+  prefix      = "openrun-apps"
+  description = "Auto-create repos on push for openrun-apps/*"
+
+  applied_for = ["CREATE_ON_PUSH"]
+
+  image_tag_mutability = "MUTABLE"
+}
+
 resource "aws_ecr_lifecycle_policy" "openrun" {
   repository = aws_ecr_repository.openrun.name
 

@@ -95,7 +95,7 @@ locals {
         url       = local.openrun_registry_url
         project   = var.ecr_repo_name
         insecure  = false
-        type      = "aws"
+        type      = "ecr"
         awsRegion = var.aws_region
       }
       metadata = {
@@ -136,6 +136,22 @@ resource "kubernetes_namespace_v1" "openrun_apps" {
 
   # Ensure AWS LB controller stays until namespace cleanup is complete.
   depends_on = [helm_release.lb_controller]
+}
+
+resource "kubernetes_manifest" "openrun_default_sa" {
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ServiceAccount"
+    metadata = {
+      name      = "default"
+      namespace = var.openrun_namespace
+      annotations = {
+        "eks.amazonaws.com/role-arn" = aws_iam_role.openrun_irsa.arn
+      }
+    }
+  }
+
+  depends_on = [kubernetes_namespace_v1.openrun]
 }
 
 resource "kubernetes_service_account_v1" "openrun" {
