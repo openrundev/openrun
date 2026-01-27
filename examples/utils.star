@@ -11,7 +11,7 @@ app("openrun.:", "-", spec="proxy", params={"url": "https://openrun.dev"}) # def
 app("/misc/event_planner", "github.com/simonw/tools", spec="static_single", params={"index": "event-planner.html"})
 
 # Install container based apps (python and go)
-limits = {"cpus": "2", "memory": "512m"} # Set limits (optional)
+limits = {"cpus": "1", "memory": "512m"} # Set limits (optional)
 app("/misc/streamlit_example", "github.com/streamlit/streamlit-example", git_branch="master",
     spec="python-streamlit", container_opts=limits)
 app("fasthtml.:", "github.com/AnswerDotAI/fasthtml/examples",
