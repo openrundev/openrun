@@ -47,6 +47,32 @@ module "network" {
   tags = local.tags
 }
 
+resource "null_resource" "vpc_sg_cleanup" {
+  triggers = {
+    vpc_id = module.network.vpc_id
+    region = var.aws_region
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -euo pipefail
+      vpc_id="${self.triggers.vpc_id}"
+      region="${self.triggers.region}"
+      sgs=$(aws ec2 describe-security-groups --region "$region" --filters Name=vpc-id,Values="$vpc_id" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text || true)
+      if [ -n "$sgs" ]; then
+        for sg in $sgs; do
+          for i in 1 2 3 4 5; do
+            aws ec2 delete-security-group --region "$region" --group-id "$sg" && break || sleep 5
+          done
+        done
+      fi
+    EOT
+  }
+
+  depends_on = [null_resource.openrun_lb_cleanup_wait, module.network]
+}
+
 resource "aws_security_group" "vpc_endpoints" {
   count = var.enable_vpc_endpoints ? 1 : 0
 

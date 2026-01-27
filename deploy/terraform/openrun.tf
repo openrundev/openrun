@@ -112,6 +112,10 @@ resource "kubernetes_namespace_v1" "openrun" {
     name = var.openrun_namespace
   }
 
+  timeouts {
+    delete = "30m"
+  }
+
   # Ensure AWS LB controller stays until namespace cleanup is complete.
   depends_on = [helm_release.lb_controller]
 }
@@ -130,6 +134,10 @@ resource "kubernetes_namespace_v1" "openrun_apps" {
     }
   }
 
+  timeouts {
+    delete = "30m"
+  }
+
   lifecycle {
     ignore_changes = [metadata[0].labels, metadata[0].annotations]
   }
@@ -138,17 +146,23 @@ resource "kubernetes_namespace_v1" "openrun_apps" {
   depends_on = [helm_release.lb_controller]
 }
 
-resource "kubernetes_manifest" "openrun_default_sa" {
-  manifest = {
-    apiVersion = "v1"
-    kind       = "ServiceAccount"
-    metadata = {
-      name      = "default"
-      namespace = var.openrun_namespace
-      annotations = {
-        "eks.amazonaws.com/role-arn" = aws_iam_role.openrun_irsa.arn
-      }
-    }
+resource "null_resource" "openrun_default_sa_annotation" {
+  triggers = {
+    namespace = var.openrun_namespace
+    role_arn  = aws_iam_role.openrun_irsa.arn
+    cluster   = module.eks.cluster_name
+    region    = var.aws_region
+    profile   = local.aws_cli_profile_arg
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -euo pipefail
+      KCFG="$(mktemp)"
+      trap 'rm -f "$KCFG"' EXIT
+      aws eks update-kubeconfig --region ${self.triggers.region} --name ${self.triggers.cluster} ${self.triggers.profile} --kubeconfig "$KCFG" >/dev/null
+      kubectl --kubeconfig "$KCFG" annotate sa default -n ${self.triggers.namespace} eks.amazonaws.com/role-arn=${self.triggers.role_arn} --overwrite
+    EOT
   }
 
   depends_on = [kubernetes_namespace_v1.openrun]
@@ -164,6 +178,42 @@ resource "kubernetes_service_account_v1" "openrun" {
   }
 
   depends_on = [kubernetes_namespace_v1.openrun, kubernetes_namespace_v1.openrun_apps]
+}
+
+resource "kubernetes_role_v1" "openrun_apps_scale" {
+  metadata {
+    name      = "${var.openrun_release_name}-apps-scale"
+    namespace = var.openrun_apps_namespace
+  }
+
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments/scale"]
+    verbs      = ["get", "patch", "update"]
+  }
+
+  depends_on = [kubernetes_namespace_v1.openrun_apps]
+}
+
+resource "kubernetes_role_binding_v1" "openrun_apps_scale" {
+  metadata {
+    name      = "${var.openrun_release_name}-apps-scale"
+    namespace = var.openrun_apps_namespace
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.openrun_apps_scale.metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = var.openrun_service_account_name
+    namespace = var.openrun_namespace
+  }
+
+  depends_on = [kubernetes_service_account_v1.openrun, kubernetes_role_v1.openrun_apps_scale]
 }
 
 resource "kubernetes_secret_v1" "openrun_postgres" {
@@ -201,11 +251,34 @@ resource "null_resource" "openrun_lb_cleanup_wait" {
   triggers = {
     name      = "${var.openrun_release_name}-external"
     namespace = var.openrun_namespace
+    eip_ids   = join(",", local.openrun_eip_ids)
+    region    = var.aws_region
   }
 
   provisioner "local-exec" {
     when    = destroy
-    command = "if kubectl get svc/${self.triggers.name} -n ${self.triggers.namespace} >/dev/null 2>&1; then kubectl wait --for=delete svc/${self.triggers.name} -n ${self.triggers.namespace} --timeout=15m; fi"
+    command = <<-EOT
+      set -euo pipefail
+      name="${lookup(self.triggers, "name", "")}"
+      namespace="${lookup(self.triggers, "namespace", "")}"
+      eip_ids="${lookup(self.triggers, "eip_ids", "")}"
+      region="${lookup(self.triggers, "region", "")}"
+      if [ -n "$name" ] && [ -n "$namespace" ] && kubectl get svc/$name -n $namespace >/dev/null 2>&1; then
+        kubectl wait --for=delete svc/$name -n $namespace --timeout=15m
+      fi
+      if [ -n "$eip_ids" ] && [ -n "$region" ]; then
+        end=$((SECONDS+900))
+        while [ $SECONDS -lt $end ]; do
+          assoc=$(aws ec2 describe-addresses --region $region --allocation-ids $eip_ids --query 'Addresses[].AssociationId' --output text | tr -s ' ' '\n' | grep -v -E '^(None)?$' || true)
+          if [ -z "$assoc" ]; then
+            exit 0
+          fi
+          sleep 10
+        done
+        echo "Timed out waiting for NLB EIPs to disassociate: $eip_ids" >&2
+        exit 1
+      fi
+    EOT
   }
 
   # Ensure the LB controller is still present while we wait on service finalizers.

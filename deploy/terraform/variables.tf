@@ -3,6 +3,12 @@ variable "aws_region" {
   type        = string
 }
 
+variable "aws_profile" {
+  description = "Optional AWS CLI profile to use for kubernetes/helm auth (aws eks get-token). Leave empty to use default credentials."
+  type        = string
+  default     = ""
+}
+
 variable "name_prefix" {
   description = "Prefix used for naming AWS resources."
   type        = string

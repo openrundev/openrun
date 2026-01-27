@@ -355,7 +355,11 @@ func (k *KubernetesCM) RunContainer(ctx context.Context, appEntry *types.AppEntr
 	imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
 	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
 	if strings.HasPrefix(string(imageName), IMAGE_NAME_PREFIX) {
-		imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
+		if k.config.Registry.Project != "" {
+			imageName = ImageName(k.config.Registry.URL + "/" + k.config.Registry.Project + "/" + string(imageName))
+		} else {
+			imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
+		}
 	}
 	kubernetesOptions, err := parseKubernetesOptions(containerOptions)
 	if err != nil {

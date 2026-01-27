@@ -6,7 +6,7 @@ data "aws_rds_engine_version" "postgres" {
 resource "random_password" "rds" {
   length           = 24
   special          = true
-  override_special = "_+=-!@#%^*(){}[]<>:?/|"
+  override_special = "_+=-!#%^*(){}[]<>:?"
 }
 
 resource "random_id" "rds_snapshot" {

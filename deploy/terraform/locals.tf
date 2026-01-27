@@ -6,4 +6,7 @@ locals {
     },
     var.tags
   )
+
+  aws_cli_profile_args = var.aws_profile != "" ? ["--profile", var.aws_profile] : []
+  aws_cli_profile_arg  = var.aws_profile != "" ? "--profile ${var.aws_profile}" : ""
 }
