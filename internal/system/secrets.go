@@ -19,6 +19,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/hashicorp/vault/api"
 	"github.com/openrundev/openrun/internal/types"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // SecretManager provides access to the secrets for the system
@@ -30,7 +34,7 @@ type SecretManager struct {
 	defaultProvider string
 }
 
-func NewSecretManager(ctx context.Context, secretConfig map[string]types.SecretConfig, defaultProvider string) (*SecretManager, error) {
+func NewSecretManager(ctx context.Context, secretConfig map[string]types.SecretConfig, defaultProvider string, serverConfig *types.ServerConfig) (*SecretManager, error) {
 	providers := make(map[string]secretProvider)
 	for name, conf := range secretConfig {
 		var provider secretProvider
@@ -44,6 +48,8 @@ func NewSecretManager(ctx context.Context, secretConfig map[string]types.SecretC
 			provider = &envSecretProvider{}
 		} else if name == "prop" || strings.HasPrefix(name, "prop_") {
 			provider = &propertiesSecretProvider{}
+		} else if name == "kubernetes" || strings.HasPrefix(name, "kubernetes_") {
+			provider = &kubernetesSecretProvider{namespace: serverConfig.Kubernetes.Namespace}
 		} else {
 			return nil, fmt.Errorf("unknown secret provider %s", name)
 		}
@@ -483,3 +489,95 @@ func (e *envSecretProvider) GetJoinDelimiter() string {
 }
 
 var _ secretProvider = &envSecretProvider{}
+
+// kubernetesSecretProvider is a secret provider that reads secrets from Kubernetes secrets
+type kubernetesSecretProvider struct {
+	clientSet *kubernetes.Clientset
+	namespace string
+}
+
+func (k *kubernetesSecretProvider) Configure(ctx context.Context, conf map[string]any) error {
+	// Override namespace from config if explicitly set
+	if ns, ok := conf["namespace"]; ok {
+		nsStr, ok := ns.(string)
+		if !ok {
+			return fmt.Errorf("namespace must be a string")
+		}
+		k.namespace = nsStr
+	}
+
+	// Try to load kubeconfig from config, otherwise use default loading
+	var cfg *rest.Config
+	var err error
+
+	if kubeconfigPath, ok := conf["kubeconfig"]; ok {
+		kubeconfigStr, ok := kubeconfigPath.(string)
+		if !ok {
+			return fmt.Errorf("kubeconfig must be a string")
+		}
+		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfigStr)
+		if err != nil {
+			return fmt.Errorf("error loading kubeconfig from %s: %w", kubeconfigStr, err)
+		}
+	} else {
+		// Try in-cluster config first, then fall back to default kubeconfig
+		cfg, err = rest.InClusterConfig()
+		if err != nil {
+			cfg, err = clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+			if err != nil {
+				return fmt.Errorf("error loading kubernetes config: %w", err)
+			}
+		}
+	}
+
+	clientSet, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("error creating kubernetes clientset: %w", err)
+	}
+
+	k.clientSet = clientSet
+	return nil
+}
+
+// GetSecret retrieves a secret from Kubernetes. The secretName should be in the format
+// "secret-name/key" where secret-name is the Kubernetes secret name and key is the
+// data key within the secret. If no key is specified, it returns the first (and only)
+// key in the secret data.
+func (k *kubernetesSecretProvider) GetSecret(ctx context.Context, secretName string) (string, error) {
+	parts := strings.SplitN(secretName, "/", 2)
+	k8sSecretName := parts[0]
+	var dataKey string
+	if len(parts) > 1 {
+		dataKey = parts[1]
+	}
+
+	secret, err := k.clientSet.CoreV1().Secrets(k.namespace).Get(ctx, k8sSecretName, meta.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("error getting kubernetes secret %s: %w", k8sSecretName, err)
+	}
+
+	if dataKey != "" {
+		value, ok := secret.Data[dataKey]
+		if !ok {
+			return "", fmt.Errorf("key %s not found in kubernetes secret %s", dataKey, k8sSecretName)
+		}
+		return string(value), nil
+	}
+
+	// If no key specified, return the single key's value (error if multiple keys)
+	if len(secret.Data) != 1 {
+		return "", fmt.Errorf("kubernetes secret %s has %d keys, please specify which key to use", k8sSecretName, len(secret.Data))
+	}
+
+	for _, v := range secret.Data {
+		return string(v), nil
+	}
+
+	return "", fmt.Errorf("kubernetes secret %s has no data", k8sSecretName)
+}
+
+func (k *kubernetesSecretProvider) GetJoinDelimiter() string {
+	return "/"
+}
+
+var _ secretProvider = &kubernetesSecretProvider{}

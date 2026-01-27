@@ -107,7 +107,7 @@ func CreateTestAppInt(logger *types.Logger, path string, fileData map[string]str
 		Permissions: permissions,
 		ParamValues: params,
 	}
-	secretManager, err := system.NewSecretManager(context.Background(), map[string]types.SecretConfig{"env": types.SecretConfig{}}, "env")
+	secretManager, err := system.NewSecretManager(context.Background(), map[string]types.SecretConfig{"env": types.SecretConfig{}}, "env", &types.ServerConfig{})
 	if err != nil {
 		return nil, nil, err
 	}
