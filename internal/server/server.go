@@ -639,7 +639,9 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 		}
 	}
 
-	s.Info().Msgf("mkcert path %s", mkcertPath)
+	if mkcertPath != "" {
+		s.Info().Msgf("mkcert path %s", mkcertPath)
+	}
 	var mkcertsLock sync.Mutex
 	if err := os.MkdirAll(os.ExpandEnv(s.config.Https.CertLocation), 0700); err != nil {
 		return nil, fmt.Errorf("error creating cert directory %s : %s",

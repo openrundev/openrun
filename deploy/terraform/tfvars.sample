@@ -1,0 +1,68 @@
+# =============================================================================
+# OpenRun Terraform Configuration Sample
+# =============================================================================
+# Copy this file to terraform.tfvars and customize the values for your deployment.
+# See variables.tf for all available variables and their defaults.
+# Use: terraform apply --var-file terraform.tfvars
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# AWS Configuration
+# -----------------------------------------------------------------------------
+# Prefix used for naming AWS resources (e.g., VPC, EKS cluster, RDS instance)
+# Do not use any special characters, including -, _, etc.
+name_prefix = "openrun"
+
+# AWS CLI profile to use for kubernetes/helm auth. Leave empty to use default credentials.
+aws_profile = "openrun"
+
+# AWS region to deploy into
+aws_region = "us-west-1"
+
+# -----------------------------------------------------------------------------
+# OpenRun Helm Chart Configuration
+# -----------------------------------------------------------------------------
+# Helm chart version for OpenRun. Leave empty for the latest.
+openrun_chart_version = ""
+
+# Default domain for OpenRun apps (e.g., apps.example.com). Required.
+openrun_default_domain = ""
+
+# Email for Let's Encrypt certificate registration. Required for Let's Encrypt certificate issuance.
+openrun_lets_encrypt_email = "
+
+# Use Let's Encrypt staging environment (set to true for testing to avoid rate limits)
+openrun_lets_encrypt_use_staging = false
+
+# -----------------------------------------------------------------------------
+# EKS Cluster Configuration
+# -----------------------------------------------------------------------------
+# CIDR blocks allowed to access the EKS public API endpoint.
+# Must include at least one CIDR so Terraform and Helm can reach the cluster.
+# Set to the public IP of the machine(s) running Terraform.
+# Example: ["205.0.113.20/32"]
+eks_public_access_cidrs = []
+
+# -----------------------------------------------------------------------------
+# EKS Node Group Configuration
+# -----------------------------------------------------------------------------
+# Minimum node count for the EKS managed node group
+node_min_size = 4
+
+# Desired node count for the EKS managed node group
+node_desired_size = 4
+
+# Maximum node count for the EKS managed node group (for autoscaling)
+node_max_size = 8
+
+# -----------------------------------------------------------------------------
+# RDS PostgreSQL Configuration
+# -----------------------------------------------------------------------------
+# Postgres engine version for RDS (e.g., 17.6). Leave empty to use AWS default.
+rds_engine_version = ""
+
+# Enable deletion protection on RDS (set to true for production)
+rds_deletion_protection = false
+
+# Skip final snapshot when destroying RDS (set to false for production)
+rds_skip_final_snapshot = true
