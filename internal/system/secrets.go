@@ -77,19 +77,19 @@ func NewSecretManager(ctx context.Context, secretConfig map[string]types.SecretC
 // templateSecretFunc is a template function that retrieves a secret from the default secret manager.
 // Since the template function does not support errors, it panics if there is an error
 func (s *SecretManager) templateSecretFunc(secretKeys ...string) string {
-	return s.appTemplateSecretFunc(nil, s.defaultProvider, "", secretKeys...)
+	return s.appTemplateSecretFunc(false, nil, s.defaultProvider, "", secretKeys...)
 }
 
 // templateSecretFromFunc is a template function that retrieves a secret from the secret manager.
 // Since the template function does not support errors, it panics if there is an error
 func (s *SecretManager) templateSecretFromFunc(providerName string, secretKeys ...string) string {
-	return s.appTemplateSecretFunc(nil, s.defaultProvider, providerName, secretKeys...)
+	return s.appTemplateSecretFunc(false, nil, s.defaultProvider, providerName, secretKeys...)
 }
 
 // appTemplateSecretFunc is a template function that retrieves a secret from the secret manager.
 // Since the template function does not support errors, it panics if there is an error. The appPerms
 // are checked to see if the secret can be accessed by the plugin API call
-func (s *SecretManager) appTemplateSecretFunc(appPerms [][]string, defaultProvider, providerName string, secretKeys ...string) string {
+func (s *SecretManager) appTemplateSecretFunc(checkAppPerms bool, appPerms [][]string, defaultProvider, providerName string, secretKeys ...string) string {
 	if providerName == "" || strings.ToLower(providerName) == "default" {
 		// Use the system default provider
 		providerName = cmp.Or(defaultProvider, s.defaultProvider)
@@ -100,37 +100,39 @@ func (s *SecretManager) appTemplateSecretFunc(appPerms [][]string, defaultProvid
 		panic(fmt.Errorf("unknown secret provider %s", providerName))
 	}
 
-	if len(appPerms) == 0 {
-		panic("Plugin does not have access to any secrets, update app permissions")
-	}
+	if checkAppPerms {
+		if len(appPerms) == 0 {
+			panic("Plugin does not have access to any secrets, update app permissions")
+		}
 
-	permMatched := false
-	for _, appPerm := range appPerms {
-		matched := true
-		for i, entry := range secretKeys {
-			if i >= len(appPerm) {
-				continue
+		permMatched := false
+		for _, appPerm := range appPerms {
+			matched := true
+			for i, entry := range secretKeys {
+				if i >= len(appPerm) {
+					continue
+				}
+				if appPerm[i] != entry {
+					regexMatch, err := types.RegexMatch(appPerm[i], entry)
+					if err != nil {
+						panic(fmt.Errorf("error matching secret value %s: %w", entry, err))
+					}
+					if !regexMatch {
+						matched = false
+						break
+					}
+				}
 			}
-			if appPerm[i] != entry {
-				regexMatch, err := types.RegexMatch(appPerm[i], entry)
-				if err != nil {
-					panic(fmt.Errorf("error matching secret value %s: %w", entry, err))
-				}
-				if !regexMatch {
-					matched = false
-					break
-				}
+
+			if matched {
+				permMatched = true
+				break
 			}
 		}
 
-		if matched {
-			permMatched = true
-			break
+		if !permMatched {
+			panic(fmt.Errorf("plugin does not have access to secret %s", strings.Join(secretKeys, provider.GetJoinDelimiter())))
 		}
-	}
-
-	if !permMatched {
-		panic(fmt.Errorf("plugin does not have access to secret %s", strings.Join(secretKeys, provider.GetJoinDelimiter())))
 	}
 
 	secretKey := strings.Join(secretKeys, provider.GetJoinDelimiter())
@@ -193,11 +195,11 @@ func (s *SecretManager) AppEvalTemplate(appSecrets [][]string, defaultProvider, 
 	}
 
 	secretFunc := func(secretKeys ...string) string {
-		return s.appTemplateSecretFunc(appSecrets, defaultProvider, "", secretKeys...)
+		return s.appTemplateSecretFunc(true, appSecrets, defaultProvider, "", secretKeys...)
 	}
 
 	secretFromFunc := func(providerName string, secretKeys ...string) string {
-		return s.appTemplateSecretFunc(appSecrets, defaultProvider, providerName, secretKeys...)
+		return s.appTemplateSecretFunc(true, appSecrets, defaultProvider, providerName, secretKeys...)
 	}
 
 	funcMap["secret"] = secretFunc

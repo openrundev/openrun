@@ -33,8 +33,8 @@ builds:
       - -trimpath
     ldflags:
       - -w
-      - -X types.gitCommit={{.ShortCommit}}
-      - -X types.gitVersion={{.Version}}
+      - -X github.com/openrundev/openrun/internal/types.gitCommit={{.ShortCommit}}
+      - -X github.com/openrundev/openrun/internal/types.gitVersion={{.Version}}
     env:
       - GO111MODULE=on
       - CGO_ENABLED=0
