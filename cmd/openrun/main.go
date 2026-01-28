@@ -18,12 +18,6 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-// Added by goreleaser as build information
-var (
-	gitCommit  string // gitCommit is the git commit that was compiled
-	gitVersion string // gitVersion is the build tag
-)
-
 const configFileFlagName = "config-file"
 
 func getAllCommands(clientConfig *types.ClientConfig, serverConfig *types.ServerConfig) ([]*cli.Command, error) {

@@ -18,6 +18,20 @@ import (
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 )
 
+// Added by goreleaser as build information
+var (
+	gitCommit  string // gitCommit is the git commit that was compiled
+	gitVersion string // gitVersion is the build tag
+)
+
+func GetVersion() string {
+	return cmp.Or(gitVersion, "dev")
+}
+
+func GetCommit() string {
+	return cmp.Or(gitCommit, "dev_build")
+}
+
 const (
 	OPENRUN_HOME            = "OPENRUN_HOME"
 	ID_PREFIX_APP_PROD      = "app_prd_"

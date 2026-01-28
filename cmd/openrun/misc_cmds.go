@@ -104,9 +104,5 @@ func readPassword() (string, error) {
 }
 
 func printVersion(cCtx *cli.Context) {
-	version := gitVersion
-	if gitVersion == "" {
-		version = "dev"
-	}
-	fmt.Printf("OpenRun version %s build %s\n", version, gitCommit)
+	fmt.Printf("OpenRun version %s build %s\n", types.GetVersion(), types.GetCommit())
 }

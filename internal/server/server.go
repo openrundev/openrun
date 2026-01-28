@@ -154,33 +154,36 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}
 
 	l := types.NewLogger(&config.Log)
+	l.Info().Str("version", types.GetVersion()).Str("commit", types.GetCommit()).Msg("Initializing server")
+
+	// Setup secrets manager
+	secretsManager, err := system.NewSecretManager(context.Background(), config.Secret, config.AppConfig.Security.DefaultSecretsProvider, config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update secrets in the config
+	err = updateConfigSecrets(config, secretsManager.EvalTemplate)
+	if err != nil {
+		return nil, err
+	}
+
 	db, err := metadata.NewMetadata(l, config)
 	if err != nil {
 		return nil, err
 	}
 
 	server := &Server{
-		Logger: l,
-		config: config,
-		db:     db,
+		Logger:         l,
+		config:         config,
+		db:             db,
+		secretsManager: secretsManager,
 	}
 	db.AppNotifyFunc = server.appNotifyHandler
 	db.ConfigNotifyFunc = server.configNotifyHandler
 	server.apps = NewAppStore(l, server)
 	server.authHandler = NewAdminBasicAuth(l, config)
 	server.notifyClose = make(chan types.AppPathDomain)
-
-	// Setup secrets manager
-	server.secretsManager, err = system.NewSecretManager(context.Background(), config.Secret, config.AppConfig.Security.DefaultSecretsProvider, config)
-	if err != nil {
-		return nil, err
-	}
-
-	// Update secrets in the config
-	err = updateConfigSecrets(server.config, server.secretsManager.EvalTemplate)
-	if err != nil {
-		return nil, err
-	}
 
 	csrfMiddleware := http.NewCrossOriginProtection()
 	csrfMiddleware.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
