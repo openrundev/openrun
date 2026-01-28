@@ -382,6 +382,16 @@ func (s *Server) configNotifyHandler(updatePayload types.ConfigUpdatePayload) {
 // updateConfigSecrets updates the secrets in the server config using the evalSecret function
 func updateConfigSecrets(config *types.ServerConfig, evalSecret func(string) (string, error)) error {
 	var err error
+	config.Metadata.DBConnection, err = evalSecret(config.Metadata.DBConnection)
+	if err != nil {
+		return err
+	}
+	config.Metadata.AuditDBConnection, err = evalSecret(config.Metadata.AuditDBConnection)
+	if err != nil {
+		return err
+	}
+	// TODO : eval store and fs db connections secrets
+
 	for name, auth := range config.Auth {
 		if auth.Key, err = evalSecret(auth.Key); err != nil {
 			return err
