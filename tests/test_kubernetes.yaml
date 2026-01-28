@@ -8,7 +8,9 @@ tests:
     command: rm -rf ./flaskapp && mkdir flaskapp && cp flask.py flaskapp/app.py
   kubernetes030: # setup flask prod app
     command: ../openrun app create --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpus=0.5 --copt memory=0.5g --approve ./flaskapp /kube_flaskprod
-  kubernetes034: # check curl
+  kubernetes031:
+    command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
+  kubernetes032: # check curl
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
     stdout: hello
   kubernetes050: # update app code
