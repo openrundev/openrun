@@ -657,9 +657,7 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 		certmagic.DefaultACME.Agreed = true
 		certmagic.DefaultACME.Email = s.config.Https.ServiceEmail
 		certmagic.DefaultACME.DisableHTTPChallenge = true
-		// Customize the storage directory
-		customStorageDir := os.ExpandEnv(s.config.Https.StorageLocation)
-		certmagic.Default.Storage = &certmagic.FileStorage{Path: customStorageDir}
+		certmagic.Default.Storage = s.db.GetCertStorage() // Use the database backed storage
 
 		magicConfig := certmagic.NewDefault()
 		magicConfig.OnDemand = &certmagic.OnDemandConfig{

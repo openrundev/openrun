@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/caddyserver/certmagic"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -21,11 +22,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 8
+const CURRENT_DB_VERSION = 9
 
 // Metadata is the metadata persistence layer
 type Metadata struct {
 	*types.Logger
+	certStorage      *CertStorage
 	config           *types.ServerConfig
 	db               *sql.DB
 	dbType           system.DBType
@@ -42,12 +44,18 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 	if err != nil {
 		return nil, fmt.Errorf("error initializing db: %w", err)
 	}
+
 	m := &Metadata{
 		Logger: logger,
 		config: config,
 		db:     db,
 		dbType: dbType,
 	}
+	certStorage, err := NewCertStorage(context.Background(), logger, m)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing cert storage: %w", err)
+	}
+	m.certStorage = certStorage
 
 	err = m.VersionUpgrade(config)
 	if err != nil {
@@ -113,6 +121,11 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 	}
 
 	return m, nil
+}
+
+// GetCertStorage returns the cert storage implementation which persists the cert info to the database.
+func (m *Metadata) GetCertStorage() certmagic.Storage {
+	return m.certStorage
 }
 
 // NotifyAppUpdate sends a notification through the postgres listener that an app has been updated
@@ -278,6 +291,16 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=8, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 9 {
+		m.Info().Msg("Upgrading to version 9")
+		if err := m.certStorage.createTables(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `update version set version=9, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}
