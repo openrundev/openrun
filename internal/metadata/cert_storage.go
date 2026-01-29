@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"time"
 
 	"github.com/caddyserver/certmagic"
@@ -110,7 +111,7 @@ func (c *CertStorage) Load(ctx context.Context, id string) ([]byte, error) {
 	var value []byte
 	err := c.metadata.db.QueryRowContext(ctx, system.RebindQuery(c.metadata.dbType, `select value from cert_data where id = ?`), id).Scan(&value)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("id %q not found: %w", id, err)
+		return nil, fs.ErrNotExist // certmagic expects fs.ErrNotExist for missing keys
 	}
 	return value, err
 }

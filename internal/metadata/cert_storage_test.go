@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"database/sql"
+	"io/fs"
 	"testing"
 	"time"
 
@@ -64,9 +65,11 @@ func TestCertStorage_StoreAndLoad(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsString(t, "data", "cert-data-1", string(data))
 
-	// Load non-existent
+	// Load non-existent returns fs.ErrNotExist (required by certmagic)
 	_, err = cs.Load(ctx, "cert/nonexistent")
-	testutil.AssertErrorContains(t, err, "not found")
+	if err != fs.ErrNotExist {
+		t.Errorf("expected fs.ErrNotExist, got: %v", err)
+	}
 }
 
 func TestCertStorage_StoreUpdate(t *testing.T) {
@@ -100,7 +103,9 @@ func TestCertStorage_Delete(t *testing.T) {
 
 	// Verify deleted
 	_, err = cs.Load(ctx, "cert/test1")
-	testutil.AssertErrorContains(t, err, "not found")
+	if err != fs.ErrNotExist {
+		t.Errorf("expected fs.ErrNotExist, got: %v", err)
+	}
 
 	// Delete non-existent (should not error)
 	err = cs.Delete(ctx, "cert/nonexistent")

@@ -23,7 +23,7 @@ endif
 .RECIPEPREFIX = >
 TAG := 
 
-.PHONY: help test unit int covtest covunit covint release int_single lint verify build-linux image show_tags
+.PHONY: help test unit int covtest covunit covint release int_single lint verify build-linux image tags
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -70,7 +70,7 @@ covint: ## Run integration tests with coverage
 > go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/int -o $(OPENRUN_HOME)/coverage/profile
 > go tool cover -func coverage/profile
 
-show_tags: ## Show current release version tags
+tags: ## Show current release version tags
 > @echo "OpenRun   : " `git tag -l --sort=-creatordate | head -n 1`
 > @cd ../openrun-helm-charts/
 > @git pull > /dev/null
