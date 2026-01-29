@@ -20,6 +20,8 @@ tests:
     stdout: "hello"
   kubernetes080: # do reload
     command: ../openrun app reload /kube_flaskprod
+  kubernetes081:
+    command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod_cl_stage
   kubernetes090: # stage is updated
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod_cl_stage
     stdout: "updated"
