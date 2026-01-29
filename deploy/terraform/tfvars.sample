@@ -13,7 +13,7 @@
 # Do not use any special characters, including -, _, etc.
 name_prefix = "openrun"
 
-# AWS CLI profile to use for kubernetes/helm auth. Leave empty to use default credentials.
+# AWS CLI profile to use for AWS provider + kubernetes/helm auth. Leave empty to use default credentials.
 aws_profile = "openrun"
 
 # AWS region to deploy into

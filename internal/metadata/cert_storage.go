@@ -38,7 +38,8 @@ var _ certmagic.Storage = (*CertStorage)(nil)
 // createTables creates the tables for the certificates.
 func (s *CertStorage) createTables(ctx context.Context, tx types.Transaction) error {
 	var err error
-	_, err = tx.ExecContext(ctx, "create table if not exists cert_data (id text, value blob, update_time "+system.MapDataType(s.metadata.dbType, "datetime")+", PRIMARY KEY(id))")
+	_, err = tx.ExecContext(ctx, "create table if not exists cert_data (id text, value "+system.MapDataType(s.metadata.dbType, "blob")+
+		", update_time "+system.MapDataType(s.metadata.dbType, "datetime")+", PRIMARY KEY(id))")
 	if err != nil {
 		return err
 	}
