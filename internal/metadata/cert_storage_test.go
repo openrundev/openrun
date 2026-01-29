@@ -48,7 +48,7 @@ func setupTestCertStorage(t *testing.T) (*CertStorage, func()) {
 		t.Fatalf("failed to commit: %v", err)
 	}
 
-	return cs, func() { db.Close() }
+	return cs, func() { db.Close() } //nolint:errcheck
 }
 
 func TestCertStorage_StoreAndLoad(t *testing.T) {
@@ -97,7 +97,7 @@ func TestCertStorage_Delete(t *testing.T) {
 	ctx := context.Background()
 
 	// Store and delete
-	cs.Store(ctx, "cert/test1", []byte("data"))
+	cs.Store(ctx, "cert/test1", []byte("data")) //nolint:errcheck
 	err := cs.Delete(ctx, "cert/test1")
 	testutil.AssertNoError(t, err)
 
@@ -121,7 +121,7 @@ func TestCertStorage_Exists(t *testing.T) {
 	testutil.AssertEqualsBool(t, "exists before", false, cs.Exists(ctx, "cert/test1"))
 
 	// Store
-	cs.Store(ctx, "cert/test1", []byte("data"))
+	cs.Store(ctx, "cert/test1", []byte("data")) //nolint:errcheck
 
 	// Exists
 	testutil.AssertEqualsBool(t, "exists after", true, cs.Exists(ctx, "cert/test1"))
@@ -133,10 +133,10 @@ func TestCertStorage_List(t *testing.T) {
 	ctx := context.Background()
 
 	// Store multiple
-	cs.Store(ctx, "certs/domain1/cert", []byte("d1"))
-	cs.Store(ctx, "certs/domain1/key", []byte("k1"))
-	cs.Store(ctx, "certs/domain2/cert", []byte("d2"))
-	cs.Store(ctx, "other/item", []byte("other"))
+	cs.Store(ctx, "certs/domain1/cert", []byte("d1")) //nolint:errcheck
+	cs.Store(ctx, "certs/domain1/key", []byte("k1"))  //nolint:errcheck
+	cs.Store(ctx, "certs/domain2/cert", []byte("d2")) //nolint:errcheck
+	cs.Store(ctx, "other/item", []byte("other"))      //nolint:errcheck
 
 	// List with prefix
 	ids, err := cs.List(ctx, "certs/domain1", false)
@@ -159,7 +159,7 @@ func TestCertStorage_Stat(t *testing.T) {
 	ctx := context.Background()
 
 	before := time.Now().Add(-time.Second)
-	cs.Store(ctx, "cert/test1", []byte("test-data"))
+	cs.Store(ctx, "cert/test1", []byte("test-data")) //nolint:errcheck
 	after := time.Now().Add(time.Second)
 
 	info, err := cs.Stat(ctx, "cert/test1")

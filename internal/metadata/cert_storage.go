@@ -145,7 +145,7 @@ func (c *CertStorage) List(ctx context.Context, prefix string, recursive bool) (
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	var ids []string
 	for rows.Next() {
 		var id string
