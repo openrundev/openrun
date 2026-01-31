@@ -18,4 +18,3 @@ dist/
 /deploy/terraform/terraform.tfstate*
 /deploy/terraform/*.plan
 /deploy/terraform/*.plan.backup
-/deploy/terraform/modules

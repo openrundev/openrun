@@ -18,11 +18,11 @@ locals {
 
   openrun_service_annotations = merge(
     {
-      "service.beta.kubernetes.io/aws-load-balancer-scheme"          = "internet-facing"
-      "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
-      "service.beta.kubernetes.io/aws-load-balancer-type"            = "external"
+      "service.beta.kubernetes.io/aws-load-balancer-scheme"                            = "internet-facing"
+      "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type"                   = "ip"
+      "service.beta.kubernetes.io/aws-load-balancer-type"                              = "external"
       "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled" = "true"
-      "service.beta.kubernetes.io/aws-load-balancer-subnets"         = join(",", module.network.public_subnets)
+      "service.beta.kubernetes.io/aws-load-balancer-subnets"                           = join(",", module.network.public_subnets)
     },
     var.openrun_enable_nlb_eips ? {
       "service.beta.kubernetes.io/aws-load-balancer-eip-allocations" = join(",", local.openrun_eip_ids)
@@ -113,10 +113,76 @@ resource "kubernetes_namespace_v1" "openrun" {
   }
 
   timeouts {
-    delete = "30m"
+    delete = "5m"
   }
 
-  # Ensure AWS LB controller stays until namespace cleanup is complete.
+  # Fast namespace cleanup for destroy - cluster is being deleted so we just need to:
+  # 1. Clear all finalizers immediately (no waiting for controllers)
+  # 2. Force-remove namespace finalizer so Terraform proceeds
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+
+      ns="${self.metadata[0].name}"
+
+      # Build AWS profile args
+      profile="$${AWS_PROFILE:-$${AWS_DEFAULT_PROFILE:-}}"
+      if [ -z "$${profile}" ] && [ -f terraform.tfvars ]; then
+        profile=$(awk -F'"' '/^[[:space:]]*aws_profile[[:space:]]*=/ {print $2; exit}' terraform.tfvars 2>/dev/null || true)
+      fi
+      profile_args=($${profile:+--profile "$${profile}"})
+
+      # Build region/cluster from env or tfvars
+      region="$${AWS_REGION:-$${AWS_DEFAULT_REGION:-}}"
+      if [ -z "$${region}" ] && [ -f terraform.tfvars ]; then
+        region=$(awk -F'"' '/^[[:space:]]*aws_region[[:space:]]*=/ {print $2; exit}' terraform.tfvars 2>/dev/null || true)
+      fi
+      cluster="$${EKS_CLUSTER_NAME:-}"
+      if [ -z "$${cluster}" ] && [ -f terraform.tfvars ]; then
+        name_prefix=$(awk -F'"' '/^[[:space:]]*name_prefix[[:space:]]*=/ {print $2; exit}' terraform.tfvars 2>/dev/null || true)
+        [ -n "$${name_prefix}" ] && cluster="$${name_prefix}-eks"
+      fi
+
+      if [ -z "$${region}" ] || [ -z "$${cluster}" ]; then
+        echo "Cannot determine EKS region/cluster. Set AWS_REGION and EKS_CLUSTER_NAME or use terraform.tfvars." >&2
+        exit 1
+      fi
+
+      # Get kubeconfig
+      KCFG="$(mktemp)"; trap 'rm -f "$KCFG"' EXIT
+      if ! aws eks update-kubeconfig --region "$${region}" --name "$${cluster}" "$${profile_args[@]}" --kubeconfig "$KCFG" >/dev/null 2>&1; then
+        echo "Failed to get kubeconfig. Run: aws sso login" >&2
+        exit 1
+      fi
+      K="kubectl --kubeconfig $KCFG"
+
+      # Skip if namespace already gone
+      $K get ns "$${ns}" >/dev/null 2>&1 || exit 0
+
+      echo "Fast cleanup of namespace $${ns} (cluster being destroyed)..."
+
+      # Clear finalizers from all resources in parallel (don't wait for anything)
+      for type in targetgroupbindings.elbv2.k8s.aws services pods deployments.apps replicasets.apps statefulsets.apps persistentvolumeclaims secrets configmaps serviceaccounts; do
+        for r in $($K get "$${type}" -n "$${ns}" -o name 2>/dev/null || true); do
+          $K patch "$${r}" -n "$${ns}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 &
+        done
+      done
+      wait
+
+      # Delete all resources without waiting
+      $K delete all -n "$${ns}" --all --force --grace-period=0 --wait=false >/dev/null 2>&1 || true
+
+      # Force-remove namespace finalizer so Terraform sees it as deleted
+      $K get ns "$${ns}" -o json 2>/dev/null | \
+        jq '.spec.finalizers = []' | \
+        $K replace --raw "/api/v1/namespaces/$${ns}/finalize" -f - >/dev/null 2>&1 || true
+
+      echo "Namespace $${ns} cleanup complete."
+    EOT
+  }
+
   depends_on = [helm_release.lb_controller]
 }
 
@@ -135,14 +201,71 @@ resource "kubernetes_namespace_v1" "openrun_apps" {
   }
 
   timeouts {
-    delete = "30m"
+    delete = "5m"
   }
 
   lifecycle {
     ignore_changes = [metadata[0].labels, metadata[0].annotations]
   }
 
-  # Ensure AWS LB controller stays until namespace cleanup is complete.
+  # Fast namespace cleanup for destroy - same as openrun namespace
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+
+      ns="${self.metadata[0].name}"
+
+      profile="$${AWS_PROFILE:-$${AWS_DEFAULT_PROFILE:-}}"
+      if [ -z "$${profile}" ] && [ -f terraform.tfvars ]; then
+        profile=$(awk -F'"' '/^[[:space:]]*aws_profile[[:space:]]*=/ {print $2; exit}' terraform.tfvars 2>/dev/null || true)
+      fi
+      profile_args=($${profile:+--profile "$${profile}"})
+
+      region="$${AWS_REGION:-$${AWS_DEFAULT_REGION:-}}"
+      if [ -z "$${region}" ] && [ -f terraform.tfvars ]; then
+        region=$(awk -F'"' '/^[[:space:]]*aws_region[[:space:]]*=/ {print $2; exit}' terraform.tfvars 2>/dev/null || true)
+      fi
+      cluster="$${EKS_CLUSTER_NAME:-}"
+      if [ -z "$${cluster}" ] && [ -f terraform.tfvars ]; then
+        name_prefix=$(awk -F'"' '/^[[:space:]]*name_prefix[[:space:]]*=/ {print $2; exit}' terraform.tfvars 2>/dev/null || true)
+        [ -n "$${name_prefix}" ] && cluster="$${name_prefix}-eks"
+      fi
+
+      if [ -z "$${region}" ] || [ -z "$${cluster}" ]; then
+        echo "Cannot determine EKS region/cluster. Set AWS_REGION and EKS_CLUSTER_NAME or use terraform.tfvars." >&2
+        exit 1
+      fi
+
+      KCFG="$(mktemp)"; trap 'rm -f "$KCFG"' EXIT
+      if ! aws eks update-kubeconfig --region "$${region}" --name "$${cluster}" "$${profile_args[@]}" --kubeconfig "$KCFG" >/dev/null 2>&1; then
+        echo "Failed to get kubeconfig. Run: aws sso login" >&2
+        exit 1
+      fi
+      K="kubectl --kubeconfig $KCFG"
+
+      $K get ns "$${ns}" >/dev/null 2>&1 || exit 0
+
+      echo "Fast cleanup of namespace $${ns} (cluster being destroyed)..."
+
+      for type in targetgroupbindings.elbv2.k8s.aws services pods deployments.apps replicasets.apps statefulsets.apps persistentvolumeclaims secrets configmaps serviceaccounts; do
+        for r in $($K get "$${type}" -n "$${ns}" -o name 2>/dev/null || true); do
+          $K patch "$${r}" -n "$${ns}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 &
+        done
+      done
+      wait
+
+      $K delete all -n "$${ns}" --all --force --grace-period=0 --wait=false >/dev/null 2>&1 || true
+
+      $K get ns "$${ns}" -o json 2>/dev/null | \
+        jq '.spec.finalizers = []' | \
+        $K replace --raw "/api/v1/namespaces/$${ns}/finalize" -f - >/dev/null 2>&1 || true
+
+      echo "Namespace $${ns} cleanup complete."
+    EOT
+  }
+
   depends_on = [helm_release.lb_controller]
 }
 
@@ -247,44 +370,6 @@ resource "helm_release" "openrun" {
   depends_on = [helm_release.lb_controller, kubernetes_service_account_v1.openrun, kubernetes_secret_v1.openrun_postgres]
 }
 
-resource "null_resource" "openrun_lb_cleanup_wait" {
-  triggers = {
-    name      = "${var.openrun_release_name}-external"
-    namespace = var.openrun_namespace
-    eip_ids   = join(",", local.openrun_eip_ids)
-    region    = var.aws_region
-  }
-
-  provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
-      set -euo pipefail
-      name="${lookup(self.triggers, "name", "")}"
-      namespace="${lookup(self.triggers, "namespace", "")}"
-      eip_ids="${lookup(self.triggers, "eip_ids", "")}"
-      region="${lookup(self.triggers, "region", "")}"
-      if [ -n "$name" ] && [ -n "$namespace" ] && kubectl get svc/$name -n $namespace >/dev/null 2>&1; then
-        kubectl wait --for=delete svc/$name -n $namespace --timeout=15m
-      fi
-      if [ -n "$eip_ids" ] && [ -n "$region" ]; then
-        end=$((SECONDS+900))
-        while [ $SECONDS -lt $end ]; do
-          assoc=$(aws ec2 describe-addresses --region $region --allocation-ids $eip_ids --query 'Addresses[].AssociationId' --output text | tr -s ' ' '\n' | grep -v -E '^(None)?$' || true)
-          if [ -z "$assoc" ]; then
-            exit 0
-          fi
-          sleep 10
-        done
-        echo "Timed out waiting for NLB EIPs to disassociate: $eip_ids" >&2
-        exit 1
-      fi
-    EOT
-  }
-
-  # Ensure the LB controller is still present while we wait on service finalizers.
-  depends_on = [helm_release.lb_controller]
-}
-
 resource "kubernetes_service_v1" "openrun_external" {
   metadata {
     name        = "${var.openrun_release_name}-external"
@@ -318,7 +403,88 @@ resource "kubernetes_service_v1" "openrun_external" {
     }
   }
 
-  depends_on = [helm_release.openrun, null_resource.openrun_lb_cleanup_wait]
+  depends_on = [helm_release.openrun]
+
+  # Delete NLB via AWS API and clear finalizers - cluster is being destroyed
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+
+      name="${self.metadata[0].name}"
+      namespace="${self.metadata[0].namespace}"
+      eip_ids="${lookup(self.metadata[0].annotations, "service.beta.kubernetes.io/aws-load-balancer-eip-allocations", "")}"
+
+      # Build AWS profile/region args
+      profile="$${AWS_PROFILE:-$${AWS_DEFAULT_PROFILE:-}}"
+      if [ -z "$${profile}" ] && [ -f terraform.tfvars ]; then
+        profile=$(awk -F'"' '/^[[:space:]]*aws_profile[[:space:]]*=/ {print $2; exit}' terraform.tfvars 2>/dev/null || true)
+      fi
+      profile_args=($${profile:+--profile "$${profile}"})
+
+      region="$${AWS_REGION:-$${AWS_DEFAULT_REGION:-}}"
+      if [ -z "$${region}" ] && [ -f terraform.tfvars ]; then
+        region=$(awk -F'"' '/^[[:space:]]*aws_region[[:space:]]*=/ {print $2; exit}' terraform.tfvars 2>/dev/null || true)
+      fi
+      cluster=""
+      if [ -f terraform.tfvars ]; then
+        name_prefix=$(awk -F'"' '/^[[:space:]]*name_prefix[[:space:]]*=/ {print $2; exit}' terraform.tfvars 2>/dev/null || true)
+        [ -n "$${name_prefix}" ] && cluster="$${name_prefix}-eks"
+      fi
+
+      # Get kubeconfig (optional - we still try to clear finalizers if possible)
+      KCFG="$(mktemp)"; trap 'rm -f "$KCFG"' EXIT
+      K=""
+      if [ -n "$${region}" ] && [ -n "$${cluster}" ]; then
+        if aws eks update-kubeconfig --region "$${region}" --name "$${cluster}" "$${profile_args[@]}" --kubeconfig "$KCFG" >/dev/null 2>&1; then
+          K="kubectl --kubeconfig $KCFG"
+        fi
+      fi
+
+      # Get LB hostname from service if kubectl works
+      lb_host=""
+      if [ -n "$K" ]; then
+        lb_host=$($K get "svc/$${name}" -n "$${namespace}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+      fi
+
+      # Extract region from LB hostname if not set
+      if [ -z "$${region}" ] && [ -n "$${lb_host}" ] && [[ "$${lb_host}" == *".elb."* ]]; then
+        region="$${lb_host#*.elb.}"; region="$${region%%.*}"
+      fi
+
+      # Delete the NLB via AWS API (this is an AWS resource that must be cleaned up)
+      if [ -n "$${lb_host}" ] && [ -n "$${region}" ]; then
+        echo "Deleting NLB for service $${namespace}/$${name}..."
+        arn=$(aws elbv2 describe-load-balancers --region "$${region}" "$${profile_args[@]}" \
+          --query "LoadBalancers[?DNSName=='$${lb_host}'].LoadBalancerArn | [0]" --output text 2>/dev/null || true)
+
+        if [ -n "$${arn}" ] && [ "$${arn}" != "None" ]; then
+          aws elbv2 delete-load-balancer --region "$${region}" --load-balancer-arn "$${arn}" "$${profile_args[@]}" >/dev/null 2>&1 || true
+          # Wait up to 2 minutes for NLB deletion (reduced from 15)
+          timeout 120 aws elbv2 wait load-balancers-deleted --region "$${region}" --load-balancer-arns "$${arn}" "$${profile_args[@]}" >/dev/null 2>&1 || true
+        fi
+      fi
+
+      # Clear service finalizers and delete (don't wait long)
+      if [ -n "$K" ]; then
+        $K patch "svc/$${name}" -n "$${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+        $K delete "svc/$${name}" -n "$${namespace}" --wait=false >/dev/null 2>&1 || true
+      fi
+
+      # Brief wait for EIPs to disassociate (reduced from 15 min to 2 min - Terraform will retry if needed)
+      if [ -n "$${eip_ids}" ] && [ -n "$${region}" ]; then
+        eip_args=$(echo "$${eip_ids}" | tr ',' ' ')
+        for i in {1..12}; do
+          out=$(aws ec2 describe-addresses --region "$${region}" --allocation-ids $${eip_args} --query 'Addresses[].AssociationId' --output text "$${profile_args[@]}" 2>/dev/null || true)
+          [ -z "$(echo "$${out}" | tr -d 'None \n')" ] && break
+          sleep 10
+        done
+      fi
+
+      echo "Service cleanup complete."
+    EOT
+  }
 }
 
 data "kubernetes_service_v1" "openrun" {

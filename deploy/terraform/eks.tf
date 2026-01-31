@@ -50,14 +50,14 @@ module "eks" {
 
   eks_managed_node_groups = {
     default = {
-      create                                = true
-      name                                  = "${local.cluster_name}-ng"
-      instance_types                        = var.node_instance_types
-      min_size                              = var.node_min_size
-      max_size                              = var.node_max_size
-      desired_size                          = var.node_desired_size
-      subnet_ids                            = module.network.private_subnets
-      enable_bootstrap_user_data            = true
+      create                     = true
+      name                       = "${local.cluster_name}-ng"
+      instance_types             = var.node_instance_types
+      min_size                   = var.node_min_size
+      max_size                   = var.node_max_size
+      desired_size               = var.node_desired_size
+      subnet_ids                 = module.network.private_subnets
+      enable_bootstrap_user_data = true
       # Avoid multiple kubernetes.io/cluster/* tagged SGs on node ENIs (breaks LB controller).
       attach_cluster_primary_security_group = false
       cloudinit_pre_nodeadm = [

@@ -49,7 +49,10 @@ jobs:
           go install github.com/commander-cli/commander/v2/cmd/commander@latest
           export CL_CONTAINER_COMMANDS=docker # using self-hosted runner, use Docker for container tests
           export KUBE_REGISTRY_URL=registry.registry.svc.cluster.local:5000
+          docker stop -t 1 $(docker ps -a -q)
+          docker system prune -f
           sudo systemctl restart k3s
+          kubectl delete namespace openrun; kubectl create namespace openrun
           kubectl delete namespace openrun-apps; kubectl create namespace openrun-apps
           gmake covtest
           docker stop -t 1 $(docker ps -a -q)
