@@ -1,2 +1,0 @@
-Dummy file to enable fs embed when appspecs repo is not checked out here.
-For release build, the https://github.com/openrundev/appspecs repo will be checked out here.
