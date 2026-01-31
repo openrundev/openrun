@@ -52,6 +52,8 @@ module "eks" {
     default = {
       create                     = true
       name                       = "${local.cluster_name}-ng"
+      partition                  = data.aws_partition.current.partition
+      account_id                 = data.aws_caller_identity.current.account_id
       instance_types             = var.node_instance_types
       min_size                   = var.node_min_size
       max_size                   = var.node_max_size
