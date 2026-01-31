@@ -237,8 +237,14 @@ variable "openrun_service_account_name" {
   default     = "openrun"
 }
 
+variable "openrun_enable_nlb" {
+  description = "Create an AWS NLB for external access to OpenRun. When false, no load balancer is created and the user must configure external access separately (e.g., via their own ingress controller or load balancer)."
+  type        = bool
+  default     = true
+}
+
 variable "openrun_enable_nlb_eips" {
-  description = "Allocate and attach static Elastic IPs to the OpenRun NLB for A records."
+  description = "Allocate and attach static Elastic IPs to the OpenRun NLB for A records. Only applies when openrun_enable_nlb is true."
   type        = bool
   default     = true
 }

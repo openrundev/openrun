@@ -59,7 +59,25 @@ Shared config:
 
 - `versions.tf`, `providers.tf`, `variables.tf`, `locals.tf`, `data.tf`
 
-## DNS configuration
+## Load balancer configuration
+
+By default, Terraform creates an AWS NLB (Network Load Balancer) for external access to OpenRun.
+
+### Disabling the managed NLB
+
+If you prefer to use your own ingress controller, API gateway, or load balancer, set:
+
+```hcl
+openrun_enable_nlb = false
+```
+
+When disabled:
+- No NLB or EIPs are created
+- The OpenRun Helm chart deploys with `ClusterIP` service type
+- You must configure external access separately (e.g., via an ingress controller, AWS ALB, or service mesh)
+- NLB-related outputs (`openrun_load_balancer_hostname`, `openrun_load_balancer_ips`, `openrun_dns_records`) will be empty
+
+### DNS configuration
 
 After apply, Terraform outputs the OpenRun load balancer hostname and (by default) static Elastic IPs.
 

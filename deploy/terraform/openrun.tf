@@ -4,7 +4,7 @@ resource "random_password" "openrun_admin" {
 }
 
 resource "aws_eip" "openrun_nlb" {
-  count  = var.openrun_enable_nlb_eips ? length(module.network.public_subnets) : 0
+  count  = var.openrun_enable_nlb && var.openrun_enable_nlb_eips ? length(module.network.public_subnets) : 0
   domain = "vpc"
 
   tags = local.tags
@@ -14,7 +14,7 @@ locals {
   openrun_db_creds     = jsondecode(aws_secretsmanager_secret_version.rds.secret_string)
   openrun_auth_enabled = var.openrun_auth_mode != "none"
   openrun_callback_url = "https://${var.openrun_default_domain}"
-  openrun_eip_ids      = var.openrun_enable_nlb_eips ? [for eip in aws_eip.openrun_nlb : eip.allocation_id] : []
+  openrun_eip_ids      = var.openrun_enable_nlb && var.openrun_enable_nlb_eips ? [for eip in aws_eip.openrun_nlb : eip.allocation_id] : []
 
   openrun_service_annotations = merge(
     {
@@ -23,6 +23,9 @@ locals {
       "service.beta.kubernetes.io/aws-load-balancer-type"                              = "external"
       "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled" = "true"
       "service.beta.kubernetes.io/aws-load-balancer-subnets"                           = join(",", module.network.public_subnets)
+      "service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol"              = "HTTPS"
+      "service.beta.kubernetes.io/aws-load-balancer-healthcheck-path"                  = "/_openrun/health"
+      "service.beta.kubernetes.io/aws-load-balancer-healthcheck-port"                  = "443"
     },
     var.openrun_enable_nlb_eips ? {
       "service.beta.kubernetes.io/aws-load-balancer-eip-allocations" = join(",", local.openrun_eip_ids)
@@ -371,6 +374,8 @@ resource "helm_release" "openrun" {
 }
 
 resource "kubernetes_service_v1" "openrun_external" {
+  count = var.openrun_enable_nlb ? 1 : 0
+
   metadata {
     name        = "${var.openrun_release_name}-external"
     namespace   = var.openrun_namespace
@@ -497,8 +502,10 @@ data "kubernetes_service_v1" "openrun" {
 }
 
 data "kubernetes_service_v1" "openrun_external" {
+  count = var.openrun_enable_nlb ? 1 : 0
+
   metadata {
-    name      = kubernetes_service_v1.openrun_external.metadata[0].name
+    name      = kubernetes_service_v1.openrun_external[0].metadata[0].name
     namespace = var.openrun_namespace
   }
 
@@ -506,23 +513,23 @@ data "kubernetes_service_v1" "openrun_external" {
 }
 
 output "openrun_load_balancer_hostname" {
-  description = "Hostname of the OpenRun service load balancer."
-  value       = try(data.kubernetes_service_v1.openrun_external.status[0].load_balancer[0].ingress[0].hostname, "")
+  description = "Hostname of the OpenRun service load balancer. Empty when openrun_enable_nlb is false."
+  value       = var.openrun_enable_nlb ? try(data.kubernetes_service_v1.openrun_external[0].status[0].load_balancer[0].ingress[0].hostname, "") : ""
 }
 
 output "openrun_load_balancer_ips" {
-  description = "Static Elastic IPs attached to the OpenRun NLB (use for DNS A records)."
+  description = "Static Elastic IPs attached to the OpenRun NLB (use for DNS A records). Empty when openrun_enable_nlb is false."
   value       = [for eip in aws_eip.openrun_nlb : eip.public_ip]
 }
 
 output "openrun_dns_records" {
-  description = "DNS records to create for OpenRun."
-  value = {
+  description = "DNS records to create for OpenRun. Empty when openrun_enable_nlb is false."
+  value = var.openrun_enable_nlb ? {
     root_a         = "${var.openrun_default_domain} -> ${join(", ", [for eip in aws_eip.openrun_nlb : eip.public_ip])}"
     wildcard_a     = "*.${var.openrun_default_domain} -> ${join(", ", [for eip in aws_eip.openrun_nlb : eip.public_ip])}"
-    root_cname     = "${var.openrun_default_domain} -> ${try(data.kubernetes_service_v1.openrun_external.status[0].load_balancer[0].ingress[0].hostname, "")}"
-    wildcard_cname = "*.${var.openrun_default_domain} -> ${try(data.kubernetes_service_v1.openrun_external.status[0].load_balancer[0].ingress[0].hostname, "")}"
-  }
+    root_cname     = "${var.openrun_default_domain} -> ${try(data.kubernetes_service_v1.openrun_external[0].status[0].load_balancer[0].ingress[0].hostname, "")}"
+    wildcard_cname = "*.${var.openrun_default_domain} -> ${try(data.kubernetes_service_v1.openrun_external[0].status[0].load_balancer[0].ingress[0].hostname, "")}"
+  } : {}
 }
 
 output "openrun_oidc_callback_url" {
