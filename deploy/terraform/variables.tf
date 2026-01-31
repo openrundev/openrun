@@ -96,9 +96,9 @@ variable "node_max_size" {
 }
 
 variable "rds_db_name" {
-  description = "Database name for OpenRun metadata."
+  description = "Database name for OpenRun metadata. Defaults to <openrun_namespace>_main if empty."
   type        = string
-  default     = "openrun"
+  default     = ""
 }
 
 variable "rds_username" {

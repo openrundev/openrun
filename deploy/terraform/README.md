@@ -72,6 +72,7 @@ openrun_enable_nlb = false
 ```
 
 When disabled:
+
 - No NLB or EIPs are created
 - The OpenRun Helm chart deploys with `ClusterIP` service type
 - You must configure external access separately (e.g., via an ingress controller, AWS ALB, or service mesh)

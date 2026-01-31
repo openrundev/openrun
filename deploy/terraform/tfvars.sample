@@ -13,6 +13,9 @@
 # Do not use any special characters, including -, _, etc.
 name_prefix = "openrun"
 
+# Kubernetes namespace for OpenRun control plane
+openrun_namespace = "openrun"
+
 # AWS CLI profile to use for AWS provider + kubernetes/helm auth. Leave empty to use default credentials.
 aws_profile = "openrun"
 

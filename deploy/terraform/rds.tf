@@ -65,7 +65,7 @@ resource "aws_db_instance" "rds" {
   storage_type          = "gp3"
   storage_encrypted     = true
 
-  db_name  = var.rds_db_name
+  db_name  = local.rds_db_name
   username = var.rds_username
   password = random_password.rds.result
 
@@ -103,7 +103,7 @@ resource "aws_secretsmanager_secret_version" "rds" {
     password = random_password.rds.result
     host     = aws_db_instance.rds.address
     port     = aws_db_instance.rds.port
-    database = var.rds_db_name
+    database = local.rds_db_name
   })
 }
 
