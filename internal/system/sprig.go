@@ -4,6 +4,7 @@
 package system
 
 import (
+	"net/url"
 	"text/template"
 
 	"github.com/Masterminds/sprig/v3"
@@ -14,5 +15,9 @@ func GetFuncMap() template.FuncMap {
 	funcMap := sprig.FuncMap()
 	delete(funcMap, "env")
 	delete(funcMap, "expandenv")
+	funcMap["pathEscape"] = url.PathEscape
+	funcMap["pathUnescape"] = url.PathUnescape
+	funcMap["queryEscape"] = url.QueryEscape
+	funcMap["queryUnescape"] = url.QueryUnescape
 	return funcMap
 }
