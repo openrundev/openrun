@@ -69,7 +69,7 @@ locals {
       enabled            = true
       host               = aws_db_instance.rds.address
       port               = aws_db_instance.rds.port
-      database           = var.rds_db_name
+      database           = local.rds_db_name
       existingSecretName = "openrun-postgres"
       usernameKey        = "username"
       passwordKey        = "password"

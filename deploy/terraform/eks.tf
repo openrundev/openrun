@@ -75,7 +75,4 @@ module "eks" {
   }
 
   tags = local.tags
-
-  # Ensure VPC cleanup happens after EKS/Kubernetes resources are gone (destroy order).
-  depends_on = [null_resource.vpc_cleanup]
 }
