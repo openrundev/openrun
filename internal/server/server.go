@@ -754,12 +754,17 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 		}
 	}
 
+	// Create a rate-limited error logger for TLS handshake errors
+	rateLimitedWriter := NewRateLimitedErrorLogger(os.Stderr)
+	errorLog := log.New(rateLimitedWriter, "", log.LstdFlags)
+
 	server := &http.Server{
 		WriteTimeout: 180 * time.Second,
 		ReadTimeout:  180 * time.Second,
 		IdleTimeout:  30 * time.Second,
 		Handler:      s.handler.router,
 		TLSConfig:    tlsConfig,
+		ErrorLog:     errorLog,
 	}
 	return server, nil
 }
