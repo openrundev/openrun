@@ -10,9 +10,10 @@
   <a href="https://github.com/openrundev/openrun/actions"><img src="https://github.com/openrundev/openrun/workflows/CI/badge.svg" alt="Build Status"></a>
   <a href="https://app.codecov.io/github/openrundev/openrun"><img src="https://img.shields.io/codecov/c/github/openrundev/openrun" alt="Code Coverage"></a>
   <a href="https://goreportcard.com/report/github.com/openrundev/openrun"><img src="https://goreportcard.com/badge/github.com/openrundev/openrun" alt="Go Report Card"></a>
-  <!--a href="https://github.com/avelino/awesome-go"><img src="https://awesome.re/mentioned-badge.svg" alt="Mentioned in Awesome Go"></a-->
   <a href="https://landscape.cncf.io/?item=app-definition-and-development--application-definition-image-build--openrun"><img src="https://img.shields.io/badge/CNCF%20Landscape-0086FF" alt="Listed in CNCF landscape"></a>
   <a href="https://www.bestpractices.dev/projects/11301"><img src="https://www.bestpractices.dev/projects/11301/badge"></a>
+  <a href="https://github.com/avelino/awesome-go"><img src="https://awesome.re/mentioned-badge.svg" alt="Mentioned in Awesome Go"></a>
+  <img src="https://img.shields.io/github/downloads/openrundev/openrun/total.svg" alt="downloads"/>
 </p>
 
 ### Menu
@@ -28,9 +29,18 @@
 
 ## Overview
 
-OpenRun is an Apache-2.0 licensed open source alternative to Google Cloud Run and AWS App Runner. OpenRun makes it easy to declaratively deploy applications built in frameworks like Streamlit/Gradio/FastHTML/NiceGUI etc. Apps can be deployed on a single node with Docker/Podman or onto a Kubernetes cluster.
+OpenRun is an Apache-2.0 licensed open source web app deployment platform, with a focus on deploying internal tools. OpenRun makes it easy to **declaratively** deploy containerized web apps. OpenRun can deploy apps on a single-node or onto a Kubernetes cluster. OpenRun provides declarative GitOps based blue-green deployment, OAuth/OIDC/SAML access controls, TLS certs & secrets management. OpenRun is built for teams to easily deploy internal tools, with full RBAC support. OpenRun apps are deployed directly from the git repo, no build server required. OpenRun scales idles apps down to zero and supports atomic updates across multiple apps.
 
-OpenRun provides **declarative** GitOps based app deployment, OAuth/OIDC/SAML access controls, TLS certs & secrets management. OpenRun is built for teams to easily deploy internal tools, with full RBAC support. OpenRun apps are deployed directly from the git repo, no build step required. OpenRun scales idles apps down to zero and supports atomic updates across multiple apps.
+Some of the unique features of OpenRun are:
+
+- Create and manage apps declaratively, through GitOps
+- Easily upgrade from single-node to Kubernetes, with no config changes required
+- Domain based or path based routing, with auto-TLS
+- OAuth/OpenID/SAML/Cert based auth
+- RBAC for admin operation and for app access
+- Scales idle apps down to zero
+- Staged deployment, for code and config changes
+- Atomic (all or nothing) updates across apps
 
 This repo hosts the source code for OpenRun. The source for the documentation site [openrun.dev](https://openrun.dev) is in the [docs](https://github.com/openrundev/docs) repo. App specifications, which are templates to create apps, are defined in the [appspecs](https://github.com/openrundev/appspecs) repo. Sample apps are in the [apps](https://github.com/openrundev/apps) repo.
 
@@ -84,7 +94,7 @@ This repo hosts the source code for OpenRun. The source for the documentation si
 
 > OpenRun can be deployed on a single node easily (Linux, Windows or OSX), using a SQLite database for storing metadata. Docker/Podman is the only dependency. OpenRun can be deployed across multiple machines, using an external Postgres database for storing metadata.
 >
-> Support for Kubernetes based deployment is being implemented. On Kubernetes, OpenRun will avoid the need to setup a build system like Jenkins, CD with ArgoCD and an IDP like BackStage.
+> OpenRun can also be deployed on Kubernetes using a Helm chart. On Kubernetes, OpenRun will avoid the need to setup a build system like Jenkins, CD with ArgoCD and an IDP like BackStage. Apps deployed using OpenRun are deployed as Kubernetes services, with OpenRun running as the api server/request router.
 
 </details>
 
@@ -130,7 +140,11 @@ For building Hypermedia based apps, OpenRun supports:
 
 The feature roadmap for OpenRun is:
 
-- Adding more app specs, to support additional frameworks out of the box
+- Adding more app specs, to support additional frameworks out of the box.
+- Support for app scaling on Kubernetes based on concurrent APIs. Scaling based on CPU/memory metrics is supported right now.
+- Support for server level plugin permissions allowlist. Currently, every plugin call has to be explicitly approved at the app level.
+- Support for using same container image for stage and prod app, when possible.
+- Support for verified promote mode, where health checks are done on stage app before promote is done.
 
 ## Setup
 
@@ -169,6 +183,10 @@ powershell -Command "iwr https://openrun.dev/install.ps1 -useb | iex"
 ```
 
 Start a new command window (to get the updated env) and run `openrun server start` to start the OpenRun service.
+
+### Kubernetes Install
+
+See [kubernetes docs](https://openrun.dev/docs/container/kubernetes/) for details on installing on Kubernetes using Helm chart and Terraform based infra setup.
 
 ### Install Apps
 
@@ -252,7 +270,7 @@ OpenRun docs are at https://openrun.dev/docs/. For doc bugs, raise a GitHub issu
 
 ## Getting help
 
-Please use [Github Discussions](https://github.com/openrundev/openrun/discussions) for discussing OpenRun related topics. Please use the bug tracker for bug reports and feature requests.
+Please use [Github Discussions](https://github.com/openrundev/openrun/discussions) for discussing OpenRun related topics. Please use the bug tracker for bug reports and feature requests. The [OpenRun Discord](https://discord.gg/t2P8pJFsd7) community is another option.
 
 ## Contributing
 
