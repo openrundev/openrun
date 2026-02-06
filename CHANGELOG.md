@@ -7,6 +7,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.17] - 2026-02-04
+
+### Changed
+- Updated appspecs to not use heredocs since Kaniko does not support it
+
 ## [0.16.16] - 2026-02-04
 
 ### Added
