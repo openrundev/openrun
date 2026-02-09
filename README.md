@@ -98,6 +98,55 @@ This repo hosts the source code for OpenRun. The source for the documentation si
 
 </details>
 
+## Architecture Overview
+
+### Single Node Architecture
+
+```mermaid
+architecture-beta
+    service client(internet)[Client]
+
+    group host(server)[OpenRun Host]
+    service openrun(server)[OpenRun Server] in host
+    service sqlite(database)[SQLite Metadata DB] in host
+
+    group cm(server)[Container Manager] in host
+    junction split in cm
+    service app1(server)[App1] in cm
+    service app2(server)[App2] in cm
+
+    client:R --> L:openrun
+    openrun:B --> T:sqlite
+    openrun:R -- L:split
+    split:T --> B:app1
+    split:B --> T:app2
+```
+
+### Kubernetes Architecture
+
+```mermaid
+architecture-beta
+    service client(internet)[Client]
+    service postgres(database)[Postgres]
+    service registry(server)[Registry]
+
+    group k8s(server)[Kubernetes]
+    service openrun(server)[OpenRun] in k8s
+
+    group apps(server)[Apps] in k8s
+    junction split in apps
+    service app1(server)[App1] in apps
+    service app2(server)[App2] in apps
+
+    client:R --> L:openrun
+    postgres:R <-- T:openrun
+    registry:R <-- B:openrun
+
+    openrun:R -- L:split
+    split:T --> B:app1
+    split:B --> T:app2
+```
+
 ## Features
 
 OpenRun can be used to:
