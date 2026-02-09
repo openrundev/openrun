@@ -100,17 +100,17 @@ This repo hosts the source code for OpenRun. The source for the documentation si
 
 ## Architecture Overview
 
-### Single Node Architecture
+### Single-Node Architecture
 
 ```mermaid
 architecture-beta
     service client(internet)[Client]
 
-    group host(server)[OpenRun Host]
+    group host(server)[Node]
     service openrun(server)[OpenRun Server] in host
-    service sqlite(database)[SQLite Metadata DB] in host
+    service sqlite(database)[SQLite Metadata] in host
 
-    group cm(server)[Container Manager] in host
+    group cm(server)[Docker or Podman] in host
     junction split in cm
     service app1(server)[App1] in cm
     service app2(server)[App2] in cm
@@ -127,13 +127,13 @@ architecture-beta
 ```mermaid
 architecture-beta
     service client(internet)[Client]
-    service postgres(database)[Postgres]
-    service registry(server)[Registry]
+    service postgres(database)[Postgres Metadata]
+    service registry(server)[Container Registry]
 
     group k8s(server)[Kubernetes]
     service openrun(server)[OpenRun] in k8s
 
-    group apps(server)[Apps] in k8s
+    group apps(server)[Deployed Apps] in k8s
     junction split in apps
     service app1(server)[App1] in apps
     service app2(server)[App2] in apps
