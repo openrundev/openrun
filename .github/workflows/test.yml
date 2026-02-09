@@ -48,11 +48,27 @@ jobs:
 
           go install github.com/commander-cli/commander/v2/cmd/commander@latest
           export CL_CONTAINER_COMMANDS=docker # using self-hosted runner, use Docker for container tests
-          export KUBE_REGISTRY_URL=registry.registry.svc.cluster.local:5000
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+          fi
+
+          if git diff --name-only "$BASE" "$HEAD" | grep -q '^internal/container/'; then
+            # Container package changed, run Kubernetes tests
+            sudo systemctl restart k3s
+            kubectl delete namespace openrun; kubectl create namespace openrun
+            kubectl delete namespace openrun-apps; kubectl create namespace openrun-apps
+            echo "----------Kubernetes tests enabled------------"
+            export KUBE_REGISTRY_URL=registry.registry.svc.cluster.local:5000
+          else
+            echo "**********Kubernetes tests skipped************"
+          fi
+
           docker system prune -f
-          sudo systemctl restart k3s
-          kubectl delete namespace openrun; kubectl create namespace openrun
-          kubectl delete namespace openrun-apps; kubectl create namespace openrun-apps
           gmake covtest
           docker stop -t 1 $(docker ps -a -q)
           docker system prune -f
