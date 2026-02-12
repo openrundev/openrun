@@ -52,9 +52,6 @@ eks_public_access_cidrs = []
 # Minimum node count for the EKS managed node group
 node_min_size = 4
 
-# Desired node count for the EKS managed node group
-node_desired_size = 4
-
 # Maximum node count for the EKS managed node group (for autoscaling)
 node_max_size = 8
 
