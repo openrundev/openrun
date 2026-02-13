@@ -4,20 +4,28 @@
 package app_test
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-func TestStoreBasics(t *testing.T) {
+func runStoreBasicsTest(t *testing.T, dbConnection string, expectedDupErr string) {
+	t.Helper()
+
 	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
+	storeScript := strings.ReplaceAll(`
 load("store.in", "store")
 
 app = ace.app("testApp", custom_layout=True, routes  = [ace.api("/")],
@@ -53,7 +61,7 @@ def handler(req):
 	if ret4: # Expect to fail
 		return {"error": "Expected duplicate insert to fail"}
 	else:
-		if ret4.error.index("UNIQUE constraint failed") < 0:
+		if ret4.error.index(__DUPLICATE_SUBSTR__) < 0:
 			return {"error": ret4.error}
 
 	id = ret.value
@@ -126,7 +134,10 @@ def handler(req):
 		"_id": ret.value._id,
 		"creator": ret.value._created_by, "created_at": ret.value._created_at,
 	    "all_rows": all_rows}
-	`,
+`, "__DUPLICATE_SUBSTR__", strconv.Quote(expectedDupErr))
+
+	fileData := map[string]string{
+		"app.star": storeScript,
 
 		"schema.star": `
 type("test1", fields=[
@@ -159,7 +170,7 @@ indexes=[
 			{Plugin: "store.in", Method: "select_one"},
 		}, map[string]types.PluginSettings{
 			"store.in": {
-				"db_connection": "sqlite:/tmp/openrun_app.db?_journal_mode=WAL",
+				"db_connection": dbConnection,
 			},
 		})
 	if err != nil {
@@ -170,7 +181,9 @@ indexes=[
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	if response.Code != 200 {
+		t.Fatalf("unexpected response code %d body %s", response.Code, response.Body.String())
+	}
 
 	ret := make(map[string]any)
 	str := response.Body.String()
@@ -181,19 +194,116 @@ indexes=[
 		t.Fatal(ret["error"])
 	}
 
-	testutil.AssertEqualsString(t, "creator", "admin", ret["creator"].(string))
-	testutil.AssertEqualsString(t, "astring", "xyz", ret["stringval"].(string))
-	id := ret["_id"].(float64)
+	creator, ok := ret["creator"].(string)
+	if !ok {
+		t.Fatalf("missing or invalid creator in response: %#v", ret)
+	}
+	testutil.AssertEqualsString(t, "creator", "admin", creator)
+
+	stringVal, ok := ret["stringval"].(string)
+	if !ok {
+		t.Fatalf("missing or invalid stringval in response: %#v", ret)
+	}
+	testutil.AssertEqualsString(t, "astring", "xyz", stringVal)
+
+	id, ok := ret["_id"].(float64)
+	if !ok {
+		t.Fatalf("missing or invalid _id in response: %#v", ret)
+	}
 	if id <= 0 {
 		t.Errorf("Expected _id to be > 0, got %f", id)
 	}
-	testutil.AssertEqualsInt(t, "length", 3, len(ret["all_rows"].([]any)))
-	rows := ret["all_rows"].([]any)
-	if rows[0].(map[string]any)["aint"].(float64) != 100 {
-		t.Errorf("Expected aint to be 100, got %f", rows[0].(map[string]any)["aint"].(float64))
+
+	rows, ok := ret["all_rows"].([]any)
+	if !ok {
+		t.Fatalf("missing or invalid all_rows in response: %#v", ret)
 	}
-	if rows[1].(map[string]any)["aint"].(float64) != 20 {
-		t.Errorf("Expected aint to be 20, got %f", rows[0].(map[string]any)["aint"].(float64))
+	testutil.AssertEqualsInt(t, "length", 3, len(rows))
+	aintValues := make(map[int]int)
+	for _, row := range rows {
+		rowMap, ok := row.(map[string]any)
+		if !ok {
+			t.Fatalf("invalid row type: %#v", row)
+		}
+		aint, ok := rowMap["aint"].(float64)
+		if !ok {
+			t.Fatalf("missing or invalid aint in row: %#v", rowMap)
+		}
+		aintValues[int(aint)]++
+	}
+	if aintValues[100] != 1 {
+		t.Errorf("Expected one row with aint=100, got counts %#v", aintValues)
+	}
+	if aintValues[20] != 1 {
+		t.Errorf("Expected one row with aint=20, got counts %#v", aintValues)
+	}
+}
+
+func TestStoreBasics(t *testing.T) {
+	// Remove old db file if exists
+	os.Remove("/tmp/openrun_app.db")     //nolint:errcheck
+	os.Remove("/tmp/openrun_app.db-wal") //nolint:errcheck
+	os.Remove("/tmp/openrun_app.db-shm") //nolint:errcheck
+
+	runStoreBasicsTest(t, "sqlite:/tmp/openrun_app.db?_journal_mode=WAL", "UNIQUE constraint failed")
+}
+
+func TestStoreBasicsPostgresTestcontainer(t *testing.T) {
+	if os.Getenv("ENABLE_POSTGRES_TESTCONTAINER") == "" {
+		t.Skip("set ENABLE_POSTGRES_TESTCONTAINER=1 to run postgres testcontainer store basics test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	postgresContainer, err := tcpostgres.Run(ctx,
+		"postgres:17-alpine",
+		tcpostgres.WithDatabase("openrun_store"),
+		tcpostgres.WithUsername("postgres"),
+		tcpostgres.WithPassword("postgres"),
+	)
+	if err != nil {
+		t.Fatalf("failed to start postgres testcontainer: %v", err)
+	}
+	defer postgresContainer.Terminate(context.Background()) //nolint:errcheck
+
+	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("failed to build postgres connection string: %v", err)
+	}
+
+	readyCtx, readyCancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer readyCancel()
+	if err := waitForPostgresReady(readyCtx, connStr); err != nil {
+		t.Fatalf("postgres testcontainer did not become ready: %v", err)
+	}
+
+	runStoreBasicsTest(t, connStr, "duplicate key value violates unique constraint")
+}
+
+func waitForPostgresReady(ctx context.Context, connStr string) error {
+	var lastErr error
+	for {
+		db, err := sql.Open("pgx", connStr)
+		if err == nil {
+			pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			err = db.PingContext(pingCtx)
+			cancel()
+			db.Close() //nolint:errcheck
+			if err == nil {
+				return nil
+			}
+		}
+		lastErr = err
+
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("last error: %w", lastErr)
+			}
+			return ctx.Err()
+		case <-time.After(300 * time.Millisecond):
+		}
 	}
 }
 

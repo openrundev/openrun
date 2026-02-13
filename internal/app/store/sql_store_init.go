@@ -54,8 +54,12 @@ func (s *SqlStore) initStore(ctx context.Context) error {
 		s.Info().Msgf("Created table %s", table)
 
 		if storeType.Indexes != nil {
+			indexMapper := s.queryMapper()
+			if !s.isSqlite {
+				indexMapper = postgresIndexFieldMapper
+			}
 			for _, index := range storeType.Indexes {
-				indexStmt, err := createIndexStmt(unquotedTable, index, s.queryMapper(), s.quoteIdentifier)
+				indexStmt, err := createIndexStmt(unquotedTable, index, indexMapper, s.quoteIdentifier)
 				if err != nil {
 					return err
 				}

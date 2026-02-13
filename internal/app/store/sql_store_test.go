@@ -48,6 +48,15 @@ func TestGenSortString(t *testing.T) {
 	if result != "field1 ASC, field2 DESC, _id ASC" {
 		t.Errorf("Expected %s, but got %s", expected, result)
 	}
+
+	result, err = genSortString(sort, postgresSortFieldMapper)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	expectedPostgres := "(_json::jsonb -> 'field1') ASC, (_json::jsonb -> 'field2') DESC, _id ASC"
+	if result != expectedPostgres {
+		t.Errorf("Expected %s, but got %s", expectedPostgres, result)
+	}
 }
 
 // test for createIndexStmt

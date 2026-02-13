@@ -43,6 +43,35 @@ func postgresFieldMapper(field string) (string, error) {
 	return jsonFieldMapper(field)
 }
 
+func postgresSortFieldMapper(field string) (string, error) {
+	if RESERVED_FIELDS[field] {
+		if field == JSON_FIELD {
+			return "", fmt.Errorf("querying %s directly is not supported", field)
+		}
+		return field, nil
+	}
+
+	if strings.Contains(field, "'") {
+		// Protect against sql injection, even though this is the column name rather than value
+		return "", fmt.Errorf("field path cannot contain ': %s", field)
+	}
+
+	// Use jsonb semantics for Postgres sorting so numeric fields are ordered numerically.
+	return fmt.Sprintf("(_json::jsonb -> '%s')", field), nil
+}
+
+func postgresIndexFieldMapper(field string) (string, error) {
+	mappedField, err := postgresFieldMapper(field)
+	if err != nil {
+		return "", err
+	}
+	if RESERVED_FIELDS[field] {
+		return mappedField, nil
+	}
+	// Postgres index expressions must be parenthesized.
+	return fmt.Sprintf("(%s)", mappedField), nil
+}
+
 func jsonFieldMapper(field string) (string, error) {
 	if RESERVED_FIELDS[field] {
 		if field == JSON_FIELD {

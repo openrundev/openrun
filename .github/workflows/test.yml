@@ -47,6 +47,7 @@ jobs:
 
           go install github.com/commander-cli/commander/v2/cmd/commander@latest
           export CL_CONTAINER_COMMANDS=docker # using self-hosted runner, use Docker for container tests
+          export ENABLE_POSTGRES_TESTCONTAINER=1
 
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BASE="${{ github.event.pull_request.base.sha }}"

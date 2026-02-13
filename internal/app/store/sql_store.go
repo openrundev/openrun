@@ -66,6 +66,13 @@ func (s *SqlStore) queryMapper() fieldMapper {
 	return postgresFieldMapper
 }
 
+func (s *SqlStore) sortMapper() fieldMapper {
+	if s.isSqlite {
+		return sqliteFieldMapper
+	}
+	return postgresSortFieldMapper
+}
+
 func (s *SqlStore) queryOptions() queryOptions {
 	if s.isSqlite {
 		return queryOptions{}
@@ -357,7 +364,7 @@ func (s *SqlStore) Select(ctx context.Context, tx *sql.Tx, thread *starlark.Thre
 
 	var sortStr string
 	if len(sort) > 0 {
-		sortStr, err = genSortString(sort, s.queryMapper())
+		sortStr, err = genSortString(sort, s.sortMapper())
 		if err != nil {
 			return nil, err
 		}
@@ -448,7 +455,12 @@ func (s *SqlStore) Update(ctx context.Context, tx *sql.Tx, table string, entry *
 	}
 
 	origUpdateAt := entry.UpdatedAt
-	entry.UpdatedAt = time.Now()
+	updatedAtMillis := time.Now().UnixMilli()
+	origUpdateAtMillis := origUpdateAt.UnixMilli()
+	if updatedAtMillis <= origUpdateAtMillis {
+		updatedAtMillis = origUpdateAtMillis + 1
+	}
+	entry.UpdatedAt = time.UnixMilli(updatedAtMillis)
 	entry.UpdatedBy = "admin" // TODO update userid
 
 	dataJson, err := json.Marshal(entry.Data)
