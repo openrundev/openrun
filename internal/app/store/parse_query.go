@@ -31,7 +31,19 @@ func init() {
 // fieldMapper maps the given field name to the expression to be passed in the sql
 type fieldMapper func(string) (string, error)
 
+type queryOptions struct {
+	stringifyMappedParams bool
+}
+
 func sqliteFieldMapper(field string) (string, error) {
+	return jsonFieldMapper(field)
+}
+
+func postgresFieldMapper(field string) (string, error) {
+	return jsonFieldMapper(field)
+}
+
+func jsonFieldMapper(field string) (string, error) {
 	if RESERVED_FIELDS[field] {
 		if field == JSON_FIELD {
 			return "", fmt.Errorf("querying %s directly is not supported", field)
@@ -49,6 +61,10 @@ func sqliteFieldMapper(field string) (string, error) {
 }
 
 func parseQuery(query map[string]any, mapper fieldMapper) (string, []interface{}, error) {
+	return parseQueryWithOptions(query, mapper, queryOptions{})
+}
+
+func parseQueryWithOptions(query map[string]any, mapper fieldMapper, options queryOptions) (string, []interface{}, error) {
 	var conditions []string
 	var params []interface{}
 
@@ -60,7 +76,7 @@ func parseQuery(query map[string]any, mapper fieldMapper) (string, []interface{}
 
 	for _, key := range keys {
 		value := query[key]
-		condition, subParams, err := parseCondition(key, value, mapper)
+		condition, subParams, err := parseCondition(key, value, mapper, options)
 		if err != nil {
 			return "", nil, err
 		}
@@ -72,12 +88,12 @@ func parseQuery(query map[string]any, mapper fieldMapper) (string, []interface{}
 	return joinedConditions, params, nil
 }
 
-func parseCondition(field string, value any, mapper fieldMapper) (string, []any, error) {
+func parseCondition(field string, value any, mapper fieldMapper, options queryOptions) (string, []any, error) {
 	switch v := value.(type) {
 	case []map[string]any:
 		// Check if the map represents a logical operator or multiple conditions
 		if isLogicalOperator(field) {
-			return parseLogicalOperator(field, v, mapper)
+			return parseLogicalOperator(field, v, mapper, options)
 		}
 
 		return "", nil, fmt.Errorf("invalid condition for %s, list supported for logical operators only, got: %#v", field, value)
@@ -89,7 +105,7 @@ func parseCondition(field string, value any, mapper fieldMapper) (string, []any,
 		if op != "" {
 			return "", nil, fmt.Errorf("operator %s supported for field conditions only: %#v", field, value)
 		}
-		return parseFieldCondition(field, v, mapper)
+		return parseFieldCondition(field, v, mapper, options)
 	case map[any]any:
 		return "", nil, fmt.Errorf("invalid query condition for %s, only map of strings supported: %#v", field, value)
 	case []any:
@@ -110,16 +126,16 @@ func parseCondition(field string, value any, mapper fieldMapper) (string, []any,
 				return "", nil, err
 			}
 		}
-		return fmt.Sprintf("%s = ?", mappedField), []any{v}, nil
+		return fmt.Sprintf("%s = ?", mappedField), []any{normalizeMappedValue(field, v, mapper, options)}, nil
 	}
 }
 
-func parseLogicalOperator(operator string, query []map[string]any, mapper fieldMapper) (string, []any, error) {
+func parseLogicalOperator(operator string, query []map[string]any, mapper fieldMapper, options queryOptions) (string, []any, error) {
 	var conditions []string
 	var params []interface{}
 
 	for _, cond := range query {
-		condition, subParams, err := parseQuery(cond, mapper)
+		condition, subParams, err := parseQueryWithOptions(cond, mapper, options)
 		if err != nil {
 			return "", nil, err
 		}
@@ -137,7 +153,7 @@ func parseLogicalOperator(operator string, query []map[string]any, mapper fieldM
 	return " ( " + joinedConditions + " ) ", params, nil
 }
 
-func parseFieldCondition(field string, query map[string]any, mapper fieldMapper) (string, []any, error) {
+func parseFieldCondition(field string, query map[string]any, mapper fieldMapper, options queryOptions) (string, []any, error) {
 	var keys []string
 	for key := range query {
 		keys = append(keys, key)
@@ -157,7 +173,7 @@ func parseFieldCondition(field string, query map[string]any, mapper fieldMapper)
 		case []map[string]any:
 			// Check if the map represents a logical operator or multiple conditions
 			if isLogicalOperator(key) {
-				subCondition, subParams, err = parseFieldLogicalOperator(field, key, v, mapper)
+				subCondition, subParams, err = parseFieldLogicalOperator(field, key, v, mapper, options)
 				if err != nil {
 					return "", nil, err
 				}
@@ -186,7 +202,7 @@ func parseFieldCondition(field string, query map[string]any, mapper fieldMapper)
 			}
 
 			subCondition = fmt.Sprintf("%s %s ?", mappedField, op)
-			subParams = []any{value}
+			subParams = []any{normalizeMappedValue(field, value, mapper, options)}
 		}
 
 		conditions = append(conditions, subCondition)
@@ -197,9 +213,17 @@ func parseFieldCondition(field string, query map[string]any, mapper fieldMapper)
 	return joinedConditions, params, nil
 }
 
-func parseFieldLogicalOperator(field string, operator string, query []map[string]any, mapper fieldMapper) (string, []any, error) {
+func parseFieldLogicalOperator(field string, operator string, query []map[string]any, mapper fieldMapper, options queryOptions) (string, []any, error) {
 	var conditions []string
 	var params []interface{}
+	mappedField := field
+	if mapper != nil {
+		var err error
+		mappedField, err = mapper(field)
+		if err != nil {
+			return "", nil, err
+		}
+	}
 
 	for _, cond := range query {
 		if len(cond) != 1 {
@@ -211,8 +235,8 @@ func parseFieldLogicalOperator(field string, operator string, query []map[string
 			if op == "" {
 				return "", nil, fmt.Errorf("invalid logical condition for %s %s, only operators supported: %#v", field, key, value)
 			}
-			conditions = append(conditions, fmt.Sprintf("%s %s ?", field, op))
-			params = append(params, value)
+			conditions = append(conditions, fmt.Sprintf("%s %s ?", mappedField, op))
+			params = append(params, normalizeMappedValue(field, value, mapper, options))
 		}
 	}
 
@@ -223,6 +247,21 @@ func parseFieldLogicalOperator(field string, operator string, query []map[string
 
 	joinedConditions := strings.Join(conditions, joiner)
 	return " ( " + joinedConditions + " ) ", params, nil
+}
+
+func normalizeMappedValue(field string, value any, mapper fieldMapper, options queryOptions) any {
+	if !options.stringifyMappedParams || mapper == nil || RESERVED_FIELDS[field] {
+		return value
+	}
+
+	switch value := value.(type) {
+	case nil:
+		return nil
+	case string:
+		return value
+	default:
+		return fmt.Sprintf("%v", value)
+	}
 }
 
 func isLogicalOperator(operator string) bool {

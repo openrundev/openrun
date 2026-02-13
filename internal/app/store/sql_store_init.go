@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/system"
@@ -25,37 +24,38 @@ func (s *SqlStore) initStore(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.db, _, err = system.InitDBConnection(connectString, "store", system.DB_SQLITE)
+	db, dbType, err := system.InitDBConnection(connectString, "store", system.DB_SQLITE_POSTGRES)
 	if err != nil {
 		return err
 	}
-	s.isSqlite = true
+	s.db = db
+	s.isSqlite = dbType == system.DB_TYPE_SQLITE
 
 	s.prefix = "db_" + string(s.pluginContext.AppId)[len(types.ID_PREFIX_APP_PROD):]
 
 	autoKey := "INTEGER PRIMARY KEY AUTOINCREMENT"
 	if !s.isSqlite {
-		autoKey = "SERIAL PRIMARY KEY"
+		autoKey = "BIGSERIAL PRIMARY KEY"
 	}
 
 	for _, storeType := range s.pluginContext.StoreInfo.Types {
-		table, err := s.genTableName(storeType.Name)
+		unquotedTable, err := s.genRawTableName(storeType.Name)
 		if err != nil {
 			return err
 		}
-
-		createStmt := "CREATE TABLE IF NOT EXISTS " + table + " (_id " + autoKey + ", _version INTEGER, _created_by TEXT, _updated_by TEXT, _created_at INTEGER, _updated_at INTEGER, _json JSON)"
+		table := s.quoteIdentifier(unquotedTable)
+		createStmt := "CREATE TABLE IF NOT EXISTS " + table + " (_id " + autoKey +
+			", _version INTEGER, _created_by TEXT, _updated_by TEXT, _created_at BIGINT, _updated_at BIGINT, _json " +
+			system.MapDataType(s.dbType(), "json") + ")"
 		_, err = s.db.ExecContext(ctx, createStmt)
 		if err != nil {
 			return fmt.Errorf("error creating table %s: %w", table, err)
 		}
 		s.Info().Msgf("Created table %s", table)
 
-		unquotedTable := strings.Trim(table, "'")
 		if storeType.Indexes != nil {
 			for _, index := range storeType.Indexes {
-
-				indexStmt, err := createIndexStmt(unquotedTable, index)
+				indexStmt, err := createIndexStmt(unquotedTable, index, s.queryMapper(), s.quoteIdentifier)
 				if err != nil {
 					return err
 				}
@@ -79,11 +79,13 @@ func (s *SqlStore) initStore(ctx context.Context) error {
 func (s *SqlStore) createSchemaInfo(ctx context.Context) error {
 	autoKey := "INTEGER PRIMARY KEY AUTOINCREMENT"
 	if !s.isSqlite {
-		autoKey = "SERIAL PRIMARY KEY"
+		autoKey = "BIGSERIAL PRIMARY KEY"
 	}
 
-	schemaTable := fmt.Sprintf("'%s_cl_schema'", s.prefix)
-	createStmt := "CREATE TABLE IF NOT EXISTS " + schemaTable + " (version " + autoKey + ", created_by TEXT, updated_by TEXT, created_at INTEGER, updated_at INTEGER, main_app TEXT, schema_data BLOB, schema_etag TEXT)"
+	schemaTable := s.quoteIdentifier(fmt.Sprintf("%s_cl_schema", s.prefix))
+	createStmt := "CREATE TABLE IF NOT EXISTS " + schemaTable + " (version " + autoKey + ", created_by TEXT, updated_by TEXT, created_at " +
+		system.MapDataType(s.dbType(), "datetime") + ", updated_at " + system.MapDataType(s.dbType(), "datetime") + ", main_app TEXT, schema_data " +
+		system.MapDataType(s.dbType(), "blob") + ", schema_etag TEXT)"
 	_, err := s.db.Exec(createStmt)
 	if err != nil {
 		return fmt.Errorf("error creating table %s: %w", schemaTable, err)
@@ -108,11 +110,12 @@ func (s *SqlStore) createSchemaInfo(ctx context.Context) error {
 	}
 
 	// Either no existing schema entry or hash mismatch. Insert new entry
-	currentTime := time.Now().UnixMilli()
 	userId := "admin"
-	insertStmt := "insert into " + schemaTable + " (created_by, updated_by, created_at, updated_at, main_app, schema_data, schema_etag) values (?, ?, ?, ?, ?, ?, ?)"
+	insertStmt := "insert into " + schemaTable + " (created_by, updated_by, created_at, updated_at, main_app, schema_data, schema_etag) values (?, ?, " +
+		system.FuncNow(s.dbType()) + ", " + system.FuncNow(s.dbType()) + ", ?, ?, ?)"
+	insertStmt = s.rebindQuery(insertStmt)
 
-	_, err = s.db.ExecContext(ctx, insertStmt, userId, userId, currentTime, currentTime, s.pluginContext.AppId, s.pluginContext.StoreInfo.Bytes, hashHex)
+	_, err = s.db.ExecContext(ctx, insertStmt, userId, userId, s.pluginContext.AppId, s.pluginContext.StoreInfo.Bytes, hashHex)
 	if err != nil {
 		return fmt.Errorf("error inserting into table %s: %w", schemaTable, err)
 	}
@@ -120,8 +123,8 @@ func (s *SqlStore) createSchemaInfo(ctx context.Context) error {
 	return nil
 }
 
-func createIndexStmt(unquotedTableName string, index starlark_type.Index) (string, error) {
-	mappedColumns, err := genSortString(index.Fields, sqliteFieldMapper)
+func createIndexStmt(unquotedTableName string, index starlark_type.Index, mapper fieldMapper, quoteIdentifier func(string) string) (string, error) {
+	mappedColumns, err := genSortString(index.Fields, mapper)
 	if err != nil {
 		return "", fmt.Errorf("error generating index columns for table %s: %w", unquotedTableName, err)
 	}
@@ -137,6 +140,6 @@ func createIndexStmt(unquotedTableName string, index starlark_type.Index) (strin
 		unique = " UNIQUE "
 	}
 
-	indexStmt := fmt.Sprintf("CREATE%sINDEX IF NOT EXISTS '%s' ON '%s' (%s)", unique, indexName, unquotedTableName, mappedColumns)
+	indexStmt := fmt.Sprintf("CREATE%sINDEX IF NOT EXISTS %s ON %s (%s)", unique, quoteIdentifier(indexName), quoteIdentifier(unquotedTableName), mappedColumns)
 	return indexStmt, nil
 }

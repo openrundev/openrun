@@ -110,9 +110,23 @@ func TestMappedQueries(t *testing.T) {
 	ParseQueryMapperTest(t, map[string]any{"age": 30, "$AND": []map[string]any{{"city": "New York"}, {"$OR": []map[string]any{{"state": "California"}, {"country": "USA"}}}, {"city": "New York"}}}, " ( _json ->> 'city' = ? AND  ( _json ->> 'state' = ? OR _json ->> 'country' = ? )  AND _json ->> 'city' = ? )  AND _json ->> 'age' = ?", []any{"New York", "California", "USA", "New York", 30})
 	ParseQueryMapperTest(t, map[string]any{"age": map[string]any{"$gt": 30, "$lt": 40}}, "_json ->> 'age' > ? AND _json ->> 'age' < ?", []any{30, 40})
 	ParseQueryMapperTest(t, map[string]any{"age": map[string]any{"$lte": 30}}, "_json ->> 'age' <= ?", []any{30})
+	ParseQueryMapperTest(t, map[string]any{"age": map[string]any{"$or": []map[string]any{{"$gt": 30}, {"$lt": 20}}}}, " ( _json ->> 'age' > ? OR _json ->> 'age' < ? ) ", []any{30, 20})
 }
 
 func TestMappedError(t *testing.T) {
 	ParseMappedErrorTest(t, map[string]any{"_json": 30}, "querying _json directly is not supporte")
 	ParseMappedErrorTest(t, map[string]any{"abc'def": 30}, "field path cannot contain ': abc")
+}
+
+func TestPostgresMappedQueryStringifyParams(t *testing.T) {
+	query := map[string]any{"_id": 10, "age": 30, "active": true}
+	conditions, params, err := parseQueryWithOptions(query, postgresFieldMapper, queryOptions{stringifyMappedParams: true})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	testutil.AssertEqualsString(t, "conditions", "_id = ? AND _json ->> 'active' = ? AND _json ->> 'age' = ?", conditions)
+	if !slices.Equal(params, []any{10, "true", "30"}) {
+		t.Fatalf("params do not match. Expected: %v, Got: %v.", []any{10, "true", "30"}, params)
+	}
 }

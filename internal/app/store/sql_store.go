@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
@@ -44,6 +46,43 @@ func NewSqlStore(pluginContext *types.PluginContext) (*SqlStore, error) {
 		Logger:        pluginContext.Logger,
 		pluginContext: pluginContext,
 	}, nil
+}
+
+func (s *SqlStore) dbType() system.DBType {
+	if s.isSqlite {
+		return system.DB_TYPE_SQLITE
+	}
+	return system.DB_TYPE_POSTGRES
+}
+
+func (s *SqlStore) rebindQuery(query string) string {
+	return system.RebindQuery(s.dbType(), query)
+}
+
+func (s *SqlStore) queryMapper() fieldMapper {
+	if s.isSqlite {
+		return sqliteFieldMapper
+	}
+	return postgresFieldMapper
+}
+
+func (s *SqlStore) queryOptions() queryOptions {
+	if s.isSqlite {
+		return queryOptions{}
+	}
+	return queryOptions{stringifyMappedParams: true}
+}
+
+func (s *SqlStore) quoteIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
+}
+
+func (s *SqlStore) genRawTableName(table string) (string, error) {
+	err := validateTableName(table)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s_%s", s.prefix, table), nil
 }
 
 func validateTableName(name string) error {
@@ -95,11 +134,11 @@ func genSortString(sortFields []string, mapper fieldMapper) (string, error) {
 }
 
 func (s *SqlStore) genTableName(table string) (string, error) {
-	err := validateTableName(table)
+	rawName, err := s.genRawTableName(table)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("'%s_%s'", s.prefix, table), nil
+	return s.quoteIdentifier(rawName), nil
 }
 
 func (s *SqlStore) initialize(ctx context.Context) error {
@@ -161,11 +200,28 @@ func (s *SqlStore) Insert(ctx context.Context, tx *sql.Tx, table string, entry *
 	}
 
 	createStmt := "INSERT INTO " + table + " (_version, _created_by, _updated_by, _created_at, _updated_at, _json) VALUES (?, ?, ?, ?, ?, ?)"
+	createStmt = s.rebindQuery(createStmt)
+	args := []any{entry.Version, entry.CreatedBy, entry.UpdatedBy, entry.CreatedAt.UnixMilli(), entry.UpdatedAt.UnixMilli(), dataJson}
+
+	if !s.isSqlite {
+		insertStmt := createStmt + " RETURNING _id"
+		var insertId int64
+		if tx != nil {
+			err = tx.QueryRowContext(ctx, insertStmt, args...).Scan(&insertId)
+		} else {
+			err = s.db.QueryRowContext(ctx, insertStmt, args...).Scan(&insertId)
+		}
+		if err != nil {
+			return -1, err
+		}
+		return EntryId(insertId), nil
+	}
+
 	var result sql.Result
 	if tx != nil {
-		result, err = tx.ExecContext(ctx, createStmt, entry.Version, entry.CreatedBy, entry.UpdatedBy, entry.CreatedAt.UnixMilli(), entry.UpdatedAt.UnixMilli(), dataJson)
+		result, err = tx.ExecContext(ctx, createStmt, args...)
 	} else {
-		result, err = s.db.ExecContext(ctx, createStmt, entry.Version, entry.CreatedBy, entry.UpdatedBy, entry.CreatedAt.UnixMilli(), entry.UpdatedAt.UnixMilli(), dataJson)
+		result, err = s.db.ExecContext(ctx, createStmt, args...)
 
 	}
 	if err != nil {
@@ -191,7 +247,7 @@ func (s *SqlStore) SelectById(ctx context.Context, tx *sql.Tx, table string, id 
 		return nil, err
 	}
 
-	query := "SELECT _id, _version, _created_by, _updated_by, _created_at, _updated_at, _json FROM " + table + " WHERE _id = ?"
+	query := s.rebindQuery("SELECT _id, _version, _created_by, _updated_by, _created_at, _updated_at, _json FROM " + table + " WHERE _id = ?")
 	var row *sql.Row
 	if tx != nil {
 		row = tx.QueryRowContext(ctx, query, id)
@@ -233,7 +289,7 @@ func (s *SqlStore) SelectOne(ctx context.Context, tx *sql.Tx, table string, filt
 		return nil, err
 	}
 
-	filterStr, params, err := parseQuery(filter, sqliteFieldMapper)
+	filterStr, params, err := parseQueryWithOptions(filter, s.queryMapper(), s.queryOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -243,13 +299,13 @@ func (s *SqlStore) SelectOne(ctx context.Context, tx *sql.Tx, table string, filt
 		whereStr = " WHERE " + filterStr
 	}
 
-	query := "SELECT _id, _version, _created_by, _updated_by, _created_at, _updated_at, _json FROM " + table + whereStr
+	query := s.rebindQuery("SELECT _id, _version, _created_by, _updated_by, _created_at, _updated_at, _json FROM " + table + whereStr)
 
 	var row *sql.Row
 	if tx != nil {
-		row = tx.QueryRow(query, params...)
+		row = tx.QueryRowContext(ctx, query, params...)
 	} else {
-		row = s.db.QueryRow(query, params...)
+		row = s.db.QueryRowContext(ctx, query, params...)
 	}
 
 	entry := &Entry{}
@@ -301,7 +357,7 @@ func (s *SqlStore) Select(ctx context.Context, tx *sql.Tx, thread *starlark.Thre
 
 	var sortStr string
 	if len(sort) > 0 {
-		sortStr, err = genSortString(sort, sqliteFieldMapper)
+		sortStr, err = genSortString(sort, s.queryMapper())
 		if err != nil {
 			return nil, err
 		}
@@ -310,7 +366,7 @@ func (s *SqlStore) Select(ctx context.Context, tx *sql.Tx, thread *starlark.Thre
 		sortStr = " ORDER BY " + sortStr
 	}
 
-	filterStr, params, err := parseQuery(filter, sqliteFieldMapper)
+	filterStr, params, err := parseQueryWithOptions(filter, s.queryMapper(), s.queryOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -320,14 +376,14 @@ func (s *SqlStore) Select(ctx context.Context, tx *sql.Tx, thread *starlark.Thre
 		whereStr = " WHERE " + filterStr
 	}
 
-	query := "SELECT _id, _version, _created_by, _updated_by, _created_at, _updated_at, _json FROM " + table + whereStr + sortStr + limitOffsetStr
+	query := s.rebindQuery("SELECT _id, _version, _created_by, _updated_by, _created_at, _updated_at, _json FROM " + table + whereStr + sortStr + limitOffsetStr)
 	s.Trace().Msgf("query: %s, params: %#v", query, params)
 
 	var rows *sql.Rows
 	if tx != nil {
-		rows, err = tx.Query(query, params...)
+		rows, err = tx.QueryContext(ctx, query, params...)
 	} else {
-		rows, err = s.db.Query(query, params...)
+		rows, err = s.db.QueryContext(ctx, query, params...)
 	}
 
 	app.DeferCleanup(thread, fmt.Sprintf("rows_cursor_%s_%p", table, rows), rows.Close, true)
@@ -351,7 +407,7 @@ func (s *SqlStore) Count(ctx context.Context, tx *sql.Tx, table string, filter m
 		return -1, err
 	}
 
-	filterStr, params, err := parseQuery(filter, sqliteFieldMapper)
+	filterStr, params, err := parseQueryWithOptions(filter, s.queryMapper(), s.queryOptions())
 	if err != nil {
 		return -1, err
 	}
@@ -361,12 +417,12 @@ func (s *SqlStore) Count(ctx context.Context, tx *sql.Tx, table string, filter m
 		whereStr = " WHERE " + filterStr
 	}
 
-	query := "SELECT count(_id) FROM " + table + whereStr
+	query := s.rebindQuery("SELECT count(_id) FROM " + table + whereStr)
 	s.Trace().Msgf("query: %s, params: %#v", query, params)
 
 	var row *sql.Row
 	if tx != nil {
-		row = tx.QueryRow(query, params...)
+		row = tx.QueryRowContext(ctx, query, params...)
 	} else {
 		row = s.db.QueryRowContext(ctx, query, params...)
 	}
@@ -401,11 +457,12 @@ func (s *SqlStore) Update(ctx context.Context, tx *sql.Tx, table string, entry *
 	}
 
 	updateStmt := "UPDATE " + table + " set _version = ?, _updated_by = ?, _updated_at = ?, _json = ? where _id = ? and _updated_at = ?"
+	updateStmt = s.rebindQuery(updateStmt)
 	s.Trace().Msgf("query: %s, id: %d updated_at %d", updateStmt, entry.Id, origUpdateAt.UnixMilli())
 
 	var result sql.Result
 	if tx != nil {
-		result, err = tx.Exec(updateStmt, entry.Version, entry.UpdatedBy, entry.UpdatedAt.UnixMilli(), dataJson, entry.Id, origUpdateAt.UnixMilli())
+		result, err = tx.ExecContext(ctx, updateStmt, entry.Version, entry.UpdatedBy, entry.UpdatedAt.UnixMilli(), dataJson, entry.Id, origUpdateAt.UnixMilli())
 	} else {
 		result, err = s.db.ExecContext(ctx, updateStmt, entry.Version, entry.UpdatedBy, entry.UpdatedAt.UnixMilli(), dataJson, entry.Id, origUpdateAt.UnixMilli())
 	}
@@ -435,11 +492,11 @@ func (s *SqlStore) DeleteById(ctx context.Context, tx *sql.Tx, table string, id 
 		return 0, err
 	}
 
-	deleteStmt := "DELETE from " + table + " where _id = ?"
+	deleteStmt := s.rebindQuery("DELETE from " + table + " where _id = ?")
 
 	var result sql.Result
 	if tx != nil {
-		result, err = tx.Exec(deleteStmt, id)
+		result, err = tx.ExecContext(ctx, deleteStmt, id)
 	} else {
 		result, err = s.db.ExecContext(ctx, deleteStmt, id)
 	}
@@ -470,7 +527,7 @@ func (s *SqlStore) Delete(ctx context.Context, tx *sql.Tx, table string, filter 
 		return 0, err
 	}
 
-	filterStr, params, err := parseQuery(filter, sqliteFieldMapper)
+	filterStr, params, err := parseQueryWithOptions(filter, s.queryMapper(), s.queryOptions())
 	if err != nil {
 		return 0, err
 	}
@@ -480,11 +537,11 @@ func (s *SqlStore) Delete(ctx context.Context, tx *sql.Tx, table string, filter 
 		whereStr = " WHERE " + filterStr
 	}
 
-	deleteStmt := "DELETE FROM " + table + whereStr
+	deleteStmt := s.rebindQuery("DELETE FROM " + table + whereStr)
 
 	var result sql.Result
 	if tx != nil {
-		result, err = tx.Exec(deleteStmt, params...)
+		result, err = tx.ExecContext(ctx, deleteStmt, params...)
 	} else {
 		result, err = s.db.ExecContext(ctx, deleteStmt, params...)
 	}
