@@ -220,7 +220,7 @@ elif [[ -z "$CL_CONTAINER_COMMANDS" ]]; then
   CL_CONTAINER_COMMANDS="docker podman"
 fi
 
-export PYTHON_VERSION=3.12.4-slim
+export PYTHON_VERSION=3.14
 port_base=9000
 for cmd in ${CL_CONTAINER_COMMANDS}; do
     http_port=`expr $port_base + 1`
