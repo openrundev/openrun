@@ -290,7 +290,7 @@ func sanitizeName(name string) string {
 	return name
 }
 
-func CreateOrUpdateSecret(ctx context.Context, cs *kubernetes.Clientset, ns, name string, data map[string][]byte, typ corev1.SecretType) error {
+func CreateOrUpdateSecret(ctx context.Context, cs kubernetes.Interface, ns, name string, data map[string][]byte, typ corev1.SecretType) error {
 	existing, err := cs.CoreV1().Secrets(ns).Get(ctx, name, meta.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -321,7 +321,7 @@ type KanikoBuild struct {
 	ExtraArgs     []string
 }
 
-func KanikoJob(ctx context.Context, logger *types.Logger, cs *kubernetes.Clientset, cfg *rest.Config, r *types.RegistryConfig, dockerCfgJSON []byte, kb KanikoBuild) error {
+func KanikoJob(ctx context.Context, logger *types.Logger, cs kubernetes.Interface, cfg *rest.Config, r *types.RegistryConfig, dockerCfgJSON []byte, kb KanikoBuild) error {
 	kb.JobName = sanitizeName(kb.JobName)
 	ns := kb.Namespace
 
@@ -481,7 +481,7 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs *kubernetes.Clients
 	return nil
 }
 
-func getPodForJob(ctx context.Context, cs *kubernetes.Clientset, ns, jobName string) (*corev1.Pod, error) {
+func getPodForJob(ctx context.Context, cs kubernetes.Interface, ns, jobName string) (*corev1.Pod, error) {
 	listOpts := meta.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 	}
@@ -496,7 +496,7 @@ func getPodForJob(ctx context.Context, cs *kubernetes.Clientset, ns, jobName str
 	return &pods.Items[0], nil
 }
 
-func tailLogs(ctx context.Context, cs *kubernetes.Clientset, ns, jobName string, lines int64) (string, error) {
+func tailLogs(ctx context.Context, cs kubernetes.Interface, ns, jobName string, lines int64) (string, error) {
 	pod, err := getPodForJob(ctx, cs, ns, jobName)
 	if err != nil {
 		return "", err
@@ -637,7 +637,7 @@ func waitForJobContainerStartOrExit(
 	}
 }
 
-func waitForTerminalPhase(ctx context.Context, cs *kubernetes.Clientset, ns, name string) (corev1.PodPhase, error) {
+func waitForTerminalPhase(ctx context.Context, cs kubernetes.Interface, ns, name string) (corev1.PodPhase, error) {
 	t := time.NewTicker(100 * time.Millisecond)
 	defer t.Stop()
 	for {
@@ -657,7 +657,7 @@ func waitForTerminalPhase(ctx context.Context, cs *kubernetes.Clientset, ns, nam
 	}
 }
 
-func attachAndStream(ctx context.Context, cfg *rest.Config, cs *kubernetes.Clientset,
+func attachAndStream(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface,
 	ns, pod string, contextDir string) error {
 	req := cs.CoreV1().RESTClient().Post().
 		Resource("pods").

@@ -79,7 +79,7 @@ type KubernetesCM struct {
 	*types.Logger
 	appNamespace string
 	config       *types.ServerConfig
-	clientSet    *kubernetes.Clientset
+	clientSet    kubernetes.Interface
 	restConfig   *rest.Config
 	appConfig    *types.AppConfig
 	appRunDir    string
