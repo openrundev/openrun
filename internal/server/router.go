@@ -289,8 +289,12 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 	contextShared := r.Context().Value(types.SHARED)
 	if contextShared != nil {
 		cs := contextShared.(*ContextShared)
-		event.Target = cs.Target
-		event.Operation = cs.Operation
+		if cs.Target != "" {
+			event.Target = cs.Target
+		}
+		if cs.Operation != "" {
+			event.Operation = cs.Operation
+		}
 		if cs.DryRun {
 			event.Operation = fmt.Sprintf("%s_dryrun", event.Operation)
 		}
@@ -546,6 +550,8 @@ func (h *Handler) getApps(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	updateTargetInContext(r, appPathGlob, false)
+	updateOperationInContext(r, "list_apps")
 
 	filteredApps, err := h.server.GetApps(r.Context(), appPathGlob, internal)
 	if err != nil {
@@ -557,6 +563,7 @@ func (h *Handler) getApps(r *http.Request) (any, error) {
 
 func (h *Handler) stopServer(r *http.Request) (any, error) {
 	h.Warn().Msgf("Server stop called")
+	updateOperationInContext(r, "stop_server")
 	err := h.server.Stop(r.Context())
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
@@ -582,6 +589,7 @@ func (h *Handler) createApp(r *http.Request) (any, error) {
 	}
 	appPath := appRequest.Path
 	updateTargetInContext(r, appPath, dryRun)
+	updateOperationInContext(r, "create_app")
 
 	results, err := h.server.CreateApp(r.Context(), appPath, approve, dryRun, &appRequest)
 	if err != nil {
@@ -602,6 +610,7 @@ func (h *Handler) deleteApps(r *http.Request) (any, error) {
 		return nil, types.CreateRequestError("appPathGlob is required", http.StatusBadRequest)
 	}
 	updateTargetInContext(r, appPathGlob, dryRun)
+	updateOperationInContext(r, "delete_apps")
 
 	results, err := h.server.DeleteApps(r.Context(), appPathGlob, dryRun)
 	if err != nil {
@@ -774,6 +783,7 @@ func (h *Handler) getApp(r *http.Request) (any, error) {
 		return nil, types.CreateRequestError("appPath is required", http.StatusBadRequest)
 	}
 	updateTargetInContext(r, appPath, false)
+	updateOperationInContext(r, "get_app")
 
 	ret, err := h.server.GetAppApi(r.Context(), appPath)
 	if err != nil {
@@ -902,6 +912,7 @@ func (h *Handler) tokenList(r *http.Request) (any, error) {
 		return nil, types.CreateRequestError("appPath is required", http.StatusBadRequest)
 	}
 	updateTargetInContext(r, appPath, false)
+	updateOperationInContext(r, "token_list")
 
 	ret, err := h.server.TokenList(r.Context(), appPath)
 	if err != nil {
@@ -922,6 +933,7 @@ func (h *Handler) tokenCreate(r *http.Request) (any, error) {
 		return nil, err
 	}
 	updateTargetInContext(r, appPath, dryRun)
+	updateOperationInContext(r, "token_create")
 
 	tokenType := r.URL.Query().Get("webhookType")
 	if appPath == "" {
@@ -947,6 +959,7 @@ func (h *Handler) tokenDelete(r *http.Request) (any, error) {
 		return nil, err
 	}
 	updateTargetInContext(r, appPath, dryRun)
+	updateOperationInContext(r, "token_delete")
 
 	tokenType := r.URL.Query().Get("webhookType")
 	if appPath == "" {
@@ -988,7 +1001,7 @@ func (h *Handler) apply(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	updateTargetInContext(r, "", dryRun)
+	updateTargetInContext(r, appPathGlob, dryRun)
 
 	promote, err := parseBoolArg(r.URL.Query().Get("promote"), false)
 	if err != nil {
@@ -1080,6 +1093,7 @@ func (h *Handler) deleteSyncEntry(r *http.Request) (any, error) {
 }
 
 func (h *Handler) listSyncEntries(r *http.Request) (any, error) {
+	updateOperationInContext(r, "list_sync")
 	results, err := h.server.ListSyncEntries(r.Context())
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
@@ -1089,10 +1103,12 @@ func (h *Handler) listSyncEntries(r *http.Request) (any, error) {
 }
 
 func (h *Handler) configGet(r *http.Request) (any, error) {
+	updateOperationInContext(r, "config_get")
 	return types.ConfigResponse{DynamicConfig: h.server.GetDynamicConfig()}, nil
 }
 
 func (h *Handler) configUpdate(r *http.Request) (any, error) {
+	updateOperationInContext(r, "config_update")
 	var dynamicConfig types.DynamicConfig
 	force, err := parseBoolArg(r.URL.Query().Get("force"), false)
 	if err != nil {
