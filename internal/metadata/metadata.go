@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -22,12 +23,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 9
+const CURRENT_DB_VERSION = 10
 
 // Metadata is the metadata persistence layer
 type Metadata struct {
 	*types.Logger
 	certStorage      *CertStorage
+	leaderElection   *LeaderElection
 	config           *types.ServerConfig
 	db               *sql.DB
 	dbType           system.DBType
@@ -51,6 +53,14 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 		db:     db,
 		dbType: dbType,
 	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil, fmt.Errorf("error getting hostname: %w", err)
+	}
+	leaderElection := NewLeaderElection(logger, m, config, string(types.CurrentServerId), hostname)
+	m.leaderElection = leaderElection
+
 	certStorage, err := NewCertStorage(context.Background(), logger, m)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing cert storage: %w", err)
@@ -61,6 +71,8 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 	if err != nil {
 		return nil, err
 	}
+
+	m.leaderElection.StartLoop(context.Background())
 
 	if m.dbType == system.DB_TYPE_POSTGRES {
 		// Setup listener for app update notifications
@@ -121,6 +133,16 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 	}
 
 	return m, nil
+}
+
+// IsLeader returns true if the current server is the leader
+func (m *Metadata) IsLeader() bool {
+	return m.leaderElection.IsLeader()
+}
+
+// Close stops background goroutines owned by Metadata (e.g. leader election).
+func (m *Metadata) Close() {
+	m.leaderElection.Stop()
 }
 
 // GetCertStorage returns the cert storage implementation which persists the cert info to the database.
@@ -301,6 +323,16 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `update version set version=9, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 10 {
+		m.Info().Msg("Upgrading to version 10")
+		if err := m.leaderElection.CreateTables(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `update version set version=10, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}

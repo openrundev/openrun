@@ -77,6 +77,9 @@ allowed_env = ["HOME", "OPENRUN_HOME", "PATH"] # env values allowed for use in n
 max_concurrent_builds = 1 # max number of concurrent container builds
 max_build_wait_secs = 120 # max wait time for a build lock
 
+leader_election_lease_secs = 30 # duration of the leader election lease
+leader_election_heartbeat_interval_secs = 10 # interval at which the leader heartbeat is sent
+
 [kubernetes]
 namespace = "openrun"
 use_node_port = false

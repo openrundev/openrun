@@ -787,6 +787,8 @@ func loadRootCAs(rootCertFile string) (*x509.CertPool, error) {
 // Stop stops the OpenRun Server
 func (s *Server) Stop(ctx context.Context) error {
 	s.Info().Msg("Stopping service")
+	s.db.Close()
+
 	var err1, err2, err3 error
 	if s.httpServer != nil {
 		err1 = s.httpServer.Shutdown(ctx)

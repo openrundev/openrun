@@ -157,10 +157,16 @@ func (s *Server) ListSyncEntries(ctx context.Context) (*types.SyncListResponse, 
 func (s *Server) syncRunner() {
 	s.Info().Msg("Starting sync runner loop")
 	for range s.syncTimer.C {
+		if !s.db.IsLeader() {
+			s.Trace().Msg("Not leader, skipping sync")
+			continue
+		} else {
+			s.Trace().Msg("Leader, running sync jobs")
+		}
 		err := s.runSyncJobs()
 		if err != nil {
 			s.Error().Err(err).Msg("Error running sync")
-			break
+			continue
 		}
 	}
 	s.Warn().Msg("Sync runner stopped")

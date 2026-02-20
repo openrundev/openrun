@@ -251,23 +251,25 @@ type LogConfig struct {
 
 // SystemConfig is the system level configuration
 type SystemConfig struct {
-	TailwindCSSCommand        string   `toml:"tailwindcss_command"`
-	FileWatcherDebounceMillis int      `toml:"file_watcher_debounce_millis"`
-	WatchIgnorePatterns       []string `toml:"watch_ignore_patterns"`
-	NodePath                  string   `toml:"node_path"`
-	ContainerCommand          string   `toml:"container_command"`
-	ContainerBuilder          string   `toml:"container_builder"`
-	DefaultDomain             string   `toml:"default_domain"`
-	RootServeListApps         string   `toml:"root_serve_list_apps"`
-	EnableCompression         bool     `toml:"enable_compression"`
-	HttpEventRetentionDays    int      `toml:"http_event_retention_days"`
-	NonHttpEventRetentionDays int      `toml:"non_http_event_retention_days"`
-	AllowedEnv                []string `toml:"allowed_env"`            // List of environment variables that are allowed to be used in the node config
-	DefaultScheduleMins       int      `toml:"default_schedule_mins"`  // Default schedule time in minutes for scheduled sync
-	MaxSyncFailureCount       int      `toml:"max_sync_failure_count"` // Max failure count for sync jobs
-	MaxConcurrentBuilds       int      `toml:"max_concurrent_builds"`  // Max concurrent container builds
-	MaxBuildWaitSecs          int      `toml:"max_build_wait_secs"`    // Max wait time for a build lock
-	EarlyHints                bool     `toml:"early_hints"`            // enable early hints for HTML responses
+	TailwindCSSCommand                  string   `toml:"tailwindcss_command"`
+	FileWatcherDebounceMillis           int      `toml:"file_watcher_debounce_millis"`
+	WatchIgnorePatterns                 []string `toml:"watch_ignore_patterns"`
+	NodePath                            string   `toml:"node_path"`
+	ContainerCommand                    string   `toml:"container_command"`
+	ContainerBuilder                    string   `toml:"container_builder"`
+	DefaultDomain                       string   `toml:"default_domain"`
+	RootServeListApps                   string   `toml:"root_serve_list_apps"`
+	EnableCompression                   bool     `toml:"enable_compression"`
+	HttpEventRetentionDays              int      `toml:"http_event_retention_days"`
+	NonHttpEventRetentionDays           int      `toml:"non_http_event_retention_days"`
+	AllowedEnv                          []string `toml:"allowed_env"`                             // List of environment variables that are allowed to be used in the node config
+	DefaultScheduleMins                 int      `toml:"default_schedule_mins"`                   // Default schedule time in minutes for scheduled sync
+	MaxSyncFailureCount                 int      `toml:"max_sync_failure_count"`                  // Max failure count for sync jobs
+	MaxConcurrentBuilds                 int      `toml:"max_concurrent_builds"`                   // Max concurrent container builds
+	MaxBuildWaitSecs                    int      `toml:"max_build_wait_secs"`                     // Max wait time for a build lock
+	EarlyHints                          bool     `toml:"early_hints"`                             // enable early hints for HTML responses
+	LeaderElectionLeaseSecs             int      `toml:"leader_election_lease_secs"`              // The lease time for the leader election
+	LeaderElectionHeartbeatIntervalSecs int      `toml:"leader_election_heartbeat_interval_secs"` // The interval for the leader election heartbeat
 }
 
 type RegistryConfig struct {
