@@ -24,7 +24,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/fsnotify/fsnotify"
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/openrundev/openrun/internal/app/action"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
