@@ -70,6 +70,33 @@ openrun sync schedule --approve --promote \ &nbsp;&nbsp;github.com/openrundev/op
 </div>
 </div>
 
+<style>
+  .sample-config-box { width: 92%; }
+  @media screen and (min-width: 768px) { .sample-config-box { width: 50%; } }
+</style>
+<div style="position: relative; width: 100vw; margin-left: calc(-50vw + 50%); display: flex; flex-direction: column; align-items: center; padding: 40px 0; box-sizing: border-box;">
+<div style="font-weight: bold; margin-bottom: 16px; font-size: 22px;">Sample OpenRun Config</div>
+<div class="sample-config-box" style="border-radius: 10px; overflow: hidden; border: 1px solid rgba(127,127,127,0.25); box-shadow: 0 2px 12px rgba(0,0,0,0.08);">
+<div style="padding: 10px 16px; font-size: 13px; font-weight: 600; letter-spacing: 0.02em; background: rgba(127,127,127,0.10); border-bottom: 1px solid rgba(127,127,127,0.2);">sample.star</div>
+<pre style="margin: 0; padding: 2px 20px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace; font-size: 13.5px; line-height: 1.6; overflow-x: auto; background: rgba(127,127,127,0.04);"><code style="font-family: inherit;">
+<span style="color: #6a737d; font-style: italic;"># Set resource limits (optional)</span>
+limits = {<span style="color: #22863a;">&quot;cpus&quot;</span>: <span style="color: #22863a;">&quot;1&quot;</span>, <span style="color: #22863a;">&quot;memory&quot;</span>: <span style="color: #22863a;">&quot;512m&quot;</span>}
+<span></span>
+
+<span style="color: #6a737d; font-style: italic;"># Streamlit App Declaration</span>
+app(path=<span style="color: #22863a;">&quot;/misc/streamlit_example&quot;</span>, source=<span style="color: #22863a;">&quot;github.com/streamlit/streamlit-example&quot;</span>,
+&nbsp;&nbsp;&nbsp;&nbsp;git_branch=<span style="color: #22863a;">&quot;master&quot;</span>, spec=<span style="color: #22863a;">&quot;python-streamlit&quot;</span>, container_opts=limits)
+
+<span style="color: #6a737d; font-style: italic;"># FastHTML App Declaration</span>
+app(path=<span style="color: #22863a;">&quot;fasthtml.:&quot;</span>, source=<span style="color: #22863a;">&quot;github.com/AnswerDotAI/fasthtml/examples&quot;</span>,
+&nbsp;&nbsp;&nbsp;&nbsp;spec=<span style="color: #22863a;">&quot;python-fasthtml&quot;</span>, params={<span style="color: #22863a;">&quot;APP_MODULE&quot;</span>:<span style="color: #22863a;">&quot;basic_ws:app&quot;</span>}, container_opts=limits)
+
+<span style="color: #6a737d; font-style: italic;"># This is the complete build and deployment config for two apps.</span>
+</code></pre>
+
+</div>
+</div>
+
 <script>
 function copyCode(codeId, buttonElem) {
     const code = document.getElementById(codeId).textContent;
