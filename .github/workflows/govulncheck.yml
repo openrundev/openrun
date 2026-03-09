@@ -2,8 +2,8 @@ name: govulncheck
 on:
   push:
   pull_request:
-  schedule: # daily at 10:22 UTC
-    - cron: '22 10 * * *'
+  schedule: # daily at 16:22 UTC
+    - cron: '22 16 * * *'
   workflow_dispatch:
 permissions:
   contents: read
