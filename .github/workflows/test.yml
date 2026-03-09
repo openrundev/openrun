@@ -23,7 +23,7 @@ jobs:
     runs-on: self-hosted
     strategy:
       matrix:
-        go-version: ["1.26.0"]
+        go-version: ["1.26.1"]
 
     steps:
       - uses: actions/checkout@v3
