@@ -29,7 +29,7 @@ require (
 	github.com/moby/buildkit v0.18.1
 	github.com/pkg/profile v1.7.0
 	github.com/rs/zerolog v1.33.0
-	github.com/russellhaering/gosaml2 v0.10.0
+	github.com/russellhaering/gosaml2 v0.11.0
 	github.com/russellhaering/goxmldsig v1.6.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.40.0
