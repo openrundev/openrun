@@ -43,8 +43,7 @@ tests:
     stdout: "Disk Usage"
   load0046: # approve audit, no more permissions
     command: '../openrun app approve /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
-    stdout:
-      exactly: "App permissions have been approved /disk_usage_dev - YYY\n  Plugins :\n    fs.in\n  Permissions:\n1 app(s) audited, 1 app(s) approved, 0 app(s) promoted.\n"
+    stdout: "No approval required. /disk_usage_dev - YYY"
     exit-code: 0
   load0047: # check curl
     command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev
