@@ -117,6 +117,7 @@ type ServerConfig struct {
 	ProfileMode string                      `toml:"profile_mode"`
 	AppConfig   AppConfig                   `toml:"app_config"`
 	NodeConfig  NodeConfig                  `toml:"node_config"`
+	Permissions PermissionsConfig           `toml:"permissions"`
 }
 
 type PluginSettings map[string]any
@@ -315,6 +316,12 @@ type AuthConfig struct {
 	Scopes       []string `toml:"scopes"`        // oauth scopes
 }
 
+// PermissionsConfig is the permissions configuration for the server. This overrides the permissions configured in the app metadata.
+type PermissionsConfig struct {
+	Allow      []Permission `toml:"allow"`       // the permissions that are allowed for all apps, without requiring explicit approval
+	FullAccess []string     `toml:"full_access"` // the apps that have full access to all plugins
+}
+
 type ClientCertConfig struct {
 	CACertFile string         `toml:"ca_cert_file"`
 	RootCAs    *x509.CertPool `toml:"-"`
@@ -402,12 +409,12 @@ func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppI
 // Permission represents a permission granted to an app to run
 // a plugin method with the given arguments
 type Permission struct {
-	Plugin    string   `json:"plugin"`
-	Method    string   `json:"method"`
-	Arguments []string `json:"arguments"`
-	IsRead    *bool    `json:"is_read,omitempty"` // Whether the call is a Read operation or Write operation.
+	Plugin    string   `json:"plugin" toml:"plugin"`
+	Method    string   `json:"method" toml:"method"`
+	Arguments []string `json:"arguments" toml:"arguments"`
+	IsRead    *bool    `json:"is_read,omitempty" toml:"is_read,omitempty"` // Whether the call is a Read operation or Write operation.
 	// nil value means go with the default as set in the plugin code
-	Secrets [][]string `json:"secrets"` // The secrets that are allowed to be used in the call.
+	Secrets [][]string `json:"secrets" toml:"secrets"` // The secrets that are allowed to be used in the call.
 }
 
 // AppAuthnType is the app level authentication type

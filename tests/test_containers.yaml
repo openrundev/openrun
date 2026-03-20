@@ -4,19 +4,20 @@ config:
     HTTP_PORT: ${HTTP_PORT}
     GOCOVERDIR: ${GOCOVERDIR}/../client
 tests:
+  # container and proxy plugins are assumed to be enabled in default toml config. So approval is not required for these apps
   container0010: # setup flask app
     command: rm -rf ./flaskapp && mkdir flaskapp && cp flask.py flaskapp/app.py
   container0020: # setup flask dev app
-    command: ../openrun app create --dev --spec python-flask --approve --copt kubernetes.invalid=abc --copt docker.cpus=2 --copt command.memory=1g --copt hostname=flaskapp ./flaskapp /cont_flaskdev
+    command: ../openrun app create --dev --spec python-flask --copt kubernetes.invalid=abc --copt docker.cpus=2 --copt command.memory=1g --copt hostname=flaskapp ./flaskapp /cont_flaskdev
   container0030: # setup flask prod app
-    command: ../openrun app create --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpu-shares=1000 --approve ./flaskapp /cont_flaskprod
+    command: ../openrun app create --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpu-shares=1000 ./flaskapp /cont_flaskprod
   container0031: # invalid python version carg fails
-    command: ../openrun app create --spec python-flask --cvol /tmp:/atmp --cvol /testvol --container-arg PYTHON_VERSION=4invalid-slim --approve ./flaskapp /cont_flaskdev2
+    command: ../openrun app create --spec python-flask --cvol /tmp:/atmp --cvol /testvol --container-arg PYTHON_VERSION=4invalid-slim ./flaskapp /cont_flaskdev2
   container0032: # check curl
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskdev2
     stdout: 4invalid
   container0033: # invalid container run option fails
-    command: ../openrun app create --spec python-flask --container-option command.invalid=abc --approve ./flaskapp /cont_flaskdev3
+    command: ../openrun app create --spec python-flask --container-option command.invalid=abc ./flaskapp /cont_flaskdev3
   container0034: # check curl
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskdev3
     stdout: invalid
@@ -33,6 +34,7 @@ tests:
     stdout: "hello"
   container0080: # do reload
     command: ../openrun app reload /cont_flaskprod
+    stderr: abc
   container0090: # stage is updated
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskprod_cl_stage
     stdout: "updated"
@@ -46,7 +48,7 @@ tests:
     stdout: "updated"
 
   container0200: # setup streamlit app
-    command: ../openrun app create --spec python-streamlit --branch master --approve github.com/streamlit/streamlit-example /cont_streamlit
+    command: ../openrun app create --spec python-streamlit --branch master github.com/streamlit/streamlit-example /cont_streamlit
   container0210: # check stage
     command: curl -sS localhost:${HTTP_PORT}/cont_streamlit_cl_stage/_stcore/health
     stdout: ok
@@ -55,7 +57,7 @@ tests:
     stdout: ok
 
   container0300: # setup proxy
-    command: ../openrun app create --spec proxy --approve -param url=https://www.google.com - /cont_proxy
+    command: ../openrun app create --spec proxy --approve --param url=https://www.google.com - /cont_proxy
   container0310: # check stage
     command: curl -sS localhost:${HTTP_PORT}/cont_proxy_cl_stage
     stdout: doctype
@@ -64,7 +66,7 @@ tests:
     stdout: doctype
 
   container0400: # setup nginx image
-    command: ../openrun app create --spec image --approve --param image=nginx --param port=80 - /cont_image_nginx
+    command: ../openrun app create --spec image --param image=nginx --param port=80 - /cont_image_nginx
   container0410: # check stage
     command: curl -sS localhost:${HTTP_PORT}/cont_image_nginx_cl_stage
     stdout: Welcome to nginx

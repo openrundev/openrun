@@ -224,7 +224,12 @@ func (a *App) loader(thread *starlark.Thread, moduleFullPath string) (starlark.S
 		return a.loadStarlark(thread, moduleFullPath, a.starlarkCache)
 	}
 
-	if a.Metadata.Loads == nil || !slices.Contains(a.Metadata.Loads, moduleFullPath) {
+	allowedModules := append([]string{}, a.Metadata.Loads...)
+	for _, p := range a.serverConfig.Permissions.Allow {
+		allowedModules = append(allowedModules, p.Plugin)
+	}
+
+	if !slices.Contains(allowedModules, moduleFullPath) {
 		return nil, fmt.Errorf("app %s is not permitted to load plugin %s. Audit the app and approve permissions", a.Path, moduleFullPath)
 	}
 
@@ -242,7 +247,7 @@ func (a *App) loader(thread *starlark.Thread, moduleFullPath string) (starlark.S
 		if pluginInfo.HandlerName == "" {
 			hookedDict[funcName] = pluginInfo.ConstantValue
 		} else {
-			hookedDict[funcName] = a.pluginHook(moduleFullPath, accountName, funcName, pluginInfo)
+			hookedDict[funcName] = a.pluginHook(a.AppPathDomain().String(), moduleFullPath, accountName, funcName, pluginInfo)
 		}
 	}
 
@@ -273,73 +278,28 @@ func (a *App) pluginLookup(_ *starlark.Thread, module string) (plugin.PluginMap,
 	return pluginDict, nil
 }
 
-func (a *App) pluginHook(modulePath, accountName, functionName string, pluginInfo *plugin.PluginInfo) *starlark.Builtin {
+func (a *App) pluginHook(appPath, modulePath, accountName, functionName string, pluginInfo *plugin.PluginInfo) *starlark.Builtin {
 	hook := func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		a.Trace().Msgf("Plugin called: %s.%s", modulePath, functionName)
 
-		if a.Metadata.Permissions == nil {
-			return nil, fmt.Errorf("app %s has no permissions configured, plugin call %s.%s is blocked. Audit the app and approve permissions", a.Path, modulePath, functionName)
-		}
-
-		approved := false
 		var lastError error
 		var secrets [][]string
-		for _, p := range a.Metadata.Permissions {
-			a.Trace().Msgf("Checking permission %s.%s call %s.%s", p.Plugin, p.Method, modulePath, functionName)
-			if p.Plugin == modulePath && p.Method == functionName {
-				if len(p.Arguments) > 0 {
-					if len(p.Arguments) > len(args) {
-						lastError = fmt.Errorf("app %s is not permitted to call %s.%s with %d arguments, %d or more positional arguments are required (permissions checks are not supported for kwargs). Audit the app and approve permissions", a.Path, modulePath, functionName, len(args), len(p.Arguments))
-						continue
-					}
-					argMismatch := false
-					for i, arg := range p.Arguments {
-						funcInput := types.StripQuotes(args[i].String())
-						if funcInput != arg {
-							match, err := types.RegexMatch(arg, funcInput)
-							if err != nil {
-								return nil, err
-							}
-							if !match {
-								lastError = fmt.Errorf("app %s is not permitted to call %s.%s with argument %d having value \"%s\", expected \"%s\". Update the app or audit and approve permissions", a.Path, modulePath, functionName, i, funcInput, arg)
-								argMismatch = true
-								break
-							}
-						}
-						// More arguments than approved are permitted. Also, using kwargs is not allowed for args which are approved
-						// Regex support is not implemented, the arguments have to match exactly as approved
-					}
-					if argMismatch {
-						// This permission is not approved, but there may be others which are
-						continue
-					}
-				}
+		var approved bool
+		var err error
 
-				if a.MainApp != "" {
-					var isRead bool
-					if p.IsRead != nil {
-						// Permission defines isRead, use that
-						isRead = *p.IsRead
-					} else {
-						// Use the plugin defined isRead value
-						isRead = pluginInfo.IsRead
-					}
-
-					if !isRead {
-						// Write API, check if stage/preview has write access
-						if strings.HasPrefix(string(a.Id), types.ID_PREFIX_APP_STAGE) && !a.Settings.StageWriteAccess {
-							return nil, fmt.Errorf("stage app %s is not permitted to call %s.%s args %v. Stage app does not have access to write operations", a.Path, modulePath, functionName, p.Arguments)
-						}
-
-						if strings.HasPrefix(string(a.Id), types.ID_PREFIX_APP_PREVIEW) && !a.Settings.PreviewWriteAccess {
-							return nil, fmt.Errorf("preview app %s is not permitted to call %s.%s args %v. Preview app does not have access to write operations", a.Path, modulePath, functionName, p.Arguments)
-						}
-					}
-				}
-
-				secrets = p.Secrets // the secrets this plugin call is allowed access to
-				approved = true
-				break
+		permsList := append([]types.Permission(nil), a.Metadata.Permissions...)
+		if len(a.serverConfig.Permissions.Allow) > 0 {
+			// Add the server config allowed permissions to the list
+			permsList = append(permsList, a.serverConfig.Permissions.Allow...)
+		}
+		if slices.Contains(a.serverConfig.Permissions.FullAccess, appPath) {
+			// App has full access to all plugins
+			approved = true
+			secrets = [][]string{{"regex:.*"}} // All secrets are allowed
+		} else {
+			lastError, secrets, approved, err = checkPermissions(a, modulePath, functionName, args, pluginInfo, permsList)
+			if err != nil {
+				return nil, err
 			}
 		}
 
@@ -466,4 +426,68 @@ func (a *App) pluginHook(modulePath, accountName, functionName string, pluginInf
 	}
 
 	return starlark.NewBuiltin(functionName, hook)
+}
+
+func checkPermissions(a *App, modulePath string, functionName string, args starlark.Tuple, pluginInfo *plugin.PluginInfo, permsList []types.Permission) (error, [][]string, bool, error) {
+	var lastError error
+	secrets := [][]string{}
+	approved := false
+	for _, p := range permsList {
+		a.Trace().Msgf("Checking permission %s.%s call %s.%s", p.Plugin, p.Method, modulePath, functionName)
+		if p.Plugin == modulePath && p.Method == functionName {
+			if len(p.Arguments) > 0 {
+				if len(p.Arguments) > len(args) {
+					lastError = fmt.Errorf("app %s is not permitted to call %s.%s with %d arguments, %d or more positional arguments are required (permissions checks are not supported for kwargs). Audit the app and approve permissions", a.Path, modulePath, functionName, len(args), len(p.Arguments))
+					continue
+				}
+				argMismatch := false
+				for i, arg := range p.Arguments {
+					funcInput := types.StripQuotes(args[i].String())
+					if funcInput != arg {
+						match, err := types.RegexMatch(arg, funcInput)
+						if err != nil {
+							return nil, nil, false, err
+						}
+						if !match {
+							lastError = fmt.Errorf("app %s is not permitted to call %s.%s with argument %d having value \"%s\", expected \"%s\". Update the app or audit and approve permissions", a.Path, modulePath, functionName, i, funcInput, arg)
+							argMismatch = true
+							break
+						}
+					}
+					// More arguments than approved are permitted. Also, using kwargs is not allowed for args which are approved
+				}
+				if argMismatch {
+					// This permission is not approved, but there may be others which are
+					continue
+				}
+			}
+
+			if a.MainApp != "" {
+				var isRead bool
+				if p.IsRead != nil {
+					// Permission defines isRead, use that
+					isRead = *p.IsRead
+				} else {
+					// Use the plugin defined isRead value
+					isRead = pluginInfo.IsRead
+				}
+
+				if !isRead {
+					// Write API, check if stage/preview has write access
+					if strings.HasPrefix(string(a.Id), types.ID_PREFIX_APP_STAGE) && !a.Settings.StageWriteAccess {
+						return nil, nil, false, fmt.Errorf("stage app %s is not permitted to call %s.%s args %v. Stage app does not have access to write operations", a.Path, modulePath, functionName, p.Arguments)
+					}
+
+					if strings.HasPrefix(string(a.Id), types.ID_PREFIX_APP_PREVIEW) && !a.Settings.PreviewWriteAccess {
+						return nil, nil, false, fmt.Errorf("preview app %s is not permitted to call %s.%s args %v. Preview app does not have access to write operations", a.Path, modulePath, functionName, p.Arguments)
+					}
+				}
+			}
+
+			secrets = p.Secrets // the secrets this plugin call is allowed access to
+			approved = true
+			break
+		}
+	}
+	return lastError, secrets, approved, nil
 }

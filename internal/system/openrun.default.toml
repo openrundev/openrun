@@ -94,6 +94,17 @@ db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_app_store.db"
 [plugin."fs.in"]
 db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_fs.db"
 
+[[permissions.allow]]
+plugin = "proxy.in"
+method = "config"
+arguments = ["<CONTAINER_URL>"]
+
+[[permissions.allow]]
+plugin = "container.in"
+method = "config"
+arguments = ["regex:.*"]
+secrets = [["regex:.*"]]
+
 [app_config]
 # app config can be set at the app level using a metadata config update. For example:
 #  openrun app update conf --promote 'cors.allow_methods="GET, POST"' /myapp

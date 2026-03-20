@@ -192,8 +192,11 @@ sleep 2
 
 if [[ -z $CL_SINGLE_TEST ]]; then
     commander test $CL_TEST_VERBOSE  --dir ./commander/
-else
+elif [[ $CL_SINGLE_TEST != "disable" ]]; then
     commander test $CL_TEST_VERBOSE ./commander/$CL_SINGLE_TEST
+fi
+
+if [[ -n $CL_SINGLE_TEST && -z $CL_TEST_CONTAINER ]]; then
     CL_CONTAINER_COMMANDS="disable"
 fi
 

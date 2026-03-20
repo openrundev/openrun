@@ -864,7 +864,7 @@ func (a *App) updateAppConfig() error {
 
 func (a *App) getSecretsAllowed(plugin, function string) [][]string {
 	ret := [][]string{}
-	for _, p := range a.Metadata.Permissions {
+	for _, p := range append(a.Metadata.Permissions, a.serverConfig.Permissions.Allow...) {
 		if p.Plugin == plugin && p.Method == function {
 			ret = append(ret, p.Secrets...)
 		}
