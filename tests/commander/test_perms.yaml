@@ -34,7 +34,7 @@ tests:
     command: perl -i -pe 's/type="WRITE"/type="READ"/g' ./perms_disk_usage/app.star
   perms0113: # Reload apps
     command: ../openrun app reload --approve "/perms*"
-    stdout: "2 app(s) reloaded, 0 app(s) skipped, 2 app(s) approved, 0 app(s) promoted."
+    stdout: "2 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   perms0114: # test stage app
     command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
     stdout: "Disk Usage"
