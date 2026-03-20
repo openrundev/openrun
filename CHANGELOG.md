@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.20] - 2026-03-19
+
+### Added
+
+- Support for default permissions in server config. Containerized apps do not require explicit approval.
+
 ## [0.16.19] - 2026-02-13
 
 ### Added
