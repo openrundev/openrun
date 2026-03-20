@@ -34,7 +34,6 @@ tests:
     stdout: "hello"
   container0080: # do reload
     command: ../openrun app reload /cont_flaskprod
-    stderr: abc
   container0090: # stage is updated
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskprod_cl_stage
     stdout: "updated"

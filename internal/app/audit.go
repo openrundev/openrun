@@ -149,6 +149,85 @@ func needsApproval(a *types.ApproveResult) bool {
 	return !slices.EqualFunc(a.NewPermissions, a.ApprovedPermissions, permEquals)
 }
 
+// needsApprovalWithServerConfig re-evaluates whether approval is needed after accounting
+// for loads and permissions that are already covered by the server config.
+func needsApprovalWithServerConfig(a *types.ApproveResult, serverPerms []types.Permission) bool {
+	serverPlugins := make(map[string]bool)
+	for _, sp := range serverPerms {
+		serverPlugins[sp.Plugin] = true
+	}
+
+	// Filter new loads: remove any that are covered by server config or already approved
+	approvedSet := make(map[string]bool)
+	for _, l := range a.ApprovedLoads {
+		approvedSet[l] = true
+	}
+	for _, l := range a.NewLoads {
+		if !approvedSet[l] && !serverPlugins[l] {
+			return true
+		}
+	}
+
+	// Filter new permissions: remove any that are covered by server config or already approved
+	for _, p := range a.NewPermissions {
+		if permissionCoveredByServerConfig(p, serverPerms) {
+			continue
+		}
+		// Check if it's in the approved list
+		found := false
+		for _, ap := range a.ApprovedPermissions {
+			if ap.Plugin == p.Plugin && ap.Method == p.Method &&
+				slices.Equal(ap.Arguments, p.Arguments) &&
+				reflect.DeepEqual(ap.Secrets, p.Secrets) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return true
+		}
+	}
+
+	return false
+}
+
+// permissionCoveredByServerConfig checks if a permission declared by an app is already
+// covered by a server config permission entry. Server config permissions can use regex
+// for arguments, so this does regex-aware matching.
+func permissionCoveredByServerConfig(perm types.Permission, serverPerms []types.Permission) bool {
+	for _, sp := range serverPerms {
+		if sp.Plugin != perm.Plugin || sp.Method != perm.Method {
+			continue
+		}
+
+		if len(sp.Arguments) == 0 {
+			return true
+		}
+
+		if len(sp.Arguments) > len(perm.Arguments) {
+			continue
+		}
+
+		argMatch := true
+		for i, serverArg := range sp.Arguments {
+			appArg := perm.Arguments[i]
+			if serverArg == appArg {
+				continue
+			}
+			match, err := types.RegexMatch(serverArg, appArg)
+			if err != nil || !match {
+				argMatch = false
+				break
+			}
+		}
+
+		if argMatch {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) createApproveResponse(loads []string, globals starlark.StringDict) (*types.ApproveResult, error) {
 	// the App entry should not get updated during the audit call, since there
 	// can be audit calls when the app is running.
@@ -170,6 +249,9 @@ func (a *App) createApproveResponse(loads []string, globals starlark.StringDict)
 	if err != nil {
 		// permission order needs to match for now
 		results.NeedsApproval = needsApproval(&results)
+		if results.NeedsApproval && len(a.serverConfig.Permissions.Allow) > 0 {
+			results.NeedsApproval = needsApprovalWithServerConfig(&results, a.serverConfig.Permissions.Allow)
+		}
 		return &results, nil
 	}
 
@@ -223,5 +305,8 @@ func (a *App) createApproveResponse(loads []string, globals starlark.StringDict)
 	}
 	results.NewPermissions = perms
 	results.NeedsApproval = needsApproval(&results)
+	if results.NeedsApproval && len(a.serverConfig.Permissions.Allow) > 0 {
+		results.NeedsApproval = needsApprovalWithServerConfig(&results, a.serverConfig.Permissions.Allow)
+	}
 	return &results, nil
 }
