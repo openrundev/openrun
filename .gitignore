@@ -8,6 +8,7 @@ dist/
 /logs/
 .DS_Store
 /run/
+/tests/run/
 /app_src/
 /config/
 /internal/server/appspecs/

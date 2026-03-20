@@ -45,8 +45,8 @@ error_handler () {
 }
 
 cleanup() {
-  rm -rf metadata app_src
-  rm -rf logs/ openrun.toml config_container.toml server.stdout flaskapp
+  rm -rf metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
+  rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp
 
   if [[ -d ../appspecs_bk ]]; then
     rm -rf ../internal/server/appspecs
