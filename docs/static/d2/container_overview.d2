@@ -1,0 +1,29 @@
+# https://d2lang.com diagram. Use make to generate SVG.
+
+direction: right
+
+openrun: {
+  label: "OpenRun"
+  shape: rectangle
+  style: {stroke-width: 2}
+}
+
+git: "Git\n(GitHub / GitLab)"
+db: "Metadata DB\n(SQLite / Postgres)"
+registry: "Container Registry"
+
+runtime: {
+  label: "Container Manager\nDocker/Podman or Kubernetes"
+  shape: rectangle
+  app1: "app1 container"
+  appN: "appN container"
+}
+
+openrun -> git: "Fetch app config and source"
+openrun -> db: "Store app metadata and source"
+openrun -> registry: "Store images"
+openrun -> runtime: "Runs app containers"
+
+registry -> runtime: "Fetch image"
+
+openrun -> runtime.appN: "Proxy APIs"

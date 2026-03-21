@@ -1,0 +1,47 @@
+# https://d2lang.com diagram. Use make to generate SVG.
+direction: right
+
+external_postgres: {
+  label: "Postgres (Metadata DB)"
+  shape: rectangle
+  icon: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg"
+  style: {stroke-width: 2}
+}
+
+external_registry: {
+  label: "Container Registry"
+  shape: rectangle
+  icon: "https://www.svgrepo.com/show/375403/container-registry.svg"
+  style: {stroke-width: 2}
+}
+
+k8s_cluster: {
+  label: "Kubernetes Cluster"
+  shape: rectangle
+  icon: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/kubernetes.svg"
+  style: {stroke-width: 2}
+
+  openrun_ns: {
+    label: "Namespace: openrun"
+    shape: rectangle
+
+    openrun: "OpenRun"
+    builder: "Kaniko Build Job"
+  }
+
+  apps_ns: {
+    label: "Namespace: openrun-apps"
+    shape: rectangle
+
+    app1_svc: "App1 Service/Pods"
+    app2_svc: "App2 Service/Pods"
+  }
+
+  kube_api: "Kubernetes API"
+}
+
+k8s_cluster.openrun_ns.openrun -> external_postgres: "Read/write metadata"
+k8s_cluster.openrun_ns.openrun -> k8s_cluster.kube_api: "Create/Update\nDeployment + Service"
+k8s_cluster.openrun_ns.openrun -> k8s_cluster.openrun_ns.builder: "Build image"
+k8s_cluster.openrun_ns.builder -> external_registry: "Push image"
+k8s_cluster.apps_ns.app1_svc -> external_registry: "Pull image"

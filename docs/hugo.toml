@@ -1,0 +1,142 @@
+baseURL = "https://openrun.dev/"
+languageCode = "en-us"
+title = "OpenRun - Internal Tools Deployment Platform"
+canonifyURLs = false
+relativeURLs = false
+pluralizeListTitles = false
+plainIdAnchors = true
+defaultContentLanguage = "en"
+enableInlineShortcodes = true
+
+[outputs]
+home = ["html", "llms"]
+
+[[module.imports]]
+path = 'github.com/imfing/hextra'
+
+[markup.goldmark.renderer]
+unsafe = true
+
+[markup.tableOfContents]
+endLevel = 3
+ordered = false
+startLevel = 2
+
+[markup.highlight]
+noClasses = false
+
+# Default Page Parameters
+[params]
+title = "OpenRun - Internal Tools Deployment Platform"
+description = "Internal tools deployment made easy. Deploy web apps declaratively, on a single-node or on Kubernetes."
+
+[params.navbar]
+displayTitle = false
+
+[params.navbar.logo]
+path = "openrun_anim.svg"
+width = 180
+height = 50
+
+[params.editurl]
+enable = false
+base = "https://github.com/openrundev/docs/edit/main/content"
+
+[params.footer]
+displayCopyright = true
+displayPoweredBy = false
+
+[params.theme]
+default = "system"
+displayToggle = true
+
+[params.banner]
+key = "announcement-kubernetes"
+message = "📌 OpenRun now enables easy app deployments to Kubernetes. [Learn more](https://openrun.dev/docs/container/kubernetes/)."
+
+# Docs Navigation
+
+[[menu.main]]
+name = "QuickStart"
+url = "/docs/quickstart"
+identifier = "quickstart"
+weight = 1
+
+[[menu.main]]
+name = "Docs"
+url = "/docs"
+identifier = "docs"
+weight = 2
+
+[[menu.main]]
+name = "Features"
+url = "/features"
+identifier = "features"
+weight = 3
+
+[[menu.main]]
+name = "Blog"
+url = "/blog"
+identifier = "blog"
+weight = 4
+
+[[menu.main]]
+name = "About"
+url = "/about"
+weight = 5
+
+[[menu.main]]
+name = "Search"
+weight = 6
+[menu.main.params]
+type = "search"
+
+[[menu.main]]
+name = "Discord"
+weight = 7
+url = "https://discord.gg/t2P8pJFsd7"
+[menu.main.params]
+icon = "discord"
+
+[[menu.main]]
+name = "GitHub"
+weight = 8
+url = "https://github.com/openrundev/openrun"
+
+[menu.main.params]
+icon = "github"
+
+[[menu.sidebar]]
+name = "Contact"
+params.type = "separator"
+weight = 1
+
+[[menu.sidebar]]
+name = "Email"
+url = "mailto:contact@openrun.dev"
+weight = 1
+
+[[menu.sidebar]]
+name = "GitHub"
+url = "https://github.com/openrundev"
+weight = 2
+
+[[menu.sidebar]]
+name = "Twitter"
+url = "https://twitter.com/ajay_kidave"
+weight = 3
+
+[[menu.sidebar]]
+name = "Blog Feed"
+url = "https://openrun.dev/blog/index.xml"
+weight = 4
+
+[[menu.sidebar]]
+name = "Discord"
+url = "https://discord.gg/t2P8pJFsd7"
+weight = 5
+
+[[menu.sidebar]]
+name = "CNCF Slack #openrun"
+url = "https://cloud-native.slack.com/"
+weight = 6

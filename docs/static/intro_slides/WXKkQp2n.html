@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+
+<html data-theme="light" lang="en" style="">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Configuration Comparison</title>
+<link href="assets/css/tailwind.min.css" rel="stylesheet"/>
+<link href="assets/css/fontawesome.min.css" rel="stylesheet"/>
+<style>
+    body {
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+        background-color: #0d1117;
+        color: #c9d1d9;
+        margin: 0;
+        overflow: hidden;
+    }
+    .slide-container {
+        width: 1280px;
+        height: 720px;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        background-color: #0d1117;
+    }
+    .content-area {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 0 60px 40px 60px;
+        gap: 20px;
+    }
+    .comparison-container {
+        display: flex;
+        gap: 40px;
+        height: 100%;
+        position: relative;
+    }
+    .vs-badge {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        background-color: #161b22;
+        border: 2px solid #30363d;
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        color: #c9d1d9;
+        z-index: 10;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    
+    /* Code Panels */
+    .code-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid #30363d;
+        background-color: #010409;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        transition: transform 0.3s ease, border-color 0.3s ease;
+        position: relative; /* Ensure absolute children are positioned relative to this */
+    }
+    
+    .panel-openrun {
+        border-color: rgba(0, 194, 0, 0.3);
+    }
+    .panel-openrun:hover {
+        border-color: #00C200;
+        transform: translateY(-5px);
+        box-shadow: 0 8px 30px rgba(0, 194, 0, 0.15);
+    }
+    
+    .panel-k8s {
+        border-color: #30363d;
+        opacity: 0.8;
+    }
+    .panel-k8s:hover {
+        border-color: #c9d1d9;
+        opacity: 1;
+    }
+    
+    .panel-header {
+        padding: 12px 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid;
+    }
+    .header-openrun {
+        background-color: rgba(0, 194, 0, 0.05);
+        border-bottom-color: rgba(0, 194, 0, 0.2);
+    }
+    .header-k8s {
+        background-color: #161b22;
+        border-bottom-color: #30363d;
+    }
+    
+    .panel-title {
+        font-weight: 600;
+        font-size: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .tag {
+        font-size: 0.7rem;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }
+    .tag-openrun {
+        background-color: #00C200;
+        color: #000;
+    }
+    .tag-k8s {
+        background-color: #30363d;
+        color: #c9d1d9;
+    }
+
+    /* Code Content */
+    .code-content {
+        padding: 20px;
+        font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.85rem;
+        line-height: 1.6;
+        overflow: hidden;
+        flex: 1;
+        position: relative;
+    }
+    
+    /* Syntax Highlighting - Starlark/Python */
+    .s-comment { color: #c9d1d9; font-style: italic; opacity: 0.8; }
+    .s-func { color: #d2a8ff; font-weight: bold; }
+    .s-string { color: #a5d6ff; }
+    .s-key { color: #79c0ff; }
+    .s-var { color: #ffa657; }
+    .s-op { color: #ff7b72; }
+    
+    /* Syntax Highlighting - YAML */
+    .y-key { color: #7ee787; }
+    .y-val { color: #a5d6ff; }
+    .y-dash { color: #c9d1d9; }
+    .y-meta { color: #79c0ff; }
+    
+    /* Stats Bar */
+    .stats-bar {
+        padding: 12px 20px;
+        font-size: 0.8rem;
+        display: flex;
+        justify-content: space-between;
+        background-color: #0d1117;
+        border-top: 1px solid #30363d;
+        color: #c9d1d9;
+    }
+    .stat-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .stat-highlight {
+        color: #00C200;
+        font-weight: bold;
+    }
+    
+    /* Blur effect for long content */
+    .fade-out {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        height: 60px;
+        background-color: transparent; 
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding-bottom: 10px;
+        color: #c9d1d9;
+        font-size: 0.8rem;
+        background-color: rgba(1, 4, 9, 0.85);
+        border-top: 1px solid #30363d;
+    }
+
+    .mono-font { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .text-brand { color: #00C200; }
+    .text-brand-dark { color: #007700; }
+    
+    /* Callout - styles kept but unused */
+    .feature-callout {
+        position: absolute;
+        top: -15px;
+        right: 20px;
+        background-color: #00C200;
+        color: #000;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 0.8rem;
+        box-shadow: 0 4px 10px rgba(0, 194, 0, 0.3);
+        z-index: 20;
+        transform: rotate(2deg);
+    }
+</style>
+</head>
+<body style="">
+<div class="slide-container">
+<!-- Header -->
+<div class="flex justify-between items-end px-20 pt-10 pb-6">
+<div>
+<span class="text-brand font-bold tracking-wider uppercase text-xs mb-2 block">Simplicity First</span>
+<h1 class="text-4xl font-bold text-white tracking-tight">Declarative Config Comparison</h1>
+</div>
+<div class="flex items-center gap-3 opacity-60">
+<i class="fa-solid fa-server text-brand"></i>
+<span class="font-bold tracking-tight text-white">OpenRun</span>
+<span class="mx-2 text-gray-600">|</span>
+<span class="text-gray-500 text-sm mono-font">08</span>
+</div>
+</div>
+<div class="content-area">
+<div class="comparison-container" style="color: #c9d1d9;">
+<div class="vs-badge">VS</div>
+<!-- OpenRun Panel -->
+<div class="code-panel panel-openrun">
+<!-- Feature Callout Removed from this panel -->
+<div class="panel-header header-openrun">
+<div class="panel-title text-white">
+<i class="fa-solid fa-file-code text-brand"></i>
+<span>OpenRun Config</span>
+</div>
+<span class="tag tag-openrun">STARLARK</span>
+</div>
+<div class="code-content">
+<p class="m-0"><span class="s-comment"># Set resource limits (optional)</span></p>
+<p class="m-0"><span class="s-var">limits</span> <span class="s-op">=</span> {<span class="s-string">"cpus"</span>: <span class="s-string">"1"</span>, <span class="s-string">"memory"</span>: <span class="s-string">"512m"</span>}</p>
+<p class="m-0"> </p>
+<p class="m-0"><span class="s-comment"># Streamlit App Declaration</span></p>
+<p class="m-0"><span class="s-func">app</span>(<span class="s-string">"/misc/streamlit_example"</span>,</p>
+<p class="m-0 pl-4"><span class="s-string">"github.com/streamlit/streamlit-example"</span>,</p>
+<p class="m-0 pl-4"><span class="s-key">git_branch</span>=<span class="s-string">"master"</span>,</p>
+<p class="m-0 pl-4"><span class="s-key">spec</span>=<span class="s-string">"python-streamlit"</span>,</p>
+<p class="m-0 pl-4"><span class="s-key">container_opts</span>=<span class="s-var">limits</span>)</p>
+<p class="m-0"> </p>
+<p class="m-0"><span class="s-comment"># FastHTML App Declaration</span></p>
+<p class="m-0"><span class="s-func">app</span>(<span class="s-string">"fasthtml.:"</span>,</p>
+<p class="m-0 pl-4"><span class="s-string">"github.com/AnswerDotAI/fasthtml/examples"</span>,</p>
+<p class="m-0 pl-4"><span class="s-key">spec</span>=<span class="s-string">"python-fasthtml"</span>,</p>
+<p class="m-0 pl-4"><span class="s-key">params</span>={<span class="s-string">"APP_MODULE"</span>:<span class="s-string">"basic_ws:app"</span>},</p>
+<p class="m-0 pl-4"><span class="s-key">container_opts</span>=<span class="s-var">limits</span>)</p>
+<p><br/></p>
+<p class="s-comment"># Complete config for two apps. Defines where to get the source code, how to build the image, how to route requests and what resource limits to set</p>
+</div>
+<div class="stats-bar">
+<div class="stat-item">
+<i class="fa-solid fa-align-left"></i>
+<span>Lines: <span class="stat-highlight">12</span></span>
+</div>
+<div class="stat-item">
+<i class="fa-regular fa-clock"></i>
+<span>Readability: <span class="stat-highlight">High</span></span>
+</div>
+</div>
+</div>
+<!-- Kubernetes Panel -->
+<div class="code-panel panel-k8s">
+<!-- Feature Callout Removed from this panel -->
+<div class="panel-header header-k8s">
+<div class="panel-title text-gray-400">
+<i class="fa-solid fa-cube"></i>
+<span>Kubernetes Manifests</span>
+</div>
+<span class="tag tag-k8s">YAML</span>
+</div>
+<div class="code-content">
+<p class="m-0"><span class="y-key">apiVersion:</span> <span class="y-val">apps/v1</span></p>
+<p class="m-0"><span class="y-key">kind:</span> <span class="y-val">Deployment</span></p>
+<p class="m-0"><span class="y-key">metadata:</span></p>
+<p class="m-0 pl-4"><span class="y-key">name:</span> <span class="y-val">streamlit-app</span></p>
+<p class="m-0"><span class="y-key">spec:</span></p>
+<p class="m-0 pl-4"><span class="y-key">replicas:</span> <span class="y-val">1</span></p>
+<p class="m-0 pl-4"><span class="y-key">selector:</span></p>
+<p class="m-0 pl-8"><span class="y-key">matchLabels:</span></p>
+<p class="m-0 pl-12"><span class="y-key">app:</span> <span class="y-val">streamlit</span></p>
+<p class="m-0 pl-4"><span class="y-key">template:</span></p>
+<p class="m-0 pl-8"><span class="y-key">metadata:</span></p>
+<p class="m-0 pl-12"><span class="y-key">labels:</span></p>
+<p class="m-0 pl-16"><span class="y-key">app:</span> <span class="y-val">streamlit</span></p>
+<p class="m-0 pl-8"><span class="y-key">spec:</span></p>
+<p class="m-0 pl-12"><span class="y-key">containers:</span></p>
+<p class="m-0 pl-12"><span class="y-dash">-</span> <span style="color: rgb(126, 231, 135); font-size: 0.85rem;">resources:</span></p>
+<p class="m-0 pl-20"><span class="y-key">limits:</span></p>
+<p class="m-0 pl-24"><span class="y-key">memory:</span> <span class="y-val">"512Mi"</span></p>
+<p class="m-0 pl-24"><span class="y-key">cpu:</span> <span class="y-val">"1"</span></p>
+<p class="m-0"><span class="s-comment">#  Partial k8s config for one app. Jenkins (CI), ArgoCD, CertManager, IDP etc require additional config.</span></p></div></div></div>
+</div>
+</div>
+</body></html>

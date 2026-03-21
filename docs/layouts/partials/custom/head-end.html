@@ -1,0 +1,32 @@
+<script
+  defer
+  data-domain="openrun.dev"
+  data-api="https://pl.demo.clace.io/api/event"
+  src="https://openrun.dev/plscript.js"></script>
+
+<!-- Google tag (gtag.js) -->
+<script
+  async
+  src="https://www.googletagmanager.com/gtag/js?id=G-5ZC8RMDJ7C"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag() {
+    dataLayer.push(arguments);
+  }
+  gtag("js", new Date());
+
+  gtag("config", "G-5ZC8RMDJ7C");
+</script>
+
+{{- $zoom := resources.Get "vendor/medium-zoom/medium-zoom.min.js" | fingerprint -}}
+<script
+  defer
+  src="{{ $zoom.RelPermalink }}"
+  integrity="{{ $zoom.Data.Integrity }}"
+  crossorigin="anonymous"></script>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    mediumZoom(".content img", { margin: 24, background: "rgba(0,0,0,0.85)" });
+  });
+</script>

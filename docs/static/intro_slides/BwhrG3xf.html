@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+
+<html data-theme="light" lang="en" style=""><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Quick Start Demo</title>
+<link href="assets/css/tailwind.min.css" rel="stylesheet"/>
+<link href="assets/css/fontawesome.min.css" rel="stylesheet"/>
+<style>
+    body {
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+        background-color: #0d1117;
+        color: #c9d1d9;
+        margin: 0;
+        overflow: hidden;
+    }
+    .slide-container {
+        width: 1280px;
+        height: 720px;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        background-color: #0d1117;
+    }
+    .content-area {
+        flex: 1;
+        display: flex;
+        padding: 20px 80px 40px 80px;
+        gap: 60px;
+    }
+    .left-panel {
+        width: 350px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+    }
+    .right-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    .mono-font { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    
+    /* Brand Colors */
+    .text-brand { color: #00C200; }
+    .bg-brand { background-color: #00C200; }
+    .border-brand { border-color: #00C200; }
+    .text-brand-dark { color: #007700; }
+    
+    /* Prereq Card */
+    .prereq-card {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 12px;
+        padding: 24px;
+    }
+    .prereq-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+        color: #c9d1d9; /* Updated contrast color */
+        font-size: 0.95rem;
+    }
+    .prereq-item:last-child { margin-bottom: 0; }
+    .check-icon {
+        color: #00C200;
+        width: 20px;
+        text-align: center;
+    }
+
+    /* Steps */
+    .step-container {
+        position: relative;
+        padding-left: 50px;
+        margin-bottom: 24px;
+    }
+    .step-line {
+        position: absolute;
+        left: 20px;
+        top: 36px;
+        bottom: -32px;
+        width: 2px;
+        background-color: #30363d;
+    }
+    .step-container:last-child .step-line { display: none; }
+    
+    .step-number {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 40px;
+        height: 40px;
+        background-color: #161b22;
+        border: 2px solid #30363d;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 600;
+        color: #c9d1d9;
+        z-index: 2;
+    }
+    .step-active .step-number {
+        border-color: #00C200;
+        color: #00C200;
+        box-shadow: 0 0 0 4px rgba(0, 194, 0, 0.1);
+    }
+    
+    .step-title {
+        color: #ffffff;
+        font-weight: 600;
+        font-size: 1.1rem;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        height: 40px;
+    }
+
+    /* Terminal Window */
+    .terminal-window {
+        background-color: #010409;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .terminal-header {
+        background-color: #161b22;
+        padding: 8px 12px;
+        display: flex;
+        gap: 6px;
+        border-bottom: 1px solid #30363d;
+    }
+    .window-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+    }
+    .terminal-body {
+        padding: 16px;
+        font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.85rem;
+        color: #e6edf3;
+        line-height: 1.6;
+    }
+    .cmd-prompt { color: #00C200; margin-right: 8px; }
+    .cmd-path { color: #58a6ff; margin-right: 8px; }
+    
+    /* Validation List */
+    .validation-list {
+        background-color: rgba(0, 194, 0, 0.05);
+        border: 1px solid rgba(0, 194, 0, 0.2);
+        border-radius: 8px;
+        padding: 16px;
+    }
+    .validation-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: #c9d1d9;
+        font-size: 0.9rem;
+        margin-bottom: 8px;
+    }
+    .validation-item:last-child { margin-bottom: 0; }
+    .validation-dot {
+        width: 6px;
+        height: 6px;
+        background-color: #00C200;
+        border-radius: 50%;
+    }
+
+</style>
+</head>
+<body style="">
+<div class="slide-container">
+<!-- Header -->
+<div class="flex justify-between items-end px-20 pt-10 pb-6">
+<div>
+<span class="text-brand font-bold tracking-wider uppercase text-xs mb-2 block">Getting Started</span>
+<h1 class="text-4xl font-bold text-white tracking-tight">Quick Start</h1>
+</div>
+<div class="flex items-center gap-3 opacity-80">
+<i class="fa-solid fa-server text-brand"></i>
+<span class="font-bold tracking-tight text-white">OpenRun</span>
+<span class="mx-2 text-gray-600">|</span>
+<span class="text-gray-500 text-sm mono-font">14</span>
+</div>
+</div>
+<div class="content-area">
+<!-- Left Panel: Prerequisites & Tips -->
+<div class="left-panel">
+<div class="prereq-card">
+<h3 class="text-white font-semibold mb-4 flex items-center gap-2">
+<i class="fa-solid fa-clipboard-check text-brand"></i>
+                    Demo Checkpoints
+                </h3>
+<div class="prereq-item">
+<i class="fa-solid fa-check check-icon"></i>
+<span>Install platform</span>
+</div>
+<div class="prereq-item">
+<i class="fa-solid fa-check check-icon"></i>
+<span>Start server process</span>
+</div>
+<div class="prereq-item">
+<i class="fa-solid fa-check check-icon"></i>
+<span>Connect to Git repo</span>
+</div>
+<div class="prereq-item">
+<i class="fa-solid fa-check check-icon"></i>
+<span>Verify deployment</span>
+</div>
+</div>
+<div class="p-6 bg-gray-900 border border-gray-800 rounded-lg">
+<div class="flex gap-3 mb-2">
+<i class="fa-solid fa-bolt text-yellow-500 mt-1"></i>
+<h4 class="text-white font-medium text-sm">GitOps Workflow</h4>
+</div>
+<p class="text-sm leading-relaxed" style="color: #c9d1d9;">
+                    By scheduling a sync, OpenRun automatically pulls config from the repo. No manual "build" or "deploy" commands are needed for individual apps—the state is reconciled from Git.
+                </p>
+</div>
+</div>
+<!-- Right Panel: Installation Steps -->
+<div class="right-panel">
+<!-- Step 1 -->
+<div class="step-container step-active">
+<div class="step-line"></div>
+<div class="step-number">1</div>
+<div class="step-title">Install &amp; Start</div>
+<div class="terminal-window">
+<div class="terminal-header">
+<div class="window-dot bg-red-500"></div>
+<div class="window-dot bg-yellow-500"></div>
+<div class="window-dot bg-green-500"></div>
+</div>
+<div class="terminal-body">
+<div>
+<span class="cmd-prompt">➜</span><span class="cmd-path">~</span>curl -sSL https://openrun.dev/install.sh | sh
+                        </div>
+<div>
+<span class="cmd-prompt">➜</span><span class="cmd-path">~</span>openrun server start &amp;
+                        </div>
+</div>
+</div>
+</div>
+<!-- Step 2 -->
+<div class="step-container step-active">
+<div class="step-line"></div>
+<div class="step-number">2</div>
+<div class="step-title">Schedule Git Sync</div>
+<div class="terminal-window">
+<div class="terminal-header">
+<div class="window-dot bg-red-500"></div>
+<div class="window-dot bg-yellow-500"></div>
+<div class="window-dot bg-green-500"></div>
+</div>
+<div class="terminal-body">
+<div style="word-break: break-all;">
+<span class="cmd-prompt">➜</span><span class="cmd-path">~</span>openrun sync schedule --approve --promote github.com/openrundev/openrun/examples/utils.star
+                        </div>
+<div class="text-green-300 mt-2 text-xs opacity-80">
+                            [INFO] Sync scheduled successfully<br/>
+                            [INFO] Fetching config from github.com...<br/>
+                            [SUCCESS] 2 apps created, 1 updated.
+                        </div>
+</div>
+</div>
+</div>
+<!-- Step 3 -->
+<div class="step-container step-active">
+<div class="step-number">3</div>
+<div class="step-title">Verify &amp; Access</div>
+<div class="validation-list">
+<div class="validation-item">
+<div class="validation-dot"></div>
+<p>Check running apps: <code class="bg-gray-800 px-2 py-0.5 rounded text-sm mx-1">openrun app list</code></p>
+</div>
+<div class="validation-item">
+<div class="validation-dot"></div>
+<p>Apps are now live at configured domains (e.g., app.localhost)</p>
+</div>
+<div class="validation-item">
+<div class="validation-dot"></div>
+<p>Updates to Git repo will automatically trigger new deploys</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body></html>

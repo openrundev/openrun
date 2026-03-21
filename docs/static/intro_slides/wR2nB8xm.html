@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+
+<html data-theme="light" lang="en" style=""><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Technical Architecture</title>
+<link href="assets/css/tailwind.min.css" rel="stylesheet"/>
+<link href="assets/css/fontawesome.min.css" rel="stylesheet"/>
+<style>
+        body {
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            margin: 0;
+            overflow: hidden;
+        }
+        .slide-container {
+            width: 1280px;
+            height: 720px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            background-color: #0d1117;
+        }
+        .content-area {
+            flex: 1;
+            display: flex;
+            padding: 20px 60px 40px 60px;
+            gap: 40px;
+        }
+        .diagram-col {
+            flex: 1.3;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            padding: 20px;
+        }
+        .details-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .mono-font { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+        
+        /* Brand Colors */
+        .text-brand-light { color: #00C200; }
+        .text-brand-dark { color: #007700; }
+        .bg-brand-dark { background-color: #007700; }
+
+        /* List Items */
+        .arch-item {
+            margin-bottom: 24px;
+            padding-left: 20px;
+            border-left: 2px solid #30363d;
+            transition: all 0.2s;
+        }
+        .arch-item:hover {
+            border-left-color: #00C200;
+        }
+        .arch-title {
+            color: #ffffff;
+            font-weight: 600;
+            font-size: 1.1rem;
+            margin-bottom: 4px;
+            display: block;
+        }
+        .arch-desc {
+            color: #c9d1d9;
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+
+        /* Diagram Elements */
+        .flow-node {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 12px 16px;
+            text-align: center;
+            position: absolute;
+            width: 150px;
+            z-index: 10;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .flow-node strong { display: block; color: white; margin-bottom: 4px; font-size: 0.9rem; }
+        .flow-node span { font-size: 0.75rem; color: #c9d1d9; }
+        .icon-circle {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 8px auto;
+            font-size: 14px;
+        }
+
+        /* Custom connection lines using SVG */
+        .connections {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            pointer-events: none;
+        }
+        
+        /* Updated Backgrounds to Match Brand */
+        .accent-bg { background-color: rgba(0, 194, 0, 0.15); border: 1px solid rgba(0, 194, 0, 0.4); }
+        .git-bg { background-color: rgba(235, 77, 43, 0.15); border: 1px solid rgba(235, 77, 43, 0.4); }
+        .runtime-bg { background-color: rgba(0, 119, 0, 0.2); border: 1px solid rgba(0, 119, 0, 0.5); }
+        
+    </style>
+</head>
+<body style="">
+<div class="slide-container">
+<!-- Header -->
+<div class="flex justify-between items-end px-16 pt-10 pb-6">
+<div>
+<p class="text-brand-light font-bold tracking-wider uppercase text-xs mb-2 block">System Design</p>
+<h1 class="text-4xl font-bold text-white tracking-tight">Technical Architecture</h1>
+</div>
+<div class="flex items-center gap-3 opacity-60">
+<i class="fa-solid fa-server text-brand-light"></i>
+<p class="font-bold tracking-tight text-white">OpenRun</p>
+<span class="mx-2 text-gray-600">|</span>
+<p class="text-gray-500 text-sm mono-font">04</p>
+</div>
+</div>
+<div class="content-area">
+<!-- Visual Diagram Column -->
+<div class="diagram-col">
+<svg class="connections" height="100%" width="100%">
+<!-- Defs for markers -->
+<defs>
+<marker id="arrowhead" markerheight="7" markerwidth="10" orient="auto" refx="9" refy="3.5">
+<polygon fill="#30363d" points="0 0, 10 3.5, 0 7"></polygon>
+</marker>
+<marker id="arrowhead-brand" markerheight="7" markerwidth="10" orient="auto" refx="9" refy="3.5">
+<polygon fill="#00C200" points="0 0, 10 3.5, 0 7"></polygon>
+</marker>
+</defs>
+<!-- Path from Developer to Git -->
+<path d="M 120 120 L 120 200" fill="none" marker-end="url(#arrowhead)" stroke="#30363d" stroke-dasharray="5,5" stroke-width="2"></path>
+<!-- Path from Git to Server -->
+<path d="M 190 240 L 290 240" fill="none" marker-end="url(#arrowhead-brand)" stroke="#00C200" stroke-width="2"></path>
+<!-- Path from Server to Runtime -->
+<path d="M 360 280 L 360 360" fill="none" marker-end="url(#arrowhead-brand)" stroke="#00C200" stroke-width="2"></path>
+<!-- Path from Runtime to Container -->
+<path d="M 430 400 L 510 400" fill="none" marker-end="url(#arrowhead)" stroke="#30363d" stroke-width="2"></path>
+<!-- Server Loop (Reconcile) -->
+<path d="M 380 220 Q 420 200 420 240 Q 420 280 380 260" fill="none" stroke="#8b949e" stroke-dasharray="3,3" stroke-width="1.5"></path>
+</svg>
+<!-- Node 1: Developer -->
+<div class="flow-node" style="top: 50px; left: 50px;">
+<div class="icon-circle bg-gray-800 text-gray-300"><i class="fa-solid fa-user"></i></div>
+<strong>Developer</strong>
+<span>Push Code + Config</span>
+</div>
+<!-- Node 2: Git -->
+<div class="flow-node git-bg" style="top: 200px; left: 50px;">
+<div class="icon-circle bg-red-900 text-red-400"><i class="fa-brands fa-git-alt"></i></div>
+<strong>Git Repo</strong>
+<span>Source of Truth</span>
+</div>
+<!-- Node 3: OpenRun Server -->
+<div class="flow-node accent-bg" style="top: 200px; left: 290px; width: 160px; height: 100px; display:flex; flex-direction:column; justify-content:center;">
+<div class="icon-circle bg-green-900 text-brand-light"><i class="fa-solid fa-server"></i></div>
+<strong>OpenRun Server</strong>
+<span>Reconciler &amp; Router</span>
+</div>
+<!-- Node 4: Runtime -->
+<div class="flow-node runtime-bg" style="top: 360px; left: 290px; width: 160px;">
+<div class="icon-circle bg-gray-800 text-brand-light"><i class="fa-brands fa-docker"></i></div>
+<strong>Docker / Podman / K8s</strong>
+<span>Container Runtime</span>
+</div>
+<!-- Node 5: App Container -->
+<div class="flow-node" style="top: 360px; left: 510px;">
+<div class="icon-circle bg-gray-800 text-gray-300"><i class="fa-solid fa-box-open"></i></div>
+<strong>App Instance</strong>
+<span>Running Service</span>
+</div>
+<!-- Labels -->
+<div style="position: absolute; top: 185px; left: 200px; color: #00C200; font-size: 10px; background:#161b22; padding:2px;">SYNC</div>
+<div style="position: absolute; top: 320px; left: 370px; color: #00C200; font-size: 10px; background:#161b22; padding:2px;">ORCHESTRATE</div>
+<div style="position: absolute; top: 210px; right: 20px; color: #c9d1d9; font-size: 11px; text-align:right;">
+<p><i class="fa-solid fa-shield-halved mr-1"></i>Auth Layer</p>
+<p><i class="fa-solid fa-list-check mr-1"></i>Audit Logs</p>
+</div>
+</div>
+<!-- Text Details Column -->
+<div class="details-col">
+<h3 class="text-xl text-white font-bold mb-6 flex items-center gap-2">
+<i class="fa-solid fa-diagram-project text-brand-light"></i> Architecture Flow
+            </h3>
+<!-- Item 1 -->
+<div class="arch-item">
+<span class="arch-title">Single Binary Orchestration</span>
+<p class="arch-desc">
+                    The core server is a single Go binary that manages the entire lifecycle. It acts as both the controller for reconciliation and the router for incoming requests.
+                </p>
+</div>
+<!-- Item 2 -->
+<div class="arch-item">
+<span class="arch-title">Flexible Runtime Support</span>
+<p class="arch-desc">
+                    Deploys directly to Docker, Podman, or Kubernetes. Single node deployment uses an embedded SQLite database, Kubernetes deployment uses Postgres for metadata.</p>
+</div>
+<!-- Item 3 -->
+<div class="arch-item">
+<span class="arch-title">Git-Based State Reconciliation</span>
+<p class="arch-desc">
+                    Periodically pulls configuration from the specified Git repository, diffs the desired state against the running containers/pods and applies changes.
+                </p>
+</div>
+<!-- Item 4 -->
+<div class="arch-item">
+<span class="arch-title">Built-in Governance Layer</span>
+<p class="arch-desc">
+                    Authentication (OAuth/OIDC/SAML) and auditing are handled at the platform layer, shielding applications from security complexity.
+                </p>
+</div>
+</div>
+</div>
+</div>
+</body></html>

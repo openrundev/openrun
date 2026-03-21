@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+
+<html data-theme="light" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Benefits Summary</title>
+<link href="assets/css/tailwind.min.css" rel="stylesheet"/>
+<link href="assets/css/fontawesome.min.css" rel="stylesheet"/>
+<style>
+    body {
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+        background-color: #0d1117;
+        color: #c9d1d9;
+        margin: 0;
+        overflow: hidden;
+    }
+    .slide-container {
+        width: 1280px;
+        height: 720px;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        background-color: #0d1117;
+    }
+    .content-area {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 0 80px 50px 80px;
+    }
+    
+    .grid-container {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        grid-template-rows: repeat(2, 1fr);
+        gap: 24px;
+        height: 100%;
+    }
+
+    .benefit-card {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 12px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    
+    .benefit-card:hover {
+        border-color: #00C200;
+        transform: translateY(-2px);
+    }
+
+    .card-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        margin-bottom: 16px;
+    }
+
+    /* Updated Icon Styles to use Brand Colors */
+    .icon-velocity { background-color: rgba(0, 194, 0, 0.1); color: #00C200; border: 1px solid rgba(0, 194, 0, 0.2); }
+    .icon-simplicity { background-color: rgba(0, 119, 0, 0.15); color: #4ade80; border: 1px solid rgba(0, 119, 0, 0.3); }
+    .icon-security { background-color: rgba(0, 194, 0, 0.1); color: #00C200; border: 1px solid rgba(0, 194, 0, 0.2); }
+    .icon-cost { background-color: rgba(0, 119, 0, 0.15); color: #4ade80; border: 1px solid rgba(0, 119, 0, 0.3); }
+    .icon-portability { background-color: rgba(0, 194, 0, 0.1); color: #00C200; border: 1px solid rgba(0, 194, 0, 0.2); }
+    .icon-focus { background-color: rgba(0, 119, 0, 0.15); color: #4ade80; border: 1px solid rgba(0, 119, 0, 0.3); }
+
+    .card-title {
+        color: #ffffff;
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+
+    .card-description {
+        color: #c9d1d9;
+        font-size: 0.9rem;
+        line-height: 1.5;
+        margin: 0;
+    }
+
+    /* Top decoration line */
+    .card-top-line {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 2px;
+        opacity: 0.8;
+    }
+    
+    /* Brand Color Utilities for Lines */
+    .bg-brand-light { background-color: #00C200; }
+    .bg-brand-dark { background-color: #007700; }
+    
+    .text-brand-light { color: #00C200; }
+    .text-brand-dark { color: #007700; }
+
+    .mono-font { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    .bg-dots {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 400px;
+        height: 400px;
+        background-color: transparent;
+        background-image: radial-gradient(#30363d 1px, transparent 1px);
+        background-size: 20px 20px;
+        opacity: 0.15;
+        z-index: 0;
+        pointer-events: none;
+    }
+</style>
+</head>
+<body style="">
+<div class="slide-container">
+<div class="bg-dots"></div>
+<!-- Top Bar -->
+<div class="flex justify-between items-end px-20 pt-10 pb-6 relative z-10">
+<div>
+<span class="text-brand-light font-bold tracking-wider uppercase text-xs mb-2 block">Why OpenRun?</span>
+<h1 class="text-4xl font-bold text-white tracking-tight">Benefits Summary</h1>
+</div>
+<div class="flex items-center gap-3 opacity-60">
+<i class="fa-solid fa-server text-brand-light"></i>
+<span class="font-bold tracking-tight text-white">OpenRun</span>
+<span class="mx-2 text-gray-600">|</span>
+<span class="text-gray-500 text-sm mono-font">15</span>
+</div>
+</div>
+<!-- Content Grid -->
+<div class="content-area relative z-10">
+<div class="grid-container">
+<!-- Item 1: Developer Velocity -->
+<div class="benefit-card">
+<div class="card-top-line bg-brand-light"></div>
+<div class="card-icon icon-velocity">
+<i class="fa-solid fa-gauge-high"></i>
+</div>
+<h3 class="card-title">Developer Velocity</h3>
+<p class="card-description">
+                    Accelerate delivery with GitOps-driven deployments. Push to Git and let OpenRun handle the rest, eliminating manual build steps and context switching.
+                </p>
+</div>
+<!-- Item 2: Operational Simplicity -->
+<div class="benefit-card">
+<div class="card-top-line bg-brand-dark"></div>
+<div class="card-icon icon-simplicity">
+<i class="fa-solid fa-feather"></i>
+</div>
+<h3 class="card-title">Operational Simplicity</h3>
+<p class="card-description">
+                    A single binary architecture with minimal dependencies. No complex orchestration layers, no third-party webservers.
+                </p>
+</div>
+<!-- Item 3: Security & Compliance -->
+<div class="benefit-card">
+<div class="card-top-line bg-brand-light"></div>
+<div class="card-icon icon-security">
+<i class="fa-solid fa-lock"></i>
+</div>
+<h3 class="card-title">Security &amp; Compliance</h3>
+<p class="card-description">
+                    Built-in OAuth/OIDC/SAML support and comprehensive API audit logging ensure your apps are secure and compliant by default, with zero code changes.
+                </p>
+</div>
+<!-- Item 4: Cost Efficiency -->
+<div class="benefit-card">
+<div class="card-top-line bg-brand-dark"></div>
+<div class="card-icon icon-cost">
+<i class="fa-solid fa-piggy-bank"></i>
+</div>
+<h3 class="card-title">Cost Efficiency</h3>
+<p class="card-description">
+                    Run on your own commodity hardware and leverage "scale-to-zero" to minimize resource consumption when apps are idle. No per-request cloud billing.
+                </p>
+</div>
+<!-- Item 5: Portability -->
+<div class="benefit-card">
+<div class="card-top-line bg-brand-light"></div>
+<div class="card-icon icon-portability">
+<i class="fa-solid fa-box-open"></i>
+</div>
+<h3 class="card-title">Portability</h3>
+<p class="card-description">
+                    Standard Docker/Podman container runtime ensures your apps run anywhere. Migrate easily between on-prem servers and cloud VMs without lock-in.
+                </p>
+</div>
+<!-- Item 6: Focused Scope -->
+<div class="benefit-card">
+<div class="card-top-line bg-brand-dark"></div>
+<div class="card-icon icon-focus">
+<i class="fa-solid fa-crosshairs"></i>
+</div>
+<h3 class="card-title">Focused Scope</h3>
+<p class="card-description">
+                    Purpose-built for web apps and internal tools. Avoids the complexity of full PaaS solutions by doing one thing well.
+                </p>
+</div>
+</div>
+</div>
+</div>
+</body></html>

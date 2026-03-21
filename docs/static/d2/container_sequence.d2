@@ -1,0 +1,29 @@
+# https://d2lang.com diagram. Use make to generate SVG.
+*.style.font-size: 20
+*.style.bold: true
+
+shape: sequence_diagram
+
+client: "Client"
+openrun: "OpenRun"
+git: "Git\n(GitHub / GitLab)"
+db: "Metadata DB\n(SQLite / Postgres)"
+registry: "Container Registry\n(OCI)"
+mgr: "Container Manager\n(Docker/Podman or Kubernetes)"
+app: "App Container"
+
+client -> openrun: "Create app (repo + config)"
+openrun -> git: "Fetch app config + source"
+openrun -> db: "Store app metadata + source code"
+openrun -> client: "App created (URL / ID)"
+
+client -> openrun: "First request to app URL"
+openrun -> mgr: "Build image (via Docker/Podman or k8s build)"
+mgr -> registry: "Push image"
+openrun -> mgr: "Start container/pod from image"
+mgr -> registry: "Pull image"
+mgr -> app: "Start Container"
+
+openrun -> app: "Proxy API request"
+app -> openrun: "API Response"
+openrun -> client: "API Response"

@@ -1,0 +1,8 @@
+dist/
+.vscode
+*.swp
+.sw*
+.DS_Store
+*.lock
+resources/*
+public/

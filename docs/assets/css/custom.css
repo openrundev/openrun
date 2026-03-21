@@ -1,0 +1,25 @@
+
+/* Change the default font */
+html {
+  font-family: 'Open Sans', sans-serif;
+}
+
+
+h1:not(.not-prose) {
+    color: #00C200 !important;
+}
+
+h2, h3, h4, h5, h6 {
+    color: #00C200 !important;
+}
+
+:root {
+    --primary-hue: 120deg;
+    --primary-saturation: 90%;
+}
+
+/* assets/css/custom.css */
+.medium-zoom-overlay,
+.medium-zoom-image--opened {
+  z-index: 9999;
+}

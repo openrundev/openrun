@@ -1,0 +1,29 @@
+# https://d2lang.com diagram. Use make to generate SVG.
+*.style.font-size: 20
+*.style.bold: true
+
+shape: sequence_diagram
+
+client: "Client"
+openrun: "OpenRun\n(main install)"
+
+builder: "OpenRun\nBuilder node\n(mode=builder)"
+command: "Container Manager\n(Docker/Podman on builder machine)"
+
+registry: "Container Registry"
+cm: "Container Manager\n(Docker/Podman on main machine\nor external Kubernetes)"
+app: "App Container"
+
+builder.note: "Builder node does NOT need its own\nregistry/git config or shared metadata DB.\nMain OpenRun passes credentials/config.\nBuilder metadata is not used."
+
+client -> openrun: "1) App Init"
+openrun -> registry: "2) Check image exists? (by tag)"
+registry -> openrun: "3) Not found"
+openrun -> builder: "4) Delegated BuildRequest\n(app sources + image tag + registry creds)"
+builder -> command: "5) Build image (docker/podman build)"
+command -> registry: "6) Push image tag"
+builder -> openrun: "7) BuildResult(success, image tag)"
+openrun -> cm: "8) Start app container (image tag)"
+cm -> registry: "9) Pull image tag"
+cm -> app: "10) Run + healthcheck"
+openrun.note: "If image already exists in registry,\nskip steps 4–7 and go to Start (8)."

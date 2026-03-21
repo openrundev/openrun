@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+
+<html data-theme="light" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Conclusion &amp; Resources</title>
+<link href="assets/css/tailwind.min.css" rel="stylesheet"/>
+<link href="assets/css/fontawesome.min.css" rel="stylesheet"/>
+<style>
+        body {
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            margin: 0;
+            overflow: hidden;
+        }
+        .slide-container {
+            width: 1280px;
+            height: 720px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            background-color: #0d1117;
+        }
+        .content-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 0 80px 50px 80px;
+            gap: 40px;
+        }
+        
+        /* Decision Criteria Section */
+        .criteria-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+        
+        .criteria-card {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 24px;
+            position: relative;
+        }
+        
+        .criteria-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        
+        .check-circle {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: rgba(0, 194, 0, 0.15);
+            color: #00C200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+        
+        .criteria-title {
+            color: #ffffff;
+            font-weight: 600;
+            font-size: 1.05rem;
+        }
+        
+        .criteria-text {
+            color: #c9d1d9; /* Changed from #8b949e for higher contrast */
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        /* Bottom Section Split */
+        .bottom-section {
+            display: flex;
+            gap: 40px;
+            flex: 1;
+        }
+        
+        .resource-panel {
+            flex: 1.2;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .next-steps-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Terminal Style */
+        .terminal-box {
+            background-color: #010409;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+            margin-top: 16px;
+            margin-bottom: 24px;
+            font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 0.85rem;
+            color: #e6edf3;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .cmd-text {
+            color: #e6edf3;
+        }
+
+        .link-row {
+            display: flex;
+            gap: 16px;
+        }
+        
+        .resource-btn {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 12px;
+            border-radius: 6px;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        
+        .resource-btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        .btn-primary {
+            background-color: #007700;
+            color: white;
+            border: 1px solid rgba(0, 194, 0, 0.3);
+        }
+        
+        .btn-secondary {
+            background-color: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+        }
+        .btn-secondary:hover {
+            border-color: #8b949e;
+            color: #ffffff;
+        }
+
+        /* Next Steps List */
+        .step-item {
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+        }
+        
+        .step-num {
+            width: 28px;
+            height: 28px;
+            background-color: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #8b949e;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.9rem;
+            font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+        
+        .step-content h4 {
+            color: #e6edf3;
+            margin: 0 0 4px 0;
+            font-size: 1rem;
+            font-weight: 500;
+        }
+        
+        .step-content p {
+            color: #c9d1d9; /* Changed from #8b949e for higher contrast */
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
+        .mono-font { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+        
+    </style>
+</head>
+<body>
+<div class="slide-container">
+<!-- Header -->
+<div class="flex justify-between items-end px-20 pt-10 pb-6 relative z-10">
+<div>
+<span class="font-bold tracking-wider uppercase text-xs mb-2 block" style="color: #00C200">Summary</span>
+<h1 class="text-4xl font-bold text-white tracking-tight">Conclusion &amp; Resources</h1>
+</div>
+<div class="flex items-center gap-3 opacity-60">
+<i class="fa-solid fa-server" style="color: #00C200"></i>
+<span class="font-bold tracking-tight text-white">OpenRun</span>
+<span class="mx-2 text-gray-600">|</span>
+<span class="text-gray-500 text-sm mono-font">16</span>
+</div>
+</div>
+<div class="content-area relative z-10">
+<!-- Section Title -->
+<div class="flex items-center gap-3 mb-2">
+<div class="h-px bg-gray-700 flex-1"></div>
+<span class="text-gray-500 text-sm font-medium uppercase tracking-wider">When to choose OpenRun</span>
+<div class="h-px bg-gray-700 flex-1"></div>
+</div>
+<!-- Decision Criteria -->
+<div class="criteria-grid">
+<div class="criteria-card">
+<div class="criteria-header">
+<div class="check-circle"><i class="fa-solid fa-check"></i></div>
+<span class="criteria-title">Cloud-like Simplicity</span>
+</div>
+<p class="criteria-text">
+                    You want the "Cloud Run" experience—stateless containers, auto-scaling—but on your own hardware or cheaper VPS.
+                </p>
+</div>
+<div class="criteria-card">
+<div class="criteria-header">
+<div class="check-circle"><i class="fa-solid fa-check"></i></div>
+<span class="criteria-title">GitOps Preference</span>
+</div>
+<p class="criteria-text">
+                    You prefer defining infrastructure as code in Git over manual "ClickOps" UI interactions or complex CLI scripting.
+                </p>
+</div>
+<div class="criteria-card">
+<div class="criteria-header">
+<div class="check-circle"><i class="fa-solid fa-check"></i></div>
+<span class="criteria-title">Focused Scope</span>
+</div>
+<p class="criteria-text">
+                    You don't need the platform to manage stateful databases (RDS/Postgres) or complex Docker Compose stacks.
+                </p>
+</div>
+</div>
+<!-- Bottom Area -->
+<div class="bottom-section mt-4">
+<!-- Resources Panel -->
+<div class="resource-panel">
+<h3 class="text-white text-lg font-semibold mb-2 flex items-center gap-2">
+<i class="fa-solid fa-terminal" style="color: #00C200"></i> Install Now
+                </h3>
+<p class="text-sm" style="color: #c9d1d9">Get started with a single command on any Linux host with Docker/Podman.</p>
+<div class="terminal-box">
+<span class="cmd-text">curl -sSL https://openrun.dev/install.sh | sh</span>
+</div>
+<div class="link-row">
+<a class="resource-btn btn-primary" href="https://openrun.dev/" rel="noopener noreferrer" target="_blank">
+<i class="fa-solid fa-globe"></i> Website
+                    </a>
+<a class="resource-btn btn-secondary" href="https://github.com/openrundev/openrun" rel="noopener noreferrer" target="_blank">
+<i class="fa-brands fa-github"></i> GitHub
+                    </a>
+</div>
+</div>
+<!-- Next Steps Panel -->
+<div class="next-steps-panel justify-center">
+<h3 class="text-white text-lg font-semibold mb-4">Next Steps</h3>
+<div class="step-item">
+<div class="step-num">1</div>
+<div class="step-content">
+<h4>Run the Quick Start</h4>
+<p>Follow the install guide and verify the server is running.</p>
+</div>
+</div>
+<div class="step-item">
+<div class="step-num">2</div>
+<div class="step-content">
+<h4>Star the OpenRun Repo</h4>
+<p>Star 
+                        <a class="mono-font text-xs bg-gray-800 px-1.5 py-0.5 rounded hover:bg-gray-700 transition-colors inline-block" href="https://github.com/openrundev/openrun" rel="noopener noreferrer" style="text-decoration: none;" target="_blank">
+<span style="color: #8b949e">openrundev/</span><span style="color: #00C200">openrun</span>
+</a>
+</p>
+</div>
+</div>
+<div class="step-item">
+<div class="step-num">3</div>
+<div class="step-content">
+<h4>Deploy Your First App</h4>
+<p>Schedule a sync pointing to your repo and watch it go live!</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

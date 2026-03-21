@@ -1,0 +1,56 @@
+{
+    "$schema": "https://fundingjson.org/schema/v1.1.0.json",
+    "version": "v1.1.0",
+    "entity": {
+        "type": "individual",
+        "role": "maintainer",
+        "name": "Ajay Kidave",
+        "email": "ajayvk@openrun.dev",
+        "phone": "",
+        "description": "I am working on making it easier for developers and teams to build and deploy their applications securely. I am working on OpenRun which allows declarative GitOps deployment to a single machine or onto Kubernetes.",
+        "webpageUrl": {
+            "url": "https://openrun.dev/about/#who-is-behind-this-project",
+            "wellKnown": ""
+        }
+    },
+    "projects": [{
+        "guid": "openrun",
+        "name": "OpenRun",
+        "description": "Open source alternative to Google Cloud Run and AWS App Runner. OpenRun supports declarative GitOps based blue-green deployment, OAuth/OIDC/SAML access controls, TLS certs & secrets management. OpenRun is built for teams to easily web apps, especially internal tools. App can be deployed directly to Docker/Podman or to Kubernetes.",
+        "webpageUrl": {
+            "url": "https://openrun.dev/"
+        },
+        "repositoryUrl": {
+            "url": "https://github.com/openrundev/openrun",
+            "wellKnown": "https://github.com/openrundev/openrun/blob/main/.github/.well-known/funding-manifest-urls"
+        },
+        "licenses": ["spdx:Apache-2.0"],
+        "tags": ["devops", "deployment", "internal-tools", "docker", "kubernetes"]
+    }],
+    "funding": {
+        "channels": [
+            {
+                "guid": "bankaccount",
+                "type": "bank",
+                "address": "",
+                "description": "Will accept direct bank transfers. Please e-mail me for details."
+            }
+        ],
+        "plans": [
+            {
+                "guid": "developer-time",
+                "status": "active",
+                "name": "Developer compensation",
+                "description": "This level of funding will allow me to focus solely on OpenRun and work full-time on the project for at least 1 year.",
+                "amount": 100000,
+                "currency": "USD",
+                "frequency": "yearly",
+                "channels": ["bankaccount"]
+            }
+        ],
+        "history": [
+        ]
+    }
+}
+
+

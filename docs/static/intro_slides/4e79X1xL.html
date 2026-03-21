@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+
+<html data-theme="light" lang="en" style="">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Kubernetes Architecture</title>
+<link href="assets/css/tailwind.min.css" rel="stylesheet"/>
+<link href="assets/css/fontawesome.min.css" rel="stylesheet"/>
+<style>
+        body {
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            margin: 0;
+            overflow: hidden;
+        }
+        .slide-container {
+            width: 1280px;
+            height: 720px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            background-color: #0d1117;
+        }
+        .content-area {
+            flex: 1;
+            display: flex;
+            padding: 20px 60px 40px 60px;
+            gap: 40px;
+        }
+        .diagram-col {
+            flex: 1.4;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            position: relative;
+            overflow: hidden;
+        }
+        .details-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 20px;
+        }
+        
+        .mono-font { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+        
+        /* Brand Colors */
+        .text-brand { color: #00C200; }
+        .bg-brand { background-color: #00C200; }
+        .border-brand { border-color: #00C200; }
+        .bg-brand-dark { background-color: #007700; }
+        .text-brand-dark { color: #007700; }
+        
+        /* Diagram Elements */
+        .k8s-cluster {
+            position: absolute;
+            top: 60px;
+            left: 20px;
+            right: 20px;
+            bottom: 40px;
+            border: 2px dashed #30363d;
+            border-radius: 12px;
+            background-color: rgba(13, 17, 23, 0.5);
+        }
+        .cluster-label {
+            position: absolute;
+            top: -12px;
+            left: 20px;
+            background-color: #161b22;
+            padding: 0 10px;
+            color: #58a6ff;
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .component-box {
+            position: absolute;
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            z-index: 10;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .component-box.openrun {
+            border-color: #00C200;
+            background-color: rgba(0, 194, 0, 0.05);
+            width: 160px;
+            height: 90px;
+        }
+        
+        .component-box.external {
+            border-color: #8b949e;
+            border-style: dashed;
+            width: 140px;
+            height: 80px;
+            background-color: #161b22;
+        }
+        
+        .component-box.app {
+            border-color: #58a6ff;
+            background-color: rgba(88, 166, 255, 0.05);
+            width: 130px;
+            height: 80px;
+        }
+        
+        .icon-circle {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 6px;
+            font-size: 14px;
+        }
+        
+        .comp-title { font-weight: 600; font-size: 0.85rem; color: #fff; margin-bottom: 2px; }
+        .comp-sub { font-size: 0.7rem; color: #c9d1d9; }
+        
+        /* Connection Lines SVG */
+        .connections {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            pointer-events: none;
+        }
+        
+        /* Note Cards */
+        .note-card {
+            background-color: #161b22;
+            border-left: 3px solid #00C200;
+            padding: 16px;
+            border-radius: 0 8px 8px 0;
+        }
+        .note-title {
+            color: #ffffff;
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .note-desc {
+            color: #c9d1d9;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            margin: 0;
+        }
+        
+        .arch-badge {
+            background-color: rgba(56, 139, 253, 0.15);
+            color: #58a6ff;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            border: 1px solid rgba(56, 139, 253, 0.3);
+            margin-top: 4px;
+        }
+        
+        .traffic-line {
+            stroke-dasharray: 4;
+            animation: flow 20s linear infinite;
+        }
+        
+        @keyframes flow {
+            to { stroke-dashoffset: -100; }
+        }
+    </style>
+</head>
+<body style="">
+<div class="slide-container">
+<!-- Header -->
+<div class="flex justify-between items-end px-16 pt-10 pb-6">
+<div>
+<span class="text-brand font-bold tracking-wider uppercase text-xs mb-2 block">Kubernetes Deployment</span>
+<h1 class="text-4xl font-bold text-white tracking-tight">K8s Architecture</h1>
+</div>
+<div class="flex items-center gap-3 opacity-60">
+<i class="fa-solid fa-server text-brand"></i>
+<span class="font-bold tracking-tight text-white">OpenRun</span>
+<span class="mx-2 text-gray-600">|</span>
+<span class="text-gray-500 text-sm mono-font">05</span>
+</div>
+</div>
+<div class="content-area">
+<!-- Diagram Column -->
+<div class="diagram-col">
+<svg class="connections" preserveaspectratio="none" viewbox="0 0 653 720">
+<defs>
+<marker id="arrow" markerheight="7" markerwidth="10" orient="auto" refx="9" refy="3.5">
+<polygon fill="#30363d" points="0 0, 10 3.5, 0 7"></polygon>
+</marker>
+<marker id="arrow-brand" markerheight="7" markerwidth="10" orient="auto" refx="9" refy="3.5">
+<polygon fill="#00C200" points="0 0, 10 3.5, 0 7"></polygon>
+</marker>
+</defs>
+<!-- All paths removed as requested -->
+</svg>
+<div class="k8s-cluster">
+<div class="cluster-label">
+<i class="fa-solid fa-dharmachakra"></i> Kubernetes Cluster
+                    </div>
+</div>
+<!-- API Ingress Label -->
+<div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 0.8rem; text-align: center;">
+<i class="fa-solid fa-globe text-brand mb-1"></i><br/>API Traffic
+                </div>
+<!-- External Components Row (Center Y: 135px) -->
+<!-- Postgres: Left 50px, Width 140px, Top 95px -->
+<div class="component-box external" style="top: 95px; left: 50px;">
+<div class="icon-circle bg-blue-900 text-blue-300"><i class="fa-solid fa-database"></i></div>
+<div class="comp-title">Postgres DB</div>
+<div class="comp-sub">External Metadata</div>
+</div>
+<!-- Registry: Left 480px, Width 140px, Top 95px -->
+<div class="component-box external" style="top: 95px; left: 480px;">
+<div class="icon-circle bg-purple-900 text-purple-300"><i class="fa-solid fa-cubes-stacked"></i></div>
+<div class="comp-title">Container Registry</div>
+<div class="comp-sub">External Image Store</div>
+</div>
+<!-- OpenRun Server: Left 247px, Width 160px, Top 90px -->
+<div class="component-box openrun" style="top: 90px; left: 247px;">
+<div class="icon-circle bg-green-900 text-brand"><i class="fa-solid fa-server"></i></div>
+<div class="comp-title">OpenRun API Server</div>
+<div class="comp-sub">Deployment + Service</div>
+<div class="arch-badge">Controller</div>
+</div>
+<!-- App Row (Top: 240px) -->
+<!-- App 1: Left 180px, Width 130px, Top 240px -->
+<div class="component-box app" style="top: 240px; left: 180px;">
+<div class="icon-circle bg-gray-800 text-blue-400"><i class="fa-brands fa-python"></i></div>
+<div class="comp-title">App1</div>
+<div class="comp-sub">Deployment + SVC</div>
+</div>
+<!-- App 2: Left 440px, Width 130px, Top 240px -->
+<div class="component-box app" style="top: 240px; left: 440px;">
+<div class="icon-circle bg-gray-800 text-yellow-400"><i class="fa-brands fa-js"></i></div>
+<div class="comp-title">App2</div>
+<div class="comp-sub">Deployment + SVC</div>
+</div>
+<!-- Routing Label -->
+<div style="position: absolute; top: 210px; left: 50%; transform: translateX(-50%); background: #161b22; padding: 4px 8px; border-radius: 4px; border: 1px solid #30363d; font-size: 0.75rem; color: #c9d1d9; z-index: 20;">
+<i class="fa-solid fa-shuffle mr-1 text-brand"></i> Routes via ClusterIP
+                </div>
+</div>
+<!-- Details Column -->
+<div class="details-col">
+<div class="mb-2">
+<h3 class="text-xl text-white font-bold mb-2 flex items-center gap-2">
+<i class="fa-solid fa-sitemap text-brand"></i> Architecture Details
+                    </h3>
+<p class="text-sm text-gray-400 m-0">OpenRun runs within your K8s cluster, managing app lifecycles.</p>
+</div>
+<!-- Note 1 -->
+<div class="note-card">
+<div class="note-title">
+<i class="fa-solid fa-server text-brand"></i>
+<span>Core Components</span>
+</div>
+<p class="note-desc">
+                        OpenRun installs as a standard <strong>Deployment</strong> with a Service. It connects to an external <strong>Postgres</strong> for state and a <strong>Registry</strong> for images (recommended for production).
+                    </p>
+</div>
+<!-- Note 2 -->
+<div class="note-card">
+<div class="note-title">
+<i class="fa-solid fa-network-wired text-brand"></i>
+<span>Traffic Routing</span>
+</div>
+<p class="note-desc">
+                        API calls hit the OpenRun Server, which routes to specific apps via their <strong>ClusterIP Services</strong>. No complex Ingress configuration required for individual apps.
+                    </p>
+</div>
+<!-- Note 3 -->
+<div class="note-card">
+<div class="note-title">
+<i class="fa-solid fa-bolt text-brand"></i>
+<span>Lazy Creation &amp; SSA</span>
+</div>
+<p class="note-desc">
+                        Resources are created <strong>lazily on first request</strong>. Updates use Kubernetes <strong>Server Side Apply (SSA)</strong> for robust reconciliation of Deployments and Services.
+                    </p>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

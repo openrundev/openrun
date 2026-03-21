@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+
+<html data-theme="light" lang="en" style=""><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Installation &amp; Setup</title>
+<link href="assets/css/tailwind.min.css" rel="stylesheet"/>
+<link href="assets/css/fontawesome.min.css" rel="stylesheet"/>
+<style>
+    body {
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+        background-color: #0d1117;
+        color: #c9d1d9;
+        margin: 0;
+        overflow: hidden;
+    }
+    .slide-container {
+        width: 1280px;
+        height: 720px;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        background-color: #0d1117;
+    }
+    .content-area {
+        flex: 1;
+        display: flex;
+        padding: 0px 80px 30px 80px;
+        gap: 60px;
+        overflow: hidden; /* Prevent spillover */
+    }
+    .left-panel {
+        width: 320px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        justify-content: flex-start;
+        padding-top: 10px;
+    }
+    .right-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        padding-top: 10px;
+    }
+    .mono-font { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    
+    /* Brand Colors */
+    .text-brand { color: #00C200; }
+    .bg-brand { background-color: #00C200; }
+    .border-brand { border-color: #00C200; }
+    .text-brand-dark { color: #007700; }
+    
+    /* Prereq Card */
+    .prereq-card {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 12px;
+        padding: 16px;
+    }
+    .prereq-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 12px;
+        color: #c9d1d9; /* Changed from #8b949e */
+        font-size: 0.85rem;
+        line-height: 1.4;
+    }
+    .prereq-item:last-child { margin-bottom: 0; }
+    .check-icon {
+        color: #00C200;
+        width: 16px;
+        text-align: center;
+        margin-top: 3px;
+        font-size: 0.8rem;
+    }
+
+    /* Steps */
+    .step-container {
+        position: relative;
+        padding-left: 50px;
+        margin-bottom: 20px;
+    }
+    .step-line {
+        position: absolute;
+        left: 20px;
+        top: 36px;
+        bottom: -24px;
+        width: 2px;
+        background-color: #30363d;
+    }
+    .step-container:last-child .step-line { display: none; }
+    
+    .step-number {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 40px;
+        height: 40px;
+        background-color: #161b22;
+        border: 2px solid #30363d;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 600;
+        color: #c9d1d9;
+        z-index: 2;
+    }
+    .step-active .step-number {
+        border-color: #00C200;
+        color: #00C200;
+        box-shadow: 0 0 0 4px rgba(0, 194, 0, 0.1);
+    }
+    
+    .step-title {
+        color: #ffffff;
+        font-weight: 600;
+        font-size: 1rem;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 40px;
+    }
+    
+    .step-badge {
+        font-size: 0.7rem;
+        padding: 2px 8px;
+        border-radius: 12px;
+        background-color: rgba(48, 54, 61, 0.5);
+        color: #c9d1d9; /* Changed from #8b949e */
+        font-weight: 500;
+        border: 1px solid #30363d;
+    }
+    .step-badge.recommended {
+        background-color: rgba(0, 194, 0, 0.1);
+        color: #00C200;
+        border-color: rgba(0, 194, 0, 0.2);
+    }
+    .step-badge.iac {
+        background-color: rgba(124, 58, 237, 0.1);
+        color: #a78bfa;
+        border-color: rgba(124, 58, 237, 0.2);
+    }
+
+    /* Terminal Window */
+    .terminal-window {
+        background-color: #010409;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .terminal-header {
+        background-color: #161b22;
+        padding: 6px 12px;
+        display: flex;
+        gap: 6px;
+        border-bottom: 1px solid #30363d;
+    }
+    .window-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+    }
+    .terminal-body {
+        padding: 10px;
+        font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.8rem;
+        color: #e6edf3;
+        line-height: 1.4;
+        white-space: pre-wrap;
+    }
+    .cmd-prompt { color: #00C200; margin-right: 8px; }
+    .cmd-text { color: #e6edf3; }
+    .cmd-comment { color: #c9d1d9; font-style: italic; } /* Changed from #8b949e */
+    .code-keyword { color: #ff7b72; }
+    .code-string { color: #a5d6ff; }
+    .code-var { color: #d2a8ff; }
+
+</style>
+</head>
+<body style="">
+<div class="slide-container">
+<!-- Header -->
+<div class="flex justify-between items-end px-20 pt-8 pb-4">
+<div>
+<span class="text-brand font-bold tracking-wider uppercase text-xs mb-2 block">Getting Started</span>
+<h1 class="text-4xl font-bold text-white tracking-tight">Installation &amp; Setup</h1>
+</div>
+<div class="flex items-center gap-3 opacity-80">
+<i class="fa-solid fa-server text-brand"></i>
+<span class="font-bold tracking-tight text-white">OpenRun</span>
+<span class="mx-2 text-gray-600">|</span>
+<span class="text-gray-500 text-sm mono-font">06</span>
+</div>
+</div>
+<div class="content-area">
+<!-- Left Panel: Prerequisites & Tips -->
+<div class="left-panel">
+<div class="prereq-card">
+<h3 class="text-white font-semibold mb-3 flex items-center gap-2">
+<i class="fa-solid fa-clipboard-check text-brand"></i>
+                    Prerequisites
+                </h3>
+<div class="mb-2 text-xs uppercase tracking-wider text-gray-400 font-semibold">Option A: Single Binary</div>
+<div class="prereq-item">
+<i class="fa-solid fa-check check-icon"></i>
+<p class="m-0">Linux/Mac/Windows host with <strong>Docker/Podman</strong></p>
+</div>
+<div class="mb-2 mt-3 text-xs uppercase tracking-wider text-gray-400 font-semibold">Option B: Kubernetes</div>
+<div class="prereq-item">
+<i class="fa-solid fa-check check-icon"></i>
+<p class="m-0">K8s cluster + <strong>Helm</strong></p>
+</div>
+<div class="mb-2 mt-3 text-xs uppercase tracking-wider text-gray-400 font-semibold">Option C: Terraform</div>
+<div class="prereq-item">
+<i class="fa-solid fa-check check-icon"></i>
+<p class="m-0"><strong>Terraform install</strong></p>
+</div>
+<div class="mt-3 pt-3 border-t border-gray-700">
+<div class="prereq-item">
+<i class="fa-solid fa-network-wired check-icon"></i>
+<p class="m-0">Network access to GitHub</p>
+</div>
+</div>
+</div>
+<div class="p-4 bg-gray-900 border border-gray-800 rounded-lg">
+<div class="flex gap-2 mb-2">
+<i class="fa-solid fa-lightbulb text-yellow-500 mt-0.5 text-sm"></i>
+<h4 class="text-white font-medium text-xs uppercase tracking-wide">Pro Tip</h4>
+</div>
+<p class="text-sm leading-relaxed m-0" style="color: #c9d1d9;">
+                    For production setups, consider externalizing the Postgres database and container registry for better persistence, regardless of deployment method.
+                </p>
+</div>
+</div>
+<!-- Right Panel: Installation Steps -->
+<div class="right-panel">
+<!-- Step A: Binary -->
+<div class="step-container step-active">
+<div class="step-line"></div>
+<div class="step-number">A</div>
+<div class="step-title">
+<span>Option A: Single Binary</span>
+<span class="step-badge recommended">RECOMMENDED START</span>
+</div>
+<div class="terminal-window">
+<div class="terminal-header">
+<div class="window-dot bg-red-500"></div>
+<div class="window-dot bg-yellow-500"></div>
+<div class="window-dot bg-green-500"></div>
+</div>
+<div class="terminal-body"><div><span class="cmd-prompt">➜</span><span class="cmd-text">curl -sSL https://openrun.dev/install.sh | sh</span></div><div><span class="cmd-prompt">➜</span><span class="cmd-text">openrun server start &amp;</span></div></div>
+</div>
+</div>
+<!-- Step B: Kubernetes -->
+<div class="step-container step-active">
+<div class="step-line"></div>
+<div class="step-number">B</div>
+<div class="step-title">
+<span>Option B: Kubernetes (Helm)</span>
+<span class="step-badge">SCALABLE</span>
+</div>
+<div class="terminal-window">
+<div class="terminal-header">
+<div class="window-dot bg-red-500"></div>
+<div class="window-dot bg-yellow-500"></div>
+<div class="window-dot bg-green-500"></div>
+</div>
+<div class="terminal-body"><div><span class="cmd-prompt">➜</span><span class="cmd-text">helm repo add openrun https://openrundev.github.io/charts/</span></div><div><span class="cmd-prompt">➜</span><span class="cmd-text">helm install openrun openrun/openrun -n openrun --create-namespace</span></div></div>
+</div>
+</div>
+<!-- Step C: Terraform -->
+<div class="step-container step-active">
+<div class="step-line"></div>
+<div class="step-number">C</div>
+<div class="step-title">
+<span>Option C: Terraform (IaC)</span>
+<span class="step-badge iac">INFRA AS CODE</span>
+</div>
+<div class="terminal-window">
+<div class="terminal-header">
+<div class="window-dot bg-red-500"></div>
+<div class="window-dot bg-yellow-500"></div>
+<div class="window-dot bg-green-500"></div>
+</div>
+<div class="terminal-body"><span class="cmd-prompt mt-2 block">➜ <span style="color: rgb(230, 237, 243); font-size: 0.8rem;">terraform init &amp;&amp; terraform apply</span></span><span class="cmd-prompt mt-2 block"><span style="color: #c9d1d9; font-size: 0.8rem;">Spins up OpenRun with an EKS cluster, RDS database and ECR registry</span></span></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body></html>

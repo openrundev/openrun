@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+
+<html data-theme="light" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>What is OpenRun?</title>
+<link href="assets/css/tailwind.min.css" rel="stylesheet"/>
+<link href="assets/css/fontawesome.min.css" rel="stylesheet"/>
+<style>
+        body {
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            margin: 0;
+            overflow: hidden;
+        }
+        .slide-container {
+            width: 1280px;
+            height: 720px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            background-color: #0d1117;
+        }
+        .content-area {
+            flex: 1;
+            display: flex;
+            padding: 40px 80px;
+            gap: 60px;
+            align-items: center;
+        }
+        .left-col {
+            width: 38%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .right-col {
+            width: 62%;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .feature-item {
+            display: flex;
+            gap: 24px;
+            padding: 24px;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            align-items: flex-start;
+            transition: border-color 0.2s;
+        }
+        .feature-icon-box {
+            width: 56px;
+            height: 56px;
+            background-color: #21262d;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            color: #00C200;
+            border: 1px solid #30363d;
+        }
+        .mono-font {
+            font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+        .accent-text {
+            color: #00C200;
+        }
+        .brand-green {
+            color: #00C200;
+        }
+        .brand-dark-green-bg {
+            background-color: #007700;
+        }
+        .text-body {
+            color: #c9d1d9 !important;
+        }
+        .text-muted {
+            color: #8b949e !important;
+        }
+    </style>
+</head>
+<body>
+<div class="slide-container">
+<!-- Top Bar -->
+<div class="flex justify-between items-center px-20 pt-10 pb-4">
+<div class="flex items-center gap-3 opacity-80">
+<i class="fa-solid fa-server brand-green"></i>
+<span class="font-bold tracking-tight text-white">OpenRun</span>
+</div>
+<div class="text-muted text-sm mono-font">02</div>
+</div>
+<div class="content-area">
+<!-- Left Side: Title & High-level summary -->
+<div class="left-col">
+<div class="mb-8">
+<span class="brand-green font-bold tracking-wider uppercase text-xs mb-3 block">Introduction</span>
+<h1 class="text-5xl font-bold text-white leading-tight mb-6">
+                        What is <br/>
+<span class="accent-text">OpenRun?</span>
+</h1>
+<p class="text-lg text-body leading-relaxed font-light mb-8">
+                    A self-hosted platform that makes declarative web-app deployment simple. Built for teams to deploy internal tools.</p>
+</div>
+<!-- Minimal graphic element -->
+<div class="p-6 border border-gray-700 rounded-lg bg-gray-900 bg-opacity-50">
+<div class="flex items-center gap-3 mb-3">
+<!-- Docker Icon -->
+<div class="w-10 h-10 rounded-full brand-dark-green-bg bg-opacity-40 flex items-center justify-center brand-green">
+<i class="fa-brands fa-docker"></i>
+</div>
+<!-- Kubernetes Icon -->
+<div class="w-10 h-10 rounded-full brand-dark-green-bg bg-opacity-40 flex items-center justify-center brand-green">
+<i class="fa-solid fa-dharmachakra"></i>
+</div>
+<div class="w-px h-8 bg-gray-700"></div>
+<!-- Git Icon -->
+<div class="w-10 h-10 rounded-full bg-gray-800 flex items-center justify-center text-white">
+<i class="fa-brands fa-git-alt"></i>
+</div>
+</div>
+<p class="text-sm text-body">
+                    Runs on <span class="text-white font-medium">Docker/Podman</span> or <span class="text-white font-medium">Kubernetes</span>.<br/>
+                    Managed via <span class="text-white font-medium">Git</span>.
+                </p>
+</div>
+</div>
+<!-- Right Side: Detailed Bullet Points -->
+<div class="right-col">
+<!-- Item 1 -->
+<div class="feature-item">
+<div class="feature-icon-box">
+<i class="fa-solid fa-cloud text-2xl"></i>
+</div>
+<div>
+<h3 class="text-white font-semibold text-xl mb-2">Open Source</h3>
+<p class="text-body text-base leading-relaxed">
+                            Self-hosted alternative to solutions like <span class="text-white font-medium">Google Cloud Run</span> and <span class="text-white font-medium">Heroku</span>. Run your internal tools on your own infrastructure.
+                        </p>
+</div>
+</div>
+<!-- Item 2 -->
+<div class="feature-item">
+<div class="feature-icon-box">
+<i class="fa-solid fa-code-branch text-2xl"></i>
+</div>
+<div>
+<h3 class="text-white font-semibold text-xl mb-2">Declarative GitOps</h3>
+<p class="text-body text-base leading-relaxed">
+                            Zero "ClickOps". Define apps and configurations in Git. OpenRun reconciles state automatically.
+                        </p>
+</div>
+</div>
+<!-- Item 3 -->
+<div class="feature-item">
+<div class="feature-icon-box">
+<i class="fa-solid fa-microchip text-2xl"></i>
+</div>
+<div>
+<h3 class="text-white font-semibold text-xl mb-2">Simplicity &amp; Reliability</h3>
+<p class="text-body text-base leading-relaxed">
+                            Single binary architecture with minimal dependencies. No third-party web servers or complex mesh required.
+                        </p>
+</div>
+</div>
+<!-- Item 4 -->
+<div class="feature-item">
+<div class="feature-icon-box">
+<i class="fa-solid fa-bullseye text-2xl"></i>
+</div>
+<div>
+<h3 class="text-white font-semibold text-xl mb-2">Focused Scope</h3>
+<p class="text-body text-base leading-relaxed">
+                            Not a full PaaS. Focus is deploying your web apps while maintaining operational simplicity.
+                        </p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

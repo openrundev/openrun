@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+
+<html data-theme="light" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Common Use Cases — Individuals</title>
+<link href="assets/css/tailwind.min.css" rel="stylesheet"/>
+<link href="assets/css/fontawesome.min.css" rel="stylesheet"/>
+<style>
+    body {
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+        background-color: #0d1117;
+        color: #c9d1d9;
+        margin: 0;
+        overflow: hidden;
+    }
+    .slide-container {
+        width: 1280px;
+        height: 720px;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        background-color: #0d1117;
+    }
+    .content-area {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 0 80px 40px 80px;
+    }
+    
+    .grid-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr 1fr;
+        gap: 24px;
+        height: 100%;
+        max-height: 520px;
+    }
+
+    .use-case-card {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 12px;
+        padding: 28px;
+        display: flex;
+        flex-direction: column;
+        transition: all 0.2s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .use-case-card:hover {
+        border-color: #00C200;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 194, 0, 0.1);
+    }
+
+    .card-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+
+    .icon-wrapper {
+        width: 48px;
+        height: 48px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+    }
+    
+    /* Updated to Brand Colors */
+    /* Primary Brand Green #00C200 */
+    .icon-brand { 
+        background-color: rgba(0, 194, 0, 0.1); 
+        color: #00C200; 
+        border: 1px solid rgba(0, 194, 0, 0.2); 
+    }
+    
+    /* Darker Variation for contrast if needed, using #007700 */
+    .icon-brand-dark { 
+        background-color: rgba(0, 119, 0, 0.15); 
+        color: #00C200; 
+        border: 1px solid rgba(0, 119, 0, 0.3); 
+    }
+
+    .card-title {
+        color: #ffffff;
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin-bottom: 12px;
+    }
+
+    .card-description {
+        color: #c9d1d9; /* Changed from #8b949e to #c9d1d9 for better contrast */
+        font-size: 0.95rem;
+        line-height: 1.6;
+        flex: 1;
+    }
+
+    .tag-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 20px;
+    }
+
+    .tech-tag {
+        font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.75rem;
+        padding: 4px 10px;
+        border-radius: 20px;
+        background-color: #21262d;
+        border: 1px solid #30363d;
+        color: #c9d1d9;
+    }
+
+    .mono-font { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    
+    /* Decoration */
+    .corner-accent {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 60px;
+        height: 60px;
+        opacity: 0.1;
+        pointer-events: none;
+        background-color: #00C200;
+        border-bottom-left-radius: 1.5rem;
+    }
+
+    /* Text Colors */
+    .text-brand { color: #00C200; }
+    .text-brand-dark { color: #007700; }
+
+</style>
+</head>
+<body style="">
+<div class="slide-container">
+<!-- Top Bar -->
+<div class="flex justify-between items-end px-20 pt-10 pb-6">
+<div>
+<span class="font-bold tracking-wider uppercase text-xs mb-2 block" style="color: #00C200;">Personal &amp; Dev Scenarios</span>
+<h1 class="text-4xl font-bold text-white tracking-tight">Common Use Cases — Individuals</h1>
+</div>
+<div class="flex items-center gap-3 opacity-60">
+<i class="fa-solid fa-server" style="color: #00C200;"></i>
+<span class="font-bold tracking-tight text-white">OpenRun</span>
+<span class="mx-2 text-gray-600">|</span>
+<span class="text-gray-500 text-sm mono-font">13</span>
+</div>
+</div>
+<!-- Content Area -->
+<div class="content-area">
+<div class="grid-container">
+<!-- Card 1: Local Dev -->
+<div class="use-case-card">
+<div class="corner-accent"></div>
+<div class="card-header">
+<div class="icon-wrapper icon-brand">
+<i class="fa-solid fa-laptop-code"></i>
+</div>
+</div>
+<h3 class="card-title">Zero-Config Local Dev</h3>
+<p class="card-description">
+                    Replicate production environments locally instantly. Spin up dev environments that mirror your deployment target without wrestling with complex Docker Compose files or manual networking.
+                </p>
+<div class="tag-container">
+<span class="tech-tag">Localhost</span>
+<span class="tech-tag">Dev/Prod Parity</span>
+<span class="tech-tag">Rapid Iteration</span>
+</div>
+</div>
+<!-- Card 2: Personal Projects -->
+<div class="use-case-card">
+<div class="corner-accent" style="opacity: 0.05; background-color: #007700;"></div>
+<div class="card-header">
+<div class="icon-wrapper icon-brand">
+<i class="fa-solid fa-user-shield"></i>
+</div>
+</div>
+<h3 class="card-title">Secure Personal Sharing</h3>
+<p class="card-description">
+                    Host web apps for friends and family safely. Leverage built-in OAuth/OIDC integration to add secure login to your hobby projects without writing a single line of authentication code.
+                </p>
+<div class="tag-container">
+<span class="tech-tag">OAuth</span>
+<span class="tech-tag">Hobby/Vibe-Coded Apps</span>
+<span class="tech-tag">Secure Access</span>
+</div>
+</div>
+<!-- Card 3: Homelab -->
+<div class="use-case-card">
+<div class="corner-accent"></div>
+<div class="card-header">
+<div class="icon-wrapper icon-brand">
+<i class="fa-solid fa-server"></i>
+</div>
+</div>
+<h3 class="card-title">Efficient Homelab</h3>
+<p class="card-description">
+                    Perfect for running lightweight services on Raspberry Pi or old hardware. The "scale-to-zero" feature puts inactive apps to sleep, saving power and freeing up system resources.
+                </p>
+<div class="tag-container">
+<span class="tech-tag">Scale-to-Zero</span>
+<span class="tech-tag">Raspberry Pi</span>
+<span class="tech-tag">Green IT</span>
+</div>
+</div>
+<!-- Card 4: Learning -->
+<div class="use-case-card">
+<div class="corner-accent" style="opacity: 0.05; background-color: #007700;"></div>
+<div class="card-header">
+<div class="icon-wrapper icon-brand">
+<i class="fa-solid fa-graduation-cap"></i>
+</div>
+</div>
+<h3 class="card-title">Master GitOps</h3>
+<p class="card-description">
+                    The best way to learn modern DevOps patterns hands-on. Experience true GitOps workflows and declarative infrastructure management without the steep learning curve of Kubernetes.
+                </p>
+<div class="tag-container">
+<span class="tech-tag">Learning</span>
+<span class="tech-tag">GitOps</span>
+<span class="tech-tag">DevOps Skills</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body></html>
