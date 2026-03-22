@@ -4,6 +4,8 @@ on:
     branches:
       - "main"
       - "release-branch/*"
+    paths-ignore:
+      - "docs/**"
   merge_group:
     branches:
       - "main"

@@ -1,7 +1,11 @@
 name: govulncheck
 on:
   push:
+    paths-ignore:
+      - "docs/**"
   pull_request:
+    paths-ignore:
+      - "docs/**"
   schedule: # daily at 16:22 UTC
     - cron: '22 16 * * *'
   workflow_dispatch:

@@ -3,6 +3,8 @@ on:
   pull_request:
     branches:
       - "*"
+    paths-ignore:
+      - "docs/**"
 
 concurrency:
   # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
