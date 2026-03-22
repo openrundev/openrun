@@ -4,7 +4,7 @@ weight: 100
 summary: "Overview of how plugins work, how to use them"
 ---
 
-Plugins provide an API for OpenRun Starlark code to call out to external systems. Plugins are implemented in Go. Every plugin API calls needs to be in the approved list for it to be permitted. See [security]({{< ref "appsecurity#sample-application" >}}/) for an overview of the security model.
+Plugins provide an API for OpenRun Starlark code to call out to external systems. Plugins are implemented in Go. Every plugin API call must be approved before it is permitted, either in the app metadata or through server level defaults in `openrun.toml`. See [security]({{< ref "appsecurity#sample-application" >}}/) for an overview of the security model.
 
 Each plugin is identified by a unique name, like `store.in` or `exec.in`. Plugins ending with `.in` are internal plugins, built into the OpenRun binary. Support for external plugins which are loaded dynamically is planned.
 
@@ -16,7 +16,7 @@ To use a plugin, load it using
 load("http.in", "http")
 ```
 
-This adds `http` to the namespace for the app. To make a call to the plugin, first add the permissions to the app config.
+This adds `http` to the namespace for the app. To make a call to the plugin, first add the permissions to the app config unless the server config already allows that call by default.
 
 ```python {filename="app.star"}
     permissions=[

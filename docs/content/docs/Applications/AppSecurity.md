@@ -4,7 +4,7 @@ weight: 300
 summary: "Application Security and sandboxing model for OpenRun"
 ---
 
-OpenRun applications run in a sandbox environment with no direct access to the system or OpenRun service. All access is through plugins. When an application is installed, the admin can audit the application for what access is being requested. Only the permissions which are approved are allowed at runtime.
+OpenRun applications run in a sandbox environment with no direct access to the system or OpenRun service. All access is through plugins. When an application is installed, the admin can audit the application for what access is being requested. Only the permissions which are approved are allowed at runtime, unless the server config already allows that plugin call globally.
 
 ## Security Model
 

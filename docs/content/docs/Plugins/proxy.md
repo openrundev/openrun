@@ -25,6 +25,8 @@ The `config` API supports the following parameter:
 - **preserve_host** (bool, optional) : whether to preserve the Host header. Default false, the Host header is set to the target host value
 - **strip_app** (bool, optional) : whether to strip the app path from the proxied API call. Default true.
 
+With the default server config, `proxy.config(container.URL, ...)` is approved implicitly for all apps. Explicit app permissions are still required when proxying to other upstream URLs.
+
 ## Example
 
 This is an example app which proxies data to google.com. This app has to be installed at the root level, since google does not use relative paths.
@@ -37,7 +39,7 @@ app = ace.app("Proxy App",
                   ace.proxy("/", proxy.config("https://www.google.com"))
               ],
               permissions=[
-                  ace.permission("proxy.in", "config", [param.url]),
+                  ace.permission("proxy.in", "config", ["https://www.google.com"]),
               ]
        )
 ```

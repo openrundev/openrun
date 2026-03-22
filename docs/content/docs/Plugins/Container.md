@@ -44,15 +44,13 @@ app = ace.app("My App",
               routes=[
                   ace.proxy("/", proxy.config(container.URL))
               ],
-              container=container.config(container.AUTO),
-              permissions=[
-                  ace.permission("proxy.in", "config", [container.URL]),
-                  ace.permission("container.in", "config", [container.AUTO])
-              ]
+              container=container.config(container.AUTO)
        ) 
 ```
 
-A app which runs an command against a specified image (see [image-cmd spec](https://github.com/openrundev/appspecs/blob/main/image-cmd/app.star)) is
+With the default server config, both `proxy.config(container.URL)` and `container.config(...)` are approved implicitly. Explicit app permissions are only needed here if you want to narrow the allowed arguments or secret access.
+
+An app which runs a command against a specified image (see [image-cmd spec](https://github.com/openrundev/appspecs/blob/main/image-cmd/app.star)) is
 
 ```python {filename="app.star"}
 load("container.in", "container")
@@ -68,10 +66,11 @@ app = ace.app(param.app_name + " : " + param.image ,
     ],
     container=container.config("image:" + param.image, lifetime=container.COMMAND),
     permissions=[
-       ace.permission("container.in", "config", ["image:" + param.image], secrets=param.secrets),
        ace.permission("container.in", "run", secrets=param.secrets)
     ]
 )
 ```
+
+The explicit `container.in.run` permission is still required in this example. `container.in.config(...)` is implicitly approved by default. Add an explicit `ace.permission("container.in", "config", ...)` entry only if the app needs to restrict the arguments or secrets available to that config call.
 
 <!-- prettier-ignore-end -->

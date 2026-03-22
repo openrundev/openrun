@@ -163,11 +163,7 @@ app = ace.app("My App",
               routes=[
                   ace.proxy("/", proxy.config(container.URL))
               ],
-              container=container.config(container.AUTO),
-              permissions=[
-                  ace.permission("proxy.in", "config", [container.URL]),
-                  ace.permission("container.in", "config", [container.AUTO])
-              ]
+              container=container.config(container.AUTO)
        ) 
 ```
 
@@ -175,11 +171,13 @@ app = ace.app("My App",
 
 which completely specifies the app. This is saying that the app is using the container plugin to configure the container and the proxy plugin to proxy all API calls (`/` route) to the container URL. On the first API call to the app, OpenRun will build the image, start the container and proxy the API traffic to the appropriate port. No other configuration is required in Starlark. If the container spec does not define the port being exposed, then the container config needs to specify the port number to use. The port number can be parameterized.
 
+With the default server config, `proxy.in.config(container.URL, ...)` and `container.in.config(...)` are already approved implicitly, so no explicit `ace.permission(...)` entries are required for this standard containerized app flow.
+
 [Containerized Apps]({{< ref "/docs/container" >}}) has more details on building containerized apps.
 
 ## App Permissions
 
-For plugin calls made by the app, the plugin permissions have to be specified in the app permissions and approved in the app metadata. The `ace.permission` struct definition is
+For plugin calls made by the app, the plugin permissions normally have to be specified in the app permissions and approved in the app metadata. Server config can also define globally allowed calls under `permissions.allow`, in which case no explicit app approval is required for those calls. The `ace.permission` struct definition is
 
 | Property  | Optional |          Type          |  Default  |                  Notes                   |
 | :-------: | :------: | :--------------------: | :-------: | :--------------------------------------: |
@@ -190,6 +188,8 @@ For plugin calls made by the app, the plugin permissions have to be specified in
 |  secrets  |   True   | list of list of string |           |  The secrets the plugin call can access  |
 
 For example `ace.permission("proxy.in", "config", [container.URL])` is a plugin call to `config` method in `proxy.in` plugin. The first argument has to be `container.URL`. Additional arguments are allowed. If no arguments are specified in the permission, then there is no restriction on arguments passed at runtime. If the value specified starts with `regex:`, then the value passed is checked against the specified regex at runtime.
+
+The default server config already allows `proxy.in.config(container.URL, ...)` and `container.in.config(...)`, so these two calls do not need an explicit permission entry unless the app wants to narrow the default access.
 
 See [secrets]({{< ref "/docs/configuration/secrets/#plugin-access-to-secrets" >}}) for details on specifying the secrets which can be accessed by the plugin call.
 

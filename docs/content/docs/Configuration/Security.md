@@ -69,6 +69,32 @@ If server_uri is set to the HTTPS endpoint and the OpenRun server is running wit
 
 See [appsecurity]({{< ref "appsecurity" >}}) for details about the application level sandboxing and [authentication]({{< ref "authentication" >}}) for details about adding OAuth/OIDC/SAML/cert-based auth for apps.
 
+## Default Plugin Permissions
+
+OpenRun can allow plugin calls at the server level so apps do not need an explicit approved permission entry in app metadata. The default server permissions are:
+
+```toml {filename="openrun.toml"}
+[[permissions.allow]]
+plugin = "proxy.in"
+method = "config"
+arguments = ["<CONTAINER_URL>"]
+
+[[permissions.allow]]
+plugin = "container.in"
+method = "config"
+arguments = ["regex:.*"]
+secrets = [["regex:.*"]]
+```
+
+`permissions.allow` adds globally approved plugin calls for all apps. `permissions.full_access` list grants the listed apps access to all plugin calls without requiring app-level approvals.
+
+The default OpenRun server config already includes two implicit approvals used by containerized apps:
+
+- `proxy.in.config(container.URL, ...)`
+- `container.in.config(...)`
+
+Because of these defaults, a standard containerized app does not need explicit `ace.permission(...)` entries just to call `proxy.config(container.URL)` and `container.config(...)`. If stricter control is needed, the app can still declare the permission explicitly, for example to narrow the allowed arguments or secrets.
+
 ## CSRF Protection
 
 CSRF protection is automatically enabled for OpenRun internal APIs and for API calls to apps. This uses the [CrossOriginProtection](https://pkg.go.dev/net/http#CrossOriginProtection) middleware. Use `app_config.security.disable_csrf_protection = true` in `openrun.toml` to disable globally for all apps. CSRF protection can be disabled individually for apps by running `openrun app update conf --promote 'security.disable_csrf_protection=true' /myapp`
