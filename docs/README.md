@@ -1,6 +1,6 @@
 # OpenRun Documentation
 
-OpenRun is an open source alternative to Google Cloud Run and AWS App Runner. The main repository for OpenRun source code is [openrun](https://github.com/openrundev/openrun/). This repository has the documentation for OpenRun.
+This folder has the public documentation for OpenRun.
 
 Documentation is hosted at [OpenRun](https://openrun.dev) using GitHub Pages.
 
