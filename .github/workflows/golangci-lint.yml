@@ -8,6 +8,7 @@ on:
   pull_request:
     paths-ignore:
       - "docs/**"
+  workflow_call:
 
 permissions:
   contents: read

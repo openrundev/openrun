@@ -9,6 +9,13 @@ on:
   merge_group:
     branches:
       - "main"
+  workflow_call:
+    inputs:
+      enable_kubernetes_tests:
+        description: "Run Kubernetes tests regardless of changed files"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
@@ -51,19 +58,30 @@ jobs:
           export CL_CONTAINER_COMMANDS=docker # using self-hosted runner, use Docker for container tests
           export ENABLE_POSTGRES_TESTCONTAINER=1
 
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          RUN_KUBERNETES_TESTS=false
+          if [[ "${{ inputs.enable_kubernetes_tests }}" == "true" ]]; then
+            RUN_KUBERNETES_TESTS=true
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD="${{ github.event.pull_request.head.sha }}"
-          else
+            if git diff --name-only "$BASE" "$HEAD" | grep -q '^internal/container/'; then
+              RUN_KUBERNETES_TESTS=true
+            fi
+          elif [[ "${{ github.event_name }}" != "workflow_call" ]]; then
             BASE="${{ github.event.before }}"
             HEAD="${{ github.sha }}"
+            if git diff --name-only "$BASE" "$HEAD" | grep -q '^internal/container/'; then
+              RUN_KUBERNETES_TESTS=true
+            fi
           fi
 
-          if git diff --name-only "$BASE" "$HEAD" | grep -q '^internal/container/'; then
+          if [[ "$RUN_KUBERNETES_TESTS" == "true" ]]; then
             # Container package changed, run Kubernetes tests
             sudo systemctl restart k3s
-            kubectl delete namespace openrun; kubectl create namespace openrun
-            kubectl delete namespace openrun-apps; kubectl create namespace openrun-apps
+            kubectl delete namespace openrun --ignore-not-found=true --wait=true
+            kubectl create namespace openrun
+            kubectl delete namespace openrun-apps --ignore-not-found=true --wait=true
+            kubectl create namespace openrun-apps
             echo "----------Kubernetes tests enabled------------"
             export KUBE_REGISTRY_URL=registry.registry.svc.cluster.local:5000
           else
@@ -72,7 +90,11 @@ jobs:
 
           docker system prune -f
           gmake covtest
-          docker stop -t 1 $(docker ps -a -q)
+
+          if [[ -n "$(docker ps -a -q)" ]]; then
+            docker stop -t 1 $(docker ps -a -q)
+          fi
+
           docker system prune -f
 
       - name: Upload Go test results

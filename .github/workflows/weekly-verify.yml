@@ -1,0 +1,28 @@
+name: Weekly Verify Job
+
+on:
+  schedule:
+    # 18:00 UTC every Tuesday (10:00 PST)
+    - cron: "0 18 * * 2"
+  workflow_dispatch:
+
+jobs:
+  docs:
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml
+
+  lint:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/golangci-lint.yml
+
+  test:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+    with:
+      enable_kubernetes_tests: true
+    secrets: inherit
