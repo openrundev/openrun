@@ -42,7 +42,7 @@ Some of the unique features of OpenRun are:
 - Staged deployment, for code and config changes
 - Atomic (all or nothing) updates across apps
 
-This repo hosts the source code for OpenRun. The source for the documentation site [openrun.dev](https://openrun.dev) is in the [docs](https://github.com/openrundev/docs) repo. App specifications, which are templates to create apps, are defined in the [appspecs](https://github.com/openrundev/appspecs) repo. Sample apps are in the [apps](https://github.com/openrundev/apps) repo.
+This repo hosts the source code for OpenRun. The source for the documentation site [openrun.dev](https://openrun.dev) is in the docs folder. App specifications, which are templates to create apps, are defined in the [appspecs](https://github.com/openrundev/appspecs) repo. Sample apps are in the [apps](https://github.com/openrundev/apps) repo.
 
 <img alt="OpenRun intro gif" src="https://openrun.dev/intro_dark_small.gif"/>
 
