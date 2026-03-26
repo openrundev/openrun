@@ -15,6 +15,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andybalholm/brotli"
@@ -82,6 +83,16 @@ func (f *FileStore) IncrementAppVersion(ctx context.Context, tx types.Transactio
 	return nil
 }
 
+type fileEntry struct {
+	path           string
+	sha            string
+	uncompressedSz int
+	compression    string
+	compressed     []byte
+	shaExists      bool
+	err            error
+}
+
 func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction, metadata types.AppMetadata, checkoutDir string) error {
 	metadataJson, err := json.Marshal(metadata)
 	if err != nil {
@@ -93,86 +104,175 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 		return fmt.Errorf("error inserting app version: %w", err)
 	}
 
-	var insertFileStmt *sql.Stmt
-	if insertFileStmt, err = tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType, system.InsertIgnorePrefix(f.metadata.dbType)+" into files (sha, compression_type, content, create_time) values (?, ?, ?, "+system.FuncNow(f.metadata.dbType)+") "+system.InsertIgnoreSuffix(f.metadata.dbType))); err != nil {
-		return err
-	}
-	defer insertFileStmt.Close() //nolint:errcheck
-
-	var insertAppFileStmt *sql.Stmt
-	if insertAppFileStmt, err = tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType, `insert into app_files (appid, version, name, sha, uncompressed_size, create_time) values (?, ?, ?, ?, ?, `+system.FuncNow(f.metadata.dbType)+")")); err != nil {
-		return err
-	}
-	defer insertAppFileStmt.Close() //nolint:errcheck
-
 	if checkoutDir == types.NO_SOURCE {
-		// No source code to add
 		return nil
 	}
 
 	fsys := os.DirFS(checkoutDir)
 
-	return fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, inErr error) error {
+	// Collect all file paths first
+	var filePaths []string
+	if err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, inErr error) error {
 		if inErr != nil {
 			return fmt.Errorf("file walk on %s failed for path %s: %w", checkoutDir, path, inErr)
 		}
 		if d.IsDir() && path == ".git" {
-			// Skip .git directory completely
 			return fs.SkipDir
 		}
-
 		if d.IsDir() {
-			// Ignore directory paths
 			return nil
 		}
+		filePaths = append(filePaths, strings.ReplaceAll(path, "\\", "/"))
+		return nil
+	}); err != nil {
+		return err
+	}
 
-		// Walk the file system, read one file at a time
-		file, err := fsys.Open(path)
-		if err != nil {
-			return err
+	if len(filePaths) == 0 {
+		return nil
+	}
+
+	// Build set of existing SHAs in the files table
+	existingSHAs := make(map[string]struct{})
+	rows, err := tx.QueryContext(ctx, "SELECT sha FROM files")
+	if err != nil {
+		return fmt.Errorf("error querying existing shas: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+	for rows.Next() {
+		var sha string
+		if err := rows.Scan(&sha); err != nil {
+			return fmt.Errorf("error scanning sha: %w", err)
 		}
-		defer file.Close() //nolint:errcheck
+		existingSHAs[sha] = struct{}{}
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("error closing sha rows: %w", err)
+	}
 
-		buf, err := fs.ReadFile(fsys, path)
-		if err != nil {
-			return err
-		}
+	// Prepare insert statements upfront
+	insertFileStmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType,
+		system.InsertIgnorePrefix(f.metadata.dbType)+" into files (sha, compression_type, content, create_time) values (?, ?, ?, "+
+			system.FuncNow(f.metadata.dbType)+") "+system.InsertIgnoreSuffix(f.metadata.dbType)))
+	if err != nil {
+		return err
+	}
+	defer insertFileStmt.Close() //nolint:errcheck
 
-		// Use forward slash as path separator
-		path = strings.ReplaceAll(path, "\\", "/")
+	insertAppFileStmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType,
+		`insert into app_files (appid, version, name, sha, uncompressed_size, create_time) values (?, ?, ?, ?, ?, `+
+			system.FuncNow(f.metadata.dbType)+")"))
+	if err != nil {
+		return err
+	}
+	defer insertAppFileStmt.Close() //nolint:errcheck
 
-		var byteBuf bytes.Buffer
-		hash := sha256.Sum256(buf)
-		hashHex := hex.EncodeToString(hash[:])
-		compressionType := ""
-		storeBuf := buf
-		if len(buf) > COMPRESSION_THRESHOLD {
-			compressionType = appfs.COMPRESSION_TYPE
-			byteBuf.Reset()
-			br := brotli.NewWriterLevel(&byteBuf, BROTLI_COMPRESSION_LEVEL)
+	numWorkers := f.metadata.config.AppConfig.FS.FileWorkers
+	if numWorkers <= 0 {
+		numWorkers = 4
+	}
 
-			if _, err := br.Write(buf); err != nil {
-				br.Close() //nolint:errcheck
-				return err
+	// done is closed on early return to unblock goroutines and prevent leaks.
+	done := make(chan struct{})
+	// work feeds paths to workers, results is bounded to numWorkers
+	// so at most numWorkers compressed files are held in memory at once.
+	work := make(chan string, numWorkers)
+	results := make(chan fileEntry, numWorkers)
+	var wg sync.WaitGroup
+
+	go func() {
+		defer close(work)
+		for _, p := range filePaths {
+			select {
+			case work <- p:
+			case <-done:
+				return
 			}
-			if err := br.Close(); err != nil {
-				return err
+		}
+	}()
+
+	for range min(numWorkers, len(filePaths)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range work {
+				buf, readErr := fs.ReadFile(fsys, path)
+				if readErr != nil {
+					select {
+					case results <- fileEntry{err: readErr}:
+					case <-done:
+					}
+					return
+				}
+
+				hash := sha256.Sum256(buf)
+				hashHex := hex.EncodeToString(hash[:])
+
+				entry := fileEntry{
+					path:           path,
+					sha:            hashHex,
+					uncompressedSz: len(buf),
+				}
+
+				if _, exists := existingSHAs[hashHex]; exists {
+					entry.shaExists = true
+				} else if len(buf) > COMPRESSION_THRESHOLD {
+					entry.compression = appfs.COMPRESSION_TYPE
+					var byteBuf bytes.Buffer
+					br := brotli.NewWriterLevel(&byteBuf, BROTLI_COMPRESSION_LEVEL)
+					if _, writeErr := br.Write(buf); writeErr != nil {
+						br.Close() //nolint:errcheck
+						select {
+						case results <- fileEntry{err: writeErr}:
+						case <-done:
+						}
+						return
+					}
+					if closeErr := br.Close(); closeErr != nil {
+						select {
+						case results <- fileEntry{err: closeErr}:
+						case <-done:
+						}
+						return
+					}
+					entry.compressed = byteBuf.Bytes()
+				} else {
+					entry.compressed = buf
+				}
+
+				select {
+				case results <- entry:
+				case <-done:
+					return
+				}
 			}
-			storeBuf = byteBuf.Bytes()
-		}
+		}()
+	}
 
-		// Compressed data is written to files table. Ignore if sha is already present
-		// File contents, if same across versions and also across apps, are shared
-		if _, err = insertFileStmt.ExecContext(ctx, hashHex, compressionType, storeBuf); err != nil {
-			return fmt.Errorf("error inserting file: %w", err)
-		}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
 
-		if _, err := insertAppFileStmt.ExecContext(ctx, f.appId, metadata.VersionMetadata.Version, path, hashHex, len(buf)); err != nil {
+	// Consume results and insert into DB as they arrive
+	for entry := range results {
+		if entry.err != nil {
+			close(done)
+			return entry.err
+		}
+		if !entry.shaExists {
+			if _, err := insertFileStmt.ExecContext(ctx, entry.sha, entry.compression, entry.compressed); err != nil {
+				close(done)
+				return fmt.Errorf("error inserting file: %w", err)
+			}
+		}
+		if _, err := insertAppFileStmt.ExecContext(ctx, f.appId, metadata.VersionMetadata.Version, entry.path, entry.sha, entry.uncompressedSz); err != nil {
+			close(done)
 			return fmt.Errorf("error inserting app file: %w", err)
 		}
+	}
 
-		return nil
-	})
+	return nil
 }
 
 func (f *FileStore) GetFileBySha(sha string) ([]byte, string, error) {

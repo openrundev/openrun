@@ -153,6 +153,7 @@ proxy.disable_compression = true
 # FS plugin related settings
 fs.file_access = ["$TEMPDIR", "/tmp"]
 fs.retain_versions = 5 # number of older versions to keep for each app
+fs.file_workers = 4 # number of parallel workers for file compression
 
 # Audit related settings
 audit.redact_url = false

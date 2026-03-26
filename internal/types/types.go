@@ -150,6 +150,7 @@ type CORS struct {
 type FS struct {
 	FileAccess     []string `toml:"file_access"`
 	RetainVersions int      `toml:"retain_versions"` // number of older versions to keep for each app
+	FileWorkers    int      `toml:"file_workers"`     // number of parallel workers for file compression during app version creation
 }
 
 type Audit struct {
