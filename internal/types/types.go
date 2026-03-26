@@ -148,7 +148,8 @@ type CORS struct {
 }
 
 type FS struct {
-	FileAccess []string `toml:"file_access"`
+	FileAccess     []string `toml:"file_access"`
+	RetainVersions int      `toml:"retain_versions"` // number of older versions to keep for each app
 }
 
 type Audit struct {
@@ -360,19 +361,20 @@ func (a AppPathDomain) String() string {
 // AppInfo is the basic info for an app
 type AppInfo struct {
 	AppPathDomain
-	Name       string
-	Id         AppId
-	IsDev      bool
-	MainApp    AppId
-	Auth       AppAuthnType
-	SourceUrl  string
-	Spec       AppSpec
-	Version    int
-	GitSha     string
-	GitMessage string
-	Branch     string
-	StarBase   string
-	UpdateTime time.Time
+	Name           string
+	Id             AppId
+	IsDev          bool
+	MainApp        AppId
+	Auth           AppAuthnType
+	SourceUrl      string
+	Spec           AppSpec
+	Version        int
+	GitSha         string
+	GitMessage     string
+	Branch         string
+	StarBase       string
+	UpdateTime     time.Time
+	RetainVersions int
 }
 
 func CreateAppPathDomain(path, domain string) AppPathDomain {
@@ -384,25 +386,26 @@ func CreateAppPathDomain(path, domain string) AppPathDomain {
 
 func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppId,
 	auth AppAuthnType, sourceUrl string, spec AppSpec,
-	version int, gitSha, gitMessage, branch, starBase string, updatedAt time.Time) AppInfo {
+	version int, gitSha, gitMessage, branch, starBase string, updatedAt time.Time, retainVersions int) AppInfo {
 	return AppInfo{
 		AppPathDomain: AppPathDomain{
 			Path:   path,
 			Domain: domain,
 		},
-		Name:       name,
-		Id:         id,
-		IsDev:      isDev,
-		MainApp:    mainApp,
-		Auth:       auth,
-		SourceUrl:  sourceUrl,
-		Spec:       spec,
-		Version:    version,
-		GitSha:     gitSha,
-		GitMessage: gitMessage,
-		Branch:     branch,
-		StarBase:   starBase,
-		UpdateTime: updatedAt,
+		Name:           name,
+		Id:             id,
+		IsDev:          isDev,
+		MainApp:        mainApp,
+		Auth:           auth,
+		SourceUrl:      sourceUrl,
+		Spec:           spec,
+		Version:        version,
+		GitSha:         gitSha,
+		GitMessage:     gitMessage,
+		Branch:         branch,
+		StarBase:       starBase,
+		UpdateTime:     updatedAt,
+		RetainVersions: retainVersions,
 	}
 }
 

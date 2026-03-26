@@ -361,5 +361,10 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		}
 	}
 
+	if status.Error == "" && !dryRun {
+		// Cleanup old versions of apps after sync runs
+		s.CleanupVersions()
+	}
+
 	return &status, updatedApps, nil
 }

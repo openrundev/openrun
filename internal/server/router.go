@@ -258,7 +258,7 @@ func validatePathForCreate(inp string) error {
 	return nil
 }
 
-func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasicAuth bool, operation string, apiFunc func(r *http.Request) (any, error)) {
+func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasicAuth bool, operation string, apiFunc func(r *http.Request) (any, error), runVersionCleanup bool) {
 	if enableBasicAuth {
 		authStatus := h.server.authHandler.authenticate(r.Header.Get("Authorization"))
 		if !authStatus {
@@ -312,6 +312,9 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 		h.Error().Err(err).Msg("error in api func call")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	} else if runVersionCleanup && contextShared != nil && !contextShared.(*ContextShared).DryRun {
+		// Cleanup old versions of apps
+		h.server.CleanupVersions()
 	}
 
 	if resp == nil {
@@ -483,6 +486,9 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 		h.Error().Err(err).Msg("error in api func call")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	} else {
+		// Cleanup old versions of apps
+		h.server.CleanupVersions()
 	}
 
 	w.Header().Add("Content-Type", "application/json")
@@ -1132,132 +1138,133 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 
 	// Get apps
 	r.Post("/stop", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "stop_server", h.stopServer)
+		h.apiHandler(w, r, enableBasicAuth, "stop_server", h.stopServer, false)
 	}))
 
 	// Get apps
 	r.Get("/apps", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_apps", h.getApps)
+		h.apiHandler(w, r, enableBasicAuth, "list_apps", h.getApps, false)
 	}))
 
 	// Get app
 	r.Get("/app", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "get_app", h.getApp)
+		h.apiHandler(w, r, enableBasicAuth, "get_app", h.getApp, false)
 	}))
 
 	// Create app
 	r.Post("/app", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "create_app", h.createApp)
+		h.apiHandler(w, r, enableBasicAuth, "create_app", h.createApp, false)
 	}))
 
 	// Delete app
 	r.Delete("/app", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "delete_apps", h.deleteApps)
+		h.apiHandler(w, r, enableBasicAuth, "delete_apps", h.deleteApps, true)
 	}))
 
 	// API to approve the plugin usage and permissions for the app
 	r.Post("/approve", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "approve_apps", h.approveApps)
+		h.apiHandler(w, r, enableBasicAuth, "approve_apps", h.approveApps, false)
 	}))
 
 	// API to reload apps
 	r.Post("/reload", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "reload_apps", h.reloadApps)
+		h.apiHandler(w, r, enableBasicAuth, "reload_apps", h.reloadApps, true)
 	}))
 
 	// API to promote apps
 	r.Post("/promote", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "promote_apps", h.promoteApps)
+		h.apiHandler(w, r, enableBasicAuth, "promote_apps", h.promoteApps, true)
 	}))
 
 	// API to create a preview version of an app
 	r.Post("/preview", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "create_preview", h.previewApp)
+		h.apiHandler(w, r, enableBasicAuth, "create_preview", h.previewApp, false)
 	}))
 
 	// API to update app settings
 	r.Post("/app_settings", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "update_settings", h.updateAppSettings)
+		h.apiHandler(w, r, enableBasicAuth, "update_settings", h.updateAppSettings, false)
 	}))
 
 	// API to update app metadata
 	r.Post("/app_metadata", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "update_metadata", h.updateAppMetadata)
+		h.apiHandler(w, r, enableBasicAuth, "update_metadata", h.updateAppMetadata, true)
 	}))
 
 	// API to change account links
 	r.Post("/link_account", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "update_links", h.accountLink)
+		h.apiHandler(w, r, enableBasicAuth, "update_links", h.accountLink, true)
 	}))
 
 	// API to update param values
 	r.Post("/update_param", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "update_params", h.updateParam)
+		h.apiHandler(w, r, enableBasicAuth, "update_params", h.updateParam, true)
 	}))
 
 	// API to list versions for an app
 	r.Get("/version", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_versions", h.versionList)
+		h.apiHandler(w, r, enableBasicAuth, "list_versions", h.versionList, false)
 	}))
 
 	// API to list files in a version
 	r.Get("/version/files", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_files", h.versionFiles)
+		h.apiHandler(w, r, enableBasicAuth, "list_files", h.versionFiles, false)
 	}))
 
 	// API to switch version for an app
 	r.Post("/version", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "version_switch", h.versionSwitch)
+		h.apiHandler(w, r, enableBasicAuth, "version_switch", h.versionSwitch, false)
 	}))
 
 	// Token list
 	r.Get("/app_webhook_token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_webhooks", h.tokenList)
+		h.apiHandler(w, r, enableBasicAuth, "list_webhooks", h.tokenList, false)
 	}))
 
 	// Token create
 	r.Post("/app_webhook_token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "token_create", h.tokenCreate)
+		h.apiHandler(w, r, enableBasicAuth, "token_create", h.tokenCreate, false)
 	}))
 
 	// Token delete
 	r.Delete("/app_webhook_token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "token_delete", h.tokenDelete)
+		h.apiHandler(w, r, enableBasicAuth, "token_delete", h.tokenDelete, false)
 	}))
 
 	// API to apply app config
 	r.Post("/apply", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "apply", h.apply)
+		h.apiHandler(w, r, enableBasicAuth, "apply", h.apply, true)
 	}))
 
 	// API to create sync entry
 	r.Post("/sync", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "sync_create", h.createSyncEntry)
+		h.apiHandler(w, r, enableBasicAuth, "sync_create", h.createSyncEntry, true)
 	}))
 
 	// API to run sync
 	r.Post("/sync/run", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "sync_run", h.runSyncEntry)
+		h.apiHandler(w, r, enableBasicAuth, "sync_run", h.runSyncEntry, false)
+		// sync runs version cleanup after it runs, so we don't need to cleanup versions here
 	}))
 
 	// API to delete sync entry
 	r.Delete("/sync", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "sync_delete", h.deleteSyncEntry)
+		h.apiHandler(w, r, enableBasicAuth, "sync_delete", h.deleteSyncEntry, false)
 	}))
 
 	// API to get sync entries
 	r.Get("/sync", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_sync", h.listSyncEntries)
+		h.apiHandler(w, r, enableBasicAuth, "list_sync", h.listSyncEntries, false)
 	}))
 
 	// API to get config
 	r.Get("/config", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "config_get", h.configGet)
+		h.apiHandler(w, r, enableBasicAuth, "config_get", h.configGet, false)
 	}))
 
 	// API to update config
 	r.Post("/config", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "config_update", h.configUpdate)
+		h.apiHandler(w, r, enableBasicAuth, "config_update", h.configUpdate, false)
 	}))
 
 	// API to delegate build

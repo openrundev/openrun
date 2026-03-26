@@ -122,6 +122,13 @@ tests:
   versions0184: # version prod version
     command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
     stdout: "1"
+  versions0200: # change to zero versions retention
+    command: ../openrun app update conf --promote fs.retain_versions=0 /versions_local1
+  versions0201: # reload, that clears older versions
+    command: ../openrun app reload --promote /versions_local1
+  versions0202: # check no versions other than current
+    command: ../openrun version list /versions_local1 | wc -l
+    stdout: "2"
 
   versions0190: # files
     command: ../openrun version files -f csv /versions_local1_cl_stage | grep rootfile

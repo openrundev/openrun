@@ -942,6 +942,35 @@ func (s *Server) KVInitConstant(ctx context.Context, keyName string, newValue []
 	return dbValue, nil
 }
 
+func (s *Server) CleanupVersions() {
+	// Cleanup old versions of apps
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.Error().Msgf("error in cleanup versions: %v", r)
+			}
+		}()
+
+		apps, err := s.apps.GetAllAppsInfo()
+		if err != nil {
+			s.Error().Err(err).Msg("error getting all apps info")
+			return
+		}
+
+		for _, app := range apps {
+			err := s.db.CleanupAppVersions(app)
+			if err != nil {
+				s.Error().Err(err).Msgf("error cleaning up versions for app %s", app.AppPathDomain)
+			}
+		}
+
+		err = s.db.CleanupFiles()
+		if err != nil {
+			s.Error().Err(err).Msg("error cleaning up files")
+		}
+	}()
+}
+
 // KVStore is an interface for a key-value store. Implemented by metadata.Metadata
 type KVStore interface {
 	FetchKV(ctx context.Context, key string) (map[string]any, error)

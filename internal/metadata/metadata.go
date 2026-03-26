@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -607,10 +608,17 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 			}
 		}
 
+		retainVersions := m.config.AppConfig.FS.RetainVersions
+		if val, ok := metadata.AppConfig["fs.retain_versions"]; ok {
+			if intVal, err := strconv.Atoi(val); err == nil && intVal >= 0 {
+				retainVersions = intVal
+			}
+		}
+
 		apps = append(apps, types.CreateAppInfo(types.AppId(id), metadata.Name, path, domain, isDev,
 			types.AppId(mainApp), metadata.AuthnType, sourceUrl, metadata.Spec,
 			metadata.VersionMetadata.Version, metadata.VersionMetadata.GitCommit, metadata.VersionMetadata.GitMessage,
-			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"]), *updateTime))
+			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"]), *updateTime, retainVersions))
 	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
@@ -1002,6 +1010,59 @@ func (m *Metadata) DeleteKV(ctx context.Context, key string) error {
 	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType, `delete from keystore where key = ?`), key)
 	if err != nil {
 		return fmt.Errorf("error deleting value: %w", err)
+	}
+	return nil
+}
+
+func (m *Metadata) CleanupAppVersions(app types.AppInfo) error {
+	m.Logger.Trace().Msgf("cleaning up app versions for app %s retain %d", app.AppPathDomain, app.RetainVersions)
+	if app.RetainVersions < 0 {
+		return nil
+	}
+
+	// The current version may not be the latest (e.g. after a rollback), so only
+	// consider versions <= the current one. Keep the current version plus
+	// RetainVersions older versions below it; delete everything older.
+	// OFFSET RetainVersions in a DESC-sorted list of versions <= current gives the
+	// oldest version to keep. If fewer versions exist, the subquery returns NULL
+	// and nothing is deleted.
+	cutoffQuery := `SELECT version FROM app_versions WHERE appid = ? AND version <= ? ORDER BY version DESC LIMIT 1 OFFSET ?`
+
+	_, err := m.db.Exec(system.RebindQuery(m.dbType,
+		`DELETE FROM app_versions WHERE appid = ? AND version < (`+cutoffQuery+`)`),
+		app.Id, app.Id, app.Version, app.RetainVersions)
+	if err != nil {
+		return fmt.Errorf("error cleaning up app versions: %w", err)
+	}
+
+	_, err = m.db.Exec(system.RebindQuery(m.dbType,
+		`DELETE FROM app_files WHERE appid = ? AND version < (`+cutoffQuery+`)`),
+		app.Id, app.Id, app.Version, app.RetainVersions)
+	if err != nil {
+		return fmt.Errorf("error cleaning up app files: %w", err)
+	}
+
+	return nil
+}
+
+func (m *Metadata) CleanupFiles() error {
+	result, err := m.db.Exec(`DELETE FROM files WHERE sha NOT IN (SELECT DISTINCT sha FROM app_files)`)
+	if err != nil {
+		return fmt.Errorf("error cleaning up files: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return nil
+	}
+
+	if m.dbType == system.DB_TYPE_SQLITE {
+		_, err = m.db.Exec(`VACUUM`)
+		if err != nil {
+			return fmt.Errorf("error vacuuming files: %w", err)
+		}
 	}
 	return nil
 }
