@@ -134,11 +134,11 @@ tests:
     stdout: "3 19b8d5c59e421f037fe563007c7254eb8d98bc221b278c3db3e5fdbbfd52e273 static_root/rootfile.txt"
 
   versions0195: # change to zero versions retention
-    command: ../openrun app update conf --promote fs.retain_versions=0 /versions_local1
+    command: ../openrun app update conf --promote fs.retain_versions=0 /versions_local2
   versions0196: # reload, that clears older versions
-    command: ../openrun app reload --promote /versions_local1
+    command: ../openrun app reload --promote /versions_local2
   versions0197: # check no versions other than current
-    command: ../openrun version list /versions_local1 | wc -l
+    command: ../openrun version list /versions_local2 | wc -l
     stdout: "2"
 
   #error tests
