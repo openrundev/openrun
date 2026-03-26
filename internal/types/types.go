@@ -150,7 +150,6 @@ type CORS struct {
 type FS struct {
 	FileAccess     []string `toml:"file_access"`
 	RetainVersions int      `toml:"retain_versions"` // number of older versions to keep for each app
-	FileWorkers    int      `toml:"file_workers"`     // number of parallel workers for file compression during app version creation
 }
 
 type Audit struct {
@@ -273,6 +272,7 @@ type SystemConfig struct {
 	EarlyHints                          bool     `toml:"early_hints"`                             // enable early hints for HTML responses
 	LeaderElectionLeaseSecs             int      `toml:"leader_election_lease_secs"`              // The lease time for the leader election
 	LeaderElectionHeartbeatIntervalSecs int      `toml:"leader_election_heartbeat_interval_secs"` // The interval for the leader election heartbeat
+	FileWorkers                         int      `toml:"file_workers"`                            // number of parallel workers for file compression during app version creation
 }
 
 type RegistryConfig struct {

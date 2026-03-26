@@ -167,7 +167,7 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 	}
 	defer insertAppFileStmt.Close() //nolint:errcheck
 
-	numWorkers := f.metadata.config.AppConfig.FS.FileWorkers
+	numWorkers := f.metadata.config.System.FileWorkers
 	if numWorkers <= 0 {
 		numWorkers = 4
 	}

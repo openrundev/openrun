@@ -76,6 +76,7 @@ allowed_env = ["HOME", "OPENRUN_HOME", "PATH"] # env values allowed for use in n
 
 max_concurrent_builds = 1 # max number of concurrent container builds
 max_build_wait_secs = 120 # max wait time for a build lock
+file_workers = 4 # number of parallel workers for file compression during app version creation
 
 leader_election_lease_secs = 30 # duration of the leader election lease
 leader_election_heartbeat_interval_secs = 10 # interval at which the leader heartbeat is sent
@@ -153,7 +154,6 @@ proxy.disable_compression = true
 # FS plugin related settings
 fs.file_access = ["$TEMPDIR", "/tmp"]
 fs.retain_versions = 5 # number of older versions to keep for each app
-fs.file_workers = 4 # number of parallel workers for file compression
 
 # Audit related settings
 audit.redact_url = false
