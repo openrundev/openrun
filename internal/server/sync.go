@@ -213,6 +213,7 @@ func (s *Server) runSyncJobs() error {
 		}
 	}
 
+	s.CleanupVersions()
 	return nil
 }
 
@@ -359,11 +360,6 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "sync"); err != nil {
 			return nil, nil, err
 		}
-	}
-
-	if status.Error == "" && !dryRun {
-		// Cleanup old versions of apps after sync runs
-		s.CleanupVersions()
 	}
 
 	return &status, updatedApps, nil

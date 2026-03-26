@@ -1243,8 +1243,7 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 
 	// API to run sync
 	r.Post("/sync/run", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "sync_run", h.runSyncEntry, false)
-		// sync runs version cleanup after it runs, so we don't need to cleanup versions here
+		h.apiHandler(w, r, enableBasicAuth, "sync_run", h.runSyncEntry, true)
 	}))
 
 	// API to delete sync entry

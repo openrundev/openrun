@@ -41,6 +41,23 @@ sets the redact property to true for all apps. The property can be further confi
 openrun app update conf --promote 'audit.redact_url=true' /myapp
 ```
 
+Version retention is also configured under `[app_config]`. By default, OpenRun keeps the current version plus 5 older versions for each app. Older versions are cleaned up automatically after operations which create or promote app versions.
+
+To change the default for all apps, set `fs.retain_versions` in `openrun.toml`:
+
+```toml {filename="openrun.toml"}
+[app_config]
+fs.retain_versions = 10
+```
+
+To override the retention count for a specific app, update the app metadata:
+
+```sh
+openrun app update conf --promote fs.retain_versions=10 /myapp
+```
+
+Setting `fs.retain_versions = 0` keeps only the current version for that app.
+
 ## Config Access from Code
 
 [App Params]({{< ref "docs/develop/#app-parameters" >}}) are the primary user configurable properties for apps. For cases where properties need to be read from `openrun.toml` config file or from env, the config builtin can be used. This is available as `config` in app definitions and in `params.star`. In app declaration (like `app.star`), this is available as `ace.config`.
