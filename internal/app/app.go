@@ -507,8 +507,13 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 		}
 	}
 
+	portInt, err := types.Int64ToInt32(port)
+	if err != nil {
+		return fmt.Errorf("error converting port to int32: %w", err)
+	}
+
 	a.containerHandler, err = NewContainerHandler(a.Logger, a,
-		fileName, a.serverConfig, port, lifetime, scheme, health, buildDir,
+		fileName, a.serverConfig, portInt, lifetime, scheme, health, buildDir,
 		a.sourceFS, a.paramValuesStr, a.AppConfig.Container, stripAppPath, volumes,
 		a.getSecretsAllowed("container.in", "config"), cargs)
 	if err != nil {

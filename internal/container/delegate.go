@@ -245,16 +245,16 @@ func delegateBuild(ctx context.Context, logger *types.Logger, config *types.Serv
 	defer releaseLock()
 
 	logger.Debug().Msgf("Building image %s from %s with %s", data.ImageTag, data.ContainerFile, destDir)
-	args := []string{config.System.ContainerCommand, "build", "-t", data.ImageTag, "-f", data.ContainerFile}
+	args := []string{"build", "-t", data.ImageTag, "-f", data.ContainerFile}
 
 	for k, v := range data.ContainerArgs {
 		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", k, v))
 	}
 
 	args = append(args, ".")
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd := exec.Command(config.System.ContainerCommand, args...)
 
-	logger.Debug().Msgf("Running command: %s", cmd.String())
+	logger.Debug().Msgf("Running command: %s %s", config.System.ContainerCommand, cmd.String())
 	cmd.Dir = destDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {

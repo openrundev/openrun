@@ -5,6 +5,7 @@ package types
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 )
 
@@ -273,4 +274,12 @@ func GetHTTPHeader(header http.Header, key string) string {
 		return val[0]
 	}
 	return ""
+}
+
+// Int64ToInt32 converts an int64 to an int32, returning an error if the value is out of range
+func Int64ToInt32(v int64) (int32, error) {
+	if v < math.MinInt32 || v > math.MaxInt32 {
+		return 0, fmt.Errorf("value %d overflows int32", v)
+	}
+	return int32(v), nil
 }

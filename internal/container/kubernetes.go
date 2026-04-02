@@ -352,7 +352,7 @@ func (k *KubernetesCM) StopContainer(ctx context.Context, name ContainerName) er
 }
 
 func (k *KubernetesCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
-	imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
+	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
 	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
 	if strings.HasPrefix(string(imageName), IMAGE_NAME_PREFIX) {
 		if k.config.Registry.Project != "" {
@@ -366,7 +366,7 @@ func (k *KubernetesCM) RunContainer(ctx context.Context, appEntry *types.AppEntr
 		return fmt.Errorf("error parsing kubernetes options: %w", err)
 	}
 	containerName = ContainerName(sanitizeContainerName(string(containerName)))
-	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), int32(port), envMap,
+	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), port, envMap,
 		volumes, sourceDir, paramMap, appEntry, versionHash, kubernetesOptions)
 	if err != nil {
 		return fmt.Errorf("create app: %w", err)

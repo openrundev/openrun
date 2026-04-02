@@ -50,7 +50,7 @@ type ContainerHandler struct {
 	containerFile   string
 	image           string              // image name as specified
 	GenImageName    container.ImageName // generated image name
-	port            int64               // Port number within the container
+	port            int32               // Port number within the container
 	hostNamePort    string              // host name : port number for the container
 	lifetime        string
 	scheme          string
@@ -76,7 +76,7 @@ type ContainerHandler struct {
 }
 
 func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
-	serverConfig *types.ServerConfig, configPort int64, lifetime, scheme, health, buildDir string, sourceFS appfs.ReadableFS,
+	serverConfig *types.ServerConfig, configPort int32, lifetime, scheme, health, buildDir string, sourceFS appfs.ReadableFS,
 	paramMap map[string]string, containerConfig types.Container, stripAppPath bool,
 	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any) (*ContainerHandler, error) {
 
@@ -109,17 +109,17 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 			return nil, fmt.Errorf("error parsing container file %s : %w", containerFile, err)
 		}
 
-		var filePort int64
+		var filePort int32
 		// Loop through the parsed result to find the EXPOSE and VOLUME instructions
 		for _, child := range result.AST.Children {
 			switch strings.ToUpper(child.Value) {
 			case "EXPOSE":
-				portVal, err := strconv.Atoi(strings.TrimSpace(child.Next.Value))
+				portVal, err := strconv.ParseInt(strings.TrimSpace(child.Next.Value), 10, 32)
 				if err != nil {
 					// Can fail if value is an arg like $PORT
 					logger.Warn().Msgf("Error parsing EXPOSE port %s in container file %s", child.Next.Value, containerFile)
 				} else {
-					filePort = int64(portVal)
+					filePort = int32(portVal)
 				}
 			case "VOLUME":
 				v := extractVolumes(child)
@@ -452,7 +452,7 @@ func (h *ContainerHandler) GetEnvMap() (map[string]string, string) {
 	// Using PORT instead of CL_PORT since that seems to be the most common convention across apps
 	hashBuilder.WriteString("PORT")
 	hashBuilder.WriteByte(0)
-	portStr := strconv.FormatInt(h.port, 10)
+	portStr := strconv.FormatInt(int64(h.port), 10)
 	hashBuilder.WriteString(portStr)
 	hashBuilder.WriteByte(0)
 	ret["PORT"] = portStr

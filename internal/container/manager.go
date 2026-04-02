@@ -48,7 +48,7 @@ type ContainerManager interface {
 	StartContainer(ctx context.Context, name ContainerName) error
 	StopContainer(ctx context.Context, name ContainerName) error
 	RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
-		imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
+		imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
 		containerOptions map[string]string, paramMap map[string]string, versionHash string) error
 	GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error)
 	VolumeExists(ctx context.Context, name VolumeName) bool

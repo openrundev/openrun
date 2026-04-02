@@ -340,7 +340,7 @@ func (c *CommandCM) StartContainer(ctx context.Context, name ContainerName) erro
 const LABEL_PREFIX = "dev.openrun."
 
 func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
-	imageName ImageName, port int64, envMap map[string]string, volumes []*VolumeInfo,
+	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
 	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
 	c.Debug().Msgf("Running container %s from image %s with port %d env %+v mountArgs %+v",
 		containerName, imageName, port, envMap, volumes)
