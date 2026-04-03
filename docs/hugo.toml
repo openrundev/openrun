@@ -59,6 +59,10 @@ message = "📌 OpenRun now enables easy app deployments to Kubernetes. [Learn m
 [params.page.contextMenu]
 enable = true
 
+[params.editURL]
+enable = true
+base = "https://github.com/openrundev/openrun/edit/main/docs/content"
+
 # Docs Navigation
 
 [[menu.main]]
