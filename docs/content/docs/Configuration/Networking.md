@@ -114,6 +114,16 @@ root_serve_list_apps = "auto"  # "auto" means serve list_apps app for default do
 
 To disable this, set `root_serve_list_apps` to `disable`. The list apps app uses the default authentication as set for the system. If another domain needs to be used, set the value to that.
 
+For the built-in list apps page served by `root_serve_list_apps`, the title and footer branding can also be configured:
+
+```toml {filename="openrun.toml"}
+[system]
+list_apps_title = "OpenRun Apps"
+show_hosted_with = true
+```
+
+`list_apps_title` sets the page title shown on the app listing. `show_hosted_with` controls whether the page shows the `Hosted with OpenRun` text.
+
 The list_apps app can be installed explicitly from `github.com/openrundev/apps/openrun/list_apps` source path. This allows the app to be installed with required auth settings. The listing shows apps which are available unauthenticated and apps which are using the same auth as the one set for the list_apps app.
 
 ## Privileged Ports

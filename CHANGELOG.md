@@ -7,7 +7,9 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
+### Added
+
+- Added `system.list_apps_title` and `system.show_hosted_with` server config options to customize the built-in app listing page title and whether it shows the `Hosted with OpenRun` text.
 
 - Add the `security.auth_required` server config option. When enabled, apps configured with `auth="none"` are denied at request time with `401 Authentication required`, providing a server-wide guardrail against unauthenticated app access.
 

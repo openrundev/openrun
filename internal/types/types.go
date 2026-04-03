@@ -274,6 +274,8 @@ type SystemConfig struct {
 	LeaderElectionLeaseSecs             int      `toml:"leader_election_lease_secs"`              // The lease time for the leader election
 	LeaderElectionHeartbeatIntervalSecs int      `toml:"leader_election_heartbeat_interval_secs"` // The interval for the leader election heartbeat
 	FileWorkers                         int      `toml:"file_workers"`                            // number of parallel workers for file compression during app version creation
+	ListAppsTitle                       string   `toml:"list_apps_title"`                         // the title of the list apps page
+	ShowHostedWith                      bool     `toml:"show_hosted_with"`                        // whether to show "Hosted with OpenRun" in the list apps page
 }
 
 type RegistryConfig struct {

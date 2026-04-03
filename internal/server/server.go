@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -843,6 +844,10 @@ func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 			Loads:     []string{"openrun.in"},
 			Permissions: []types.Permission{
 				{Plugin: "openrun.in", Method: "list_apps"},
+			},
+			ParamValues: map[string]string{
+				"title":            s.config.System.ListAppsTitle,
+				"show_hosted_with": strconv.FormatBool(s.config.System.ShowHostedWith),
 			},
 		},
 	}

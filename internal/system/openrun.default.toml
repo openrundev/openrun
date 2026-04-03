@@ -84,6 +84,9 @@ file_workers = 4 # number of parallel workers for file compression during app ve
 leader_election_lease_secs = 30 # duration of the leader election lease
 leader_election_heartbeat_interval_secs = 10 # interval at which the leader heartbeat is sent
 
+list_apps_title = "OpenRun Apps" # the title of the list apps page
+show_hosted_with = true            # whether to show "Hosted with OpenRun" in the list apps page
+
 [kubernetes]
 namespace = "openrun"
 use_node_port = false

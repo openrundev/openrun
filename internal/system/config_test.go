@@ -86,6 +86,8 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsString(t, "kubernetes namespace", "openrun", c.Kubernetes.Namespace)
 	testutil.AssertEqualsString(t, "builder mode", "auto", c.Builder.Mode)
 	testutil.AssertEqualsString(t, "kaniko image", "ghcr.io/kaniko-build/dist/chainguard-dev-kaniko/executor:v1.25.3-slim", c.Builder.KanikoImage)
+	testutil.AssertEqualsString(t, "list apps title", "OpenRun Apps", c.System.ListAppsTitle)
+	testutil.AssertEqualsBool(t, "show hosted with", true, c.System.ShowHostedWith)
 }
 
 func TestClientConfig(t *testing.T) {
