@@ -18,7 +18,6 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
 func runStoreBasicsTest(t *testing.T, dbConnection string, expectedDupErr string) {
@@ -256,26 +255,16 @@ func TestStoreBasicsPostgresTestcontainer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	postgresContainer, err := tcpostgres.Run(ctx,
-		"postgres:17-alpine",
-		tcpostgres.WithDatabase("openrun_store"),
-		tcpostgres.WithUsername("postgres"),
-		tcpostgres.WithPassword("postgres"),
-	)
+	connStr, cleanup, err := testutil.StartPostgresContainer(ctx, "postgres:17-alpine", "openrun_store", "postgres", "postgres")
 	if err != nil {
-		t.Fatalf("failed to start postgres testcontainer: %v", err)
+		t.Fatalf("failed to start postgres container: %v", err)
 	}
-	defer postgresContainer.Terminate(context.Background()) //nolint:errcheck
-
-	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to build postgres connection string: %v", err)
-	}
+	defer cleanup()
 
 	readyCtx, readyCancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer readyCancel()
 	if err := waitForPostgresReady(readyCtx, connStr); err != nil {
-		t.Fatalf("postgres testcontainer did not become ready: %v", err)
+		t.Fatalf("postgres container did not become ready: %v", err)
 	}
 
 	runStoreBasicsTest(t, connStr, "duplicate key value violates unique constraint")

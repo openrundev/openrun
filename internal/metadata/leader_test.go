@@ -15,7 +15,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
 func skipIfNoPostgres(t *testing.T) {
@@ -31,32 +30,19 @@ func startPostgres(t *testing.T) (connStr string, cleanup func()) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	container, err := tcpostgres.Run(ctx,
-		"postgres:17-alpine",
-		tcpostgres.WithDatabase("openrun_leader"),
-		tcpostgres.WithUsername("postgres"),
-		tcpostgres.WithPassword("postgres"),
-	)
+	connStr, cleanup, err := testutil.StartPostgresContainer(ctx, "postgres:17-alpine", "openrun_leader", "postgres", "postgres")
 	if err != nil {
-		t.Fatalf("failed to start postgres testcontainer: %v", err)
-	}
-
-	connStr, err = container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		container.Terminate(context.Background()) //nolint:errcheck
-		t.Fatalf("failed to build postgres connection string: %v", err)
+		t.Fatalf("failed to start postgres container: %v", err)
 	}
 
 	readyCtx, readyCancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer readyCancel()
 	if err := waitForPostgresReady(readyCtx, connStr); err != nil {
-		container.Terminate(context.Background()) //nolint:errcheck
-		t.Fatalf("postgres testcontainer did not become ready: %v", err)
+		cleanup()
+		t.Fatalf("postgres container did not become ready: %v", err)
 	}
 
-	return connStr, func() {
-		container.Terminate(context.Background()) //nolint:errcheck
-	}
+	return connStr, cleanup
 }
 
 func waitForPostgresReady(ctx context.Context, connStr string) error {
