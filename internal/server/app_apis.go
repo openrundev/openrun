@@ -485,6 +485,10 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	groups := make([]string, 0)
 
 	if strippedAuth == types.AppAuthnNone {
+		if s.config.Security.AuthRequired {
+			http.Error(w, "Authentication required", http.StatusUnauthorized)
+			return
+		}
 		// No authentication required
 		userId = types.ANONYMOUS_USER
 	} else if strippedAuth == types.AppAuthnSystem {

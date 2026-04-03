@@ -21,6 +21,19 @@ assuming there is a `github_prod` OAuth config.
 
 Any new app created will use this as the auth unless overridden in the `app create` call or using `app update`.
 
+## Require Authentication for All Apps
+
+To require every app to use some form of authentication, set `auth_required` in the `security` section:
+
+```toml {filename="openrun.toml"}
+[security]
+auth_required = true
+```
+
+When this is enabled, any app with `auth="none"` is denied at request time with `401 Authentication required`. This check happens when the app is accessed, not when the app metadata is created or updated.
+
+Use this when you want a server-wide guardrail to prevent accidentally exposing apps without authentication. The app can still use any supported auth mode such as `system`, OIDC/OAuth, SAML, mTLS, or the configured `app_default_auth_type`.
+
 ## Client Cert Authentication (mTLS)
 
 Apps can be updated to use mutual TLS authentication. To enable this, first set `disable_client_certs` to `false` in the `https` section. Add a `client_auth` config entry in server config with the CA certificate to verify against. Multiple entries can be added, the entry name should be `cert` or should start with `cert_`. For example

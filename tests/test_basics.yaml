@@ -59,24 +59,24 @@ tests:
       exactly: "Authentication failed"
 
   basic160: ## create test2 app with authentication disabled
-    command: ../openrun app create --auth=none ./testapp /test2
+    command: ../openrun app create ./testapp /test2
     exit-code: 0
 
   basic161: ## Check static files are using optimized fetch path (no compression/decompression)
     ## The data should be streamed directly from sqlite. x-openrun-compressed header should be true
-    command: 'curl -sI -H "Accept-Encoding: br" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: br" -e "Content-Length: 15595" | wc -l'
+    command: 'curl -sI -u "admin:abcd" -H "Accept-Encoding: br" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: br" -e "Content-Length: 15595" | wc -l'
     stdout:
       exactly: "3"
     exit-code: 0
 
   basic162: ## Check static files are using are gzipped when only gzip encoding is accepted
-    command: 'curl -sI -H "Accept-Encoding: gzip" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: gzip" | wc -l'
+    command: 'curl -sI -u "admin:abcd" -H "Accept-Encoding: gzip" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: gzip" | wc -l'
     stdout:
       exactly: "1" # X-OpenRun-Compressed is not set, content length depends on gzip
     exit-code: 0
 
   basic163: ## Check static files are not compressed if no encoding is accepted
-    command: 'curl -sI localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-OpenRun-Compressed: true" -e "Content-Encoding: " -e "Content-Length: 50387" | wc -l'
+    command: 'curl -sI -u "admin:abcd" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-OpenRun-Compressed: true" -e "Content-Encoding: " -e "Content-Length: 50387" | wc -l'
     stdout:
       exactly: "1" # X-OpenRun-Compressed is not set, encoding is not set
     exit-code: 0
@@ -89,17 +89,32 @@ tests:
     command: curl -sS -u "admin:abcd" localhost:9154/test2
     stdout: "Test app body"
 
-  basic180: # check curl without password
+  basic180: # check curl without auth
     command: curl -sS localhost:9154/test2
-    stdout: "Test app body"
+    stdout: "Authentication failed"
 
-  basic190: # check curl works with wrong password (no authentication is done)
+  basic181: # check curl with wrong password
     command: curl -sS -u "admin:abcd2" localhost:9154/test2
-    stdout: "Test app body"
+    stdout: "Authentication failed"
 
-  basic200: # check curl works with wrong user (no authentication is done)
+  basic182: # check curl with wrong user
     command: curl -sS -u "admin2:abcd" localhost:9154/test2
-    stdout: "Test app body"
+    stdout: "Authentication failed"
+
+  basic190: ## create test2 app with authentication disabled
+    command: ../openrun app create --auth=none ./testapp /test_na
+    exit-code: 0
+
+  basic191: # check curl without auth
+    command: curl -sS localhost:9154/test_na
+    stdout: "Authentication required" # auth_required is true, so this fails
+
+  basic192: # check curl with auth
+    command: curl -sS -u "admin:abcd" localhost:9154/test_na
+    stdout: "Authentication required" # auth_required is true, so this fails
+
+  basic193: # delete app
+    command: ../openrun app delete /test_na
 
   basic250: # Clear generated files
     command: rm -rf ./testapp/static/gen ./testapp/index_gen.go.html ./testapp/config_gen.lock ./testapp/openrun_gen.go.html

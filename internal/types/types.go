@@ -224,6 +224,7 @@ type SecurityConfig struct {
 	AdminOverTCP             bool   `toml:"admin_over_tcp"`
 	AdminPasswordBcrypt      string `toml:"admin_password_bcrypt"`
 	AppDefaultAuthType       string `toml:"app_default_auth_type"`
+	AuthRequired             bool   `toml:"auth_required"`
 	SessionMaxAge            int    `toml:"session_max_age"`
 	SessionHttpsOnly         bool   `toml:"session_https_only"`
 	CallbackUrl              string `toml:"callback_url"`

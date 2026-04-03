@@ -35,6 +35,9 @@ session_block_key = ""           # the block key for session cookie. Auto genera
 session_max_age = 86400          # session max age in seconds
 session_https_only = true        # session cookie is HTTPS only
 app_default_auth_type = "none" # default auth type for apps, "system" or "none" or custom auth
+auth_required = false          # require authentication for all apps. This is verified during app access, not during metadata updates
+                               # If this is set to true, the app access will be denied if the app is not authenticated.
+                               # "none" auth_type cannot be used if this is set to true.
 default_git_auth = ""            # default git auth entry to use
 stage_enable_write_access = true # enable write plugin API call access for staging apps
 preview_enable_write_access = true #  enable write plugin API call access for preview apps

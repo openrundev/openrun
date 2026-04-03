@@ -45,6 +45,7 @@ Change to the `openrun` account by running `sudo su -l openrun`. Edit the openru
 admin_password_bcrypt = "$2a$10$L5dzoAEZFKmpdXbbbFddkurIP639w2.fl49737kmxxxxxxxx" # CHANGEME Retain orig value
 callback_url = "https://apps.example.com" # CHANGEME: OAuth/OIDC/SAML callback URL prefix
 app_default_auth_type = "rbac:oidc_okta" # Default auth for all apps, with rbac
+auth_required = true # Prevent unauthenticated apps from being served
 default_git_auth = "githubpat" # Account used for all GitHub access
 
 [system]
@@ -70,7 +71,7 @@ discovery_url = "https://integrator-33xxxxx-admin.okta.com/.well-known/openid-co
 scopes = ["openid", "profile", "email", "groups"]
 ```
 
-This sets the default ports to 80 and 443, sets the apps to use OIDC for auth and sets the GitHub PAT. As the regular user (since `openrun` user might not have sudo access), run `sudo systemctl restart openrun` to pick up the config update. The `admin_password_bcrypt` is not used in this scenario, it can be kept at its original value or changed.
+This sets the default ports to 80 and 443, sets the apps to use OIDC for auth, requires every app to have authentication enabled, and sets the GitHub PAT. As the regular user (since `openrun` user might not have sudo access), run `sudo systemctl restart openrun` to pick up the config update. The `admin_password_bcrypt` is not used in this scenario, it can be kept at its original value or changed.
 
 ## TLS Certificates
 
@@ -177,6 +178,6 @@ If this file is checked into the main branch in the `myorg/myrepo` repo, then ru
 openrun sync schedule --minutes 1 --approve --promote github.com/myorg/myrepo/apps.star
 ```
 
-will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) which checks every minute for new updates to the file. Apps in /shared have `auth="oidc"`, instead of the default `auth="rbac:oidc_okta"`, so anyone can access the app after OIDC login. If `auth="none"` is used, then no auth is required to access the app.
+will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) which checks every minute for new updates to the file. Apps in /shared have `auth="oidc"`, instead of the default `auth="rbac:oidc_okta"`, so anyone can access the app after OIDC login. In this team setup, `auth_required = true` is enabled at the server level, so `auth="none"` apps are blocked from being served even if they are defined in app metadata.
 
 Any new apps declared will be automatically created. Any code changes in the repos referenced or config changes in the apps will also automatically be applied on the existing apps. No further manual updates are required on the machine. All updates can be done by just checking in changes into the declarative config - **Full GitOps CI/CD, in one command.**
