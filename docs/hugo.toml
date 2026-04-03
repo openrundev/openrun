@@ -9,7 +9,9 @@ defaultContentLanguage = "en"
 enableInlineShortcodes = true
 
 [outputs]
-home = ["html", "llms"]
+home = ["html", "llms", "markdown"]
+page = ["html", "llms", "markdown"]
+section = ["html", "llms", "markdown"]
 
 [[module.imports]]
 path = 'github.com/imfing/hextra'
@@ -53,6 +55,9 @@ displayToggle = true
 [params.banner]
 key = "announcement-kubernetes"
 message = "📌 OpenRun now enables easy app deployments to Kubernetes. [Learn more](https://openrun.dev/docs/container/kubernetes/)."
+
+[params.page.contextMenu]
+enable = true
 
 # Docs Navigation
 
