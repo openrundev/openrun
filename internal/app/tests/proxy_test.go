@@ -710,6 +710,8 @@ permissions=[
 	request := httptest.NewRequest("GET", "/test/abc", nil)
 	// Set user ID in context as it would be set by the server middleware
 	ctx := context.WithValue(request.Context(), types.USER_ID, types.ANONYMOUS_USER)
+	ctx = context.WithValue(ctx, types.CUSTOM_PERMS, []string{"read:data", "write:data", "admin"})
+	ctx = context.WithValue(ctx, types.RBAC_ENABLED, true)
 	request = request.WithContext(ctx)
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)

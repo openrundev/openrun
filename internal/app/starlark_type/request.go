@@ -16,23 +16,26 @@ import (
 // and passed to the starlark handler function as it only argument. The Data field is updated with the handler's
 // response and then the template evaluation is done with the same Request
 type Request struct {
-	AppName     string
-	AppPath     string
-	AppUrl      string
-	PagePath    string
-	PageUrl     string
-	Method      string
-	IsDev       bool
-	IsPartial   bool
-	PushEvents  bool
-	HtmxVersion string
-	Headers     http.Header
-	RemoteIP    string
-	UrlParams   map[string]string
-	Form        url.Values
-	Query       url.Values
-	PostForm    url.Values
-	Data        any
+	AppName        string
+	AppPath        string
+	AppUrl         string
+	PagePath       string
+	PageUrl        string
+	Method         string
+	IsDev          bool
+	IsPartial      bool
+	PushEvents     bool
+	HtmxVersion    string
+	Headers        http.Header
+	RemoteIP       string
+	UrlParams      map[string]string
+	Form           url.Values
+	Query          url.Values
+	PostForm       url.Values
+	UserId         string
+	CustomPerms    []string
+	AppRBACEnabled bool
+	Data           any
 }
 
 func (r Request) Attr(name string) (starlark.Value, error) {
@@ -69,6 +72,12 @@ func (r Request) Attr(name string) (starlark.Value, error) {
 		return MarshalStarlark(r.Query)
 	case "PostForm":
 		return MarshalStarlark(r.PostForm)
+	case "UserId":
+		return starlark.String(r.UserId), nil
+	case "CustomPerms":
+		return MarshalStarlark(r.CustomPerms)
+	case "AppRBACEnabled":
+		return starlark.Bool(r.AppRBACEnabled), nil
 	case "Data":
 		return MarshalStarlark(r.Data)
 	default:
@@ -77,7 +86,7 @@ func (r Request) Attr(name string) (starlark.Value, error) {
 }
 
 func (r Request) AttrNames() []string {
-	return []string{"AppName", "AppPath", "AppUrl", "PagePath", "PageUrl", "Method", "IsDev", "IsPartial", "PushEvents", "HtmxVersion", "Headers", "RemoteIP", "UrlParams", "Form", "Query", "PostForm", "Data"}
+	return []string{"AppName", "AppPath", "AppUrl", "PagePath", "PageUrl", "Method", "IsDev", "IsPartial", "PushEvents", "HtmxVersion", "Headers", "RemoteIP", "UrlParams", "Form", "Query", "PostForm", "UserId", "CustomPerms", "AppRBACEnabled", "Data"}
 }
 
 func (r Request) String() string {

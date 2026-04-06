@@ -127,18 +127,21 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			}
 			appUrl := getRequestUrl(r) + appPath
 			requestData = starlark_type.Request{
-				AppName:     a.Name,
-				AppPath:     appPath,
-				AppUrl:      appUrl,
-				PagePath:    pagePath,
-				PageUrl:     appUrl + pagePath,
-				Method:      r.Method,
-				IsDev:       a.IsDev,
-				IsPartial:   isHtmxRequest,
-				PushEvents:  a.codeConfig.Routing.PushEvents,
-				HtmxVersion: a.codeConfig.Htmx.Version,
-				Headers:     header,
-				RemoteIP:    getRemoteIP(r),
+				AppName:        a.Name,
+				AppPath:        appPath,
+				AppUrl:         appUrl,
+				PagePath:       pagePath,
+				PageUrl:        appUrl + pagePath,
+				Method:         r.Method,
+				IsDev:          a.IsDev,
+				IsPartial:      isHtmxRequest,
+				PushEvents:     a.codeConfig.Routing.PushEvents,
+				HtmxVersion:    a.codeConfig.Htmx.Version,
+				Headers:        header,
+				RemoteIP:       getRemoteIP(r),
+				UserId:         system.GetContextUserId(r.Context()),
+				CustomPerms:    system.GetCustomPerms(r.Context()),
+				AppRBACEnabled: system.IsAppRBACEnabled(r.Context()),
 			}
 
 			chiContext := chi.RouteContext(r.Context())

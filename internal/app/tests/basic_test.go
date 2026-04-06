@@ -4,6 +4,7 @@
 package app_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/testutil"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestAppLoadError(t *testing.T) {
@@ -714,4 +716,33 @@ app = ace.app("testApp", routes = [ace.api("/t1", t1, type=ace.TEXT), ace.api("/
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "body", "$SHELL", response.Body.String())
+}
+
+func TestAppUserAndPerms(t *testing.T) {
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
+
+def handler(req):
+	return {"user": req.UserId, "perms": req.CustomPerms, "rbac_enabled": req.AppRBACEnabled}
+		`,
+		"index.go.html": `Template got {{ .Data.user }} {{ .Data.perms }} {{ .Data.rbac_enabled }} {{ .UserId }} {{ .CustomPerms }} {{ .AppRBACEnabled }}`,
+	}
+	a, _, err := CreateDevModeTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test", nil)
+	ctx := context.WithValue(request.Context(), types.USER_ID, types.ANONYMOUS_USER)
+	ctx = context.WithValue(ctx, types.CUSTOM_PERMS, []string{"read:data", "write:data", "admin"})
+	ctx = context.WithValue(ctx, types.RBAC_ENABLED, true)
+	request = request.WithContext(ctx)
+	response := httptest.NewRecorder()
+
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertEqualsString(t, "body", `Template got anonymous [read:data write:data admin] true anonymous [read:data write:data admin] true`, response.Body.String())
 }

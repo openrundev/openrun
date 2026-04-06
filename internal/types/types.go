@@ -58,6 +58,8 @@ const (
 	APP_PATH_DOMAIN ContextKey = "app_path_domain"
 	APP_AUTH        ContextKey = "app_auth"
 	GROUPS          ContextKey = "groups"
+	RBAC_ENABLED    ContextKey = "rbac_enabled"
+	CUSTOM_PERMS    ContextKey = "custom_perms"
 )
 
 const (

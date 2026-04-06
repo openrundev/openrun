@@ -27,6 +27,7 @@ import (
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/dev"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
@@ -563,7 +564,8 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	}
 	action, err := action.NewAction(a.Logger, a.sourceFS, a.IsDev, name, description, path, run, suggest,
 		slices.Collect(maps.Values(a.paramInfo)), a.paramValuesStr, a.paramDict, a.Path, a.appStyle.GetStyleType(),
-		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerHandler, a.jsLibs, a.AppPathDomain(), a.serverConfig, permit, a.rbacApi)
+		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerHandler, a.jsLibs, a.AppPathDomain(),
+		a.serverConfig, permit, a.rbacApi)
 	if err != nil {
 		return fmt.Errorf("error creating action %s: %w", name, err)
 	}
@@ -863,25 +865,11 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 			}
 
 			// Add X-Openrun- headers to request
-			customPerms := make([]string, 0)
-			if a.rbacApi != nil {
-				customPerms, err = a.rbacApi.GetCustomPermissions(r.Context())
-			}
 			// Add the user and custom permissions to the request headers
+			customPerms := system.GetCustomPerms(r.Context())
 			r.Header.Set(types.OPENRUN_HEADER_PERMS, strings.Join(customPerms, ","))
-
-			// Get user from context, use anonymous user if not set
-			userId := types.ANONYMOUS_USER
-			if userVal := r.Context().Value(types.USER_ID); userVal != nil {
-				if userStr, ok := userVal.(string); ok {
-					userId = userStr
-				}
-			}
-			r.Header.Set(types.OPENRUN_HEADER_USER, userId)
-			appRBACEnabled := false
-			if a.rbacApi != nil {
-				appRBACEnabled = a.rbacApi.IsAppRBACEnabled(r.Context())
-			}
+			r.Header.Set(types.OPENRUN_HEADER_USER, system.GetContextUserId(r.Context()))
+			appRBACEnabled := system.IsAppRBACEnabled(r.Context())
 			r.Header.Set(types.OPENRUN_HEADER_APP_RBAC_ENABLED, strconv.FormatBool(appRBACEnabled))
 
 			// Set the response headers

@@ -561,6 +561,18 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	ctx = context.WithValue(ctx, types.APP_AUTH, appAuth)
 	ctx = context.WithValue(ctx, types.GROUPS, groups)
 
+	customPerms := make([]string, 0)
+	appRBACEnabled := s.rbacManager.IsAppRBACEnabled(ctx)
+	if appRBACEnabled {
+		customPerms, err = s.rbacManager.GetCustomPermissions(ctx)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	ctx = context.WithValue(ctx, types.CUSTOM_PERMS, customPerms)
+	ctx = context.WithValue(ctx, types.RBAC_ENABLED, appRBACEnabled)
+
 	contextShared := ctx.Value(types.SHARED)
 	if contextShared != nil {
 		// allow audit middleware to access the user id

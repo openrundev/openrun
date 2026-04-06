@@ -111,7 +111,21 @@ In the default layout mode, the auto generated `index_gen.go.html` file is used.
 
 <!-- prettier-ignore-end -->
 
-The `.Data` binding has the data as returned by the handler function for the route.
+In both custom layout and default layout modes, the template context is the same `req` object that is passed to the Starlark handler. The `.Data` binding has the data returned by the handler function for the route, and request properties are available directly in the template, for example `.UserId`, `.CustomPerms`, and `.AppRBACEnabled`.
+
+For example:
+
+<!-- prettier-ignore -->
+```html
+{{block "openrun_body" .}}
+   User: {{ .UserId }}
+   Perms: {{ .CustomPerms }}
+   RBAC enabled: {{ .AppRBACEnabled }}
+   Data is {{ .Data }}
+{{end}}
+```
+
+<!-- prettier-ignore-end -->
 
 shared across both apps.
 

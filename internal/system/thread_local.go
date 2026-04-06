@@ -100,3 +100,23 @@ func GetContextRequestId(ctx context.Context) string {
 func GetContextAppId(ctx context.Context) types.AppId {
 	return types.AppId(GetContextValue(ctx, types.APP_ID))
 }
+
+func GetCustomPerms(ctx context.Context) []string {
+	customPerms := make([]string, 0)
+	if customPermsCtx := ctx.Value(types.CUSTOM_PERMS); customPermsCtx != nil {
+		if customPermsSlice, ok := customPermsCtx.([]string); ok {
+			customPerms = customPermsSlice
+		}
+	}
+	return customPerms
+}
+
+func IsAppRBACEnabled(ctx context.Context) bool {
+	appRBACEnabled := false
+	if rbacEnabledCtx := ctx.Value(types.RBAC_ENABLED); rbacEnabledCtx != nil {
+		if rbacEnabledBool, ok := rbacEnabledCtx.(bool); ok {
+			appRBACEnabled = rbacEnabledBool
+		}
+	}
+	return appRBACEnabled
+}
