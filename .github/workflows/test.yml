@@ -16,6 +16,18 @@ on:
         required: false
         default: false
         type: boolean
+    secrets:
+      CL_INFOCLACE_SSH:
+        required: false
+      CL_GITHUB_SECRET:
+        required: false
+      TEST_PAT:
+        required: false
+      CODECOV_TOKEN:
+        required: false
+
+permissions:
+  contents: read
 
 concurrency:
   # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
@@ -24,7 +36,7 @@ concurrency:
   # For non-PR pushes, concurrency.group needs to be unique for every distinct
   # CI run we want to have happen. Use run_id, which in practice means all
   # non-PR CI runs will be allowed to run without preempting each other.
-  group: ${{ github.workflow }}-$${{ github.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -35,9 +47,11 @@ jobs:
         go-version: ["1.26.2"]
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: ${{ matrix.go-version }}
       - name: Install dependencies
@@ -54,7 +68,7 @@ jobs:
           rm -rf appspecs/.git
           cd $OPENRUN_HOME
 
-          go install github.com/commander-cli/commander/v2/cmd/commander@latest
+          go install github.com/commander-cli/commander/v2/cmd/commander@v2.5.0
           export CL_CONTAINER_COMMANDS=docker # using self-hosted runner, use Docker for container tests
           export ENABLE_POSTGRES_TESTCONTAINER=1
 
@@ -98,12 +112,12 @@ jobs:
           docker system prune -f
 
       - name: Upload Go test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Go-results-${{ matrix.go-version }}
           path: TestResults-${{ matrix.go-version }}.json
 
       - name: Upload results to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

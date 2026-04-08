@@ -25,4 +25,8 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       enable_kubernetes_tests: true
-    secrets: inherit
+    secrets:
+      CL_INFOCLACE_SSH: ${{ secrets.CL_INFOCLACE_SSH }}
+      CL_GITHUB_SECRET: ${{ secrets.CL_GITHUB_SECRET }}
+      TEST_PAT: ${{ secrets.TEST_PAT }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
