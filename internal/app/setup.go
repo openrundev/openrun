@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -847,6 +848,14 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 				}
 			}
 
+			clientIP := a.getRemoteIP(r)
+			for _, key := range []string{"Forwarded", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Prefix"} {
+				r.Header.Del(key)
+			}
+			if clientIP != "" {
+				r.Header.Set("X-Real-IP", clientIP)
+				r.RemoteAddr = net.JoinHostPort(clientIP, "0")
+			}
 			r.Header.Set("X-Forwarded-Host", strings.SplitN(r.Host, ":", 2)[0])
 			if r.TLS != nil {
 				r.Header.Set("X-Forwarded-Proto", "https")

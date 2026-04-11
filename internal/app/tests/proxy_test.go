@@ -770,3 +770,56 @@ permissions=[
 	testutil.AssertEqualsString(t, "X-Openrun-User", "testuser@example.com", receivedUser)
 	testutil.AssertEqualsString(t, "X-Openrun-Extra", "", receivedExtra)
 }
+
+func TestProxyForwardHeadersSanitized(t *testing.T) {
+	var forwardedFor string
+	var realIP string
+	var forwarded string
+	var forwardedHost string
+	var forwardedProto string
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwardedFor = r.Header.Get("X-Forwarded-For")
+		realIP = r.Header.Get("X-Real-IP")
+		forwarded = r.Header.Get("Forwarded")
+		forwardedHost = r.Header.Get("X-Forwarded-Host")
+		forwardedProto = r.Header.Get("X-Forwarded-Proto")
+		io.WriteString(w, "test contents") //nolint:errcheck
+	}))
+
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": fmt.Sprintf(`
+load("proxy.in", "proxy")
+
+app = ace.app("testApp", routes = [ace.proxy("/", proxy.config("%s"))],
+permissions=[
+	ace.permission("proxy.in", "config"),
+]
+)`, testServer.URL),
+	}
+
+	a, _, err := CreateTestAppPlugin(logger, fileData, []string{"proxy.in"},
+		[]types.Permission{
+			{Plugin: "proxy.in", Method: "config"},
+		}, map[string]types.PluginSettings{})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "http://example.com/test/abc", nil)
+	request.RemoteAddr = "198.51.100.40:4242"
+	request.Host = "example.com"
+	request.Header.Set("X-Forwarded-For", "203.0.113.1")
+	request.Header.Set("X-Real-IP", "203.0.113.2")
+	request.Header.Set("Forwarded", "for=203.0.113.3")
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertEqualsString(t, "body", "test contents", response.Body.String())
+	testutil.AssertEqualsString(t, "forwarded for", "198.51.100.40", forwardedFor)
+	testutil.AssertEqualsString(t, "real ip", "198.51.100.40", realIP)
+	testutil.AssertEqualsString(t, "forwarded", "", forwarded)
+	testutil.AssertEqualsString(t, "forwarded host", "example.com", forwardedHost)
+	testutil.AssertEqualsString(t, "forwarded proto", "http", forwardedProto)
+}

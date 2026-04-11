@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -179,4 +180,87 @@ func GetRequestUrl(r *http.Request) string {
 	}
 	ret.WriteString(r.URL.RequestURI())
 	return ret.String()
+}
+
+// GetClientIP returns the caller IP, honoring forwarding headers only when the
+// direct peer is explicitly configured as a trusted proxy.
+func GetClientIP(r *http.Request, trustedProxies []string) string {
+	peerIP := parseIPValue(r.RemoteAddr)
+	if peerIP == nil {
+		return ""
+	}
+
+	if !isTrustedProxy(peerIP, trustedProxies) {
+		return peerIP.String()
+	}
+
+	if forwardedIP := forwardedClientIP(r.Header.Values("X-Forwarded-For"), trustedProxies); forwardedIP != nil {
+		return forwardedIP.String()
+	}
+
+	if realIP := parseIPValue(r.Header.Get("X-Real-IP")); realIP != nil {
+		return realIP.String()
+	}
+
+	return peerIP.String()
+}
+
+func forwardedClientIP(values []string, trustedProxies []string) net.IP {
+	var parsed []net.IP
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			if ip := parseIPValue(part); ip != nil {
+				parsed = append(parsed, ip)
+			}
+		}
+	}
+
+	for i := len(parsed) - 1; i >= 0; i-- {
+		if !isTrustedProxy(parsed[i], trustedProxies) {
+			return parsed[i]
+		}
+	}
+	if len(parsed) == 0 {
+		return nil
+	}
+	return parsed[0]
+}
+
+func isTrustedProxy(ip net.IP, trustedProxies []string) bool {
+	if ip == nil {
+		return false
+	}
+
+	for _, entry := range trustedProxies {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		if proxyIP := net.ParseIP(entry); proxyIP != nil && proxyIP.Equal(ip) {
+			return true
+		}
+
+		_, network, err := net.ParseCIDR(entry)
+		if err == nil && network.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func parseIPValue(value string) net.IP {
+	value = strings.TrimSpace(strings.Trim(value, `"`))
+	if value == "" {
+		return nil
+	}
+
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	} else {
+		value = strings.Trim(value, "[]")
+	}
+
+	return net.ParseIP(value)
 }

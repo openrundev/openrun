@@ -25,20 +25,12 @@ import (
 )
 
 var (
-	REAL_IP_HEADER   = "X-Real-IP"
-	FORWARDED_HEADER = "X-Forwarded-For"
-
 	CONTENT_TYPE_JSON = []string{"application/json"}
 	CONTENT_TYPE_TEXT = []string{"text/plain"}
 
 	SERVER_NAME       = []string{"OpenRun"}
 	VARY_HEADER_VALUE = []string{"HX-Request"}
 )
-
-func init() {
-	REAL_IP_HEADER = http.CanonicalHeaderKey(REAL_IP_HEADER)
-	FORWARDED_HEADER = http.CanonicalHeaderKey(FORWARDED_HEADER)
-}
 
 func (a *App) earlyHints(w http.ResponseWriter, r *http.Request) {
 	sendHint := false
@@ -138,7 +130,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				PushEvents:     a.codeConfig.Routing.PushEvents,
 				HtmxVersion:    a.codeConfig.Htmx.Version,
 				Headers:        header,
-				RemoteIP:       getRemoteIP(r),
+				RemoteIP:       a.getRemoteIP(r),
 				UserId:         system.GetContextUserId(r.Context()),
 				CustomPerms:    system.GetCustomPerms(r.Context()),
 				AppRBACEnabled: system.IsAppRBACEnabled(r.Context()),
@@ -502,28 +494,11 @@ func (a *App) handleResponse(retStruct *starlarkstruct.Struct, r *http.Request, 
 	return true, nil
 }
 
-func getRemoteIP(r *http.Request) string {
-	header := r.Header
-	remoteIP := types.GetHTTPHeader(header, REAL_IP_HEADER)
-	if remoteIP == "" {
-		remoteIP = types.GetHTTPHeader(header, FORWARDED_HEADER)
+func (a *App) getRemoteIP(r *http.Request) string {
+	if a.serverConfig == nil {
+		return system.GetClientIP(r, nil)
 	}
-
-	if remoteIP != "" {
-		return remoteIP
-	}
-
-	if r.RemoteAddr != "" {
-		var ok bool
-		remoteIP, _, ok = strings.Cut(r.RemoteAddr, "]")
-		if ok {
-			// IPv6
-			remoteIP = remoteIP[1:]
-		} else {
-			remoteIP, _, _ = strings.Cut(r.RemoteAddr, ":")
-		}
-	}
-	return remoteIP
+	return system.GetClientIP(r, a.serverConfig.Security.TrustedProxies)
 }
 
 func (a *App) handleStreamResponse(w http.ResponseWriter, r *http.Request, rtype string, fragment string, streamResponse map[string]any) {

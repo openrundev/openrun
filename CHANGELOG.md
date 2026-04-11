@@ -5,6 +5,17 @@ Changes to OpenRun will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `security.trusted_proxies` server config to control which reverse proxies or load balancers are allowed to supply forwarded client IP headers.
+
+### Changed
+
+- `req.RemoteIP` now ignores `X-Forwarded-For` and `X-Real-IP` unless the direct peer is listed in `security.trusted_proxies`.
+- Reverse proxied requests now strip inbound forwarding headers and rebuild a clean `X-Forwarded-*` / `X-Real-IP` set before sending the request upstream.
+
 ## [v0.16.26] - 2026-04-06
 
 ### Added

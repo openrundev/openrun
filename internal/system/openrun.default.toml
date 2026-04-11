@@ -34,6 +34,7 @@ session_secret = ""              # the secret key for session cookie. Auto gener
 session_block_key = ""           # the block key for session cookie. Auto generated on server startup if not set
 session_max_age = 86400          # session max age in seconds
 session_https_only = true        # session cookie is HTTPS only
+trusted_proxies = []             # CIDR ranges or IPs allowed to supply forwarded client IP headers
 app_default_auth_type = "none" # default auth type for apps, "system" or "none" or custom auth
 auth_required = false          # require authentication for all apps. This is verified during app access, not during metadata updates
                                # If this is set to true, the app access will be denied if the app is not authenticated.

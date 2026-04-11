@@ -143,3 +143,4 @@ This would be required after any new build or update of the OpenRun binary.
 - If port 0 is used, the service will bind to any available port. Look at the stdout or logs to find the port used. Clients would have to be updated after every server restarted to point to the new port.
 - Only the [TLS-ALPN](https://github.com/caddyserver/certmagic#tls-alpn-challenge) challenge is enabled in OpenRun. The HTTP and DNS based challenges are not supported currently.
 - If OpenRun is running behind a load balancer, ensure that the load balancer is doing TLS pass-through. If TLS termination is done in the load balancer, then the automatic certificate management done by OpenRun through certmagic will not work.
+- If OpenRun is running behind a reverse proxy or load balancer that sets `X-Forwarded-For` or `X-Real-IP`, add that proxy IP or CIDR range to `security.trusted_proxies`. Otherwise OpenRun will ignore those headers and use the direct peer address for `req.RemoteIP`.

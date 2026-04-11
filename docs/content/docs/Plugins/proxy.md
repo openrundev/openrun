@@ -27,6 +27,8 @@ The `config` API supports the following parameter:
 
 With the default server config, `proxy.config(container.URL, ...)` is approved implicitly for all apps. Explicit app permissions are still required when proxying to other upstream URLs.
 
+When proxying, OpenRun strips inbound `Forwarded`, `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-Prefix` headers and rebuilds a clean forwarding header set for the upstream service. The client IP used for this is resolved using `security.trusted_proxies`.
+
 ## Example
 
 This is an example app which proxies data to google.com. This app has to be installed at the root level, since google does not use relative paths.

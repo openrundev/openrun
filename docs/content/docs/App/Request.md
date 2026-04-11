@@ -21,7 +21,7 @@ The handler function is passed one argument which has the details about the API 
 |   PushEvents   |   bool   |         Whether push events are enabled for this app            |
 |  HtmxVersion   |  string  |                 The HTMX version configured for the app         |
 |    Headers     |   dict   |                      The incoming HTTP headers                  |
-|    RemoteIP    |  string  |                      The Client IP address                      |
+|    RemoteIP    |  string  | The resolved client IP address, honoring forwarded headers only from configured trusted proxies |
 |   UrlParams    |   dict   |           The url parameters, if used in the url spec           |
 |      Form      |   dict   |             The form data, including body and query             |
 |     Query      |   dict   |              The url query data, as a string array              |
@@ -86,3 +86,13 @@ def handler(req)
 ```
 
 The value for Form is an string array, since there can be multiple form parameters with the same name.
+
+## Client IP Resolution
+
+`req.RemoteIP` is the OpenRun-resolved client IP for the request.
+
+- By default, this is the IP address of the direct peer connection.
+- If the direct peer is listed in `security.trusted_proxies`, OpenRun will honor `X-Forwarded-For` and `X-Real-IP`.
+- For multi-hop `X-Forwarded-For` values, OpenRun walks the chain from right to left and returns the first IP that is not itself a trusted proxy.
+
+This means apps should prefer `req.RemoteIP` over reading `X-Forwarded-For` or `X-Real-IP` directly from `req.Headers`.

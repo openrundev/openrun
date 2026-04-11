@@ -136,6 +136,8 @@ The plugin is authorized to allow proxying to `https://www.google.com`. Any requ
 
 If proxying is enabled for `/` route, then `/static` file serving is disabled for the app since requests to static path are also forwarded to the upstream service. `/static_root` serving is available and overrides the proxy config.
 
+OpenRun sanitizes forwarding headers before proxying. Inbound `Forwarded` and `X-Forwarded-*` / `X-Real-IP` headers are not passed through as-is. Instead, OpenRun computes the client IP using `security.trusted_proxies` and sends a clean forwarding header set to the upstream service.
+
 See [proxy plugin]({{< ref "docs/plugins/proxy" >}}) for details about the proxy config.
 
 {{<callout type="warning" >}}

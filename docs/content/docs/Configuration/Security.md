@@ -99,6 +99,26 @@ Because of these defaults, a standard containerized app does not need explicit `
 
 CSRF protection is automatically enabled for OpenRun internal APIs and for API calls to apps. This uses the [CrossOriginProtection](https://pkg.go.dev/net/http#CrossOriginProtection) middleware. Use `app_config.security.disable_csrf_protection = true` in `openrun.toml` to disable globally for all apps. CSRF protection can be disabled individually for apps by running `openrun app update conf --promote 'security.disable_csrf_protection=true' /myapp`
 
+## Trusted Proxies and Client IP Headers
+
+By default, OpenRun does not trust `X-Forwarded-For` or `X-Real-IP` headers supplied by the client. The client IP exposed to apps in `req.RemoteIP` is taken from the direct peer connection unless the peer is explicitly configured as a trusted proxy.
+
+To allow a reverse proxy or load balancer to supply the client IP, set `security.trusted_proxies` to a list of IP addresses or CIDR ranges:
+
+```toml {filename="openrun.toml"}
+[security]
+trusted_proxies = ["127.0.0.1", "10.0.0.0/8", "192.168.0.0/16"]
+```
+
+Behavior:
+
+- If the direct peer is not in `trusted_proxies`, OpenRun ignores `X-Forwarded-For` and `X-Real-IP`.
+- If the direct peer is trusted, OpenRun uses the rightmost non-trusted address from the `X-Forwarded-For` chain as the client IP.
+- If `X-Forwarded-For` is not present and the direct peer is trusted, OpenRun falls back to `X-Real-IP`.
+- When OpenRun proxies requests to an upstream service, it strips inbound forwarding headers and rebuilds a clean set based on the resolved client IP.
+
+This setting should include only infrastructure that is allowed to rewrite client IP headers, such as your ingress proxy or load balancer.
+
 ## Private Repository Access
 
 OpenRun can read public GitHub/GitLab repositories automatically. If the repository is private, to be able to access the repo, the [ssh key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account) or [personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) needs to be specified. Same for GitLab.
