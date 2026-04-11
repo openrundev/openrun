@@ -1070,6 +1070,139 @@ func TestSAMLManager_Routes_RedirectNonceMismatch(t *testing.T) {
 	testutil.AssertEqualsInt(t, "status code", http.StatusInternalServerError, resp.StatusCode)
 }
 
+func TestSAMLManager_Routes_RedirectInvalidRelayBase64(t *testing.T) {
+	t.Parallel()
+
+	logger := testutil.TestLogger()
+	config := &types.ServerConfig{}
+	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
+	db := NewInmemoryKVStore()
+
+	manager := NewSAMLManager(logger, config, cookieStore, db)
+	mux := chi.NewRouter()
+	manager.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/_openrun/sso/saml_okta/redirect?relay=invalid!!!", nil)
+	w := httptest.NewRecorder()
+
+	session, err := cookieStore.Get(req, "saml_okta_openrun_saml_session")
+	testutil.AssertNoError(t, err)
+	session.Values[NONCE_KEY] = "nonce123"
+	session.Values[REDIRECT_URL] = "http://example.com/app"
+	err = session.Save(req, w)
+	testutil.AssertNoError(t, err)
+
+	for _, cookie := range w.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close() //nolint:errcheck
+
+	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestSAMLManager_Routes_RedirectInvalidNonceType(t *testing.T) {
+	t.Parallel()
+
+	logger := testutil.TestLogger()
+	config := &types.ServerConfig{}
+	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
+	db := NewInmemoryKVStore()
+
+	manager := NewSAMLManager(logger, config, cookieStore, db)
+	mux := chi.NewRouter()
+	manager.RegisterRoutes(mux)
+
+	sessionId := "saml_session_invalid_nonce"
+	stateMap := map[string]any{
+		AUTH_KEY:          true,
+		PROVIDER_NAME_KEY: "saml_okta",
+		USER_KEY:          "user@example.com",
+		GROUPS_KEY:        []any{"group1"},
+		SESSION_INDEX_KEY: "session123",
+		REDIRECT_URL:      "http://example.com/app",
+		NONCE_KEY:         "nonce123",
+	}
+	err := db.StoreKV(context.Background(), sessionId, stateMap, nil)
+	testutil.AssertNoError(t, err)
+
+	relayEncoded := "c2FtbF9zZXNzaW9uX2ludmFsaWRfbm9uY2U="
+	req := httptest.NewRequest(http.MethodGet, "/_openrun/sso/saml_okta/redirect?relay="+relayEncoded, nil)
+	w := httptest.NewRecorder()
+
+	session, err := cookieStore.Get(req, "saml_okta_openrun_saml_session")
+	testutil.AssertNoError(t, err)
+	session.Values[NONCE_KEY] = []string{"nonce123"}
+	session.Values[REDIRECT_URL] = "http://example.com/app"
+	err = session.Save(req, w)
+	testutil.AssertNoError(t, err)
+
+	for _, cookie := range w.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close() //nolint:errcheck
+
+	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestSAMLManager_Routes_RedirectInvalidStateProviderType(t *testing.T) {
+	t.Parallel()
+
+	logger := testutil.TestLogger()
+	config := &types.ServerConfig{}
+	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
+	db := NewInmemoryKVStore()
+
+	manager := NewSAMLManager(logger, config, cookieStore, db)
+	mux := chi.NewRouter()
+	manager.RegisterRoutes(mux)
+
+	sessionId := "saml_session_invalid_provider"
+	stateMap := map[string]any{
+		AUTH_KEY:          true,
+		PROVIDER_NAME_KEY: []any{"saml_okta"},
+		USER_KEY:          "user@example.com",
+		GROUPS_KEY:        []any{"group1"},
+		SESSION_INDEX_KEY: "session123",
+		REDIRECT_URL:      "http://example.com/app",
+		NONCE_KEY:         "nonce123",
+	}
+	err := db.StoreKV(context.Background(), sessionId, stateMap, nil)
+	testutil.AssertNoError(t, err)
+
+	relayEncoded := "c2FtbF9zZXNzaW9uX2ludmFsaWRfcHJvdmlkZXI="
+	req := httptest.NewRequest(http.MethodGet, "/_openrun/sso/saml_okta/redirect?relay="+relayEncoded, nil)
+	w := httptest.NewRecorder()
+
+	session, err := cookieStore.Get(req, "saml_okta_openrun_saml_session")
+	testutil.AssertNoError(t, err)
+	session.Values[NONCE_KEY] = "nonce123"
+	session.Values[REDIRECT_URL] = "http://example.com/app"
+	err = session.Save(req, w)
+	testutil.AssertNoError(t, err)
+
+	for _, cookie := range w.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close() //nolint:errcheck
+
+	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, resp.StatusCode)
+}
+
 func TestSAMLManager_Routes_LogoutProviderNotFound(t *testing.T) {
 	t.Parallel()
 

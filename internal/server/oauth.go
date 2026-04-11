@@ -343,9 +343,13 @@ func (s *OAuthManager) beginLogin(w http.ResponseWriter, r *http.Request, provid
 
 func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 	state := gothic.GetState(r)
+	if state == "" {
+		http.Error(w, "state is required", http.StatusBadRequest)
+		return
+	}
 	sessionId, err := base64.URLEncoding.DecodeString(state)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -363,7 +367,8 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	providerName := chi.URLParam(r, "provider")
-	if stateMap[PROVIDER_NAME_KEY] != providerName {
+	stateProviderName, ok := stateValueString(stateMap, PROVIDER_NAME_KEY)
+	if !ok || stateProviderName != providerName {
 		http.Error(w, "error matching session state", http.StatusInternalServerError)
 		return
 	}
@@ -377,14 +382,16 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 	providerType := strings.SplitN(providerName, PROVIDER_NAME_DELIMITER, 2)[0]
 	switch providerType {
 	case "google":
-		if providerConfig.HostedDomain != "" && user.RawData["hd"] != providerConfig.HostedDomain {
+		hostedDomain, _ := user.RawData["hd"].(string)
+		if providerConfig.HostedDomain != "" && hostedDomain != providerConfig.HostedDomain {
 			http.Error(w, fmt.Sprintf("user does not belong to the required hosted domain. Found %s, expected %s",
-				user.RawData["hd"], providerConfig.HostedDomain), http.StatusInternalServerError)
+				hostedDomain, providerConfig.HostedDomain), http.StatusInternalServerError)
 			return
 		}
 	}
 
-	if stateMap[AUTH_KEY] != false {
+	auth, ok := stateValueBool(stateMap, AUTH_KEY)
+	if !ok || auth {
 		http.Error(w, "error matching session state, expected auth to be false", http.StatusInternalServerError)
 		return
 	}
@@ -399,7 +406,6 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 		lookupKeys = []string{USER_EMAIL_KEY, USER_NICKNAME_KEY, USER_ID_KEY}
 	}
 	userId := ""
-	ok := false
 	for _, key := range lookupKeys {
 		userId, ok = stateMap[key].(string)
 		if ok && userId != "" {
@@ -437,7 +443,11 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectUrl := stateMap[REDIRECT_URL].(string)
+	redirectUrl, ok := stateValueString(stateMap, REDIRECT_URL)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
 	redirectParsed, err := url.Parse(redirectUrl)
 	if err != nil {
 		http.Error(w, "error parsing relay: "+err.Error(), http.StatusInternalServerError)
@@ -460,6 +470,7 @@ func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {
 		http.Error(w, "error getting session: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	success := false
@@ -470,10 +481,14 @@ func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	nonceFromCookie := session.Values[NONCE_KEY].(string)
+	nonceFromCookie, ok := sessionValueString(session, NONCE_KEY)
+	if !ok {
+		http.Error(w, "error matching session, nonce not found", http.StatusBadRequest)
+		return
+	}
 	sessionIdBytes, err := base64.URLEncoding.DecodeString(state)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	sessionId := string(sessionIdBytes)
@@ -508,21 +523,46 @@ func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if stateMap[PROVIDER_NAME_KEY] != providerName || stateMap[REDIRECT_URL] != redirectUrl {
+	stateProviderName, ok := stateValueString(stateMap, PROVIDER_NAME_KEY)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
+	stateRedirectURL, ok := stateValueString(stateMap, REDIRECT_URL)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
+	if stateProviderName != providerName || stateRedirectURL != redirectUrl {
 		http.Error(w, "error matching session state", http.StatusInternalServerError)
 		return
 	}
 
-	if subtle.ConstantTimeCompare([]byte(stateMap[NONCE_KEY].(string)), []byte(nonceFromCookie)) != 1 {
+	stateNonce, ok := stateValueString(stateMap, NONCE_KEY)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(stateNonce), []byte(nonceFromCookie)) != 1 {
 		http.Error(w, "error matching session state, nonce mismatch", http.StatusInternalServerError)
 		return
 	}
 
 	// Update the session cookie to authenticated, with the new values
 	success = true
+	userID, ok := stateValueString(stateMap, USER_KEY)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
+	groups, ok := stateValueStringSlice(stateMap, GROUPS_KEY)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
 	session.Values[AUTH_KEY] = true
-	session.Values[USER_KEY] = stateMap[USER_KEY].(string)
-	session.Values[GROUPS_KEY] = stateMap[GROUPS_KEY].([]any)
+	session.Values[USER_KEY] = userID
+	session.Values[GROUPS_KEY] = groups
 	delete(session.Values, REDIRECT_URL)
 	err = session.Save(r, w)
 	if err != nil {

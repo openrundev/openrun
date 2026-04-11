@@ -100,6 +100,10 @@ func (a *AdminBasicAuth) BasicAuth(authHeader string) (username, password string
 // "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" returns ("Aladdin", "open sesame", true).
 func (a *AdminBasicAuth) parseBasicAuth(auth string) (username, password string, ok bool) {
 	const prefix = "Basic "
+	if len(auth) < len(prefix) {
+		return "", "", false
+	}
+
 	if subtle.ConstantTimeCompare([]byte(auth[:len(prefix)]), []byte(prefix)) != 1 {
 		return "", "", false
 	}

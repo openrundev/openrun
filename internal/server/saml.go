@@ -526,9 +526,13 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 	)
 	s.Trace().Str("user_id", ai.NameID).Str("provider_name", providerName).Msgf("authenticated saml user with groups %+v", groups)
 
+	if r.PostFormValue("RelayState") == "" {
+		http.Error(w, "relay is required", http.StatusBadRequest)
+		return
+	}
 	sessionIdBytes, err := base64.URLEncoding.DecodeString(r.PostFormValue("RelayState"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	sessionId := string(sessionIdBytes)
@@ -538,15 +542,21 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if stateMap[PROVIDER_NAME_KEY] != providerName {
+	stateProviderName, ok := stateValueString(stateMap, PROVIDER_NAME_KEY)
+	if !ok || stateProviderName != providerName {
 		http.Error(w, "error matching session state", http.StatusInternalServerError)
 		return
 	}
-	if stateMap[AUTH_KEY] != false {
+	auth, ok := stateValueBool(stateMap, AUTH_KEY)
+	if !ok || auth {
 		http.Error(w, "error matching session state, expected auth to be false", http.StatusInternalServerError)
 		return
 	}
-	redirectUrl := stateMap[REDIRECT_URL].(string)
+	redirectUrl, ok := stateValueString(stateMap, REDIRECT_URL)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
 
 	// Update the state map, set to authenticated and add the user id and groups
 	stateMap[AUTH_KEY] = true
@@ -581,6 +591,7 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {
 		http.Error(w, "error getting session: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	success := false
@@ -591,10 +602,14 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	nonceFromCookie := session.Values[NONCE_KEY].(string)
+	nonceFromCookie, ok := sessionValueString(session, NONCE_KEY)
+	if !ok {
+		http.Error(w, "error matching session, nonce not found", http.StatusBadRequest)
+		return
+	}
 	sessionIdBytes, err := base64.URLEncoding.DecodeString(relayStr)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	sessionId := string(sessionIdBytes)
@@ -629,22 +644,52 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if stateMap[PROVIDER_NAME_KEY] != providerName || stateMap[REDIRECT_URL] != redirectUrl {
+	stateProviderName, ok := stateValueString(stateMap, PROVIDER_NAME_KEY)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
+	stateRedirectURL, ok := stateValueString(stateMap, REDIRECT_URL)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
+	if stateProviderName != providerName || stateRedirectURL != redirectUrl {
 		http.Error(w, "error matching session state", http.StatusInternalServerError)
 		return
 	}
 
-	if subtle.ConstantTimeCompare([]byte(stateMap[NONCE_KEY].(string)), []byte(nonceFromCookie)) != 1 {
+	stateNonce, ok := stateValueString(stateMap, NONCE_KEY)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(stateNonce), []byte(nonceFromCookie)) != 1 {
 		http.Error(w, "error matching session state, nonce mismatch", http.StatusInternalServerError)
 		return
 	}
 
 	// Update the session cookie to authenticated, with the new values
 	success = true
+	userID, ok := stateValueString(stateMap, USER_KEY)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
+	groups, ok := stateValueStringSlice(stateMap, GROUPS_KEY)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
+	sessionIndex, ok := stateValueString(stateMap, SESSION_INDEX_KEY)
+	if !ok {
+		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
 	session.Values[AUTH_KEY] = true
-	session.Values[USER_KEY] = stateMap[USER_KEY].(string)
-	session.Values[GROUPS_KEY] = stateMap[GROUPS_KEY].([]any)
-	session.Values[SESSION_INDEX_KEY] = stateMap[SESSION_INDEX_KEY].(string)
+	session.Values[USER_KEY] = userID
+	session.Values[GROUPS_KEY] = groups
+	session.Values[SESSION_INDEX_KEY] = sessionIndex
 	delete(session.Values, REDIRECT_URL)
 	err = session.Save(r, w)
 	if err != nil {
