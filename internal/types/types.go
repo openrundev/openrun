@@ -279,6 +279,7 @@ type SystemConfig struct {
 	FileWorkers                         int      `toml:"file_workers"`                            // number of parallel workers for file compression during app version creation
 	ListAppsTitle                       string   `toml:"list_apps_title"`                         // the title of the list apps page
 	ShowHostedWith                      bool     `toml:"show_hosted_with"`                        // whether to show "Hosted with OpenRun" in the list apps page
+	FallbackUnknownDomains              bool     `toml:"fallback_unknown_domains"`                // whether to fallback to default domain for unknown domains
 }
 
 type RegistryConfig struct {

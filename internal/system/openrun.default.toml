@@ -87,6 +87,7 @@ leader_election_heartbeat_interval_secs = 10 # interval at which the leader hear
 
 list_apps_title = "OpenRun Apps" # the title of the list apps page
 show_hosted_with = true            # whether to show "Hosted with OpenRun" in the list apps page
+fallback_unknown_domains = false    # whether to fallback to default domain for unknown domains
 
 [kubernetes]
 namespace = "openrun"

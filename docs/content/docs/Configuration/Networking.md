@@ -105,7 +105,14 @@ The config has the default domain set to `localhost` by default. The default dom
 default_domain = "localhost" # default domain for apps
 ```
 
-The list_app app is served at the default domain root level if no app is installed there.
+Requests are only routed to the default domain when the request `Host` matches that domain. By default, requests for unknown hostnames are not treated as requests for the default domain. To preserve the older catch-all behavior, enable `system.fallback_unknown_domains`.
+
+```toml {filename="openrun.toml"}
+[system]
+fallback_unknown_domains = false # set true to route unknown hostnames to the default domain
+```
+
+The built-in `list_apps` app is served at the default domain root level if no app is installed there.
 
 ```toml {filename="openrun.toml"}
 [system]

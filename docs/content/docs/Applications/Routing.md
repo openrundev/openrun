@@ -10,6 +10,8 @@ The OpenRun server can host multiple applications simultaneously. Each applicati
 
 When an application is created, a path needs to be specified and a domain can be optionally specified. Routing for application requests is done based on domain and path. The domain is the namespace within which the paths are resolved. If no domain is specified for the app, it is installed for the default domain. [Default domain]({{< ref "/docs/configuration/networking/#default-domain" >}}) can be set using the `system.default_domain` config property (default value is `localhost`).
 
+Requests for unknown hostnames are not routed to the default domain by default. This means a request has to arrive on the configured default domain, or on a domain explicitly assigned to an app, for routing to succeed. To preserve the older compatibility behavior of routing unknown hostnames to the default domain, set `system.fallback_unknown_domains = true`.
+
 Consider this scenario:
 
 - App A is installed at /utils/appA

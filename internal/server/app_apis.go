@@ -630,7 +630,7 @@ func (s *Server) MatchApp(hostHeader, matchPath string) (types.AppInfo, error) {
 		hostHeader = "localhost"
 	}
 
-	if !domainMap[hostHeader] {
+	if s.config.System.FallbackUnknownDomains && !domainMap[hostHeader] {
 		// Request to unknown domain, match against default domain
 		hostHeader = s.config.System.DefaultDomain
 	}
