@@ -4,6 +4,7 @@
 package app_test
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -316,7 +317,34 @@ def handler(req):
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 
-	// With Referer header, non htmx, redirect to Origin
+	// Relative same-origin referer is accepted.
 	testutil.AssertEqualsInt(t, "code", 303, response.Code)
 	testutil.AssertEqualsString(t, "redirect", "/test/abc", response.Header().Get("Location"))
+
+	request = httptest.NewRequest("POST", "/test/abc/frag", nil)
+	request.Header.Set("Referer", "http://example.com/test/abc?q=1#frag")
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	// Absolute same-origin referer is normalized to a local redirect target.
+	testutil.AssertEqualsInt(t, "code", http.StatusSeeOther, response.Code)
+	testutil.AssertEqualsString(t, "redirect", "/test/abc?q=1#frag", response.Header().Get("Location"))
+
+	request = httptest.NewRequest("POST", "/test/abc/frag", nil)
+	request.Header.Set("Referer", "http://evil.com/test/abc")
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	// External referer is ignored and falls back to rendering the page.
+	testutil.AssertEqualsInt(t, "code", http.StatusOK, response.Code)
+	testutil.AssertEqualsString(t, "body", "Template main myvalue.  fragdata myvalue2 ", response.Body.String())
+
+	request = httptest.NewRequest("POST", "/test/abc/frag", nil)
+	request.Header.Set("Referer", "relative/path")
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	// Non-rooted relative referer is ignored and falls back to rendering the page.
+	testutil.AssertEqualsInt(t, "code", http.StatusOK, response.Code)
+	testutil.AssertEqualsString(t, "body", "Template main myvalue.  fragdata myvalue2 ", response.Body.String())
 }

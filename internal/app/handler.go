@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -60,6 +61,68 @@ func getRequestUrl(r *http.Request) string {
 	} else {
 		return "http://" + r.Host
 	}
+}
+
+func defaultPortForScheme(scheme string) string {
+	switch strings.ToLower(scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
+func sameOriginURL(refURL *url.URL, requestURL *url.URL) bool {
+	if refURL == nil || requestURL == nil {
+		return false
+	}
+	if !strings.EqualFold(refURL.Scheme, requestURL.Scheme) {
+		return false
+	}
+	if !strings.EqualFold(refURL.Hostname(), requestURL.Hostname()) {
+		return false
+	}
+	return cmp.Or(refURL.Port(), defaultPortForScheme(refURL.Scheme)) ==
+		cmp.Or(requestURL.Port(), defaultPortForScheme(requestURL.Scheme))
+}
+
+func validatedRefererRedirect(r *http.Request, referrer string) (string, bool) {
+	if referrer == "" {
+		return "", false
+	}
+
+	refURL, err := url.Parse(referrer)
+	if err != nil {
+		return "", false
+	}
+
+	requestURL, err := url.Parse(getRequestUrl(r))
+	if err != nil {
+		return "", false
+	}
+
+	switch {
+	case refURL.Scheme != "" || refURL.Host != "":
+		if refURL.Scheme == "" || refURL.Host == "" || !sameOriginURL(refURL, requestURL) {
+			return "", false
+		}
+	case !strings.HasPrefix(refURL.Path, "/"):
+		return "", false
+	}
+
+	redirectTarget := refURL.EscapedPath()
+	if redirectTarget == "" {
+		redirectTarget = "/"
+	}
+	if refURL.RawQuery != "" {
+		redirectTarget += "?" + refURL.RawQuery
+	}
+	if refURL.Fragment != "" {
+		redirectTarget += "#" + refURL.Fragment
+	}
+	return redirectTarget, true
 }
 
 // pooled holds one encoder and its buffer.
@@ -336,16 +399,18 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 		} else {
 			referrer := types.GetHTTPHeader(header, "Referer")
 			isUpdateRequest := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
-			if !isHtmxRequest && isUpdateRequest && fragment != "" && referrer != "" {
+			if !isHtmxRequest && isUpdateRequest && fragment != "" {
 				// If block is defined, and this is a non-GET request, then redirect to the referrer page
 				// This handles the Post/Redirect/Get pattern required if HTMX is disabled
-				a.Trace().Msgf("Redirecting to %s with code %d", referrer, http.StatusSeeOther)
-				http.Redirect(w, r, referrer, http.StatusSeeOther)
-				return
-			} else {
-				a.Trace().Msgf("Rendering page %s", fullHtml)
-				err = a.executeTemplate(w, fullHtml, "", requestData)
+				if redirectTarget, ok := validatedRefererRedirect(r, referrer); ok {
+					a.Trace().Msgf("Redirecting to %s with code %d", redirectTarget, http.StatusSeeOther)
+					http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
+					return
+				}
 			}
+
+			a.Trace().Msgf("Rendering page %s", fullHtml)
+			err = a.executeTemplate(w, fullHtml, "", requestData)
 		}
 
 		if err != nil {
