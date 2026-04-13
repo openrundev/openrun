@@ -191,7 +191,7 @@ func (h *Handler) callApp(w http.ResponseWriter, r *http.Request) {
 		h.Debug().Str("method", r.Method).Str("url", r.URL.String()).Msg("App Received request")
 	}
 
-	requestDomain, _, _ := strings.Cut(r.Host, ":")
+	requestDomain := system.GetHostname(r.Host)
 	var serveListApps = false
 	matchedApp, matchErr := h.server.MatchApp(requestDomain, r.URL.Path)
 	if matchErr != nil {

@@ -182,6 +182,28 @@ func GetRequestUrl(r *http.Request) string {
 	return ret.String()
 }
 
+// GetHostname returns the hostname portion of an HTTP host header, handling
+// hostnames, IPv4 addresses, and bracketed or bare IPv6 literals.
+func GetHostname(host string) string {
+	if host == "" {
+		return ""
+	}
+
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		return strings.Trim(parsedHost, "[]")
+	}
+
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		return strings.Trim(host, "[]")
+	}
+
+	if strings.Count(host, ":") > 1 {
+		return strings.Trim(host, "[]")
+	}
+
+	return host
+}
+
 // GetClientIP returns the caller IP, honoring forwarding headers only when the
 // direct peer is explicitly configured as a trusted proxy.
 func GetClientIP(r *http.Request, trustedProxies []string) string {

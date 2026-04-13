@@ -37,3 +37,23 @@ func TestGetClientIPFallsBackToXRealIPForTrustedProxy(t *testing.T) {
 	clientIP := GetClientIP(req, []string{"127.0.0.1"})
 	testutil.AssertEqualsString(t, "client ip", "198.51.100.30", clientIP)
 }
+
+func TestGetHostname(t *testing.T) {
+	testCases := []struct {
+		name string
+		host string
+		want string
+	}{
+		{name: "hostname", host: "example.com:8443", want: "example.com"},
+		{name: "ipv4", host: "198.51.100.10:8443", want: "198.51.100.10"},
+		{name: "ipv6 with port", host: "[2001:db8::1]:8443", want: "2001:db8::1"},
+		{name: "ipv6 bracketed", host: "[2001:db8::1]", want: "2001:db8::1"},
+		{name: "ipv6 bare", host: "2001:db8::1", want: "2001:db8::1"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.AssertEqualsString(t, "hostname", tc.want, GetHostname(tc.host))
+		})
+	}
+}

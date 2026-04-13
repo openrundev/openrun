@@ -856,7 +856,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 				r.Header.Set("X-Real-IP", clientIP)
 				r.RemoteAddr = net.JoinHostPort(clientIP, "0")
 			}
-			r.Header.Set("X-Forwarded-Host", strings.SplitN(r.Host, ":", 2)[0])
+			r.Header.Set("X-Forwarded-Host", system.GetHostname(r.Host))
 			if r.TLS != nil {
 				r.Header.Set("X-Forwarded-Proto", "https")
 			} else {
