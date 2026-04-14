@@ -168,13 +168,7 @@ func (h *Handler) httpsRedirectMiddleware(next http.Handler) http.Handler {
 		if r.TLS == nil {
 			u := *r.URL
 			u.Scheme = "https"
-			u.Host = r.Host
-
-			host, _, err := net.SplitHostPort(r.Host)
-			if err == nil {
-				// update https port
-				u.Host = fmt.Sprintf("%s:%d", host, h.server.config.Https.Port)
-			}
+			u.Host = h.httpsRedirectHost(r.Host)
 
 			// Redirect to the HTTPS version of the URL
 			http.Redirect(w, r, u.String(), http.StatusPermanentRedirect) // 308 (301 does not keep method)
@@ -184,6 +178,68 @@ func (h *Handler) httpsRedirectMiddleware(next http.Handler) http.Handler {
 		// If it's already HTTPS, just proceed
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (h *Handler) httpsRedirectHost(requestHost string) string {
+	redirectDomain := h.httpsRedirectDomain(system.GetHostname(requestHost))
+	if _, _, err := net.SplitHostPort(requestHost); err == nil {
+		return net.JoinHostPort(redirectDomain, strconv.Itoa(h.server.config.Https.Port))
+	}
+	return formatRedirectHost(redirectDomain)
+}
+
+func (h *Handler) httpsRedirectDomain(requestDomain string) string {
+	config := h.server.config
+	if requestDomain == "" {
+		return config.System.DefaultDomain
+	}
+
+	if h.isConfiguredRedirectDomain(requestDomain) {
+		return requestDomain
+	}
+
+	if config.System.DefaultDomain != "" {
+		return config.System.DefaultDomain
+	}
+	if config.System.RootServeListApps != "" &&
+		config.System.RootServeListApps != "auto" &&
+		config.System.RootServeListApps != "disable" {
+		return config.System.RootServeListApps
+	}
+	return requestDomain
+}
+
+func (h *Handler) isConfiguredRedirectDomain(requestDomain string) bool {
+	config := h.server.config
+	if requestDomain == config.System.DefaultDomain {
+		return true
+	}
+	if requestDomain == "127.0.0.1" && config.System.DefaultDomain == "localhost" {
+		return true
+	}
+	if requestDomain == "localhost" && config.System.DefaultDomain == "127.0.0.1" {
+		return true
+	}
+	if config.System.RootServeListApps != "" &&
+		config.System.RootServeListApps != "auto" &&
+		config.System.RootServeListApps != "disable" &&
+		requestDomain == config.System.RootServeListApps {
+		return true
+	}
+
+	allDomains, err := h.server.apps.GetAllDomains()
+	if err != nil {
+		h.Error().Err(err).Str("host", requestDomain).Msg("Error loading configured domains for https redirect")
+		return false
+	}
+	return allDomains[requestDomain]
+}
+
+func formatRedirectHost(host string) string {
+	if strings.Count(host, ":") > 1 && !strings.HasPrefix(host, "[") {
+		return "[" + host + "]"
+	}
+	return host
 }
 
 func (h *Handler) callApp(w http.ResponseWriter, r *http.Request) {

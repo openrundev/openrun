@@ -24,6 +24,9 @@ func newRouterTestServer(adminOverTCP, redirectToHTTPS bool) (*types.ServerConfi
 		Security: types.SecurityConfig{
 			AdminOverTCP: adminOverTCP,
 		},
+		System: types.SystemConfig{
+			DefaultDomain: "example.com",
+		},
 	}
 	logger := types.NewLogger(&types.LogConfig{
 		Level: "WARN",
@@ -35,6 +38,11 @@ func newRouterTestServer(adminOverTCP, redirectToHTTPS bool) (*types.ServerConfi
 		oAuthManager:   &OAuthManager{Logger: logger, config: config},
 		samlManager:    &SAMLManager{Logger: logger, config: config},
 		csrfMiddleware: http.NewCrossOriginProtection(),
+	}
+	server.apps = &AppStore{
+		Logger:     logger,
+		server:     server,
+		allDomains: map[string]bool{"example.com": true},
 	}
 	return config, server, logger
 }
@@ -117,9 +125,10 @@ func TestRouterNewUDSHandler_NoAppRoutes(t *testing.T) {
 }
 
 func TestRouterHTTPSRedirectMiddleware(t *testing.T) {
-	_, server, logger := newRouterTestServer(false, false)
+	config, server, logger := newRouterTestServer(false, false)
 	handler := &Handler{
 		Logger: logger,
+		config: config,
 		server: server,
 	}
 
@@ -148,6 +157,51 @@ func TestRouterHTTPSRedirectMiddleware(t *testing.T) {
 	}
 	if tlsRec.Code != http.StatusNoContent {
 		t.Fatalf("status: want %d got %d", http.StatusNoContent, tlsRec.Code)
+	}
+}
+
+func TestRouterHTTPSRedirectMiddlewareFallsBackToConfiguredDomain(t *testing.T) {
+	config, server, logger := newRouterTestServer(false, false)
+	handler := &Handler{
+		Logger: logger,
+		config: config,
+		server: server,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://attacker.test:8080/any?x=1", nil)
+	rec := httptest.NewRecorder()
+	handler.httpsRedirectMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called for plain http request")
+	})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPermanentRedirect {
+		t.Fatalf("status: want %d got %d", http.StatusPermanentRedirect, rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "https://example.com:7443/any?x=1" {
+		t.Fatalf("location: got %q", got)
+	}
+}
+
+func TestRouterHTTPSRedirectMiddlewarePreservesConfiguredCustomDomain(t *testing.T) {
+	config, server, logger := newRouterTestServer(false, false)
+	server.apps.allDomains["app.example.com"] = true
+	handler := &Handler{
+		Logger: logger,
+		config: config,
+		server: server,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://app.example.com:8080/any", nil)
+	rec := httptest.NewRecorder()
+	handler.httpsRedirectMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called for plain http request")
+	})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPermanentRedirect {
+		t.Fatalf("status: want %d got %d", http.StatusPermanentRedirect, rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "https://app.example.com:7443/any" {
+		t.Fatalf("location: got %q", got)
 	}
 }
 
