@@ -30,11 +30,19 @@ type DiskReadFS struct {
 var _ ReadableFS = (*DiskReadFS)(nil)
 
 func NewDiskReadFS(logger *types.Logger, root string, specFiles types.SpecFiles) *DiskReadFS {
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		cleanRoot = filepath.Clean(root)
+	}
+	if resolvedRoot, err := filepath.EvalSymlinks(cleanRoot); err == nil {
+		cleanRoot = resolvedRoot
+	}
+
 	return &DiskReadFS{
 		Logger:    logger,
-		root:      root,
-		fs:        os.DirFS(root),
-		cleanRoot: filepath.Clean(root),
+		root:      cleanRoot,
+		fs:        os.DirFS(cleanRoot),
+		cleanRoot: cleanRoot,
 		specFiles: specFiles,
 	}
 }

@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,6 +173,58 @@ func TestMetadata_AppLifecycle(t *testing.T) {
 
 	_, err = m.GetApp(types.CreateAppPathDomain(prod.Path, prod.Domain))
 	testutil.AssertErrorContains(t, err, "app not found")
+}
+
+func TestFileStoreRejectsSymlinksInSource(t *testing.T) {
+	m, cleanup := setupTestMetadata(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	sourceDir := t.TempDir()
+	externalDir := t.TempDir()
+	externalFile := filepath.Join(externalDir, "secret.txt")
+	if err := os.WriteFile(externalFile, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write external file: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "app.star"), []byte("app = ace.app(\"test\")\n"), 0o600); err != nil {
+		t.Fatalf("write app file: %v", err)
+	}
+	if err := os.Symlink(externalFile, filepath.Join(sourceDir, "leak.txt")); err != nil {
+		t.Skipf("symlink unsupported in test environment: %v", err)
+	}
+
+	appEntry := &types.AppEntry{
+		Id:        types.AppId(types.ID_PREFIX_APP_PROD + "symlinktest"),
+		Path:      "/symlink",
+		Domain:    "example.com",
+		SourceUrl: sourceDir,
+		UserID:    "u1",
+		Metadata: types.AppMetadata{
+			SpecFiles: &types.SpecFiles{},
+		},
+	}
+
+	tx, err := m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, m.CreateApp(ctx, tx, appEntry))
+
+	fileStore, err := NewFileStore(appEntry.Id, 0, m, tx)
+	testutil.AssertNoError(t, err)
+
+	err = fileStore.AddAppVersionDisk(ctx, tx, types.AppMetadata{
+		VersionMetadata: types.VersionMetadata{
+			Version: 1,
+		},
+	}, sourceDir)
+	if err == nil {
+		t.Fatal("expected symlinked source file to be rejected")
+	}
+	if !strings.Contains(err.Error(), "symlinks are not allowed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	testutil.AssertNoError(t, tx.Rollback())
 }
 
 func TestMetadata_SyncLifecycle(t *testing.T) {
