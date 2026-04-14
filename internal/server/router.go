@@ -430,32 +430,36 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("error reading request body: %s", err), http.StatusUnauthorized)
-		return
-	}
-
 	// Authenticate the request
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
-		// Using Authentication header, bearer token
+		// Using Authentication header, bearer token — validate before reading body
 		if !strings.HasPrefix(authHeader, "Bearer ") {
 			http.Error(w, "Authorization header with bearer token is required", http.StatusUnauthorized)
 			return
 		}
-		authHeader = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-		if authHeader == "" {
+		token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		if token == "" {
 			http.Error(w, "Bearer token is required", http.StatusUnauthorized)
 			return
 		}
 
-		if subtle.ConstantTimeCompare([]byte(appToken), []byte(authHeader)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(appToken), []byte(token)) != 1 {
 			http.Error(w, "Invalid bearer token", http.StatusUnauthorized)
 			return
 		}
-	} else {
-		// Using signature auth
+	}
+
+	const maxWebhookBody = 10 << 20 // 10 MiB
+	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBody)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error reading request body: %s", err), http.StatusBadRequest)
+		return
+	}
+
+	if authHeader == "" {
+		// Using signature auth — requires body for HMAC verification
 		// https://docs.github.com/en/webhooks/webhook-events-and-payloads#delivery-headers
 		signature := r.Header.Get("X-Hub-Signature-256")
 		if signature == "" {
