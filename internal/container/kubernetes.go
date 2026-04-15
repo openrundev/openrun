@@ -203,7 +203,9 @@ func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, source
 
 	targetUrl, found := strings.CutPrefix(k.config.Builder.Mode, "delegate:")
 	if found {
-		// delegated build
+		if k.config.System.BuilderAuthToken == "" {
+			return fmt.Errorf("system.builder_auth_token must be set when using delegated builds")
+		}
 		err := sendDelegateBuild(targetUrl, DelegateRequest{
 			ImageTag:       string(imgName),
 			ContainerFile:  containerFile,

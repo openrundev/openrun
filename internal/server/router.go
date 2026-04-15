@@ -27,9 +27,10 @@ import (
 )
 
 const (
-	DRY_RUN_ARG       = "dryRun"
-	PROMOTE_ARG       = "promote"
-	DELEGATE_BUILD_OP = "delegate_build"
+	DRY_RUN_ARG              = "dryRun"
+	PROMOTE_ARG              = "promote"
+	DELEGATE_BUILD_OP        = "delegate_build"
+	MAX_DELEGATE_UPLOAD_SIZE = 512 << 20 // 512 MiB
 )
 
 var (
@@ -137,7 +138,7 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 
 	if config.Builder.Mode == "delegate_server" {
 		logger.Warn().Msg("Delegated build server mode is enabled")
-		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveDelegatedBuild(true)))
+		router.Mount(types.INTERNAL_URL_PREFIX, handler.serveDelegatedBuild(true))
 	} else if config.Security.AdminOverTCP {
 		// Mount the internal API's only if admin over TCP is enabled
 		logger.Warn().Msg("Admin API access over TCP is enabled")
@@ -318,7 +319,7 @@ func validatePathForCreate(inp string) error {
 	return nil
 }
 
-func (h *Handler) builderAuth(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) builderAuth(r *http.Request) error {
 	if h.server.config.System.BuilderAuthToken == "" {
 		return fmt.Errorf("builder auth token is not configured")
 	}
@@ -344,7 +345,7 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 	if enableBasicAuth {
 		if operation == DELEGATE_BUILD_OP {
 			// Builder auth is required for delegated builds
-			err := h.builderAuth(w, r)
+			err := h.builderAuth(r)
 			if err != nil {
 				w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s"`, REALM))
 				http.Error(w, err.Error(), http.StatusUnauthorized)
@@ -1373,6 +1374,7 @@ func (h *Handler) serveDelegatedBuild(enableBasicAuth bool) http.Handler {
 
 	// API to delegate build
 	r.Post("/delegate_build", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, MAX_DELEGATE_UPLOAD_SIZE)
 		h.apiHandler(w, r, enableBasicAuth, DELEGATE_BUILD_OP, func(r *http.Request) (any, error) {
 			return container.DelegateHandler(r, h.config, h.Logger)
 		}, false)

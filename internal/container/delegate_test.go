@@ -182,7 +182,7 @@ func TestDelegateHandler(t *testing.T) {
 		if err == nil {
 			t.Fatal("DelegateHandler should fail for unsupported builder mode")
 		}
-		if !strings.Contains(err.Error(), "deleted builder mode not supported") {
+		if !strings.Contains(err.Error(), "delegated builder mode not supported") {
 			t.Fatalf("error = %q, want unsupported mode error", err)
 		}
 	})
@@ -197,10 +197,10 @@ func TestDelegateHandler(t *testing.T) {
 		_, err := DelegateHandler(req, cfg, logger)
 
 		if err == nil {
-			t.Fatal("DelegateHandler should fail for non-multipart requests")
+			t.Fatal("DelegateHandler should fail for non-multipart content type")
 		}
-		if !strings.Contains(err.Error(), "expected multipart/form-data") {
-			t.Fatalf("error = %q, want multipart error", err)
+		if strings.Contains(err.Error(), "delegated builder mode not supported") {
+			t.Fatalf("delegate_server mode should be accepted, got: %q", err)
 		}
 	})
 

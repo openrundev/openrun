@@ -131,6 +131,9 @@ func (c *CommandCM) RemoveImage(ctx context.Context, name ImageName) error {
 func (c *CommandCM) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
 	targetUrl, found := strings.CutPrefix(c.config.Builder.Mode, "delegate:")
 	if found {
+		if c.config.System.BuilderAuthToken == "" {
+			return fmt.Errorf("system.builder_auth_token must be set when using delegated builds")
+		}
 		err := sendDelegateBuild(targetUrl, DelegateRequest{
 			ImageTag:       string(imgName),
 			ContainerFile:  containerFile,

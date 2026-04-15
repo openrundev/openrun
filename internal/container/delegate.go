@@ -122,7 +122,7 @@ func DelegateHandler(r *http.Request, config *types.ServerConfig, logger *types.
 	}
 
 	if config.Builder.Mode != "delegate_server" {
-		return nil, fmt.Errorf("deleted builder mode not supported: %s", config.Builder.Mode)
+		return nil, fmt.Errorf("delegated builder mode not supported: %s", config.Builder.Mode)
 	}
 
 	// Parse Content-Type to get boundary
@@ -167,14 +167,7 @@ func DelegateHandler(r *http.Request, config *types.ServerConfig, logger *types.
 			gotMeta = true
 
 		case "file":
-			// Stream file to disk (or wherever you want)
-			filename := part.FileName()
-			if filename == "" {
-				filename = "uploaded.bin"
-			}
-			dstPath := filepath.Join(os.TempDir(), filename)
-
-			dst, err := os.Create(dstPath)
+			dst, err := os.CreateTemp("", "delegate-build-*.tar.gz")
 			if err != nil {
 				_ = part.Close()
 				return nil, fmt.Errorf("error creating file: %v", err)
@@ -187,7 +180,7 @@ func DelegateHandler(r *http.Request, config *types.ServerConfig, logger *types.
 			}
 			_ = dst.Close()
 
-			savedFile = dstPath
+			savedFile = dst.Name()
 			gotFile = true
 
 		default:
@@ -228,14 +221,19 @@ func delegateBuild(ctx context.Context, logger *types.Logger, config *types.Serv
 	}
 	defer os.RemoveAll(destDir) // nolint: errcheck
 
+	cleanFile := filepath.Clean(data.ContainerFile)
+	if filepath.IsAbs(cleanFile) || strings.HasPrefix(cleanFile, ".."+string(os.PathSeparator)) || cleanFile == ".." {
+		return fmt.Errorf("invalid container file path: %q", data.ContainerFile)
+	}
+
 	releaseLock, err := acquireBuildLock(context.Background(), &config.System, data.ImageTag)
 	if err != nil {
 		return fmt.Errorf("error acquiring build lock: %w", err)
 	}
 	defer releaseLock()
 
-	logger.Debug().Msgf("Building image %s from %s with %s", data.ImageTag, data.ContainerFile, destDir)
-	args := []string{"build", "-t", data.ImageTag, "-f", data.ContainerFile}
+	logger.Debug().Msgf("Building image %s from %s with %s", data.ImageTag, cleanFile, destDir)
+	args := []string{"build", "-t", data.ImageTag, "-f", cleanFile}
 
 	for k, v := range data.ContainerArgs {
 		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", k, v))
