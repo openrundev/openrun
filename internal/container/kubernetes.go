@@ -209,7 +209,7 @@ func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, source
 			ContainerFile:  containerFile,
 			ContainerArgs:  containerArgs,
 			RegistryConfig: &k.config.Registry,
-		}, sourceUrl)
+		}, sourceUrl, k.config.System.BuilderAuthToken)
 		if err != nil {
 			return fmt.Errorf("error sending delegate build: %w", err)
 		}

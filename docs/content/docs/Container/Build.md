@@ -12,7 +12,7 @@ The configuration for the container builder is
 
 ```toml {filename="openrun.toml"}
 [builder]
-mode = "auto"                        # "auto" or "kaniko" or "command" or "delegate:<url>"
+mode = "auto"                        # "auto" or "kaniko" or "command" or "delegate:<url>" or "delegate_server"
 kaniko_image = "ghcr.io/kaniko-build/dist/chainguard-dev-kaniko/executor:v1.25.3-slim"
 ```
 
@@ -28,6 +28,15 @@ insecure = false                    # use true if using http:// instead of https
 ```
 
 Other options supported for the registry are `username`, `password`, `password_file`, `type` which can be `ecr` or empty, `ca_file`, `client_cert_file`, `client_key_file` and `aws_region`.
+
+Delegated builds also require a shared auth token between the main OpenRun installation and the builder node(s):
+
+```toml {filename="openrun.toml"}
+[system]
+builder_auth_token = "replace-with-a-random-shared-secret"
+```
+
+Set the same `builder_auth_token` value on the main install and on every delegated builder node.
 
 ## Single-Node Installations
 
@@ -52,21 +61,29 @@ redirect_to_https = false
 
 [system]
 container_command = "docker"
+builder_auth_token = "replace-with-a-random-shared-secret"
 
-[security]
-admin_over_tcp = true
+[builder]
+mode = "delegate_server"
 ```
 
-Starting the OpenRun server enables the HTTP port (default 25222) to receive delegated build requests. The container manager (Docker/Podman) should be running on the builder machine.
+Starting the OpenRun server enables the HTTP port (default 25222) to receive delegated build requests. The container manager (Docker/Podman) should be running on the builder machine. Builder nodes should use `builder.mode = "delegate_server"` and do not need `security.admin_over_tcp = true`. The delegated build endpoint requires `Authorization: Bearer <builder_auth_token>` and rejects requests if the token is missing or does not match.
 
 On the actual OpenRun installation, add in the config:
 
 ```toml {filename="openrun.toml"}
+[system]
+builder_auth_token = "replace-with-a-random-shared-secret"
+
 [builder]
 mode = "delegate:http://mybuilder.example.com:25222"
 ```
 
 Config like registry settings, git credentials etc are not required in the builder machine. Those are passed from the main install to the builder. The main OpenRun install and the builder nodes do not have to point to the same metadata database. The metadata on the builder machines is not used, so it can default to the local SQLite based metadata, even if multiple builder nodes are used.
+
+{{<callout type="warning" >}}
+Existing delegated-build installations must add the same `system.builder_auth_token` value on both sides before upgrading. Otherwise delegated builds will fail with `401 Unauthorized`.
+{{</callout>}}
 
 <picture  class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
   <img alt="Delegated Build" src="/d2/delegated_build.svg">

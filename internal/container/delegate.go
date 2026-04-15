@@ -32,7 +32,7 @@ type DelegateRequest struct {
 	RegistryConfig *types.RegistryConfig
 }
 
-func sendDelegateBuild(url string, data DelegateRequest, sourcePath string) error {
+func sendDelegateBuild(url string, data DelegateRequest, sourcePath string, builderAuthToken string) error {
 	url += "/_openrun/delegate_build"
 	// Create a pipe: writer feeds the HTTP request, reader is used as the body
 	pr, pw := io.Pipe()
@@ -96,6 +96,7 @@ func sendDelegateBuild(url string, data DelegateRequest, sourcePath string) erro
 		return err
 	}
 	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", builderAuthToken))
 
 	// Send it
 	client := &http.Client{}
@@ -115,29 +116,25 @@ func sendDelegateBuild(url string, data DelegateRequest, sourcePath string) erro
 }
 
 // DelegateHandler is the handler for the delegated build API
-func DelegateHandler(w http.ResponseWriter, r *http.Request, config *types.ServerConfig, logger *types.Logger) {
+func DelegateHandler(r *http.Request, config *types.ServerConfig, logger *types.Logger) (any, error) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
-		return
+		return nil, fmt.Errorf("only POST allowed")
 	}
 
-	if config.Builder.Mode != "auto" && config.Builder.Mode != "command" {
-		http.Error(w, fmt.Sprintf("deleted builder mode not supported: %s", config.Builder.Mode), http.StatusInternalServerError)
-		return
+	if config.Builder.Mode != "delegate_server" {
+		return nil, fmt.Errorf("deleted builder mode not supported: %s", config.Builder.Mode)
 	}
 
 	// Parse Content-Type to get boundary
 	ct := r.Header.Get("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
-		http.Error(w, "expected multipart/form-data", http.StatusBadRequest)
-		return
+		return nil, fmt.Errorf("expected multipart/form-data")
 	}
 
 	boundary, ok := params["boundary"]
 	if !ok {
-		http.Error(w, "missing multipart boundary", http.StatusBadRequest)
-		return
+		return nil, fmt.Errorf("missing multipart boundary")
 	}
 
 	mr := multipart.NewReader(r.Body, boundary)
@@ -155,8 +152,7 @@ func DelegateHandler(w http.ResponseWriter, r *http.Request, config *types.Serve
 			break
 		}
 		if err != nil {
-			http.Error(w, fmt.Sprintf("reading part: %v", err), http.StatusInternalServerError)
-			return
+			return nil, fmt.Errorf("reading part: %v", err)
 		}
 
 		name := part.FormName()
@@ -165,9 +161,8 @@ func DelegateHandler(w http.ResponseWriter, r *http.Request, config *types.Serve
 		case "meta":
 			// Stream-decode JSON for meta
 			if err := json.NewDecoder(part).Decode(&data); err != nil {
-				http.Error(w, fmt.Sprintf("invalid meta json: %v", err), http.StatusBadRequest)
 				_ = part.Close()
-				return
+				return nil, fmt.Errorf("invalid meta json: %v", err)
 			}
 			gotMeta = true
 
@@ -181,16 +176,14 @@ func DelegateHandler(w http.ResponseWriter, r *http.Request, config *types.Serve
 
 			dst, err := os.Create(dstPath)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("error creating file: %v", err), http.StatusInternalServerError)
 				_ = part.Close()
-				return
+				return nil, fmt.Errorf("error creating file: %v", err)
 			}
 
 			if _, err := io.Copy(dst, part); err != nil {
 				_ = dst.Close()
-				http.Error(w, fmt.Sprintf("error saving file: %v", err), http.StatusInternalServerError)
 				_ = part.Close()
-				return
+				return nil, fmt.Errorf("error saving file: %v", err)
 			}
 			_ = dst.Close()
 
@@ -206,29 +199,26 @@ func DelegateHandler(w http.ResponseWriter, r *http.Request, config *types.Serve
 	}
 
 	if data.RegistryConfig.URL == "" {
-		http.Error(w, "registry url needs to be set on the sender for delegated builds", http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("registry url needs to be set on the sender for delegated builds")
 	}
 
 	if !gotMeta || !gotFile {
-		http.Error(w, "missing meta or file part", http.StatusBadRequest)
-		return
+		return nil, fmt.Errorf("missing meta or file part")
 	}
 	logger.Debug().Msgf("DelegateHandler called for build %s", data.ImageTag)
 	defer func() {
 		if err := os.Remove(savedFile); err != nil {
-			http.Error(w, fmt.Sprintf("error removing file: %v", err), http.StatusInternalServerError)
+			logger.Error().Err(err).Msg("error removing file")
 			return
 		}
 	}()
 
 	err = delegateBuild(r.Context(), logger, config, data, savedFile)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("error delegating build: %v", err), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("error delegating build: %v", err)
 	}
 
-	w.WriteHeader(http.StatusOK)
+	return nil, nil
 }
 
 func delegateBuild(ctx context.Context, logger *types.Logger, config *types.ServerConfig, data DelegateRequest, filePath string) error {

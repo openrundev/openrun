@@ -280,6 +280,7 @@ type SystemConfig struct {
 	ListAppsTitle                       string   `toml:"list_apps_title"`                         // the title of the list apps page
 	ShowHostedWith                      bool     `toml:"show_hosted_with"`                        // whether to show "Hosted with OpenRun" in the list apps page
 	FallbackUnknownDomains              bool     `toml:"fallback_unknown_domains"`                // whether to fallback to default domain for unknown domains
+	BuilderAuthToken                    string   `toml:"builder_auth_token"`                      // the token for the builder auth
 }
 
 type RegistryConfig struct {
@@ -303,7 +304,7 @@ type KubernetesConfig struct {
 }
 
 type BuilderConfig struct {
-	Mode        string `toml:"mode"` // "auto", "kaniko", "command", "delegate:<url>"
+	Mode        string `toml:"mode"` // "auto", "kaniko", "command", "delegate:<url>", "delegate_server"
 	KanikoImage string `toml:"kaniko_image"`
 }
 

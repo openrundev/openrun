@@ -106,7 +106,7 @@ func TestSendDelegateBuild(t *testing.T) {
 			},
 		}
 
-		if err := sendDelegateBuild(srv.URL, req, srcDir); err != nil {
+		if err := sendDelegateBuild(srv.URL, req, srcDir, "test-token"); err != nil {
 			t.Fatalf("sendDelegateBuild returned error: %v", err)
 		}
 
@@ -139,7 +139,7 @@ func TestSendDelegateBuild(t *testing.T) {
 		err := sendDelegateBuild(srv.URL, DelegateRequest{
 			ImageTag:      "sample:latest",
 			ContainerFile: "Dockerfile",
-		}, srcDir)
+		}, srcDir, "test-token")
 		if err == nil {
 			t.Fatal("sendDelegateBuild should fail for non-2xx response")
 		}
@@ -154,21 +154,20 @@ func TestSendDelegateBuild(t *testing.T) {
 
 func TestDelegateHandler(t *testing.T) {
 	baseConfig := &types.ServerConfig{
-		Builder: types.BuilderConfig{Mode: "auto"},
+		Builder: types.BuilderConfig{Mode: "delegate_server"},
 	}
 	logger := newTestLogger()
 
 	t.Run("rejects non-POST requests", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/_openrun/delegate_build", nil)
-		rr := httptest.NewRecorder()
 
-		DelegateHandler(rr, req, baseConfig, logger)
+		_, err := DelegateHandler(req, baseConfig, logger)
 
-		if rr.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+		if err == nil {
+			t.Fatal("DelegateHandler should fail for non-POST requests")
 		}
-		if !strings.Contains(rr.Body.String(), "only POST allowed") {
-			t.Fatalf("body = %q, want method error", rr.Body.String())
+		if !strings.Contains(err.Error(), "only POST allowed") {
+			t.Fatalf("error = %q, want method error", err)
 		}
 	})
 
@@ -177,30 +176,45 @@ func TestDelegateHandler(t *testing.T) {
 			Builder: types.BuilderConfig{Mode: "kaniko"},
 		}
 		req := httptest.NewRequest(http.MethodPost, "/_openrun/delegate_build", nil)
-		rr := httptest.NewRecorder()
 
-		DelegateHandler(rr, req, cfg, logger)
+		_, err := DelegateHandler(req, cfg, logger)
 
-		if rr.Code != http.StatusInternalServerError {
-			t.Fatalf("status = %d, want %d", rr.Code, http.StatusInternalServerError)
+		if err == nil {
+			t.Fatal("DelegateHandler should fail for unsupported builder mode")
 		}
-		if !strings.Contains(rr.Body.String(), "deleted builder mode not supported") {
-			t.Fatalf("body = %q, want unsupported mode error", rr.Body.String())
+		if !strings.Contains(err.Error(), "deleted builder mode not supported") {
+			t.Fatalf("error = %q, want unsupported mode error", err)
+		}
+	})
+
+	t.Run("accepts delegate_server mode", func(t *testing.T) {
+		cfg := &types.ServerConfig{
+			Builder: types.BuilderConfig{Mode: "delegate_server"},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/_openrun/delegate_build", strings.NewReader(`{"a":"b"}`))
+		req.Header.Set("Content-Type", "application/json")
+
+		_, err := DelegateHandler(req, cfg, logger)
+
+		if err == nil {
+			t.Fatal("DelegateHandler should fail for non-multipart requests")
+		}
+		if !strings.Contains(err.Error(), "expected multipart/form-data") {
+			t.Fatalf("error = %q, want multipart error", err)
 		}
 	})
 
 	t.Run("rejects non-multipart requests", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/_openrun/delegate_build", strings.NewReader(`{"a":"b"}`))
 		req.Header.Set("Content-Type", "application/json")
-		rr := httptest.NewRecorder()
 
-		DelegateHandler(rr, req, baseConfig, logger)
+		_, err := DelegateHandler(req, baseConfig, logger)
 
-		if rr.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+		if err == nil {
+			t.Fatal("DelegateHandler should fail for non-multipart requests")
 		}
-		if !strings.Contains(rr.Body.String(), "expected multipart/form-data") {
-			t.Fatalf("body = %q, want multipart error", rr.Body.String())
+		if !strings.Contains(err.Error(), "expected multipart/form-data") {
+			t.Fatalf("error = %q, want multipart error", err)
 		}
 	})
 
@@ -215,19 +229,18 @@ func TestDelegateHandler(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/_openrun/delegate_build", body)
 		req.Header.Set("Content-Type", contentType)
-		rr := httptest.NewRecorder()
 
-		DelegateHandler(rr, req, baseConfig, logger)
+		_, err := DelegateHandler(req, baseConfig, logger)
 
-		if rr.Code != http.StatusInternalServerError {
-			t.Fatalf("status = %d, want %d", rr.Code, http.StatusInternalServerError)
+		if err == nil {
+			t.Fatal("DelegateHandler should fail when registry url is empty")
 		}
-		if !strings.Contains(rr.Body.String(), "registry url needs to be set on the sender") {
-			t.Fatalf("body = %q, want registry URL error", rr.Body.String())
+		if !strings.Contains(err.Error(), "registry url needs to be set on the sender") {
+			t.Fatalf("error = %q, want registry URL error", err)
 		}
 	})
 
-	t.Run("returns bad request when file part is missing", func(t *testing.T) {
+	t.Run("returns error when file part is missing", func(t *testing.T) {
 		body, contentType := buildDelegateMultipartBody(t, DelegateRequest{
 			ImageTag:      "sample:latest",
 			ContainerFile: "Dockerfile",
@@ -238,15 +251,14 @@ func TestDelegateHandler(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/_openrun/delegate_build", body)
 		req.Header.Set("Content-Type", contentType)
-		rr := httptest.NewRecorder()
 
-		DelegateHandler(rr, req, baseConfig, logger)
+		_, err := DelegateHandler(req, baseConfig, logger)
 
-		if rr.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+		if err == nil {
+			t.Fatal("DelegateHandler should fail when file part is missing")
 		}
-		if !strings.Contains(rr.Body.String(), "missing meta or file part") {
-			t.Fatalf("body = %q, want missing part error", rr.Body.String())
+		if !strings.Contains(err.Error(), "missing meta or file part") {
+			t.Fatalf("error = %q, want missing part error", err)
 		}
 	})
 
@@ -267,15 +279,14 @@ func TestDelegateHandler(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/_openrun/delegate_build", &buf)
 		req.Header.Set("Content-Type", writer.FormDataContentType())
-		rr := httptest.NewRecorder()
 
-		DelegateHandler(rr, req, baseConfig, logger)
+		_, err = DelegateHandler(req, baseConfig, logger)
 
-		if rr.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+		if err == nil {
+			t.Fatal("DelegateHandler should fail for invalid meta json")
 		}
-		if !strings.Contains(rr.Body.String(), "invalid meta json") {
-			t.Fatalf("body = %q, want invalid json error", rr.Body.String())
+		if !strings.Contains(err.Error(), "invalid meta json") {
+			t.Fatalf("error = %q, want invalid json error", err)
 		}
 	})
 }

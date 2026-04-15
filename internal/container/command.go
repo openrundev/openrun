@@ -136,7 +136,7 @@ func (c *CommandCM) BuildImage(ctx context.Context, imgName ImageName, sourceUrl
 			ContainerFile:  containerFile,
 			ContainerArgs:  containerArgs,
 			RegistryConfig: &c.config.Registry,
-		}, sourceUrl)
+		}, sourceUrl, c.config.System.BuilderAuthToken)
 		if err != nil {
 			return fmt.Errorf("error sending delegate build: %w", err)
 		}

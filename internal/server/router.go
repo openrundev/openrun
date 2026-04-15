@@ -27,8 +27,9 @@ import (
 )
 
 const (
-	DRY_RUN_ARG = "dryRun"
-	PROMOTE_ARG = "promote"
+	DRY_RUN_ARG       = "dryRun"
+	PROMOTE_ARG       = "promote"
+	DELEGATE_BUILD_OP = "delegate_build"
 )
 
 var (
@@ -134,9 +135,12 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 		router.Use(middleware.Compress(5, COMPRESSION_ENABLED_MIME_TYPES...))
 	}
 
-	if config.Security.AdminOverTCP {
+	if config.Builder.Mode == "delegate_server" {
+		logger.Warn().Msg("Delegated build server mode is enabled")
+		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveDelegatedBuild(true)))
+	} else if config.Security.AdminOverTCP {
 		// Mount the internal API's only if admin over TCP is enabled
-		logger.Warn().Msg("Admin API access over TCP is enabled, enable 2FA for admin user account")
+		logger.Warn().Msg("Admin API access over TCP is enabled")
 		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveInternal(true)))
 	} else {
 		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(http.NotFoundHandler())) // reserve the path
@@ -314,13 +318,46 @@ func validatePathForCreate(inp string) error {
 	return nil
 }
 
+func (h *Handler) builderAuth(w http.ResponseWriter, r *http.Request) error {
+	if h.server.config.System.BuilderAuthToken == "" {
+		return fmt.Errorf("builder auth token is not configured")
+	}
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		return fmt.Errorf("authorization header is required")
+	}
+	// Check bearer token
+	if !strings.HasPrefix(token, "Bearer ") {
+		return fmt.Errorf("authorization header with bearer token is required")
+	}
+	token = strings.TrimSpace(strings.TrimPrefix(token, "Bearer "))
+	if token == "" {
+		return fmt.Errorf("bearer token is required")
+	}
+	if subtle.ConstantTimeCompare([]byte(h.server.config.System.BuilderAuthToken), []byte(token)) != 1 {
+		return fmt.Errorf("invalid bearer token")
+	}
+	return nil
+}
+
 func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasicAuth bool, operation string, apiFunc func(r *http.Request) (any, error), runVersionCleanup bool) {
 	if enableBasicAuth {
-		authStatus := h.server.authHandler.authenticate(r.Header.Get("Authorization"))
-		if !authStatus {
-			w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, REALM))
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
+		if operation == DELEGATE_BUILD_OP {
+			// Builder auth is required for delegated builds
+			err := h.builderAuth(w, r)
+			if err != nil {
+				w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s"`, REALM))
+				http.Error(w, err.Error(), http.StatusUnauthorized)
+				return
+			}
+		} else {
+			// Admin auth is required for other APIs
+			authStatus := h.server.authHandler.authenticate(r.Header.Get("Authorization"))
+			if !authStatus {
+				w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, REALM))
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
 		}
 	}
 
@@ -1326,9 +1363,19 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 		h.apiHandler(w, r, enableBasicAuth, "config_update", h.configUpdate, false)
 	}))
 
+	return r
+}
+
+// serveDelegatedBuild returns a handler for the delegated build API
+func (h *Handler) serveDelegatedBuild(enableBasicAuth bool) http.Handler {
+	// These API's are mounted at /_openrun
+	r := chi.NewRouter()
+
 	// API to delegate build
 	r.Post("/delegate_build", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		container.DelegateHandler(w, r, h.config, h.Logger)
+		h.apiHandler(w, r, enableBasicAuth, DELEGATE_BUILD_OP, func(r *http.Request) (any, error) {
+			return container.DelegateHandler(r, h.config, h.Logger)
+		}, false)
 	}))
 
 	return r
