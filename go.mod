@@ -23,7 +23,7 @@ require (
 	github.com/google/go-containerregistry v0.21.3
 	github.com/gorilla/sessions v1.4.0
 	github.com/hashicorp/vault/api v1.15.0
-	github.com/jackc/pgx/v5 v5.7.5
+	github.com/jackc/pgx/v5 v5.9.0
 	github.com/jackc/pgxlisten v0.0.0-20241106001234-1d6f6656415c
 	github.com/markbates/goth v1.80.0
 	github.com/moby/buildkit v0.28.1
