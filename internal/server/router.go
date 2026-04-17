@@ -150,8 +150,8 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	// Webhooks are always mounted, they are disabled at the app level by default
 	router.Mount(types.WEBHOOK_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveWebhooks()))
 
-	server.oAuthManager.RegisterRoutes(router) // register OAuth routes
-	server.samlManager.RegisterRoutes(router)  // register SAML routes
+	server.oAuthManager.RegisterRoutes(server.csrfMiddleware, router) // register OAuth routes
+	server.samlManager.RegisterRoutes(router)                         // register SAML routes
 
 	router.HandleFunc("/*", handler.callApp)
 	router.HandleFunc(types.INTERNAL_URL_PREFIX+"/health",

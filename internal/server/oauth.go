@@ -181,7 +181,7 @@ func (s *OAuthManager) Setup(sessionKey []byte, sessionBlockKey []byte) error {
 	return nil
 }
 
-func (s *OAuthManager) RegisterRoutes(mux *chi.Mux) {
+func (s *OAuthManager) RegisterRoutes(csrfMiddleware *http.CrossOriginProtection, mux *chi.Mux) {
 	mux.Get(types.INTERNAL_URL_PREFIX+"/auth/{provider}/login", func(w http.ResponseWriter, r *http.Request) {
 		// Start login process
 		gothic.BeginAuthHandler(w, r)
@@ -191,7 +191,7 @@ func (s *OAuthManager) RegisterRoutes(mux *chi.Mux) {
 
 	mux.Get(types.INTERNAL_URL_PREFIX+"/auth/{provider}/redirect", s.redirect)
 
-	mux.Post(types.INTERNAL_URL_PREFIX+"/logout/{provider}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Method("POST", types.INTERNAL_URL_PREFIX+"/logout/{provider}", csrfMiddleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// gothic.Logout(w, r) needs to be called on the callback domain, so not done
 		// Set user as not authenticated in session
 		providerName := chi.URLParam(r, "provider")
@@ -206,7 +206,7 @@ func (s *OAuthManager) RegisterRoutes(mux *chi.Mux) {
 		session.Options.MaxAge = -1
 		_ = session.Save(r, w)
 		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
-	})
+	})))
 }
 
 func (s *OAuthManager) ValidateProviderName(provider string) bool {

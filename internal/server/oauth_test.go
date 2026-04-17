@@ -1505,7 +1505,7 @@ func TestLogout(t *testing.T) {
 
 	// Register routes and call logout
 	mux := chi.NewRouter()
-	manager.RegisterRoutes(mux)
+	manager.RegisterRoutes(http.NewCrossOriginProtection(), mux)
 	mux.ServeHTTP(w2, r2)
 
 	testutil.AssertEqualsInt(t, "status code", http.StatusTemporaryRedirect, w2.Code)
