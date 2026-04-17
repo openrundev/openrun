@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"golang.org/x/sync/errgroup"
@@ -99,16 +100,12 @@ func (f *fsPlugin) checkAccess(filePath string) (bool, error) {
 	}
 
 	for _, dir := range f.accessAllowed {
-		// Compute the relative path from baseDir to targetPath.
-		relPath, err := filepath.Rel(dir, absPath)
+		inside, err := system.PathWithinDir(dir, absPath)
 		if err != nil {
-			return false, fmt.Errorf("failed to compute relative path: %w", err)
+			return false, fmt.Errorf("failed to check path access: %w", err)
 		}
 
-		// Clean the relative path to remove any redundant components.
-		relPath = filepath.Clean(relPath)
-		if relPath != ".." && !strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
-			// Target path is inside the base directory.
+		if inside {
 			return true, nil
 		}
 	}

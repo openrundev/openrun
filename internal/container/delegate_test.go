@@ -326,19 +326,28 @@ func TestExtractTarGzToTemp(t *testing.T) {
 	})
 
 	t.Run("rejects traversal paths", func(t *testing.T) {
-		tarPath := filepath.Join(t.TempDir(), "context.tar.gz")
-		if err := writeTarGz(tarPath, []testTarEntry{
-			{name: "../evil.txt", body: "bad", typ: tar.TypeReg, mode: 0o644},
-		}); err != nil {
-			t.Fatalf("write tar.gz: %v", err)
-		}
+		for _, name := range []string{
+			"../evil.txt",
+			"/tmp/evil.txt",
+			`..\evil.txt`,
+			"nested/../../evil.txt",
+		} {
+			t.Run(name, func(t *testing.T) {
+				tarPath := filepath.Join(t.TempDir(), "context.tar.gz")
+				if err := writeTarGz(tarPath, []testTarEntry{
+					{name: name, body: "bad", typ: tar.TypeReg, mode: 0o644},
+				}); err != nil {
+					t.Fatalf("write tar.gz: %v", err)
+				}
 
-		_, err := extractTarGzToTemp(tarPath)
-		if err == nil {
-			t.Fatal("extractTarGzToTemp should fail for traversal entries")
-		}
-		if !strings.Contains(err.Error(), "invalid tar entry path") {
-			t.Fatalf("error = %q, want traversal path error", err)
+				_, err := extractTarGzToTemp(tarPath)
+				if err == nil {
+					t.Fatal("extractTarGzToTemp should fail for traversal entries")
+				}
+				if !strings.Contains(err.Error(), "invalid tar entry path") {
+					t.Fatalf("error = %q, want traversal path error", err)
+				}
+			})
 		}
 	})
 }

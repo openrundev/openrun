@@ -97,11 +97,16 @@ func init() {
 func (s *Server) GetAppSpec(name types.AppSpec) types.SpecFiles {
 	// Add custom app type config from conf folder
 
-	customSpecsDir := path.Clean((path.Join(os.ExpandEnv("$OPENRUN_HOME/config"), APPSPECS, string(name))))
+	specName, err := system.CleanFilename(string(name))
+	if err != nil {
+		return appTypes[string(name)]
+	}
+
+	customSpecsDir := path.Clean((path.Join(os.ExpandEnv("$OPENRUN_HOME/config"), APPSPECS, specName)))
 	entries, err := os.ReadDir(customSpecsDir)
 	if err != nil {
 		// Use bundled app if present
-		return appTypes[string(name)]
+		return appTypes[specName]
 	}
 
 	newAppType := make(types.SpecFiles)

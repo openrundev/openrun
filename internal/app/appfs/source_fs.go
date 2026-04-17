@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/openrundev/openrun/internal/system"
 )
 
 // ReadableFS is the interface for the file system used by app to read source files
@@ -257,9 +259,15 @@ func (h *fsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Clean up filename based on URL path.
 	filename := r.URL.Path
 	filename = strings.TrimPrefix(filename, "/")
-	filename = path.Clean(filename)
-	if filename == "/" || filename == "." {
+	if filename == "" || filename == "/" || filename == "." {
 		filename = h.indexPage
+	} else {
+		cleanName, err := system.CleanRelativePath(filename)
+		if err != nil {
+			http.Error(w, "404 page not found", http.StatusNotFound)
+			return
+		}
+		filename = cleanName
 	}
 
 	if h.singleFile && filename != h.indexPage {

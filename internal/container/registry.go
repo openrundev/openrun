@@ -22,6 +22,7 @@ import (
 
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -749,8 +750,11 @@ func tarGzDir(srcDir string) (io.ReadCloser, error) {
 				if err != nil {
 					return err
 				}
-				// Use the relative path inside the archive.
-				hdr.Name = relPath
+				archivePath, err := system.CleanRelativePath(relPath)
+				if err != nil {
+					return err
+				}
+				hdr.Name = archivePath
 
 				if err := tw.WriteHeader(hdr); err != nil {
 					return err

@@ -22,6 +22,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -221,9 +222,9 @@ func delegateBuild(ctx context.Context, logger *types.Logger, config *types.Serv
 	}
 	defer os.RemoveAll(destDir) // nolint: errcheck
 
-	cleanFile := filepath.Clean(data.ContainerFile)
-	if filepath.IsAbs(cleanFile) || strings.HasPrefix(cleanFile, ".."+string(os.PathSeparator)) || cleanFile == ".." {
-		return fmt.Errorf("invalid container file path: %q", data.ContainerFile)
+	cleanFile, err := system.CleanRelativeLocalPath(data.ContainerFile)
+	if err != nil {
+		return fmt.Errorf("invalid container file path %q: %w", data.ContainerFile, err)
 	}
 
 	releaseLock, err := acquireBuildLock(context.Background(), &config.System, data.ImageTag)
@@ -333,17 +334,9 @@ func extractTarGzToTemp(tarGzPath string) (string, error) {
 			continue
 		}
 
-		// Clean and join the path to avoid traversal attacks
-		relPath := filepath.Clean(hdr.Name)
-		if relPath == "." {
-			continue
-		}
-
-		targetPath := filepath.Join(destDir, relPath)
-
-		// Ensure targetPath is still under destDir
-		if !strings.HasPrefix(targetPath, destDir+string(os.PathSeparator)) && targetPath != destDir {
-			return "", fmt.Errorf("invalid tar entry path: %q", hdr.Name)
+		targetPath, err := system.PathInDir(destDir, hdr.Name)
+		if err != nil {
+			return "", fmt.Errorf("invalid tar entry path %q: %w", hdr.Name, err)
 		}
 
 		switch hdr.Typeflag {

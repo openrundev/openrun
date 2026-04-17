@@ -337,6 +337,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 				http.Error(w, fmt.Sprintf("error getting file %s: %s", param.Name, err), http.StatusBadRequest)
 				return
 			}
+			defer f.Close() //nolint:errcheck
 
 			if tempDir == "" {
 				tempDir, err = os.MkdirTemp("", "openrun-file-upload-*")
@@ -352,7 +353,12 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 				}()
 			}
 
-			fullPath := path.Join(tempDir, fh.Filename)
+			fullPath, err := uploadedFilePath(tempDir, fh.Filename)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
 			destFile, err := os.Create(fullPath)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -577,6 +583,20 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 			return
 		}
 	}
+}
+
+func uploadedFilePath(tempDir, filename string) (string, error) {
+	safeName, err := system.CleanFilename(filename)
+	if err != nil {
+		return "", fmt.Errorf("invalid uploaded filename: %q", filename)
+	}
+
+	fullPath, err := system.PathInDir(tempDir, safeName)
+	if err != nil {
+		return "", fmt.Errorf("invalid uploaded file path: %q", filename)
+	}
+
+	return fullPath, nil
 }
 
 func (a *Action) renderResults(w http.ResponseWriter, report string, valuesMap []map[string]any, valuesStr []string) error {

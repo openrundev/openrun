@@ -125,7 +125,11 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 		if d.Type()&fs.ModeSymlink != 0 {
 			return fmt.Errorf("symlinks are not allowed in app sources: %s", path)
 		}
-		filePaths = append(filePaths, strings.ReplaceAll(path, "\\", "/"))
+		cleanPath, err := system.CleanRelativePath(path)
+		if err != nil {
+			return fmt.Errorf("invalid app source path %s: %w", path, err)
+		}
+		filePaths = append(filePaths, cleanPath)
 		return nil
 	}); err != nil {
 		return err
