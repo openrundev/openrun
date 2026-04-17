@@ -159,10 +159,7 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 			w.WriteHeader(200)
 			w.Write([]byte("OK")) //nolint:errcheck
 		})
-	router.HandleFunc("/testperf", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
-	})
+
 	return handler
 }
 
@@ -605,7 +602,7 @@ func validateSignature(secret, signatureHeader string, body []byte) error {
 		return fmt.Errorf("invalid signature header: '%s' does not contain =", signatureHeader)
 	}
 
-	// Ensure secret is a sha1 hash
+	// Ensure secret is a sha256 hash
 	signature_type := signature_parts[0]
 	signature_hash := signature_parts[1]
 	if signature_type != "sha256" {
