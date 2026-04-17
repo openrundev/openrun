@@ -18,7 +18,7 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-chi/chi/v5 v5.2.5
-	github.com/go-git/go-git/v5 v5.17.1
+	github.com/go-git/go-git/v5 v5.18.0
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/google/go-containerregistry v0.21.3
 	github.com/gorilla/sessions v1.4.0
