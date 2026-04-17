@@ -99,6 +99,30 @@ Because of these defaults, a standard containerized app does not need explicit `
 
 CSRF protection is automatically enabled for OpenRun internal APIs and for API calls to apps. This uses the [CrossOriginProtection](https://pkg.go.dev/net/http#CrossOriginProtection) middleware. Use `app_config.security.disable_csrf_protection = true` in `openrun.toml` to disable globally for all apps. CSRF protection can be disabled individually for apps by running `openrun app update conf --promote 'security.disable_csrf_protection=true' /myapp`
 
+## CORS
+
+CORS headers are disabled by default for apps. Containerized apps are normally accessed through OpenRun, which performs authentication before proxying the request to the app. With the default config, OpenRun does not add `Access-Control-Allow-Origin` and does not answer CORS preflight requests before they reach the app.
+
+To allow browser requests from a specific frontend origin, set an app-level CORS origin:
+
+```bash
+openrun app update conf --promote 'cors.allow_origin="https://frontend.example.com"' /myapp
+```
+
+To reflect the request origin as the allowed origin, use:
+
+```bash
+openrun app update conf --promote 'cors.allow_origin="origin"' /myapp
+```
+
+For credentialed browser CORS requests, enable credentials explicitly:
+
+```bash
+openrun app update conf --promote 'cors.allow_credentials="true"' /myapp
+```
+
+Avoid enabling credentials with `cors.allow_origin="*"`. Browsers reject wildcard origins for credentialed CORS, and it can expose authenticated app endpoints too broadly.
+
 ## Trusted Proxies and Client IP Headers
 
 By default, OpenRun does not trust `X-Forwarded-For` or `X-Real-IP` headers supplied by the client. The client IP exposed to apps in `req.RemoteIP` is taken from the direct peer connection unless the peer is explicitly configured as a trusted proxy.

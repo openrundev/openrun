@@ -19,6 +19,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reverse proxied requests now strip inbound forwarding headers and rebuild a clean `X-Forwarded-*` / `X-Real-IP` set before sending the request upstream.
 - Requests for unknown `Host` values no longer route to the default domain unless `system.fallback_unknown_domains` is explicitly enabled.
 - Delegated builds now require a valid bearer token on `/_openrun/delegate_build`. Builder nodes should run with `builder.mode = "delegate_server"` and no longer require `security.admin_over_tcp = true` for delegated-build ingress. Existing delegated-build setups must set the same `system.builder_auth_token` value on the main install and every builder node before upgrading.
+- CORS is disabled by default for apps. The default `app_config.cors.allow_origin` is now empty and `app_config.cors.allow_credentials` is now `"false"`. Apps that need browser cross-origin access must opt in with an app config override such as `cors.allow_origin="https://frontend.example.com"` or `cors.allow_origin="origin"`.
 
 ## [v0.16.26] - 2026-04-06
 

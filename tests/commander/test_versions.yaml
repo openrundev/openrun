@@ -170,9 +170,10 @@ tests:
     stderr: "error: version commands not supported for dev app"
 
   # Test CORS
-  versions0300: # default is origin is *
+  versions0300: # default is CORS disabled
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
-    stdout: "*"
+    stdout:
+      line-count: 0
   versions0301: # change to "origin" setting
     command: ../openrun app update conf --promote 'cors.allow_origin="origin"' /versions_local1
   versions0302:
@@ -194,7 +195,7 @@ tests:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-headers | cut -f2- -d':'
     stdout: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Requested-With"
   versions0309: # disable CORS
-    command: ../openrun app update conf --promote 'cors.setting="disable"' /versions_local1
+    command: ../openrun app update conf --promote 'cors.allow_origin=""' /versions_local1
   versions0310:
     command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout:

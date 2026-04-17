@@ -119,13 +119,15 @@ secrets = [["regex:.*"]]
 #  openrun app update conf --promote 'cors.allow_methods="GET, POST"' /myapp
 
 # ==== CORS related Config ====
-# Default setting is to add CORS headers with * as allow_origin header. If cors.allow_origin is set to empty string,
-# no CORS headers are set. If allow_origin is set to "origin", the origin host is used as the allow_origin header. 
+# CORS is disabled by default. Containerized apps are normally accessed through
+# OpenRun, which handles auth before proxying requests to the app.
+# If cors.allow_origin is set to empty string, no CORS headers are set.
+# If allow_origin is set to "origin", the origin host is used as the allow_origin header.
 # For any other value for cors.allow_origin, the specified value is used as the allow_origin header.
-cors.allow_origin = "*"
+cors.allow_origin = ""
 cors.allow_methods = "*"
 cors.allow_headers = "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Requested-With"
-cors.allow_credentials = "true"
+cors.allow_credentials = "false"
 cors.max_age = "2678400"                                                                                                                 # 31 days
 
 # ==== Container related Config ====
