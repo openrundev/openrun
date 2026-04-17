@@ -12,10 +12,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -103,20 +103,14 @@ func (d *DiskReadFS) ReadFile(name string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (d *DiskReadFS) makeAbsolute(name string) string {
-	if !strings.HasPrefix(name, d.root) && !strings.HasPrefix(name, d.cleanRoot) {
-		name = path.Join(d.root, name)
-	}
-
-	return name
-}
-
 func (d *DiskReadFS) Stat(name string) (fs.FileInfo, error) {
-	absName := d.makeAbsolute(name)
+	absName, err := system.PathInDir(d.root, name)
+	if err != nil {
+		return nil, err
+	}
 	fi, err := os.Stat(absName)
 	if err != nil && errors.Is(err, fs.ErrNotExist) {
 		if _, ok := d.specFiles[name]; ok {
-			// File found in spec files, use that
 			fi := DiskFileInfo{
 				name:    name,
 				len:     int64(len(d.specFiles[name])),
@@ -130,7 +124,10 @@ func (d *DiskReadFS) Stat(name string) (fs.FileInfo, error) {
 }
 
 func (d *DiskReadFS) StatNoSpec(name string) (fs.FileInfo, error) {
-	absName := d.makeAbsolute(name)
+	absName, err := system.PathInDir(d.root, name)
+	if err != nil {
+		return nil, err
+	}
 	return os.Stat(absName)
 }
 
@@ -169,17 +166,23 @@ func (d *DiskReadFS) Reset() {
 }
 
 func (d *DiskWriteFS) Write(name string, bytes []byte) error {
-	name = d.makeAbsolute(name)
-	dirName := path.Dir(name)
+	absName, err := system.PathInDir(d.root, name)
+	if err != nil {
+		return err
+	}
+	dirName := path.Dir(absName)
 	if err := os.MkdirAll(dirName, 0700); err != nil {
 		return fmt.Errorf("error creating directory %s : %s", dirName, err)
 	}
-	return os.WriteFile(name, bytes, 0600)
+	return os.WriteFile(absName, bytes, 0600)
 }
 
 func (d *DiskWriteFS) Remove(name string) error {
-	name = d.makeAbsolute(name)
-	return os.Remove(name)
+	absName, err := system.PathInDir(d.root, name)
+	if err != nil {
+		return err
+	}
+	return os.Remove(absName)
 }
 
 type DiskFile struct {
