@@ -149,7 +149,8 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 	}
 
 	cloneOptions := git.CloneOptions{
-		URL: repo,
+		URL:  repo,
+		Tags: git.NoTags, // Don't fetch tags, to speed up checkout
 	}
 
 	if commit == "" {
