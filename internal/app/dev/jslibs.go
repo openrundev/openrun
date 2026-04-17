@@ -5,9 +5,10 @@ package dev
 
 import (
 	"fmt"
-	"os"
 	"path"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/evanw/esbuild/pkg/api"
@@ -15,6 +16,8 @@ import (
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/types"
 )
+
+var npmPackageNamePattern = regexp.MustCompile(`^(?:@[A-Za-z0-9][A-Za-z0-9._~-]*/)?[A-Za-z0-9][A-Za-z0-9._~-]*(?:/[A-Za-z0-9][A-Za-z0-9._~-]*)*$`)
 
 func NewLibrary(url string) *types.JSLibrary {
 	j := types.JSLibrary{
@@ -48,10 +51,6 @@ type JsLibManager struct {
 func (j *JsLibManager) Setup(dev *AppDev, sourceFS *appfs.WritableSourceFs, workFS *appfs.WorkFs) (string, error) {
 	if j.LibType == types.Library { //nolint:staticcheck
 		targetFile := path.Join(types.LIB_PATH, j.SanitizedFileName)
-		targetDir := path.Dir(targetFile)
-		if err := os.MkdirAll(targetDir, 0755); err != nil {
-			return "", fmt.Errorf("error creating directory %s : %s", types.LIB_PATH, err)
-		}
 		if err := dev.downloadFile(j.DirectUrl, sourceFS, targetFile); err != nil {
 			return "", fmt.Errorf("error downloading %s : %s", j.DirectUrl, err)
 		}
@@ -64,8 +63,11 @@ func (j *JsLibManager) Setup(dev *AppDev, sourceFS *appfs.WritableSourceFs, work
 }
 
 func (j *JsLibManager) setupEsbuild(dev *AppDev, sourceFS *appfs.WritableSourceFs, workFS *appfs.WorkFs) (string, error) {
-	targetDir := path.Join(sourceFS.Root, types.ESM_PATH)
-	targetFile := path.Join(targetDir, j.SanitizedFileName)
+	targetRel := path.Join(types.ESM_PATH, j.SanitizedFileName)
+	targetFile, err := sourceOutputAbsPath(sourceFS.Root, targetRel)
+	if err != nil {
+		return "", err
+	}
 
 	sourceFile, err := j.generateSourceFile(workFS)
 	if err != nil {
@@ -91,10 +93,7 @@ func (j *JsLibManager) setupEsbuild(dev *AppDev, sourceFS *appfs.WritableSourceF
 	}
 	//options.AbsWorkingDir = sourceFS.Root this fails if the source dir is not absolute
 	options.Outfile = targetFile
-
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return "", fmt.Errorf("error creating directory %s : %s", targetDir, err)
-	}
+	options.Write = false
 
 	if dev.systemConfig.NodePath != "" {
 		if dev.systemConfig.NodePath == "disable" {
@@ -119,26 +118,32 @@ func (j *JsLibManager) setupEsbuild(dev *AppDev, sourceFS *appfs.WritableSourceF
 		// Return the target file name. The caller can check if the file exists to determine if the
 		// setup was successful even though this step failed
 		dev.Error().Msgf("error building %s : %v", j.PackageName, result.Warnings)
-		return targetFile, fmt.Errorf("error building %s : %v", j.PackageName, result.Errors)
+		return targetRel, fmt.Errorf("error building %s : %v", j.PackageName, result.Errors)
 	}
 	if len(result.Warnings) > 0 {
 		dev.Warn().Msgf("warning building %s : %v", j.PackageName, result.Warnings)
 	}
 
 	for _, file := range result.OutputFiles {
-		target, _ := strings.CutPrefix(file.Path, sourceFS.Root)
-		dev.Trace().Msgf("esbuild output file : %s %s", file.Path, target)
-		err := sourceFS.Write(target, file.Contents)
+		target, err := cleanSourceRelativeOutput(sourceFS.Root, file.Path)
 		if err != nil {
+			return "", err
+		}
+		dev.Trace().Msgf("esbuild output file : %s %s", file.Path, target)
+		if err := sourceFS.Write(target, file.Contents); err != nil {
 			return "", fmt.Errorf("error writing esbuild output file %s : %s", file.Path, err)
 		}
 	}
-	return options.Outfile, nil
+	return targetRel, nil
 }
 
 func (j *JsLibManager) generateSourceFile(workFS *appfs.WorkFs) (string, error) {
+	if err := validatePackageName(j.PackageName); err != nil {
+		return "", err
+	}
+
 	sourceFileName := j.SanitizedFileName
-	sourceContent := fmt.Sprintf(`export * from "%s"`, j.PackageName)
+	sourceContent := fmt.Sprintf("export * from %s", strconv.Quote(j.PackageName))
 	if err := workFS.Write(sourceFileName, []byte(sourceContent)); err != nil {
 		return "", fmt.Errorf("error writing source file %s : %s", sourceFileName, err)
 	}
@@ -149,4 +154,17 @@ func sanitizeFileName(input string) string {
 	output := path.Base(input)
 	output = strings.ReplaceAll(output, "@", "")
 	return output
+}
+
+func validatePackageName(name string) error {
+	if name == "" {
+		return fmt.Errorf("package name cannot be empty")
+	}
+	if len(name) > 214 {
+		return fmt.Errorf("package name %q is too long", name)
+	}
+	if !npmPackageNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid package name %q", name)
+	}
+	return nil
 }

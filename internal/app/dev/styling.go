@@ -272,10 +272,9 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 
 	// Since the watcher process creates the file, the unit test framework (in memory filesystem)
 	// can't be used to test the watcher functionality)
-	targetFile := path.Join(sourceFS.Root, STYLE_FILE_PATH)
-	targetDir := path.Dir(targetFile)
-	if err := os.MkdirAll(targetDir, 0700); err != nil {
-		return fmt.Errorf("error creating directory %s : %s", targetDir, err)
+	targetFile, err := ensureSourceOutputDir(sourceFS.Root, STYLE_FILE_PATH, 0700)
+	if err != nil {
+		return err
 	}
 	args = append(args, "--watch")
 	args = append(args, "-c", path.Join(workFS.Root, "style", TAILWIND_CONFIG_FILE))
@@ -287,7 +286,6 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 	if s.watcherStdout != nil {
 		_ = s.watcherStdout.Close()
 	}
-	var err error
 	s.watcherStdout, err = os.Create(path.Join(workFS.Root, "tailwindcss.log"))
 	if err != nil {
 		return fmt.Errorf("error creating tailwindcss log file : %s", err)

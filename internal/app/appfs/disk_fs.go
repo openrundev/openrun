@@ -7,11 +7,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -22,8 +21,6 @@ import (
 type DiskReadFS struct {
 	*types.Logger
 	root      string
-	cleanRoot string
-	fs        fs.FS
 	specFiles types.SpecFiles
 }
 
@@ -41,8 +38,6 @@ func NewDiskReadFS(logger *types.Logger, root string, specFiles types.SpecFiles)
 	return &DiskReadFS{
 		Logger:    logger,
 		root:      cleanRoot,
-		fs:        os.DirFS(cleanRoot),
-		cleanRoot: cleanRoot,
 		specFiles: specFiles,
 	}
 }
@@ -52,13 +47,24 @@ type DiskWriteFS struct {
 }
 
 func (d *DiskReadFS) Open(name string) (fs.File, error) {
-	f, err := d.fs.Open(name)
+	localName, specName, err := d.cleanName(name)
+	if err != nil {
+		return nil, err
+	}
+
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close() //nolint:errcheck
+
+	f, err := root.Open(localName)
 	if err != nil && errors.Is(err, fs.ErrNotExist) {
-		if _, ok := d.specFiles[name]; ok {
+		if _, ok := d.specFiles[specName]; ok {
 			// File found in spec files, use that
-			df := NewDiskFile(name, []byte(d.specFiles[name]), DiskFileInfo{
-				name:    name,
-				len:     int64(len(d.specFiles[name])),
+			df := NewDiskFile(specName, []byte(d.specFiles[specName]), DiskFileInfo{
+				name:    specName,
+				len:     int64(len(d.specFiles[specName])),
 				modTime: time.Now(),
 			})
 			return df, nil
@@ -68,52 +74,45 @@ func (d *DiskReadFS) Open(name string) (fs.File, error) {
 }
 
 func (d *DiskReadFS) ReadFile(name string) ([]byte, error) {
-	if dir, ok := d.fs.(fs.ReadFileFS); ok {
-		if name[0] == '/' {
-			name = name[1:]
-		}
-		bytes, err := dir.ReadFile(name)
-		if err != nil && errors.Is(err, fs.ErrNotExist) {
-			if _, ok := d.specFiles[name]; ok {
-				// File found in spec files, use that
-				return []byte(d.specFiles[name]), nil
-			}
-		}
-		return bytes, err
-	}
-
-	file, err := d.fs.Open(name)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			if _, ok := d.specFiles[name]; ok {
-				// File found in spec files, use that
-				return []byte(d.specFiles[name]), nil
-			}
-		}
-		return nil, err
-	}
-
-	defer file.Close() //nolint:errcheck
-
-	buf := new(bytes.Buffer)
-	_, err = io.Copy(buf, file)
+	localName, specName, err := d.cleanName(name)
 	if err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close() //nolint:errcheck
+
+	bytes, err := root.ReadFile(localName)
+	if err != nil && errors.Is(err, fs.ErrNotExist) {
+		if _, ok := d.specFiles[specName]; ok {
+			// File found in spec files, use that
+			return []byte(d.specFiles[specName]), nil
+		}
+	}
+	return bytes, err
 }
 
 func (d *DiskReadFS) Stat(name string) (fs.FileInfo, error) {
-	absName, err := system.PathInDir(d.root, name)
+	localName, specName, err := d.cleanName(name)
 	if err != nil {
 		return nil, err
 	}
-	fi, err := os.Stat(absName)
+
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close() //nolint:errcheck
+
+	fi, err := root.Stat(localName)
 	if err != nil && errors.Is(err, fs.ErrNotExist) {
-		if _, ok := d.specFiles[name]; ok {
+		if _, ok := d.specFiles[specName]; ok {
 			fi := DiskFileInfo{
-				name:    name,
-				len:     int64(len(d.specFiles[name])),
+				name:    specName,
+				len:     int64(len(d.specFiles[specName])),
 				modTime: time.Now(),
 			}
 			return &fi, nil
@@ -124,27 +123,53 @@ func (d *DiskReadFS) Stat(name string) (fs.FileInfo, error) {
 }
 
 func (d *DiskReadFS) StatNoSpec(name string) (fs.FileInfo, error) {
-	absName, err := system.PathInDir(d.root, name)
+	localName, _, err := d.cleanName(name)
 	if err != nil {
 		return nil, err
 	}
-	return os.Stat(absName)
+
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close() //nolint:errcheck
+
+	return root.Stat(localName)
 }
 
 func (d *DiskReadFS) Glob(pattern string) (matches []string, err error) {
 	// TODO glob does not look at spec files
-	return fs.Glob(d.fs, pattern)
+	cleanPattern, err := system.CleanRelativePath(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close() //nolint:errcheck
+
+	return fs.Glob(root.FS(), cleanPattern)
 }
 
 func (d *DiskReadFS) StaticFiles() []string {
-	staticFiles, err := doublestar.Glob(d.fs, "static/**/*")
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		d.Logger.Err(err).Msg("error opening root for static files")
+		return nil
+	}
+	defer root.Close() //nolint:errcheck
+
+	rootFS := root.FS()
+	staticFiles, err := doublestar.Glob(rootFS, "static/**/*")
 	if err != nil {
 		d.Logger.Err(err).Msg("error getting static files")
 		return nil
 	}
 
 	var staticRootFiles []string
-	staticRootFiles, err = doublestar.Glob(d.fs, "static_root/**/*")
+	staticRootFiles, err = doublestar.Glob(rootFS, "static_root/**/*")
 	if err != nil {
 		d.Logger.Err(err).Msg("error getting static_root files")
 		return nil
@@ -166,23 +191,52 @@ func (d *DiskReadFS) Reset() {
 }
 
 func (d *DiskWriteFS) Write(name string, bytes []byte) error {
-	absName, err := system.PathInDir(d.root, name)
+	localName, _, err := d.cleanName(name)
 	if err != nil {
 		return err
 	}
-	dirName := path.Dir(absName)
-	if err := os.MkdirAll(dirName, 0700); err != nil {
-		return fmt.Errorf("error creating directory %s : %s", dirName, err)
+
+	if err := os.MkdirAll(d.root, 0700); err != nil {
+		return fmt.Errorf("error creating root directory %s : %s", d.root, err)
 	}
-	return os.WriteFile(absName, bytes, 0600)
+
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		return err
+	}
+	defer root.Close() //nolint:errcheck
+
+	dirName := filepath.Dir(localName)
+	if dirName != "." {
+		if err := root.MkdirAll(dirName, 0700); err != nil {
+			return fmt.Errorf("error creating directory %s : %s", dirName, err)
+		}
+	}
+	return root.WriteFile(localName, bytes, 0600)
 }
 
 func (d *DiskWriteFS) Remove(name string) error {
-	absName, err := system.PathInDir(d.root, name)
+	localName, _, err := d.cleanName(name)
 	if err != nil {
 		return err
 	}
-	return os.Remove(absName)
+
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		return err
+	}
+	defer root.Close() //nolint:errcheck
+
+	return root.Remove(localName)
+}
+
+func (d *DiskReadFS) cleanName(name string) (localName string, specName string, err error) {
+	name = strings.TrimPrefix(name, "/")
+	localName, err = system.CleanRelativeLocalPath(name)
+	if err != nil {
+		return "", "", err
+	}
+	return localName, filepath.ToSlash(localName), nil
 }
 
 type DiskFile struct {
