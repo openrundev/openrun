@@ -4,6 +4,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/app/starlark_type"
@@ -24,6 +25,51 @@ func TestGenTableName(t *testing.T) {
 
 	if result != expected {
 		t.Errorf("Expected %s, but got %s", expected, result)
+	}
+}
+
+func TestValidateTableName(t *testing.T) {
+	validNames := []string{
+		"table",
+		"Table1",
+		"_table",
+		"a_b_c_123",
+	}
+	for _, name := range validNames {
+		t.Run("valid_"+name, func(t *testing.T) {
+			if err := validateTableName(name); err != nil {
+				t.Fatalf("expected %q to be valid, got %v", name, err)
+			}
+		})
+	}
+
+	invalidNames := []struct {
+		name        string
+		errContains string
+	}{
+		{name: "", errContains: "cannot be empty"},
+		{name: "1table", errContains: "must start"},
+		{name: "table-name", errContains: "can only contain"},
+		{name: "table.name", errContains: "can only contain"},
+		{name: "table name", errContains: "can only contain"},
+		{name: "table\"name", errContains: "can only contain"},
+		{name: "table;name", errContains: "can only contain"},
+		{name: "table\nname", errContains: "can only contain"},
+		{name: "tábla", errContains: "can only contain"},
+		{name: "cl_schema", errContains: "reserved"},
+		{name: "CL_SCHEMA", errContains: "reserved"},
+		{name: strings.Repeat("a", MAX_TABLE_NAME_LEN+1), errContains: "exceeds max length"},
+	}
+	for _, tt := range invalidNames {
+		t.Run("invalid_"+tt.errContains, func(t *testing.T) {
+			err := validateTableName(tt.name)
+			if err == nil {
+				t.Fatalf("expected %q to be invalid", tt.name)
+			}
+			if !strings.Contains(err.Error(), tt.errContains) {
+				t.Fatalf("expected error containing %q, got %v", tt.errContains, err)
+			}
+		})
 	}
 }
 

@@ -27,6 +27,7 @@ const (
 	SELECT_DEFAULT_LIMIT = 10_000
 	SORT_ASCENDING       = "asc"
 	SORT_DESCENDING      = "desc"
+	MAX_TABLE_NAME_LEN   = 63
 )
 
 type SqlStore struct {
@@ -93,8 +94,37 @@ func (s *SqlStore) genRawTableName(table string) (string, error) {
 }
 
 func validateTableName(name string) error {
-	// TODO: validate table name
+	if name == "" {
+		return fmt.Errorf("table name cannot be empty")
+	}
+	if len(name) > MAX_TABLE_NAME_LEN {
+		return fmt.Errorf("table name %q exceeds max length %d", name, MAX_TABLE_NAME_LEN)
+	}
+	if strings.EqualFold(name, "cl_schema") {
+		return fmt.Errorf("table name %q is reserved", name)
+	}
+
+	for i := 0; i < len(name); i++ {
+		ch := name[i]
+		if i == 0 {
+			if !isTableNameStart(ch) {
+				return fmt.Errorf("invalid table name %q: must start with an ASCII letter or underscore", name)
+			}
+			continue
+		}
+		if !isTableNameChar(ch) {
+			return fmt.Errorf("invalid table name %q: can only contain ASCII letters, digits, and underscores", name)
+		}
+	}
 	return nil
+}
+
+func isTableNameStart(ch byte) bool {
+	return ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+}
+
+func isTableNameChar(ch byte) bool {
+	return isTableNameStart(ch) || (ch >= '0' && ch <= '9')
 }
 
 func genSortString(sortFields []string, mapper fieldMapper) (string, error) {
