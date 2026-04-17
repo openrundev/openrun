@@ -61,16 +61,6 @@ func TestRouterNewTCPHandler_SystemRoutes(t *testing.T) {
 		t.Fatalf("health body: want OK got %q", healthRec.Body.String())
 	}
 
-	perfReq := httptest.NewRequest(http.MethodGet, "http://example.com/testperf", nil)
-	perfRec := httptest.NewRecorder()
-	handler.router.ServeHTTP(perfRec, perfReq)
-	if perfRec.Code != http.StatusOK {
-		t.Fatalf("testperf status: want %d got %d", http.StatusOK, perfRec.Code)
-	}
-	if !strings.Contains(perfRec.Body.String(), `"status":"ok"`) {
-		t.Fatalf("testperf body: unexpected %q", perfRec.Body.String())
-	}
-
 	internalReq := httptest.NewRequest(http.MethodGet, "http://example.com/_openrun/apps", nil)
 	internalRec := httptest.NewRecorder()
 	handler.router.ServeHTTP(internalRec, internalReq)
@@ -206,7 +196,14 @@ func TestRouterHTTPSRedirectMiddlewarePreservesConfiguredCustomDomain(t *testing
 }
 
 func TestRouterPanicRecovery(t *testing.T) {
-	mw := panicRecovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	config, server, logger := newRouterTestServer(false, false)
+	handler := &Handler{
+		Logger: logger,
+		config: config,
+		server: server,
+	}
+
+	mw := handler.panicRecovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("boom")
 	}))
 

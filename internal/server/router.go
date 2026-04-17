@@ -75,13 +75,13 @@ type Handler struct {
 	router *chi.Mux
 }
 
-func panicRecovery(next http.Handler) http.Handler {
+func (h *Handler) panicRecovery(next http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rvr := recover(); rvr != nil && rvr != http.ErrAbortHandler {
 				msg := fmt.Sprint(rvr)
-				fmt.Fprintf(os.Stderr, "Panic %s: %s\n", msg, string(debug.Stack()))
-				// TODO log
+				fmt.Fprintf(os.Stderr, "Panic %s", msg)
+				h.Error().Msgf("Panic %s: %s", msg, string(debug.Stack()))
 				http.Error(w, msg, http.StatusInternalServerError)
 			}
 		}()
@@ -95,7 +95,6 @@ func panicRecovery(next http.Handler) http.Handler {
 func NewUDSHandler(logger *types.Logger, config *types.ServerConfig, server *Server) *Handler {
 	router := chi.NewRouter()
 	router.Use(server.handleStatus)
-	router.Use(panicRecovery)
 
 	handler := &Handler{
 		Logger: logger,
@@ -103,7 +102,7 @@ func NewUDSHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 		server: server,
 		router: router,
 	}
-
+	router.Use(handler.panicRecovery)
 	router.Use(middleware.Logger)
 	router.Use(middleware.CleanPath)
 
@@ -129,16 +128,17 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 		router.Use(handler.httpsRedirectMiddleware)
 	}
 	router.Use(server.handleStatus)
-	router.Use(panicRecovery)
+	router.Use(handler.panicRecovery)
 	router.Use(middleware.Logger)
 	router.Use(middleware.CleanPath)
+
 	if config.System.EnableCompression {
 		router.Use(middleware.Compress(5, COMPRESSION_ENABLED_MIME_TYPES...))
 	}
 
 	if config.Builder.Mode == "delegate_server" {
 		logger.Warn().Msg("Delegated build server mode is enabled")
-		router.Mount(types.INTERNAL_URL_PREFIX, handler.serveDelegatedBuild(true))
+		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveDelegatedBuild()))
 	} else if config.Security.AdminOverTCP {
 		// Mount the internal API's only if admin over TCP is enabled
 		logger.Warn().Msg("Admin API access over TCP is enabled")
@@ -1365,14 +1365,14 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 }
 
 // serveDelegatedBuild returns a handler for the delegated build API
-func (h *Handler) serveDelegatedBuild(enableBasicAuth bool) http.Handler {
+func (h *Handler) serveDelegatedBuild() http.Handler {
 	// These API's are mounted at /_openrun
 	r := chi.NewRouter()
 
 	// API to delegate build
 	r.Post("/delegate_build", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, MAX_DELEGATE_UPLOAD_SIZE)
-		h.apiHandler(w, r, enableBasicAuth, DELEGATE_BUILD_OP, func(r *http.Request) (any, error) {
+		h.apiHandler(w, r, true, DELEGATE_BUILD_OP, func(r *http.Request) (any, error) {
 			return container.DelegateHandler(r, h.config, h.Logger)
 		}, false)
 	}))
