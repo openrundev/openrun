@@ -18,6 +18,17 @@ h2, h3, h4, h5, h6 {
     --primary-saturation: 90%;
 }
 
+.hextra-nav-container nav > a:first-child {
+  height: 50px;
+  overflow: hidden;
+}
+
+.hextra-nav-container nav > a:first-child img {
+  width: 180px !important;
+  height: 180px !important;
+  max-width: none;
+}
+
 /* assets/css/custom.css */
 .medium-zoom-overlay,
 .medium-zoom-image--opened {

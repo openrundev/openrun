@@ -66,32 +66,32 @@ base = "https://github.com/openrundev/openrun/edit/main/docs/content"
 # Docs Navigation
 
 [[menu.main]]
-name = "QuickStart"
-url = "/docs/quickstart"
+name = "Quick Start"
+url = "/docs/quickstart/"
 identifier = "quickstart"
 weight = 1
 
 [[menu.main]]
 name = "Docs"
-url = "/docs"
+url = "/docs/"
 identifier = "docs"
 weight = 2
 
 [[menu.main]]
 name = "Features"
-url = "/features"
+url = "/features/"
 identifier = "features"
 weight = 3
 
 [[menu.main]]
 name = "Blog"
-url = "/blog"
+url = "/blog/"
 identifier = "blog"
 weight = 4
 
 [[menu.main]]
 name = "About"
-url = "/about"
+url = "/about/"
 weight = 5
 
 [[menu.main]]
