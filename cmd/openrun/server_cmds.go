@@ -19,7 +19,6 @@ import (
 	"github.com/openrundev/openrun/pkg/api"
 	"github.com/pkg/profile"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 )
 
 func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.ClientConfig) ([]*cli.Command, error) {
@@ -30,28 +29,25 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 			Usage: "Manage the OpenRun server",
 			Subcommands: []*cli.Command{
 				{
-					Name:   "start",
-					Usage:  "Start the openrun server",
-					Flags:  flags,
-					Before: altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
+					Name:  "start",
+					Usage: "Start the openrun server",
+					Flags: flags,
 					Action: func(cCtx *cli.Context) error {
 						return startServer(cCtx, serverConfig)
 					},
 				},
 				{
-					Name:   "stop",
-					Usage:  "Stop the openrun server",
-					Flags:  flags,
-					Before: altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
+					Name:  "stop",
+					Usage: "Stop the openrun server",
+					Flags: flags,
 					Action: func(cCtx *cli.Context) error {
 						return stopServer(cCtx, clientConfig)
 					},
 				},
 				{
-					Name:   "show-config",
-					Usage:  "Show the server dynamic config",
-					Flags:  flags,
-					Before: altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
+					Name:  "show-config",
+					Usage: "Show the server dynamic config",
+					Flags: flags,
 					Action: func(cCtx *cli.Context) error {
 						return showConfig(cCtx, clientConfig)
 					},
@@ -60,7 +56,6 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 					Name:      "update-config",
 					Usage:     "Update the server dynamic config",
 					Flags:     []cli.Flag{newBoolFlag("force", "f", "Force update even if the config version id is different", false)},
-					Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 					ArgsUsage: "configFilePath",
 					UsageText: `args: configFilePath
 

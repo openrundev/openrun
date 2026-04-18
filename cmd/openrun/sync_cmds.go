@@ -13,7 +13,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 )
 
 func initSyncCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -46,7 +45,6 @@ func syncScheduleCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		Name:      "schedule",
 		Usage:     "Create scheduled sync job for updating app config",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<filePath>",
 		UsageText: `args: <filePath>
 
@@ -119,7 +117,6 @@ func syncListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 		Name:      "list",
 		Usage:     "List the sync jobs",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "",
 		UsageText: `
 	Examples:
@@ -154,7 +151,6 @@ func syncRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 		Name:      "run",
 		Usage:     "Run specified sync job",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "args: <syncId>",
 		UsageText: `
 	Examples:
@@ -198,7 +194,6 @@ func syncDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 		Name:      "delete",
 		Usage:     "Delete specified sync job",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "args: <syncId>",
 		UsageText: `
 	Examples:

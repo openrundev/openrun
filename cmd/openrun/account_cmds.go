@@ -11,7 +11,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 )
 
 func initAccountCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -35,7 +34,6 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 		Name:      "link",
 		Usage:     "Link an app to to use specific account for a plugin",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPathGlob> <pluginName> <accountName>",
 		UsageText: `args: <appPathGlob> <pluginName> <accountName>
 
@@ -99,7 +97,6 @@ func accountListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 		Name:      "list",
 		Usage:     "List the accounts linked to an app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 
@@ -159,7 +156,6 @@ func updateParamsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		Name:      "update",
 		Usage:     "Update parameter value for the app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<paramName> <paramValue> <appPathGlob>",
 		UsageText: `args: <paramName> <paramValue> <appPathGlob>
 
@@ -224,7 +220,6 @@ func paramListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		Name:      "list",
 		Usage:     "List the params for an app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 

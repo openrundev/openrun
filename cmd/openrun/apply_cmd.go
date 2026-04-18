@@ -12,7 +12,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 )
 
 func initApplyCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -33,7 +32,6 @@ func initApplyCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		Name:      "apply",
 		Usage:     "Apply app configuration declaratively",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<filePath> [<appPathGlob>]",
 		UsageText: `args: <filePath> [<appPathGlob>]
 

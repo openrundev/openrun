@@ -11,7 +11,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 )
 
 func appUpdateSettingsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -34,7 +33,6 @@ func appUpdateStageWrite(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		Name:      "stage-write-access",
 		Usage:     "Update write access permission for staging app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<value:true|false> <appPathGlob>",
 
 		UsageText: `args: <value:true|false> <appPathGlob>
@@ -96,7 +94,6 @@ func appUpdatePreviewWrite(commonFlags []cli.Flag, clientConfig *types.ClientCon
 		Name:      "preview-write-access",
 		Usage:     "Update write access permission for preview apps",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<value:true|false> <appPathGlob>",
 
 		UsageText: `args: <value:true|false> <appPathGlob>
@@ -175,7 +172,6 @@ func appUpdateAppSpec(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		Name:      "spec",
 		Usage:     "Update app spec for apps",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<value:spec_name|none> <appPathGlob>",
 
 		UsageText: `args: <value:spec_name|none> <appPathGlob>
@@ -243,7 +239,6 @@ func appUpdateConfig(commonFlags []cli.Flag, clientConfig *types.ClientConfig, a
 		Name:      arg,
 		Usage:     fmt.Sprintf("Update %s metadata for apps", arg),
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: valName + " <appPathGlob>",
 
 		UsageText: fmt.Sprintf(`args: `+valName+` <appPathGlob>

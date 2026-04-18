@@ -13,7 +13,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 )
 
 func initVersionCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -38,7 +37,6 @@ func versionListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 		Name:      "list",
 		Usage:     "List the versions for an app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 
@@ -125,7 +123,6 @@ func versionFilesCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		Name:      "files",
 		Usage:     "List the files in a versions of the app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPath> [<version>]",
 		UsageText: `args: <appPath> [<version>]
 
@@ -203,7 +200,6 @@ func versionSwitchCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Name:      "switch",
 		Usage:     "Switch the version for an app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<version> <appPath> ",
 		UsageText: `args: <version> <appPath>
 
@@ -252,7 +248,6 @@ func versionRevertCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Name:      "revert",
 		Usage:     "Revert the version for an app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 

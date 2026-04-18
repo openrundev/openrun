@@ -15,7 +15,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 )
 
 const (
@@ -108,7 +107,6 @@ func appCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		Name:      "create",
 		Usage:     "Create a new app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<app_source_url> <app_path>",
 		UsageText: `args: <app_source_url> <app_path>
 
@@ -256,7 +254,6 @@ func appListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 		Name:      "list",
 		Usage:     "List apps",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "[<appPathGlob>]",
 		UsageText: `args: [<appPathGlob>]
 
@@ -422,7 +419,6 @@ func appDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		Name:      "delete",
 		Usage:     "Delete an app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPathGlob>",
 
 		UsageText: `args: <appPathGlob>
@@ -472,7 +468,6 @@ func appApproveCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 		Name:      "approve",
 		Usage:     "Approve app permissions",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPathGlob>",
 
 		UsageText: `args: <appPathGlob>
@@ -550,7 +545,6 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		Name:      "reload",
 		Usage:     "Reload the app source code",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPathGlob>",
 
 		UsageText: `args: <appPathGlob>
@@ -658,7 +652,6 @@ func appPromoteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 		Name:      "promote",
 		Usage:     "Promote the app from staging to production",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPathGlob>",
 		UsageText: `args: <appPathGlob>
 

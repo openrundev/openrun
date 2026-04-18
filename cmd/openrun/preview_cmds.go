@@ -11,7 +11,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 )
 
 func initPreviewCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -34,7 +33,6 @@ func previewCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Name:      "create",
 		Usage:     "Create a preview version of the app from specified git commit id",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<gitCommitId> <appPath>",
 		UsageText: `args: <gitCommitId> <appPath>
 

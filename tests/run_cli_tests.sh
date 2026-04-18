@@ -164,9 +164,6 @@ EOF
 fi
 
 cat <<EOF >> $CL_CONFIG_FILE
-
-
-
 [https]
 disable_client_certs = false
 
@@ -238,6 +235,18 @@ port = $http_port
 port = $https_port
 [system]
 container_command="$cmd"
+
+[[permissions.allow]]
+plugin = "proxy.in"
+method = "config"
+arguments = ["<CONTAINER_URL>"]
+
+[[permissions.allow]]
+plugin = "container.in"
+method = "config"
+arguments = ["regex:.*"]
+secrets = [["regex:.*"]]
+
 [secret.env]
 EOF
     rm -rf metadata run/openrun.sock

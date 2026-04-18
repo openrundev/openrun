@@ -13,7 +13,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 )
 
 func initWebhookCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -37,7 +36,6 @@ func webhookListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 		Name:      "list",
 		Usage:     "List the webhooks for an app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 
@@ -111,7 +109,6 @@ func webhookCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Name:      "create",
 		Usage:     "Create webhooks for an app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<webhookType> <appPath>",
 		UsageText: `args: <webhookType> appPath>
 
@@ -158,7 +155,6 @@ func webhookDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Name:      "delete",
 		Usage:     "Delete webhooks for an app",
 		Flags:     flags,
-		Before:    altsrc.InitInputSourceWithContext(flags, altsrc.NewTomlSourceFromFlagFunc(configFileFlagName)),
 		ArgsUsage: "<webhookType> <appPath>",
 		UsageText: `args: <webhookType> appPath>
 
