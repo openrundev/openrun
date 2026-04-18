@@ -84,6 +84,8 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsInt(t, "proxy idle timeout", 15, c.AppConfig.Proxy.IdleConnTimeoutSecs)
 	testutil.AssertEqualsBool(t, "proxy disable compression", true, c.AppConfig.Proxy.DisableCompression)
 	testutil.AssertEqualsString(t, "secrets provider", "env", c.AppConfig.Security.DefaultSecretsProvider)
+	testutil.AssertEqualsInt(t, "default permissions", 2, len(c.Permissions.Allow))
+	testutil.AssertEqualsInt(t, "default container secrets", 0, len(c.Permissions.Allow[1].Secrets))
 
 	testutil.AssertEqualsString(t, "kubernetes namespace", "openrun", c.Kubernetes.Namespace)
 	testutil.AssertEqualsString(t, "builder mode", "auto", c.Builder.Mode)

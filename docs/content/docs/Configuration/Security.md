@@ -71,7 +71,7 @@ See [appsecurity]({{< ref "appsecurity" >}}) for details about the application l
 
 ## Default Plugin Permissions
 
-OpenRun can allow plugin calls at the server level so apps do not need an explicit approved permission entry in app metadata. The default server permissions are:
+OpenRun can allow plugin calls at the server level so apps do not need an explicitly approved permission entry in app metadata. The default server permissions are:
 
 ```toml {filename="openrun.toml"}
 [[permissions.allow]]
@@ -83,17 +83,27 @@ arguments = ["<CONTAINER_URL>"]
 plugin = "container.in"
 method = "config"
 arguments = ["regex:.*"]
-secrets = [["regex:.*"]]
+secrets = [] # no secrets allowed by default
 ```
 
-`permissions.allow` adds globally approved plugin calls for all apps. `permissions.full_access` list grants the listed apps access to all plugin calls without requiring app-level approvals.
+`permissions.allow` adds globally approved plugin calls for all apps. If a permission entry includes `secrets`, that list controls which secrets the globally approved plugin call can resolve. An empty `secrets` list means the global approval does not grant access to any secret values. `permissions.full_access` list grants the listed apps access to all plugin calls without requiring app-level approvals.
 
 The default OpenRun server config already includes two implicit approvals used by containerized apps:
 
-- `proxy.in.config(container.URL, ...)`
-- `container.in.config(...)`
+- `proxy.config(container.URL, ...)`
+- `container.config(...)`
 
-Because of these defaults, a standard containerized app does not need explicit `ace.permission(...)` entries just to call `proxy.config(container.URL)` and `container.config(...)`. If stricter control is needed, the app can still declare the permission explicitly, for example to narrow the allowed arguments or secrets.
+Because of these defaults, a standard containerized app does not need explicit `ace.permission(...)` entries just to call `proxy.config(container.URL)` and `container.config(...)`. The default `container.config(...)` approval does not allow secrets. If a containerized app passes secrets through params, build args or generated secret volumes, the app must declare and receive approval for a `container.config` permission with the required `secrets=[...]` allowlist, or the server config must be intentionally changed to allow those secrets globally.
+
+For example, to restore blanket server-level secret access for containerized apps:
+
+```toml {filename="openrun.toml"}
+[[permissions.allow]]
+plugin = "container.in"
+method = "config"
+arguments = ["regex:.*"]
+secrets = [["regex:.*"]]
+```
 
 ## CSRF Protection
 

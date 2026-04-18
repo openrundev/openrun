@@ -112,7 +112,8 @@ arguments = ["<CONTAINER_URL>"]
 plugin = "container.in"
 method = "config"
 arguments = ["regex:.*"]
-secrets = [["regex:.*"]]
+secrets = [] # no secrets allowed by default, use [["regex:.*"]] to allow all secrets
+             # to be accessed by apps which are using the container plugin
 
 [app_config]
 # app config can be set at the app level using a metadata config update. For example:

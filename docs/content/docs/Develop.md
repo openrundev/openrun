@@ -100,13 +100,13 @@ param("preserve_host", type=BOOLEAN, description="Whether to preserve the origin
 
 This is defining three parameters. The type can be one of `STRING`(default), `INT`, `BOOLEAN`, `LIST` and `DICT`. The param structure definition is
 
-|   Property   | Optional |                    Type                    |         Default         |                                                       Notes                                                        |
-| :----------: | :------: | :----------------------------------------: | :---------------------: | :----------------------------------------------------------------------------------------------------------------: |
-|     name     |  False   |                   string                   |                         |                                       Has to be a valid starlark keyword                                           |
-|     type     |   True   | `STRING`, `INT`, `BOOLEAN`, `LIST`or`DICT` |        `STRING`         |                                                   The data type                                                    |
-|   default    |   True   |           Type as set for `type`           | Zero value for the type |                                                                                                                    |
-| description  |   True   |                   string                   |                         |                                           The description for the param                                            |
-|   required   |   True   |                    bool                    |          True           |                   If required is True and default value is not specified, then validation fails                    |
+|   Property   | Optional |                    Type                    |         Default         |                                                        Notes                                                        |
+| :----------: | :------: | :----------------------------------------: | :---------------------: | :-----------------------------------------------------------------------------------------------------------------: |
+|     name     |  False   |                   string                   |                         |                                         Has to be a valid starlark keyword                                          |
+|     type     |   True   | `STRING`, `INT`, `BOOLEAN`, `LIST`or`DICT` |        `STRING`         |                                                    The data type                                                    |
+|   default    |   True   |           Type as set for `type`           | Zero value for the type |                                                                                                                     |
+| description  |   True   |                   string                   |                         |                                            The description for the param                                            |
+|   required   |   True   |                    bool                    |          True           |                    If required is True and default value is not specified, then validation fails                    |
 | display_type |   True   |                   string                   |                         | How this param should be displayed in the UI. Options are `FILE`, `PASSWORD` and `TEXTAREA`, default is text input. |
 
 The parameters are available in the app Starlark code, through the `param` namespace. For example, `param.port`, `param.app_name` etc. See https://github.com/openrundev/appspecs/blob/main/python-flask/app.star for an example of how this can be used.
@@ -171,7 +171,7 @@ app = ace.app("My App",
 
 which completely specifies the app. This is saying that the app is using the container plugin to configure the container and the proxy plugin to proxy all API calls (`/` route) to the container URL. On the first API call to the app, OpenRun will build the image, start the container and proxy the API traffic to the appropriate port. No other configuration is required in Starlark. If the container spec does not define the port being exposed, then the container config needs to specify the port number to use. The port number can be parameterized.
 
-With the default server config, `proxy.in.config(container.URL, ...)` and `container.in.config(...)` are already approved implicitly, so no explicit `ace.permission(...)` entries are required for this standard containerized app flow.
+With the default server config, `proxy.config(container.URL, ...)` and `container.config(...)` are already approved implicitly, so no explicit `ace.permission(...)` entries are required for this standard containerized app flow. That default approval does not allow `container.config(...)` to resolve secrets; apps that pass secrets to containers must request and receive approval for the required `secrets=[...]` allowlist.
 
 [Containerized Apps]({{< ref "/docs/container" >}}) has more details on building containerized apps.
 
@@ -189,7 +189,7 @@ For plugin calls made by the app, the plugin permissions normally have to be spe
 
 For example `ace.permission("proxy.in", "config", [container.URL])` is a plugin call to `config` method in `proxy.in` plugin. The first argument has to be `container.URL`. Additional arguments are allowed. If no arguments are specified in the permission, then there is no restriction on arguments passed at runtime. If the value specified starts with `regex:`, then the value passed is checked against the specified regex at runtime.
 
-The default server config already allows `proxy.in.config(container.URL, ...)` and `container.in.config(...)`, so these two calls do not need an explicit permission entry unless the app wants to narrow the default access.
+The default server config already allows `proxy.config(container.URL, ...)` and `container.config(...)`, so these two calls do not need an explicit permission entry unless the app wants to narrow the default access or allow specific secrets for `container.config(...)`.
 
 See [secrets]({{< ref "/docs/configuration/secrets/#plugin-access-to-secrets" >}}) for details on specifying the secrets which can be accessed by the plugin call.
 

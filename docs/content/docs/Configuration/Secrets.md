@@ -103,7 +103,9 @@ hosted_domain = "example.com"
 
 ## Plugin Access to Secrets
 
-For secrets which are passed to plugins, through app params or plugin arguments, the plugin needs to be authorized to access the secret. The permissions for each plugin are defined in the app definition. For example:
+For secrets which are passed to plugins, through app params or plugin arguments, the plugin needs to be authorized to access the secret. The default server permission for `container.config(...)` does not allow any secrets, so containerized apps that use secrets in params, build args need an explicitly approved `container.config` permission with a `secrets=[...]` allowlist.
+
+The permissions for each plugin are defined in the app definition. For example:
 
 ```python {filename="app.star"}
 app = ace.app("test",
@@ -116,7 +118,15 @@ app = ace.app("test",
 
 The secrets accessible are specified as a list of list of strings. In this case, the `{{secret "c1" "c2"}}` and `{{secret "TESTENV"}}` calls are allowed. Additional keys are also permitted.
 
-If the key is specified as a string starting with `regex:`, then the subsequent part is a regex which is matched against the specified value. For example, `ace.permission("exec.in", "run", ["ls"], secrets=[["regex:TEST_.*"]),` allows accessing any secret starting with `TEST_`.
+If the key is specified as a string starting with `regex:`, then the subsequent part is a regex which is matched against the specified value. For example, `ace.permission("exec.in", "run", ["ls"], secrets=[["regex:TEST_.*"]])` allows accessing any secret starting with `TEST_`.
+
+For a containerized app, the permission usually looks like:
+
+```python {filename="app.star"}
+ace.permission("container.in", "config", [container.AUTO], secrets=[["DB_PASSWORD"]])
+```
+
+The app must then be approved with that permission before `{{secret "DB_PASSWORD"}}` can be resolved for the container.
 
 ## Multiple Keys
 
