@@ -21,6 +21,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Delegated builds now require a valid bearer token on `/_openrun/delegate_build`. Builder nodes should run with `builder.mode = "delegate_server"` and no longer require `security.admin_over_tcp = true` for delegated-build ingress. Existing delegated-build setups must set the same `system.builder_auth_token` value on the main install and every builder node before upgrading.
 - CORS is disabled by default for apps. The default `app_config.cors.allow_origin` is now empty and `app_config.cors.allow_credentials` is now `"false"`. Apps that need browser cross-origin access must opt in with an app config override such as `cors.allow_origin="https://frontend.example.com"` or `cors.allow_origin="origin"`.
 - The default server-level `container.config(...)` permission no longer allows access to all secrets. Containerized apps that pass secrets through params, build args or generated secret volumes now need an explicitly approved `container.config` permission with the required `secrets=[...]` allowlist, unless the server config is intentionally changed to allow those secrets globally.
+- Container runtime options now only pass raw Docker/Podman flags from app metadata when the flag is explicitly listed in `security.allowed_container_args`. Built-in `cpus` and `memory` options continue to be parsed by OpenRun and do not require this raw flag allowlist.
 
 ## [v0.16.26] - 2026-04-06
 

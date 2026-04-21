@@ -61,8 +61,8 @@ func acquireBuildLock(ctx context.Context, config *types.SystemConfig, buildId s
 }
 
 type CommandOptions struct {
-	cpus   string         `mapstructure:"cpus"`
-	memory string         `mapstructure:"memory"`
+	Cpus   string         `mapstructure:"cpus"`
+	Memory string         `mapstructure:"memory"`
 	Other  map[string]any `mapstructure:",remain"`
 }
 
@@ -94,6 +94,10 @@ func parseCommandOptions(command string, options map[string]string) (CommandOpti
 		return CommandOptions{}, err
 	}
 	return ret, nil
+}
+
+func ParseCommandOptions(containerCommand string, options map[string]string) (CommandOptions, error) {
+	return parseCommandOptions(path.Base(containerCommand), options)
 }
 
 type CommandCM struct {
@@ -384,31 +388,15 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 	}
 
 	// Add container related args
-	commandOptions, err := parseCommandOptions(path.Base(c.config.System.ContainerCommand), containerOptions)
+	commandOptions, err := ParseCommandOptions(c.config.System.ContainerCommand, containerOptions)
 	if err != nil {
 		return fmt.Errorf("error parsing command options: %w", err)
 	}
-	if commandOptions.cpus != "" {
-		cpus, err := CPUString(commandOptions.cpus, true)
-		if err != nil {
-			return fmt.Errorf("error parsing cpus value %q: %w", commandOptions.cpus, err)
-		}
-		args = append(args, "--cpus", cpus)
+	commandOptionArgs, err := CommandOptionArgs(commandOptions, c.config.Security.AllowedContainerArgs)
+	if err != nil {
+		return err
 	}
-	if commandOptions.memory != "" {
-		memory, err := BytesString(commandOptions.memory)
-		if err != nil {
-			return fmt.Errorf("error parsing memory value %q: %w", commandOptions.memory, err)
-		}
-		args = append(args, "--memory", memory)
-	}
-	for k, v := range commandOptions.Other {
-		if v == "" {
-			args = append(args, fmt.Sprintf("--%s", k))
-		} else {
-			args = append(args, fmt.Sprintf("--%s=%s", k, v))
-		}
-	}
+	args = append(args, commandOptionArgs...)
 
 	args = append(args, imageUrl)
 

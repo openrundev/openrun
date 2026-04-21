@@ -42,6 +42,10 @@ auth_required = false          # require authentication for all apps. This is ve
 default_git_auth = ""            # default git auth entry to use
 stage_enable_write_access = true # enable write plugin API call access for staging apps
 preview_enable_write_access = true #  enable write plugin API call access for preview apps
+allowed_container_args = {}      # the container args that are allowed to be used in the app config
+                                 # keys are the container arg names, values are the allowed values
+                                 # empty values allow valueless flags only
+                                 # non-empty values must match exactly, or can use regex:.* to allow all values
 
 
 # Logging related Config

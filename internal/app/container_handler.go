@@ -929,13 +929,15 @@ func (h *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []strin
 	}
 
 	// Add container related args
-	for k, v := range h.app.Metadata.ContainerOptions {
-		if v == "" {
-			args = append(args, fmt.Sprintf("--%s", k))
-		} else {
-			args = append(args, fmt.Sprintf("--%s=%s", k, v))
-		}
+	commandOptions, err := container.ParseCommandOptions(h.serverConfig.System.ContainerCommand, h.app.Metadata.ContainerOptions)
+	if err != nil {
+		return nil, err
 	}
+	commandOptionArgs, err := container.CommandOptionArgs(commandOptions, h.serverConfig.Security.AllowedContainerArgs)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, commandOptionArgs...)
 
 	if len(h.mountArgs) > 0 {
 		args = append(args, h.mountArgs...)

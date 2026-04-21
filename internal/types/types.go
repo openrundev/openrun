@@ -223,17 +223,18 @@ type HttpsConfig struct {
 
 // SecurityConfig is the security related configuration
 type SecurityConfig struct {
-	AdminOverTCP             bool     `toml:"admin_over_tcp"`
-	AdminPasswordBcrypt      string   `toml:"admin_password_bcrypt"`
-	AppDefaultAuthType       string   `toml:"app_default_auth_type"`
-	AuthRequired             bool     `toml:"auth_required"`
-	SessionMaxAge            int      `toml:"session_max_age"`
-	SessionHttpsOnly         bool     `toml:"session_https_only"`
-	TrustedProxies           []string `toml:"trusted_proxies"`
-	CallbackUrl              string   `toml:"callback_url"`
-	DefaultGitAuth           string   `toml:"default_git_auth"`
-	StageEnableWriteAccess   bool     `toml:"stage_enable_write_access"`
-	PreviewEnableWriteAccess bool     `toml:"preview_enable_write_access"`
+	AdminOverTCP             bool              `toml:"admin_over_tcp"`
+	AdminPasswordBcrypt      string            `toml:"admin_password_bcrypt"`
+	AppDefaultAuthType       string            `toml:"app_default_auth_type"`
+	AuthRequired             bool              `toml:"auth_required"`
+	SessionMaxAge            int               `toml:"session_max_age"`
+	SessionHttpsOnly         bool              `toml:"session_https_only"`
+	TrustedProxies           []string          `toml:"trusted_proxies"`
+	CallbackUrl              string            `toml:"callback_url"`
+	DefaultGitAuth           string            `toml:"default_git_auth"`
+	StageEnableWriteAccess   bool              `toml:"stage_enable_write_access"`
+	PreviewEnableWriteAccess bool              `toml:"preview_enable_write_access"`
+	AllowedContainerArgs     map[string]string `toml:"allowed_container_args"` // the container args that are allowed to be used in the app config
 }
 
 // MetadataConfig is the configuration for the Metadata persistence layer

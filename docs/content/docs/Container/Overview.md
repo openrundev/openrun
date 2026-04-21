@@ -76,24 +76,40 @@ Like all metadata updates, arg updates are staged. Pass `--promote` to promote i
 
 ## Container Options
 
-To set CPU and memory limits and other options for the container, pass `--copt optkey[=optvalue]` to the app create command. For example, `--copt cpu-shares=1000`
+To set CPU and memory limits for the container, pass `--copt cpus=<value>` and `--copt memory=<value>` to the app create command.
 
 ```sh
 openrun app create --approve --spec python-fasthtml \
   --param APP_MODULE=basic_ws:app \
-  --copt cpu=2 \
+  --copt cpus=2 \
+  --copt memory=512m \
   https://github.com/AnswerDotAI/fasthtml/examples fasthtmlapp.localhost:/
 ```
 
-sets the CPU request for the container to 2.
+sets the CPU limit for the container to 2 cores and the memory limit to 512 MiB.
 
 To update container options, run
 
 ```sh
-openrun app update copt cpu=3 fasthtmlapp.localhost:/
+openrun app update copt cpus=3 fasthtmlapp.localhost:/
 ```
 
 Like all metadata updates, option updates are staged. Pass `--promote` to promote immediately or run `app promote` to promote from stage to prod.
+
+OpenRun parses `cpus` and `memory` before passing them to the container runtime. CPU values can be specified as cores (`2`, `0.5`) or millicores (`500m`). Memory values can be specified using Docker-style units (`512m`, `1g`) or Kubernetes quantities (`512Mi`, `1Gi`).
+
+Additional Docker/Podman runtime flags are disabled by default. To allow an app to set a raw runtime flag with `--copt`, the server admin must add the flag to `security.allowed_container_args` in `openrun.toml`.
+
+```toml {filename="openrun.toml"}
+[security]
+allowed_container_args = {
+  "init" = "",
+  "label" = "regex:^team=.+$",
+  "security-opt" = "label=disable",
+}
+```
+
+The map key is the container runtime flag name without the leading `--`. An empty value allows only a valueless flag, such as `--init`. A non-empty value must match exactly unless it starts with `regex:`, in which case OpenRun matches the user-provided value against that regular expression.
 
 {{<callout type="info" >}}
 **Note:** By default there are no limits set for the containers. That allows for full utilization of system resources. To avoid individual apps from utilizing too much of the system resources, CPU/memory limits can be set.
