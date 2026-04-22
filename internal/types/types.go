@@ -235,6 +235,7 @@ type SecurityConfig struct {
 	StageEnableWriteAccess   bool              `toml:"stage_enable_write_access"`
 	PreviewEnableWriteAccess bool              `toml:"preview_enable_write_access"`
 	AllowedContainerArgs     map[string]string `toml:"allowed_container_args"` // the container args that are allowed to be used in the app config
+	AllowedMounts            []string          `toml:"allowed_mounts"`         // the volume mounts paths that are allowed to be used in the app config
 }
 
 // MetadataConfig is the configuration for the Metadata persistence layer

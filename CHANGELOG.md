@@ -12,6 +12,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added `security.trusted_proxies` server config to control which reverse proxies or load balancers are allowed to supply forwarded client IP headers.
 - Added `system.fallback_unknown_domains` server config to optionally preserve legacy routing of unknown hostnames to the default domain.
 - Added `system.builder_auth_token` server config for delegated container builds, using a shared bearer token between the main OpenRun install and builder node(s).
+- Added `security.allowed_mounts` server config to allow administrators to approve host directories that apps may use as container bind-mount sources.
 
 ### Changed
 
@@ -22,6 +23,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - CORS is disabled by default for apps. The default `app_config.cors.allow_origin` is now empty and `app_config.cors.allow_credentials` is now `"false"`. Apps that need browser cross-origin access must opt in with an app config override such as `cors.allow_origin="https://frontend.example.com"` or `cors.allow_origin="origin"`.
 - The default server-level `container.config(...)` permission no longer allows access to all secrets. Containerized apps that pass secrets through params, build args or generated secret volumes now need an explicitly approved `container.config` permission with the required `secrets=[...]` allowlist, unless the server config is intentionally changed to allow those secrets globally.
 - Container runtime options now only pass raw Docker/Podman flags from app metadata when the flag is explicitly listed in `security.allowed_container_args`. Built-in `cpus` and `memory` options continue to be parsed by OpenRun and do not require this raw flag allowlist.
+- Container bind-mount sources are now restricted to the app source directory, the app runtime directory, or directories listed in `security.allowed_mounts`. Relative bind sources must stay inside the app source tree.
 
 ## [v0.16.26] - 2026-04-06
 

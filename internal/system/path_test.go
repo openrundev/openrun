@@ -121,6 +121,23 @@ func TestPathInDir(t *testing.T) {
 	}
 }
 
+func TestCleanAbsolutePath(t *testing.T) {
+	tempDir := t.TempDir()
+
+	got, err := CleanAbsolutePath(filepath.Join(tempDir, "missing", "..", "report.txt"))
+	if err != nil {
+		t.Fatalf("CleanAbsolutePath returned error: %v", err)
+	}
+	want := filepath.Join(tempDir, "report.txt")
+	if got != want {
+		t.Fatalf("CleanAbsolutePath = %q, want %q", got, want)
+	}
+
+	if _, err := CleanAbsolutePath("bad\x00path"); err == nil {
+		t.Fatal("CleanAbsolutePath should reject NUL bytes")
+	}
+}
+
 func TestPathWithinDir(t *testing.T) {
 	tempDir := t.TempDir()
 

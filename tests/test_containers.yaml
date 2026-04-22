@@ -21,6 +21,11 @@ tests:
   container0034: # check curl
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskdev3
     stdout: invalid
+  container0035: # mount outside of allowed path
+    command: ../openrun app create --spec python-flask --cvol /tmp2:/atmp ./flaskapp /cont_flaskdev4
+  container0036: # mount fails
+    command: curl -sS localhost:${HTTP_PORT}/cont_flaskdev4
+    stdout: bind volume source /tmp2 is not allowed
   container0040: # check curl dev works
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskdev
     stdout: "hello"

@@ -236,6 +236,9 @@ port = $https_port
 [system]
 container_command="$cmd"
 
+[security]
+allowed_mounts = ["/tmp"]
+
 [[permissions.allow]]
 plugin = "proxy.in"
 method = "config"

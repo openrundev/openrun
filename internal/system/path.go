@@ -119,6 +119,27 @@ func PathInDir(root, relPath string) (string, error) {
 	return filepath.Join(root, localRelPath), nil
 }
 
+// CleanAbsolutePath returns an absolute, cleaned local filesystem path. If the
+// path exists, symlinks are resolved.
+func CleanAbsolutePath(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("path cannot be empty")
+	}
+	if strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf("path cannot contain NUL bytes")
+	}
+
+	absPath, err := filepath.Abs(name)
+	if err != nil {
+		return "", err
+	}
+	absPath = filepath.Clean(absPath)
+	if resolvedPath, err := filepath.EvalSymlinks(absPath); err == nil {
+		absPath = resolvedPath
+	}
+	return absPath, nil
+}
+
 // PathWithinDir reports whether targetPath is lexically inside root.
 //
 // This is a purely lexical check: symlinks under root that point outside root

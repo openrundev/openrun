@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/container"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
@@ -517,11 +519,49 @@ func parseBindPaths(vol string) (string, string, bool) {
 	return "", p1, readOnly
 }
 
-// parseVolumeString parses the volume string. It returns four values
-// 1. openrun prefix, if present
-// 2. volume name, UNNAMED_VOLUME if unnamed, "" for bind
-// 3. the rest of the volume string
-// 4. error
+func (h *ContainerHandler) validateVolumeSource(src string, sourceRelative bool) (string, error) {
+	expanded := os.ExpandEnv(src)
+	if !filepath.IsAbs(expanded) {
+		localPath, err := system.CleanRelativeLocalPath(expanded)
+		if err != nil {
+			return "", err
+		}
+		if sourceRelative {
+			return localPath, nil
+		}
+		return "." + string(filepath.Separator) + localPath, nil
+	}
+
+	sourcePath, err := system.CleanAbsolutePath(expanded)
+	if err != nil {
+		return "", err
+	}
+
+	allowedRoots := []string{}
+	allowedRoots = append(allowedRoots, h.serverConfig.Security.AllowedMounts...)
+	if h.app.SourceUrl != "" && h.app.SourceUrl != types.NO_SOURCE && !system.IsGit(h.app.SourceUrl) {
+		allowedRoots = append(allowedRoots, h.app.SourceUrl)
+	}
+	if h.app.AppRunPath != "" {
+		allowedRoots = append(allowedRoots, h.app.AppRunPath)
+	}
+
+	for _, root := range allowedRoots {
+		cleanRoot, err := system.CleanAbsolutePath(os.ExpandEnv(root))
+		if err != nil {
+			return "", fmt.Errorf("invalid allowed mount path %s: %w", root, err)
+		}
+		inside, err := system.PathWithinDir(cleanRoot, sourcePath)
+		if err != nil {
+			return "", err
+		}
+		if inside {
+			return sourcePath, nil
+		}
+	}
+	return "", fmt.Errorf("source path %s is not within an allowed mount directory", sourcePath)
+}
+
 func (h *ContainerHandler) parseVolumeString(vol string) (*container.VolumeInfo, error) {
 	vol, hasSecretPrefix := strings.CutPrefix(vol, VOL_PREFIX_SECRET)
 	if hasSecretPrefix {
@@ -530,21 +570,30 @@ func (h *ContainerHandler) parseVolumeString(vol string) (*container.VolumeInfo,
 		if src == "" || dst == "" {
 			return nil, fmt.Errorf("expected bind mount (source:target) for cl_secret volume %s", vol)
 		}
+		sourcePath, err := h.validateVolumeSource(src, true)
+		if err != nil {
+			return nil, fmt.Errorf("secret volume source %s is not allowed: %w", src, err)
+		}
 		return &container.VolumeInfo{
 			IsSecret:   hasSecretPrefix,
 			VolumeName: "",
-			SourcePath: src,
+			SourcePath: sourcePath,
 			TargetPath: dst,
 			ReadOnly:   readOnly,
 		}, nil
 	}
 
 	src, dst, readOnly := parseBindPaths(vol)
-	if strings.HasPrefix(src, "/") || strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") {
+	expandedSrc := os.ExpandEnv(src)
+	if filepath.IsAbs(expandedSrc) || strings.HasPrefix(expandedSrc, "./") || strings.HasPrefix(expandedSrc, "../") {
 		// Bind mount
+		sourcePath, err := h.validateVolumeSource(src, false)
+		if err != nil {
+			return nil, fmt.Errorf("bind volume source %s is not allowed: %w", src, err)
+		}
 		return &container.VolumeInfo{
 			VolumeName: "",
-			SourcePath: src,
+			SourcePath: sourcePath,
 			TargetPath: dst,
 			ReadOnly:   readOnly,
 		}, nil

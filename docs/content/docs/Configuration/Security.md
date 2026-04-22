@@ -105,6 +105,15 @@ arguments = ["regex:.*"]
 secrets = [["regex:.*"]]
 ```
 
+Container bind-mount sources are constrained separately from Starlark plugin permissions. Relative bind sources must stay inside the app source directory. Absolute bind sources must be inside the app source directory, the app runtime directory, or a directory listed in `security.allowed_mounts`:
+
+```toml {filename="openrun.toml"}
+[security]
+allowed_mounts = ["$OPENRUN_HOME/mounts", "/srv/openrun/shared"]
+```
+
+`security.allowed_mounts` entries are expanded with environment variables before validation.
+
 ## CSRF Protection
 
 CSRF protection is automatically enabled for OpenRun internal APIs and for API calls to apps. This uses the [CrossOriginProtection](https://pkg.go.dev/net/http#CrossOriginProtection) middleware. Use `app_config.security.disable_csrf_protection = true` in `openrun.toml` to disable globally for all apps. CSRF protection can be disabled individually for apps by running `openrun app update conf --promote 'security.disable_csrf_protection=true' /myapp`

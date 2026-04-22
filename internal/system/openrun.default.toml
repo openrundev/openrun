@@ -46,7 +46,7 @@ allowed_container_args = {}      # the container args that are allowed to be use
                                  # keys are the container arg names, values are the allowed values
                                  # empty values allow valueless flags only
                                  # non-empty values must match exactly, or can use regex:.* to allow all values
-
+allowed_mounts = ["$OPENRUN_HOME/mounts"] # host paths that app volume sources are allowed to mount
 
 # Logging related Config
 [logging]

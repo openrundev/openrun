@@ -125,7 +125,16 @@ OpenRun automatically manages volumes for containers. Volumes definitions are pi
 
 For named and unnamed volumes, OpenRun creates a unique named volume for each app. This volume is mounted across app updates.
 
-Bind mounts are supported for mounting secrets into the container. If the source has a template file `secret.tmpl` which needs to be loaded into the container at `/app/secret.ini`, a volume can be defined like `cl_secret:secret.tmpl:/app/secret.ini`. The template file is passed the environment params and the generated file is bound into the container. For example, if the template file contains
+Bind mounts are supported for source files and administrator-approved host paths. Relative bind mount sources such as `./config.yaml:/app/config.yaml` are resolved inside the app source directory and cannot use parent directory traversal. Absolute bind mount sources must be inside the app source directory, the app runtime directory, or one of the directories listed in `security.allowed_mounts`.
+
+```toml {filename="openrun.toml"}
+[security]
+allowed_mounts = ["$OPENRUN_HOME/mounts", "/srv/openrun/shared"]
+```
+
+Entries in `security.allowed_mounts` use environment variable expansion, so `$OPENRUN_HOME` can be used in the path.
+
+Bind mounts are also supported for mounting generated secrets into the container. If the source has a template file `secret.tmpl` which needs to be loaded into the container at `/app/secret.ini`, a volume can be defined like `cl_secret:secret.tmpl:/app/secret.ini`. The template file is passed the environment params and the generated file is bound into the container. For example, if the template file contains
 
 ```{filename="secret.tmpl"}
 [DEFAULT]

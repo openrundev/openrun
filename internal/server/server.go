@@ -500,6 +500,10 @@ func (s *Server) Start() error {
 		return fmt.Errorf("error changing to OPENRUN_HOME directory: %w", err)
 	}
 
+	if err := os.MkdirAll(path.Join(clHome, "mounts"), 0700); err != nil {
+		return fmt.Errorf("error creating directory %s : %s", "mounts", err)
+	}
+
 	// Start unix domain socket server
 	if !strings.HasPrefix(serverUri, "http://") && !strings.HasPrefix(serverUri, "https://") {
 		if strings.HasPrefix(serverUri, clHome) {

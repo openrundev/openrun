@@ -60,6 +60,8 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsBool(t, "admin tcp", false, c.Security.AdminOverTCP)
 	testutil.AssertEqualsString(t, "admin password bcrypt", "", c.Security.AdminPasswordBcrypt)
 	testutil.AssertEqualsInt(t, "trusted proxies", 0, len(c.Security.TrustedProxies))
+	testutil.AssertEqualsInt(t, "allowed mounts", 1, len(c.Security.AllowedMounts))
+	testutil.AssertEqualsString(t, "allowed mount", "$OPENRUN_HOME/mounts", c.Security.AllowedMounts[0])
 
 	// Container Settings
 	testutil.AssertEqualsString(t, "command", "auto", c.System.ContainerCommand)

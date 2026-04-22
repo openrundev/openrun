@@ -528,7 +528,12 @@ func (c *CommandCM) genMountArgs(sourceDir string, volumeInfo []*VolumeInfo, par
 
 		if volInfo.VolumeName == "" {
 			// bind mount
-			args = append(args, fmt.Sprintf("--volume=%s:%s", volInfo.SourcePath, volInfo.TargetPath))
+			sourcePath := makeAbsolute(sourceDir, volInfo.SourcePath)
+			volStr := fmt.Sprintf("%s:%s", sourcePath, volInfo.TargetPath)
+			if volInfo.ReadOnly {
+				volStr += ":ro"
+			}
+			args = append(args, fmt.Sprintf("--volume=%s", volStr))
 			continue
 		}
 
