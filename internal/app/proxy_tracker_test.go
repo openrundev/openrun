@@ -13,6 +13,18 @@ import (
 	"time"
 )
 
+func newTestReverseProxy(t *testing.T, target *url.URL) *httputil.ReverseProxy {
+	t.Helper()
+
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
+	proxy.Transport = transport
+	t.Cleanup(transport.CloseIdleConnections)
+
+	return proxy
+}
+
 func TestTracker_BasicByteTracking(t *testing.T) {
 	t.Parallel()
 
@@ -26,7 +38,7 @@ func TestTracker_BasicByteTracking(t *testing.T) {
 
 	// Create reverse proxy to backend
 	backendURL, _ := url.Parse(backend.URL)
-	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	proxy := newTestReverseProxy(t, backendURL)
 
 	// Create tracker with 5 second window
 	tracker := NewTracker(proxy, 5)
@@ -77,7 +89,7 @@ func TestTracker_MultipleRequests(t *testing.T) {
 
 	// Create reverse proxy and tracker
 	backendURL, _ := url.Parse(backend.URL)
-	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	proxy := newTestReverseProxy(t, backendURL)
 	tracker := NewTracker(proxy, 5)
 
 	frontend := httptest.NewServer(tracker)
@@ -140,7 +152,7 @@ func TestTracker_StreamingResponse(t *testing.T) {
 
 	// Create reverse proxy and tracker
 	backendURL, _ := url.Parse(backend.URL)
-	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	proxy := newTestReverseProxy(t, backendURL)
 	tracker := NewTracker(proxy, 5)
 
 	frontend := httptest.NewServer(tracker)
@@ -201,7 +213,7 @@ func TestTracker_ConcurrentRequests(t *testing.T) {
 
 	// Create reverse proxy and tracker
 	backendURL, _ := url.Parse(backend.URL)
-	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	proxy := newTestReverseProxy(t, backendURL)
 	tracker := NewTracker(proxy, 5)
 
 	frontend := httptest.NewServer(tracker)
@@ -256,7 +268,7 @@ func TestTracker_RollingWindow(t *testing.T) {
 
 	// Create reverse proxy and tracker with SHORT 2-second window
 	backendURL, _ := url.Parse(backend.URL)
-	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	proxy := newTestReverseProxy(t, backendURL)
 	tracker := NewTracker(proxy, 2)
 
 	frontend := httptest.NewServer(tracker)
@@ -313,7 +325,7 @@ func TestTracker_LargePayloads(t *testing.T) {
 
 	// Create reverse proxy and tracker
 	backendURL, _ := url.Parse(backend.URL)
-	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	proxy := newTestReverseProxy(t, backendURL)
 	tracker := NewTracker(proxy, 5)
 
 	frontend := httptest.NewServer(tracker)
@@ -383,7 +395,7 @@ func TestTracker_SpreadOver5Seconds(t *testing.T) {
 
 	// Create reverse proxy and tracker with 10-second window
 	backendURL, _ := url.Parse(backend.URL)
-	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	proxy := newTestReverseProxy(t, backendURL)
 	tracker := NewTracker(proxy, 10)
 
 	frontend := httptest.NewServer(tracker)

@@ -87,6 +87,10 @@ func (w *countingResponseWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+func (w *countingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 // Support Flush for streaming/SSE.
 func (w *countingResponseWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
