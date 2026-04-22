@@ -9,8 +9,8 @@ defaultContentLanguage = "en"
 enableInlineShortcodes = true
 
 [outputs]
-home = ["html", "llms", "markdown"]
-page = ["html", "llms", "markdown"]
+home = ["html", "llms"]
+page = ["html", "llms"]
 section = ["html", "llms", "markdown"]
 
 [[module.imports]]
