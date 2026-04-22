@@ -34,3 +34,24 @@ h2, h3, h4, h5, h6 {
 .medium-zoom-image--opened {
   z-index: 9999;
 }
+
+.openrun-feature-card {
+  --openrun-card-rgb: 0 137 123;
+  --openrun-card-alpha: 0.14;
+
+  background: radial-gradient(
+    ellipse at 50% 80%,
+    rgb(var(--openrun-card-rgb) / var(--openrun-card-alpha)),
+    hsl(0 0% 100% / 0)
+  );
+}
+
+.openrun-feature-card-light {
+  --openrun-card-rgb: 0 137 123;
+  --openrun-card-alpha: 0.14;
+}
+
+.openrun-feature-card-dark {
+  --openrun-card-rgb: 11 95 139;
+  --openrun-card-alpha: 0.2;
+}
