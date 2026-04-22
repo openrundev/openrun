@@ -1,6 +1,7 @@
 /dist/
 /.vscode
 /openrun
+/mounts/
 /metadata/
 /openrun.toml
 *.swp
