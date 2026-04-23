@@ -123,6 +123,9 @@ secrets = [] # no secrets allowed by default, use [["regex:.*"]] to allow all se
 # app config can be set at the app level using a metadata config update. For example:
 #  openrun app update conf --promote 'cors.allow_methods="GET, POST"' /myapp
 
+# Action related settings
+action.max_request_body_bytes = 33554432
+
 # ==== CORS related Config ====
 # CORS is disabled by default. Containerized apps are normally accessed through
 # OpenRun, which handles auth before proxying requests to the app.

@@ -7,11 +7,13 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
 	"maps"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -37,6 +39,11 @@ import (
 var embedHtml embed.FS
 var embedFS = hashfs.NewFS(embedHtml)
 
+const (
+	defaultMaxRequestBodyBytes int64 = 32 << 20
+	multipartMaxMemoryBytes    int64 = 10 << 20
+)
+
 type ActionLink struct {
 	Name       string
 	Path       string
@@ -49,32 +56,33 @@ type ActionLink struct {
 // and an API interface
 type Action struct {
 	*types.Logger
-	isDev             bool
-	name              string
-	description       string
-	appPath           string
-	run               starlark.Callable
-	suggest           starlark.Callable
-	params            []apptype.AppParam
-	paramValuesStr    map[string]string
-	paramDict         starlark.StringDict
-	actionTemplate    *template.Template
-	pagePath          string
-	AppTemplate       *template.Template
-	StyleType         types.StyleType
-	LightTheme        string
-	DarkTheme         string
-	containerProxyUrl string
-	hidden            map[string]bool // params which are not shown in the UI
-	Links             []ActionLink    // links to other actions
-	showValidate      bool
-	auditInsert       func(*types.AuditEvent) error
-	containerHandler  any // Container manager, if available, used to run commands in the container
-	esmLibs           []types.JSLibrary
-	appPathDomain     types.AppPathDomain
-	serverConfig      *types.ServerConfig
-	permit            []string
-	rbacApi           rbac.RBACAPI
+	isDev               bool
+	name                string
+	description         string
+	appPath             string
+	run                 starlark.Callable
+	suggest             starlark.Callable
+	params              []apptype.AppParam
+	paramValuesStr      map[string]string
+	paramDict           starlark.StringDict
+	actionTemplate      *template.Template
+	pagePath            string
+	AppTemplate         *template.Template
+	StyleType           types.StyleType
+	LightTheme          string
+	DarkTheme           string
+	containerProxyUrl   string
+	hidden              map[string]bool // params which are not shown in the UI
+	Links               []ActionLink    // links to other actions
+	showValidate        bool
+	auditInsert         func(*types.AuditEvent) error
+	containerHandler    any // Container manager, if available, used to run commands in the container
+	esmLibs             []types.JSLibrary
+	appPathDomain       types.AppPathDomain
+	serverConfig        *types.ServerConfig
+	maxRequestBodyBytes int64
+	permit              []string
+	rbacApi             rbac.RBACAPI
 }
 
 // NewAction creates a new action
@@ -82,7 +90,7 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 	params []apptype.AppParam, paramValuesStr map[string]string, paramDict starlark.StringDict,
 	appPath string, styleType types.StyleType, containerProxyUrl string, hidden []string, showValidate bool,
 	auditInsert func(*types.AuditEvent) error, containerManager any, jsLibs []types.JSLibrary, appPathDomain types.AppPathDomain,
-	serverConfig *types.ServerConfig, permit []string, rbacApi rbac.RBACAPI) (*Action, error) {
+	serverConfig *types.ServerConfig, actionConfig types.ActionConfig, permit []string, rbacApi rbac.RBACAPI) (*Action, error) {
 
 	funcMap := system.GetFuncMap()
 
@@ -134,6 +142,9 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 			esmLibs = append(esmLibs, lib)
 		}
 	}
+	if actionConfig.MaxRequestBodyBytes <= 0 {
+		actionConfig.MaxRequestBodyBytes = defaultMaxRequestBodyBytes
+	}
 
 	return &Action{
 		Logger:            &appLogger,
@@ -156,10 +167,11 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 		containerHandler:  containerManager,
 		esmLibs:           esmLibs,
 		// Links, AppTemplate and Theme names are initialized later
-		appPathDomain: appPathDomain,
-		serverConfig:  serverConfig,
-		permit:        permit,
-		rbacApi:       rbacApi,
+		appPathDomain:       appPathDomain,
+		serverConfig:        serverConfig,
+		maxRequestBodyBytes: actionConfig.MaxRequestBodyBytes,
+		permit:              permit,
+		rbacApi:             rbacApi,
 	}, nil
 }
 
@@ -295,8 +307,11 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.appPathDomain, a.serverConfig))
 	isHtmxRequest := r.Header.Get("HX-Request") == "true"
 
-	r.ParseMultipartForm(10 << 20) //nolint:errcheck // 10 MB max file size
-	// ignore error if no form data is passed
+	r.Body = http.MaxBytesReader(w, r.Body, a.maxRequestBodyBytes)
+	if err := r.ParseMultipartForm(multipartMaxMemoryBytes); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		writeRequestParseError(w, err, a.maxRequestBodyBytes)
+		return
+	}
 
 	deferredCleanup := func() error {
 		// Check for any deferred cleanups
@@ -583,6 +598,16 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 			return
 		}
 	}
+}
+
+func writeRequestParseError(w http.ResponseWriter, err error, maxRequestBodyBytes int64) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) || errors.Is(err, multipart.ErrMessageTooLarge) {
+		http.Error(w, fmt.Sprintf("request body too large: limit is %d bytes", maxRequestBodyBytes), http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	http.Error(w, err.Error(), http.StatusBadRequest)
 }
 
 func uploadedFilePath(tempDir, filename string) (string, error) {

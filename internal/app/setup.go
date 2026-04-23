@@ -566,7 +566,7 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	action, err := action.NewAction(a.Logger, a.sourceFS, a.IsDev, name, description, path, run, suggest,
 		slices.Collect(maps.Values(a.paramInfo)), a.paramValuesStr, a.paramDict, a.Path, a.appStyle.GetStyleType(),
 		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerHandler, a.jsLibs, a.AppPathDomain(),
-		a.serverConfig, permit, a.rbacApi)
+		a.serverConfig, a.AppConfig.Action, permit, a.rbacApi)
 	if err != nil {
 		return fmt.Errorf("error creating action %s: %w", name, err)
 	}

@@ -163,6 +163,12 @@ For string type params, the `display_type` property can be set to `FILE`, `PASSW
 
 For `FILE` display type, the Action app user can upload a file. The file is uploaded to a temp file on the server and the file name is available through the `args.param_name`. The file can be process as required from disk. Multiple `FILE` type params are supported, each param can upload one file only. The temp files are deleted at the end of the handler function execution.
 
+Action request bodies are capped by default at `33554432` bytes. To change this globally, update `app_config.action.max_request_body_bytes` in `openrun.toml`. To override it for one app, run:
+
+```
+openrun app update conf --promote 'action.max_request_body_bytes=67108864' /myapp
+```
+
 To return file as output for the Action, using the [`fs.serve_tmp_file`]({{< ref "/docs/plugins/catalog/#serve_tmp_file" >}}) API. This makes a file on disk available through an API.
 
 See number_lines app [code](https://github.com/openrundev/apps/blob/main/misc/num_lines/app.star):[demo](https://utils.demo.clace.io/num_lines) for an example of using this API. Use `report=ace.DOWNLOAD` property in the `ace.result` to generate a file download link.

@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Action request bodies are now capped by default at `33554432` bytes. The limit can be configured globally with `app_config.action.max_request_body_bytes` or overridden per app with `openrun app update conf --promote 'action.max_request_body_bytes=<bytes>' /myapp`.
+
 ## [v0.17.0] - 2026-04-22
 
 ### Added

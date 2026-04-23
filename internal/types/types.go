@@ -127,14 +127,19 @@ type SecretConfig map[string]any
 type NodeConfig map[string]any
 
 type AppConfig struct {
-	CORS       CORS       `toml:"cors"`
-	Container  Container  `toml:"container"`
-	Kubernetes Kubernetes `toml:"kubernetes"`
-	Proxy      Proxy      `toml:"proxy"`
-	FS         FS         `toml:"fs"`
-	Audit      Audit      `toml:"audit"`
-	Security   Security   `toml:"security"`
-	StarBase   string     `toml:"star_base"` // The base directory for starlark config files
+	CORS       CORS         `toml:"cors"`
+	Action     ActionConfig `toml:"action"`
+	Container  Container    `toml:"container"`
+	Kubernetes Kubernetes   `toml:"kubernetes"`
+	Proxy      Proxy        `toml:"proxy"`
+	FS         FS           `toml:"fs"`
+	Audit      Audit        `toml:"audit"`
+	Security   Security     `toml:"security"`
+	StarBase   string       `toml:"star_base"` // The base directory for starlark config files
+}
+
+type ActionConfig struct {
+	MaxRequestBodyBytes int64 `toml:"max_request_body_bytes"`
 }
 type Security struct {
 	DefaultSecretsProvider string `toml:"default_secrets_provider"`

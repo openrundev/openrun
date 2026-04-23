@@ -1,6 +1,9 @@
 package app_test
 
 import (
+	"bytes"
+	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path"
@@ -11,6 +14,31 @@ import (
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 )
+
+func createMultipartUploadRequest(t *testing.T, reqPath, fieldName, fileName string, fileSize int) *http.Request {
+	t.Helper()
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	part, err := writer.CreateFormFile(fieldName, fileName)
+	if err != nil {
+		t.Fatalf("CreateFormFile error: %v", err)
+	}
+
+	if _, err = part.Write(bytes.Repeat([]byte("a"), fileSize)); err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+
+	if err = writer.Close(); err != nil {
+		t.Fatalf("Close error: %v", err)
+	}
+
+	request := httptest.NewRequest("POST", reqPath, body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("HX-Request", "true")
+	return request
+}
 
 func actionTester(t *testing.T, rootPath bool, actionPath string) {
 	t.Helper()
@@ -611,6 +639,36 @@ app = ace.app("testApp",
 			</div>
   		 </div>
         <div id="action_result" hx-swap-oob="innerHTML"> <output role="alert"> </output> </div>html/template: "custom" is undefined`, response.Body.String())
+}
+
+func TestActionUploadRequestBodyLimit(t *testing.T) {
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+def handler(dry_run, args):
+	return ace.result(status="done", values=["ok"], report=ace.TEXT)
+
+app = ace.app("testApp",
+	actions=[ace.action("testAction", "/", handler)])
+		`,
+		"params.star": `param("upload", description="upload", type=STRING, display_type=FILE, default="")`,
+	}
+
+	a, _, err := CreateTestAppConfig(logger, fileData, types.AppConfig{
+		Action: types.ActionConfig{
+			MaxRequestBodyBytes: 128,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := createMultipartUploadRequest(t, "/test", "upload", "report.txt", 512)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", http.StatusRequestEntityTooLarge, response.Code)
+	testutil.AssertStringContains(t, response.Body.String(), "request body too large")
 }
 
 func TestCustomESMImport(t *testing.T) {
