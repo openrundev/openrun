@@ -55,12 +55,8 @@ func (a *App) earlyHints(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getRequestUrl(r *http.Request) string {
-	if r.TLS != nil {
-		return "https://" + r.Host
-	} else {
-		return "http://" + r.Host
-	}
+func (a *App) getRequestUrl(r *http.Request) string {
+	return system.GetRequestScheme(r, a.serverConfig.Security.TrustedProxies) + "://" + r.Host
 }
 
 func defaultPortForScheme(scheme string) string {
@@ -88,7 +84,7 @@ func sameOriginURL(refURL *url.URL, requestURL *url.URL) bool {
 		cmp.Or(requestURL.Port(), defaultPortForScheme(requestURL.Scheme))
 }
 
-func validatedRefererRedirect(r *http.Request, referrer string) (string, bool) {
+func (a *App) validatedRefererRedirect(r *http.Request, referrer string) (string, bool) {
 	if referrer == "" {
 		return "", false
 	}
@@ -98,7 +94,7 @@ func validatedRefererRedirect(r *http.Request, referrer string) (string, bool) {
 		return "", false
 	}
 
-	requestURL, err := url.Parse(getRequestUrl(r))
+	requestURL, err := url.Parse(a.getRequestUrl(r))
 	if err != nil {
 		return "", false
 	}
@@ -180,7 +176,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			if pagePath == "/" {
 				pagePath = ""
 			}
-			appUrl := getRequestUrl(r) + appPath
+			appUrl := a.getRequestUrl(r) + appPath
 			requestData = starlark_type.Request{
 				AppName:        a.Name,
 				AppPath:        appPath,
@@ -402,7 +398,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			if !isHtmxRequest && isUpdateRequest && fragment != "" {
 				// If block is defined, and this is a non-GET request, then redirect to the referrer page
 				// This handles the Post/Redirect/Get pattern required if HTMX is disabled
-				if redirectTarget, ok := validatedRefererRedirect(r, referrer); ok {
+				if redirectTarget, ok := a.validatedRefererRedirect(r, referrer); ok {
 					a.Trace().Msgf("Redirecting to %s with code %d", redirectTarget, http.StatusSeeOther)
 					http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
 					return

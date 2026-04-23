@@ -635,11 +635,7 @@ func (s *Server) canonicalAuthRedirectURL(r *http.Request, appPathDomain types.A
 	}
 
 	requestURL := *r.URL
-	if r.TLS != nil {
-		requestURL.Scheme = "https"
-	} else {
-		requestURL.Scheme = "http"
-	}
+	requestURL.Scheme = system.GetRequestScheme(r, s.config.Security.TrustedProxies)
 
 	if _, port, err := net.SplitHostPort(r.Host); err == nil {
 		requestURL.Host = net.JoinHostPort(canonicalDomain, port)

@@ -612,7 +612,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.AppConfig.CORS.AllowOrigin != "" {
 		origin := a.AppConfig.CORS.AllowOrigin
 		if a.AppConfig.CORS.AllowOrigin == "origin" {
-			origin = getRequestUrl(r)
+			origin = a.getRequestUrl(r)
 		}
 
 		if r.Method == http.MethodOptions {

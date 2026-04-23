@@ -229,7 +229,7 @@ func (s *OAuthManager) ValidateAuthType(authType string) bool {
 
 func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider string) (string, []string, error) {
 	cookieName := genCookieName(appProvider)
-	requestUrl := system.GetRequestUrl(r)
+	requestUrl := system.GetRequestUrl(r, s.config.Security.TrustedProxies)
 
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {

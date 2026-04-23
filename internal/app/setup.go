@@ -849,6 +849,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 			}
 
 			clientIP := a.getRemoteIP(r)
+			requestScheme := system.GetRequestScheme(r, a.serverConfig.Security.TrustedProxies)
 			for _, key := range []string{"Forwarded", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Prefix"} {
 				r.Header.Del(key)
 			}
@@ -857,11 +858,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 				r.RemoteAddr = net.JoinHostPort(clientIP, "0")
 			}
 			r.Header.Set("X-Forwarded-Host", system.GetHostname(r.Host))
-			if r.TLS != nil {
-				r.Header.Set("X-Forwarded-Proto", "https")
-			} else {
-				r.Header.Set("X-Forwarded-Proto", "http")
-			}
+			r.Header.Set("X-Forwarded-Proto", requestScheme)
 			if a.Path != "" && a.Path != "/" {
 				r.Header.Set("X-Forwarded-Prefix", a.Path)
 			}

@@ -166,13 +166,47 @@ func MapServerHost(host string) string {
 	return host
 }
 
-func GetRequestUrl(r *http.Request) string {
-	ret := strings.Builder{}
-	if r.TLS != nil {
-		ret.WriteString("https://")
-	} else {
-		ret.WriteString("http://")
+// GetRequestScheme returns "https" if the request was received over TLS locally,
+// or if the direct peer is listed in trustedProxies and set X-Forwarded-Proto: https.
+// Otherwise it returns "http". Only the first value of X-Forwarded-Proto is honored
+// and only when the direct peer is a trusted proxy.
+func GetRequestScheme(r *http.Request, trustedProxies []string) string {
+	if r != nil && r.TLS != nil {
+		return "https"
 	}
+
+	if r == nil {
+		return "http"
+	}
+
+	peerIP := parseIPValue(r.RemoteAddr)
+	if peerIP != nil && isTrustedProxy(peerIP, trustedProxies) {
+		forwarded := r.Header.Get("X-Forwarded-Proto")
+		if forwarded != "" {
+			// When a request traverses multiple proxies the header can be a
+			// comma-separated list like "https, http"; the leftmost value is
+			// the client-facing scheme. SplitN with n=2 avoids scanning the
+			// full string when there are many hops.
+			proto := strings.ToLower(strings.TrimSpace(strings.SplitN(forwarded, ",", 2)[0]))
+			if proto == "https" || proto == "http" {
+				return proto
+			}
+		}
+	}
+
+	return "http"
+}
+
+// IsOrigRequestHTTPS reports whether the request is (or originally came in as) HTTPS,
+// honoring X-Forwarded-Proto only when the direct peer is a trusted proxy.
+func IsOrigRequestHTTPS(r *http.Request, trustedProxies []string) bool {
+	return GetRequestScheme(r, trustedProxies) == "https"
+}
+
+func GetRequestUrl(r *http.Request, trustedProxies []string) string {
+	ret := strings.Builder{}
+	ret.WriteString(GetRequestScheme(r, trustedProxies))
+	ret.WriteString("://")
 	if r.Host == "" {
 		ret.WriteString(r.URL.Host)
 	} else {

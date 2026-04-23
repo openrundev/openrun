@@ -99,7 +99,7 @@ func (s *SAMLManager) ValidateSAMLProvider(authType string) bool {
 
 func (s *SAMLManager) CheckSAMLAuth(w http.ResponseWriter, r *http.Request, appProvider string) (string, []string, error) {
 	cookieName := genSAMLCookieName(appProvider)
-	requestUrl := system.GetRequestUrl(r)
+	requestUrl := system.GetRequestUrl(r, s.config.Security.TrustedProxies)
 
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {

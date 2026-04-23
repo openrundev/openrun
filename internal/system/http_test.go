@@ -38,6 +38,46 @@ func TestGetClientIPFallsBackToXRealIPForTrustedProxy(t *testing.T) {
 	testutil.AssertEqualsString(t, "client ip", "198.51.100.30", clientIP)
 }
 
+func TestGetRequestSchemeDefaultsToHTTP(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://example.com", nil)
+	req.RemoteAddr = "198.51.100.10:4321"
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	testutil.AssertEqualsString(t, "scheme", "http", GetRequestScheme(req, nil))
+}
+
+func TestGetRequestSchemeIgnoresHeaderFromUntrustedPeer(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://example.com", nil)
+	req.RemoteAddr = "198.51.100.10:4321"
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	testutil.AssertEqualsString(t, "scheme", "http", GetRequestScheme(req, []string{"127.0.0.0/8"}))
+}
+
+func TestGetRequestSchemeHonorsHeaderFromTrustedProxy(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://example.com", nil)
+	req.RemoteAddr = "127.0.0.1:4321"
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	testutil.AssertEqualsString(t, "scheme", "https", GetRequestScheme(req, []string{"127.0.0.0/8"}))
+}
+
+func TestGetRequestSchemeUsesFirstHeaderValue(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://example.com", nil)
+	req.RemoteAddr = "127.0.0.1:4321"
+	req.Header.Set("X-Forwarded-Proto", "https, http")
+
+	testutil.AssertEqualsString(t, "scheme", "https", GetRequestScheme(req, []string{"127.0.0.1"}))
+}
+
+func TestGetRequestSchemeRejectsBogusHeaderValue(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://example.com", nil)
+	req.RemoteAddr = "127.0.0.1:4321"
+	req.Header.Set("X-Forwarded-Proto", "ftp")
+
+	testutil.AssertEqualsString(t, "scheme", "http", GetRequestScheme(req, []string{"127.0.0.1"}))
+}
+
 func TestGetHostname(t *testing.T) {
 	testCases := []struct {
 		name string
