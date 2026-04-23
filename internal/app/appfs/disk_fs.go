@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -27,12 +26,9 @@ type DiskReadFS struct {
 var _ ReadableFS = (*DiskReadFS)(nil)
 
 func NewDiskReadFS(logger *types.Logger, root string, specFiles types.SpecFiles) *DiskReadFS {
-	cleanRoot, err := filepath.Abs(root)
+	cleanRoot, err := system.CleanAbsolutePath(root)
 	if err != nil {
 		cleanRoot = filepath.Clean(root)
-	}
-	if resolvedRoot, err := filepath.EvalSymlinks(cleanRoot); err == nil {
-		cleanRoot = resolvedRoot
 	}
 
 	return &DiskReadFS{
@@ -231,12 +227,11 @@ func (d *DiskWriteFS) Remove(name string) error {
 }
 
 func (d *DiskReadFS) cleanName(name string) (localName string, specName string, err error) {
-	name = strings.TrimPrefix(name, "/")
-	localName, err = system.CleanRelativeLocalPath(name)
+	specName, err = system.CleanRelativePath(name)
 	if err != nil {
 		return "", "", err
 	}
-	return localName, filepath.ToSlash(localName), nil
+	return filepath.FromSlash(specName), specName, nil
 }
 
 type DiskFile struct {

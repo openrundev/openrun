@@ -72,3 +72,18 @@ func TestDiskFSGlobRejectsTraversalPattern(t *testing.T) {
 		t.Fatal("Glob should reject traversal patterns")
 	}
 }
+
+func TestDiskFSCleanNameRejectsAbsoluteAndTraversalPaths(t *testing.T) {
+	readFS := NewDiskReadFS(testutil.TestLogger(), t.TempDir(), nil)
+
+	for _, name := range []string{
+		"/secret.txt",
+		"../secret.txt",
+		`..\secret.txt`,
+		`C:\secret.txt`,
+	} {
+		if _, _, err := readFS.cleanName(name); err == nil {
+			t.Fatalf("cleanName(%q) should reject invalid path", name)
+		}
+	}
+}
