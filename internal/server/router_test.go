@@ -22,7 +22,7 @@ func newRouterTestServer(adminOverTCP, redirectToHTTPS bool) (*types.ServerConfi
 			Port: 7443,
 		},
 		Security: types.SecurityConfig{
-			AdminOverTCP: adminOverTCP,
+			UnsafeAdminOverTCP: adminOverTCP,
 		},
 		System: types.SystemConfig{
 			DefaultDomain: "example.com",

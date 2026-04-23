@@ -67,7 +67,7 @@ builder_auth_token = "replace-with-a-random-shared-secret"
 mode = "delegate_server"
 ```
 
-Starting the OpenRun server enables the HTTP port (default 25222) to receive delegated build requests. The container manager (Docker/Podman) should be running on the builder machine. Builder nodes should use `builder.mode = "delegate_server"` and do not need `security.admin_over_tcp = true`. The delegated build endpoint requires `Authorization: Bearer <builder_auth_token>` and rejects requests if the token is missing or does not match.
+Starting the OpenRun server enables the HTTP port (default 25222) to receive delegated build requests. The container manager (Docker/Podman) should be running on the builder machine. Builder nodes should use `builder.mode = "delegate_server"`. The delegated build endpoint requires `Authorization: Bearer <builder_auth_token>` and rejects requests if the token is missing or does not match.
 
 On the actual OpenRun installation, add in the config:
 

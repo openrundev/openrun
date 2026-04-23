@@ -57,7 +57,7 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsString(t, "admin user", "admin", c.AdminUser)
 
 	// Security Settings
-	testutil.AssertEqualsBool(t, "admin tcp", false, c.Security.AdminOverTCP)
+	testutil.AssertEqualsBool(t, "admin tcp", false, c.Security.UnsafeAdminOverTCP)
 	testutil.AssertEqualsString(t, "admin password bcrypt", "", c.Security.AdminPasswordBcrypt)
 	testutil.AssertEqualsInt(t, "trusted proxies", 0, len(c.Security.TrustedProxies))
 	testutil.AssertEqualsInt(t, "allowed mounts", 1, len(c.Security.AllowedMounts))

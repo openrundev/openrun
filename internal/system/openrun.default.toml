@@ -28,7 +28,8 @@ storage_location = "$OPENRUN_HOME/run/certmagic"    # where to cache dynamically
 disable_client_certs = true                    # disable client certs for HTTPS
 
 [security]
-admin_over_tcp = false           # enable admin API's over TCP (HTTP/HTTPS). Admin is over UDS only by default
+unsafe_admin_over_tcp = false    # enable admin API's over TCP (HTTP/HTTPS). Admin is over UDS only by default.
+                                 # It is strongly recommended to keep this setting disabled (false).
 admin_password_bcrypt = ""       # the password bcrypt value
 session_secret = ""              # the secret key for session cookie. Auto generated on server startup if not set
 session_block_key = ""           # the block key for session cookie. Auto generated on server startup if not set

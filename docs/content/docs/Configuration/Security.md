@@ -47,7 +47,7 @@ To enable remote API calls, where the client is on a different machine from the 
 
 ```toml {filename="openrun.toml"}
 [security]
-admin_over_tcp = true
+unsafe_admin_over_tcp = true
 ```
 
 If running the OpenRun client from a remote machine, the config options required for the client are:

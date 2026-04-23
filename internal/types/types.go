@@ -228,7 +228,7 @@ type HttpsConfig struct {
 
 // SecurityConfig is the security related configuration
 type SecurityConfig struct {
-	AdminOverTCP             bool              `toml:"admin_over_tcp"`
+	UnsafeAdminOverTCP       bool              `toml:"unsafe_admin_over_tcp"`
 	AdminPasswordBcrypt      string            `toml:"admin_password_bcrypt"`
 	AppDefaultAuthType       string            `toml:"app_default_auth_type"`
 	AuthRequired             bool              `toml:"auth_required"`

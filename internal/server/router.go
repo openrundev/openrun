@@ -139,9 +139,9 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	if config.Builder.Mode == "delegate_server" {
 		logger.Warn().Msg("Delegated build server mode is enabled")
 		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveDelegatedBuild()))
-	} else if config.Security.AdminOverTCP {
+	} else if config.Security.UnsafeAdminOverTCP {
 		// Mount the internal API's only if admin over TCP is enabled
-		logger.Warn().Msg("Admin API access over TCP is enabled")
+		logger.Warn().Msg("Admin API access over TCP is enabled, this is **NOT** recommended")
 		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveInternal(true)))
 	} else {
 		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(http.NotFoundHandler())) // reserve the path
