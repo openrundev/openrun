@@ -7,6 +7,7 @@ package plugins
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -40,6 +41,7 @@ func AsString(x starlark.Value) (string, error) {
 const (
 	formEncodingMultipart = "multipart/form-data"
 	formEncodingURL       = "application/x-www-form-urlencoded"
+	defaultTimeoutSeconds = 300
 )
 
 func init() {
@@ -113,12 +115,13 @@ func (h *httpPlugin) reqMethod(method string) func(thread *starlark.Thread, _ *s
 			body         starlark.String
 			jsonBody     starlark.Value
 			errorOnFail  = starlark.True
+			timeout      = starlark.MakeInt(defaultTimeoutSeconds)
 		)
 
 		if err := starlark.UnpackArgs(method, args, kwargs, "url", &urlv, "params?", &params, "headers",
 			&headers, "body", &body, "form_body", &formBody, "form_encoding", &formEncoding,
 			"json_body", &jsonBody, "auth_basic", &basicAuth, "auth_signature", &signAuth,
-			"error_on_fail", &errorOnFail); err != nil {
+			"error_on_fail", &errorOnFail, "timeout", &timeout); err != nil {
 			return nil, err
 		}
 
@@ -142,7 +145,23 @@ func (h *httpPlugin) reqMethod(method string) func(thread *starlark.Thread, _ *s
 			return nil, err
 		}
 
-		req, err := http.NewRequest(strings.ToUpper(method), rawurl, nil)
+		timeoutSeconds, ok := timeout.Int64()
+		if !ok || timeoutSeconds <= 0 {
+			return nil, fmt.Errorf("timeout must be a positive integer number of seconds")
+		}
+
+		ctx := app.GetContext(thread)
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		requestCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+		cancelOnError := true
+		defer func() {
+			if cancelOnError {
+				cancel()
+			}
+		}()
+		req, err := http.NewRequestWithContext(requestCtx, strings.ToUpper(method), rawurl, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -170,10 +189,20 @@ func (h *httpPlugin) reqMethod(method string) func(thread *starlark.Thread, _ *s
 		}
 
 		if errorOnFail && (res.StatusCode < 200 || res.StatusCode >= 300) { // 1xx and 3xx are also failed by default
+			res.Body.Close() //nolint:errcheck
 			return nil, fmt.Errorf("http request failed with status code %d: %s", res.StatusCode, res.Status)
 		}
 
-		r := &Response{*res}
+		r := &Response{
+			Response:   *res,
+			thread:     thread,
+			cleanupKey: fmt.Sprintf("response_body_%p", res.Body),
+			cancel:     cancel,
+		}
+		app.DeferCleanup(thread, r.cleanupKey, func() error {
+			return r.cleanupBody(false)
+		}, false)
+		cancelOnError = false
 		return app.NewResponse(r.Struct()), nil
 	}
 }
@@ -466,6 +495,27 @@ func setBody(req *http.Request, body starlark.String, formData *starlark.Dict, f
 // starlark methods
 type Response struct {
 	http.Response
+	thread     *starlark.Thread
+	cleanupKey string
+	cancel     context.CancelFunc
+}
+
+func (r *Response) cleanupBody(clearCleanup bool) error {
+	if clearCleanup && r.thread != nil && r.cleanupKey != "" {
+		app.ClearCleanup(r.thread, r.cleanupKey)
+		r.cleanupKey = ""
+	}
+
+	var err error
+	if r.Body != nil {
+		err = r.Body.Close()
+		r.Body = nil
+	}
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	return err
 }
 
 // Struct turns a response into a *starlark.Struct
@@ -498,7 +548,9 @@ func (r *Response) Text(thread *starlark.Thread, _ *starlark.Builtin, args starl
 	if err != nil {
 		return nil, err
 	}
-	r.Body.Close() //nolint:errcheck
+	if err := r.cleanupBody(true); err != nil {
+		return nil, err
+	}
 	// reset reader to allow multiple calls
 	r.Body = io.NopCloser(bytes.NewReader(data))
 
@@ -517,7 +569,9 @@ func (r *Response) JSON(thread *starlark.Thread, _ *starlark.Builtin, args starl
 	if err := json.Unmarshal(body, &data); err != nil {
 		return nil, err
 	}
-	r.Body.Close() //nolint:errcheck
+	if err := r.cleanupBody(true); err != nil {
+		return nil, err
+	}
 	// reset reader to allow multiple calls
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	return starlark_type.MarshalStarlark(data)

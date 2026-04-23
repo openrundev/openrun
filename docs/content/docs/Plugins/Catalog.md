@@ -46,6 +46,7 @@ All the APIs support the following parameters:
 - **auth_basic** (tuple(string, string), optional): HTTP basic auth username and password
 - **auth_signature** (string, optional): Signature auth type
 - **error_on_fail** (bool, optional): Whether to fail on non-2xx status code, default true
+- **timeout** (int, optional): Request timeout in seconds, default 300
 
 The response for all APIs (`value` within `plugin_response`) contains the following properties:
 

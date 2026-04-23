@@ -10,6 +10,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Action request bodies are now capped by default at `33554432` bytes. The limit can be configured globally with `app_config.action.max_request_body_bytes` or overridden per app with `openrun app update conf --promote 'action.max_request_body_bytes=<bytes>' /myapp`.
+- `http.in` requests now inherit the current request context, support an optional `timeout` argument with a default of `300` seconds, and automatically close unread response bodies through deferred plugin cleanup when `body()` or `json()` are not called.
 
 ## [v0.17.0] - 2026-04-22
 

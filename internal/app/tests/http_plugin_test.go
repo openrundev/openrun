@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
@@ -183,4 +184,65 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.api("/api1",  handler
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 500, response.Code)
 	testutil.AssertStringContains(t, response.Body.String(), "error calling secret_from: plugin does not have access to secret abc")
+}
+
+func TestHttpPluginDeferredCleanupWithoutBodyRead(t *testing.T) {
+	done := make(chan struct{}, 1)
+
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.WriteString(w, "test contents"); err != nil {
+			return
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+
+		<-r.Context().Done()
+		done <- struct{}{}
+	}))
+	defer testServer.Close()
+
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+
+load ("http.in", "http")
+app = ace.app("testApp", custom_layout=True, routes = [ace.api("/")],
+    permissions=[
+	ace.permission("http.in", "get"),
+	])
+
+def handler(req):
+	resp = http.get("` + testServer.URL + `")
+	return {
+		"status_code": resp.value.status_code,
+	}
+`,
+	}
+
+	a, _, err := CreateTestAppPlugin(logger, fileData,
+		[]string{"http.in"},
+		[]types.Permission{
+			{Plugin: "http.in", Method: "get"},
+		},
+		nil)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+
+	ret := make(map[string]any)
+	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
+	testutil.AssertEqualsInt(t, "status_code", 200, int(ret["status_code"].(float64)))
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected deferred cleanup to close the HTTP response body")
+	}
 }
