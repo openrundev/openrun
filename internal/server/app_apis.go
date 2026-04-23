@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -484,6 +485,19 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	strippedAuth := types.AppAuthnType(strippedAuthStr)
 	groups := make([]string, 0)
 
+	if s.config.System.FallbackUnknownDomains && usesSessionCookieAuth(strippedAuthStr) {
+		// Cookie-based auth must start on the app's configured host. Otherwise a
+		// fallback-matched unknown host would receive the auth nonce/session cookie.
+		if canonicalURL, redirectNeeded := s.canonicalAuthRedirectURL(r, app.AppPathDomain()); redirectNeeded {
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("HX-Redirect", canonicalURL)
+			} else {
+				http.Redirect(w, r, canonicalURL, http.StatusFound)
+			}
+			return
+		}
+	}
+
 	if strippedAuth == types.AppAuthnNone {
 		if s.config.Security.AuthRequired {
 			http.Error(w, "Authentication required", http.StatusUnauthorized)
@@ -588,6 +602,52 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	} else {
 		app.ServeHTTP(w, r)
 	}
+}
+
+func usesSessionCookieAuth(authType string) bool {
+	if authType == "" || authType == string(types.AppAuthnNone) || authType == string(types.AppAuthnSystem) {
+		return false
+	}
+	if authType == "cert" || strings.HasPrefix(authType, "cert_") {
+		return false
+	}
+	return true
+}
+
+func sameAppRequestDomain(requestDomain, appDomain string) bool {
+	if strings.EqualFold(requestDomain, appDomain) {
+		return true
+	}
+	if requestDomain == "localhost" && appDomain == "127.0.0.1" {
+		return true
+	}
+	if requestDomain == "127.0.0.1" && appDomain == "localhost" {
+		return true
+	}
+	return false
+}
+
+func (s *Server) canonicalAuthRedirectURL(r *http.Request, appPathDomain types.AppPathDomain) (string, bool) {
+	requestDomain := system.GetHostname(r.Host)
+	canonicalDomain := cmp.Or(appPathDomain.Domain, s.config.System.DefaultDomain)
+	if requestDomain == "" || canonicalDomain == "" || sameAppRequestDomain(requestDomain, canonicalDomain) {
+		return "", false
+	}
+
+	requestURL := *r.URL
+	if r.TLS != nil {
+		requestURL.Scheme = "https"
+	} else {
+		requestURL.Scheme = "http"
+	}
+
+	if _, port, err := net.SplitHostPort(r.Host); err == nil {
+		requestURL.Host = net.JoinHostPort(canonicalDomain, port)
+	} else {
+		requestURL.Host = formatRedirectHost(canonicalDomain)
+	}
+
+	return requestURL.String(), true
 }
 
 // verifyClientCerts verifies the client certificate, whether it is signed by one
