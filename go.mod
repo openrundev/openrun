@@ -23,7 +23,7 @@ require (
 	github.com/google/go-containerregistry v0.21.3
 	github.com/gorilla/sessions v1.4.0
 	github.com/hashicorp/vault/api v1.15.0
-	github.com/jackc/pgx/v5 v5.9.0
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/jackc/pgxlisten v0.0.0-20241106001234-1d6f6656415c
 	github.com/markbates/goth v1.80.0
 	github.com/moby/buildkit v0.28.1
@@ -215,7 +215,6 @@ require (
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	golang.org/x/crypto v0.49.0
 	golang.org/x/sys v0.42.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 replace cloud.google.com/go/compute/metadata => cloud.google.com/go/compute/metadata v0.2.3
