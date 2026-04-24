@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	appcore "github.com/openrundev/openrun/internal/app"
@@ -119,6 +120,216 @@ func TestMatchAppRejectsUnknownHostWhenFallbackDisabled(t *testing.T) {
 
 	if _, err := server.MatchApp("unknown.test", "/myapp"); err == nil {
 		t.Fatal("MatchApp should reject unknown hosts when fallback_unknown_domains is disabled")
+	}
+}
+
+func TestIsOpenRunCookieName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		cookie string
+		want   bool
+	}{
+		{name: "oauth session", cookie: "github_openrun_session", want: true},
+		{name: "saml session", cookie: "saml_okta_openrun_saml_session", want: true},
+		{name: "gothic session", cookie: "_gothic_session", want: true},
+		{name: "app cookie", cookie: "sessionid", want: false},
+		{name: "contains openrun but different suffix", cookie: "openrun_theme", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isOpenRunCookieName(tt.cookie); got != tt.want {
+				t.Fatalf("isOpenRunCookieName(%q): want %v got %v", tt.cookie, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestStripOpenRunCookies(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/myapp", nil)
+	req.Header.Add("Cookie", strings.Join([]string{
+		"app_session=keep1",
+		"github_openrun_session=drop1",
+		"theme=keep2",
+		"_gothic_session=drop2",
+		"saml_okta_openrun_saml_session=drop3",
+	}, "; "))
+
+	stripOpenRunCookies(req)
+
+	got := req.Header.Values("Cookie")
+	if len(got) != 1 {
+		t.Fatalf("cookie header count: want 1 got %d", len(got))
+	}
+	if got[0] != "app_session=keep1; theme=keep2" {
+		t.Fatalf("cookie header: got %q", got[0])
+	}
+}
+
+func TestStripOpenRunCookiesRemovesHeaderWhenOnlyOpenRunCookiesRemain(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/myapp", nil)
+	req.Header.Add("Cookie", "github_openrun_session=drop1; _gothic_session=drop2")
+
+	stripOpenRunCookies(req)
+
+	if got := req.Header.Get("Cookie"); got != "" {
+		t.Fatalf("cookie header: want empty got %q", got)
+	}
+}
+
+func TestStripOpenRunCookieHeaderFastPath(t *testing.T) {
+	t.Parallel()
+
+	const cookieHeader = "app_session=keep1; theme=keep2"
+	got, changed := stripOpenRunCookieHeader(cookieHeader)
+	if changed {
+		t.Fatal("expected fast path to leave header unchanged")
+	}
+	if got != cookieHeader {
+		t.Fatalf("cookie header: want %q got %q", cookieHeader, got)
+	}
+}
+
+func TestStripOpenRunCookieHeader(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		header  string
+		want    string
+		changed bool
+	}{
+		{
+			name:    "removes oauth and saml cookies",
+			header:  "app_session=keep1; github_openrun_session=drop1; theme=keep2; saml_okta_openrun_saml_session=drop2",
+			want:    "app_session=keep1; theme=keep2",
+			changed: true,
+		},
+		{
+			name:    "removes gothic cookie",
+			header:  "app_session=keep1; _gothic_session=drop1; theme=keep2",
+			want:    "app_session=keep1; theme=keep2",
+			changed: true,
+		},
+		{
+			name:    "handles extra whitespace",
+			header:  "  app_session=keep1  ;\tgithub_openrun_session=drop1\t;  theme=keep2 ",
+			want:    "app_session=keep1; theme=keep2",
+			changed: true,
+		},
+		{
+			name:    "handles duplicate separators",
+			header:  "app_session=keep1;; github_openrun_session=drop1; ; theme=keep2;",
+			want:    "app_session=keep1; theme=keep2",
+			changed: true,
+		},
+		{
+			name:    "handles cookie without equals",
+			header:  "app_session=keep1; github_openrun_session; theme=keep2",
+			want:    "app_session=keep1; theme=keep2",
+			changed: true,
+		},
+		{
+			name:    "keeps non openrun cookie containing openrun substring",
+			header:  "app_session=keep1; openrun_theme=keep2",
+			want:    "app_session=keep1; openrun_theme=keep2",
+			changed: false,
+		},
+		{
+			name:    "removes all cookies when only openrun remain",
+			header:  "_gothic_session=drop1; github_openrun_session=drop2",
+			want:    "",
+			changed: true,
+		},
+		{
+			name:    "empty header",
+			header:  "",
+			want:    "",
+			changed: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, changed := stripOpenRunCookieHeader(tt.header)
+			if changed != tt.changed {
+				t.Fatalf("changed: want %v got %v", tt.changed, changed)
+			}
+			if got != tt.want {
+				t.Fatalf("cookie header: want %q got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestStripOpenRunCookiesMultipleHeaders(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/myapp", nil)
+	req.Header["Cookie"] = []string{
+		"app_session=keep1; github_openrun_session=drop1",
+		"theme=keep2",
+		"_gothic_session=drop2",
+	}
+
+	stripOpenRunCookies(req)
+
+	got := req.Header["Cookie"]
+	if len(got) != 2 {
+		t.Fatalf("cookie header count: want 2 got %d", len(got))
+	}
+	if got[0] != "app_session=keep1" {
+		t.Fatalf("cookie header 0: got %q", got[0])
+	}
+	if got[1] != "theme=keep2" {
+		t.Fatalf("cookie header 1: got %q", got[1])
+	}
+}
+
+func TestStripOpenRunCookiesLeavesHeadersUntouchedWhenNoMatch(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/myapp", nil)
+	req.Header["Cookie"] = []string{
+		"app_session=keep1; theme=keep2",
+		"locale=en-US",
+	}
+
+	before := append([]string(nil), req.Header["Cookie"]...)
+	stripOpenRunCookies(req)
+	after := req.Header["Cookie"]
+
+	if len(after) != len(before) {
+		t.Fatalf("cookie header count: want %d got %d", len(before), len(after))
+	}
+	for i := range before {
+		if after[i] != before[i] {
+			t.Fatalf("cookie header %d: want %q got %q", i, before[i], after[i])
+		}
+	}
+}
+
+func BenchmarkStripOpenRunCookieHeaderNoMatch(b *testing.B) {
+	const cookieHeader = "app_session=keep1; theme=keep2; locale=en-US"
+	for i := 0; i < b.N; i++ {
+		stripOpenRunCookieHeader(cookieHeader)
+	}
+}
+
+func BenchmarkStripOpenRunCookieHeaderWithOpenRunCookies(b *testing.B) {
+	const cookieHeader = "app_session=keep1; github_openrun_session=drop1; theme=keep2; _gothic_session=drop2; saml_okta_openrun_saml_session=drop3"
+	for i := 0; i < b.N; i++ {
+		stripOpenRunCookieHeader(cookieHeader)
 	}
 }
 

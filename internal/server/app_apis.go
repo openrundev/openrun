@@ -595,6 +595,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 		cs.AppId = string(app.Id)
 	}
 	r = r.WithContext(ctx)
+	stripOpenRunCookies(r)
 
 	// Authentication successful, serve the app
 	if !app.AppConfig.Security.DisableCSRFProtection {
@@ -644,6 +645,107 @@ func (s *Server) canonicalAuthRedirectURL(r *http.Request, appPathDomain types.A
 	}
 
 	return requestURL.String(), true
+}
+
+func isOpenRunCookieName(name string) bool {
+	if name == types.GOTHIC_SESSION_COOKIE {
+		return true
+	}
+	if !strings.Contains(name, types.OPENRUN_COOKIE_MARKER) {
+		return false
+	}
+	return strings.HasSuffix(name, "_"+types.OAUTH_SESSION_COOKIE) ||
+		strings.HasSuffix(name, "_"+types.SAML_SESSION_COOKIE)
+}
+
+func isCookieWhitespace(b byte) bool {
+	return b == ' ' || b == '\t'
+}
+
+func stripOpenRunCookieHeader(cookieHeader string) (string, bool) {
+	if cookieHeader == "" {
+		return "", false
+	}
+	if !strings.Contains(cookieHeader, types.OPENRUN_COOKIE_MARKER) && !strings.Contains(cookieHeader, types.GOTHIC_SESSION_COOKIE) {
+		return cookieHeader, false
+	}
+
+	var builder strings.Builder
+	builder.Grow(len(cookieHeader))
+	changed := false
+	start := 0
+	for start < len(cookieHeader) {
+		end := strings.IndexByte(cookieHeader[start:], ';')
+		if end < 0 {
+			end = len(cookieHeader)
+		} else {
+			end += start
+		}
+
+		pairStart := start
+		for pairStart < end && isCookieWhitespace(cookieHeader[pairStart]) {
+			pairStart++
+		}
+		pairEnd := end
+		for pairEnd > pairStart && isCookieWhitespace(cookieHeader[pairEnd-1]) {
+			pairEnd--
+		}
+
+		if pairStart < pairEnd {
+			pair := cookieHeader[pairStart:pairEnd]
+			name, _, _ := strings.Cut(pair, "=")
+			name = strings.TrimRight(name, " \t")
+
+			if isOpenRunCookieName(name) {
+				changed = true
+			} else {
+				if builder.Len() != 0 {
+					builder.WriteString("; ")
+				}
+				builder.WriteString(pair)
+			}
+		}
+
+		if end == len(cookieHeader) {
+			break
+		}
+		start = end + 1
+	}
+
+	if !changed {
+		return cookieHeader, false
+	}
+	return builder.String(), true
+}
+
+func stripOpenRunCookies(r *http.Request) {
+	cookieHeaders, ok := r.Header["Cookie"]
+	if !ok || len(cookieHeaders) == 0 {
+		return
+	}
+
+	changed := false
+	writeIdx := 0
+	for _, cookieHeader := range cookieHeaders {
+		filteredHeader, headerChanged := stripOpenRunCookieHeader(cookieHeader)
+		if headerChanged {
+			changed = true
+		}
+		if filteredHeader == "" {
+			continue
+		}
+		cookieHeaders[writeIdx] = filteredHeader
+		writeIdx++
+	}
+
+	if !changed {
+		return
+	}
+	if writeIdx == 0 {
+		r.Header.Del("Cookie")
+		return
+	}
+	r.Header["Cookie"] = cookieHeaders[:writeIdx]
 }
 
 // verifyClientCerts verifies the client certificate, whether it is signed by one

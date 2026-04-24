@@ -60,7 +60,6 @@ import (
 
 const (
 	PROVIDER_NAME_DELIMITER = "_"
-	SESSION_COOKIE          = "openrun_session"
 	AUTH_KEY                = "authenticated"
 	USER_KEY                = "user" // email/userid/nickname (for git email/nickname/userid)
 	USER_ID_KEY             = "user_id"
@@ -99,7 +98,7 @@ func getProviderName(r *http.Request) (string, error) {
 }
 
 func genCookieName(provider string) string {
-	return fmt.Sprintf("%s_%s", provider, SESSION_COOKIE)
+	return fmt.Sprintf("%s_%s", provider, types.OAUTH_SESSION_COOKIE)
 }
 
 func (s *OAuthManager) Setup(sessionKey []byte, sessionBlockKey []byte) error {

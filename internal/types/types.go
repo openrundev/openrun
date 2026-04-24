@@ -833,6 +833,10 @@ const (
 	CONSTANT_KV_PREFIX          = "constant:"
 	COOKIE_SESSION_SECRET_KV    = "cookie_session_secret"
 	COOKIE_SESSION_BLOCK_KEY_KV = "cookie_session_block_key"
+	OPENRUN_COOKIE_MARKER       = "_openrun_"
+	GOTHIC_SESSION_COOKIE       = "_gothic_session"
+	OAUTH_SESSION_COOKIE        = "openrun_session"
+	SAML_SESSION_COOKIE         = "openrun_saml_session"
 )
 
 const (

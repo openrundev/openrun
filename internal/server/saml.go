@@ -73,7 +73,7 @@ func NewSAMLManager(logger *types.Logger, config *types.ServerConfig, cookieStor
 }
 
 func genSAMLCookieName(provider string) string {
-	return fmt.Sprintf("%s_openrun_saml_session", provider)
+	return fmt.Sprintf("%s_%s", provider, types.SAML_SESSION_COOKIE)
 }
 
 func (s *SAMLManager) Setup(ctx context.Context) error {
