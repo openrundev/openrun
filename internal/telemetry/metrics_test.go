@@ -20,6 +20,8 @@ func TestMetricRecordingNoopsWhenDisabled(t *testing.T) {
 
 	RecordDBCall(context.Background(), DBSystemSQLite, "test", "select", time.Now(), nil)
 	RecordContainerCall(context.Background(), "command", "run_container", time.Now(), nil)
+	RecordAppRequest(context.Background(), "GET")
+	RecordAppProxyBytes(context.Background(), 10, 20)
 }
 
 func TestMetricRecordingCreatesInstrumentsWhenEnabled(t *testing.T) {
@@ -42,5 +44,15 @@ func TestMetricRecordingCreatesInstrumentsWhenEnabled(t *testing.T) {
 	RecordContainerCall(context.Background(), "command", "run_container", time.Now().Add(-time.Millisecond), errors.New("boom"))
 	if containerCallDuration == nil {
 		t.Fatal("expected container histogram to be initialized")
+	}
+
+	RecordAppRequest(context.Background(), "GET")
+	RecordAppRequest(context.Background(), "POST")
+	RecordAppProxyBytes(context.Background(), 10, 20)
+	if appRequest == nil {
+		t.Fatal("expected app request counter to be initialized")
+	}
+	if appProxyBytes == nil {
+		t.Fatal("expected app proxy byte counter to be initialized")
 	}
 }

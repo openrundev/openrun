@@ -73,7 +73,7 @@ func (m *telemetryContainerManager) RunContainer(ctx context.Context, appEntry *
 	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
 	start := time.Now()
 	err := m.ContainerManager.RunContainer(ctx, appEntry, sourceDir, containerName, imageName, port, envMap, volumes, containerOptions, paramMap, versionHash)
-	telemetry.RecordContainerCall(ctx, m.kind, "run_container", start, err)
+	telemetry.RecordContainerCall(ctx, m.kind, "run_container", start, err, telemetry.AppIdentityAttributes(appEntry)...)
 	return err
 }
 

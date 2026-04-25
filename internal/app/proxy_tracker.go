@@ -2,12 +2,16 @@ package app
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"sync"
 	"time"
+
+	"github.com/openrundev/openrun/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type bucket struct {
@@ -20,22 +24,25 @@ type ByteWindow struct {
 	mu      sync.Mutex
 	buckets []bucket // len = windowSeconds
 	window  int      // seconds
+	attrs   []attribute.KeyValue
 }
 
-func NewByteWindow(windowSeconds int) *ByteWindow {
+func NewByteWindow(windowSeconds int, attrs ...attribute.KeyValue) *ByteWindow {
+	if windowSeconds < 1 {
+		windowSeconds = 1
+	}
 	return &ByteWindow{
 		buckets: make([]bucket, windowSeconds),
 		window:  windowSeconds,
+		attrs:   append([]attribute.KeyValue(nil), attrs...),
 	}
 }
 
-func (bw *ByteWindow) add(now time.Time, sent, recv uint64) {
+func (bw *ByteWindow) add(ctx context.Context, now time.Time, sent, recv uint64) {
 	sec := now.Unix()
 	idx := int(sec % int64(bw.window))
 
 	bw.mu.Lock()
-	defer bw.mu.Unlock()
-
 	b := &bw.buckets[idx]
 	if b.sec != sec {
 		// this slot is stale; reset
@@ -45,6 +52,12 @@ func (bw *ByteWindow) add(now time.Time, sent, recv uint64) {
 	}
 	b.sent += sent
 	b.recv += recv
+	bw.mu.Unlock()
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	telemetry.RecordAppProxyBytes(ctx, recv, sent, bw.attrs...)
 }
 
 func (bw *ByteWindow) Totals() (sent, recv uint64) {
@@ -61,14 +74,15 @@ func (bw *ByteWindow) Totals() (sent, recv uint64) {
 }
 
 type countingReadCloser struct {
-	rc io.ReadCloser
-	bw *ByteWindow
+	rc  io.ReadCloser
+	bw  *ByteWindow
+	ctx context.Context
 }
 
 func (c *countingReadCloser) Read(p []byte) (int, error) {
 	n, err := c.rc.Read(p)
 	if n > 0 {
-		c.bw.add(time.Now(), 0, uint64(n))
+		c.bw.add(c.ctx, time.Now(), 0, uint64(n))
 	}
 	return n, err
 }
@@ -76,13 +90,14 @@ func (c *countingReadCloser) Close() error { return c.rc.Close() }
 
 type countingResponseWriter struct {
 	http.ResponseWriter
-	bw *ByteWindow
+	bw  *ByteWindow
+	ctx context.Context
 }
 
 func (w *countingResponseWriter) Write(p []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(p)
 	if n > 0 {
-		w.bw.add(time.Now(), uint64(n), 0)
+		w.bw.add(w.ctx, time.Now(), uint64(n), 0)
 	}
 	return n, err
 }
@@ -109,25 +124,26 @@ func (w *countingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return &countingConn{Conn: c, bw: w.bw}, rw, nil
+	return &countingConn{Conn: c, bw: w.bw, ctx: w.ctx}, rw, nil
 }
 
 type countingConn struct {
 	net.Conn
-	bw *ByteWindow
+	bw  *ByteWindow
+	ctx context.Context
 }
 
 func (c *countingConn) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
 	if n > 0 {
-		c.bw.add(time.Now(), 0, uint64(n)) // client -> proxy
+		c.bw.add(c.ctx, time.Now(), 0, uint64(n)) // client -> proxy
 	}
 	return n, err
 }
 func (c *countingConn) Write(b []byte) (int, error) {
 	n, err := c.Conn.Write(b)
 	if n > 0 {
-		c.bw.add(time.Now(), uint64(n), 0) // proxy -> client
+		c.bw.add(c.ctx, time.Now(), uint64(n), 0) // proxy -> client
 	}
 	return n, err
 }
@@ -138,9 +154,9 @@ type Tracker struct {
 	proxy *httputil.ReverseProxy
 }
 
-func NewTracker(proxy *httputil.ReverseProxy, windowSeconds int) *Tracker {
+func NewTracker(proxy *httputil.ReverseProxy, windowSeconds int, attrs ...attribute.KeyValue) *Tracker {
 	return &Tracker{
-		bw:    NewByteWindow(windowSeconds),
+		bw:    NewByteWindow(windowSeconds, attrs...),
 		proxy: proxy,
 	}
 }
@@ -148,9 +164,9 @@ func NewTracker(proxy *httputil.ReverseProxy, windowSeconds int) *Tracker {
 func (t *Tracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Count request bytes (body) for non-upgraded requests.
 	if r.Body != nil {
-		r.Body = &countingReadCloser{rc: r.Body, bw: t.bw}
+		r.Body = &countingReadCloser{rc: r.Body, bw: t.bw, ctx: r.Context()}
 	}
-	crw := &countingResponseWriter{ResponseWriter: w, bw: t.bw}
+	crw := &countingResponseWriter{ResponseWriter: w, bw: t.bw, ctx: r.Context()}
 	t.proxy.ServeHTTP(crw, r)
 }
 

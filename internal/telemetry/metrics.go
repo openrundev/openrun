@@ -29,6 +29,9 @@ var (
 	dbCallDuration           metric.Float64Histogram
 	containerInstrumentsOnce sync.Once
 	containerCallDuration    metric.Float64Histogram
+	appInstrumentsOnce       sync.Once
+	appRequest               metric.Int64Counter
+	appProxyBytes            metric.Int64Counter
 )
 
 // resetMetricInstruments is called from Shutdown so that a subsequent Setup
@@ -38,6 +41,9 @@ func resetMetricInstruments() {
 	dbCallDuration = nil
 	containerInstrumentsOnce = sync.Once{}
 	containerCallDuration = nil
+	appInstrumentsOnce = sync.Once{}
+	appRequest = nil
+	appProxyBytes = nil
 }
 
 func ensureDBInstruments() metric.Float64Histogram {
@@ -70,6 +76,30 @@ func ensureContainerInstruments() metric.Float64Histogram {
 	return containerCallDuration
 }
 
+func ensureAppInstruments() bool {
+	appInstrumentsOnce.Do(func() {
+		meter := Meter()
+		var err error
+		appRequest, err = meter.Int64Counter(
+			"openrun.app.request",
+			metric.WithDescription("Total app requests"),
+		)
+		if err != nil {
+			return
+		}
+		appProxyBytes, err = meter.Int64Counter(
+			"openrun.app.proxy.bytes",
+			metric.WithUnit("By"),
+			metric.WithDescription("Bytes transferred by app reverse proxies"),
+		)
+		if err != nil {
+			appRequest = nil
+			return
+		}
+	})
+	return appRequest != nil && appProxyBytes != nil
+}
+
 // RecordDBCall records the duration and outcome of a SQL driver call. It is a
 // no-op when metrics are disabled.
 func RecordDBCall(ctx context.Context, dbSystem, invoker, operation string, start time.Time, err error) {
@@ -91,7 +121,7 @@ func RecordDBCall(ctx context.Context, dbSystem, invoker, operation string, star
 
 // RecordContainerCall records the duration and outcome of a container manager
 // call. It is a no-op when metrics are disabled.
-func RecordContainerCall(ctx context.Context, kind, operation string, start time.Time, err error) {
+func RecordContainerCall(ctx context.Context, kind, operation string, start time.Time, err error, extraAttrs ...attribute.KeyValue) {
 	if !MetricsEnabled() {
 		return
 	}
@@ -104,5 +134,57 @@ func RecordContainerCall(ctx context.Context, kind, operation string, start time
 		attribute.String("openrun.container.op", operation),
 		attribute.Bool("openrun.error", err != nil),
 	}
+	attrs = append(attrs, extraAttrs...)
 	hist.Record(ctx, float64(time.Since(start).Microseconds())/1000.0, metric.WithAttributes(attrs...))
+}
+
+// RecordAppRequest records app-level request counters. It is a no-op when
+// metrics are disabled.
+func RecordAppRequest(ctx context.Context, method string, attrs ...attribute.KeyValue) {
+	if !MetricsEnabled() || !ensureAppInstruments() {
+		return
+	}
+	totalAttrs := metricAttrs(attrs, attribute.String("openrun.request.kind", "total"))
+	appRequest.Add(ctx, 1, metric.WithAttributes(totalAttrs...))
+	switch method {
+	case "GET":
+		getAttrs := metricAttrs(attrs, attribute.String("openrun.request.kind", "get"))
+		appRequest.Add(ctx, 1, metric.WithAttributes(getAttrs...))
+	case "HEAD", "OPTIONS":
+		return
+	default:
+		updateAttrs := metricAttrs(attrs, attribute.String("openrun.request.kind", "update"))
+		appRequest.Add(ctx, 1, metric.WithAttributes(updateAttrs...))
+	}
+}
+
+// RecordAppProxyBytes records app reverse-proxy byte counters. bytesIn is
+// traffic received from the client, and bytesOut is traffic sent to the client.
+func RecordAppProxyBytes(ctx context.Context, bytesIn, bytesOut uint64, attrs ...attribute.KeyValue) {
+	if !MetricsEnabled() || !ensureAppInstruments() {
+		return
+	}
+	if bytesIn > 0 {
+		inAttrs := metricAttrs(attrs, attribute.String("openrun.proxy.direction", "in"))
+		appProxyBytes.Add(ctx, saturatingInt64(bytesIn), metric.WithAttributes(inAttrs...))
+	}
+	if bytesOut > 0 {
+		outAttrs := metricAttrs(attrs, attribute.String("openrun.proxy.direction", "out"))
+		appProxyBytes.Add(ctx, saturatingInt64(bytesOut), metric.WithAttributes(outAttrs...))
+	}
+}
+
+func metricAttrs(attrs []attribute.KeyValue, extra attribute.KeyValue) []attribute.KeyValue {
+	ret := make([]attribute.KeyValue, 0, len(attrs)+1)
+	ret = append(ret, attrs...)
+	ret = append(ret, extra)
+	return ret
+}
+
+func saturatingInt64(v uint64) int64 {
+	const maxInt64 = uint64(1<<63 - 1)
+	if v > maxInt64 {
+		return int64(maxInt64)
+	}
+	return int64(v)
 }

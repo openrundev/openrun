@@ -426,6 +426,7 @@ func (a *App) callStarlarkHandler(r *http.Request, thread *starlark.Thread, hand
 
 	ctx, span := telemetry.StartSpan(r.Context(), "openrun.app.starlark_handler",
 		attribute.String("openrun.app.id", string(a.Id)),
+		attribute.String("openrun.app.path", a.Path),
 		attribute.String("openrun.handler", handler.Name()),
 	)
 	defer span.End()
@@ -442,6 +443,7 @@ func (a *App) executeTemplateTraced(r *http.Request, w http.ResponseWriter, full
 	}
 	_, span := telemetry.StartSpan(r.Context(), "openrun.app.template_render",
 		attribute.String("openrun.app.id", string(a.Id)),
+		attribute.String("openrun.app.path", a.Path),
 		attribute.String("openrun.template", fullHtml),
 		attribute.String("openrun.template.block", fragment),
 	)

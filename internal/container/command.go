@@ -372,6 +372,7 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 	}
 
 	args = append(args, "--label", LABEL_PREFIX+"app.id="+string(appEntry.Id))
+	args = append(args, "--label", LABEL_PREFIX+"app.path="+appEntry.Path)
 	if appEntry.IsDev {
 		args = append(args, "--label", LABEL_PREFIX+"dev=true")
 	} else {

@@ -29,7 +29,37 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
           "thresholds": {
@@ -41,33 +71,31 @@
               }
             ]
           },
-          "unit": "reqps"
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 6,
+        "h": 8,
+        "w": 12,
         "x": 0,
         "y": 0
       },
-      "id": 1,
+      "id": 9,
       "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
+        "legend": {
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "",
-          "values": false
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "textMode": "auto",
-        "wideLayout": true
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
       },
-      "pluginVersion": "10.0.0",
       "targets": [
         {
           "datasource": {
@@ -75,81 +103,14 @@
             "uid": "${prometheus}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_server_request_duration_seconds_count{service_name=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "requests/sec",
           "range": true,
-          "refId": "A"
+          "refId": "A",
+          "expr": "sum by (openrun_app_path, openrun_request_kind) ({service_name=~\"$service\", __name__=~\"openrun_app_request.*\", openrun_request_kind=~\"total|get|update\"})",
+          "legendFormat": "{{openrun_app_path}} {{openrun_request_kind}}"
         }
       ],
-      "title": "Server Request Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${prometheus}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 0
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${prometheus}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(http_server_request_duration_seconds_count{service_name=~\"$service\", http_response_status_code=~\"5..\"}[$__rate_interval]))",
-          "legendFormat": "5xx/sec",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Server 5xx Rate",
-      "type": "stat"
+      "title": "App Requests",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -201,7 +162,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "bytes"
         },
         "overrides": []
       },
@@ -211,7 +172,7 @@
         "x": 12,
         "y": 0
       },
-      "id": 3,
+      "id": 10,
       "options": {
         "legend": {
           "calcs": [
@@ -233,13 +194,13 @@
             "uid": "${prometheus}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, openrun_route_class) (rate(http_server_request_duration_seconds_bucket{service_name=~\"$service\"}[$__rate_interval])))",
-          "legendFormat": "p95 {{openrun_route_class}}",
           "range": true,
-          "refId": "A"
+          "refId": "A",
+          "expr": "sum by (openrun_app_path, openrun_proxy_direction) ({service_name=~\"$service\", __name__=~\"openrun_app_proxy_bytes.*\", openrun_proxy_direction=~\"in|out\"})",
+          "legendFormat": "{{openrun_app_path}} {{openrun_proxy_direction}}"
         }
       ],
-      "title": "Server Request Latency p95",
+      "title": "App Proxy Bytes",
       "type": "timeseries"
     },
     {
@@ -300,7 +261,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 4
+        "y": 8
       },
       "id": 4,
       "options": {
@@ -482,7 +443,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 12
+        "y": 16
       },
       "id": 6,
       "options": {
@@ -637,7 +598,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 24
       },
       "id": 8,
       "options": {
@@ -722,6 +683,6 @@
   "timezone": "browser",
   "title": "OpenRun Metrics",
   "uid": "openrun-metrics",
-  "version": 1,
+  "version": 5,
   "weekStart": ""
 }

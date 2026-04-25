@@ -97,7 +97,8 @@ type App struct {
 
 	// telemetryAttrs caches the immutable per-app OpenTelemetry attributes so
 	// that ServeHTTP does not allocate them on every request.
-	telemetryAttrs []attribute.KeyValue
+	telemetryAttrs         []attribute.KeyValue
+	telemetryIdentityAttrs []attribute.KeyValue
 }
 
 type starlarkCacheEntry struct {
@@ -135,6 +136,7 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 		return nil, err
 	}
 	newApp.telemetryAttrs = telemetry.AppAttributes(appEntry)
+	newApp.telemetryIdentityAttrs = telemetry.AppIdentityAttributes(appEntry)
 
 	if appEntry.IsDev {
 		newApp.appDev = dev.NewAppDev(logger, &appfs.WritableSourceFs{SourceFs: sourceFS}, workFS, newApp.appStyle, systemConfig)
@@ -606,6 +608,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.Info().Enabled() {
 		a.Info().Str("method", r.Method).Str("url", r.URL.String()).Msg("App Received request")
 	}
+	telemetry.RecordAppRequest(r.Context(), r.Method, a.telemetryIdentityAttrs...)
 	if a.reloadError != nil {
 		a.Warn().Err(a.reloadError).Msg("Last reload had failed")
 		http.Error(w, a.reloadError.Error(), http.StatusInternalServerError)

@@ -581,9 +581,14 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 
 	metadata := map[string]string{}
 	metadata["app"] = name
+	metadata[LABEL_PREFIX+"app.id"] = TrimLabelValue(string(appEntry.Id))
 	metadata[LABEL_PREFIX+"git.sha"] = TrimLabelValue(appEntry.Metadata.VersionMetadata.GitCommit)
 	metadata[LABEL_PREFIX+"app.version"] = strconv.Itoa(appEntry.Metadata.VersionMetadata.Version)
 	metadata[VERSION_HASH_LABEL] = TrimLabelValue(versionHash)
+	annotations := map[string]string{
+		LABEL_PREFIX + "app.id":   string(appEntry.Id),
+		LABEL_PREFIX + "app.path": appEntry.Path,
+	}
 
 	// Set replicas from kubernetesOptions, defaulting to 1
 	replicas := int32(1)
@@ -669,6 +674,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 
 	dep := appsv1apply.Deployment(name, k.appNamespace).
 		WithLabels(labels).
+		WithAnnotations(annotations).
 		WithSpec(appsv1apply.DeploymentSpec().
 			WithReplicas(replicas).
 			WithSelector(metav1apply.LabelSelector().
@@ -676,6 +682,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 			WithStrategy(strategy).
 			WithTemplate(corev1apply.PodTemplateSpec().
 				WithLabels(metadata).
+				WithAnnotations(annotations).
 				WithSpec(podSpec)))
 
 	if _, err := k.clientSet.AppsV1().Deployments(k.appNamespace).Apply(ctx, dep, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
@@ -718,6 +725,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 	}
 	svcApply := corev1apply.Service(name, k.appNamespace).
 		WithLabels(metadata).
+		WithAnnotations(annotations).
 		WithSpec(corev1apply.ServiceSpec().
 			WithType(serviceType).
 			WithSelector(labels).

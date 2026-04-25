@@ -430,6 +430,7 @@ func (a *App) pluginHook(appPath, modulePath, accountName, functionName string, 
 		parentCtx := GetContext(thread)
 		if telemetry.PluginSpansEnabled() && parentCtx != nil && pluginInfo != nil {
 			ctx, span := telemetry.StartSpan(parentCtx, "openrun.plugin.call",
+				attribute.String("openrun.app.id", string(a.Id)),
 				attribute.String("openrun.app.path", appPath),
 				attribute.String("openrun.plugin.module", modulePath),
 				attribute.String("openrun.plugin.function", functionName),

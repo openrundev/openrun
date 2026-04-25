@@ -828,11 +828,9 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 		}
 	}
 
-	var proxyWrapper http.Handler = proxy
+	proxyWrapper := NewTracker(proxy, a.AppConfig.Container.IdleShutdownSecs, a.telemetryIdentityAttrs...)
 	if originalUrlStr == apptype.CONTAINER_URL {
-		// Wrap the proxy with a tracker to count the bytes sent and received
-		proxyWrapper = NewTracker(proxy, a.AppConfig.Container.IdleShutdownSecs)
-		a.containerHandler.proxyTracker = proxyWrapper.(*Tracker)
+		a.containerHandler.proxyTracker = proxyWrapper
 	}
 
 	permsHandler := func(handler http.Handler) http.Handler {

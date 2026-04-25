@@ -264,20 +264,31 @@ func WrapTransport(base http.RoundTripper) http.RoundTripper {
 	return otelhttp.NewTransport(base)
 }
 
-// AppAttributes returns the immutable per-app attribute set. Cache the result
-// on the App and reuse across requests; do not call this on the hot path.
-func AppAttributes(app *types.AppEntry) []attribute.KeyValue {
+// AppIdentityAttributes returns the per-app identity attributes used on app
+// traces and metrics.
+func AppIdentityAttributes(app *types.AppEntry) []attribute.KeyValue {
 	if app == nil {
 		return nil
 	}
 	return []attribute.KeyValue{
 		attribute.String("openrun.app.id", string(app.Id)),
 		attribute.String("openrun.app.path", app.Path),
+	}
+}
+
+// AppAttributes returns the immutable per-app attribute set. Cache the result
+// on the App and reuse across requests; do not call this on the hot path.
+func AppAttributes(app *types.AppEntry) []attribute.KeyValue {
+	attrs := AppIdentityAttributes(app)
+	if attrs == nil {
+		return nil
+	}
+	return append(attrs,
 		attribute.String("openrun.app.domain", app.Domain),
 		attribute.Bool("openrun.app.is_dev", app.IsDev),
 		attribute.String("openrun.app.auth_type", string(app.Metadata.AuthnType)),
 		attribute.Int("openrun.app.version", app.Metadata.VersionMetadata.Version),
-	}
+	)
 }
 
 // RequestAttributes returns per-request attributes that are safe to record.
