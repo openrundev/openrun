@@ -29,6 +29,7 @@ import (
 	"github.com/openrundev/openrun/internal/app/dev"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
@@ -810,7 +811,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	customTransport.MaxIdleConnsPerHost = maxIdleConnCount
 	customTransport.IdleConnTimeout = time.Duration(a.AppConfig.Proxy.IdleConnTimeoutSecs) * time.Second
 	customTransport.DisableCompression = a.AppConfig.Proxy.DisableCompression
-	proxy.Transport = customTransport
+	proxy.Transport = telemetry.WrapTransport(customTransport)
 
 	defaultDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {

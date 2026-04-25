@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -77,6 +78,13 @@ func InitDBConnection(connectString string, invoker string, supportedDBs []DBTyp
 	if driver == "" {
 		return nil, "", fmt.Errorf("unknown database type: %s", dbType)
 	}
+	if telemetry.MetricsEnabled() {
+		wrapped, err := telemetry.SQLDriverName(driver, telemetryDBSystem(dbType), invoker)
+		if err != nil {
+			return nil, "", fmt.Errorf("error wrapping %s driver for telemetry: %w", driver, err)
+		}
+		driver = wrapped
+	}
 
 	db, err := sql.Open(driver, connectString)
 	if err != nil {
@@ -103,6 +111,17 @@ func InitDBConnection(connectString string, invoker string, supportedDBs []DBTyp
 		}
 	}
 	return db, dbType, nil
+}
+
+func telemetryDBSystem(dbType DBType) string {
+	switch dbType {
+	case DB_TYPE_SQLITE:
+		return telemetry.DBSystemSQLite
+	case DB_TYPE_POSTGRES:
+		return telemetry.DBSystemPostgres
+	default:
+		return string(dbType)
+	}
 }
 
 func GetConnectString(pluginContext *types.PluginContext) (string, error) {

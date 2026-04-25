@@ -20,7 +20,9 @@ import (
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
+	"go.opentelemetry.io/otel/attribute"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
@@ -256,9 +258,9 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			var ret starlark.Value
 			var err error
 			if hasArgs {
-				ret, err = starlark.Call(thread, handler, starlark.Tuple{requestData}, nil)
+				ret, err = a.callStarlarkHandler(r, thread, handler, starlark.Tuple{requestData})
 			} else {
-				ret, err = starlark.Call(thread, handler, nil, nil)
+				ret, err = a.callStarlarkHandler(r, thread, handler, nil)
 			}
 
 			if err == nil {
@@ -299,7 +301,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				// error handler is defined, call it
 				valueDict := starlark.Dict{}
 				valueDict.SetKey(starlark.String("error"), starlark.String(msg)) //nolint:errcheck
-				ret, err = starlark.Call(thread, a.errorHandler, starlark.Tuple{requestData, &valueDict}, nil)
+				ret, err = a.callStarlarkHandler(r, thread, a.errorHandler, starlark.Tuple{requestData, &valueDict})
 				if err != nil {
 					// error handler itself failed
 					firstFrame := ""
@@ -391,7 +393,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 		var err error
 		if isHtmxRequest && fragment != "" {
 			a.Trace().Msgf("Rendering block %s", fragment)
-			err = a.executeTemplate(w, fullHtml, fragment, requestData)
+			err = a.executeTemplateTraced(r, w, fullHtml, fragment, requestData)
 		} else {
 			referrer := types.GetHTTPHeader(header, "Referer")
 			isUpdateRequest := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
@@ -406,7 +408,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			}
 
 			a.Trace().Msgf("Rendering page %s", fullHtml)
-			err = a.executeTemplate(w, fullHtml, "", requestData)
+			err = a.executeTemplateTraced(r, w, fullHtml, "", requestData)
 		}
 
 		if err != nil {
@@ -415,6 +417,38 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 		}
 	}
 	return goHandler
+}
+
+func (a *App) callStarlarkHandler(r *http.Request, thread *starlark.Thread, handler starlark.Callable, args starlark.Tuple) (starlark.Value, error) {
+	if !telemetry.Enabled() {
+		return starlark.Call(thread, handler, args, nil)
+	}
+
+	ctx, span := telemetry.StartSpan(r.Context(), "openrun.app.starlark_handler",
+		attribute.String("openrun.app.id", string(a.Id)),
+		attribute.String("openrun.handler", handler.Name()),
+	)
+	defer span.End()
+	defer pushThreadContext(thread, ctx, r.Context())()
+
+	ret, err := starlark.Call(thread, handler, args, nil)
+	telemetry.RecordError(span, err)
+	return ret, err
+}
+
+func (a *App) executeTemplateTraced(r *http.Request, w http.ResponseWriter, fullHtml, fragment string, data any) error {
+	if !telemetry.Enabled() {
+		return a.executeTemplate(w, fullHtml, fragment, data)
+	}
+	_, span := telemetry.StartSpan(r.Context(), "openrun.app.template_render",
+		attribute.String("openrun.app.id", string(a.Id)),
+		attribute.String("openrun.template", fullHtml),
+		attribute.String("openrun.template.block", fragment),
+	)
+	defer span.End()
+	err := a.executeTemplate(w, fullHtml, fragment, data)
+	telemetry.RecordError(span, err)
+	return err
 }
 
 func (a *App) handleResponse(retStruct *starlarkstruct.Struct, r *http.Request, w http.ResponseWriter, requestData starlark_type.Request, rtype string, deferredCleanup func() error) (bool, error) {
@@ -547,7 +581,7 @@ func (a *App) handleResponse(retStruct *starlarkstruct.Struct, r *http.Request, 
 		return true, nil
 	}
 	w.WriteHeader(int(code))
-	err = a.executeTemplate(w, "", templateBlock, requestData)
+	err = a.executeTemplateTraced(r, w, "", templateBlock, requestData)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true, nil

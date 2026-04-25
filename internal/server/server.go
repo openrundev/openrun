@@ -33,6 +33,7 @@ import (
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/server/list_apps"
 	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/segmentio/ksuid"
 	"golang.org/x/crypto/bcrypt"
@@ -150,6 +151,7 @@ type Server struct {
 	dynamicConfig  *types.DynamicConfig
 	rbacManager    *rbac.RBACManager
 	csrfMiddleware *http.CrossOriginProtection
+	telemetry      *telemetry.Providers
 }
 
 // NewServer creates a new instance of the OpenRun Server
@@ -168,11 +170,26 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
-	// Update secrets in the config
+	// Update secrets in the config (including telemetry headers, which are
+	// resolved before being passed to the OTLP exporter).
 	err = updateConfigSecrets(config, secretsManager.EvalTemplate)
 	if err != nil {
 		return nil, err
 	}
+
+	// Initialize telemetry after secrets are resolved so OTLP headers can use
+	// ${secret:...} references. A failure here is logged but does not block
+	// server startup; observability is non-essential.
+	telemetryProviders, err := telemetry.Setup(context.Background(), config, l)
+	if err != nil {
+		l.Error().Err(err).Msg("OpenTelemetry initialization failed; continuing without telemetry")
+	}
+	telemetryCleanup := true
+	defer func() {
+		if telemetryCleanup {
+			_ = telemetryProviders.Shutdown(context.Background())
+		}
+	}()
 
 	db, err := metadata.NewMetadata(l, config)
 	if err != nil {
@@ -184,6 +201,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		config:         config,
 		db:             db,
 		secretsManager: secretsManager,
+		telemetry:      telemetryProviders,
 	}
 	db.AppNotifyFunc = server.appNotifyHandler
 	db.ConfigNotifyFunc = server.configNotifyHandler
@@ -289,6 +307,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	// Start the idle shutdown check
 	server.syncTimer = time.NewTicker(time.Minute) // run sync every minute
 	go server.syncRunner()
+	telemetryCleanup = false
 	return server, nil
 }
 
@@ -442,6 +461,14 @@ func updateConfigSecrets(config *types.ServerConfig, evalSecret func(string) (st
 		config.NodeConfig[key] = val
 	}
 
+	for k, v := range config.Telemetry.Headers {
+		resolved, err := evalSecret(v)
+		if err != nil {
+			return fmt.Errorf("resolving telemetry header %q: %w", k, err)
+		}
+		config.Telemetry.Headers[k] = resolved
+	}
+
 	return nil
 }
 
@@ -541,7 +568,10 @@ func (s *Server) Start() error {
 			WriteTimeout: 180 * time.Second,
 			ReadTimeout:  180 * time.Second,
 			IdleTimeout:  30 * time.Second,
-			Handler:      udsHandler.router,
+			Handler: telemetry.WrapServerHandler(udsHandler.router, telemetry.ServerHandlerOption{
+				Operation: "openrun.uds",
+				Public:    false, // UDS is admin-only, peer is authenticated by file permissions
+			}),
 		}
 
 		s.Info().Str("address", serverUri).Msg("Starting unix domain socket server")
@@ -567,7 +597,16 @@ func (s *Server) Start() error {
 			WriteTimeout: 180 * time.Second,
 			ReadTimeout:  180 * time.Second,
 			IdleTimeout:  30 * time.Second,
-			Handler:      s.handler.router,
+			Handler: telemetry.WrapServerHandler(s.handler.router, telemetry.ServerHandlerOption{
+				Operation: "openrun.http",
+				Public:    true, // public HTTP listener; do not extract incoming traceparent
+				TraceOnlyPrefixes: []string{
+					types.INTERNAL_URL_PREFIX + "/", // app traffic is traced at the app layer with app redaction policy
+				},
+				ExtraSkipPaths: []string{
+					types.WEBHOOK_URL_PREFIX + "/", // webhook URLs may include secrets in the path
+				},
+			}),
 		}
 	}
 
@@ -772,9 +811,18 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 		WriteTimeout: 180 * time.Second,
 		ReadTimeout:  180 * time.Second,
 		IdleTimeout:  30 * time.Second,
-		Handler:      s.handler.router,
-		TLSConfig:    tlsConfig,
-		ErrorLog:     errorLog,
+		Handler: telemetry.WrapServerHandler(s.handler.router, telemetry.ServerHandlerOption{
+			Operation: "openrun.https",
+			Public:    true, // public HTTPS listener; do not extract incoming traceparent
+			TraceOnlyPrefixes: []string{
+				types.INTERNAL_URL_PREFIX + "/", // app traffic is traced at the app layer with app redaction policy
+			},
+			ExtraSkipPaths: []string{
+				types.WEBHOOK_URL_PREFIX + "/", // webhook URLs may include secrets in the path
+			},
+		}),
+		TLSConfig: tlsConfig,
+		ErrorLog:  errorLog,
 	}
 	return server, nil
 }
@@ -809,8 +857,9 @@ func (s *Server) Stop(ctx context.Context) error {
 	if s.udsServer != nil {
 		err3 = s.udsServer.Shutdown(ctx)
 	}
+	err4 := s.telemetry.Shutdown(ctx)
 
-	return cmp.Or(err1, err2, err3)
+	return cmp.Or(err1, err2, err3, err4)
 }
 
 func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {

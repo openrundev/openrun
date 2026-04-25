@@ -106,6 +106,7 @@ type ServerConfig struct {
 	Security    SecurityConfig              `toml:"security"`
 	Metadata    MetadataConfig              `toml:"metadata"`
 	Log         LogConfig                   `toml:"logging"`
+	Telemetry   TelemetryConfig             `toml:"telemetry"`
 	System      SystemConfig                `toml:"system"`
 	Registry    RegistryConfig              `toml:"registry"`
 	Builder     BuilderConfig               `toml:"builder"`
@@ -260,6 +261,21 @@ type LogConfig struct {
 	Console       bool   `toml:"console"`
 	File          bool   `toml:"file"`
 	AccessLogging bool   `toml:"access_logging"`
+}
+
+// TelemetryConfig is the OpenTelemetry configuration.
+type TelemetryConfig struct {
+	Enabled     bool              `toml:"enabled"`
+	ServiceName string            `toml:"service_name"`
+	Environment string            `toml:"environment"`
+	Endpoint    string            `toml:"endpoint"`
+	Headers     map[string]string `toml:"headers"`
+	Traces      bool              `toml:"traces"`
+	Metrics     bool              `toml:"metrics"`
+	// PluginSpans, when true, creates a span around each Starlark plugin
+	// invocation. Off by default because data-heavy apps may issue many
+	// plugin calls per request.
+	PluginSpans bool `toml:"plugin_spans"`
 }
 
 // SystemConfig is the system level configuration

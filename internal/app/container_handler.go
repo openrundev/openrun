@@ -84,8 +84,10 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 
 	var containerManager container.ContainerManager
 	var err error
+	containerManagerKind := "command"
 	switch serverConfig.System.ContainerCommand {
 	case types.CONTAINER_KUBERNETES:
+		containerManagerKind = "kubernetes"
 		containerManager, err = container.NewKubernetesCM(logger, serverConfig, &app.AppConfig, app.AppRunPath, app.Id)
 		if err != nil {
 			return nil, fmt.Errorf("error creating kubernetes container manager: %w", err)
@@ -93,6 +95,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	default:
 		containerManager = container.NewCommandCM(logger, serverConfig, app.Id, app.AppRunPath)
 	}
+	containerManager = container.WrapContainerManager(containerManager, containerManagerKind)
 
 	image := ""
 	volumes := []string{}

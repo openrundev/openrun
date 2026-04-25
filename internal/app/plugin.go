@@ -16,7 +16,9 @@ import (
 
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
+	"go.opentelemetry.io/otel/attribute"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
@@ -421,6 +423,25 @@ func (a *App) pluginHook(appPath, modulePath, accountName, functionName string, 
 
 		// Call the builtin function
 		newBuiltin := starlark.NewBuiltin(functionName, errorHandlingWrapper)
+		// Plugin spans are gated separately because data-heavy apps may issue
+		// many plugin calls per request; we also require an existing parent
+		// context (set by the surrounding handler) so a missing TL_CONTEXT
+		// surfaces as no span rather than a silently-detached root span.
+		parentCtx := GetContext(thread)
+		if telemetry.PluginSpansEnabled() && parentCtx != nil && pluginInfo != nil {
+			ctx, span := telemetry.StartSpan(parentCtx, "openrun.plugin.call",
+				attribute.String("openrun.app.path", appPath),
+				attribute.String("openrun.plugin.module", modulePath),
+				attribute.String("openrun.plugin.function", functionName),
+				attribute.Bool("openrun.plugin.read", pluginInfo.IsRead),
+			)
+			defer span.End()
+			defer pushThreadContext(thread, ctx, parentCtx)()
+
+			val, err := newBuiltin.CallInternal(thread, args, kwargs)
+			telemetry.RecordError(span, err)
+			return val, err
+		}
 		val, err := newBuiltin.CallInternal(thread, args, kwargs)
 		return val, err
 	}

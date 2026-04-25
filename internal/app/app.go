@@ -32,7 +32,10 @@ import (
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 	"go.starlark.net/syntax"
@@ -91,6 +94,10 @@ type App struct {
 	auditInsert     func(*types.AuditEvent) error
 	AppRunPath      string       // path to the app run directory
 	rbacApi         rbac.RBACAPI // the rbac api to use
+
+	// telemetryAttrs caches the immutable per-app OpenTelemetry attributes so
+	// that ServeHTTP does not allocate them on every request.
+	telemetryAttrs []attribute.KeyValue
 }
 
 type starlarkCacheEntry struct {
@@ -127,6 +134,7 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 	if err := newApp.updateAppConfig(); err != nil {
 		return nil, err
 	}
+	newApp.telemetryAttrs = telemetry.AppAttributes(appEntry)
 
 	if appEntry.IsDev {
 		newApp.appDev = dev.NewAppDev(logger, &appfs.WritableSourceFs{SourceFs: sourceFS}, workFS, newApp.appStyle, systemConfig)
@@ -633,6 +641,22 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.lastRequestTime.Store(time.Now().Unix()) // new api call, update last request time
+	if telemetry.Enabled() && !a.AppConfig.Audit.SkipHttpEvents {
+		spanName := "openrun.app.request"
+		if a.AppConfig.Audit.RedactUrl {
+			spanName = "openrun.app.request.redacted"
+		}
+		// Pass cached app attrs and per-request attrs as separate WithAttributes
+		// options. The SDK concatenates them internally, so we avoid the
+		// per-request allocation of a combined slice and the cached
+		// a.telemetryAttrs slice is referenced (not copied) here.
+		ctx, span := telemetry.Tracer().Start(r.Context(), spanName,
+			trace.WithAttributes(a.telemetryAttrs...),
+			trace.WithAttributes(telemetry.RequestAttributes(r)...),
+		)
+		defer span.End()
+		r = r.WithContext(ctx)
+	}
 	a.appRouter.ServeHTTP(w, r)
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -100,7 +101,7 @@ func sendDelegateBuild(url string, data DelegateRequest, sourcePath string, buil
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", builderAuthToken))
 
 	// Send it
-	client := &http.Client{}
+	client := &http.Client{Transport: telemetry.WrapTransport(http.DefaultTransport)}
 	res, err := client.Do(req)
 	if err != nil {
 		return err

@@ -29,6 +29,14 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsInt(t, "max backups", 10, c.Log.MaxBackups)
 	testutil.AssertEqualsInt(t, "max size MB", 50, c.Log.MaxSizeMB)
 
+	// Telemetry related settings
+	testutil.AssertEqualsBool(t, "telemetry enabled", false, c.Telemetry.Enabled)
+	testutil.AssertEqualsString(t, "telemetry service", "", c.Telemetry.ServiceName)
+	testutil.AssertEqualsString(t, "telemetry endpoint", "", c.Telemetry.Endpoint)
+	testutil.AssertEqualsBool(t, "telemetry traces", true, c.Telemetry.Traces)
+	testutil.AssertEqualsBool(t, "telemetry metrics", true, c.Telemetry.Metrics)
+	testutil.AssertEqualsBool(t, "telemetry plugin spans", false, c.Telemetry.PluginSpans)
+
 	// Metadata related settings
 	testutil.AssertEqualsString(t, "db connection", "sqlite:$OPENRUN_HOME/metadata/clace_metadata.db", c.Metadata.DBConnection)
 	testutil.AssertEqualsBool(t, "auto upgrade", true, c.Metadata.AutoUpgrade)

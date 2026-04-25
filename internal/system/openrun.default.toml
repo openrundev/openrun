@@ -58,6 +58,21 @@ console = false
 file = true
 access_logging = true
 
+# OpenTelemetry related Config. Disabled by default.
+# When enabled, endpoint and headers are optional; the standard OTEL_EXPORTER_OTLP_*
+# environment variables are used by the OpenTelemetry exporters when these are unset.
+# Header values support ${secret:...} references and are resolved before being sent
+# to the exporter.
+[telemetry]
+enabled = false
+service_name = ""
+environment = ""
+endpoint = ""
+headers = {}
+traces = true
+metrics = true
+plugin_spans = false # create a span around each Starlark plugin invocation; can be expensive
+
 # Metadata Storage Config
 [metadata]
 db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_metadata.db"
