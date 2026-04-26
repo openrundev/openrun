@@ -25,6 +25,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/fsnotify/fsnotify"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/openrundev/openrun/internal/app/action"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
@@ -609,14 +610,22 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.Info().Str("method", r.Method).Str("url", r.URL.String()).Msg("App Received request")
 	}
 	telemetry.RecordAppRequest(r.Context(), r.Method, a.telemetryIdentityAttrs...)
+	wrapper := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+	defer func() {
+		status := wrapper.Status()
+		if status == 0 {
+			status = http.StatusOK
+		}
+		telemetry.RecordAppResponse(r.Context(), status, a.telemetryIdentityAttrs...)
+	}()
 	if a.reloadError != nil {
 		a.Warn().Err(a.reloadError).Msg("Last reload had failed")
-		http.Error(w, a.reloadError.Error(), http.StatusInternalServerError)
+		http.Error(wrapper, a.reloadError.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if a.redirectBarePath && r.URL.Path == a.Path && !strings.HasSuffix(r.URL.Path, "/") {
-		http.Redirect(w, r, a.Path+"/", http.StatusTemporaryRedirect) // some apps like gradio need redirect to the full path with trailing slash
+		http.Redirect(wrapper, r, a.Path+"/", http.StatusTemporaryRedirect) // some apps like gradio need redirect to the full path with trailing slash
 		return
 	}
 
@@ -627,19 +636,19 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", a.AppConfig.CORS.AllowMethods)
-			w.Header().Set("Access-Control-Allow-Headers", a.AppConfig.CORS.AllowHeaders)
-			w.Header().Set("Access-Control-Allow-Credentials", a.AppConfig.CORS.AllowCredentials)
-			w.Header().Set("Access-Control-Max-Age", a.AppConfig.CORS.MaxAge)
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Header().Set("Content-Length", "0")
-			w.WriteHeader(http.StatusNoContent)
+			wrapper.Header().Set("Access-Control-Allow-Origin", origin)
+			wrapper.Header().Set("Access-Control-Allow-Methods", a.AppConfig.CORS.AllowMethods)
+			wrapper.Header().Set("Access-Control-Allow-Headers", a.AppConfig.CORS.AllowHeaders)
+			wrapper.Header().Set("Access-Control-Allow-Credentials", a.AppConfig.CORS.AllowCredentials)
+			wrapper.Header().Set("Access-Control-Max-Age", a.AppConfig.CORS.MaxAge)
+			wrapper.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			wrapper.Header().Set("Content-Length", "0")
+			wrapper.WriteHeader(http.StatusNoContent)
 			return
 		} else {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", a.AppConfig.CORS.AllowMethods)
-			w.Header().Set("Access-Control-Allow-Headers", a.AppConfig.CORS.AllowHeaders)
+			wrapper.Header().Set("Access-Control-Allow-Origin", origin)
+			wrapper.Header().Set("Access-Control-Allow-Methods", a.AppConfig.CORS.AllowMethods)
+			wrapper.Header().Set("Access-Control-Allow-Headers", a.AppConfig.CORS.AllowHeaders)
 		}
 	}
 
@@ -660,7 +669,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer span.End()
 		r = r.WithContext(ctx)
 	}
-	a.appRouter.ServeHTTP(w, r)
+	a.appRouter.ServeHTTP(wrapper, r)
 }
 
 func (a *App) startWatcher() error {

@@ -31,6 +31,7 @@ var (
 	containerCallDuration    metric.Float64Histogram
 	appInstrumentsOnce       sync.Once
 	appRequest               metric.Int64Counter
+	appResponse              metric.Int64Counter
 	appProxyBytes            metric.Int64Counter
 )
 
@@ -43,6 +44,7 @@ func resetMetricInstruments() {
 	containerCallDuration = nil
 	appInstrumentsOnce = sync.Once{}
 	appRequest = nil
+	appResponse = nil
 	appProxyBytes = nil
 }
 
@@ -87,6 +89,14 @@ func ensureAppInstruments() bool {
 		if err != nil {
 			return
 		}
+		appResponse, err = meter.Int64Counter(
+			"openrun.app.response",
+			metric.WithDescription("App responses by HTTP status bucket"),
+		)
+		if err != nil {
+			appRequest = nil
+			return
+		}
 		appProxyBytes, err = meter.Int64Counter(
 			"openrun.app.proxy.bytes",
 			metric.WithUnit("By"),
@@ -94,10 +104,11 @@ func ensureAppInstruments() bool {
 		)
 		if err != nil {
 			appRequest = nil
+			appResponse = nil
 			return
 		}
 	})
-	return appRequest != nil && appProxyBytes != nil
+	return appRequest != nil && appResponse != nil && appProxyBytes != nil
 }
 
 // RecordDBCall records the duration and outcome of a SQL driver call. It is a
@@ -158,6 +169,16 @@ func RecordAppRequest(ctx context.Context, method string, attrs ...attribute.Key
 	}
 }
 
+// RecordAppResponse records app-level HTTP status counters. It is a no-op when
+// metrics are disabled.
+func RecordAppResponse(ctx context.Context, status int, attrs ...attribute.KeyValue) {
+	if !MetricsEnabled() || !ensureAppInstruments() {
+		return
+	}
+	statusAttrs := metricAttrs(attrs, attribute.String("openrun.response.status", statusBucket(status)))
+	appResponse.Add(ctx, 1, metric.WithAttributes(statusAttrs...))
+}
+
 // RecordAppProxyBytes records app reverse-proxy byte counters. bytesIn is
 // traffic received from the client, and bytesOut is traffic sent to the client.
 func RecordAppProxyBytes(ctx context.Context, bytesIn, bytesOut uint64, attrs ...attribute.KeyValue) {
@@ -171,6 +192,27 @@ func RecordAppProxyBytes(ctx context.Context, bytesIn, bytesOut uint64, attrs ..
 	if bytesOut > 0 {
 		outAttrs := metricAttrs(attrs, attribute.String("openrun.proxy.direction", "out"))
 		appProxyBytes.Add(ctx, saturatingInt64(bytesOut), metric.WithAttributes(outAttrs...))
+	}
+}
+
+func statusBucket(status int) string {
+	switch {
+	case status == 401:
+		return "401"
+	case status == 403:
+		return "403"
+	case status >= 100 && status < 200:
+		return "1xx"
+	case status >= 200 && status < 300:
+		return "2xx"
+	case status >= 300 && status < 400:
+		return "3xx"
+	case status >= 400 && status < 500:
+		return "4xx"
+	case status >= 500 && status < 600:
+		return "5xx"
+	default:
+		return "unknown"
 	}
 }
 
