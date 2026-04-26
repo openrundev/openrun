@@ -191,6 +191,7 @@ func (s *Server) runSyncJobs() error {
 	if err != nil {
 		return err
 	}
+	updatedAnyApps := false
 	for _, entry := range scheduleEntries {
 		if !entry.IsScheduled || entry.Metadata.ScheduleFrequency <= 0 {
 			continue
@@ -206,14 +207,20 @@ func (s *Server) runSyncJobs() error {
 			continue
 		}
 
-		_, _, err = s.runSyncJob(ctx, types.Transaction{}, entry, false, true, repoCache) // each sync runs in its own transaction
+		_, updatedApps, err := s.runSyncJob(ctx, types.Transaction{}, entry, false, true, repoCache) // each sync runs in its own transaction
 		if err != nil {
 			s.Error().Err(err).Msgf("Error running sync job %s", entry.Id)
 			// One failure does not stop the rest
+			continue
+		}
+		if len(updatedApps) > 0 {
+			updatedAnyApps = true
 		}
 	}
 
-	s.CleanupVersions()
+	if updatedAnyApps {
+		s.CleanupVersions()
+	}
 	return nil
 }
 
