@@ -89,6 +89,7 @@ Secrets can be accessed using the syntax `{{secret_from "PROVIDER_NAME" "KEY_NAM
   - For client key and secret in [auth config]({{< ref "/docs/configuration/authentication/#oauth-authentication" >}})
   - For password in [git_auth config]({{< ref "/docs/configuration/security/#private-repository-access" >}})
   - For string values in [plugin config]({{< ref "/docs/plugins/overview/#account-linking" >}})
+  - For OTLP exporter headers in [telemetry config]({{< ref "/docs/configuration/telemetry/#collector-headers-and-secrets" >}})
 
 Secrets are always resolved late. The Starlark code does not get access to the plain text secrets. The secret lookup happens when the call to the plugin API is done. In case of params, the lookup happens when the param is passed to the container.
 

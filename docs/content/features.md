@@ -25,6 +25,8 @@ layout: hextra-home
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Audit Events" link="/docs/applications/audit/" subtitle="Auto-audit logging for all events, plus custom events."  icon="view-list" class="openrun-feature-card openrun-feature-card-light" >}}
 
+<!-- prettier-ignore --> {{< hextra/feature-card title="OpenTelemetry" link="/docs/configuration/telemetry/" subtitle="Export traces and metrics for app requests, containers and database calls over OTLP HTTP."  icon="chart-bar" class="openrun-feature-card openrun-feature-card-light" >}}
+
 <!-- prettier-ignore --> {{< hextra/feature-card title="Cross-language AppServer" link="/docs/quickstart/#containerized-applications" subtitle="Application Server which supports all languages."  icon="support" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Container management" link="/docs/container/overview/" subtitle="Automatically build and deploy containers, with Docker/Podman or Kubernetes."  icon="docker" class="openrun-feature-card openrun-feature-card-light" >}}

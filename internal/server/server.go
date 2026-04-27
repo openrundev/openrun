@@ -178,7 +178,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}
 
 	// Initialize telemetry after secrets are resolved so OTLP headers can use
-	// ${secret:...} references. A failure here is logged but does not block
+	// {{ secret ... }} references. A failure here is logged but does not block
 	// server startup; observability is non-essential.
 	telemetryProviders, err := telemetry.Setup(context.Background(), config, l)
 	if err != nil {
