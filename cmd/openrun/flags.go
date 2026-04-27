@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/urfave/cli/v2"
@@ -65,6 +66,15 @@ func newBoolFlag(name, alias, usage string, value bool) *cli.BoolFlag {
 		Usage:   usage,
 		Value:   value,
 	}
+}
+
+func validateNoFlagLikeValues(flagName string, valueName string, values []string) error {
+	for _, value := range values {
+		if strings.HasPrefix(value, "--") {
+			return fmt.Errorf("invalid %s value %q for %s: values cannot start with --; did you forget to provide a value for %s?", valueName, value, flagName, flagName)
+		}
+	}
+	return nil
 }
 
 // makeAbsolute converts a relative path to an absolute path.

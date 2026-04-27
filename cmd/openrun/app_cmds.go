@@ -162,6 +162,9 @@ Examples:
 			}
 
 			containerVolumes := cCtx.StringSlice("container-volume")
+			if err := validateNoFlagLikeValues("--cvol", "container volume", containerVolumes); err != nil {
+				return err
+			}
 
 			appConfig := cCtx.StringSlice("app-config")
 			confMap := make(map[string]string)

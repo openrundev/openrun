@@ -263,6 +263,11 @@ The initial argument are strings. The last argument is <appPathGlob>. `+PATH_SPE
 			body := types.CreateUpdateAppMetadataRequest()
 			body.ConfigType = configType
 			body.ConfigEntries = cCtx.Args().Slice()[:cCtx.NArg()-1]
+			if configType == types.AppMetadataContainerVolumes {
+				if err := validateNoFlagLikeValues("--cvol", "container volume", body.ConfigEntries); err != nil {
+					return err
+				}
+			}
 
 			var updateResponse types.AppUpdateMetadataResponse
 			if err := client.Post("/_openrun/app_metadata", values, body, &updateResponse); err != nil {
