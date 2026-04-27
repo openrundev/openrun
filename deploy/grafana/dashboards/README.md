@@ -32,9 +32,13 @@ In Grafana, import:
 - `openrun-metrics.json`
 - `openrun-traces.json`
 
-During import, select the Prometheus datasource for the metrics dashboard and
-the Tempo datasource for the traces dashboard. Leave the `service` variable as
-`openrun-dev` unless you changed `telemetry.service_name`.
+The metrics dashboard is configured for a Prometheus datasource with UID
+`prometheus` and `telemetry.service_name = "openrun-dev"`, so it can also be
+used as a public dashboard where variables are not supported. If your datasource
+UID or service name differs, update `openrun-metrics.json` before importing.
+
+During import, select the Tempo datasource for the traces dashboard. Leave the
+`service` variable as `openrun-dev` unless you changed `telemetry.service_name`.
 
 To create the dashboards, run
 

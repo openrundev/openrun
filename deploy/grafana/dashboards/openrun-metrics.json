@@ -24,7 +24,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${prometheus}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -100,12 +100,12 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${prometheus}"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "range": true,
           "refId": "A",
-          "expr": "sum by (openrun_app_path, openrun_request_kind) ({service_name=~\"$service\", __name__=~\"openrun_app_request.*\", openrun_request_kind=~\"total|get|update\"})",
+          "expr": "sum by (openrun_app_path, openrun_request_kind) (increase({service_name=\"openrun-dev\", __name__=~\"openrun_app_request.*\", __name__!~\".*_created\", openrun_request_kind=~\"total|get|update\"}[5m]))",
           "legendFormat": "{{openrun_app_path}} {{openrun_request_kind}}"
         }
       ],
@@ -115,7 +115,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${prometheus}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -191,22 +191,22 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${prometheus}"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "range": true,
           "refId": "A",
-          "expr": "sum by (openrun_app_path, openrun_proxy_direction) (increase({service_name=~\"$service\", __name__=~\"openrun_app_proxy_bytes.*\", __name__!~\".*_created\", openrun_proxy_direction=~\"in|out\"}[$__rate_interval]))",
+          "expr": "sum by (openrun_app_path, openrun_proxy_direction) (increase({service_name=\"openrun-dev\", __name__=~\"openrun_app_proxy_bytes.*\", __name__!~\".*_created\", openrun_proxy_direction=~\"in|out\"}[5m]))",
           "legendFormat": "{{openrun_app_path}} {{openrun_proxy_direction}}"
         }
       ],
-      "title": "App Proxy Bytes / Interval",
+      "title": "App Proxy Bytes",
       "type": "timeseries"
     },
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${prometheus}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -282,12 +282,12 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${prometheus}"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "range": true,
           "refId": "A",
-          "expr": "sum by (openrun_app_path, openrun_response_status) ({service_name=~\"$service\", __name__=~\"openrun_app_response.*\", openrun_response_status=~\"1xx|2xx|3xx|401|403|4xx|5xx\"})",
+          "expr": "sum by (openrun_app_path, openrun_response_status) (increase({service_name=\"openrun-dev\", __name__=~\"openrun_app_response.*\", __name__!~\".*_created\", openrun_response_status=~\"1xx|2xx|3xx|401|403|4xx|5xx\"}[5m]))",
           "legendFormat": "{{openrun_app_path}} {{openrun_response_status}}"
         }
       ],
@@ -297,7 +297,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${prometheus}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -373,10 +373,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${prometheus}"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (openrun_db_invoker, db_operation, openrun_error) (rate(openrun_db_call_duration_milliseconds_count{service_name=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (openrun_db_invoker, db_operation, openrun_error) (rate(openrun_db_call_duration_milliseconds_count{service_name=\"openrun-dev\"}[5m]))",
           "legendFormat": "{{openrun_db_invoker}} {{db_operation}} error={{openrun_error}}",
           "range": true,
           "refId": "A"
@@ -388,7 +388,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${prometheus}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -464,10 +464,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${prometheus}"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, openrun_db_invoker, db_operation) (rate(openrun_db_call_duration_milliseconds_bucket{service_name=~\"$service\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, openrun_db_invoker, db_operation) (rate(openrun_db_call_duration_milliseconds_bucket{service_name=\"openrun-dev\"}[5m])))",
           "legendFormat": "p95 {{openrun_db_invoker}} {{db_operation}}",
           "range": true,
           "refId": "A"
@@ -479,7 +479,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${prometheus}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -555,10 +555,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${prometheus}"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (openrun_container_kind, openrun_container_op, openrun_error) (rate(openrun_container_call_duration_milliseconds_count{service_name=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (openrun_container_kind, openrun_container_op, openrun_error) (rate(openrun_container_call_duration_milliseconds_count{service_name=\"openrun-dev\"}[5m]))",
           "legendFormat": "{{openrun_container_kind}} {{openrun_container_op}} error={{openrun_error}}",
           "range": true,
           "refId": "A"
@@ -570,7 +570,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${prometheus}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -646,10 +646,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${prometheus}"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, openrun_container_kind, openrun_container_op) (rate(openrun_container_call_duration_milliseconds_bucket{service_name=~\"$service\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, openrun_container_kind, openrun_container_op) (rate(openrun_container_call_duration_milliseconds_bucket{service_name=\"openrun-dev\"}[5m])))",
           "legendFormat": "p95 {{openrun_container_kind}} {{openrun_container_op}}",
           "range": true,
           "refId": "A"
@@ -657,70 +657,6 @@
       ],
       "title": "Container Operation Latency p95",
       "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${prometheus}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 32
-      },
-      "id": 8,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${prometheus}"
-          },
-          "editorMode": "code",
-          "expr": "topk(20, sum by (http_request_method, openrun_route_class, http_response_status_code) (rate(http_server_request_duration_seconds_count{service_name=~\"$service\"}[$__rate_interval])))",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Top Server Routes",
-      "type": "table"
     }
   ],
   "refresh": "10s",
@@ -730,42 +666,6 @@
     "otel",
     "metrics"
   ],
-  "templating": {
-    "list": [
-      {
-        "current": {},
-        "hide": 0,
-        "includeAll": false,
-        "label": "Prometheus",
-        "multi": false,
-        "name": "prometheus",
-        "options": [],
-        "query": "prometheus",
-        "refresh": 1,
-        "regex": "",
-        "type": "datasource"
-      },
-      {
-        "current": {
-          "selected": true,
-          "text": "openrun-dev",
-          "value": "openrun-dev"
-        },
-        "hide": 0,
-        "label": "Service",
-        "name": "service",
-        "options": [
-          {
-            "selected": true,
-            "text": "openrun-dev",
-            "value": "openrun-dev"
-          }
-        ],
-        "query": "openrun-dev",
-        "type": "textbox"
-      }
-    ]
-  },
   "time": {
     "from": "now-1h",
     "to": "now"
