@@ -31,7 +31,8 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 )
 
-// SAML auth using gosaml2 library. Standard SAML flow, using cookies for saving session state.
+// SAML auth using gosaml2 library. Standard SAML flow, using KV-backed gorilla
+// sessions so browser cookies only carry opaque session ids.
 // Two unusual situations are handled:
 // 1. The SAML callback url is on domain a.com while the app is on b.com. The standard flow does not work since the ACS api (on a.com) cannot
 //  set cookies on b.com. This is handled by having a redirect api on b.com which sets the cookies
@@ -49,7 +50,7 @@ import (
 // 8. ACS api validates the sessionid, and updates the state map in the DB with the user id and groups info
 // 9. ACS api redirects to the redirect API on the app domain, again passing the sessionid in the relay parameter
 // 10. redirect API validates the passed sessionid, nonce from DB statemap against nonce from cookie,
-// 11. redirect sets the session cookie in authenticated state, with the user id and groups info and deletes the DB entry
+// 11. redirect stores the authenticated session, with the user id and groups info and deletes the DB entry
 // 12. Redirects back to original app url, which will again call CheckSAMLAuth and find the authenticated cookie
 const SAML_AUTH_PREFIX = "saml_"
 
@@ -59,11 +60,11 @@ type SAMLManager struct {
 	config          *types.ServerConfig
 	providerConfigs map[string]*types.SAMLConfig
 	providers       map[string]*saml2.SAMLServiceProvider
-	cookieStore     *sessions.CookieStore
+	cookieStore     sessions.Store
 	db              KVStore
 }
 
-func NewSAMLManager(logger *types.Logger, config *types.ServerConfig, cookieStore *sessions.CookieStore, db KVStore) *SAMLManager {
+func NewSAMLManager(logger *types.Logger, config *types.ServerConfig, cookieStore sessions.Store, db KVStore) *SAMLManager {
 	return &SAMLManager{
 		Logger:      logger,
 		config:      config,

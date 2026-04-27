@@ -364,6 +364,20 @@ func TestMetadata_ConfigAndKV(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	_, err = m.FetchKVBlob(ctx, "expired")
 	testutil.AssertErrorContains(t, err, "error querying keystore")
+
+	future := time.Now().Add(time.Hour)
+	testutil.AssertNoError(t, m.UpsertKVBlob(ctx, "expired", []byte(`{"ok":true}`), &future))
+	value, err := m.FetchKVBlob(ctx, "expired")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "upserted expired value", `{"ok":true}`, string(value))
+
+	_, err = m.db.ExecContext(ctx, `insert into keystore values (?, ?, datetime('now'), datetime('now', '-1 day'))`, "expired-cleanup", []byte(`{"ok":true}`))
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, m.CleanupExpiredKV(ctx))
+	_, err = m.db.ExecContext(ctx, `insert into keystore values (?, ?, datetime('now'), datetime('now', '-1 day'))`, "expired-cleanup", []byte(`{"ok":true}`))
+	testutil.AssertNoError(t, err)
+	_, err = m.FetchKVBlob(ctx, "expired-cleanup")
+	testutil.AssertErrorContains(t, err, "error querying keystore")
 }
 
 func TestToNullTime(t *testing.T) {
@@ -373,7 +387,7 @@ func TestToNullTime(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	nullTime = toNullTime(&now)
 	testutil.AssertEqualsBool(t, "non nil time valid", true, nullTime.Valid)
-	if !nullTime.Time.Equal(now) {
-		t.Fatalf("expected %s got %s", now, nullTime.Time)
+	if !nullTime.Time.Equal(now.UTC()) {
+		t.Fatalf("expected %s got %s", now.UTC(), nullTime.Time)
 	}
 }

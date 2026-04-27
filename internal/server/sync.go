@@ -163,6 +163,9 @@ func (s *Server) syncRunner() {
 		} else {
 			s.Trace().Msg("Leader, running sync jobs")
 		}
+		if err := s.db.CleanupExpiredKV(context.Background()); err != nil {
+			s.Error().Err(err).Msg("Error cleaning up expired KV entries")
+		}
 		err := s.runSyncJobs()
 		if err != nil {
 			s.Error().Err(err).Msg("Error running sync")

@@ -35,7 +35,8 @@ import (
 	"github.com/markbates/goth/providers/openidConnect"
 )
 
-// OAuth and OIDC support using goth library. Standard OAuth flow, using cookies for saving session state.
+// OAuth and OIDC support using goth library. Standard OAuth flow, using
+// KV-backed gorilla sessions so browser cookies only carry opaque session ids.
 // Two unusual situations are handled:
 // 1. The OAuth callback url is on domain a.com while the app is on b.com. The standard flow does not work since the callback api (on a.com) cannot
 //  set cookies on b.com. This is handled by having a redirect api on b.com which sets the cookies
@@ -55,7 +56,7 @@ import (
 // 10. Callback api validates the sessionid, and updates the state map in the DB with the user id and groups info
 // 11. Callback api redirects to the redirect API on the app domain, again passing the sessionid in the state parameter
 // 12. redirect API validates the passed sessionid, nonce from DB statemap against nonce from cookie,
-// 13. redirect sets the session cookie in authenticated state, with the user id and groups info and deletes the DB entry
+// 13. redirect stores the authenticated session, with the user id and groups info and deletes the DB entry
 // 14. Redirects back to original app url, which will again call CheckAuth and find the authenticated cookie
 
 const (
@@ -76,7 +77,7 @@ const (
 type OAuthManager struct {
 	*types.Logger
 	config          *types.ServerConfig
-	cookieStore     *sessions.CookieStore
+	cookieStore     sessions.Store
 	providerConfigs map[string]*types.AuthConfig
 	db              KVStore
 }
@@ -102,12 +103,13 @@ func genCookieName(provider string) string {
 }
 
 func (s *OAuthManager) Setup(sessionKey []byte, sessionBlockKey []byte) error {
-	s.cookieStore = sessions.NewCookieStore(sessionKey, sessionBlockKey)
-	s.cookieStore.MaxAge(s.config.Security.SessionMaxAge)
-	s.cookieStore.Options.Path = "/"
-	s.cookieStore.Options.HttpOnly = true
-	s.cookieStore.Options.Secure = s.config.Security.SessionHttpsOnly
-	s.cookieStore.Options.SameSite = http.SameSiteLaxMode
+	cookieStore := NewKVSessionStore(s.db, sessionKey, sessionBlockKey)
+	cookieStore.MaxAge(s.config.Security.SessionMaxAge)
+	cookieStore.Options.Path = "/"
+	cookieStore.Options.HttpOnly = true
+	cookieStore.Options.Secure = s.config.Security.SessionHttpsOnly
+	cookieStore.Options.SameSite = http.SameSiteLaxMode
+	s.cookieStore = cookieStore
 
 	gothic.Store = s.cookieStore // Set the store for gothic
 	gothic.GetProviderName = getProviderName

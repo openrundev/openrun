@@ -1588,6 +1588,20 @@ func (e *errorKVStore) FetchKV(ctx context.Context, key string) (map[string]any,
 	return e.InmemoryKVStore.FetchKV(ctx, key)
 }
 
+func (e *errorKVStore) FetchKVBlob(ctx context.Context, key string) ([]byte, error) {
+	if e.fetchError {
+		return nil, &url.Error{Op: "fetch", URL: "test", Err: context.DeadlineExceeded}
+	}
+	return e.InmemoryKVStore.FetchKVBlob(ctx, key)
+}
+
+func (e *errorKVStore) UpsertKVBlob(ctx context.Context, key string, value []byte, expireAt *time.Time) error {
+	if e.storeError || e.updateError {
+		return &url.Error{Op: "upsert", URL: "test", Err: context.DeadlineExceeded}
+	}
+	return e.InmemoryKVStore.UpsertKVBlob(ctx, key, value, expireAt)
+}
+
 func (e *errorKVStore) UpdateKV(ctx context.Context, key string, value map[string]any) error {
 	if e.updateError {
 		return &url.Error{Op: "update", URL: "test", Err: context.DeadlineExceeded}

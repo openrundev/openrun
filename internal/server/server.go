@@ -1037,8 +1037,10 @@ func (s *Server) CleanupVersions() {
 // KVStore is an interface for a key-value store. Implemented by metadata.Metadata
 type KVStore interface {
 	FetchKV(ctx context.Context, key string) (map[string]any, error)
+	FetchKVBlob(ctx context.Context, key string) ([]byte, error)
 	StoreKV(ctx context.Context, key string, value map[string]any, expireAt *time.Time) error
 	StoreKVBlob(ctx context.Context, key string, value []byte, expireAt *time.Time) error
+	UpsertKVBlob(ctx context.Context, key string, value []byte, expireAt *time.Time) error
 
 	UpdateKV(ctx context.Context, key string, value map[string]any) error
 	UpdateKVBlob(ctx context.Context, key string, value []byte) error

@@ -982,6 +982,17 @@ func (m *Metadata) StoreKVBlob(ctx context.Context, key string, value []byte, ex
 	return nil
 }
 
+func (m *Metadata) UpsertKVBlob(ctx context.Context, key string, value []byte, expireAt *time.Time) error {
+	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`insert into keystore(key, value, create_time, delete_at) values (?, ?, `+system.FuncNow(m.dbType)+`, ?)
+		 on conflict(key) do update set value = excluded.value, delete_at = excluded.delete_at`),
+		key, value, toNullTime(expireAt))
+	if err != nil {
+		return fmt.Errorf("error upserting value: %w", err)
+	}
+	return nil
+}
+
 func (m *Metadata) UpdateKV(ctx context.Context, key string, value map[string]any) error {
 	valueJson, err := json.Marshal(value)
 	if err != nil {
@@ -1010,6 +1021,14 @@ func (m *Metadata) DeleteKV(ctx context.Context, key string) error {
 	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType, `delete from keystore where key = ?`), key)
 	if err != nil {
 		return fmt.Errorf("error deleting value: %w", err)
+	}
+	return nil
+}
+
+func (m *Metadata) CleanupExpiredKV(ctx context.Context) error {
+	_, err := m.db.ExecContext(ctx, `delete from keystore where delete_at is not null and delete_at <= `+system.FuncNow(m.dbType))
+	if err != nil {
+		return fmt.Errorf("error cleaning up expired kv entries: %w", err)
 	}
 	return nil
 }
@@ -1071,7 +1090,7 @@ func toNullTime(t *time.Time) sql.NullTime {
 	if t == nil {
 		return sql.NullTime{Valid: false}
 	}
-	return sql.NullTime{Time: *t, Valid: true}
+	return sql.NullTime{Time: t.UTC(), Valid: true}
 }
 
 // BeginTransaction starts a new Transaction

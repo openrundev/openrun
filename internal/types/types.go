@@ -846,6 +846,7 @@ type SAMLConfig struct {
 const (
 	SAML_SESSION_KV_PREFIX      = "saml_session:"
 	OAUTH_SESSION_KV_PREFIX     = "oauth_session:"
+	HTTP_SESSION_KV_PREFIX      = "http_session:"
 	CONSTANT_KV_PREFIX          = "constant:"
 	COOKIE_SESSION_SECRET_KV    = "cookie_session_secret"
 	COOKIE_SESSION_BLOCK_KEY_KV = "cookie_session_block_key"
