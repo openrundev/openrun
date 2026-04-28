@@ -1203,6 +1203,85 @@ func (h *Handler) listSyncEntries(r *http.Request) (any, error) {
 	return results, nil
 }
 
+func (h *Handler) createService(r *http.Request) (any, error) {
+	dryRun, err := parseBoolArg(r.URL.Query().Get(DRY_RUN_ARG), false)
+	if err != nil {
+		return nil, err
+	}
+
+	var service types.Service
+	if err = json.NewDecoder(r.Body).Decode(&service); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	if service.Name == "" || service.ServiceType == "" {
+		return nil, types.CreateRequestError("name and service_type are required", http.StatusBadRequest)
+	}
+
+	updateTargetInContext(r, service.ServiceType+"/"+service.Name, dryRun)
+	updateOperationInContext(r, "service_create")
+
+	if err := h.server.CreateService(r.Context(), &service, dryRun); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return service, nil
+}
+
+func (h *Handler) updateService(r *http.Request) (any, error) {
+	dryRun, err := parseBoolArg(r.URL.Query().Get(DRY_RUN_ARG), false)
+	if err != nil {
+		return nil, err
+	}
+
+	var service types.Service
+	if err = json.NewDecoder(r.Body).Decode(&service); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	if service.Name == "" || service.ServiceType == "" {
+		return nil, types.CreateRequestError("name and service_type are required", http.StatusBadRequest)
+	}
+
+	updateTargetInContext(r, service.ServiceType+"/"+service.Name, dryRun)
+	updateOperationInContext(r, "service_update")
+
+	if err := h.server.UpdateService(r.Context(), &service, dryRun); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return service, nil
+}
+
+func (h *Handler) deleteService(r *http.Request) (any, error) {
+	name := r.URL.Query().Get("name")
+	serviceType := r.URL.Query().Get("service_type")
+	if name == "" || serviceType == "" {
+		return nil, types.CreateRequestError("name and service_type are required", http.StatusBadRequest)
+	}
+
+	dryRun, err := parseBoolArg(r.URL.Query().Get(DRY_RUN_ARG), false)
+	if err != nil {
+		return nil, err
+	}
+
+	updateTargetInContext(r, serviceType+"/"+name, dryRun)
+	updateOperationInContext(r, "service_delete")
+
+	if err := h.server.DeleteService(r.Context(), name, serviceType, dryRun); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return map[string]any{"name": name, "service_type": serviceType, "dry_run": dryRun}, nil
+}
+
+func (h *Handler) listServices(r *http.Request) (any, error) {
+	updateOperationInContext(r, "list_services")
+	serviceType := r.URL.Query().Get("service_type")
+	name := r.URL.Query().Get("name")
+
+	results, err := h.server.ListServices(r.Context(), serviceType, name)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return results, nil
+}
+
 func (h *Handler) configGet(r *http.Request) (any, error) {
 	updateOperationInContext(r, "config_get")
 	return types.ConfigResponse{DynamicConfig: h.server.GetDynamicConfig()}, nil
@@ -1349,6 +1428,26 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to get sync entries
 	r.Get("/sync", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "list_sync", h.listSyncEntries, false)
+	}))
+
+	// API to create service
+	r.Post("/service", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "service_create", h.createService, false)
+	}))
+
+	// API to update service
+	r.Put("/service", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "service_update", h.updateService, false)
+	}))
+
+	// API to delete service
+	r.Delete("/service", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "service_delete", h.deleteService, false)
+	}))
+
+	// API to list services
+	r.Get("/services", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "list_services", h.listServices, false)
 	}))
 
 	// API to get config

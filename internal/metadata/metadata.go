@@ -24,7 +24,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 10
+const CURRENT_DB_VERSION = 11
 
 // Metadata is the metadata persistence layer
 type Metadata struct {
@@ -334,6 +334,16 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `update version set version=10, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 11 {
+		m.Info().Msg("Upgrading to version 11")
+		if err := m.createServiceBindings(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `update version set version=11, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}
@@ -1084,6 +1094,155 @@ func (m *Metadata) CleanupFiles() error {
 		}
 	}
 	return nil
+}
+
+func (m *Metadata) createServiceBindings(ctx context.Context, tx types.Transaction) error {
+	_, err := tx.ExecContext(ctx, `create table services (name text, service_type text, is_default bool, config json, create_time `+
+		system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(name, service_type))")
+	if err != nil {
+		return fmt.Errorf("error creating service bindings table: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`CREATE UNIQUE INDEX services_one_default_per_type ON services(service_type) WHERE is_default`)
+	if err != nil {
+		return fmt.Errorf("error creating services default index: %w", err)
+	}
+
+	return nil
+}
+
+func (m *Metadata) CreateService(ctx context.Context, tx types.Transaction, service *types.Service) error {
+	configJson, err := json.Marshal(service.Config)
+	if err != nil {
+		return fmt.Errorf("error marshalling service config: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`INSERT into services(name, service_type, is_default, config, create_time, update_time) values(?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		service.Name, service.ServiceType, service.IsDefault, string(configJson))
+	if err != nil {
+		return fmt.Errorf("error inserting service: %w", err)
+	}
+	return nil
+}
+
+func (m *Metadata) UpdateService(ctx context.Context, tx types.Transaction, service *types.Service) error {
+	configJson, err := json.Marshal(service.Config)
+	if err != nil {
+		return fmt.Errorf("error marshalling service config: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`UPDATE services set is_default = ?, config = ?, update_time = `+system.FuncNow(m.dbType)+` where name = ? and service_type = ?`),
+		service.IsDefault, string(configJson), service.Name, service.ServiceType)
+	if err != nil {
+		return fmt.Errorf("error updating service: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("no service found with name %s and service_type %s", service.Name, service.ServiceType)
+	}
+	return nil
+}
+
+// ClearServiceDefault unsets the is_default flag for any service of the given
+// service_type except for the service with the given name. If exceptName is empty,
+// the default flag is cleared for all services of that type.
+func (m *Metadata) ClearServiceDefault(ctx context.Context, tx types.Transaction, serviceType, exceptName string) error {
+	query := `UPDATE services set is_default = ?, update_time = ` + system.FuncNow(m.dbType) + ` where service_type = ? and is_default`
+	args := []any{false, serviceType}
+	if exceptName != "" {
+		query += ` and name <> ?`
+		args = append(args, exceptName)
+	}
+	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType, query), args...)
+	if err != nil {
+		return fmt.Errorf("error clearing default service: %w", err)
+	}
+	return nil
+}
+
+// CountServices returns the number of services of the given service_type.
+func (m *Metadata) CountServices(ctx context.Context, tx types.Transaction, serviceType string) (int, error) {
+	var count int
+	err := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
+		`select count(*) from services where service_type = ?`), serviceType).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("error counting services: %w", err)
+	}
+	return count, nil
+}
+
+func (m *Metadata) DeleteService(ctx context.Context, tx types.Transaction, name, serviceType string) error {
+	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`delete from services where name = ? and service_type = ?`), name, serviceType)
+	if err != nil {
+		return fmt.Errorf("error deleting service: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("no service found with name %s and service_type %s", name, serviceType)
+	}
+	return nil
+}
+
+// ListServices returns services filtered by the optional serviceType and name. Empty string means no filter.
+func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, serviceType, name string) ([]*types.Service, error) {
+	query := `select name, service_type, is_default, config, create_time, update_time from services`
+	args := make([]any, 0, 2)
+	conds := make([]string, 0, 2)
+	if serviceType != "" {
+		conds = append(conds, `service_type = ?`)
+		args = append(args, serviceType)
+	}
+	if name != "" {
+		conds = append(conds, `name = ?`)
+		args = append(args, name)
+	}
+	if len(conds) > 0 {
+		query += ` where ` + strings.Join(conds, ` and `)
+	}
+	query += ` order by service_type, name`
+
+	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, query))
+	if err != nil {
+		return nil, fmt.Errorf("error preparing statement: %w", err)
+	}
+	defer stmt.Close() //nolint:errcheck
+
+	rows, err := stmt.Query(args...)
+	if err != nil {
+		return nil, fmt.Errorf("error querying services: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	services := make([]*types.Service, 0)
+	for rows.Next() {
+		var service types.Service
+		var configStr sql.NullString
+		err = rows.Scan(&service.Name, &service.ServiceType, &service.IsDefault, &configStr, &service.CreateTime, &service.UpdateTime)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning service: %w", err)
+		}
+		if configStr.Valid && configStr.String != "" {
+			err = json.Unmarshal([]byte(configStr.String), &service.Config)
+			if err != nil {
+				return nil, fmt.Errorf("error unmarshalling service config: %w", err)
+			}
+		}
+		services = append(services, &service)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return nil, fmt.Errorf("error closing rows: %w", closeErr)
+	}
+	return services, nil
 }
 
 func toNullTime(t *time.Time) sql.NullTime {

@@ -89,6 +89,10 @@ func (h *HttpClient) Post(url string, params url.Values, input any, output any) 
 	return h.request(http.MethodPost, url, params, input, output)
 }
 
+func (h *HttpClient) Put(url string, params url.Values, input any, output any) error {
+	return h.request(http.MethodPut, url, params, input, output)
+}
+
 func (h *HttpClient) Delete(url string, params url.Values, output any) error {
 	return h.request(http.MethodDelete, url, params, nil, output)
 }

@@ -863,3 +863,12 @@ const (
 	OPENRUN_HEADER_PERMS            = OPENRUN_HEADER_PREFIX + "Perms"
 	OPENRUN_HEADER_APP_RBAC_ENABLED = OPENRUN_HEADER_PREFIX + "Rbac-Enabled"
 )
+
+type Service struct {
+	Name        string            `json:"name"`
+	ServiceType string            `json:"service_type"`
+	IsDefault   bool              `json:"is_default"`
+	Config      map[string]string `json:"config"`
+	CreateTime  time.Time         `json:"create_time"`
+	UpdateTime  time.Time         `json:"update_time"`
+}

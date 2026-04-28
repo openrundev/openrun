@@ -1,0 +1,265 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+
+tests:
+  # Basic create + list
+  service0010: # create first postgres service - auto becomes default
+    command: ../openrun service create --config url=postgres://localhost:5432/db1 postgres/p1
+    stdout: "Service postgres/p1 created"
+    exit-code: 0
+
+  service0011: # initial create even without --is-default sets default true
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].is_default'
+    stdout: "true"
+
+  service0012: # config url stored
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
+    stdout: "postgres://localhost:5432/db1"
+
+  service0013: # service_type and name returned correctly
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].service_type + "/" + .[0].name'
+    stdout: "postgres/p1"
+
+  service0014: # create_time and update_time populated
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].create_time'
+    stdout: "20" # year prefix in timestamp
+
+  # Second service of same type does not become default
+  service0020:
+    command: ../openrun service create --config url=postgres://h2:5432/db2 --config user=admin postgres/p2
+    stdout: "Service postgres/p2 created"
+
+  service0021: # second service is_default stays false (not requested)
+    command: ../openrun service list -f json postgres/p2 | jq -r '.[0].is_default'
+    stdout: "false"
+
+  service0022: # second service config has multiple keys
+    command: ../openrun service list -f json postgres/p2 | jq -r '.[0].config.user'
+    stdout: "admin"
+
+  service0023:
+    command: ../openrun service list -f json postgres/p2 | jq -r '.[0].config.url'
+    stdout: "postgres://h2:5432/db2"
+
+  service0024: # p1 still default
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].is_default'
+    stdout: "true"
+
+  # List filtering by service type
+  service0030: # filtered by service_type returns 2 entries
+    command: ../openrun service list -f json postgres | jq 'length'
+    stdout: "2"
+
+  service0031: # exactly one default among postgres services
+    command: ../openrun service list -f json postgres | jq '[.[] | select(.is_default)] | length'
+    stdout: "1"
+
+  service0032: # default has name p1
+    command: ../openrun service list -f json postgres | jq -r '.[] | select(.is_default) | .name'
+    stdout: "p1"
+
+  # Create with --is-default flag clears existing default
+  service0040:
+    command: ../openrun service create --is-default --config url=postgres://h3:5432/db3 postgres/p3
+    stdout: "Service postgres/p3 created"
+
+  service0041: # p3 is the new default
+    command: ../openrun service list -f json postgres/p3 | jq -r '.[0].is_default'
+    stdout: "true"
+
+  service0042: # p1 default got reset
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].is_default'
+    stdout: "false"
+
+  service0043: # p2 still not default
+    command: ../openrun service list -f json postgres/p2 | jq -r '.[0].is_default'
+    stdout: "false"
+
+  service0044: # only one default among postgres services
+    command: ../openrun service list -f json postgres | jq '[.[] | select(.is_default)] | length'
+    stdout: "1"
+
+  service0045: # 3 postgres services now
+    command: ../openrun service list -f json postgres | jq 'length'
+    stdout: "3"
+
+  # Update --set-default resets the previous default
+  service0050:
+    command: ../openrun service update --set-default=true postgres/p1
+    stdout: "Service postgres/p1 updated"
+
+  service0051: # p1 is default again
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].is_default'
+    stdout: "true"
+
+  service0052: # p3 default got reset by update
+    command: ../openrun service list -f json postgres/p3 | jq -r '.[0].is_default'
+    stdout: "false"
+
+  service0053: # still exactly one default
+    command: ../openrun service list -f json postgres | jq '[.[] | select(.is_default)] | length'
+    stdout: "1"
+
+  # Update --set-default=false unsets default without setting another
+  service0060:
+    command: ../openrun service update --set-default=false postgres/p1
+    stdout: "Service postgres/p1 updated"
+
+  service0061: # p1 no longer default
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].is_default'
+    stdout: "false"
+
+  service0062: # zero defaults among postgres services
+    command: ../openrun service list -f json postgres | jq '[.[] | select(.is_default)] | length'
+    stdout: "0"
+
+  service0063: # restore p3 as default for next steps
+    command: ../openrun service update --set-default=true postgres/p3
+    stdout: "Service postgres/p3 updated"
+
+  # Update config: add a new key
+  service0070:
+    command: ../openrun service update --config password=secret postgres/p1
+    stdout: "Service postgres/p1 updated"
+
+  service0071: # password key added
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.password'
+    stdout: "secret"
+
+  service0072: # url unchanged
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
+    stdout: "postgres://localhost:5432/db1"
+
+  # Update config: change existing value
+  service0080:
+    command: ../openrun service update --config url=postgres://newhost:5432/db1 postgres/p1
+    stdout: "Service postgres/p1 updated"
+
+  service0081:
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
+    stdout: "postgres://newhost:5432/db1"
+
+  service0082: # password key still there
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.password'
+    stdout: "secret"
+
+  # Update config: empty value deletes the key
+  service0090:
+    command: ../openrun service update --config password= postgres/p1
+    stdout: "Service postgres/p1 updated"
+
+  service0091: # password removed
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.password'
+    stdout: "null"
+
+  service0092: # url unchanged
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
+    stdout: "postgres://newhost:5432/db1"
+
+  service0093: # only one config key remaining
+    command: ../openrun service list -f json postgres/p1 | jq '.[0].config | length'
+    stdout: "1"
+
+  # Update without --set-default preserves the existing default state
+  service0100: # p3 is currently default; update its config
+    command: ../openrun service update --config extra=val postgres/p3
+    stdout: "Service postgres/p3 updated"
+
+  service0101: # p3 still default after config-only update
+    command: ../openrun service list -f json postgres/p3 | jq -r '.[0].is_default'
+    stdout: "true"
+
+  service0102:
+    command: ../openrun service list -f json postgres/p3 | jq -r '.[0].config.extra'
+    stdout: "val"
+
+  # First service of a different type also auto-defaults
+  service0110:
+    command: ../openrun service create --config url=mysql://m1 mysql/m1
+    stdout: "Service mysql/m1 created"
+
+  service0111:
+    command: ../openrun service list -f json mysql/m1 | jq -r '.[0].is_default'
+    stdout: "true"
+
+  service0112: # postgres default state unaffected
+    command: ../openrun service list -f json postgres/p3 | jq -r '.[0].is_default'
+    stdout: "true"
+
+  service0113: # listing all with no filter returns at least 4
+    command: ../openrun service list -f json | jq 'length'
+    stdout: "4"
+
+  # Delete
+  service0120:
+    command: ../openrun service delete postgres/p2
+    stdout: "Service postgres/p2 deleted"
+
+  service0121: # only 2 postgres services remain
+    command: ../openrun service list -f json postgres | jq 'length'
+    stdout: "2"
+
+  service0122: # p2 not in the list
+    command: ../openrun service list -f json postgres | jq -r '[.[].name] | sort | join(",")'
+    stdout: "p1,p3"
+
+  # Error cases
+  service0200: # invalid service id (missing /)
+    command: ../openrun service create postgres
+    exit-code: 1
+    stderr: "invalid service id"
+
+  service0201: # invalid service id (empty name)
+    command: ../openrun service create postgres/
+    exit-code: 1
+    stderr: "invalid service id"
+
+  service0202: # invalid config entry on create
+    command: ../openrun service create --config nope postgres/p_bad
+    exit-code: 1
+    stderr: "invalid config entry"
+
+  service0203: # invalid config entry on update
+    command: ../openrun service update --config nope postgres/p1
+    exit-code: 1
+    stderr: "invalid config entry"
+
+  service0204: # update non-existent service
+    command: ../openrun service update --set-default=true postgres/missing
+    exit-code: 1
+    stderr: "service postgres/missing not found"
+
+  service0205: # delete non-existent service
+    command: ../openrun service delete postgres/missing
+    exit-code: 1
+    stderr: "no service found"
+
+  service0206: # too many args to create
+    command: ../openrun service create postgres/p1 extra
+    exit-code: 1
+    stderr: "expected one arg"
+
+  # Dry-run create does not persist
+  service0210:
+    command: ../openrun service create --dry-run --config url=dryrun postgres/dry1
+    stdout: "Service postgres/dry1 created"
+
+  service0211: # dry-run create did not persist
+    command: ../openrun service list -f json postgres/dry1 | jq 'length'
+    stdout: "0"
+
+  # Dry-run update does not persist
+  service0220:
+    command: ../openrun service update --dry-run --config url=changed postgres/p1
+    stdout: "dry-run mode"
+
+  service0221: # url unchanged after dry-run update
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
+    stdout: "postgres://newhost:5432/db1"
+
+  # Cleanup
+  service99999:
+    command: (../openrun service delete postgres/p1; ../openrun service delete postgres/p3; ../openrun service delete mysql/m1) || true
