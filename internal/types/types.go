@@ -868,6 +868,7 @@ type Service struct {
 	Name        string            `json:"name"`
 	ServiceType string            `json:"service_type"`
 	IsDefault   bool              `json:"is_default"`
+	Staging     string            `json:"staging"`
 	Config      map[string]string `json:"config"`
 	CreateTime  time.Time         `json:"create_time"`
 	UpdateTime  time.Time         `json:"update_time"`

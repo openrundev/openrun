@@ -20,6 +20,7 @@ const (
 	SET_DEFAULT_FLAG = "set-default"
 	IS_DEFAULT_FLAG  = "is-default"
 	CONFIG_FLAG      = "config"
+	STAGING_FLAG     = "staging"
 )
 
 func initServiceCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -58,9 +59,10 @@ func parseConfigEntries(entries []string) (map[string]string, error) {
 }
 
 func serviceCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
-	flags := make([]cli.Flag, 0, len(commonFlags)+3)
+	flags := make([]cli.Flag, 0, len(commonFlags)+4)
 	flags = append(flags, commonFlags...)
 	flags = append(flags, newBoolFlag(IS_DEFAULT_FLAG, "", "Mark this service as the default for its service type", false))
+	flags = append(flags, newStringFlag(STAGING_FLAG, "", "Set the staging service name for this service", ""))
 	flags = append(flags,
 		&cli.StringSliceFlag{
 			Name:    CONFIG_FLAG,
@@ -100,6 +102,7 @@ Examples:
 				Name:        name,
 				ServiceType: serviceType,
 				IsDefault:   cCtx.Bool(IS_DEFAULT_FLAG),
+				Staging:     cCtx.String(STAGING_FLAG),
 				Config:      config,
 			}
 
@@ -122,9 +125,10 @@ Examples:
 }
 
 func serviceUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
-	flags := make([]cli.Flag, 0, len(commonFlags)+3)
+	flags := make([]cli.Flag, 0, len(commonFlags)+4)
 	flags = append(flags, commonFlags...)
 	flags = append(flags, newBoolFlag(SET_DEFAULT_FLAG, "", "Set the is_default flag (true/false)", false))
+	flags = append(flags, newStringFlag(STAGING_FLAG, "", "Set the staging service name. Empty value clears staging", ""))
 	flags = append(flags,
 		&cli.StringSliceFlag{
 			Name:    CONFIG_FLAG,
@@ -176,6 +180,9 @@ Examples:
 
 			if cCtx.IsSet(SET_DEFAULT_FLAG) {
 				service.IsDefault = cCtx.Bool(SET_DEFAULT_FLAG)
+			}
+			if cCtx.IsSet(STAGING_FLAG) {
+				service.Staging = cCtx.String(STAGING_FLAG)
 			}
 
 			for _, entry := range cCtx.StringSlice(CONFIG_FLAG) {
@@ -324,21 +331,21 @@ func printServiceList(cCtx *cli.Context, services []types.Service, format string
 			enc.Encode(s) //nolint:errcheck
 		}
 	case FORMAT_BASIC:
-		formatStr := "%-20s %-20s %-9s\n"
-		printStdout(cCtx, formatStr, "ServiceType", "Name", "IsDefault")
+		formatStr := "%-20s %-20s %-9s %-20s\n"
+		printStdout(cCtx, formatStr, "ServiceType", "Name", "IsDefault", "Staging")
 		for _, s := range services {
-			printStdout(cCtx, formatStr, s.ServiceType, s.Name, strconv.FormatBool(s.IsDefault))
+			printStdout(cCtx, formatStr, s.ServiceType, s.Name, strconv.FormatBool(s.IsDefault), s.Staging)
 		}
 	case FORMAT_TABLE, "":
-		formatStrHead := "%-20s %-20s %-9s %-25s %-s\n"
-		formatStrData := "%-20s %-20s %-9t %-25s %-s\n"
-		printStdout(cCtx, formatStrHead, "ServiceType", "Name", "IsDefault", "UpdateTime", "Config")
+		formatStrHead := "%-20s %-20s %-9s %-20s %-25s %-s\n"
+		formatStrData := "%-20s %-20s %-9t %-20s %-25s %-s\n"
+		printStdout(cCtx, formatStrHead, "ServiceType", "Name", "IsDefault", "Staging", "UpdateTime", "Config")
 		for _, s := range services {
-			printStdout(cCtx, formatStrData, s.ServiceType, s.Name, s.IsDefault, s.UpdateTime.Format("2006-01-02 15:04:05"), formatConfig(s.Config))
+			printStdout(cCtx, formatStrData, s.ServiceType, s.Name, s.IsDefault, s.Staging, s.UpdateTime.Format("2006-01-02 15:04:05"), formatConfig(s.Config))
 		}
 	case FORMAT_CSV:
 		for _, s := range services {
-			printStdout(cCtx, "%s,%s,%t,%s,%s\n", s.ServiceType, s.Name, s.IsDefault, s.UpdateTime.Format("2006-01-02 15:04:05"), formatConfig(s.Config))
+			printStdout(cCtx, "%s,%s,%t,%s,%s,%s\n", s.ServiceType, s.Name, s.IsDefault, s.Staging, s.UpdateTime.Format("2006-01-02 15:04:05"), formatConfig(s.Config))
 		}
 	default:
 		panic(fmt.Errorf("unknown format %s", format))

@@ -29,7 +29,7 @@ tests:
 
   # Second service of same type does not become default
   service0020:
-    command: ../openrun service create --config url=postgres://h2:5432/db2 --config user=admin postgres/p2
+    command: ../openrun service create --staging p1 --config url=postgres://h2:5432/db2 --config user=admin postgres/p2
     stdout: "Service postgres/p2 created"
 
   service0021: # second service is_default stays false (not requested)
@@ -47,6 +47,10 @@ tests:
   service0024: # p1 still default
     command: ../openrun service list -f json postgres/p1 | jq -r '.[0].is_default'
     stdout: "true"
+
+  service0025: # staging service stored on create
+    command: ../openrun service list -f json postgres/p2 | jq -r '.[0].staging'
+    stdout: "p1"
 
   # List filtering by service type
   service0030: # filtered by service_type returns 2 entries
@@ -85,6 +89,18 @@ tests:
   service0045: # 3 postgres services now
     command: ../openrun service list -f json postgres | jq 'length'
     stdout: "3"
+
+  service0046: # staging service can be set on update
+    command: ../openrun service update --staging p3 postgres/p1
+    stdout: "Service postgres/p1 updated"
+
+  service0047:
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].staging'
+    stdout: "p3"
+
+  service0048: # table output includes staging service name
+    command: ../openrun service list postgres/p1 | tail -n +2 | awk '{print $4}'
+    stdout: "p3"
 
   # Update --set-default resets the previous default
   service0050:
@@ -193,6 +209,14 @@ tests:
     command: ../openrun service list -f json | jq 'length'
     stdout: "4"
 
+  service0114: # make p1 depend on p2 before deleting p2
+    command: ../openrun service update --staging p2 postgres/p1
+    stdout: "Service postgres/p1 updated"
+
+  service0115:
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].staging'
+    stdout: "p2"
+
   # Delete
   service0120:
     command: ../openrun service delete postgres/p2
@@ -205,6 +229,10 @@ tests:
   service0122: # p2 not in the list
     command: ../openrun service list -f json postgres | jq -r '[.[].name] | sort | join(",")'
     stdout: "p1,p3"
+
+  service0123: # deleting p2 unlinks services using it as staging
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].staging'
+    stdout: ""
 
   # Error cases
   service0200: # invalid service id (missing /)
@@ -242,21 +270,41 @@ tests:
     exit-code: 1
     stderr: "expected one arg"
 
+  service0207: # staging service has to exist for the same service type
+    command: ../openrun service create --staging missing postgres/p_bad
+    exit-code: 1
+    stderr: "staging service postgres/missing not found"
+
+  service0208: # staging service from a different type is rejected
+    command: ../openrun service update --staging m1 postgres/p1
+    exit-code: 1
+    stderr: "staging service postgres/m1 not found"
+
+  service0209: # create cannot use itself as staging service
+    command: ../openrun service create --staging p_bad postgres/p_bad
+    exit-code: 1
+    stderr: "staging service postgres/p_bad cannot refer to itself"
+
+  service0210: # update cannot use itself as staging service
+    command: ../openrun service update --staging p1 postgres/p1
+    exit-code: 1
+    stderr: "staging service postgres/p1 cannot refer to itself"
+
   # Dry-run create does not persist
-  service0210:
+  service0220:
     command: ../openrun service create --dry-run --config url=dryrun postgres/dry1
     stdout: "Service postgres/dry1 created"
 
-  service0211: # dry-run create did not persist
+  service0221: # dry-run create did not persist
     command: ../openrun service list -f json postgres/dry1 | jq 'length'
     stdout: "0"
 
   # Dry-run update does not persist
-  service0220:
+  service0230:
     command: ../openrun service update --dry-run --config url=changed postgres/p1
     stdout: "dry-run mode"
 
-  service0221: # url unchanged after dry-run update
+  service0231: # url unchanged after dry-run update
     command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
     stdout: "postgres://newhost:5432/db1"
 

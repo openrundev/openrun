@@ -1097,7 +1097,7 @@ func (m *Metadata) CleanupFiles() error {
 }
 
 func (m *Metadata) createServiceBindings(ctx context.Context, tx types.Transaction) error {
-	_, err := tx.ExecContext(ctx, `create table services (name text, service_type text, is_default bool, config json, create_time `+
+	_, err := tx.ExecContext(ctx, `create table services (name text, service_type text, is_default bool, staging text not null default '', config json, create_time `+
 		system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(name, service_type))")
 	if err != nil {
 		return fmt.Errorf("error creating service bindings table: %w", err)
@@ -1119,8 +1119,8 @@ func (m *Metadata) CreateService(ctx context.Context, tx types.Transaction, serv
 	}
 
 	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into services(name, service_type, is_default, config, create_time, update_time) values(?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		service.Name, service.ServiceType, service.IsDefault, string(configJson))
+		`INSERT into services(name, service_type, is_default, staging, config, create_time, update_time) values(?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		service.Name, service.ServiceType, service.IsDefault, service.Staging, string(configJson))
 	if err != nil {
 		return fmt.Errorf("error inserting service: %w", err)
 	}
@@ -1134,8 +1134,8 @@ func (m *Metadata) UpdateService(ctx context.Context, tx types.Transaction, serv
 	}
 
 	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`UPDATE services set is_default = ?, config = ?, update_time = `+system.FuncNow(m.dbType)+` where name = ? and service_type = ?`),
-		service.IsDefault, string(configJson), service.Name, service.ServiceType)
+		`UPDATE services set is_default = ?, staging = ?, config = ?, update_time = `+system.FuncNow(m.dbType)+` where name = ? and service_type = ?`),
+		service.IsDefault, service.Staging, string(configJson), service.Name, service.ServiceType)
 	if err != nil {
 		return fmt.Errorf("error updating service: %w", err)
 	}
@@ -1147,6 +1147,16 @@ func (m *Metadata) UpdateService(ctx context.Context, tx types.Transaction, serv
 		return fmt.Errorf("no service found with name %s and service_type %s", service.Name, service.ServiceType)
 	}
 	return nil
+}
+
+func (m *Metadata) ServiceExists(ctx context.Context, tx types.Transaction, serviceType, name string) (bool, error) {
+	var count int
+	err := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
+		`select count(*) from services where service_type = ? and name = ?`), serviceType, name).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("error checking service: %w", err)
+	}
+	return count > 0, nil
 }
 
 // ClearServiceDefault unsets the is_default flag for any service of the given
@@ -1162,6 +1172,16 @@ func (m *Metadata) ClearServiceDefault(ctx context.Context, tx types.Transaction
 	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType, query), args...)
 	if err != nil {
 		return fmt.Errorf("error clearing default service: %w", err)
+	}
+	return nil
+}
+
+func (m *Metadata) ClearServiceStaging(ctx context.Context, tx types.Transaction, serviceType, staging string) error {
+	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`UPDATE services set staging = ?, update_time = `+system.FuncNow(m.dbType)+` where service_type = ? and staging = ?`),
+		"", serviceType, staging)
+	if err != nil {
+		return fmt.Errorf("error clearing staging service: %w", err)
 	}
 	return nil
 }
@@ -1195,7 +1215,7 @@ func (m *Metadata) DeleteService(ctx context.Context, tx types.Transaction, name
 
 // ListServices returns services filtered by the optional serviceType and name. Empty string means no filter.
 func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, serviceType, name string) ([]*types.Service, error) {
-	query := `select name, service_type, is_default, config, create_time, update_time from services`
+	query := `select name, service_type, is_default, staging, config, create_time, update_time from services`
 	args := make([]any, 0, 2)
 	conds := make([]string, 0, 2)
 	if serviceType != "" {
@@ -1227,7 +1247,7 @@ func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, servi
 	for rows.Next() {
 		var service types.Service
 		var configStr sql.NullString
-		err = rows.Scan(&service.Name, &service.ServiceType, &service.IsDefault, &configStr, &service.CreateTime, &service.UpdateTime)
+		err = rows.Scan(&service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
 		if err != nil {
 			return nil, fmt.Errorf("error scanning service: %w", err)
 		}
