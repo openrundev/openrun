@@ -1282,6 +1282,98 @@ func (h *Handler) listServices(r *http.Request) (any, error) {
 	return results, nil
 }
 
+func (h *Handler) createBinding(r *http.Request) (any, error) {
+	dryRun, err := parseBoolArg(r.URL.Query().Get(DRY_RUN_ARG), false)
+	if err != nil {
+		return nil, err
+	}
+
+	var binding types.Binding
+	if err = json.NewDecoder(r.Body).Decode(&binding); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	if binding.Path == "" {
+		return nil, types.CreateRequestError("path is required", http.StatusBadRequest)
+	}
+
+	updateTargetInContext(r, binding.Path, dryRun)
+	updateOperationInContext(r, "binding_create")
+
+	if err := h.server.CreateBinding(r.Context(), &binding, dryRun); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return binding, nil
+}
+
+func (h *Handler) updateBinding(r *http.Request) (any, error) {
+	dryRun, err := parseBoolArg(r.URL.Query().Get(DRY_RUN_ARG), false)
+	if err != nil {
+		return nil, err
+	}
+
+	var binding types.Binding
+	if err = json.NewDecoder(r.Body).Decode(&binding); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	if binding.Path == "" {
+		return nil, types.CreateRequestError("path is required", http.StatusBadRequest)
+	}
+
+	updateTargetInContext(r, binding.Path, dryRun)
+	updateOperationInContext(r, "binding_update")
+
+	if err := h.server.UpdateBinding(r.Context(), &binding, dryRun); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return binding, nil
+}
+
+func (h *Handler) deleteBinding(r *http.Request) (any, error) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		return nil, types.CreateRequestError("path is required", http.StatusBadRequest)
+	}
+
+	dryRun, err := parseBoolArg(r.URL.Query().Get(DRY_RUN_ARG), false)
+	if err != nil {
+		return nil, err
+	}
+
+	updateTargetInContext(r, path, dryRun)
+	updateOperationInContext(r, "binding_delete")
+
+	if err := h.server.DeleteBinding(r.Context(), path, dryRun); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return map[string]any{"path": path, "dry_run": dryRun}, nil
+}
+
+func (h *Handler) getBinding(r *http.Request) (any, error) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		return nil, types.CreateRequestError("path is required", http.StatusBadRequest)
+	}
+	updateTargetInContext(r, path, false)
+	updateOperationInContext(r, "binding_get")
+
+	binding, err := h.server.GetBinding(r.Context(), path)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return binding, nil
+}
+
+func (h *Handler) listBindings(r *http.Request) (any, error) {
+	updateOperationInContext(r, "list_bindings")
+	source := r.URL.Query().Get("source")
+
+	results, err := h.server.ListBindings(r.Context(), source)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return results, nil
+}
+
 func (h *Handler) configGet(r *http.Request) (any, error) {
 	updateOperationInContext(r, "config_get")
 	return types.ConfigResponse{DynamicConfig: h.server.GetDynamicConfig()}, nil
@@ -1448,6 +1540,31 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to list services
 	r.Get("/services", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "list_services", h.listServices, false)
+	}))
+
+	// API to create binding
+	r.Post("/binding", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "binding_create", h.createBinding, false)
+	}))
+
+	// API to update binding
+	r.Put("/binding", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "binding_update", h.updateBinding, false)
+	}))
+
+	// API to delete binding
+	r.Delete("/binding", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "binding_delete", h.deleteBinding, false)
+	}))
+
+	// API to get a binding
+	r.Get("/binding", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "binding_get", h.getBinding, false)
+	}))
+
+	// API to list bindings
+	r.Get("/bindings", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "list_bindings", h.listBindings, false)
 	}))
 
 	// API to get config

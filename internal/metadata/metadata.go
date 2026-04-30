@@ -1100,13 +1100,20 @@ func (m *Metadata) createServiceBindings(ctx context.Context, tx types.Transacti
 	_, err := tx.ExecContext(ctx, `create table services (name text, service_type text, is_default bool, staging text not null default '', config json, create_time `+
 		system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(name, service_type))")
 	if err != nil {
-		return fmt.Errorf("error creating service bindings table: %w", err)
+		return fmt.Errorf("error creating services table: %w", err)
 	}
 
 	_, err = tx.ExecContext(ctx,
 		`CREATE UNIQUE INDEX services_one_default_per_type ON services(service_type) WHERE is_default`)
 	if err != nil {
 		return fmt.Errorf("error creating services default index: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `create table bindings (path text, source text, service_type text not null default '', `+
+		`service_name text not null default '', base_binding text not null default '', metadata json, account json, apply_info `+system.MapDataType(m.dbType, "blob")+`, `+
+		`create_time `+system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(path))")
+	if err != nil {
+		return fmt.Errorf("error creating bindings table: %w", err)
 	}
 
 	return nil
@@ -1213,6 +1220,43 @@ func (m *Metadata) DeleteService(ctx context.Context, tx types.Transaction, name
 	return nil
 }
 
+func (m *Metadata) GetDefaultService(ctx context.Context, tx types.Transaction, serviceType string) (*types.Service, error) {
+	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
+		`select name, service_type, is_default, staging, config, create_time, update_time from services where service_type = ? and is_default`), serviceType)
+	var service types.Service
+	var configStr sql.NullString
+	err := row.Scan(&service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
+	if err != nil {
+		return nil, fmt.Errorf("error querying default service: %w", err)
+	}
+	if configStr.Valid && configStr.String != "" {
+		err = json.Unmarshal([]byte(configStr.String), &service.Config)
+		if err != nil {
+			return nil, fmt.Errorf("error unmarshalling service config: %w", err)
+		}
+	}
+	return &service, nil
+}
+
+func (m *Metadata) GetService(ctx context.Context, tx types.Transaction, serviceType, name string) (*types.Service, error) {
+	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
+		`select name, service_type, is_default, staging, config, create_time, update_time from services where service_type = ? and name = ?`), serviceType, name)
+	var service types.Service
+	var configStr sql.NullString
+	err := row.Scan(&service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
+	if err != nil {
+		return nil, fmt.Errorf("error querying service: %w", err)
+	}
+
+	if configStr.Valid && configStr.String != "" {
+		err = json.Unmarshal([]byte(configStr.String), &service.Config)
+		if err != nil {
+			return nil, fmt.Errorf("error unmarshalling service config: %w", err)
+		}
+	}
+	return &service, nil
+}
+
 // ListServices returns services filtered by the optional serviceType and name. Empty string means no filter.
 func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, serviceType, name string) ([]*types.Service, error) {
 	query := `select name, service_type, is_default, staging, config, create_time, update_time from services`
@@ -1263,6 +1307,142 @@ func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, servi
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
 	}
 	return services, nil
+}
+
+func (m *Metadata) CreateBinding(ctx context.Context, tx types.Transaction, binding *types.Binding) error {
+	metadataJson, err := json.Marshal(binding.Metadata)
+	if err != nil {
+		return fmt.Errorf("error marshalling binding metadata: %w", err)
+	}
+	accountJson, err := json.Marshal(binding.Account)
+	if err != nil {
+		return fmt.Errorf("error marshalling binding account: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`INSERT into bindings(path, source, service_type, service_name, base_binding, metadata, account, apply_info, create_time, update_time) values(?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		binding.Path, binding.Source, binding.ServiceType, binding.ServiceName, binding.BaseBinding, string(metadataJson), string(accountJson), binding.ApplyInfo)
+	if err != nil {
+		return fmt.Errorf("error inserting binding: %w", err)
+	}
+	return nil
+}
+
+func (m *Metadata) UpdateBinding(ctx context.Context, tx types.Transaction, binding *types.Binding) error {
+	metadataJson, err := json.Marshal(binding.Metadata)
+	if err != nil {
+		return fmt.Errorf("error marshalling binding metadata: %w", err)
+	}
+	accountJson, err := json.Marshal(binding.Account)
+	if err != nil {
+		return fmt.Errorf("error marshalling binding account: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`UPDATE bindings set source = ?, service_type = ?, service_name = ?, base_binding = ?, metadata = ?, account = ?, apply_info = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ?`),
+		binding.Source, binding.ServiceType, binding.ServiceName, binding.BaseBinding, string(metadataJson), string(accountJson), binding.ApplyInfo, binding.Path)
+	if err != nil {
+		return fmt.Errorf("error updating binding: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("no binding found with path %s", binding.Path)
+	}
+	return nil
+}
+
+func (m *Metadata) DeleteBinding(ctx context.Context, tx types.Transaction, path string) error {
+	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`delete from bindings where path = ?`), path)
+	if err != nil {
+		return fmt.Errorf("error deleting binding: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("no binding found with path %s", path)
+	}
+	return nil
+}
+
+func (m *Metadata) GetBinding(ctx context.Context, tx types.Transaction, path string) (*types.Binding, error) {
+	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
+		`select path, source, service_type, service_name, base_binding, metadata, account, apply_info, create_time, update_time from bindings where path = ?`), path)
+
+	var binding types.Binding
+	var metadataStr, accountStr sql.NullString
+	err := row.Scan(&binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.BaseBinding, &metadataStr, &accountStr, &binding.ApplyInfo, &binding.CreateTime, &binding.UpdateTime)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("binding not found with path: %s", path)
+		}
+		return nil, fmt.Errorf("error querying binding: %w", err)
+	}
+
+	if metadataStr.Valid && metadataStr.String != "" {
+		if err = json.Unmarshal([]byte(metadataStr.String), &binding.Metadata); err != nil {
+			return nil, fmt.Errorf("error unmarshalling binding metadata: %w", err)
+		}
+	}
+	if accountStr.Valid && accountStr.String != "" {
+		if err = json.Unmarshal([]byte(accountStr.String), &binding.Account); err != nil {
+			return nil, fmt.Errorf("error unmarshalling binding account: %w", err)
+		}
+	}
+	return &binding, nil
+}
+
+// ListBindings returns bindings filtered by the optional source. Empty string means no filter.
+func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, source string) ([]*types.Binding, error) {
+	query := `select path, source, service_type, service_name, base_binding, metadata, account, apply_info, create_time, update_time from bindings`
+	args := make([]any, 0, 1)
+	if source != "" {
+		query += ` where source = ?`
+		args = append(args, source)
+	}
+	query += ` order by path`
+
+	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, query))
+	if err != nil {
+		return nil, fmt.Errorf("error preparing statement: %w", err)
+	}
+	defer stmt.Close() //nolint:errcheck
+
+	rows, err := stmt.Query(args...)
+	if err != nil {
+		return nil, fmt.Errorf("error querying bindings: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	bindings := make([]*types.Binding, 0)
+	for rows.Next() {
+		var binding types.Binding
+		var metadataStr, accountStr sql.NullString
+		err = rows.Scan(&binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.BaseBinding, &metadataStr, &accountStr, &binding.ApplyInfo, &binding.CreateTime, &binding.UpdateTime)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning binding: %w", err)
+		}
+		if metadataStr.Valid && metadataStr.String != "" {
+			if err = json.Unmarshal([]byte(metadataStr.String), &binding.Metadata); err != nil {
+				return nil, fmt.Errorf("error unmarshalling binding metadata: %w", err)
+			}
+		}
+		if accountStr.Valid && accountStr.String != "" {
+			if err = json.Unmarshal([]byte(accountStr.String), &binding.Account); err != nil {
+				return nil, fmt.Errorf("error unmarshalling binding account: %w", err)
+			}
+		}
+		bindings = append(bindings, &binding)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return nil, fmt.Errorf("error closing rows: %w", closeErr)
+	}
+	return bindings, nil
 }
 
 func toNullTime(t *time.Time) sql.NullTime {

@@ -1,0 +1,375 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+
+tests:
+  # Setup: create the source service used by all bindings below
+  binding0001:
+    command: ../openrun service create --config url=postgres://localhost:5432/db postgres/testbind
+    stdout: "Service postgres/testbind created"
+    exit-code: 0
+
+  # Basic create + get
+  binding0010: # create simple binding
+    command: ../openrun binding create --source postgres/testbind /apps/b1
+    stdout: "Binding /apps/b1 created"
+    exit-code: 0
+
+  binding0011: # path returned correctly
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].path'
+    stdout: "/apps/b1"
+
+  binding0012: # source stored
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].source'
+    stdout: "postgres/testbind"
+
+  binding0013: # service_type resolved from source
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].service_type'
+    stdout: "postgres"
+
+  binding0014: # service_name resolved from source
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].service_name'
+    stdout: "testbind"
+
+  binding0015: # base_binding empty when source is a service reference
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].base_binding'
+    stdout: ""
+
+  binding0016: # create_time populated with year prefix
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].create_time'
+    stdout: "20"
+
+  binding0017: # update_time populated with year prefix
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].update_time'
+    stdout: "20"
+
+  # Create with metadata key=value entries
+  binding0020:
+    command: ../openrun binding create --source postgres/testbind --metadata role=reader --metadata env=prod /apps/b2
+    stdout: "Binding /apps/b2 created"
+
+  binding0021: # metadata role stored
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.role'
+    stdout: "reader"
+
+  binding0022: # metadata env stored
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.env'
+    stdout: "prod"
+
+  binding0023: # metadata has exactly 2 keys
+    command: ../openrun binding get -f json /apps/b2 | jq '.[0].metadata | length'
+    stdout: "2"
+
+  # Create with --metadata-json (supports non-string values)
+  binding0030:
+    command: ../openrun binding create --source postgres/testbind --metadata-json '{"role":"writer","quota":10,"enabled":true}' /apps/b3
+    stdout: "Binding /apps/b3 created"
+
+  binding0031: # string from json
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.role'
+    stdout: "writer"
+
+  binding0032: # numeric value from json preserved as a number
+    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.quota'
+    stdout: "10"
+
+  binding0033: # boolean value from json preserved
+    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.enabled'
+    stdout: "true"
+
+  # --metadata-json merges on top of --metadata key=value entries
+  binding0040:
+    command: ../openrun binding create --source postgres/testbind --metadata role=reader --metadata env=dev --metadata-json '{"role":"writer","quota":5}' /apps/b4
+    stdout: "Binding /apps/b4 created"
+
+  binding0041: # json overrode key=value role
+    command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].metadata.role'
+    stdout: "writer"
+
+  binding0042: # key=value entry preserved when not overridden
+    command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].metadata.env'
+    stdout: "dev"
+
+  binding0043: # json-only key present
+    command: ../openrun binding get -f json /apps/b4 | jq '.[0].metadata.quota'
+    stdout: "5"
+
+  # Source = "<service_type>" alone resolves to the default service of that type
+  binding0045:
+    command: ../openrun binding create --source postgres /apps/b5
+    stdout: "Binding /apps/b5 created"
+
+  binding0046: # source string preserved as user provided it
+    command: ../openrun binding get -f json /apps/b5 | jq -r '.[0].source'
+    stdout: "postgres"
+
+  binding0047: # service_type resolved
+    command: ../openrun binding get -f json /apps/b5 | jq -r '.[0].service_type'
+    stdout: "postgres"
+
+  binding0048: # service_name resolved to the default postgres service (testbind)
+    command: ../openrun binding get -f json /apps/b5 | jq -r '.[0].service_name'
+    stdout: "testbind"
+
+  binding0049: # base_binding empty since source resolves to a service
+    command: ../openrun binding get -f json /apps/b5 | jq -r '.[0].base_binding'
+    stdout: ""
+
+  # List + filter by source
+  binding0050: # 5 bindings created so far
+    command: ../openrun binding list -f json | jq 'length'
+    stdout: "5"
+
+  binding0051: # source filter for postgres/testbind returns 4 entries (b1..b4)
+    command: ../openrun binding list -f json --source postgres/testbind | jq 'length'
+    stdout: "4"
+
+  binding0052: # filter for unknown source returns empty list
+    command: ../openrun binding list -f json --source nope/missing | jq 'length'
+    stdout: "0"
+
+  binding0053: # bindings sorted by path
+    command: ../openrun binding list -f json | jq -r '[.[].path] | join(",")'
+    stdout: "/apps/b1,/apps/b2,/apps/b3,/apps/b4,/apps/b5"
+
+  binding0054: # distinct sources used across bindings
+    command: ../openrun binding list -f json | jq -r '[.[].source] | unique | join(",")'
+    stdout: "postgres,postgres/testbind"
+
+  binding0055: # all bindings resolve to the same service_type/service_name
+    command: ../openrun binding list -f json | jq -r '[.[] | .service_type + "/" + .service_name] | unique | join(",")'
+    stdout: "postgres/testbind"
+
+  # Update: add new metadata key
+  binding0060:
+    command: ../openrun binding update --metadata password=secret /apps/b1
+    stdout: "Binding /apps/b1 updated"
+
+  binding0061: # password key added
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].metadata.password'
+    stdout: "secret"
+
+  binding0062: # source preserved on update
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].source'
+    stdout: "postgres/testbind"
+
+  # Update: change existing metadata value
+  binding0070:
+    command: ../openrun binding update --metadata role=admin /apps/b2
+    stdout: "Binding /apps/b2 updated"
+
+  binding0071:
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.role'
+    stdout: "admin"
+
+  binding0072: # other metadata key preserved
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.env'
+    stdout: "prod"
+
+  # Update: empty value deletes key
+  binding0080:
+    command: ../openrun binding update --metadata env= /apps/b2
+    stdout: "Binding /apps/b2 updated"
+
+  binding0081: # env removed
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.env'
+    stdout: "null"
+
+  binding0082: # other metadata key still present
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.role'
+    stdout: "admin"
+
+  binding0083: # only one metadata key remaining
+    command: ../openrun binding get -f json /apps/b2 | jq '.[0].metadata | length'
+    stdout: "1"
+
+  # Update: --metadata-json merges on top of existing metadata
+  binding0090:
+    command: ../openrun binding update --metadata-json '{"quota":20,"role":"owner"}' /apps/b3
+    stdout: "Binding /apps/b3 updated"
+
+  binding0091: # role overridden by json
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.role'
+    stdout: "owner"
+
+  binding0092: # quota updated to 20
+    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.quota'
+    stdout: "20"
+
+  binding0093: # boolean key preserved (not in update json)
+    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.enabled'
+    stdout: "true"
+
+  # Table format includes path/source columns
+  binding0100:
+    command: ../openrun binding list | head -n 1
+    stdout: "Path"
+
+  binding0101: # data row contains path
+    command: ../openrun binding list | grep "/apps/b1" | awk '{print $1}'
+    stdout: "/apps/b1"
+
+  binding0102: # data row source for /apps/b1
+    command: ../openrun binding list | grep "/apps/b1" | awk '{print $2}'
+    stdout: "postgres/testbind"
+
+  # basic format
+  binding0110:
+    command: ../openrun binding list -f basic | head -n 1
+    stdout: "Path"
+
+  binding0111:
+    command: ../openrun binding list -f basic | grep "/apps/b1" | awk '{print $2}'
+    stdout: "postgres/testbind"
+
+  # csv format
+  binding0120: # csv contains path,source comma-separated
+    command: ../openrun binding list -f csv | grep "^/apps/b1,"
+    stdout: "/apps/b1,postgres/testbind,"
+
+  # jsonl format - one json object per line
+  binding0130:
+    command: ../openrun binding list -f jsonl | wc -l | tr -d ' '
+    stdout: "5"
+
+  # Dry-run create does not persist
+  binding0200:
+    command: ../openrun binding create --dry-run --source postgres/testbind /apps/dry1
+    stdout: "Binding /apps/dry1 created"
+
+  binding0201: # dry-run create did not persist (still 5 bindings)
+    command: ../openrun binding list -f json | jq 'length'
+    stdout: "5"
+
+  # Dry-run update does not persist
+  binding0210:
+    command: ../openrun binding update --dry-run --metadata role=ghost /apps/b2
+    stdout: "dry-run mode"
+
+  binding0211: # role unchanged after dry-run update
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.role'
+    stdout: "admin"
+
+  # Dry-run delete does not persist
+  binding0220:
+    command: ../openrun binding delete --dry-run /apps/b1
+    stdout: "Binding /apps/b1 deleted"
+
+  binding0221: # dry-run delete did not remove the binding
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].path'
+    stdout: "/apps/b1"
+
+  # Error cases
+  binding0300: # create requires <path> arg
+    command: ../openrun binding create --source postgres/testbind
+    exit-code: 1
+    stderr: "expected one arg"
+
+  binding0301: # too many args to create
+    command: ../openrun binding create /apps/x extra
+    exit-code: 1
+    stderr: "expected one arg"
+
+  binding0302: # invalid metadata entry on create
+    command: ../openrun binding create --metadata nope /apps/b_bad
+    exit-code: 1
+    stderr: "invalid entry"
+
+  binding0303: # invalid metadata-json on create
+    command: ../openrun binding create --metadata-json 'not-json' /apps/b_bad
+    exit-code: 1
+    stderr: "invalid JSON"
+
+  binding0304: # update requires <path> arg
+    command: ../openrun binding update --metadata k=v
+    exit-code: 1
+    stderr: "expected one arg"
+
+  binding0305: # update non-existent binding
+    command: ../openrun binding update --metadata role=x /apps/missing
+    exit-code: 1
+    stderr: "binding not found with path: /apps/missing"
+
+  binding0306: # invalid metadata entry on update
+    command: ../openrun binding update --metadata nope /apps/b1
+    exit-code: 1
+    stderr: "invalid metadata entry"
+
+  binding0307: # delete non-existent binding
+    command: ../openrun binding delete /apps/missing
+    exit-code: 1
+    stderr: "no binding found with path /apps/missing"
+
+  binding0308: # get non-existent binding
+    command: ../openrun binding get /apps/missing
+    exit-code: 1
+    stderr: "binding not found with path: /apps/missing"
+
+  binding0309: # delete requires <path> arg
+    command: ../openrun binding delete
+    exit-code: 1
+    stderr: "expected one arg"
+
+  binding0310: # get requires <path> arg
+    command: ../openrun binding get
+    exit-code: 1
+    stderr: "expected one arg"
+
+  binding0311: # list does not accept positional args
+    command: ../openrun binding list extra
+    exit-code: 1
+    stderr: "expected no args"
+
+  binding0312: # source referencing a missing service by type/name fails
+    command: ../openrun binding create --source postgres/missing /apps/b_bad
+    exit-code: 1
+    stderr: "service postgres/missing not found"
+
+  binding0313: # source referencing a service type with no default fails
+    command: ../openrun binding create --source mysql /apps/b_bad
+    exit-code: 1
+    stderr: "service mysql not found"
+
+  binding0314: # empty source rejected
+    command: ../openrun binding create /apps/b_bad
+    exit-code: 1
+    stderr: "binding source is required"
+
+  binding0315: # creating a binding with an existing path fails
+    command: ../openrun binding create --source postgres /apps/b1
+    exit-code: 1
+    stderr: "binding already exists: /apps/b1"
+
+  binding0316: # source referencing a missing base binding fails
+    command: ../openrun binding create --source /apps/missing /apps/b_bad
+    exit-code: 1
+    stderr: "binding source /apps/missing not found"
+
+  # Failed creates above must not have persisted
+  binding0317:
+    command: ../openrun binding list -f json | jq 'length'
+    stdout: "5"
+
+  # Delete + list verifies removal
+  binding0400:
+    command: ../openrun binding delete /apps/b4
+    stdout: "Binding /apps/b4 deleted"
+
+  binding0401: # 4 bindings remain
+    command: ../openrun binding list -f json | jq 'length'
+    stdout: "4"
+
+  binding0402: # /apps/b4 not in list
+    command: ../openrun binding list -f json | jq -r '[.[].path] | join(",")'
+    stdout: "/apps/b1,/apps/b2,/apps/b3,/apps/b5"
+
+  binding0403: # second delete of same binding fails
+    command: ../openrun binding delete /apps/b4
+    exit-code: 1
+    stderr: "no binding found with path /apps/b4"
+
+  # Cleanup: remove remaining bindings and the source service
+  binding99999:
+    command: (../openrun binding delete /apps/b1; ../openrun binding delete /apps/b2; ../openrun binding delete /apps/b3; ../openrun binding delete /apps/b5; ../openrun service delete postgres/testbind) || true
