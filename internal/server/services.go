@@ -168,6 +168,7 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 		binding.ServiceName = service.Name
 		binding.BaseBinding = ""
 	}
+	binding.Metadata = binding.StagedMetadata
 
 	if err := s.db.CreateBinding(ctx, tx, binding); err != nil {
 		return err
@@ -179,13 +180,16 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 	return tx.Commit()
 }
 
-func (s *Server) UpdateBinding(ctx context.Context, binding *types.Binding, dryRun bool) error {
+func (s *Server) UpdateBinding(ctx context.Context, binding *types.Binding, dryRun, promote bool) error {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	if promote {
+		binding.Metadata = binding.StagedMetadata
+	}
 	if err := s.db.UpdateBinding(ctx, tx, binding); err != nil {
 		return err
 	}

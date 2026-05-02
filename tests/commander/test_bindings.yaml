@@ -51,15 +51,15 @@ tests:
     stdout: "Binding /apps/b2 created"
 
   binding0021: # metadata role stored
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.role'
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.config.role'
     stdout: "reader"
 
   binding0022: # metadata env stored
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.env'
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.config.env'
     stdout: "prod"
 
   binding0023: # metadata has exactly 2 keys
-    command: ../openrun binding get -f json /apps/b2 | jq '.[0].metadata | length'
+    command: ../openrun binding get -f json /apps/b2 | jq '.[0].metadata.config | length'
     stdout: "2"
 
   # Create with --metadata-json (supports non-string values)
@@ -68,15 +68,15 @@ tests:
     stdout: "Binding /apps/b3 created"
 
   binding0031: # string from json
-    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.role'
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.config.role'
     stdout: "writer"
 
   binding0032: # numeric value from json preserved as a number
-    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.quota'
+    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.config.quota'
     stdout: "10"
 
   binding0033: # boolean value from json preserved
-    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.enabled'
+    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.config.enabled'
     stdout: "true"
 
   # --metadata-json merges on top of --metadata key=value entries
@@ -85,15 +85,15 @@ tests:
     stdout: "Binding /apps/b4 created"
 
   binding0041: # json overrode key=value role
-    command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].metadata.role'
+    command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].metadata.config.role'
     stdout: "writer"
 
   binding0042: # key=value entry preserved when not overridden
-    command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].metadata.env'
+    command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].metadata.config.env'
     stdout: "dev"
 
   binding0043: # json-only key present
-    command: ../openrun binding get -f json /apps/b4 | jq '.[0].metadata.quota'
+    command: ../openrun binding get -f json /apps/b4 | jq '.[0].metadata.config.quota'
     stdout: "5"
 
   # Source = "<service_type>" alone resolves to the default service of that type
@@ -147,13 +147,29 @@ tests:
     command: ../openrun binding update --metadata password=secret /apps/b1
     stdout: "Binding /apps/b1 updated"
 
-  binding0061: # password key added
-    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].metadata.password'
+  binding0061: # password key added to staged metadata
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].staged_metadata.config.password'
     stdout: "secret"
 
   binding0062: # source preserved on update
     command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].source'
     stdout: "postgres/testbind"
+
+  binding0063: # active metadata unchanged until promote
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].metadata.config.password'
+    stdout: "null"
+
+  binding0064: # update with promote copies the edited staged metadata to active metadata
+    command: ../openrun binding update --promote --metadata password=prodsecret /apps/b1
+    stdout: "Binding /apps/b1 updated"
+
+  binding0065:
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].metadata.config.password'
+    stdout: "prodsecret"
+
+  binding0066:
+    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].staged_metadata.config.password'
+    stdout: "prodsecret"
 
   # Update: change existing metadata value
   binding0070:
@@ -161,12 +177,16 @@ tests:
     stdout: "Binding /apps/b2 updated"
 
   binding0071:
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.role'
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.role'
     stdout: "admin"
 
   binding0072: # other metadata key preserved
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.env'
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.env'
     stdout: "prod"
+
+  binding0073: # active metadata still has the original value
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.config.role'
+    stdout: "reader"
 
   # Update: empty value deletes key
   binding0080:
@@ -174,15 +194,15 @@ tests:
     stdout: "Binding /apps/b2 updated"
 
   binding0081: # env removed
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.env'
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.env'
     stdout: "null"
 
   binding0082: # other metadata key still present
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.role'
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.role'
     stdout: "admin"
 
-  binding0083: # only one metadata key remaining
-    command: ../openrun binding get -f json /apps/b2 | jq '.[0].metadata | length'
+  binding0083: # only one staged metadata key remaining
+    command: ../openrun binding get -f json /apps/b2 | jq '.[0].staged_metadata.config | length'
     stdout: "1"
 
   # Update: --metadata-json merges on top of existing metadata
@@ -191,16 +211,32 @@ tests:
     stdout: "Binding /apps/b3 updated"
 
   binding0091: # role overridden by json
-    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.role'
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].staged_metadata.config.role'
     stdout: "owner"
 
   binding0092: # quota updated to 20
-    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.quota'
+    command: ../openrun binding get -f json /apps/b3 | jq '.[0].staged_metadata.config.quota'
     stdout: "20"
 
   binding0093: # boolean key preserved (not in update json)
-    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.enabled'
+    command: ../openrun binding get -f json /apps/b3 | jq '.[0].staged_metadata.config.enabled'
     stdout: "true"
+
+  binding0094: # active metadata unchanged before promote
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.config.role'
+    stdout: "writer"
+
+  binding0095: # promote copies staged metadata to active metadata
+    command: ../openrun binding update --promote /apps/b3
+    stdout: "Binding /apps/b3 updated"
+
+  binding0096:
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.config.role'
+    stdout: "owner"
+
+  binding0097:
+    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.config.quota'
+    stdout: "20"
 
   # Table format includes path/source columns
   binding0100:
@@ -249,7 +285,7 @@ tests:
     stdout: "dry-run mode"
 
   binding0211: # role unchanged after dry-run update
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.role'
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.role'
     stdout: "admin"
 
   # Dry-run delete does not persist

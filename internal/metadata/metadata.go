@@ -1110,7 +1110,7 @@ func (m *Metadata) createServiceBindings(ctx context.Context, tx types.Transacti
 	}
 
 	_, err = tx.ExecContext(ctx, `create table bindings (path text, source text, service_type text not null default '', `+
-		`service_name text not null default '', base_binding text not null default '', metadata json, account json, apply_info `+system.MapDataType(m.dbType, "blob")+`, `+
+		`service_name text not null default '', base_binding text not null default '', metadata json, staged_metadata json, `+
 		`create_time `+system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(path))")
 	if err != nil {
 		return fmt.Errorf("error creating bindings table: %w", err)
@@ -1314,14 +1314,14 @@ func (m *Metadata) CreateBinding(ctx context.Context, tx types.Transaction, bind
 	if err != nil {
 		return fmt.Errorf("error marshalling binding metadata: %w", err)
 	}
-	accountJson, err := json.Marshal(binding.Account)
+	stagedMetadataJson, err := json.Marshal(binding.StagedMetadata)
 	if err != nil {
-		return fmt.Errorf("error marshalling binding account: %w", err)
+		return fmt.Errorf("error marshalling staged binding metadata: %w", err)
 	}
 
 	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into bindings(path, source, service_type, service_name, base_binding, metadata, account, apply_info, create_time, update_time) values(?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		binding.Path, binding.Source, binding.ServiceType, binding.ServiceName, binding.BaseBinding, string(metadataJson), string(accountJson), binding.ApplyInfo)
+		`INSERT into bindings(path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time) values(?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		binding.Path, binding.Source, binding.ServiceType, binding.ServiceName, binding.BaseBinding, string(metadataJson), string(stagedMetadataJson))
 	if err != nil {
 		return fmt.Errorf("error inserting binding: %w", err)
 	}
@@ -1333,14 +1333,14 @@ func (m *Metadata) UpdateBinding(ctx context.Context, tx types.Transaction, bind
 	if err != nil {
 		return fmt.Errorf("error marshalling binding metadata: %w", err)
 	}
-	accountJson, err := json.Marshal(binding.Account)
+	stagedMetadataJson, err := json.Marshal(binding.StagedMetadata)
 	if err != nil {
-		return fmt.Errorf("error marshalling binding account: %w", err)
+		return fmt.Errorf("error marshalling staged binding metadata: %w", err)
 	}
 
 	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`UPDATE bindings set source = ?, service_type = ?, service_name = ?, base_binding = ?, metadata = ?, account = ?, apply_info = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ?`),
-		binding.Source, binding.ServiceType, binding.ServiceName, binding.BaseBinding, string(metadataJson), string(accountJson), binding.ApplyInfo, binding.Path)
+		`UPDATE bindings set source = ?, service_type = ?, service_name = ?, base_binding = ?, metadata = ?, staged_metadata = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ?`),
+		binding.Source, binding.ServiceType, binding.ServiceName, binding.BaseBinding, string(metadataJson), string(stagedMetadataJson), binding.Path)
 	if err != nil {
 		return fmt.Errorf("error updating binding: %w", err)
 	}
@@ -1372,11 +1372,11 @@ func (m *Metadata) DeleteBinding(ctx context.Context, tx types.Transaction, path
 
 func (m *Metadata) GetBinding(ctx context.Context, tx types.Transaction, path string) (*types.Binding, error) {
 	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select path, source, service_type, service_name, base_binding, metadata, account, apply_info, create_time, update_time from bindings where path = ?`), path)
+		`select path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time from bindings where path = ?`), path)
 
 	var binding types.Binding
-	var metadataStr, accountStr sql.NullString
-	err := row.Scan(&binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.BaseBinding, &metadataStr, &accountStr, &binding.ApplyInfo, &binding.CreateTime, &binding.UpdateTime)
+	var metadataStr, stagedMetadataStr sql.NullString
+	err := row.Scan(&binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.BaseBinding, &metadataStr, &stagedMetadataStr, &binding.CreateTime, &binding.UpdateTime)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("binding not found with path: %s", path)
@@ -1389,9 +1389,9 @@ func (m *Metadata) GetBinding(ctx context.Context, tx types.Transaction, path st
 			return nil, fmt.Errorf("error unmarshalling binding metadata: %w", err)
 		}
 	}
-	if accountStr.Valid && accountStr.String != "" {
-		if err = json.Unmarshal([]byte(accountStr.String), &binding.Account); err != nil {
-			return nil, fmt.Errorf("error unmarshalling binding account: %w", err)
+	if stagedMetadataStr.Valid && stagedMetadataStr.String != "" {
+		if err = json.Unmarshal([]byte(stagedMetadataStr.String), &binding.StagedMetadata); err != nil {
+			return nil, fmt.Errorf("error unmarshalling staged binding metadata: %w", err)
 		}
 	}
 	return &binding, nil
@@ -1399,7 +1399,7 @@ func (m *Metadata) GetBinding(ctx context.Context, tx types.Transaction, path st
 
 // ListBindings returns bindings filtered by the optional source. Empty string means no filter.
 func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, source string) ([]*types.Binding, error) {
-	query := `select path, source, service_type, service_name, base_binding, metadata, account, apply_info, create_time, update_time from bindings`
+	query := `select path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time from bindings`
 	args := make([]any, 0, 1)
 	if source != "" {
 		query += ` where source = ?`
@@ -1422,8 +1422,8 @@ func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, sourc
 	bindings := make([]*types.Binding, 0)
 	for rows.Next() {
 		var binding types.Binding
-		var metadataStr, accountStr sql.NullString
-		err = rows.Scan(&binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.BaseBinding, &metadataStr, &accountStr, &binding.ApplyInfo, &binding.CreateTime, &binding.UpdateTime)
+		var metadataStr, stagedMetadataStr sql.NullString
+		err = rows.Scan(&binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.BaseBinding, &metadataStr, &stagedMetadataStr, &binding.CreateTime, &binding.UpdateTime)
 		if err != nil {
 			return nil, fmt.Errorf("error scanning binding: %w", err)
 		}
@@ -1432,9 +1432,9 @@ func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, sourc
 				return nil, fmt.Errorf("error unmarshalling binding metadata: %w", err)
 			}
 		}
-		if accountStr.Valid && accountStr.String != "" {
-			if err = json.Unmarshal([]byte(accountStr.String), &binding.Account); err != nil {
-				return nil, fmt.Errorf("error unmarshalling binding account: %w", err)
+		if stagedMetadataStr.Valid && stagedMetadataStr.String != "" {
+			if err = json.Unmarshal([]byte(stagedMetadataStr.String), &binding.StagedMetadata); err != nil {
+				return nil, fmt.Errorf("error unmarshalling staged binding metadata: %w", err)
 			}
 		}
 		bindings = append(bindings, &binding)

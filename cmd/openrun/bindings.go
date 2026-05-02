@@ -111,9 +111,14 @@ Examples:
 			}
 
 			binding := types.Binding{
-				Path:     path,
-				Source:   cCtx.String(SOURCE_FLAG),
-				Metadata: metadata,
+				Path:   path,
+				Source: cCtx.String(SOURCE_FLAG),
+				Metadata: types.BindingMetadata{
+					Config: metadata,
+				},
+				StagedMetadata: types.BindingMetadata{
+					Config: metadata,
+				},
 			}
 
 			values := url.Values{}
@@ -135,7 +140,7 @@ Examples:
 }
 
 func bindingUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
-	flags := make([]cli.Flag, 0, len(commonFlags)+6)
+	flags := make([]cli.Flag, 0, len(commonFlags)+7)
 	flags = append(flags, commonFlags...)
 	flags = append(flags,
 		&cli.StringSliceFlag{
@@ -143,6 +148,7 @@ func bindingUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			Usage: "Update a metadata entry. Format is key=value. Empty value deletes the key. Can be specified multiple times",
 		})
 	flags = append(flags, newStringFlag(METADATA_JSON_FLAG, "", "Metadata as a JSON object. Merged on top of existing metadata after --metadata edits", ""))
+	flags = append(flags, newBoolFlag(PROMOTE_FLAG, "p", "Promote staged metadata to active metadata", false))
 	flags = append(flags, dryRunFlag())
 
 	return &cli.Command{
@@ -172,11 +178,8 @@ Examples:
 			if err := client.Get("/_openrun/binding", fetchValues, &binding); err != nil {
 				return err
 			}
-			if binding.Metadata == nil {
-				binding.Metadata = map[string]any{}
-			}
-			if binding.Account == nil {
-				binding.Account = map[string]any{}
+			if binding.StagedMetadata.Config == nil {
+				binding.StagedMetadata.Config = map[string]any{}
 			}
 
 			for _, entry := range cCtx.StringSlice(METADATA_FLAG) {
@@ -185,20 +188,21 @@ Examples:
 					return fmt.Errorf("invalid metadata entry %q, expected key=value", entry)
 				}
 				if value == "" {
-					delete(binding.Metadata, key)
+					delete(binding.StagedMetadata.Config, key)
 				} else {
-					binding.Metadata[key] = value
+					binding.StagedMetadata.Config[key] = value
 				}
 			}
 
 			var err error
-			binding.Metadata, err = mergeJSONIntoMap(binding.Metadata, cCtx.String(METADATA_JSON_FLAG))
+			binding.StagedMetadata.Config, err = mergeJSONIntoMap(binding.StagedMetadata.Config, cCtx.String(METADATA_JSON_FLAG))
 			if err != nil {
 				return err
 			}
 
 			values := url.Values{}
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
+			values.Add(PROMOTE_ARG, strconv.FormatBool(cCtx.Bool(PROMOTE_FLAG)))
 
 			var response types.Binding
 			if err := client.Put("/_openrun/binding", values, &binding, &response); err != nil {
@@ -354,16 +358,16 @@ func printBindingList(cCtx *cli.Context, bindings []types.Binding, format string
 			printStdout(cCtx, formatStr, b.Path, b.Source)
 		}
 	case FORMAT_TABLE, "":
-		formatStr := "%-30s %-30s %-25s %-30s %-s\n"
-		printStdout(cCtx, formatStr, "Path", "Source", "UpdateTime", "Metadata", "Account")
+		formatStr := "%-30s %-30s %-25s %-30s %-30s %-s\n"
+		printStdout(cCtx, formatStr, "Path", "Source", "UpdateTime", "StagedMetadata", "Metadata", "Account")
 		for _, b := range bindings {
 			printStdout(cCtx, formatStr, b.Path, b.Source, b.UpdateTime.Format("2006-01-02 15:04:05"),
-				formatAnyMap(b.Metadata), formatAnyMap(b.Account))
+				formatAnyMap(b.StagedMetadata.Config), formatAnyMap(b.Metadata.Config), formatAnyMap(b.Metadata.Account))
 		}
 	case FORMAT_CSV:
 		for _, b := range bindings {
-			printStdout(cCtx, "%s,%s,%s,%s,%s\n", b.Path, b.Source, b.UpdateTime.Format("2006-01-02 15:04:05"),
-				formatAnyMap(b.Metadata), formatAnyMap(b.Account))
+			printStdout(cCtx, "%s,%s,%s,%s,%s,%s\n", b.Path, b.Source, b.UpdateTime.Format("2006-01-02 15:04:05"),
+				formatAnyMap(b.StagedMetadata.Config), formatAnyMap(b.Metadata.Config), formatAnyMap(b.Metadata.Account))
 		}
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
