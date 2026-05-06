@@ -289,6 +289,53 @@ func TestMetadata_SyncLifecycle(t *testing.T) {
 	testutil.AssertErrorContains(t, err, "sync entry not found")
 }
 
+func TestMetadata_ServiceBindingIdsPersisted(t *testing.T) {
+	m, cleanup := setupTestMetadata(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	service := &types.Service{
+		Id:          types.ID_PREFIX_SERVICE + "test",
+		Name:        "svc1",
+		ServiceType: "test",
+		IsDefault:   true,
+		Config:      map[string]string{"url": "postgres://localhost/db"},
+	}
+	binding := &types.Binding{
+		Id:             types.ID_PREFIX_BINDING + "test",
+		Path:           "/apps/b1",
+		Source:         "test/svc1",
+		ServiceType:    "test",
+		ServiceName:    "svc1",
+		StagedMetadata: types.BindingMetadata{Config: map[string]any{"role": "reader"}},
+		Metadata:       types.BindingMetadata{Config: map[string]any{"role": "reader"}},
+	}
+
+	tx, err := m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, m.CreateService(ctx, tx, service))
+	testutil.AssertNoError(t, m.CreateBinding(ctx, tx, binding))
+	testutil.AssertNoError(t, tx.Commit())
+
+	tx, err = m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	gotService, err := m.GetService(ctx, tx, service.ServiceType, service.Name)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "service id", service.Id, gotService.Id)
+	gotBinding, err := m.GetBinding(ctx, tx, binding.Path)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "binding id", binding.Id, gotBinding.Id)
+	testutil.AssertNoError(t, tx.Rollback())
+
+	tx, err = m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	duplicateService := *service
+	duplicateService.Name = "svc2"
+	err = m.CreateService(ctx, tx, &duplicateService)
+	testutil.AssertErrorContains(t, err, "error inserting service")
+	testutil.AssertNoError(t, tx.Rollback())
+}
+
 func TestMetadata_ConfigAndKV(t *testing.T) {
 	m, cleanup := setupTestMetadata(t)
 	defer cleanup()

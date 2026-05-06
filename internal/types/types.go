@@ -38,6 +38,8 @@ const (
 	ID_PREFIX_APP_DEV       = "app_dev_"
 	ID_PREFIX_APP_STAGE     = "app_stg_"
 	ID_PREFIX_APP_PREVIEW   = "app_pre_"
+	ID_PREFIX_SERVICE       = "srv_"
+	ID_PREFIX_BINDING       = "bnd_"
 	ID_PREFIX_SERVER        = "srv_id_"
 	INTERNAL_URL_PREFIX     = "/_openrun"
 	WEBHOOK_URL_PREFIX      = "/_openrun_webhook"
@@ -867,6 +869,7 @@ const (
 // Service is a service entry in the metadata database
 // service is the admin level connection from which bindings are created
 type Service struct {
+	Id          string            `json:"id"`
 	Name        string            `json:"name"`
 	ServiceType string            `json:"service_type"`
 	IsDefault   bool              `json:"is_default"`
@@ -879,6 +882,7 @@ type Service struct {
 // Binding is a binding entry in the metadata database
 // A binding is a link between a service and a source service
 type Binding struct {
+	Id             string          `json:"id"`           // the id of the binding
 	Path           string          `json:"path"`         // the path of the binding
 	Source         string          `json:"source"`       // service id, or the base binding path
 	ServiceType    string          `json:"service_type"` // the type of the service

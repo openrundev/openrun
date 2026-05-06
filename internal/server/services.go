@@ -10,7 +10,16 @@ import (
 
 	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/types"
+	"github.com/segmentio/ksuid"
 )
+
+func newPrefixedId(prefix string) (string, error) {
+	genId, err := ksuid.NewRandom()
+	if err != nil {
+		return "", err
+	}
+	return prefix + strings.ToLower(genId.String()), nil
+}
 
 func (s *Server) validateStagingService(ctx context.Context, tx types.Transaction, service *types.Service) error {
 	if service.Staging == "" {
@@ -36,6 +45,11 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	service.Id, err = newPrefixedId(types.ID_PREFIX_SERVICE)
+	if err != nil {
+		return err
+	}
 
 	builder, ok := bindings.ServiceBindings[service.ServiceType]
 	if !ok {
@@ -139,6 +153,11 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	binding.Id, err = newPrefixedId(types.ID_PREFIX_BINDING)
+	if err != nil {
+		return err
+	}
 
 	_, err = s.db.GetBinding(ctx, tx, binding.Path)
 	if err == nil {

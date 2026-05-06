@@ -366,7 +366,7 @@ func printBindingList(cCtx *cli.Context, bindings []types.Binding, format string
 		}
 	case FORMAT_CSV:
 		for _, b := range bindings {
-			printStdout(cCtx, "%s,%s,%s,%s,%s,%s\n", b.Path, b.Source, b.UpdateTime.Format("2006-01-02 15:04:05"),
+			printStdout(cCtx, "%s,%s,%s,%s,%s,%s,%s\n", b.Id, b.Path, b.Source, b.UpdateTime.Format("2006-01-02 15:04:05"),
 				formatAnyMap(b.StagedMetadata.Config), formatAnyMap(b.Metadata.Config), formatAnyMap(b.Metadata.Account))
 		}
 	default:

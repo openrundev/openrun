@@ -345,7 +345,7 @@ func printServiceList(cCtx *cli.Context, services []types.Service, format string
 		}
 	case FORMAT_CSV:
 		for _, s := range services {
-			printStdout(cCtx, "%s,%s,%t,%s,%s,%s\n", s.ServiceType, s.Name, s.IsDefault, s.Staging, s.UpdateTime.Format("2006-01-02 15:04:05"), formatConfig(s.Config))
+			printStdout(cCtx, "%s,%s,%s,%t,%s,%s,%s\n", s.Id, s.ServiceType, s.Name, s.IsDefault, s.Staging, s.UpdateTime.Format("2006-01-02 15:04:05"), formatConfig(s.Config))
 		}
 	default:
 		panic(fmt.Errorf("unknown format %s", format))

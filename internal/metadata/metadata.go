@@ -1097,8 +1097,8 @@ func (m *Metadata) CleanupFiles() error {
 }
 
 func (m *Metadata) createServiceBindings(ctx context.Context, tx types.Transaction) error {
-	_, err := tx.ExecContext(ctx, `create table services (name text, service_type text, is_default bool, staging text not null default '', config json, create_time `+
-		system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(name, service_type))")
+	_, err := tx.ExecContext(ctx, `create table services (id text not null, name text, service_type text, is_default bool, staging text not null default '', config json, create_time `+
+		system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(name, service_type), UNIQUE(id))")
 	if err != nil {
 		return fmt.Errorf("error creating services table: %w", err)
 	}
@@ -1109,9 +1109,9 @@ func (m *Metadata) createServiceBindings(ctx context.Context, tx types.Transacti
 		return fmt.Errorf("error creating services default index: %w", err)
 	}
 
-	_, err = tx.ExecContext(ctx, `create table bindings (path text, source text, service_type text not null default '', `+
+	_, err = tx.ExecContext(ctx, `create table bindings (id text not null, path text, source text, service_type text not null default '', `+
 		`service_name text not null default '', base_binding text not null default '', metadata json, staged_metadata json, `+
-		`create_time `+system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(path))")
+		`create_time `+system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(path), UNIQUE(id))")
 	if err != nil {
 		return fmt.Errorf("error creating bindings table: %w", err)
 	}
@@ -1126,8 +1126,8 @@ func (m *Metadata) CreateService(ctx context.Context, tx types.Transaction, serv
 	}
 
 	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into services(name, service_type, is_default, staging, config, create_time, update_time) values(?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		service.Name, service.ServiceType, service.IsDefault, service.Staging, string(configJson))
+		`INSERT into services(id, name, service_type, is_default, staging, config, create_time, update_time) values(?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		service.Id, service.Name, service.ServiceType, service.IsDefault, service.Staging, string(configJson))
 	if err != nil {
 		return fmt.Errorf("error inserting service: %w", err)
 	}
@@ -1222,10 +1222,10 @@ func (m *Metadata) DeleteService(ctx context.Context, tx types.Transaction, name
 
 func (m *Metadata) GetDefaultService(ctx context.Context, tx types.Transaction, serviceType string) (*types.Service, error) {
 	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select name, service_type, is_default, staging, config, create_time, update_time from services where service_type = ? and is_default`), serviceType)
+		`select id, name, service_type, is_default, staging, config, create_time, update_time from services where service_type = ? and is_default`), serviceType)
 	var service types.Service
 	var configStr sql.NullString
-	err := row.Scan(&service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
+	err := row.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
 	if err != nil {
 		return nil, fmt.Errorf("error querying default service: %w", err)
 	}
@@ -1240,10 +1240,10 @@ func (m *Metadata) GetDefaultService(ctx context.Context, tx types.Transaction, 
 
 func (m *Metadata) GetService(ctx context.Context, tx types.Transaction, serviceType, name string) (*types.Service, error) {
 	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select name, service_type, is_default, staging, config, create_time, update_time from services where service_type = ? and name = ?`), serviceType, name)
+		`select id, name, service_type, is_default, staging, config, create_time, update_time from services where service_type = ? and name = ?`), serviceType, name)
 	var service types.Service
 	var configStr sql.NullString
-	err := row.Scan(&service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
+	err := row.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
 	if err != nil {
 		return nil, fmt.Errorf("error querying service: %w", err)
 	}
@@ -1259,7 +1259,7 @@ func (m *Metadata) GetService(ctx context.Context, tx types.Transaction, service
 
 // ListServices returns services filtered by the optional serviceType and name. Empty string means no filter.
 func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, serviceType, name string) ([]*types.Service, error) {
-	query := `select name, service_type, is_default, staging, config, create_time, update_time from services`
+	query := `select id, name, service_type, is_default, staging, config, create_time, update_time from services`
 	args := make([]any, 0, 2)
 	conds := make([]string, 0, 2)
 	if serviceType != "" {
@@ -1291,7 +1291,7 @@ func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, servi
 	for rows.Next() {
 		var service types.Service
 		var configStr sql.NullString
-		err = rows.Scan(&service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
+		err = rows.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
 		if err != nil {
 			return nil, fmt.Errorf("error scanning service: %w", err)
 		}
@@ -1320,8 +1320,8 @@ func (m *Metadata) CreateBinding(ctx context.Context, tx types.Transaction, bind
 	}
 
 	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into bindings(path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time) values(?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		binding.Path, binding.Source, binding.ServiceType, binding.ServiceName, binding.BaseBinding, string(metadataJson), string(stagedMetadataJson))
+		`INSERT into bindings(id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time) values(?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		binding.Id, binding.Path, binding.Source, binding.ServiceType, binding.ServiceName, binding.BaseBinding, string(metadataJson), string(stagedMetadataJson))
 	if err != nil {
 		return fmt.Errorf("error inserting binding: %w", err)
 	}
@@ -1372,11 +1372,11 @@ func (m *Metadata) DeleteBinding(ctx context.Context, tx types.Transaction, path
 
 func (m *Metadata) GetBinding(ctx context.Context, tx types.Transaction, path string) (*types.Binding, error) {
 	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time from bindings where path = ?`), path)
+		`select id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time from bindings where path = ?`), path)
 
 	var binding types.Binding
 	var metadataStr, stagedMetadataStr sql.NullString
-	err := row.Scan(&binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.BaseBinding, &metadataStr, &stagedMetadataStr, &binding.CreateTime, &binding.UpdateTime)
+	err := row.Scan(&binding.Id, &binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.BaseBinding, &metadataStr, &stagedMetadataStr, &binding.CreateTime, &binding.UpdateTime)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("binding not found with path: %s", path)
@@ -1399,7 +1399,7 @@ func (m *Metadata) GetBinding(ctx context.Context, tx types.Transaction, path st
 
 // ListBindings returns bindings filtered by the optional source. Empty string means no filter.
 func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, source string) ([]*types.Binding, error) {
-	query := `select path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time from bindings`
+	query := `select id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time from bindings`
 	args := make([]any, 0, 1)
 	if source != "" {
 		query += ` where source = ?`
@@ -1423,7 +1423,7 @@ func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, sourc
 	for rows.Next() {
 		var binding types.Binding
 		var metadataStr, stagedMetadataStr sql.NullString
-		err = rows.Scan(&binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.BaseBinding, &metadataStr, &stagedMetadataStr, &binding.CreateTime, &binding.UpdateTime)
+		err = rows.Scan(&binding.Id, &binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.BaseBinding, &metadataStr, &stagedMetadataStr, &binding.CreateTime, &binding.UpdateTime)
 		if err != nil {
 			return nil, fmt.Errorf("error scanning binding: %w", err)
 		}
