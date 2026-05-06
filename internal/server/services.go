@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -35,6 +36,16 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	builder, ok := bindings.ServiceBindings[service.ServiceType]
+	if !ok {
+		return fmt.Errorf("unknown service type: %s", service.ServiceType)
+	}
+
+	serviceBinding := builder()
+	if err := serviceBinding.InitService(ctx, service.Config); err != nil {
+		return fmt.Errorf("error initializing service binding: %w", err)
+	}
 
 	count, err := s.db.CountServices(ctx, tx, service.ServiceType)
 	if err != nil {
