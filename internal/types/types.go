@@ -895,7 +895,7 @@ type Binding struct {
 }
 
 type BindingMetadata struct {
-	Config    map[string]any `json:"config"`
-	Account   map[string]any `json:"account"`
-	ApplyInfo []byte         `json:"apply_info"`
+	Config    map[string]string `json:"config"`
+	Account   map[string]string `json:"account"`
+	ApplyInfo []byte            `json:"apply_info"`
 }

@@ -39,8 +39,8 @@ func initBindingCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 
 // parseKVEntries parses key=value entries into a map[string]any. String values are
 // stored as-is. To provide non-string values, use the *-json flag instead.
-func parseKVEntries(entries []string) (map[string]any, error) {
-	out := make(map[string]any, len(entries))
+func parseKVEntries(entries []string) (map[string]string, error) {
+	out := make(map[string]string, len(entries))
 	for _, e := range entries {
 		key, value, ok := strings.Cut(e, "=")
 		if !ok || key == "" {
@@ -53,16 +53,16 @@ func parseKVEntries(entries []string) (map[string]any, error) {
 
 // mergeJSONIntoMap parses jsonStr (when non-empty) and merges its top-level keys into dst.
 // dst is created if nil. Keys from jsonStr take precedence over existing entries.
-func mergeJSONIntoMap(dst map[string]any, jsonStr string) (map[string]any, error) {
+func mergeJSONIntoMap(dst map[string]string, jsonStr string) (map[string]string, error) {
 	if jsonStr == "" {
 		return dst, nil
 	}
-	parsed := map[string]any{}
+	parsed := map[string]string{}
 	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
 		return nil, fmt.Errorf("invalid JSON %q: %w", jsonStr, err)
 	}
 	if dst == nil {
-		dst = make(map[string]any, len(parsed))
+		dst = make(map[string]string, len(parsed))
 	}
 	for k, v := range parsed {
 		dst[k] = v
@@ -179,7 +179,7 @@ Examples:
 				return err
 			}
 			if binding.StagedMetadata.Config == nil {
-				binding.StagedMetadata.Config = map[string]any{}
+				binding.StagedMetadata.Config = map[string]string{}
 			}
 
 			for _, entry := range cCtx.StringSlice(METADATA_FLAG) {
@@ -362,19 +362,19 @@ func printBindingList(cCtx *cli.Context, bindings []types.Binding, format string
 		printStdout(cCtx, formatStr, "Path", "Source", "UpdateTime", "StagedMetadata", "Metadata", "Account")
 		for _, b := range bindings {
 			printStdout(cCtx, formatStr, b.Path, b.Source, b.UpdateTime.Format("2006-01-02 15:04:05"),
-				formatAnyMap(b.StagedMetadata.Config), formatAnyMap(b.Metadata.Config), formatAnyMap(b.Metadata.Account))
+				formatMap(b.StagedMetadata.Config), formatMap(b.Metadata.Config), formatMap(b.Metadata.Account))
 		}
 	case FORMAT_CSV:
 		for _, b := range bindings {
 			printStdout(cCtx, "%s,%s,%s,%s,%s,%s,%s\n", b.Id, b.Path, b.Source, b.UpdateTime.Format("2006-01-02 15:04:05"),
-				formatAnyMap(b.StagedMetadata.Config), formatAnyMap(b.Metadata.Config), formatAnyMap(b.Metadata.Account))
+				formatMap(b.StagedMetadata.Config), formatMap(b.Metadata.Config), formatMap(b.Metadata.Account))
 		}
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
 }
 
-func formatAnyMap(m map[string]any) string {
+func formatMap(m map[string]string) string {
 	if len(m) == 0 {
 		return ""
 	}

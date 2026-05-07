@@ -11,9 +11,10 @@ import (
 )
 
 type ServiceBinding interface {
-	InitService(ctx context.Context, serviceConfig map[string]string) error  // Initialize the service with the given config
-	InitRootBinding(ctx context.Context, bindingConfig map[string]any) error // Initialize the root binding against service with the given config
-	GenerateAccount(ctx context.Context) map[string]any                      // Generate the account based on the binding config
+	InitService(ctx context.Context, serviceConfig map[string]string) error                           // Initialize the service with the given config
+	InitBaseBinding(ctx context.Context, bindingConfig map[string]string) error                       // Initialize the base binding against service with the given config
+	InitDerivedBinding(ctx context.Context, grants []string, bindingConfig map[string]string) error   // Initialize the derived binding against service with the given config
+	GenerateAccount(ctx context.Context, bindingId string, isStaging bool) (map[string]string, error) // Generate the account based on the binding config
 }
 
 type ServiceBindingBuilder func() ServiceBinding
@@ -30,9 +31,9 @@ func RegisterServiceBinding(name string, serviceBindingBuilder ServiceBindingBui
 	ServiceBindings[name] = serviceBindingBuilder
 }
 
-func verifyKeys(inputKeys []string, requiredKeys []string) error {
+func verifyKeys(inputKeys []string, requiredKeys []string, optionalKeys []string) error {
 	for _, key := range inputKeys {
-		if !slices.Contains(requiredKeys, key) {
+		if !slices.Contains(requiredKeys, key) && !slices.Contains(optionalKeys, key) {
 			return fmt.Errorf("unknown config key: %s", key)
 		}
 	}

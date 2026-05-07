@@ -307,8 +307,8 @@ func TestMetadata_ServiceBindingIdsPersisted(t *testing.T) {
 		Source:         "test/svc1",
 		ServiceType:    "test",
 		ServiceName:    "svc1",
-		StagedMetadata: types.BindingMetadata{Config: map[string]any{"role": "reader"}},
-		Metadata:       types.BindingMetadata{Config: map[string]any{"role": "reader"}},
+		StagedMetadata: types.BindingMetadata{Config: map[string]string{"role": "reader"}},
+		Metadata:       types.BindingMetadata{Config: map[string]string{"role": "reader"}},
 	}
 
 	tx, err := m.BeginTransaction(ctx)
