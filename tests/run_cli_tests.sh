@@ -59,7 +59,10 @@ cleanup() {
   fi 
 
   set +e
-  ps -ax | grep "openrun server start" | grep -v grep | cut -c1-6 | xargs kill -9
+  server_pids=$(ps -ax | grep "openrun server start" | grep -v grep | awk '{print $1}')
+  if [[ -n "$server_pids" ]]; then
+    kill -9 $server_pids
+  fi
 
   # Github Actions does not seem to allow kill, the last echo is to allow the exit code to be zero
   echo "Done with cleanup"
