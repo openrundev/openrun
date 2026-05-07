@@ -14,7 +14,7 @@ tests:
 
   # Basic create + get
   binding0010: # create simple binding
-    command: ../openrun binding create --source postgres/testbind /apps/b1
+    command: ../openrun binding create postgres/testbind /apps/b1
     stdout: "Binding /apps/b1 created"
     exit-code: 0
 
@@ -46,16 +46,16 @@ tests:
     command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].update_time'
     stdout: "20"
 
-  # Create with metadata key=value entries
+  # Create with config key=value entries
   binding0020:
-    command: ../openrun binding create --source postgres/testbind --metadata inherit_default=false /apps/b2
+    command: ../openrun binding create --config inherit_default=false postgres/testbind /apps/b2
     stdout: "Binding /apps/b2 created"
 
-  binding0021: # metadata inherit_default stored
+  binding0021: # config inherit_default stored in metadata
     command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.config.inherit_default'
     stdout: "false"
 
-  binding0022: # staged metadata inherit_default stored
+  binding0022: # config inherit_default stored in staged metadata
     command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.inherit_default'
     stdout: "false"
 
@@ -63,12 +63,12 @@ tests:
     command: ../openrun binding get -f json /apps/b2 | jq '.[0].metadata.config | length'
     stdout: "1"
 
-  # Create with --metadata-json
+  # Create with --config
   binding0030:
-    command: ../openrun binding create --source postgres/testbind --metadata-json '{"inherit_default":"true"}' /apps/b3
+    command: ../openrun binding create --config inherit_default=true postgres/testbind /apps/b3
     stdout: "Binding /apps/b3 created"
 
-  binding0031: # string from json
+  binding0031: # string from config
     command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.config.inherit_default'
     stdout: "true"
 
@@ -80,12 +80,12 @@ tests:
     command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.account.url | startswith("postgres://")'
     stdout: "true"
 
-  # --metadata-json merges on top of --metadata key=value entries
+  # Later --config entries override earlier entries
   binding0040:
-    command: ../openrun binding create --source postgres/testbind --metadata inherit_default=true --metadata-json '{"inherit_default":"false"}' /apps/b4
+    command: ../openrun binding create --config inherit_default=true --config inherit_default=false postgres/testbind /apps/b4
     stdout: "Binding /apps/b4 created"
 
-  binding0041: # json overrode key=value inherit_default
+  binding0041: # later config overrode earlier inherit_default
     command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].metadata.config.inherit_default'
     stdout: "false"
 
@@ -99,7 +99,7 @@ tests:
 
   # Source = "<service_type>" alone resolves to the default service of that type
   binding0045:
-    command: ../openrun binding create --source postgres /apps/b5
+    command: ../openrun binding create postgres /apps/b5
     stdout: "Binding /apps/b5 created"
 
   binding0046: # source string preserved as user provided it
@@ -143,9 +143,9 @@ tests:
     command: ../openrun binding list -f json | jq -r '[.[] | .service_type + "/" + .service_name] | unique | join(",")'
     stdout: "postgres/testbind"
 
-  # Update: add new metadata key
+  # Update: add new config key
   binding0060:
-    command: ../openrun binding update --metadata password=secret /apps/b1
+    command: ../openrun binding update --config password=secret /apps/b1
     stdout: "Binding /apps/b1 updated"
 
   binding0061: # password key added to staged metadata
@@ -161,7 +161,7 @@ tests:
     stdout: "null"
 
   binding0064: # update with promote copies the edited staged metadata to active metadata
-    command: ../openrun binding update --promote --metadata password=prodsecret /apps/b1
+    command: ../openrun binding update --promote --config password=prodsecret /apps/b1
     stdout: "Binding /apps/b1 updated"
 
   binding0065:
@@ -172,9 +172,9 @@ tests:
     command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].staged_metadata.config.password'
     stdout: "prodsecret"
 
-  # Update: change existing metadata value
+  # Update: change existing config value
   binding0070:
-    command: ../openrun binding update --metadata role=admin /apps/b2
+    command: ../openrun binding update --config role=admin /apps/b2
     stdout: "Binding /apps/b2 updated"
 
   binding0071:
@@ -191,7 +191,7 @@ tests:
 
   # Update: empty value deletes key
   binding0080:
-    command: ../openrun binding update --metadata inherit_default= /apps/b2
+    command: ../openrun binding update --config inherit_default= /apps/b2
     stdout: "Binding /apps/b2 updated"
 
   binding0081: # inherit_default removed
@@ -206,12 +206,12 @@ tests:
     command: ../openrun binding get -f json /apps/b2 | jq '.[0].staged_metadata.config | length'
     stdout: "1"
 
-  # Update: --metadata-json merges on top of existing metadata
+  # Update: multiple --config entries update staged config
   binding0090:
-    command: ../openrun binding update --metadata-json '{"quota":"20","role":"owner"}' /apps/b3
+    command: ../openrun binding update --config quota=20 --config role=owner /apps/b3
     stdout: "Binding /apps/b3 updated"
 
-  binding0091: # role overridden by json
+  binding0091: # role updated by config
     command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].staged_metadata.config.role'
     stdout: "owner"
 
@@ -219,7 +219,7 @@ tests:
     command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].staged_metadata.config.quota'
     stdout: "20"
 
-  binding0093: # inherit_default key preserved (not in update json)
+  binding0093: # inherit_default key preserved (not in update config)
     command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].staged_metadata.config.inherit_default'
     stdout: "true"
 
@@ -273,7 +273,7 @@ tests:
 
   # Dry-run create does not persist
   binding0200:
-    command: ../openrun binding create --dry-run --source postgres/testbind /apps/dry1
+    command: ../openrun binding create --dry-run postgres/testbind /apps/dry1
     stdout: "Binding /apps/dry1 created"
 
   binding0201: # dry-run create did not persist (still 5 bindings)
@@ -282,7 +282,7 @@ tests:
 
   # Dry-run update does not persist
   binding0210:
-    command: ../openrun binding update --dry-run --metadata role=ghost /apps/b2
+    command: ../openrun binding update --dry-run --config role=ghost /apps/b2
     stdout: "dry-run mode"
 
   binding0211: # role unchanged after dry-run update
@@ -299,40 +299,40 @@ tests:
     stdout: "/apps/b1"
 
   # Error cases
-  binding0300: # create requires <path> arg
-    command: ../openrun binding create --source postgres/testbind
+  binding0300: # create requires <source> and <binding_path> args
+    command: ../openrun binding create postgres/testbind
     exit-code: 1
-    stderr: "expected one arg"
+    stderr: "expected two args"
 
   binding0301: # too many args to create
-    command: ../openrun binding create /apps/x extra
+    command: ../openrun binding create postgres/testbind /apps/x extra
     exit-code: 1
-    stderr: "expected one arg"
+    stderr: "expected two args"
 
-  binding0302: # invalid metadata entry on create
-    command: ../openrun binding create --metadata nope /apps/b_bad
+  binding0302: # invalid config entry on create
+    command: ../openrun binding create --config nope postgres/testbind /apps/b_bad
     exit-code: 1
-    stderr: "invalid entry"
+    stderr: "invalid config entry"
 
-  binding0303: # invalid metadata-json on create
-    command: ../openrun binding create --metadata-json 'not-json' /apps/b_bad
+  binding0303: # metadata-json option was removed
+    command: ../openrun binding create --metadata-json 'not-json' postgres/testbind /apps/b_bad
     exit-code: 1
-    stderr: "invalid JSON"
+    stderr: "flag provided but not defined"
 
   binding0304: # update requires <path> arg
-    command: ../openrun binding update --metadata k=v
+    command: ../openrun binding update --config k=v
     exit-code: 1
     stderr: "expected one arg"
 
   binding0305: # update non-existent binding
-    command: ../openrun binding update --metadata role=x /apps/missing
+    command: ../openrun binding update --config role=x /apps/missing
     exit-code: 1
     stderr: "binding not found with path: /apps/missing"
 
-  binding0306: # invalid metadata entry on update
-    command: ../openrun binding update --metadata nope /apps/b1
+  binding0306: # invalid config entry on update
+    command: ../openrun binding update --config nope /apps/b1
     exit-code: 1
-    stderr: "invalid metadata entry"
+    stderr: "invalid config entry"
 
   binding0307: # delete non-existent binding
     command: ../openrun binding delete /apps/missing
@@ -360,27 +360,27 @@ tests:
     stderr: "expected no args"
 
   binding0312: # source referencing a missing service by type/name fails
-    command: ../openrun binding create --source postgres/missing /apps/b_bad
+    command: ../openrun binding create postgres/missing /apps/b_bad
     exit-code: 1
     stderr: "service postgres/missing not found"
 
   binding0313: # source referencing a service type with no default fails
-    command: ../openrun binding create --source mysql /apps/b_bad
+    command: ../openrun binding create mysql /apps/b_bad
     exit-code: 1
     stderr: "service mysql not found"
 
   binding0314: # empty source rejected
-    command: ../openrun binding create /apps/b_bad
+    command: ../openrun binding create "" /apps/b_bad
     exit-code: 1
     stderr: "binding source is required"
 
   binding0315: # creating a binding with an existing path fails
-    command: ../openrun binding create --source postgres /apps/b1
+    command: ../openrun binding create postgres /apps/b1
     exit-code: 1
     stderr: "binding already exists: /apps/b1"
 
   binding0316: # source referencing a missing base binding fails
-    command: ../openrun binding create --source /apps/missing /apps/b_bad
+    command: ../openrun binding create /apps/missing /apps/b_bad
     exit-code: 1
     stderr: "binding source /apps/missing not found"
 

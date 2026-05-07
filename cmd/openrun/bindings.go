@@ -18,9 +18,8 @@ import (
 )
 
 const (
-	SOURCE_FLAG        = "source"
-	METADATA_FLAG      = "metadata"
-	METADATA_JSON_FLAG = "metadata-json"
+	SOURCE_FLAG = "source"
+	GRANT_FLAG  = "grant"
 )
 
 func initBindingCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -37,87 +36,59 @@ func initBindingCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 	}
 }
 
-// parseKVEntries parses key=value entries into a map[string]any. String values are
-// stored as-is. To provide non-string values, use the *-json flag instead.
-func parseKVEntries(entries []string) (map[string]string, error) {
-	out := make(map[string]string, len(entries))
-	for _, e := range entries {
-		key, value, ok := strings.Cut(e, "=")
-		if !ok || key == "" {
-			return nil, fmt.Errorf("invalid entry %q, expected key=value", e)
-		}
-		out[key] = value
-	}
-	return out, nil
-}
-
-// mergeJSONIntoMap parses jsonStr (when non-empty) and merges its top-level keys into dst.
-// dst is created if nil. Keys from jsonStr take precedence over existing entries.
-func mergeJSONIntoMap(dst map[string]string, jsonStr string) (map[string]string, error) {
-	if jsonStr == "" {
-		return dst, nil
-	}
-	parsed := map[string]string{}
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
-		return nil, fmt.Errorf("invalid JSON %q: %w", jsonStr, err)
-	}
-	if dst == nil {
-		dst = make(map[string]string, len(parsed))
-	}
-	for k, v := range parsed {
-		dst[k] = v
-	}
-	return dst, nil
-}
-
 func bindingCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
-	flags := make([]cli.Flag, 0, len(commonFlags)+6)
+	flags := make([]cli.Flag, 0, len(commonFlags)+3)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newStringFlag(SOURCE_FLAG, "s", "Source for the binding (service id, or base binding path)", ""))
 	flags = append(flags,
 		&cli.StringSliceFlag{
-			Name:  METADATA_FLAG,
-			Usage: "Set a metadata entry. Format is key=value. Can be specified multiple times",
+			Name:    CONFIG_FLAG,
+			Aliases: []string{"c"},
+			Usage:   "Set a config entry. Format is key=value. Can be specified multiple times",
 		})
-	flags = append(flags, newStringFlag(METADATA_JSON_FLAG, "", "Metadata as a JSON object. Merged on top of --metadata entries", ""))
+	flags = append(flags,
+		&cli.StringSliceFlag{
+			Name:  GRANT_FLAG,
+			Usage: "Grant to add to the binding metadata. Can be specified multiple times",
+		})
 	flags = append(flags, dryRunFlag())
 
 	return &cli.Command{
 		Name:      "create",
 		Usage:     "Create a new binding entry",
 		Flags:     flags,
-		ArgsUsage: "<path>",
-		UsageText: `args: <path>
+		ArgsUsage: "<source> <binding_path>",
+		UsageText: `args: <source> <binding_path>
 
-<path> is the unique path of the binding.
+<source> is the service id or base binding path.
+<binding_path> is the unique path of the binding.
 
 Examples:
-  Create a binding: openrun binding create /apps/p1 --source postgres/p1 --metadata role=reader
-  Create with JSON metadata: openrun binding create /apps/p1 --source postgres/p1 --metadata-json '{"role":"reader","quota":10}'
+  Create a binding: openrun binding create --config role=reader postgres/p1 /apps/p1
+  Create with grants: openrun binding create --grant "read:*" /apps/p1 /apps/p2
 `,
 		Action: func(cCtx *cli.Context) error {
-			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <path>")
+			if cCtx.NArg() != 2 {
+				return fmt.Errorf("expected two args: <source> <binding_path>")
 			}
-			path := cCtx.Args().First()
+			source := cCtx.Args().Get(0)
+			path := cCtx.Args().Get(1)
 
-			metadata, err := parseKVEntries(cCtx.StringSlice(METADATA_FLAG))
+			config, err := parseConfigEntries(cCtx.StringSlice(CONFIG_FLAG))
 			if err != nil {
 				return err
 			}
-			metadata, err = mergeJSONIntoMap(metadata, cCtx.String(METADATA_JSON_FLAG))
-			if err != nil {
-				return err
-			}
+			grants := cCtx.StringSlice(GRANT_FLAG)
 
 			binding := types.Binding{
 				Path:   path,
-				Source: cCtx.String(SOURCE_FLAG),
+				Source: source,
 				Metadata: types.BindingMetadata{
-					Config: metadata,
+					Grants: append([]string(nil), grants...),
+					Config: config,
 				},
 				StagedMetadata: types.BindingMetadata{
-					Config: metadata,
+					Grants: append([]string(nil), grants...),
+					Config: config,
 				},
 			}
 
@@ -140,14 +111,14 @@ Examples:
 }
 
 func bindingUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
-	flags := make([]cli.Flag, 0, len(commonFlags)+7)
+	flags := make([]cli.Flag, 0, len(commonFlags)+3)
 	flags = append(flags, commonFlags...)
 	flags = append(flags,
 		&cli.StringSliceFlag{
-			Name:  METADATA_FLAG,
-			Usage: "Update a metadata entry. Format is key=value. Empty value deletes the key. Can be specified multiple times",
+			Name:    CONFIG_FLAG,
+			Aliases: []string{"c"},
+			Usage:   "Update a config entry. Format is key=value. Empty value deletes the key. Can be specified multiple times",
 		})
-	flags = append(flags, newStringFlag(METADATA_JSON_FLAG, "", "Metadata as a JSON object. Merged on top of existing metadata after --metadata edits", ""))
 	flags = append(flags, newBoolFlag(PROMOTE_FLAG, "p", "Promote staged metadata to active metadata", false))
 	flags = append(flags, dryRunFlag())
 
@@ -161,8 +132,8 @@ func bindingUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <path> is the unique path of the binding.
 
 Examples:
-  Update metadata key: openrun binding update /apps/p1 --metadata role=writer
-  Delete a metadata key: openrun binding update /apps/p1 --metadata role=
+  Update config key: openrun binding update /apps/p1 --config role=writer
+  Delete a config key: openrun binding update /apps/p1 --config role=
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -182,22 +153,16 @@ Examples:
 				binding.StagedMetadata.Config = map[string]string{}
 			}
 
-			for _, entry := range cCtx.StringSlice(METADATA_FLAG) {
+			for _, entry := range cCtx.StringSlice(CONFIG_FLAG) {
 				key, value, ok := strings.Cut(entry, "=")
 				if !ok || key == "" {
-					return fmt.Errorf("invalid metadata entry %q, expected key=value", entry)
+					return fmt.Errorf("invalid config entry %q, expected key=value", entry)
 				}
 				if value == "" {
 					delete(binding.StagedMetadata.Config, key)
 				} else {
 					binding.StagedMetadata.Config[key] = value
 				}
-			}
-
-			var err error
-			binding.StagedMetadata.Config, err = mergeJSONIntoMap(binding.StagedMetadata.Config, cCtx.String(METADATA_JSON_FLAG))
-			if err != nil {
-				return err
 			}
 
 			values := url.Values{}
