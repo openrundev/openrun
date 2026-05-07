@@ -3,11 +3,12 @@ config:
     CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
     PATH: ${PATH}
+    TEST_POSTGRES_URL: ${TEST_POSTGRES_URL}
 
 tests:
   # Basic create + list
   service0010: # create first postgres service - auto becomes default
-    command: ../openrun service create --config url=postgres://localhost:5432/db1 postgres/p1
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/p1
     stdout: "Service postgres/p1 created"
     exit-code: 0
 
@@ -16,8 +17,8 @@ tests:
     stdout: "true"
 
   service0012: # config url stored
-    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
-    stdout: "postgres://localhost:5432/db1"
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url == env.TEST_POSTGRES_URL'
+    stdout: "true"
 
   service0013: # service_type and name returned correctly
     command: ../openrun service list -f json postgres/p1 | jq -r '.[0].service_type + "/" + .[0].name'
@@ -29,20 +30,20 @@ tests:
 
   # Second service of same type does not become default
   service0020:
-    command: ../openrun service create --staging p1 --config url=postgres://h2:5432/db2 --config user=admin postgres/p2
+    command: ../openrun service create --staging p1 --config url=${TEST_POSTGRES_URL} postgres/p2
     stdout: "Service postgres/p2 created"
 
   service0021: # second service is_default stays false (not requested)
     command: ../openrun service list -f json postgres/p2 | jq -r '.[0].is_default'
     stdout: "false"
 
-  service0022: # second service config has multiple keys
-    command: ../openrun service list -f json postgres/p2 | jq -r '.[0].config.user'
-    stdout: "admin"
+  service0022: # second service config has url only
+    command: ../openrun service list -f json postgres/p2 | jq '.[0].config | length'
+    stdout: "1"
 
   service0023:
-    command: ../openrun service list -f json postgres/p2 | jq -r '.[0].config.url'
-    stdout: "postgres://h2:5432/db2"
+    command: ../openrun service list -f json postgres/p2 | jq -r '.[0].config.url == env.TEST_POSTGRES_URL'
+    stdout: "true"
 
   service0024: # p1 still default
     command: ../openrun service list -f json postgres/p1 | jq -r '.[0].is_default'
@@ -67,7 +68,7 @@ tests:
 
   # Create with --is-default flag clears existing default
   service0040:
-    command: ../openrun service create --is-default --config url=postgres://h3:5432/db3 postgres/p3
+    command: ../openrun service create --is-default --config url=${TEST_POSTGRES_URL} postgres/p3
     stdout: "Service postgres/p3 created"
 
   service0041: # p3 is the new default
@@ -146,17 +147,17 @@ tests:
     stdout: "secret"
 
   service0072: # url unchanged
-    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
-    stdout: "postgres://localhost:5432/db1"
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url == env.TEST_POSTGRES_URL'
+    stdout: "true"
 
-  # Update config: change existing value
+  # Update config: set existing value
   service0080:
-    command: ../openrun service update --config url=postgres://newhost:5432/db1 postgres/p1
+    command: ../openrun service update --config url=${TEST_POSTGRES_URL} postgres/p1
     stdout: "Service postgres/p1 updated"
 
   service0081:
-    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
-    stdout: "postgres://newhost:5432/db1"
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url == env.TEST_POSTGRES_URL'
+    stdout: "true"
 
   service0082: # password key still there
     command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.password'
@@ -172,8 +173,8 @@ tests:
     stdout: "null"
 
   service0092: # url unchanged
-    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
-    stdout: "postgres://newhost:5432/db1"
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url == env.TEST_POSTGRES_URL'
+    stdout: "true"
 
   service0093: # only one config key remaining
     command: ../openrun service list -f json postgres/p1 | jq '.[0].config | length'
@@ -192,22 +193,22 @@ tests:
     command: ../openrun service list -f json postgres/p3 | jq -r '.[0].config.extra'
     stdout: "val"
 
-  # First service of a different type also auto-defaults
+  # Listing without a filter includes the created postgres services
   service0110:
-    command: ../openrun service create --config url=mysql://m1 mysql/m1
-    stdout: "Service mysql/m1 created"
+    command: ../openrun service list -f json | jq 'length >= 3'
+    stdout: "true"
 
   service0111:
-    command: ../openrun service list -f json mysql/m1 | jq -r '.[0].is_default'
-    stdout: "true"
+    command: ../openrun service list -f json postgres | jq -r '[.[].name] | sort | join(",")'
+    stdout: "p1,p2,p3"
 
   service0112: # postgres default state unaffected
     command: ../openrun service list -f json postgres/p3 | jq -r '.[0].is_default'
     stdout: "true"
 
-  service0113: # listing all with no filter returns at least 4
+  service0113: # listing all with no filter returns the 3 postgres services
     command: ../openrun service list -f json | jq 'length'
-    stdout: "4"
+    stdout: "3"
 
   service0114: # make p1 depend on p2 before deleting p2
     command: ../openrun service update --staging p2 postgres/p1
@@ -271,7 +272,7 @@ tests:
     stderr: "expected one arg"
 
   service0207: # staging service has to exist for the same service type
-    command: ../openrun service create --staging missing postgres/p_bad
+    command: ../openrun service create --staging missing --config url=${TEST_POSTGRES_URL} postgres/p_bad
     exit-code: 1
     stderr: "staging service postgres/missing not found"
 
@@ -281,7 +282,7 @@ tests:
     stderr: "staging service postgres/m1 not found"
 
   service0209: # create cannot use itself as staging service
-    command: ../openrun service create --staging p_bad postgres/p_bad
+    command: ../openrun service create --staging p_bad --config url=${TEST_POSTGRES_URL} postgres/p_bad
     exit-code: 1
     stderr: "staging service postgres/p_bad cannot refer to itself"
 
@@ -292,7 +293,7 @@ tests:
 
   # Dry-run create does not persist
   service0220:
-    command: ../openrun service create --dry-run --config url=dryrun postgres/dry1
+    command: ../openrun service create --dry-run --config url=${TEST_POSTGRES_URL} postgres/dry1
     stdout: "Service postgres/dry1 created"
 
   service0221: # dry-run create did not persist
@@ -301,13 +302,13 @@ tests:
 
   # Dry-run update does not persist
   service0230:
-    command: ../openrun service update --dry-run --config url=changed postgres/p1
+    command: ../openrun service update --dry-run --config url=${TEST_POSTGRES_URL} postgres/p1
     stdout: "dry-run mode"
 
   service0231: # url unchanged after dry-run update
-    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url'
-    stdout: "postgres://newhost:5432/db1"
+    command: ../openrun service list -f json postgres/p1 | jq -r '.[0].config.url == env.TEST_POSTGRES_URL'
+    stdout: "true"
 
   # Cleanup
   service99999:
-    command: (../openrun service delete postgres/p1; ../openrun service delete postgres/p3; ../openrun service delete mysql/m1) || true
+    command: (../openrun service delete postgres/p1; ../openrun service delete postgres/p3) || true

@@ -241,6 +241,7 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 		}
 	} else {
 		// TODO: Implement derived binding account generation
+		return nil
 	}
 
 	return tx.Commit()

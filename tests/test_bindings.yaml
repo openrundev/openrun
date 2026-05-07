@@ -3,11 +3,12 @@ config:
     CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
     PATH: ${PATH}
+    TEST_POSTGRES_URL: ${TEST_POSTGRES_URL}
 
 tests:
   # Setup: create the source service used by all bindings below
   binding0001:
-    command: ../openrun service create --config url=postgres://localhost:5432/db postgres/testbind
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/testbind
     stdout: "Service postgres/testbind created"
     exit-code: 0
 
@@ -47,54 +48,54 @@ tests:
 
   # Create with metadata key=value entries
   binding0020:
-    command: ../openrun binding create --source postgres/testbind --metadata role=reader --metadata env=prod /apps/b2
+    command: ../openrun binding create --source postgres/testbind --metadata inherit_default=false /apps/b2
     stdout: "Binding /apps/b2 created"
 
-  binding0021: # metadata role stored
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.config.role'
-    stdout: "reader"
+  binding0021: # metadata inherit_default stored
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.config.inherit_default'
+    stdout: "false"
 
-  binding0022: # metadata env stored
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.config.env'
-    stdout: "prod"
+  binding0022: # staged metadata inherit_default stored
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.inherit_default'
+    stdout: "false"
 
-  binding0023: # metadata has exactly 2 keys
+  binding0023: # metadata has exactly 1 key
     command: ../openrun binding get -f json /apps/b2 | jq '.[0].metadata.config | length'
-    stdout: "2"
+    stdout: "1"
 
-  # Create with --metadata-json (supports non-string values)
+  # Create with --metadata-json
   binding0030:
-    command: ../openrun binding create --source postgres/testbind --metadata-json '{"role":"writer","quota":10,"enabled":true}' /apps/b3
+    command: ../openrun binding create --source postgres/testbind --metadata-json '{"inherit_default":"true"}' /apps/b3
     stdout: "Binding /apps/b3 created"
 
   binding0031: # string from json
-    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.config.role'
-    stdout: "writer"
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.config.inherit_default'
+    stdout: "true"
 
-  binding0032: # numeric value from json preserved as a number
-    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.config.quota'
-    stdout: "10"
+  binding0032: # metadata has exactly 1 key
+    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.config | length'
+    stdout: "1"
 
-  binding0033: # boolean value from json preserved
-    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.config.enabled'
+  binding0033: # account url was generated
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.account.url | startswith("postgres://")'
     stdout: "true"
 
   # --metadata-json merges on top of --metadata key=value entries
   binding0040:
-    command: ../openrun binding create --source postgres/testbind --metadata role=reader --metadata env=dev --metadata-json '{"role":"writer","quota":5}' /apps/b4
+    command: ../openrun binding create --source postgres/testbind --metadata inherit_default=true --metadata-json '{"inherit_default":"false"}' /apps/b4
     stdout: "Binding /apps/b4 created"
 
-  binding0041: # json overrode key=value role
-    command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].metadata.config.role'
-    stdout: "writer"
+  binding0041: # json overrode key=value inherit_default
+    command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].metadata.config.inherit_default'
+    stdout: "false"
 
-  binding0042: # key=value entry preserved when not overridden
-    command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].metadata.config.env'
-    stdout: "dev"
+  binding0042: # staged metadata matches metadata
+    command: ../openrun binding get -f json /apps/b4 | jq -r '.[0].staged_metadata.config.inherit_default'
+    stdout: "false"
 
-  binding0043: # json-only key present
-    command: ../openrun binding get -f json /apps/b4 | jq '.[0].metadata.config.quota'
-    stdout: "5"
+  binding0043: # one config key present
+    command: ../openrun binding get -f json /apps/b4 | jq '.[0].metadata.config | length'
+    stdout: "1"
 
   # Source = "<service_type>" alone resolves to the default service of that type
   binding0045:
@@ -181,20 +182,20 @@ tests:
     stdout: "admin"
 
   binding0072: # other metadata key preserved
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.env'
-    stdout: "prod"
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.inherit_default'
+    stdout: "false"
 
-  binding0073: # active metadata still has the original value
+  binding0073: # active metadata does not have the staged-only key
     command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].metadata.config.role'
-    stdout: "reader"
+    stdout: "null"
 
   # Update: empty value deletes key
   binding0080:
-    command: ../openrun binding update --metadata env= /apps/b2
+    command: ../openrun binding update --metadata inherit_default= /apps/b2
     stdout: "Binding /apps/b2 updated"
 
-  binding0081: # env removed
-    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.env'
+  binding0081: # inherit_default removed
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].staged_metadata.config.inherit_default'
     stdout: "null"
 
   binding0082: # other metadata key still present
@@ -207,7 +208,7 @@ tests:
 
   # Update: --metadata-json merges on top of existing metadata
   binding0090:
-    command: ../openrun binding update --metadata-json '{"quota":20,"role":"owner"}' /apps/b3
+    command: ../openrun binding update --metadata-json '{"quota":"20","role":"owner"}' /apps/b3
     stdout: "Binding /apps/b3 updated"
 
   binding0091: # role overridden by json
@@ -215,16 +216,16 @@ tests:
     stdout: "owner"
 
   binding0092: # quota updated to 20
-    command: ../openrun binding get -f json /apps/b3 | jq '.[0].staged_metadata.config.quota'
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].staged_metadata.config.quota'
     stdout: "20"
 
-  binding0093: # boolean key preserved (not in update json)
-    command: ../openrun binding get -f json /apps/b3 | jq '.[0].staged_metadata.config.enabled'
+  binding0093: # inherit_default key preserved (not in update json)
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].staged_metadata.config.inherit_default'
     stdout: "true"
 
   binding0094: # active metadata unchanged before promote
     command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.config.role'
-    stdout: "writer"
+    stdout: "null"
 
   binding0095: # promote copies staged metadata to active metadata
     command: ../openrun binding update --promote /apps/b3
@@ -235,7 +236,7 @@ tests:
     stdout: "owner"
 
   binding0097:
-    command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.config.quota'
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.config.quota'
     stdout: "20"
 
   # Table format includes path/source columns
@@ -262,8 +263,8 @@ tests:
 
   # csv format
   binding0120: # csv contains path,source comma-separated
-    command: ../openrun binding list -f csv | grep "^/apps/b1,"
-    stdout: "/apps/b1,postgres/testbind,"
+    command: ../openrun binding list -f csv | grep ",/apps/b1," | cut -d, -f2-3
+    stdout: "/apps/b1,postgres/testbind"
 
   # jsonl format - one json object per line
   binding0130:

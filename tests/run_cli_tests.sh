@@ -1,5 +1,5 @@
 #set -x
-set -e
+set -eE
 
 # Enabling verbose is useful for debugging but the commander command seems to
 # return exit code of 0 when verbose is enabled, even if tests fails. So verbose
@@ -48,6 +48,11 @@ cleanup() {
   rm -rf metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
   rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp
 
+  if [[ -n "$POSTGRES_TEST_CONTAINER_ID" ]]; then
+    $POSTGRES_TEST_CONTAINER_COMMAND rm -f "$POSTGRES_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
+    POSTGRES_TEST_CONTAINER_ID=""
+  fi
+
   if [[ -d ../appspecs_bk ]]; then
     rm -rf ../internal/server/appspecs
     mv ../appspecs_bk ../internal/server/appspecs
@@ -58,6 +63,57 @@ cleanup() {
 
   # Github Actions does not seem to allow kill, the last echo is to allow the exit code to be zero
   echo "Done with cleanup"
+}
+
+start_postgres_testcontainer() {
+  if [[ -z "$ENABLE_POSTGRES_TESTCONTAINER" ]]; then
+    return
+  fi
+
+  POSTGRES_TEST_CONTAINER_COMMAND="${OPENRUN_TEST_CONTAINER_COMMAND:-docker}"
+  echo "Starting postgres test container with $POSTGRES_TEST_CONTAINER_COMMAND"
+  POSTGRES_TEST_CONTAINER_ID=$($POSTGRES_TEST_CONTAINER_COMMAND run \
+    --detach \
+    --rm \
+    --publish 127.0.0.1::5432 \
+    --env POSTGRES_DB=openrun_cli \
+    --env POSTGRES_USER=postgres \
+    --env POSTGRES_PASSWORD=postgres \
+    postgres:17-alpine)
+
+  local port=""
+  for _ in {1..75}; do
+    port=$($POSTGRES_TEST_CONTAINER_COMMAND inspect \
+      --format '{{with index .NetworkSettings.Ports "5432/tcp"}}{{(index . 0).HostPort}}{{end}}' \
+      "$POSTGRES_TEST_CONTAINER_ID" 2>/dev/null || true)
+    if [[ -n "$port" ]]; then
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ -z "$port" ]]; then
+    echo "Postgres test container port was not published"
+    return 1
+  fi
+
+  local ready=""
+  for _ in {1..300}; do
+    if $POSTGRES_TEST_CONTAINER_COMMAND exec "$POSTGRES_TEST_CONTAINER_ID" pg_isready -U postgres -d openrun_cli >/dev/null 2>&1; then
+      ready="true"
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ -z "$ready" ]]; then
+    echo "Postgres test container did not become ready"
+    $POSTGRES_TEST_CONTAINER_COMMAND logs "$POSTGRES_TEST_CONTAINER_ID" || true
+    return 1
+  fi
+
+  export TEST_POSTGRES_URL="postgres://postgres:postgres@127.0.0.1:${port}/openrun_cli?sslmode=disable"
+  echo "TEST_POSTGRES_URL=$TEST_POSTGRES_URL"
 }
 
 # Test basic functionality
@@ -185,13 +241,28 @@ EOF
 
 export TESTENV=abc
 export c1c2_c3=xyz
+start_postgres_testcontainer
 GOCOVERDIR=$GOCOVERDIR ../openrun server start &
 sleep 2
 
 if [[ -z $CL_SINGLE_TEST ]]; then
-    commander test $CL_TEST_VERBOSE  --dir ./commander/
+    commander test $CL_TEST_VERBOSE --dir ./commander/
+    if [[ -n "$TEST_POSTGRES_URL" ]]; then
+        commander test $CL_TEST_VERBOSE test_service.yaml
+        commander test $CL_TEST_VERBOSE test_bindings.yaml
+    else
+        echo "Skipping postgres service and binding tests; TEST_POSTGRES_URL is not set"
+    fi
 elif [[ $CL_SINGLE_TEST != "disable" ]]; then
-    commander test $CL_TEST_VERBOSE ./commander/$CL_SINGLE_TEST
+    if [[ $CL_SINGLE_TEST = "test_service.yaml" || $CL_SINGLE_TEST = "test_bindings.yaml" ]]; then
+        if [[ -n "$TEST_POSTGRES_URL" ]]; then
+            commander test $CL_TEST_VERBOSE ./$CL_SINGLE_TEST
+        else
+            echo "Skipping $CL_SINGLE_TEST; TEST_POSTGRES_URL is not set"
+        fi
+    else
+        commander test $CL_TEST_VERBOSE ./commander/$CL_SINGLE_TEST
+    fi
 fi
 
 if [[ -n $CL_SINGLE_TEST && -z $CL_TEST_CONTAINER ]]; then
