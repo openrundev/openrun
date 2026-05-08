@@ -417,19 +417,21 @@ func (c *CommandCM) ImageExists(ctx context.Context, name ImageName) (bool, erro
 	}
 
 	c.Debug().Msgf("Getting images with name %s", name)
-	args := []string{"images", string(name)}
+	args := []string{"image", "ls", "--quiet", string(name)}
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, args...)
-	output, err := cmd.CombinedOutput()
+	output, err := cmd.Output()
 	if err != nil {
-		return false, fmt.Errorf("error listing images: %s : %s", output, err)
+		var stderr string
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr = string(exitErr.Stderr)
+		}
+		if ctx.Err() != nil {
+			return false, fmt.Errorf("error listing images: %s : %w", stderr, ctx.Err())
+		}
+		return false, fmt.Errorf("error listing images: %s : %s", stderr, err)
 	}
 
-	split := strings.SplitN(string(output), "\n", 3)
-	if len(split) > 1 && len(strings.TrimSpace(split[1])) > 0 {
-		return true, nil
-	}
-
-	return false, nil
+	return strings.TrimSpace(string(output)) != "", nil
 }
 
 // ExecTailN executes a command and returns the last n lines of output

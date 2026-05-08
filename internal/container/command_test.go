@@ -4,9 +4,15 @@
 package container
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/openrundev/openrun/internal/testutil"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestCommandOptionArgsAllowedExactAndRegex(t *testing.T) {
@@ -51,6 +57,69 @@ func TestParseCommandOptionsFiltersByContainerCommand(t *testing.T) {
 	}
 	if _, ok := got.Other["ignored.option"]; ok {
 		t.Fatalf("unprefixed unknown option should not be decoded, got %#v", got.Other["ignored.option"])
+	}
+}
+
+func TestCommandCMImageExistsUsesQuietImageListForDockerAndPodman(t *testing.T) {
+	for _, commandName := range []string{"docker", "podman"} {
+		t.Run(commandName, func(t *testing.T) {
+			commandPath := filepath.Join(t.TempDir(), commandName)
+			script := `#!/bin/sh
+if [ "$1" != "image" ] || [ "$2" != "ls" ] || [ "$3" != "--quiet" ]; then
+	echo "unexpected args: $*" >&2
+	exit 64
+fi
+
+case "$4" in
+	present:latest)
+		echo 'sha256:abc'
+		exit 0
+		;;
+	missing:latest)
+		exit 0
+		;;
+	fail:latest)
+		echo "daemon unavailable" >&2
+		exit 65
+		;;
+	*)
+		echo "unexpected image: $4" >&2
+		exit 65
+		;;
+esac
+`
+			if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
+				t.Fatalf("write fake container command: %v", err)
+			}
+
+			manager := NewCommandCM(testutil.TestLogger(), &types.ServerConfig{
+				System: types.SystemConfig{ContainerCommand: commandPath},
+			}, "", "")
+
+			exists, err := manager.ImageExists(context.Background(), ImageName("present:latest"))
+			if err != nil {
+				t.Fatalf("ImageExists present returned error: %v", err)
+			}
+			if !exists {
+				t.Fatal("ImageExists present = false, want true")
+			}
+
+			exists, err = manager.ImageExists(context.Background(), ImageName("missing:latest"))
+			if err != nil {
+				t.Fatalf("ImageExists missing returned error: %v", err)
+			}
+			if exists {
+				t.Fatal("ImageExists missing = true, want false")
+			}
+
+			exists, err = manager.ImageExists(context.Background(), ImageName("fail:latest"))
+			if err == nil {
+				t.Fatal("ImageExists command failure returned nil error")
+			}
+			if exists {
+				t.Fatal("ImageExists command failure = true, want false")
+			}
+		})
 	}
 }
 
