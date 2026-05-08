@@ -182,6 +182,9 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 		// TODO: Implement derived binding initialization
 	} else {
 		// Base binding
+		if len(binding.Metadata.Grants) > 0 {
+			return fmt.Errorf("grants are not supported for base bindings, only derived bindings can have grants")
+		}
 		serviceType, name, ok := strings.Cut(binding.Source, "/")
 		if !ok {
 			// Reference a service by type alone
@@ -210,18 +213,17 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 	if dryRun {
 		return nil
 	}
+	stagingService := service
+	if service.Staging != "" {
+		stagingService, err = s.db.GetService(ctx, tx, service.ServiceType, service.Staging)
+		if err != nil {
+			return fmt.Errorf("error getting staging service: %w", err)
+		}
+	}
 
 	// Not dry run, generate the account info
 	if binding.BaseBinding == "" {
 		// Generate the base binding
-		stagingService := service
-		if service.Staging != "" {
-			stagingService, err = s.db.GetService(ctx, tx, service.ServiceType, service.Staging)
-			if err != nil {
-				return fmt.Errorf("error getting staging service: %w", err)
-			}
-		}
-
 		// Generate the staging account info, either against the staging service if set or against the main service
 		stagingAccount, err := s.generateBaseBindingAccount(ctx, stagingService, binding.Id, binding.Metadata.Config, true)
 		if err != nil {
