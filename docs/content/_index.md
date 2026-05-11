@@ -7,13 +7,13 @@ cascade:
 
 <div class="hx:mb-4" style="background: #277A9F; background: linear-gradient(180deg, #277A9F, #359ece); color: transparent; background-clip: text; -webkit-background-clip: text;">
 {{< hextra/hero-headline >}}
-  Internal Tools Deployment Platform
+  Platform for code-first internal tools
 {{< /hextra/hero-headline >}}
 </div>
 
 <div class="hx:mb-6">
 {{< hextra/hero-subtitle >}}
-  Internal tools deployment made easy.&nbsp;<br class="hx:sm:block hx:hidden"/>Deploy web apps declaratively, on a single-node or on Kubernetes.
+  Low-code platform features, without the pain.&nbsp;<br class="hx:sm:block hx:hidden"/>Declarative deployments, authentication, auditing, and RBAC for code-first apps.
 {{< /hextra/hero-subtitle >}}
 </div>
 

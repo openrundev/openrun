@@ -29,8 +29,8 @@ noClasses = false
 
 # Default Page Parameters
 [params]
-title = "OpenRun - Internal Tools Deployment Platform"
-description = "Internal tools deployment made easy. Deploy web apps declaratively, on a single-node or on Kubernetes."
+title = "OpenRun - Deployment platform for code-first internal tools"
+description = "Low-code platform features, without the pain. Declarative deployments, authentication, auditing, and RBAC for code-first apps."
 
 [params.navbar]
 displayTitle = false
