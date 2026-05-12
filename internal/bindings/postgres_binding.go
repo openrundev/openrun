@@ -16,11 +16,15 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 type PostgresServiceBinding struct {
+	*types.Logger
 	serviceConfig map[string]string
-	bindingConfig map[string]string
+	binding       *types.Binding
+	baseBinding   *types.Binding
+	grants        []string
 
 	adminConn *sql.DB // The admin connection to the main database, available after InitService
 }
@@ -35,7 +39,8 @@ func NewPostgresServiceBinding() ServiceBinding {
 	return &PostgresServiceBinding{}
 }
 
-func (b *PostgresServiceBinding) InitService(ctx context.Context, serviceConfig map[string]string) error {
+func (b *PostgresServiceBinding) InitService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error {
+	b.Logger = logger
 	if err := verifyKeys(slices.Collect(maps.Keys(serviceConfig)), []string{"url"}, []string{}); err != nil {
 		return err
 	}
@@ -55,43 +60,53 @@ func (b *PostgresServiceBinding) InitService(ctx context.Context, serviceConfig 
 	return nil
 }
 
-func (b *PostgresServiceBinding) InitBaseBinding(ctx context.Context, bindingConfig map[string]string) error {
-	if err := verifyKeys(slices.Collect(maps.Keys(bindingConfig)), []string{}, []string{"inherit_default"}); err != nil {
+func (b *PostgresServiceBinding) InitBinding(ctx context.Context, binding *types.Binding, baseBinding *types.Binding, grants []string) error {
+	if err := verifyKeys(slices.Collect(maps.Keys(binding.StagedMetadata.Config)), []string{}, []string{"inherit_default"}); err != nil {
 		return err
 	}
-	b.bindingConfig = bindingConfig
+
+	b.grants = grants
+	b.binding = binding
+	b.baseBinding = baseBinding
 	return nil
 }
 
-func (b *PostgresServiceBinding) InitDerivedBinding(ctx context.Context, grants []string, bindingConfig map[string]string) error {
-	// TODO: Implement derived binding initialization
-	return nil
-}
-
-func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId string, isStaging bool) (map[string]string, error) {
+func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingConfig map[string]string, isStaging bool) (map[string]string, []string, error) {
 	inheritDefault := true
 	var err error
 
-	inheritDefaultStr, ok := b.bindingConfig["inherit_default"]
+	inheritDefaultStr, ok := bindingConfig["inherit_default"]
 	if ok {
 		inheritDefault, err = strconv.ParseBool(inheritDefaultStr)
 		if err != nil {
-			return nil, fmt.Errorf("error parsing inherit_default: %w", err)
+			return nil, nil, fmt.Errorf("error parsing inherit_default: %w", err)
 		}
 	}
 
 	// Create a new schema, create a login role and grant full access on the schema for that role.
 	password, err := randomHex(32)
 	if err != nil {
-		return nil, fmt.Errorf("error generating random password: %w", err)
+		return nil, nil, fmt.Errorf("error generating random password: %w", err)
 	}
 	modePrefix := "prd_"
 	if isStaging {
 		modePrefix = "stg_"
 	}
 
-	schemaName := "cl_sch_" + modePrefix + bindingId
-	roleName := "cl_rol_" + modePrefix + bindingId
+	schemaName := "cl_sch_" + modePrefix + b.binding.Id
+	roleName := "cl_rol_" + modePrefix + b.binding.Id
+	baseRoleName := ""
+	if b.baseBinding != nil {
+		// Derived binding, use the base binding's schema
+		if isStaging {
+			schemaName = b.baseBinding.StagedMetadata.Account["schema"]
+			baseRoleName = b.baseBinding.StagedMetadata.Account["role"]
+
+		} else {
+			schemaName = b.baseBinding.Metadata.Account["schema"]
+			baseRoleName = b.baseBinding.Metadata.Account["role"]
+		}
+	}
 
 	quotedSchema := pgx.Identifier{schemaName}.Sanitize()
 	quotedRole := pgx.Identifier{roleName}.Sanitize()
@@ -105,44 +120,158 @@ func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId 
 
 	tx, err := b.adminConn.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("error starting transaction: %w", err)
+		return nil, nil, fmt.Errorf("error starting transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
 	createRoleSQL := fmt.Sprintf("CREATE ROLE %s WITH %s PASSWORD %s", quotedRole, roleOptions, quotedPassword)
 	if _, err := tx.ExecContext(ctx, createRoleSQL); err != nil {
-		return nil, fmt.Errorf("error creating role %s: %w", roleName, err)
+		return nil, nil, fmt.Errorf("error creating role %s: %w", roleName, err)
 	}
 
-	createSchemaSQL := fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s", quotedSchema, quotedRole)
-	if _, err := tx.ExecContext(ctx, createSchemaSQL); err != nil {
-		return nil, fmt.Errorf("error creating schema %s: %w", schemaName, err)
-	}
+	grantsProcessed := []string{}
+	if b.baseBinding == nil {
+		// Base binding, create a new schema
+		createSchemaSQL := fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s", quotedSchema, quotedRole)
+		if _, err := tx.ExecContext(ctx, createSchemaSQL); err != nil {
+			return nil, nil, fmt.Errorf("error creating schema %s: %w", schemaName, err)
+		}
 
-	grantSQL := fmt.Sprintf("GRANT ALL ON SCHEMA %s TO %s", quotedSchema, quotedRole)
-	if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
-		return nil, fmt.Errorf("error granting privileges on schema %s: %w", schemaName, err)
+		grantSQL := fmt.Sprintf("GRANT ALL ON SCHEMA %s TO %s", quotedSchema, quotedRole)
+		if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
+			return nil, nil, fmt.Errorf("error granting privileges on schema %s: %w", schemaName, err)
+		}
+	} else {
+		grantUsageSQL := fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s", quotedSchema, quotedRole)
+		if _, err := tx.ExecContext(ctx, grantUsageSQL); err != nil {
+			return nil, nil, fmt.Errorf("error granting usage privileges on schema %s: %w", schemaName, err)
+		}
+
+		// Setup the grants
+		grantsProcessed, err = b.processGrants(ctx, tx, roleName, schemaName, b.grants, baseRoleName)
+		if err != nil {
+			return nil, nil, fmt.Errorf("error processing grants: %w", err)
+		}
 	}
 
 	setSearchPathSQL := fmt.Sprintf("ALTER ROLE %s SET search_path = %s", quotedRole, quotedSchema)
 	if _, err := tx.ExecContext(ctx, setSearchPathSQL); err != nil {
-		return nil, fmt.Errorf("error setting search_path on role %s: %w", roleName, err)
+		return nil, nil, fmt.Errorf("error setting search_path on role %s: %w", roleName, err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("error committing account creation: %w", err)
+		return nil, nil, fmt.Errorf("error committing account creation: %w", err)
 	}
 
 	accountURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, schemaName)
 	if err != nil {
-		return nil, fmt.Errorf("error building account url: %w", err)
+		return nil, nil, fmt.Errorf("error building account url: %w", err)
 	}
 
 	return map[string]string{
 		"url":    accountURL,
 		"schema": schemaName,
 		"role":   roleName,
-	}, nil
+	}, grantsProcessed, nil
+}
+
+func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, role, schema string, grants []string, baseRoleName string) ([]string, error) {
+	quotedSchema := pgx.Identifier{schema}.Sanitize()
+	quotedRole := pgx.Identifier{role}.Sanitize()
+	quotedBaseRole := pgx.Identifier{baseRoleName}.Sanitize()
+
+	grantsProcessed := []string{}
+	for _, grant := range grants {
+		grantType, grantTarget, err := parseGrant(grant, []GrantType{GrantTypeRead, GrantTypeCreate, GrantTypeFull})
+		if err != nil {
+			return nil, fmt.Errorf("error parsing grant: %w", err)
+		}
+
+		switch grantType {
+		case GrantTypeRead:
+			if grantTarget == GrantTargetAll {
+				// Read grant on all tables in the schema
+				grantSQL := fmt.Sprintf("GRANT SELECT ON ALL TABLES IN SCHEMA %s TO %s", quotedSchema, quotedRole)
+				if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
+					return nil, fmt.Errorf("error granting select privileges on all tables in schema %s: %w", schema, err)
+				}
+
+				// grant select on any tables created later by the base role using DEFAULT PRIVILEGES
+				grantDefaultSQL := fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %s GRANT SELECT ON TABLES TO %s", quotedBaseRole, quotedSchema, quotedRole)
+				if _, err := tx.ExecContext(ctx, grantDefaultSQL); err != nil {
+					return nil, fmt.Errorf("error granting default select privileges on all tables in schema %s: %w", schema, err)
+				}
+				grantsProcessed = append(grantsProcessed, grant)
+			} else {
+				// Read grant on specific table
+				quotedTableName := pgx.Identifier{schema, grantTarget}.Sanitize()
+				grantSQL := fmt.Sprintf("GRANT SELECT ON TABLE %s TO %s", quotedTableName, quotedRole)
+				if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
+					b.Warn().Err(err).Str("grant", grant).Str("schema", schema).Str("table", grantTarget).Msg("error granting select privileges on table")
+					// if table is missing, ignore the error. Grant wil be done later after table is created.
+				} else {
+					grantsProcessed = append(grantsProcessed, grant)
+				}
+			}
+
+		case GrantTypeCreate:
+			if grantTarget != "" && grantTarget != GrantTargetAll {
+				return nil, fmt.Errorf("create grant on specific table is not supported")
+			}
+			// Create grant on all tables in the schema
+			grantSQL := fmt.Sprintf("GRANT CREATE ON SCHEMA %s TO %s", quotedSchema, quotedRole)
+			if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
+				return nil, fmt.Errorf("error granting create privileges on all tables in schema %s: %w", schema, err)
+			}
+
+			grantsProcessed = append(grantsProcessed, grant)
+		case GrantTypeFull:
+			if grantTarget == GrantTargetAll {
+				// Full grant on all tables in the schema
+				grantSQL := fmt.Sprintf("GRANT ALL ON ALL TABLES IN SCHEMA %s TO %s", quotedSchema, quotedRole)
+				if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
+					return nil, fmt.Errorf("error granting full privileges on all tables in schema %s: %w", schema, err)
+				}
+
+				// grant access to all sequences in the schema
+				grantSequenceSQL := fmt.Sprintf("GRANT ALL ON ALL SEQUENCES IN SCHEMA %s TO %s", quotedSchema, quotedRole)
+				if _, err := tx.ExecContext(ctx, grantSequenceSQL); err != nil {
+					return nil, fmt.Errorf("error granting full privileges on all sequences in schema %s: %w", schema, err)
+				}
+
+				// Grant create on TABLE and SEQUENCE in the schema
+				grantCreateSQL := fmt.Sprintf("GRANT CREATE ON SCHEMA %s TO %s", quotedSchema, quotedRole)
+				if _, err := tx.ExecContext(ctx, grantCreateSQL); err != nil {
+					return nil, fmt.Errorf("error granting create privileges on table and sequence in schema %s: %w", schema, err)
+				}
+
+				// grant full privileges on any tables created later by the base role using DEFAULT PRIVILEGES
+				grantDefaultSQL := fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %s GRANT ALL ON TABLES TO %s", quotedBaseRole, quotedSchema, quotedRole)
+				if _, err := tx.ExecContext(ctx, grantDefaultSQL); err != nil {
+					return nil, fmt.Errorf("error granting default full privileges on all tables in schema %s: %w", schema, err)
+				}
+
+				// grant full privileges on any sequences created later by the base role using DEFAULT PRIVILEGES
+				grantDefaultSeqSQL := fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %s GRANT ALL ON SEQUENCES TO %s", quotedBaseRole, quotedSchema, quotedRole)
+				if _, err := tx.ExecContext(ctx, grantDefaultSeqSQL); err != nil {
+					return nil, fmt.Errorf("error granting default full privileges on all sequences in schema %s: %w", schema, err)
+				}
+				grantsProcessed = append(grantsProcessed, grant)
+			} else {
+				quotedTableName := pgx.Identifier{schema, grantTarget}.Sanitize()
+				// Full grant on specific table
+				grantSQL := fmt.Sprintf("GRANT ALL ON TABLE %s TO %s", quotedTableName, quotedRole)
+				if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
+					b.Warn().Err(err).Str("grant", grant).Str("schema", schema).Str("table", grantTarget).Msg("error granting full privileges on table")
+					// if table is missing, ignore the error. Grant wil be done later after table is created.
+				} else {
+					grantsProcessed = append(grantsProcessed, grant)
+				}
+			}
+		}
+	}
+	b.Debug().Strs("grants_processed", grantsProcessed).Msg("processed grants")
+	return grantsProcessed, nil
 }
 
 func randomHex(n int) (string, error) {
