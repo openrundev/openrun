@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"maps"
 	"net/url"
@@ -16,8 +17,21 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/openrundev/openrun/internal/types"
 )
+
+// pgUndefinedTable is the SQLSTATE code returned by Postgres when a relation
+// referenced in a statement does not exist (42P01 "relation does not exist").
+const pgUndefinedTable = "42P01"
+
+// isUndefinedTable reports whether err is a Postgres "relation does not exist"
+// error. This is used to detect grants targeting a table that has not yet been
+// created by the base binding's role, so the grant can be deferred.
+func isUndefinedTable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgUndefinedTable
+}
 
 type PostgresServiceBinding struct {
 	*types.Logger
@@ -181,7 +195,7 @@ func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, 
 	quotedBaseRole := pgx.Identifier{baseRoleName}.Sanitize()
 
 	grantsProcessed := []string{}
-	for _, grant := range grants {
+	for i, grant := range grants {
 		grantType, grantTarget, err := parseGrant(grant, []GrantType{GrantTypeRead, GrantTypeCreate, GrantTypeFull})
 		if err != nil {
 			return nil, fmt.Errorf("error parsing grant: %w", err)
@@ -203,14 +217,19 @@ func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, 
 				}
 				grantsProcessed = append(grantsProcessed, grant)
 			} else {
-				// Read grant on specific table
+				// Read grant on specific table. Wrapped in a SAVEPOINT so that a
+				// missing-table error does not abort the outer transaction.
 				quotedTableName := pgx.Identifier{schema, grantTarget}.Sanitize()
 				grantSQL := fmt.Sprintf("GRANT SELECT ON TABLE %s TO %s", quotedTableName, quotedRole)
-				if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
-					b.Warn().Err(err).Str("grant", grant).Str("schema", schema).Str("table", grantTarget).Msg("error granting select privileges on table")
-					// if table is missing, ignore the error. Grant wil be done later after table is created.
-				} else {
+				applied, err := b.trySoftGrant(ctx, tx, savepointName(i), grantSQL)
+				if err != nil {
+					return nil, fmt.Errorf("error granting select privileges on table %s.%s: %w", schema, grantTarget, err)
+				}
+				if applied {
 					grantsProcessed = append(grantsProcessed, grant)
+				} else {
+					b.Warn().Str("grant", grant).Str("schema", schema).Str("table", grantTarget).
+						Msg("table does not exist yet; grant deferred until reconcile")
 				}
 			}
 
@@ -239,7 +258,7 @@ func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, 
 					return nil, fmt.Errorf("error granting full privileges on all sequences in schema %s: %w", schema, err)
 				}
 
-				// Grant create on TABLE and SEQUENCE in the schema
+				// Grant create on schema
 				grantCreateSQL := fmt.Sprintf("GRANT CREATE ON SCHEMA %s TO %s", quotedSchema, quotedRole)
 				if _, err := tx.ExecContext(ctx, grantCreateSQL); err != nil {
 					return nil, fmt.Errorf("error granting create privileges on table and sequence in schema %s: %w", schema, err)
@@ -258,20 +277,73 @@ func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, 
 				}
 				grantsProcessed = append(grantsProcessed, grant)
 			} else {
+				// Full grant on a specific table. Wrapped in a SAVEPOINT so that a
+				// missing-table error does not abort the outer transaction.
 				quotedTableName := pgx.Identifier{schema, grantTarget}.Sanitize()
-				// Full grant on specific table
 				grantSQL := fmt.Sprintf("GRANT ALL ON TABLE %s TO %s", quotedTableName, quotedRole)
-				if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
-					b.Warn().Err(err).Str("grant", grant).Str("schema", schema).Str("table", grantTarget).Msg("error granting full privileges on table")
-					// if table is missing, ignore the error. Grant wil be done later after table is created.
-				} else {
+				applied, err := b.trySoftGrant(ctx, tx, savepointName(i), grantSQL)
+				if err != nil {
+					return nil, fmt.Errorf("error granting full privileges on table %s.%s: %w", schema, grantTarget, err)
+				}
+				if applied {
 					grantsProcessed = append(grantsProcessed, grant)
+				} else {
+					b.Warn().Str("grant", grant).Str("schema", schema).Str("table", grantTarget).
+						Msg("table does not exist yet; grant deferred until reconcile")
 				}
 			}
 		}
 	}
 	b.Debug().Strs("grants_processed", grantsProcessed).Msg("processed grants")
 	return grantsProcessed, nil
+}
+
+// savepointName returns a unique savepoint identifier for the i-th grant in a
+// processGrants loop. Postgres savepoint names are simple identifiers; we keep
+// them short and ASCII-only.
+func savepointName(i int) string {
+	return fmt.Sprintf("grant_sp_%d", i)
+}
+
+// trySoftGrant runs a single GRANT-like statement inside a SAVEPOINT so that a
+// "relation does not exist" error (42P01) does not poison the surrounding
+// transaction. It returns (applied, err):
+//   - applied=true, err=nil:  the statement succeeded and is committed within
+//     the outer transaction.
+//   - applied=false, err=nil: the target table does not exist yet; the grant
+//     should be retried later (e.g. via reconcile) after the base binding
+//     creates the table. The outer transaction is left in a clean state.
+//   - applied=false, err!=nil: a real error occurred. The caller should treat
+//     this as fatal for the binding operation; the outer transaction is
+//     already aborted by Postgres at this point and must be rolled back.
+func (b *PostgresServiceBinding) trySoftGrant(ctx context.Context, tx *sql.Tx, name, stmt string) (bool, error) {
+	if _, err := tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
+		return false, fmt.Errorf("error creating savepoint %s: %w", name, err)
+	}
+
+	if _, err := tx.ExecContext(ctx, stmt); err != nil {
+		if !isUndefinedTable(err) {
+			// Real error: the outer transaction is now aborted by Postgres.
+			// Surface the original error so callers can bail out cleanly.
+			return false, err
+		}
+
+		// Target relation does not exist yet. Undo the failed statement so the
+		// outer transaction can continue, then release the savepoint to keep
+		// the savepoint stack bounded for callers running many grants.
+		if _, rerr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+name); rerr != nil {
+			return false, fmt.Errorf("error rolling back to savepoint %s after %w: %w", name, err, rerr)
+		}
+		if _, rerr := tx.ExecContext(ctx, "RELEASE SAVEPOINT "+name); rerr != nil {
+			return false, fmt.Errorf("error releasing savepoint %s after rollback: %w", name, rerr)
+		}
+		return false, nil
+	}
+
+	if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT "+name); err != nil {
+		return false, fmt.Errorf("error releasing savepoint %s: %w", name, err)
+	}
+	return true, nil
 }
 
 func randomHex(n int) (string, error) {
