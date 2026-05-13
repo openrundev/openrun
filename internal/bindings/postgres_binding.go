@@ -298,24 +298,13 @@ func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, 
 	return grantsProcessed, nil
 }
 
-// savepointName returns a unique savepoint identifier for the i-th grant in a
-// processGrants loop. Postgres savepoint names are simple identifiers; we keep
-// them short and ASCII-only.
 func savepointName(i int) string {
 	return fmt.Sprintf("grant_sp_%d", i)
 }
 
 // trySoftGrant runs a single GRANT-like statement inside a SAVEPOINT so that a
 // "relation does not exist" error (42P01) does not poison the surrounding
-// transaction. It returns (applied, err):
-//   - applied=true, err=nil:  the statement succeeded and is committed within
-//     the outer transaction.
-//   - applied=false, err=nil: the target table does not exist yet; the grant
-//     should be retried later (e.g. via reconcile) after the base binding
-//     creates the table. The outer transaction is left in a clean state.
-//   - applied=false, err!=nil: a real error occurred. The caller should treat
-//     this as fatal for the binding operation; the outer transaction is
-//     already aborted by Postgres at this point and must be rolled back.
+// transaction.
 func (b *PostgresServiceBinding) trySoftGrant(ctx context.Context, tx *sql.Tx, name, stmt string) (bool, error) {
 	if _, err := tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
 		return false, fmt.Errorf("error creating savepoint %s: %w", name, err)

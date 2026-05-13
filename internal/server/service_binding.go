@@ -177,6 +177,17 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 			return fmt.Errorf("binding source %s not found", binding.Source)
 		}
 
+		// Reject multi-level nesting. A derived binding must be derived from a
+		// base binding (one whose Source points at a service, not at another
+		// binding). Allowing derived-of-derived would make ALTER DEFAULT
+		// PRIVILEGES reference the wrong creator role
+		if baseBinding.BaseBinding != "" {
+			return fmt.Errorf(
+				"cannot derive binding %s from another derived binding %s; "+
+					"derive from the base binding %s instead",
+				binding.Path, baseBinding.Path, baseBinding.BaseBinding)
+		}
+
 		binding.ServiceType = baseBinding.ServiceType
 		binding.ServiceName = baseBinding.ServiceName
 		binding.BaseBinding = binding.Source
