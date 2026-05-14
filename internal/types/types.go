@@ -887,7 +887,7 @@ type Binding struct {
 	Source         string          `json:"source"`       // service id, or the base binding path
 	ServiceType    string          `json:"service_type"` // the type of the service
 	ServiceName    string          `json:"service_name"` // the name of the service
-	BaseBinding    string          `json:"base_binding"` // the base binding path
+	DerivedFrom    string          `json:"derived_from"` // the base binding path this is derived from
 	StagedMetadata BindingMetadata `json:"staged_metadata"`
 	Metadata       BindingMetadata `json:"metadata"`
 	CreateTime     time.Time       `json:"create_time"`

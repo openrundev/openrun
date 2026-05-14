@@ -36,11 +36,7 @@ func isUndefinedTable(err error) bool {
 type PostgresServiceBinding struct {
 	*types.Logger
 	serviceConfig map[string]string
-	binding       *types.Binding
-	baseBinding   *types.Binding
-	grants        []string
-
-	adminConn *sql.DB // The admin connection to the main database, available after InitService
+	adminConn     *sql.DB // The admin connection to the main database, available after InitService
 }
 
 func init() {
@@ -53,7 +49,7 @@ func NewPostgresServiceBinding() ServiceBinding {
 	return &PostgresServiceBinding{}
 }
 
-func (b *PostgresServiceBinding) InitService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error {
+func (b *PostgresServiceBinding) InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error {
 	b.Logger = logger
 	if err := verifyKeys(slices.Collect(maps.Keys(serviceConfig)), []string{"url"}, []string{}); err != nil {
 		return err
@@ -74,52 +70,33 @@ func (b *PostgresServiceBinding) InitService(ctx context.Context, logger *types.
 	return nil
 }
 
-func (b *PostgresServiceBinding) InitBinding(ctx context.Context, binding *types.Binding, baseBinding *types.Binding, grants []string) error {
-	if err := verifyKeys(slices.Collect(maps.Keys(binding.StagedMetadata.Config)), []string{}, []string{"inherit_default"}); err != nil {
-		return err
-	}
-
-	b.grants = grants
-	b.binding = binding
-	b.baseBinding = baseBinding
-	return nil
-}
-
-func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingConfig map[string]string, isStaging bool) (map[string]string, []string, error) {
+func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata, derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, error) {
 	inheritDefault := true
 	var err error
 
-	inheritDefaultStr, ok := bindingConfig["inherit_default"]
+	inheritDefaultStr, ok := bindingMetadata.Config["inherit_default"]
 	if ok {
 		inheritDefault, err = strconv.ParseBool(inheritDefaultStr)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error parsing inherit_default: %w", err)
+			return nil, fmt.Errorf("error parsing inherit_default: %w", err)
 		}
 	}
 
 	// Create a new schema, create a login role and grant full access on the schema for that role.
 	password, err := randomHex(32)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error generating random password: %w", err)
+		return nil, fmt.Errorf("error generating random password: %w", err)
 	}
 	modePrefix := "prd_"
 	if isStaging {
 		modePrefix = "stg_"
 	}
 
-	schemaName := "cl_sch_" + modePrefix + b.binding.Id
-	roleName := "cl_rol_" + modePrefix + b.binding.Id
-	baseRoleName := ""
-	if b.baseBinding != nil {
+	schemaName := "cl_sch_" + modePrefix + bindingId
+	roleName := "cl_rol_" + modePrefix + bindingId
+	if derivedFromMetadata != nil {
 		// Derived binding, use the base binding's schema
-		if isStaging {
-			schemaName = b.baseBinding.StagedMetadata.Account["schema"]
-			baseRoleName = b.baseBinding.StagedMetadata.Account["role"]
-
-		} else {
-			schemaName = b.baseBinding.Metadata.Account["schema"]
-			baseRoleName = b.baseBinding.Metadata.Account["role"]
-		}
+		schemaName = derivedFromMetadata.Account["schema"]
 	}
 
 	quotedSchema := pgx.Identifier{schemaName}.Sanitize()
@@ -134,62 +111,79 @@ func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingCon
 
 	tx, err := b.adminConn.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error starting transaction: %w", err)
+		return nil, fmt.Errorf("error starting transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
 	createRoleSQL := fmt.Sprintf("CREATE ROLE %s WITH %s PASSWORD %s", quotedRole, roleOptions, quotedPassword)
 	if _, err := tx.ExecContext(ctx, createRoleSQL); err != nil {
-		return nil, nil, fmt.Errorf("error creating role %s: %w", roleName, err)
+		return nil, fmt.Errorf("error creating role %s: %w", roleName, err)
 	}
 
-	grantsProcessed := []string{}
-	if b.baseBinding == nil {
+	if derivedFromMetadata == nil {
 		// Base binding, create a new schema
 		createSchemaSQL := fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s", quotedSchema, quotedRole)
 		if _, err := tx.ExecContext(ctx, createSchemaSQL); err != nil {
-			return nil, nil, fmt.Errorf("error creating schema %s: %w", schemaName, err)
+			return nil, fmt.Errorf("error creating schema %s: %w", schemaName, err)
 		}
 
 		grantSQL := fmt.Sprintf("GRANT ALL ON SCHEMA %s TO %s", quotedSchema, quotedRole)
 		if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
-			return nil, nil, fmt.Errorf("error granting privileges on schema %s: %w", schemaName, err)
+			return nil, fmt.Errorf("error granting privileges on schema %s: %w", schemaName, err)
 		}
 	} else {
+		// Derived binding, grant usage on the base binding's schema
 		grantUsageSQL := fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s", quotedSchema, quotedRole)
 		if _, err := tx.ExecContext(ctx, grantUsageSQL); err != nil {
-			return nil, nil, fmt.Errorf("error granting usage privileges on schema %s: %w", schemaName, err)
-		}
-
-		// Setup the grants
-		grantsProcessed, err = b.processGrants(ctx, tx, roleName, schemaName, b.grants, baseRoleName)
-		if err != nil {
-			return nil, nil, fmt.Errorf("error processing grants: %w", err)
+			return nil, fmt.Errorf("error granting usage privileges on schema %s: %w", schemaName, err)
 		}
 	}
 
 	setSearchPathSQL := fmt.Sprintf("ALTER ROLE %s SET search_path = %s", quotedRole, quotedSchema)
 	if _, err := tx.ExecContext(ctx, setSearchPathSQL); err != nil {
-		return nil, nil, fmt.Errorf("error setting search_path on role %s: %w", roleName, err)
+		return nil, fmt.Errorf("error setting search_path on role %s: %w", roleName, err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, nil, fmt.Errorf("error committing account creation: %w", err)
+		return nil, fmt.Errorf("error committing account creation: %w", err)
 	}
 
 	accountURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, schemaName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error building account url: %w", err)
+		return nil, fmt.Errorf("error building account url: %w", err)
 	}
 
 	return map[string]string{
 		"url":    accountURL,
 		"schema": schemaName,
 		"role":   roleName,
-	}, grantsProcessed, nil
+	}, nil
 }
 
-func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, role, schema string, grants []string, baseRoleName string) ([]string, error) {
+func (b *PostgresServiceBinding) ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata types.BindingMetadata, derivedFromMetadata types.BindingMetadata) ([]string, error) {
+	if err := verifyKeys(slices.Collect(maps.Keys(bindingMetadata.Config)), []string{}, []string{"inherit_default"}); err != nil {
+		return nil, err
+	}
+
+	tx, err := b.adminConn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	grantsProcessed, err := b.processGrants(ctx, tx, account["role"], account["schema"], derivedFromMetadata.Account["role"], bindingMetadata.Grants)
+	if err != nil {
+		return nil, fmt.Errorf("error processing grants: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("error committing grants: %w", err)
+	}
+
+	return grantsProcessed, nil
+}
+
+func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, role, schema string, baseRoleName string, grants []string) ([]string, error) {
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	quotedRole := pgx.Identifier{role}.Sanitize()
 	quotedBaseRole := pgx.Identifier{baseRoleName}.Sanitize()

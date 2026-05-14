@@ -57,7 +57,7 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 	}
 
 	serviceBinding := builder()
-	if err := serviceBinding.InitService(ctx, s.Logger, service.Config); err != nil {
+	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config); err != nil {
 		return fmt.Errorf("error initializing service binding: %w", err)
 	}
 
@@ -169,10 +169,10 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 	}
 
 	var service *types.Service
-	var baseBinding *types.Binding
+	var derivedFrom *types.Binding
 	if strings.HasPrefix(binding.Source, "/") {
 		// Reference another binding by path - derived binding
-		baseBinding, err = s.db.GetBinding(ctx, tx, binding.Source)
+		derivedFrom, err = s.db.GetBinding(ctx, tx, binding.Source)
 		if err != nil {
 			return fmt.Errorf("binding source %s not found", binding.Source)
 		}
@@ -181,18 +181,18 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 		// base binding (one whose Source points at a service, not at another
 		// binding). Allowing derived-of-derived would make ALTER DEFAULT
 		// PRIVILEGES reference the wrong creator role
-		if baseBinding.BaseBinding != "" {
+		if derivedFrom.DerivedFrom != "" {
 			return fmt.Errorf(
 				"cannot derive binding %s from another derived binding %s; "+
 					"derive from the base binding %s instead",
-				binding.Path, baseBinding.Path, baseBinding.BaseBinding)
+				binding.Path, derivedFrom.Path, derivedFrom.DerivedFrom)
 		}
 
-		binding.ServiceType = baseBinding.ServiceType
-		binding.ServiceName = baseBinding.ServiceName
-		binding.BaseBinding = binding.Source
+		binding.ServiceType = derivedFrom.ServiceType
+		binding.ServiceName = derivedFrom.ServiceName
+		binding.DerivedFrom = binding.Source
 
-		service, err = s.db.GetService(ctx, tx, baseBinding.ServiceType, baseBinding.ServiceName)
+		service, err = s.db.GetService(ctx, tx, derivedFrom.ServiceType, derivedFrom.ServiceName)
 		if err != nil {
 			return fmt.Errorf("error getting base binding service: %w", err)
 		}
@@ -218,7 +218,7 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 
 		binding.ServiceType = service.ServiceType
 		binding.ServiceName = service.Name
-		binding.BaseBinding = ""
+		binding.DerivedFrom = ""
 	}
 	binding.Metadata = binding.StagedMetadata
 
@@ -239,14 +239,14 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 
 	// Not dry run, generate the account info
 	// Generate the staging account info, either against the staging service if set or against the main service
-	binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, err = s.generateAccount(ctx, stagingService, binding, baseBinding, binding.StagedMetadata.Config, true)
+	binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, err = s.generateAccount(ctx, stagingService, binding, derivedFrom, true)
 	if err != nil {
 		return fmt.Errorf("error generating staging account: %w", err)
 	}
 
 	// Generate the production account info
 	// This runs as a separate transaction, since it might not be against same database as the metadata database
-	binding.Metadata.Account, binding.Metadata.GrantsApplied, err = s.generateAccount(ctx, service, binding, baseBinding, binding.Metadata.Config, false)
+	binding.Metadata.Account, binding.Metadata.GrantsApplied, err = s.generateAccount(ctx, service, binding, derivedFrom, false)
 	if err != nil {
 		return err
 	}
@@ -257,26 +257,43 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 	return tx.Commit()
 }
 
-func (s *Server) generateAccount(ctx context.Context, service *types.Service, binding *types.Binding, baseBinding *types.Binding, bindingConfig map[string]string, isStaging bool) (map[string]string, []string, error) {
+func (s *Server) generateAccount(ctx context.Context, service *types.Service, binding *types.Binding, derivedFrom *types.Binding, isStaging bool) (map[string]string, []string, error) {
 	builder, ok := bindings.ServiceBindings[service.ServiceType]
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
 	}
 
 	serviceBinding := builder()
-	if err := serviceBinding.InitService(ctx, s.Logger, service.Config); err != nil {
+	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config); err != nil {
 		return nil, nil, fmt.Errorf("error initializing service: %w", err)
 	}
 
-	grants := binding.Metadata.Grants
+	metadata := binding.Metadata
 	if isStaging {
-		grants = binding.StagedMetadata.Grants
-	}
-	if err := serviceBinding.InitBinding(ctx, binding, baseBinding, grants); err != nil {
-		return nil, nil, fmt.Errorf("error initializing binding: %w", err)
+		metadata = binding.StagedMetadata
 	}
 
-	return serviceBinding.GenerateAccount(ctx, bindingConfig, isStaging)
+	var derivedFromMetadata *types.BindingMetadata
+	if derivedFrom != nil {
+		derivedFromMetadata = &derivedFrom.Metadata
+		if isStaging {
+			derivedFromMetadata = &derivedFrom.StagedMetadata
+		}
+	}
+
+	account, err := serviceBinding.GenerateAccount(ctx, binding.Id, binding.Path, metadata, derivedFromMetadata, isStaging)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error generating account: %w", err)
+	}
+
+	grantsApplied := []string{}
+	if derivedFrom != nil {
+		grantsApplied, err = serviceBinding.ApplyGrants(ctx, account, metadata, *derivedFromMetadata)
+		if err != nil {
+			return nil, nil, fmt.Errorf("error applying grants: %w", err)
+		}
+	}
+	return account, grantsApplied, nil
 }
 
 func (s *Server) UpdateBinding(ctx context.Context, binding *types.Binding, dryRun, promote bool) error {

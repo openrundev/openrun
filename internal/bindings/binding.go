@@ -14,9 +14,9 @@ import (
 )
 
 type ServiceBinding interface {
-	InitService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error                              // Initialize the service with the given config
-	InitBinding(ctx context.Context, binding *types.Binding, baseBinding *types.Binding, grants []string) error                // Initialize the binding against service with the given config
-	GenerateAccount(ctx context.Context, bindingConfig map[string]string, isStaging bool) (map[string]string, []string, error) // Generate the account based on the binding config
+	InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error                                                                                               // Initialize the service with the given config
+	GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata, derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, error) // Generate the account based on the binding config
+	ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata, derivedFromMetadata types.BindingMetadata) ([]string, error)                                                         // Apply the grants to the account
 }
 
 type ServiceBindingBuilder func() ServiceBinding
