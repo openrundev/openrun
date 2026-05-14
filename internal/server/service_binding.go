@@ -257,7 +257,7 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 	return tx.Commit()
 }
 
-func (s *Server) generateAccount(ctx context.Context, service *types.Service, binding *types.Binding, derivedFrom *types.Binding, isStaging bool) (map[string]string, []string, error) {
+func (s *Server) generateAccount(ctx context.Context, service *types.Service, binding *types.Binding, derivedFrom *types.Binding, isStaging bool) (map[string]string, []types.BindingGrant, error) {
 	builder, ok := bindings.ServiceBindings[service.ServiceType]
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
@@ -286,7 +286,7 @@ func (s *Server) generateAccount(ctx context.Context, service *types.Service, bi
 		return nil, nil, fmt.Errorf("error generating account: %w", err)
 	}
 
-	grantsApplied := []string{}
+	grantsApplied := []types.BindingGrant{}
 	if derivedFrom != nil {
 		grantsApplied, err = serviceBinding.ApplyGrants(ctx, account, metadata, *derivedFromMetadata)
 		if err != nil {

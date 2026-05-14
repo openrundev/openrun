@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/openrundev/openrun/internal/types"
@@ -24,7 +23,7 @@ type ServiceBinding interface {
 
 	// Apply the grants to the account. This is called when the binding is created, after the account is generated.
 	// The grants are applied to the account on the endpoint specified in the service config. It can be called again if the grants are changed.
-	ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata, derivedFromMetadata types.BindingMetadata) ([]string, error)
+	ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata, derivedFromMetadata types.BindingMetadata) ([]types.BindingGrant, error)
 }
 
 type ServiceBindingBuilder func() ServiceBinding
@@ -55,32 +54,4 @@ func verifyKeys(inputKeys []string, requiredKeys []string, optionalKeys []string
 	}
 
 	return nil
-}
-
-type GrantType string
-
-const (
-	GrantTypeRead   GrantType = "READ"
-	GrantTypeCreate GrantType = "CREATE"
-	GrantTypeFull   GrantType = "FULL"
-)
-
-const (
-	GrantTargetAll = "*"
-)
-
-func parseGrant(grant string, supportedGrantTypes []GrantType) (GrantType, string, error) {
-	grantType, grantTarget, ok := strings.Cut(grant, ":")
-	if !ok || grantType == "" {
-		return "", "", fmt.Errorf("invalid grant format, expected type:<target>, got: %s", grant)
-	}
-	grantType = strings.ToUpper(grantType)
-	if !slices.Contains(supportedGrantTypes, GrantType(grantType)) {
-		supportedGrantTypesStr := make([]string, len(supportedGrantTypes))
-		for i, gt := range supportedGrantTypes {
-			supportedGrantTypesStr[i] = string(gt)
-		}
-		return "", "", fmt.Errorf("unsupported grant type: %s, supported types: %s", grantType, strings.Join(supportedGrantTypesStr, ", "))
-	}
-	return GrantType(grantType), grantTarget, nil
 }

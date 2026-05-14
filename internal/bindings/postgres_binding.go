@@ -160,7 +160,7 @@ func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId,
 	}, nil
 }
 
-func (b *PostgresServiceBinding) ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata types.BindingMetadata, derivedFromMetadata types.BindingMetadata) ([]string, error) {
+func (b *PostgresServiceBinding) ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata types.BindingMetadata, derivedFromMetadata types.BindingMetadata) ([]types.BindingGrant, error) {
 	if err := verifyKeys(slices.Collect(maps.Keys(bindingMetadata.Config)), []string{}, []string{"inherit_default"}); err != nil {
 		return nil, err
 	}
@@ -183,21 +183,21 @@ func (b *PostgresServiceBinding) ApplyGrants(ctx context.Context, account map[st
 	return grantsProcessed, nil
 }
 
-func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, role, schema string, baseRoleName string, grants []string) ([]string, error) {
+func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, role, schema string, baseRoleName string, grants []string) ([]types.BindingGrant, error) {
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	quotedRole := pgx.Identifier{role}.Sanitize()
 	quotedBaseRole := pgx.Identifier{baseRoleName}.Sanitize()
 
-	grantsProcessed := []string{}
-	for i, grant := range grants {
-		grantType, grantTarget, err := parseGrant(grant, []GrantType{GrantTypeRead, GrantTypeCreate, GrantTypeFull})
+	grantsProcessed := []types.BindingGrant{}
+	for i, g := range grants {
+		grant, err := types.ParseGrant(g, []types.GrantType{types.GrantTypeRead, types.GrantTypeCreate, types.GrantTypeFull})
 		if err != nil {
 			return nil, fmt.Errorf("error parsing grant: %w", err)
 		}
 
-		switch grantType {
-		case GrantTypeRead:
-			if grantTarget == GrantTargetAll {
+		switch grant.GrantType {
+		case types.GrantTypeRead:
+			if grant.GrantTarget == types.GrantTargetAll {
 				// Read grant on all tables in the schema
 				grantSQL := fmt.Sprintf("GRANT SELECT ON ALL TABLES IN SCHEMA %s TO %s", quotedSchema, quotedRole)
 				if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
@@ -213,22 +213,22 @@ func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, 
 			} else {
 				// Read grant on specific table. Wrapped in a SAVEPOINT so that a
 				// missing-table error does not abort the outer transaction.
-				quotedTableName := pgx.Identifier{schema, grantTarget}.Sanitize()
+				quotedTableName := pgx.Identifier{schema, grant.GrantTarget}.Sanitize()
 				grantSQL := fmt.Sprintf("GRANT SELECT ON TABLE %s TO %s", quotedTableName, quotedRole)
 				applied, err := b.trySoftGrant(ctx, tx, savepointName(i), grantSQL)
 				if err != nil {
-					return nil, fmt.Errorf("error granting select privileges on table %s.%s: %w", schema, grantTarget, err)
+					return nil, fmt.Errorf("error granting select privileges on table %s.%s: %w", schema, grant.GrantTarget, err)
 				}
 				if applied {
 					grantsProcessed = append(grantsProcessed, grant)
 				} else {
-					b.Warn().Str("grant", grant).Str("schema", schema).Str("table", grantTarget).
+					b.Warn().Str("grant", grant.String()).Str("schema", schema).Str("table", grant.GrantTarget).
 						Msg("table does not exist yet; grant deferred until reconcile")
 				}
 			}
 
-		case GrantTypeCreate:
-			if grantTarget != "" && grantTarget != GrantTargetAll {
+		case types.GrantTypeCreate:
+			if grant.GrantTarget != "" && grant.GrantTarget != types.GrantTargetAll {
 				return nil, fmt.Errorf("create grant on specific table is not supported")
 			}
 			// Create grant on all tables in the schema
@@ -238,8 +238,8 @@ func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, 
 			}
 
 			grantsProcessed = append(grantsProcessed, grant)
-		case GrantTypeFull:
-			if grantTarget == GrantTargetAll {
+		case types.GrantTypeFull:
+			if grant.GrantTarget == types.GrantTargetAll {
 				// Full grant on all tables in the schema
 				grantSQL := fmt.Sprintf("GRANT ALL ON ALL TABLES IN SCHEMA %s TO %s", quotedSchema, quotedRole)
 				if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
@@ -273,22 +273,22 @@ func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, 
 			} else {
 				// Full grant on a specific table. Wrapped in a SAVEPOINT so that a
 				// missing-table error does not abort the outer transaction.
-				quotedTableName := pgx.Identifier{schema, grantTarget}.Sanitize()
+				quotedTableName := pgx.Identifier{schema, grant.GrantTarget}.Sanitize()
 				grantSQL := fmt.Sprintf("GRANT ALL ON TABLE %s TO %s", quotedTableName, quotedRole)
 				applied, err := b.trySoftGrant(ctx, tx, savepointName(i), grantSQL)
 				if err != nil {
-					return nil, fmt.Errorf("error granting full privileges on table %s.%s: %w", schema, grantTarget, err)
+					return nil, fmt.Errorf("error granting full privileges on table %s.%s: %w", schema, grant.GrantTarget, err)
 				}
 				if applied {
 					grantsProcessed = append(grantsProcessed, grant)
 				} else {
-					b.Warn().Str("grant", grant).Str("schema", schema).Str("table", grantTarget).
+					b.Warn().Str("grant", grant.String()).Str("schema", schema).Str("table", grant.GrantTarget).
 						Msg("table does not exist yet; grant deferred until reconcile")
 				}
 			}
 		}
 	}
-	b.Debug().Strs("grants_processed", grantsProcessed).Msg("processed grants")
+	b.Debug().Msgf("processed grants %v", grantsProcessed)
 	return grantsProcessed, nil
 }
 
