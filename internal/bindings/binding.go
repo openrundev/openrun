@@ -14,9 +14,17 @@ import (
 )
 
 type ServiceBinding interface {
-	InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error                                                                                               // Initialize the service with the given config
-	GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata, derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, error) // Generate the account based on the binding config
-	ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata, derivedFromMetadata types.BindingMetadata) ([]string, error)                                                         // Apply the grants to the account
+	// Initialize the service with the given config. This is called when the service binding is created.
+	InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error
+
+	// Generate the account based on the binding config. This is called once when the binding is created, after the service is initialized.
+	// The account is created on the endpoint specified in the service config.
+	GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata,
+		derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, error)
+
+	// Apply the grants to the account. This is called when the binding is created, after the account is generated.
+	// The grants are applied to the account on the endpoint specified in the service config. It can be called again if the grants are changed.
+	ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata, derivedFromMetadata types.BindingMetadata) ([]string, error)
 }
 
 type ServiceBindingBuilder func() ServiceBinding
