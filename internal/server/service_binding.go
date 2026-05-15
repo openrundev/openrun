@@ -226,9 +226,6 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 		return err
 	}
 
-	if dryRun {
-		return nil
-	}
 	stagingService := service
 	if service.Staging != "" {
 		stagingService, err = s.db.GetService(ctx, tx, service.ServiceType, service.Staging)
@@ -239,14 +236,14 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 
 	// Not dry run, generate the account info
 	// Generate the staging account info, either against the staging service if set or against the main service
-	binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, err = s.generateAccount(ctx, stagingService, binding, derivedFrom, true)
+	binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, err = s.generateAccount(ctx, dryRun, stagingService, binding, derivedFrom, true, true)
 	if err != nil {
 		return fmt.Errorf("error generating staging account: %w", err)
 	}
 
 	// Generate the production account info
 	// This runs as a separate transaction, since it might not be against same database as the metadata database
-	binding.Metadata.Account, binding.Metadata.GrantsApplied, err = s.generateAccount(ctx, service, binding, derivedFrom, false)
+	binding.Metadata.Account, binding.Metadata.GrantsApplied, err = s.generateAccount(ctx, dryRun, service, binding, derivedFrom, false, true)
 	if err != nil {
 		return err
 	}
@@ -254,17 +251,22 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 		return err
 	}
 
+	if dryRun {
+		return nil
+	}
+
 	return tx.Commit()
 }
 
-func (s *Server) generateAccount(ctx context.Context, service *types.Service, binding *types.Binding, derivedFrom *types.Binding, isStaging bool) (map[string]string, []types.BindingGrant, error) {
+func (s *Server) generateAccount(ctx context.Context, dryRun bool, service *types.Service, binding *types.Binding, derivedFrom *types.Binding, isStaging, reapplyAll bool) (map[string]string, []types.BindingGrant, error) {
 	builder, ok := bindings.ServiceBindings[service.ServiceType]
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
 	}
 
+	var err error
 	serviceBinding := builder()
-	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config); err != nil {
+	if err = serviceBinding.InitializeService(ctx, s.Logger, service.Config); err != nil {
 		return nil, nil, fmt.Errorf("error initializing service: %w", err)
 	}
 
@@ -281,6 +283,12 @@ func (s *Server) generateAccount(ctx context.Context, service *types.Service, bi
 		}
 	}
 
+	ctx, err = serviceBinding.BeginTransaction(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error beginning transaction: %w", err)
+	}
+	defer serviceBinding.RollbackTransaction(ctx) //nolint:errcheck
+
 	account, err := serviceBinding.GenerateAccount(ctx, binding.Id, binding.Path, metadata, derivedFromMetadata, isStaging)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error generating account: %w", err)
@@ -288,11 +296,18 @@ func (s *Server) generateAccount(ctx context.Context, service *types.Service, bi
 
 	grantsApplied := []types.BindingGrant{}
 	if derivedFrom != nil {
-		grantsApplied, err = serviceBinding.ApplyGrants(ctx, account, metadata, *derivedFromMetadata)
+		grantsApplied, err = serviceBinding.ApplyGrants(ctx, account, metadata, *derivedFromMetadata, reapplyAll)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error applying grants: %w", err)
 		}
 	}
+
+	if !dryRun {
+		if err := serviceBinding.CommitTransaction(ctx); err != nil {
+			return nil, nil, fmt.Errorf("error committing transaction: %w", err)
+		}
+	}
+
 	return account, grantsApplied, nil
 }
 
