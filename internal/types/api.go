@@ -83,6 +83,14 @@ func CreateUpdateAppMetadataRequest() UpdateAppMetadataRequest {
 	}
 }
 
+// UpdateBindingRequest is the request body for updating a binding. Binding
+// updates are limited to grant changes.
+type UpdateBindingRequest struct {
+	Path         string   `json:"path"`
+	AddGrants    []string `json:"add_grants"`
+	DeleteGrants []string `json:"delete_grants"`
+}
+
 // ApproveResult represents the result of an app approval audit
 type ApproveResult struct {
 	Id                  AppId         `json:"id"`

@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	SOURCE_FLAG = "source"
-	GRANT_FLAG  = "grant"
+	SOURCE_FLAG       = "source"
+	GRANT_FLAG        = "grant"
+	ADD_GRANT_FLAG    = "add-grant"
+	DELETE_GRANT_FLAG = "delete-grant"
 )
 
 func initBindingCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -115,11 +117,15 @@ func bindingUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 	flags = append(flags, commonFlags...)
 	flags = append(flags,
 		&cli.StringSliceFlag{
-			Name:    CONFIG_FLAG,
-			Aliases: []string{"c"},
-			Usage:   "Update a config entry. Format is key=value. Empty value deletes the key. Can be specified multiple times",
+			Name:  ADD_GRANT_FLAG,
+			Usage: "Grant to add to the binding metadata. Can be specified multiple times",
 		})
-	flags = append(flags, newBoolFlag(PROMOTE_FLAG, "p", "Promote staged metadata to active metadata", false))
+	flags = append(flags,
+		&cli.StringSliceFlag{
+			Name:  DELETE_GRANT_FLAG,
+			Usage: "Grant to delete from the binding metadata. Can be specified multiple times",
+		})
+	flags = append(flags, newBoolFlag(PROMOTE_FLAG, "p", "Promote staged grants to active metadata", false))
 	flags = append(flags, dryRunFlag())
 
 	return &cli.Command{
@@ -132,45 +138,35 @@ func bindingUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <path> is the unique path of the binding.
 
 Examples:
-  Update config key: openrun binding update /apps/p1 --config role=writer
-  Delete a config key: openrun binding update /apps/p1 --config role=
+  Add a grant: openrun binding update /apps/p2 --add-grant "read:*"
+  Delete a grant: openrun binding update /apps/p2 --delete-grant "read:*"
+  Promote staged grants: openrun binding update --promote /apps/p2
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
 				return fmt.Errorf("expected one arg: <path>")
 			}
 			path := cCtx.Args().First()
-
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
-
-			fetchValues := url.Values{}
-			fetchValues.Add("path", path)
-			var binding types.Binding
-			if err := client.Get("/_openrun/binding", fetchValues, &binding); err != nil {
-				return err
-			}
-			if binding.StagedMetadata.Config == nil {
-				binding.StagedMetadata.Config = map[string]string{}
-			}
-
-			for _, entry := range cCtx.StringSlice(CONFIG_FLAG) {
-				key, value, ok := strings.Cut(entry, "=")
-				if !ok || key == "" {
-					return fmt.Errorf("invalid config entry %q, expected key=value", entry)
-				}
-				if value == "" {
-					delete(binding.StagedMetadata.Config, key)
-				} else {
-					binding.StagedMetadata.Config[key] = value
-				}
+			addGrants := cCtx.StringSlice(ADD_GRANT_FLAG)
+			deleteGrants := cCtx.StringSlice(DELETE_GRANT_FLAG)
+			promote := cCtx.Bool(PROMOTE_FLAG)
+			if len(addGrants) == 0 && len(deleteGrants) == 0 && !promote {
+				return fmt.Errorf("expected at least one --add-grant, --delete-grant, or --promote")
 			}
 
 			values := url.Values{}
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
-			values.Add(PROMOTE_ARG, strconv.FormatBool(cCtx.Bool(PROMOTE_FLAG)))
+			values.Add(PROMOTE_ARG, strconv.FormatBool(promote))
 
+			updateRequest := types.UpdateBindingRequest{
+				Path:         path,
+				AddGrants:    addGrants,
+				DeleteGrants: deleteGrants,
+			}
+
+			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
 			var response types.Binding
-			if err := client.Put("/_openrun/binding", values, &binding, &response); err != nil {
+			if err := client.Put("/_openrun/binding", values, updateRequest, &response); err != nil {
 				return err
 			}
 

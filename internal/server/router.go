@@ -1315,18 +1315,21 @@ func (h *Handler) updateBinding(r *http.Request) (any, error) {
 		return nil, err
 	}
 
-	var binding types.Binding
-	if err = json.NewDecoder(r.Body).Decode(&binding); err != nil {
+	var updateRequest types.UpdateBindingRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&updateRequest); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
-	if binding.Path == "" {
+	if updateRequest.Path == "" {
 		return nil, types.CreateRequestError("path is required", http.StatusBadRequest)
 	}
 
-	updateTargetInContext(r, binding.Path, dryRun)
+	updateTargetInContext(r, updateRequest.Path, dryRun)
 	updateOperationInContext(r, "binding_update")
 
-	if err := h.server.UpdateBinding(r.Context(), &binding, dryRun, promote); err != nil {
+	binding, err := h.server.UpdateBinding(r.Context(), updateRequest, dryRun, promote)
+	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 	return binding, nil
