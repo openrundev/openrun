@@ -168,6 +168,7 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 	if binding.Source == "" {
 		return fmt.Errorf("binding source is required")
 	}
+	binding.StagedMetadata.Grants = normalizeGrantList(binding.StagedMetadata.Grants)
 
 	var service *types.Service
 	var derivedFrom *types.Binding
@@ -354,9 +355,28 @@ func (s *Server) applyBindingGrants(ctx context.Context, dryRun bool, service *t
 	return grantsApplied, nil
 }
 
+func normalizeGrantForStorage(grant string) string {
+	grantType, grantTarget, ok := strings.Cut(grant, ":")
+	if !ok {
+		return strings.TrimSpace(grant)
+	}
+	return strings.ToLower(strings.TrimSpace(grantType)) + ":" + strings.TrimSpace(grantTarget)
+}
+
+func normalizeGrantList(grants []string) []string {
+	normalized := make([]string, 0, len(grants))
+	for _, grant := range grants {
+		normalizedGrant := normalizeGrantForStorage(grant)
+		if !slices.Contains(normalized, normalizedGrant) {
+			normalized = append(normalized, normalizedGrant)
+		}
+	}
+	return normalized
+}
+
 func mergeGrantUpdates(current, addGrants, deleteGrants []string) []string {
-	merged := append([]string(nil), current...)
-	for _, grant := range deleteGrants {
+	merged := normalizeGrantList(current)
+	for _, grant := range normalizeGrantList(deleteGrants) {
 		for {
 			index := slices.Index(merged, grant)
 			if index == -1 {
@@ -365,7 +385,7 @@ func mergeGrantUpdates(current, addGrants, deleteGrants []string) []string {
 			merged = slices.Delete(merged, index, index+1)
 		}
 	}
-	for _, grant := range addGrants {
+	for _, grant := range normalizeGrantList(addGrants) {
 		if !slices.Contains(merged, grant) {
 			merged = append(merged, grant)
 		}

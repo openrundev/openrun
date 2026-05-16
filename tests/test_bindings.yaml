@@ -172,16 +172,16 @@ tests:
     command: ../openrun binding get -f json /apps/b6 | jq -r '.[0].staged_metadata.grants | join(",")'
     stdout: "read:*,create:*"
 
-  binding0067: # duplicate add is ignored
-    command: ../openrun binding update --add-grant "create:*" /apps/b6
+  binding0067: # duplicate add is ignored even with casing/spacing differences
+    command: ../openrun binding update --add-grant " CREATE : * " /apps/b6
     stdout: "Binding /apps/b6 updated"
 
   binding0068:
     command: ../openrun binding get -f json /apps/b6 | jq -r '.[0].staged_metadata.grants | join(",")'
     stdout: "read:*,create:*"
 
-  binding0070: # delete a grant
-    command: ../openrun binding update --delete-grant "read:*" /apps/b6
+  binding0070: # delete a grant even with casing/spacing differences
+    command: ../openrun binding update --delete-grant " READ : * " /apps/b6
     stdout: "Binding /apps/b6 updated"
 
   binding0071:
