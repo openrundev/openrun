@@ -123,6 +123,36 @@ esac
 	}
 }
 
+func TestCommandByOpenRunLabel(t *testing.T) {
+	commandPath := filepath.Join(t.TempDir(), "docker")
+	script := `#!/bin/sh
+if [ "$1" != "ps" ] || [ "$2" != "--format" ] || [ "$3" != "json" ] || [ "$4" != "--filter" ] || [ "$5" != "label=dev.openrun.app.id" ]; then
+	echo "unexpected args: $*" >&2
+	exit 64
+fi
+if [ "$6" != "" ]; then
+	echo "unexpected extra args: $*" >&2
+	exit 64
+fi
+echo '{"ID":"abc","Names":"clc-app-current","Image":"img","State":"running","Status":"Up","Ports":""}'
+`
+	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake container command: %v", err)
+	}
+
+	manager := NewCommandCM(testutil.TestLogger(), &types.ServerConfig{
+		System: types.SystemConfig{ContainerCommand: commandPath},
+	}, "", "")
+
+	containers, err := manager.ListOpenRunContainers(context.Background())
+	if err != nil {
+		t.Fatalf("ListOpenRunContainers returned error: %v", err)
+	}
+	if len(containers) != 1 || containers[0].Names != "clc-app-current" {
+		t.Fatalf("ListOpenRunContainers = %#v", containers)
+	}
+}
+
 func TestImagePull(t *testing.T) {
 	commandPath := filepath.Join(t.TempDir(), "docker")
 	script := `#!/bin/sh

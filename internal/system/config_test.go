@@ -73,6 +73,7 @@ func TestServerConfig(t *testing.T) {
 
 	// Container Settings
 	testutil.AssertEqualsString(t, "command", "auto", c.System.ContainerCommand)
+	testutil.AssertEqualsInt(t, "stale container cleanup interval", 5, c.System.StaleContainerCleanupIntervalMins)
 
 	// App CORS default Settings
 	testutil.AssertEqualsString(t, "cors origin", "", c.AppConfig.CORS.AllowOrigin)

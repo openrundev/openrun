@@ -152,6 +152,9 @@ type Server struct {
 	rbacManager    *rbac.RBACManager
 	csrfMiddleware *http.CrossOriginProtection
 	telemetry      *telemetry.Providers
+
+	staleContainerCleanupTicker *time.Ticker
+	staleContainerCleanupStop   chan struct{}
 }
 
 // NewServer creates a new instance of the OpenRun Server
@@ -307,6 +310,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	// Start the idle shutdown check
 	server.syncTimer = time.NewTicker(time.Minute) // run sync every minute
 	go server.syncRunner()
+	server.startStaleContainerCleanup()
 	telemetryCleanup = false
 	return server, nil
 }
@@ -845,6 +849,10 @@ func loadRootCAs(rootCertFile string) (*x509.CertPool, error) {
 // Stop stops the OpenRun Server
 func (s *Server) Stop(ctx context.Context) error {
 	s.Info().Msg("Stopping service")
+	if s.staleContainerCleanupStop != nil {
+		close(s.staleContainerCleanupStop)
+		s.staleContainerCleanupStop = nil
+	}
 	s.db.Close()
 
 	var err1, err2, err3 error

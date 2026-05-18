@@ -59,8 +59,11 @@ The default for the container command to use is
 ```toml
 [system]
 container_command = "auto"
+stale_container_cleanup_interval_mins = 5
 ```
 
 `auto` means that OpenRun will look for `podman` executable in the path. If found, it will use that. Else it will use `docker` as the container manager command. If the value for `container_command` is set to any other value (except `kubernetes`), that will be used as the command to use. Orbstack implements the Docker CLI interface, so Orbstack also works fine with OpenRun.
 
 Setting `container_command = "kubernetes"` enables Kubernetes mode. In Kubernetes mode, the Kubernetes APIs are used to manage the container lifecycle. No CLI commands are used in Kubernetes mode.
+
+For Docker/Podman mode, `stale_container_cleanup_interval_mins` controls how often OpenRun stops running containers that were started by OpenRun but are no longer referenced by an active app. Set it to `0` or a negative value to disable stale container cleanup.

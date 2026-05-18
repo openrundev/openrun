@@ -31,6 +31,7 @@ import (
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/dev"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/telemetry"
@@ -100,6 +101,8 @@ type App struct {
 	// that ServeHTTP does not allocate them on every request.
 	telemetryAttrs         []attribute.KeyValue
 	telemetryIdentityAttrs []attribute.KeyValue
+
+	activeContainerName container.ContainerName
 }
 
 type starlarkCacheEntry struct {
@@ -204,6 +207,26 @@ func (a *App) Close() error {
 	}
 
 	return nil
+}
+
+// ActiveContainerName returns the container from the last successful app reload.
+func (a *App) ActiveContainerName() (container.ContainerName, bool) {
+	a.initMutex.Lock()
+	defer a.initMutex.Unlock()
+	if a.activeContainerName == "" {
+		return "", false
+	}
+	return a.activeContainerName, true
+}
+
+func (a *App) updateActiveContainerNameLocked() {
+	a.activeContainerName = ""
+	if a.containerHandler == nil {
+		return
+	}
+	if name, ok := a.containerHandler.ActiveContainerName(); ok {
+		a.activeContainerName = name
+	}
 }
 
 func (a *App) ResetFS() {
@@ -378,6 +401,7 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 		action.DarkTheme = cmp.Or(a.appStyle.Dark, apptype.DEFAULT_DAISYUI_DARK_THEME)
 	}
 	a.initialized = true
+	a.updateActiveContainerNameLocked()
 
 	if a.IsDev {
 		a.notifyClients()

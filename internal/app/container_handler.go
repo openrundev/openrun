@@ -65,9 +65,10 @@ type ContainerHandler struct {
 	excludeGlob     []string
 
 	// Idle shutdown related fields
-	idleShutdownTicker *time.Ticker
-	stateLock          sync.RWMutex
-	currentState       ContainerState
+	idleShutdownTicker  *time.Ticker
+	stateLock           sync.RWMutex
+	currentState        ContainerState
+	activeContainerName container.ContainerName
 	// imageDigest is the digest (e.g. "sha256:abc...") resolved by the most
 	// recent RefreshImage call during ProdReload. Only set for image-spec
 	// apps. Folded into getAppHash so a moved upstream tag forces a recreate
@@ -712,6 +713,7 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 		return fmt.Errorf("container %s not running. Logs\n %s", containerName, logs)
 	}
 	h.currentState = ContainerStateRunning
+	h.activeContainerName = containerName
 	h.hostNamePort = hostNamePort
 
 	if h.health != "" {
@@ -854,6 +856,16 @@ func (h *ContainerHandler) IsImageSpec() bool {
 	return h.image != ""
 }
 
+// ActiveContainerName returns the last container this handler successfully started or reused.
+func (h *ContainerHandler) ActiveContainerName() (container.ContainerName, bool) {
+	h.stateLock.RLock()
+	defer h.stateLock.RUnlock()
+	if h.activeContainerName == "" {
+		return "", false
+	}
+	return h.activeContainerName, true
+}
+
 func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 	// For image-spec apps (where the operator supplied an upstream image
 	// reference via `--spec image`/`image:`), resolve the current digest
@@ -947,6 +959,7 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 			}
 
 			h.currentState = ContainerStateRunning
+			h.activeContainerName = containerName
 			h.Debug().Msgf("updating port to %s", h.hostNamePort)
 			return nil
 		}
@@ -1026,6 +1039,7 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 		return fmt.Errorf("container not running")
 	}
 	h.currentState = ContainerStateRunning
+	h.activeContainerName = containerName
 	h.hostNamePort = hostNamePort
 	return nil
 }

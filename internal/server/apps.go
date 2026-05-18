@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -157,6 +158,25 @@ func (a *AppStore) GetApp(pathDomain types.AppPathDomain) (*app.App, error) {
 		return nil, fmt.Errorf("app not found: %s", pathDomain)
 	}
 	return app, nil
+}
+
+// ActiveContainerNames returns the container names currently referenced by loaded apps.
+func (a *AppStore) ActiveContainerNames() map[container.ContainerName]bool {
+	a.mu.RLock()
+	apps := make([]*app.App, 0, len(a.appMap))
+	for _, application := range a.appMap {
+		apps = append(apps, application)
+	}
+	a.mu.RUnlock()
+
+	names := make(map[container.ContainerName]bool)
+	for _, application := range apps {
+		name, ok := application.ActiveContainerName()
+		if ok {
+			names[name] = true
+		}
+	}
+	return names
 }
 
 func (a *AppStore) AddApp(app *app.App) {

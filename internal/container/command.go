@@ -226,6 +226,11 @@ func (c *CommandCM) getContainers(ctx context.Context, name ContainerName, getAl
 	return c.listContainers(ctx, filters, getAll)
 }
 
+// ListOpenRunContainers returns running containers with an OpenRun ownership label.
+func (c *CommandCM) ListOpenRunContainers(ctx context.Context) ([]Container, error) {
+	return c.listContainers(ctx, []string{fmt.Sprintf("label=%sapp.id", LABEL_PREFIX)}, false)
+}
+
 // listContainers runs `<containerCommand> ps --format json` with the given
 // filters and parses the result. Handles both Podman (JSON array, Names/Ports
 // as arrays) and Docker (newline-separated JSON objects).

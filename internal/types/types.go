@@ -287,6 +287,7 @@ type SystemConfig struct {
 	WatchIgnorePatterns                 []string `toml:"watch_ignore_patterns"`
 	NodePath                            string   `toml:"node_path"`
 	ContainerCommand                    string   `toml:"container_command"`
+	StaleContainerCleanupIntervalMins   int      `toml:"stale_container_cleanup_interval_mins"` // Interval for stale OpenRun container cleanup. Set <=0 to disable.
 	ContainerBuilder                    string   `toml:"container_builder"`
 	DefaultDomain                       string   `toml:"default_domain"`
 	RootServeListApps                   string   `toml:"root_serve_list_apps"`

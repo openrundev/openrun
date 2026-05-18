@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added background cleanup for stale Docker/Podman containers started by OpenRun. The cleanup stops running OpenRun-labeled containers that are no longer referenced by an active app, and its interval is configurable with `system.stale_container_cleanup_interval_mins`.
+
 ## [v0.17.1] - 2026-04-27
 
 ### Changed
