@@ -44,12 +44,17 @@ type VolumeInfo struct {
 type ContainerManager interface {
 	BuildImage(ctx context.Context, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error
 	ImageExists(ctx context.Context, name ImageName) (bool, error)
+	// RefreshImage pulls (or HEADs) the named image from its registry and returns a
+	// stable content-addressable digest (e.g. "sha256:..."). Only used for
+	// image-spec apps so the container handler can detect when the upstream
+	// reference has moved and recreate the container with the new content.
+	RefreshImage(ctx context.Context, name ImageName) (digest string, err error)
 	GetContainerState(ctx context.Context, name ContainerName, expectHash string) (hostPort string, running bool, err error)
 	StartContainer(ctx context.Context, name ContainerName) error
 	StopContainer(ctx context.Context, name ContainerName) error
 	RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 		imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
-		containerOptions map[string]string, paramMap map[string]string, versionHash string) error
+		containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool) error
 	GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error)
 	VolumeExists(ctx context.Context, name VolumeName) bool
 	VolumeCreate(ctx context.Context, name VolumeName) error
@@ -85,6 +90,28 @@ func GenVolumeName(appId types.AppId, dirName string) VolumeName {
 	dirHash := sha256.Sum256([]byte(dirName))
 	hashHex := hex.EncodeToString(dirHash[:])
 	return VolumeName(fmt.Sprintf("clv-%s-%s", appId, strings.ToLower(hashHex)))
+}
+
+// DigestPinned returns image with the given digest appended, replacing any
+// existing @digest suffix. For example:
+//
+//	("mycompany/jp-app:latest",          "sha256:abc") -> "mycompany/jp-app:latest@sha256:abc"
+//	("mycompany/jp-app@sha256:old",      "sha256:new") -> "mycompany/jp-app@sha256:new"
+//	("mycompany/jp-app:v1@sha256:old",   "sha256:new") -> "mycompany/jp-app:v1@sha256:new"
+//	("mycompany/jp-app",                 "sha256:abc") -> "mycompany/jp-app@sha256:abc"
+//
+// Both Docker and Kubernetes accept "repo:tag@digest" references; when both
+// are present the digest is authoritative. Returns image unchanged if either
+// argument is empty.
+func DigestPinned(image, digest string) string {
+	if image == "" || digest == "" {
+		return image
+	}
+	base := image
+	if i := strings.Index(base, "@"); i != -1 {
+		base = base[:i]
+	}
+	return base + "@" + digest
 }
 
 // renderTemplate reads the source template file, executes it with the given data,

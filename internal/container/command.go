@@ -219,11 +219,21 @@ func (c *CommandCM) GetContainerState(ctx context.Context, name ContainerName, e
 
 func (c *CommandCM) getContainers(ctx context.Context, name ContainerName, getAll bool) ([]Container, error) {
 	c.Debug().Msgf("Getting containers with name %s, getAll %t", name, getAll)
-	args := []string{"ps", "--format", "json"}
+	var filters []string
 	if name != "" {
-		args = append(args, "--filter", fmt.Sprintf("name=%s", name))
+		filters = append(filters, fmt.Sprintf("name=%s", name))
 	}
+	return c.listContainers(ctx, filters, getAll)
+}
 
+// listContainers runs `<containerCommand> ps --format json` with the given
+// filters and parses the result. Handles both Podman (JSON array, Names/Ports
+// as arrays) and Docker (newline-separated JSON objects).
+func (c *CommandCM) listContainers(ctx context.Context, filters []string, getAll bool) ([]Container, error) {
+	args := []string{"ps", "--format", "json"}
+	for _, f := range filters {
+		args = append(args, "--filter", f)
+	}
 	if getAll {
 		args = append(args, "--all")
 	}
@@ -267,9 +277,13 @@ func (c *CommandCM) getContainers(ctx context.Context, name ContainerName, getAl
 			if len(c.Ports) > 0 {
 				port = c.Ports[0].HostPort
 			}
+			name := ""
+			if len(c.Names) > 0 {
+				name = c.Names[0]
+			}
 			resp = append(resp, Container{
 				ID:     c.ID,
-				Names:  c.Names[0],
+				Names:  name,
 				Image:  c.Image,
 				State:  c.State,
 				Status: c.Status,
@@ -348,7 +362,7 @@ const LABEL_PREFIX = "dev.openrun."
 
 func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
-	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
+	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool) error {
 	c.Debug().Msgf("Running container %s from image %s with port %d env %+v mountArgs %+v",
 		containerName, imageName, port, envMap, volumes)
 	publish := fmt.Sprintf("127.0.0.1::%d", port)
@@ -409,6 +423,43 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 	}
 
 	return nil
+}
+
+// RefreshImage pulls the named image and returns its content-addressable
+// digest. It first attempts to extract the manifest digest from RepoDigests
+// (which is stable across container managers and matches the digest the
+// registry advertises); it falls back to the image config digest (.Id) when
+// the local image has no associated RepoDigests entry (e.g. it was built
+// locally rather than pulled).
+func (c *CommandCM) RefreshImage(ctx context.Context, name ImageName) (string, error) {
+	c.Debug().Msgf("Pulling image %s", name)
+	pullCmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "pull", string(name))
+	if output, err := pullCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("error pulling image %s: %s : %w", name, output, err)
+	}
+
+	inspectCmd := exec.CommandContext(ctx, c.config.System.ContainerCommand,
+		"image", "inspect",
+		"--format", "{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}",
+		string(name))
+	output, err := inspectCmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("error inspecting image %s: %s : %w", name, output, err)
+	}
+
+	value := strings.TrimSpace(string(output))
+	if value == "" {
+		return "", fmt.Errorf("empty digest from inspect of image %s", name)
+	}
+	// RepoDigests entries are "repo/name@sha256:abc..."; strip the repo prefix.
+	if idx := strings.LastIndex(value, "@"); idx != -1 {
+		value = value[idx+1:]
+	}
+	if value == "" {
+		return "", fmt.Errorf("invalid digest from inspect of image %s", name)
+	}
+	c.Debug().Msgf("Refreshed image %s digest %s", name, value)
+	return value, nil
 }
 
 func (c *CommandCM) ImageExists(ctx context.Context, name ImageName) (bool, error) {

@@ -123,6 +123,106 @@ esac
 	}
 }
 
+func TestImagePull(t *testing.T) {
+	commandPath := filepath.Join(t.TempDir(), "docker")
+	script := `#!/bin/sh
+case "$1" in
+	pull)
+		if [ "$2" = "mycompany/jp-app:latest" ]; then
+			echo "Status: Image is up to date"
+			exit 0
+		fi
+		echo "unexpected pull arg: $2" >&2
+		exit 65
+		;;
+	image)
+		if [ "$2" = "inspect" ] && [ "$3" = "--format" ] && [ "$5" = "mycompany/jp-app:latest" ]; then
+			echo "mycompany/jp-app@sha256:abc123"
+			exit 0
+		fi
+		echo "unexpected inspect args: $*" >&2
+		exit 65
+		;;
+esac
+echo "unexpected args: $*" >&2
+exit 64
+`
+	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake container command: %v", err)
+	}
+
+	manager := NewCommandCM(testutil.TestLogger(), &types.ServerConfig{
+		System: types.SystemConfig{ContainerCommand: commandPath},
+	}, "", "")
+	got, err := manager.RefreshImage(context.Background(), ImageName("mycompany/jp-app:latest"))
+	if err != nil {
+		t.Fatalf("RefreshImage returned error: %v", err)
+	}
+	if got != "sha256:abc123" {
+		t.Fatalf("RefreshImage digest = %q, want %q", got, "sha256:abc123")
+	}
+}
+
+func TestImagePullFallback(t *testing.T) {
+	commandPath := filepath.Join(t.TempDir(), "docker")
+	script := `#!/bin/sh
+case "$1" in
+	pull)
+		echo "ok"
+		exit 0
+		;;
+	image)
+		if [ "$2" = "inspect" ]; then
+			echo "sha256:configdigest"
+			exit 0
+		fi
+		;;
+esac
+echo "unexpected args: $*" >&2
+exit 64
+`
+	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake container command: %v", err)
+	}
+
+	manager := NewCommandCM(testutil.TestLogger(), &types.ServerConfig{
+		System: types.SystemConfig{ContainerCommand: commandPath},
+	}, "", "")
+	got, err := manager.RefreshImage(context.Background(), ImageName("local/built:dev"))
+	if err != nil {
+		t.Fatalf("RefreshImage returned error: %v", err)
+	}
+	if got != "sha256:configdigest" {
+		t.Fatalf("RefreshImage digest = %q, want %q", got, "sha256:configdigest")
+	}
+}
+
+func TestImagePullFailure(t *testing.T) {
+	commandPath := filepath.Join(t.TempDir(), "docker")
+	script := `#!/bin/sh
+if [ "$1" = "pull" ]; then
+	echo "denied: unauthorized" >&2
+	exit 1
+fi
+echo "unexpected args: $*" >&2
+exit 64
+`
+	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake container command: %v", err)
+	}
+
+	manager := NewCommandCM(testutil.TestLogger(), &types.ServerConfig{
+		System: types.SystemConfig{ContainerCommand: commandPath},
+	}, "", "")
+	_, err := manager.RefreshImage(context.Background(), ImageName("private/image:latest"))
+	if err == nil {
+		t.Fatal("RefreshImage should fail when pull fails")
+	}
+	if !strings.Contains(err.Error(), "error pulling image") {
+		t.Fatalf("RefreshImage error = %q, want pull error", err.Error())
+	}
+}
+
 func TestCommandOptionArgsRejectsDisallowedArg(t *testing.T) {
 	_, err := CommandOptionArgs(CommandOptions{
 		Other: map[string]any{"privileged": ""},

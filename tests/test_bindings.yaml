@@ -173,7 +173,7 @@ tests:
     stdout: "read:*,create:*"
 
   binding0067: # duplicate add is ignored even with casing/spacing differences
-    command: ../openrun binding update --add-grant " CREATE : * " /apps/b6
+    command: '../openrun binding update --add-grant " CREATE : * " /apps/b6'
     stdout: "Binding /apps/b6 updated"
 
   binding0068:
@@ -181,7 +181,7 @@ tests:
     stdout: "read:*,create:*"
 
   binding0070: # delete a grant even with casing/spacing differences
-    command: ../openrun binding update --delete-grant " READ : * " /apps/b6
+    command: '../openrun binding update --delete-grant " READ : * " /apps/b6'
     stdout: "Binding /apps/b6 updated"
 
   binding0071:

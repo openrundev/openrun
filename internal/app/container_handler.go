@@ -68,6 +68,11 @@ type ContainerHandler struct {
 	idleShutdownTicker *time.Ticker
 	stateLock          sync.RWMutex
 	currentState       ContainerState
+	// imageDigest is the digest (e.g. "sha256:abc...") resolved by the most
+	// recent RefreshImage call during ProdReload. Only set for image-spec
+	// apps. Folded into getAppHash so a moved upstream tag forces a recreate
+	// and used to digest-pin the running container. Guarded by stateLock.
+	imageDigest string
 
 	// Health check related fields
 	healthCheckTicker *time.Ticker
@@ -693,7 +698,7 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 	}
 	envMap, _ := h.GetEnvMap()
 	err = devCM.RunContainer(ctx, h.app.AppEntry, h.app.SourceUrl, containerName,
-		h.GenImageName, h.port, envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, "")
+		h.GenImageName, h.port, envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, "", h.IsImageSpec())
 	if err != nil {
 		return fmt.Errorf("error running container: %w", err)
 	}
@@ -808,18 +813,65 @@ func (h *ContainerHandler) getAppHash() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error getting cvol hash: %w", err)
 	}
+	// For image-spec apps where RefreshImage has resolved a digest, fold the
+	// digest into the identity hash so that a moved tag (e.g.
+	// mycompany/jp-app:latest pointing to new content) yields a different
+	// container name and forces ProdReload down the recreate path.
+	//
+	// The digest is only appended when non-empty so that:
+	//   1. non-image apps produce the exact same hash as before this change
+	//      (no spurious container rebuild on upgrade), and
+	//   2. image-spec apps whose manager returns no digest (e.g. Kubernetes,
+	//      where RefreshImage is currently a no-op) also keep their existing
+	//      hash and container lifecycle.
+	imageDigest := ""
+	if h.image != "" {
+		h.stateLock.RLock()
+		imageDigest = h.imageDigest
+		h.stateLock.RUnlock()
+	}
 	fullHashVal := fmt.Sprintf("%s-%s-%s-%s-%s", sourceHash, envHash, coptHash, cargHash, cvolHash)
+	if imageDigest != "" {
+		fullHashVal += "-" + imageDigest
+	}
 	sha := sha256.New()
 	if _, err := sha.Write([]byte(fullHashVal)); err != nil {
 		return "", err
 	}
 	fullHash := hex.EncodeToString(sha.Sum(nil))
-	h.Debug().Msgf("Source hash %s Env hash %s copt hash %s args hash %s cvol hash %s Full hash %s",
-		sourceHash, envHash, coptHash, cargHash, cvolHash, fullHash)
+	h.Debug().Msgf("Source hash %s Env hash %s copt hash %s args hash %s cvol hash %s image digest %q Full hash %s",
+		sourceHash, envHash, coptHash, cargHash, cvolHash, imageDigest, fullHash)
 	return fullHash, nil
 }
 
+// IsImageSpec reports whether this container handler was configured with an
+// upstream image reference (i.e. `--spec image` / `container.source = "image:..."`).
+// Such apps need ProdReload to run on every admin reload so that RefreshImage
+// can resolve the current digest and recreate the container when the upstream
+// tag has moved; build-spec apps only need ProdReload on Initialize since
+// their image identity is captured by the source-content hash.
+func (h *ContainerHandler) IsImageSpec() bool {
+	return h.image != ""
+}
+
 func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
+	// For image-spec apps (where the operator supplied an upstream image
+	// reference via `--spec image`/`image:`), resolve the current digest
+	// from the registry before computing the identity hash. This both
+	// ensures the latest content is cached locally (a `docker pull` for the
+	// command-based managers) and yields a stable identifier that is folded
+	// into fullHash so a moved tag forces a container recreate. Skipped on
+	// dry-run since it has external side effects.
+	if !dryRun && h.image != "" {
+		digest, err := h.manager.RefreshImage(ctx, container.ImageName(h.image))
+		if err != nil {
+			return fmt.Errorf("error refreshing image %s: %w", h.image, err)
+		}
+		h.stateLock.Lock()
+		h.imageDigest = digest
+		h.stateLock.Unlock()
+	}
+
 	fullHash, err := h.getAppHash()
 	if err != nil {
 		return err
@@ -828,6 +880,12 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 	h.GenImageName = container.ImageName(h.image)
 	if h.GenImageName == "" {
 		h.GenImageName = container.GenImageName(h.app.Id, fullHash)
+	} else if h.imageDigest != "" {
+		// Digest-pin the image reference we pass to RunContainer/the pod
+		// template. Subsequent pod restarts or scale-ups will fetch the
+		// exact digest the operator approved at refresh time, not whatever
+		// the upstream tag points to at that future moment.
+		h.GenImageName = container.ImageName(container.DigestPinned(h.image, h.imageDigest))
 	}
 
 	if dryRun {
@@ -845,8 +903,21 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 			return fmt.Errorf("error getting running containers: %w", err)
 		}
 
-		h.Debug().Msgf("current state: hostNamePort %s running %t expectHash %s", hostNamePort, running, fullHash)
-		if hostNamePort != "" {
+		// For image-spec apps on managers that update workloads in-place
+		// (i.e. Kubernetes), we deliberately bypass the "service already
+		// healthy, reuse it" short-circuit and always fall through to
+		// RunContainer. The upstream tag may have moved while the existing
+		// Deployment's pod-template hash is unchanged (RefreshImage is a
+		// no-op on Kubernetes so the digest is not folded into fullHash),
+		// so re-applying the Deployment is what surfaces the new image:
+		// createDeployment bumps a pod-template annotation on every reload
+		// and sets imagePullPolicy=Always, triggering a RollingUpdate that
+		// pulls the latest image content. Build-spec apps and command-based
+		// managers (Docker/Podman, where the digest is in fullHash) keep
+		// the existing reuse fast path.
+		canReuse := !h.IsImageSpec() || !h.manager.SupportsInPlaceUpdate()
+		h.Debug().Msgf("current state: hostNamePort %s running %t expectHash %s canReuse %t", hostNamePort, running, fullHash, canReuse)
+		if hostNamePort != "" && canReuse {
 			// Service is present, make sure deployment it is in the correct state
 			h.stateLock.Lock()
 			defer h.stateLock.Unlock()
@@ -918,7 +989,7 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 	}
 	envMap, _ := h.GetEnvMap()
 	err = h.manager.RunContainer(ctx, h.app.AppEntry, sourceDir, containerName,
-		h.GenImageName, h.port, envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, fullHash)
+		h.GenImageName, h.port, envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, fullHash, h.IsImageSpec())
 	if err != nil {
 		return fmt.Errorf("error starting container after update: %w", err)
 	}

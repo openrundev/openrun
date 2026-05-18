@@ -47,6 +47,13 @@ func (m *telemetryContainerManager) ImageExists(ctx context.Context, name ImageN
 	return exists, err
 }
 
+func (m *telemetryContainerManager) RefreshImage(ctx context.Context, name ImageName) (string, error) {
+	start := time.Now()
+	digest, err := m.ContainerManager.RefreshImage(ctx, name)
+	telemetry.RecordContainerCall(ctx, m.kind, "refresh_image", start, err)
+	return digest, err
+}
+
 func (m *telemetryContainerManager) GetContainerState(ctx context.Context, name ContainerName, expectHash string) (string, bool, error) {
 	start := time.Now()
 	hostPort, running, err := m.ContainerManager.GetContainerState(ctx, name, expectHash)
@@ -70,9 +77,9 @@ func (m *telemetryContainerManager) StopContainer(ctx context.Context, name Cont
 
 func (m *telemetryContainerManager) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
-	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
+	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool) error {
 	start := time.Now()
-	err := m.ContainerManager.RunContainer(ctx, appEntry, sourceDir, containerName, imageName, port, envMap, volumes, containerOptions, paramMap, versionHash)
+	err := m.ContainerManager.RunContainer(ctx, appEntry, sourceDir, containerName, imageName, port, envMap, volumes, containerOptions, paramMap, versionHash, isImageSpec)
 	telemetry.RecordContainerCall(ctx, m.kind, "run_container", start, err, telemetry.AppIdentityAttributes(appEntry)...)
 	return err
 }

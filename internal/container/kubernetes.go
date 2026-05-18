@@ -196,6 +196,12 @@ func (k *KubernetesCM) ImageExists(ctx context.Context, name ImageName) (bool, e
 	return ImageExists(ctx, k.Logger, string(name), &k.config.Registry)
 }
 
+// RefreshImage is a no-op on Kubernetes. Returning an empty digest leaves the existing identity hash and
+// container lifecycle on Kubernetes unchanged.
+func (k *KubernetesCM) RefreshImage(ctx context.Context, name ImageName) (string, error) {
+	return "", nil
+}
+
 func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
 	if k.config.Registry.URL == "" {
 		return fmt.Errorf("registry url is required for kubernetes container manager")
@@ -355,7 +361,7 @@ func (k *KubernetesCM) StopContainer(ctx context.Context, name ContainerName) er
 
 func (k *KubernetesCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
-	containerOptions map[string]string, paramMap map[string]string, versionHash string) error {
+	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool) error {
 	if strings.HasPrefix(string(imageName), IMAGE_NAME_PREFIX) {
 		if k.config.Registry.Project != "" {
 			imageName = ImageName(k.config.Registry.URL + "/" + k.config.Registry.Project + "/" + string(imageName))
@@ -369,7 +375,7 @@ func (k *KubernetesCM) RunContainer(ctx context.Context, appEntry *types.AppEntr
 	}
 	containerName = ContainerName(sanitizeContainerName(string(containerName)))
 	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), port, envMap,
-		volumes, sourceDir, paramMap, appEntry, versionHash, kubernetesOptions)
+		volumes, sourceDir, paramMap, appEntry, versionHash, kubernetesOptions, isImageSpec)
 	if err != nil {
 		return fmt.Errorf("create app: %w", err)
 	}
@@ -576,7 +582,7 @@ const VERSION_HASH_LABEL = LABEL_PREFIX + "version.hash"
 // createDeployment creates a Deployment + Service using server-side apply and returns the Service URL.
 func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 	port int32, envMap map[string]string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string,
-	appEntry *types.AppEntry, versionHash string, kubernetesOptions KubernetesOptions) (string, error) {
+	appEntry *types.AppEntry, versionHash string, kubernetesOptions KubernetesOptions, isImageSpec bool) (string, error) {
 	labels := map[string]string{"app": name}
 
 	metadata := map[string]string{}
@@ -588,6 +594,24 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 	annotations := map[string]string{
 		LABEL_PREFIX + "app.id":   string(appEntry.Id),
 		LABEL_PREFIX + "app.path": appEntry.Path,
+	}
+
+	// For image-spec apps, the version hash does not change when only the
+	// upstream tag's content moves (Kubernetes's RefreshImage is a no-op so
+	// the image digest is not folded into versionHash). Without something
+	// changing in the pod template, a re-apply during `openrun app reload`
+	// would be a no-op and Kubernetes would not roll out new pods. We bump
+	// a dedicated pod-template-only annotation on every reload so the apply
+	// diff exists and the RollingUpdate strategy picks up the new image. We
+	// keep this annotation off the Deployment- and Service-level metadata
+	// so unrelated controllers don't see spurious churn.
+	templateAnnotations := annotations
+	if isImageSpec {
+		templateAnnotations = make(map[string]string, len(annotations)+1)
+		for k, v := range annotations {
+			templateAnnotations[k] = v
+		}
+		templateAnnotations[LABEL_PREFIX+"refreshed-at"] = strconv.FormatInt(time.Now().Unix(), 10)
 	}
 
 	// Set replicas from kubernetesOptions, defaulting to 1
@@ -621,6 +645,15 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 			WithContainerPort(port).
 			WithProtocol(protocol)).
 		WithEnv(envVars...)
+
+	if isImageSpec {
+		// Image-spec apps consume an externally-managed tag; ensure each new
+		// pod actually re-resolves the tag against the registry instead of
+		// reusing whatever bytes happen to be cached on the node. Combined
+		// with the refreshed-at annotation bump above, every reload pulls
+		// the latest content for the configured tag.
+		containerConfig = containerConfig.WithImagePullPolicy(core.PullAlways)
+	}
 
 	if len(volumeMounts) > 0 {
 		containerConfig = containerConfig.WithVolumeMounts(volumeMounts...)
@@ -682,7 +715,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 			WithStrategy(strategy).
 			WithTemplate(corev1apply.PodTemplateSpec().
 				WithLabels(metadata).
-				WithAnnotations(annotations).
+				WithAnnotations(templateAnnotations).
 				WithSpec(podSpec)))
 
 	if _, err := k.clientSet.AppsV1().Deployments(k.appNamespace).Apply(ctx, dep, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {

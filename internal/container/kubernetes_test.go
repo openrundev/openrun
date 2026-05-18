@@ -560,12 +560,12 @@ func TestKubernetesCMCreateDeploymentValidationErrors(t *testing.T) {
 		},
 	}
 
-	_, err := k.createDeployment(context.Background(), "myapp", "img:latest", 8080, nil, nil, "", nil, appEntry, "hash", KubernetesOptions{Cpus: "invalid"})
+	_, err := k.createDeployment(context.Background(), "myapp", "img:latest", 8080, nil, nil, "", nil, appEntry, "hash", KubernetesOptions{Cpus: "invalid"}, false)
 	if err == nil || !strings.Contains(err.Error(), "error parsing cpus value") {
 		t.Fatalf("error = %v, want cpu parse error", err)
 	}
 
-	_, err = k.createDeployment(context.Background(), "myapp", "img:latest", 8080, nil, nil, "", nil, appEntry, "hash", KubernetesOptions{Memory: "invalid"})
+	_, err = k.createDeployment(context.Background(), "myapp", "img:latest", 8080, nil, nil, "", nil, appEntry, "hash", KubernetesOptions{Memory: "invalid"}, false)
 	if err == nil || !strings.Contains(err.Error(), "error parsing memory value") {
 		t.Fatalf("error = %v, want memory parse error", err)
 	}
