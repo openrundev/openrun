@@ -10,6 +10,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Added background cleanup for stale Docker/Podman containers started by OpenRun. The cleanup stops running OpenRun-labeled containers that are no longer referenced by an active app, and its interval is configurable with `system.stale_container_cleanup_interval_mins`.
+- Fix #95: Pull image and update apps which use image spec when app reload is done
 
 ## [v0.17.1] - 2026-04-27
 
