@@ -479,6 +479,8 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 
 	userId := ""
+	userSubject := ""
+	userEmail := ""
 
 	// Remove the RBAC_AUTH_PREFIX rbac: prefix
 	strippedAuthStr := strings.TrimPrefix(string(appAuth), rbac.RBAC_AUTH_PREFIX)
@@ -547,7 +549,12 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 		}
 
 		// Redirect to the auth provider if not logged in
-		userId, groups, err = s.oAuthManager.CheckAuth(w, r, strippedAuthStr)
+		authInfo, authErr := s.oAuthManager.CheckAuthInfo(w, r, strippedAuthStr)
+		userId = authInfo.UserId
+		groups = authInfo.Groups
+		userSubject = authInfo.UserSubject
+		userEmail = authInfo.UserEmail
+		err = authErr
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -570,6 +577,8 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 
 	// Create a new context with the user ID
 	ctx := context.WithValue(r.Context(), types.USER_ID, userId)
+	ctx = context.WithValue(ctx, types.USER_SUBJECT, userSubject)
+	ctx = context.WithValue(ctx, types.USER_EMAIL, userEmail)
 	ctx = context.WithValue(ctx, types.APP_ID, string(app.Id))
 	ctx = context.WithValue(ctx, types.APP_PATH_DOMAIN, app.AppPathDomain())
 	ctx = context.WithValue(ctx, types.APP_AUTH, appAuth)

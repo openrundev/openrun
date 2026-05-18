@@ -93,6 +93,14 @@ func GetContextUserId(ctx context.Context) string {
 	return GetContextValue(ctx, types.USER_ID)
 }
 
+func GetContextUserSubject(ctx context.Context) string {
+	return GetContextValue(ctx, types.USER_SUBJECT)
+}
+
+func GetContextUserEmail(ctx context.Context) string {
+	return GetContextValue(ctx, types.USER_EMAIL)
+}
+
 func GetContextRequestId(ctx context.Context) string {
 	return GetContextValue(ctx, types.REQUEST_ID)
 }

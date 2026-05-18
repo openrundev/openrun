@@ -54,6 +54,8 @@ type ContextKey string
 
 const (
 	USER_ID         ContextKey = "user_id"
+	USER_SUBJECT    ContextKey = "user_subject"
+	USER_EMAIL      ContextKey = "user_email"
 	SHARED          ContextKey = "shared"
 	REQUEST_ID      ContextKey = "request_id"
 	APP_ID          ContextKey = "app_id"
@@ -863,6 +865,8 @@ const (
 	// OpenRun headers are used to pass information to the downstream service
 	OPENRUN_HEADER_PREFIX           = "X-Openrun-"
 	OPENRUN_HEADER_USER             = OPENRUN_HEADER_PREFIX + "User"
+	OPENRUN_HEADER_USER_ID          = OPENRUN_HEADER_PREFIX + "User-Id"
+	OPENRUN_HEADER_USER_EMAIL       = OPENRUN_HEADER_PREFIX + "User-Email"
 	OPENRUN_HEADER_PERMS            = OPENRUN_HEADER_PREFIX + "Perms"
 	OPENRUN_HEADER_APP_RBAC_ENABLED = OPENRUN_HEADER_PREFIX + "Rbac-Enabled"
 )

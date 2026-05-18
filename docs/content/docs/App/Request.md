@@ -27,6 +27,8 @@ The handler function is passed one argument which has the details about the API 
 |     Query      |   dict   |              The url query data, as a string array              |
 |    PostForm    |   dict   |                   The form data from the body                   |
 |     UserId     |  string  |                 The current user id for the request             |
+|  UserSubject   |  string  |              The provider user id claim, when available         |
+|   UserEmail    |  string  |                The provider email claim, when available         |
 |  CustomPerms   | string[] |            The custom permissions available to the user         |
 | AppRBACEnabled |   bool   |                Whether app RBAC is enabled for the request      |
 |      Data      |   dict   | The response from the handler function (passed to the template) |

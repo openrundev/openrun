@@ -157,6 +157,9 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 		thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.AppPathDomain(), a.serverConfig))
 
 		header := r.Header
+		requestHeaders := header.Clone()
+		deleteOpenRunHeaders(requestHeaders)
+		setOpenRunHeaders(requestHeaders, r.Context())
 		isHtmxRequest := types.GetHTTPHeader(header, "Hx-Request") == "true" &&
 			!(types.GetHTTPHeader(header, "Hx-Boosted") == "true") //nolint:staticcheck
 
@@ -190,9 +193,11 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				IsPartial:      isHtmxRequest,
 				PushEvents:     a.codeConfig.Routing.PushEvents,
 				HtmxVersion:    a.codeConfig.Htmx.Version,
-				Headers:        header,
+				Headers:        requestHeaders,
 				RemoteIP:       a.getRemoteIP(r),
 				UserId:         system.GetContextUserId(r.Context()),
+				UserSubject:    system.GetContextUserSubject(r.Context()),
+				UserEmail:      system.GetContextUserEmail(r.Context()),
 				CustomPerms:    system.GetCustomPerms(r.Context()),
 				AppRBACEnabled: system.IsAppRBACEnabled(r.Context()),
 			}

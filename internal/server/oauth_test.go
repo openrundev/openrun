@@ -597,6 +597,8 @@ func TestCheckAuth_WithValidSession(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	session.Values[AUTH_KEY] = true
 	session.Values[USER_KEY] = "testuser"
+	session.Values[USER_ID_KEY] = "subject-123"
+	session.Values[USER_EMAIL_KEY] = "test@example.com"
 	session.Values[PROVIDER_NAME_KEY] = "github"
 	session.Values[GROUPS_KEY] = []string{"group1", "group2"}
 	err = session.Save(r, w)
@@ -615,6 +617,11 @@ func TestCheckAuth_WithValidSession(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsString(t, "userId", "github:testuser", userId)
 	testutil.AssertEqualsInt(t, "groups count", 2, len(groups))
+
+	authInfo, err := manager.CheckAuthInfo(httptest.NewRecorder(), r2, "github")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "user subject", "subject-123", authInfo.UserSubject)
+	testutil.AssertEqualsString(t, "user email", "test@example.com", authInfo.UserEmail)
 }
 
 func TestCheckAuth_ProviderMismatch(t *testing.T) {
@@ -1187,6 +1194,8 @@ func TestRedirect_Success(t *testing.T) {
 		REDIRECT_URL:      redirectUrl,
 		NONCE_KEY:         nonce,
 		USER_KEY:          "testuser",
+		USER_ID_KEY:       "subject-123",
+		USER_EMAIL_KEY:    "test@example.com",
 		GROUPS_KEY:        []any{"group1", "group2"},
 	}
 
@@ -1231,6 +1240,15 @@ func TestRedirect_Success(t *testing.T) {
 	if err == nil {
 		t.Error("expected error fetching deleted state")
 	}
+
+	r3 := httptest.NewRequest("GET", "/some-path", nil)
+	for _, cookie := range w2.Result().Cookies() {
+		r3.AddCookie(cookie)
+	}
+	authInfo, err := manager.CheckAuthInfo(httptest.NewRecorder(), r3, "github")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "user subject", "subject-123", authInfo.UserSubject)
+	testutil.AssertEqualsString(t, "user email", "test@example.com", authInfo.UserEmail)
 }
 
 func TestRedirect_AuthNotTrue(t *testing.T) {

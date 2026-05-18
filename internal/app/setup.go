@@ -866,20 +866,11 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 				r.Header.Set("X-Forwarded-Prefix", a.Path)
 			}
 
-			for key := range r.Header {
-				// Delete all x-openrun- prefixed headers
-				if strings.HasPrefix(strings.ToLower(key), "x-openrun-") {
-					r.Header.Del(key)
-				}
-			}
+			deleteOpenRunHeaders(r.Header)
 
 			// Add X-Openrun- headers to request
 			// Add the user and custom permissions to the request headers
-			customPerms := system.GetCustomPerms(r.Context())
-			r.Header.Set(types.OPENRUN_HEADER_PERMS, strings.Join(customPerms, ","))
-			r.Header.Set(types.OPENRUN_HEADER_USER, system.GetContextUserId(r.Context()))
-			appRBACEnabled := system.IsAppRBACEnabled(r.Context())
-			r.Header.Set(types.OPENRUN_HEADER_APP_RBAC_ENABLED, strconv.FormatBool(appRBACEnabled))
+			setOpenRunHeaders(r.Header, r.Context())
 
 			// Set the response headers
 			for key, value := range responseHeaders {

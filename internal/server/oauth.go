@@ -82,6 +82,13 @@ type OAuthManager struct {
 	db              KVStore
 }
 
+type OAuthAuthInfo struct {
+	UserId      string
+	Groups      []string
+	UserSubject string
+	UserEmail   string
+}
+
 func NewOAuthManager(logger *types.Logger, config *types.ServerConfig, db KVStore) *OAuthManager {
 	return &OAuthManager{
 		Logger: logger,
@@ -229,6 +236,11 @@ func (s *OAuthManager) ValidateAuthType(authType string) bool {
 }
 
 func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProvider string) (string, []string, error) {
+	authInfo, err := s.CheckAuthInfo(w, r, appProvider)
+	return authInfo.UserId, authInfo.Groups, err
+}
+
+func (s *OAuthManager) CheckAuthInfo(w http.ResponseWriter, r *http.Request, appProvider string) (OAuthAuthInfo, error) {
 	cookieName := genCookieName(appProvider)
 	requestUrl := system.GetRequestUrl(r, s.config.Security.TrustedProxies)
 
@@ -246,7 +258,7 @@ func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProv
 		} else {
 			http.Redirect(w, r, requestUrl, http.StatusTemporaryRedirect)
 		}
-		return "", nil, nil
+		return OAuthAuthInfo{}, nil
 	}
 
 	redirectCaller := false
@@ -264,13 +276,13 @@ func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProv
 	if redirectCaller {
 		// do the OAuth login flow
 		s.beginLogin(w, r, appProvider, requestUrl)
-		return "", nil, nil
+		return OAuthAuthInfo{}, nil
 	}
 
 	userId, ok := session.Values[USER_KEY].(string)
 	if !ok || userId == "" {
 		s.Warn().Msg("no user key in session")
-		return "", nil, fmt.Errorf("no user key in session")
+		return OAuthAuthInfo{}, fmt.Errorf("no user key in session")
 	}
 
 	groups := make([]string, 0)
@@ -286,7 +298,15 @@ func (s *OAuthManager) CheckAuth(w http.ResponseWriter, r *http.Request, appProv
 		}
 	}
 
-	return appProvider + ":" + userId, groups, nil
+	userSubject, _ := sessionValueString(session, USER_ID_KEY)
+	userEmail, _ := sessionValueString(session, USER_EMAIL_KEY)
+
+	return OAuthAuthInfo{
+		UserId:      appProvider + ":" + userId,
+		Groups:      groups,
+		UserSubject: userSubject,
+		UserEmail:   userEmail,
+	}, nil
 }
 
 func (s *OAuthManager) beginLogin(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
@@ -563,7 +583,18 @@ func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 	}
 	session.Values[AUTH_KEY] = true
 	session.Values[USER_KEY] = userID
+	session.Values[PROVIDER_NAME_KEY] = providerName
 	session.Values[GROUPS_KEY] = groups
+	if userSubject, ok := stateValueString(stateMap, USER_ID_KEY); ok {
+		session.Values[USER_ID_KEY] = userSubject
+	} else {
+		delete(session.Values, USER_ID_KEY)
+	}
+	if userEmail, ok := stateValueString(stateMap, USER_EMAIL_KEY); ok {
+		session.Values[USER_EMAIL_KEY] = userEmail
+	} else {
+		delete(session.Values, USER_EMAIL_KEY)
+	}
 	delete(session.Values, REDIRECT_URL)
 	err = session.Save(r, w)
 	if err != nil {

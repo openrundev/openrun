@@ -77,6 +77,8 @@ In the `groups.<group_name>` property and in `grant.users`, the username can be 
 Permissions like `access`, `list`, `update` etc are OpenRun-defined permissions. They control what actions can be performed by the user in OpenRun. In addition to these, custom permissions are supported. Custom permissions are defined in the config with the `custom:` prefix. These permissions are ignored by OpenRun. They are passed to the app. For apps where requests are proxied through OpenRun (like containerized apps), these permissions are available in the HTTP headers
 
 - `X-Openrun-User`: This is the user performing the request. The user ID is prefixed with the provider name (like `google:test@example.com`). The username is `anonymous` for anonymous requests and `admin` for admin requests.
+- `X-Openrun-User-Id`: The provider user ID claim, when available. For OIDC providers this is the `sub` claim.
+- `X-Openrun-User-Email`: The provider email claim, when available.
 - `X-Openrun-Perms`: The list of custom permissions available to this user on this app. The list is comma-separated, without the `custom:` prefix, like `appread,appdelete`.
 - `X-Openrun-Rbac-Enabled`: Whether RBAC is enabled for the app, `true` or `false`
 

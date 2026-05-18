@@ -678,10 +678,14 @@ permissions=[
 func TestProxyUserAndPermsHeaders(t *testing.T) {
 	// Test that X-Openrun-User and X-Openrun-Perms headers are passed to proxied endpoint
 	var receivedUser string
+	var receivedUserSubject string
+	var receivedUserEmail string
 	var receivedPerms string
 	var receivedRBACEnabled string
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedUser = r.Header.Get("X-Openrun-User")
+		receivedUserSubject = r.Header.Get("X-Openrun-User-Id")
+		receivedUserEmail = r.Header.Get("X-Openrun-User-Email")
 		receivedPerms = r.Header.Get("X-Openrun-Perms")
 		receivedRBACEnabled = r.Header.Get("X-Openrun-Rbac-Enabled")
 		io.WriteString(w, "test contents") //nolint:errcheck
@@ -710,6 +714,8 @@ permissions=[
 	request := httptest.NewRequest("GET", "/test/abc", nil)
 	// Set user ID in context as it would be set by the server middleware
 	ctx := context.WithValue(request.Context(), types.USER_ID, types.ANONYMOUS_USER)
+	ctx = context.WithValue(ctx, types.USER_SUBJECT, "subject-123")
+	ctx = context.WithValue(ctx, types.USER_EMAIL, "test@example.com")
 	ctx = context.WithValue(ctx, types.CUSTOM_PERMS, []string{"read:data", "write:data", "admin"})
 	ctx = context.WithValue(ctx, types.RBAC_ENABLED, true)
 	request = request.WithContext(ctx)
@@ -721,6 +727,8 @@ permissions=[
 
 	// Verify the headers were passed to the proxied endpoint
 	testutil.AssertEqualsString(t, "X-Openrun-User", types.ANONYMOUS_USER, receivedUser)
+	testutil.AssertEqualsString(t, "X-Openrun-User-Id", "subject-123", receivedUserSubject)
+	testutil.AssertEqualsString(t, "X-Openrun-User-Email", "test@example.com", receivedUserEmail)
 	testutil.AssertEqualsString(t, "X-Openrun-Perms", "read:data,write:data,admin", receivedPerms)
 	testutil.AssertEqualsString(t, "X-Openrun-Rbac-Enabled", "true", receivedRBACEnabled)
 }

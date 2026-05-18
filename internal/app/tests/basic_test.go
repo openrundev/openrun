@@ -725,9 +725,17 @@ func TestAppUserAndPerms(t *testing.T) {
 app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
 
 def handler(req):
-	return {"user": req.UserId, "perms": req.CustomPerms, "rbac_enabled": req.AppRBACEnabled}
+	return {
+		"user": req.UserId,
+		"user_subject": req.UserSubject,
+		"user_email": req.UserEmail,
+		"header_user_subject": req.Headers["X-Openrun-User-Id"][0],
+		"header_user_email": req.Headers["X-Openrun-User-Email"][0],
+		"perms": req.CustomPerms,
+		"rbac_enabled": req.AppRBACEnabled,
+	}
 		`,
-		"index.go.html": `Template got {{ .Data.user }} {{ .Data.perms }} {{ .Data.rbac_enabled }} {{ .UserId }} {{ .CustomPerms }} {{ .AppRBACEnabled }}`,
+		"index.go.html": `Template got {{ .Data.user }} {{ .Data.user_subject }} {{ .Data.user_email }} {{ .Data.header_user_subject }} {{ .Data.header_user_email }} {{ .Data.perms }} {{ .Data.rbac_enabled }} {{ .UserId }} {{ .UserSubject }} {{ .UserEmail }} {{ .CustomPerms }} {{ .AppRBACEnabled }}`,
 	}
 	a, _, err := CreateDevModeTestApp(logger, fileData)
 	if err != nil {
@@ -736,6 +744,8 @@ def handler(req):
 
 	request := httptest.NewRequest("GET", "/test", nil)
 	ctx := context.WithValue(request.Context(), types.USER_ID, types.ANONYMOUS_USER)
+	ctx = context.WithValue(ctx, types.USER_SUBJECT, "subject-123")
+	ctx = context.WithValue(ctx, types.USER_EMAIL, "test@example.com")
 	ctx = context.WithValue(ctx, types.CUSTOM_PERMS, []string{"read:data", "write:data", "admin"})
 	ctx = context.WithValue(ctx, types.RBAC_ENABLED, true)
 	request = request.WithContext(ctx)
@@ -744,5 +754,5 @@ def handler(req):
 	a.ServeHTTP(response, request)
 
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertEqualsString(t, "body", `Template got anonymous [read:data write:data admin] true anonymous [read:data write:data admin] true`, response.Body.String())
+	testutil.AssertEqualsString(t, "body", `Template got anonymous subject-123 test@example.com subject-123 test@example.com [read:data write:data admin] true anonymous subject-123 test@example.com [read:data write:data admin] true`, response.Body.String())
 }

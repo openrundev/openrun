@@ -33,6 +33,8 @@ type Request struct {
 	Query          url.Values
 	PostForm       url.Values
 	UserId         string
+	UserSubject    string
+	UserEmail      string
 	CustomPerms    []string
 	AppRBACEnabled bool
 	Data           any
@@ -74,6 +76,10 @@ func (r Request) Attr(name string) (starlark.Value, error) {
 		return MarshalStarlark(r.PostForm)
 	case "UserId":
 		return starlark.String(r.UserId), nil
+	case "UserSubject":
+		return starlark.String(r.UserSubject), nil
+	case "UserEmail":
+		return starlark.String(r.UserEmail), nil
 	case "CustomPerms":
 		return MarshalStarlark(r.CustomPerms)
 	case "AppRBACEnabled":
@@ -86,7 +92,7 @@ func (r Request) Attr(name string) (starlark.Value, error) {
 }
 
 func (r Request) AttrNames() []string {
-	return []string{"AppName", "AppPath", "AppUrl", "PagePath", "PageUrl", "Method", "IsDev", "IsPartial", "PushEvents", "HtmxVersion", "Headers", "RemoteIP", "UrlParams", "Form", "Query", "PostForm", "UserId", "CustomPerms", "AppRBACEnabled", "Data"}
+	return []string{"AppName", "AppPath", "AppUrl", "PagePath", "PageUrl", "Method", "IsDev", "IsPartial", "PushEvents", "HtmxVersion", "Headers", "RemoteIP", "UrlParams", "Form", "Query", "PostForm", "UserId", "UserSubject", "UserEmail", "CustomPerms", "AppRBACEnabled", "Data"}
 }
 
 func (r Request) String() string {
