@@ -13,7 +13,7 @@ cascade:
 
 <div class="hx:mb-6">
 {{< hextra/hero-subtitle >}}
-  Low-code platform features, without the pain.&nbsp;<br class="hx:sm:block hx:hidden"/>Declarative deployments, authentication, auditing, and RBAC for code-first apps.
+  Deploy code-first apps with Retool-like ease.&nbsp;<br class="hx:sm:block hx:hidden"/>Declarative deployments, authentication, auditing, and RBAC for internal tools.
 {{< /hextra/hero-subtitle >}}
 </div>
 

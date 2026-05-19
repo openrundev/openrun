@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://openrun.dev/openrun.png" alt="OpenRun-logo" width="300" height="250"/>
 
-  <p align="center">App deployment simplified. Open source alternative to Google Cloud Run and AWS App Runner. Easily deploy internal tools, on a single node with Docker/Podman or onto a Kubernetes cluster.</p>
+  <p align="center">Platform for code-first internal tools. Deploy code-first apps with Retool-like ease. Declarative deployments, authentication, auditing, and RBAC for code-first apps. Easily deploy internal tools, on a single node with Docker/Podman or onto a Kubernetes cluster.</p>
 </p>
 
 <p>
@@ -29,7 +29,7 @@
 
 ## Overview
 
-OpenRun is an Apache-2.0 licensed open source web app deployment platform, with a focus on deploying internal tools. OpenRun makes it easy to **declaratively** deploy containerized web apps. OpenRun can deploy apps on a single-node or onto a Kubernetes cluster. OpenRun provides declarative GitOps based blue-green deployment, OAuth/OIDC/SAML access controls, TLS certs & secrets management. OpenRun is built for teams to easily deploy internal tools, with full RBAC support. OpenRun apps are deployed directly from the git repo, no build server required. OpenRun scales idles apps down to zero and supports atomic updates across multiple apps.
+OpenRun is an Apache-2.0 licensed open source web app deployment platform for deploying internal tools. OpenRun makes it easy to **declaratively** deploy containerized web apps. OpenRun can deploy apps on a single-node or onto a Kubernetes cluster. OpenRun provides declarative GitOps based blue-green deployment, OAuth/OIDC/SAML access controls, TLS certs & secrets management. OpenRun is built for teams to easily deploy internal tools, with full RBAC support. OpenRun apps are deployed directly from the git repo, no build server required. OpenRun scales idles apps down to zero and supports atomic updates across multiple apps.
 
 Some of the unique features of OpenRun are:
 
