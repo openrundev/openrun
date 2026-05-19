@@ -261,7 +261,7 @@ openrun app create --approve github.com/openrundev/apps/utils/bookmarks /book
 
 Open https://localhost:25223 to see the app listing. The disk usage app is available at https://localhost:25223/disk_usage (port 25222 for HTTP). The bookmark manager is available at https://localhost:25223/book, the list files app is available at https://localhost:25223/files.
 
-See [installation]({{< ref "installation" >}}) for details. See [config options]({{< ref "configuration" >}}) for configuration options. To enable Let's Encrypt certificates, see [Automatic SSL]({{< ref "configuration/networking/#enable-automatic-signed-certificate" >}}).
+See [installation](https://openrun.dev/docs/installation/) for install info. See [config options](https://openrun.dev/docs/configuration/) for configuration options. To enable Let's Encrypt certificates, see [Automatic SSL](https://openrun.dev/docs/configuration/networking/#enable-automatic-signed-certificate).
 
 The release binaries are also available at [releases](https://github.com/openrundev/openrun/releases). See [install from source]({{< ref "installation/#install-from-source" >}}) to build from source.
 
