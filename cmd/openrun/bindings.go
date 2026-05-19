@@ -34,6 +34,7 @@ func initBindingCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			bindingDeleteCommand(commonFlags, clientConfig),
 			bindingGetCommand(commonFlags, clientConfig),
 			bindingListCommand(commonFlags, clientConfig),
+			bindingRunCommand(commonFlags, clientConfig),
 		},
 	}
 }
@@ -290,6 +291,52 @@ func bindingListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			}
 
 			printBindingList(cCtx, response, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
+			return nil
+		},
+	}
+}
+
+func bindingRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
+	flags := make([]cli.Flag, 0, len(commonFlags)+1)
+	flags = append(flags, commonFlags...)
+	flags = append(flags, newBoolFlag(STAGING_FLAG, "s", "Run using the staged binding account", false))
+
+	return &cli.Command{
+		Name:      "run-command",
+		Usage:     "Run a command through a binding account",
+		Flags:     flags,
+		ArgsUsage: "<binding_name> <sql>",
+		UsageText: `args: <binding_name> <sql>
+
+<binding_name> is the binding path.
+<command> is the command to run.
+
+Examples:
+  Run a select: openrun binding run-command /apps/p1 "select * from items"
+  Run using staged account: openrun binding run-command --staging /apps/p1 "select current_user"
+`,
+		Action: func(cCtx *cli.Context) error {
+			if cCtx.NArg() < 2 {
+				return fmt.Errorf("expected two args: <binding_name> <sql>")
+			}
+			bindingName := cCtx.Args().Get(0)
+			sql := strings.Join(cCtx.Args().Slice()[1:], " ")
+
+			request := types.RunBindingCommandRequest{
+				BindingName: bindingName,
+				UseStaging:  cCtx.Bool(STAGING_FLAG),
+				Command:     sql,
+			}
+
+			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			var response map[string]any
+			if err := client.Post("/_openrun/binding/run-command", nil, request, &response); err != nil {
+				return err
+			}
+
+			enc := json.NewEncoder(cCtx.App.Writer)
+			enc.SetIndent("", "  ")
+			enc.Encode(response) //nolint:errcheck
 			return nil
 		},
 	}

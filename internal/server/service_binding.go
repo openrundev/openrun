@@ -260,16 +260,25 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 	return tx.Commit()
 }
 
-func (s *Server) generateAccount(ctx context.Context, dryRun bool, service *types.Service, binding *types.Binding, derivedFrom *types.Binding, isStaging, reapplyAll bool) (map[string]string, []types.BindingGrant, error) {
+func (s *Server) getServiceBinding(ctx context.Context, service *types.Service, binding *types.Binding) (bindings.ServiceBinding, error) {
 	builder, ok := bindings.ServiceBindings[service.ServiceType]
 	if !ok {
-		return nil, nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
+		return nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
 	}
 
 	var err error
 	serviceBinding := builder()
 	if err = serviceBinding.InitializeService(ctx, s.Logger, service.Config); err != nil {
-		return nil, nil, fmt.Errorf("error initializing service: %w", err)
+		return nil, fmt.Errorf("error initializing service: %w", err)
+	}
+
+	return serviceBinding, nil
+}
+
+func (s *Server) generateAccount(ctx context.Context, dryRun bool, service *types.Service, binding *types.Binding, derivedFrom *types.Binding, isStaging, reapplyAll bool) (map[string]string, []types.BindingGrant, error) {
+	serviceBinding, err := s.getServiceBinding(ctx, service, binding)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error getting service binding: %w", err)
 	}
 
 	metadata := binding.Metadata
@@ -489,4 +498,41 @@ func (s *Server) ListBindings(ctx context.Context, source string) ([]*types.Bind
 	defer tx.Rollback() //nolint:errcheck
 
 	return s.db.ListBindings(ctx, tx, source)
+}
+
+func (s *Server) RunBindingCommand(ctx context.Context, bindingName string, useStaging bool, command string) (map[string]any, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil, fmt.Errorf("sql is required")
+	}
+
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	binding, err := s.db.GetBinding(ctx, tx, bindingName)
+	if err != nil {
+		return nil, err
+	}
+
+	service, err := s.db.GetService(ctx, tx, binding.ServiceType, binding.ServiceName)
+	if err != nil {
+		return nil, fmt.Errorf("error getting binding service: %w", err)
+	}
+
+	metadata := binding.Metadata
+	if useStaging {
+		metadata = binding.StagedMetadata
+	}
+
+	serviceBinding, err := s.getServiceBinding(ctx, service, binding)
+	if err != nil {
+		return nil, fmt.Errorf("error getting service binding: %w", err)
+	}
+
+	defer serviceBinding.CloseService(ctx) //nolint:errcheck
+
+	return serviceBinding.RunCommand(ctx, metadata, command)
 }

@@ -91,6 +91,14 @@ type UpdateBindingRequest struct {
 	DeleteGrants []string `json:"delete_grants"`
 }
 
+// RunBindingCommandRequest is the request body for running a command through a
+// service binding account.
+type RunBindingCommandRequest struct {
+	BindingName string `json:"binding_name"`
+	UseStaging  bool   `json:"use_staging"`
+	Command     string `json:"command"`
+}
+
 // ApproveResult represents the result of an app approval audit
 type ApproveResult struct {
 	Id                  AppId         `json:"id"`

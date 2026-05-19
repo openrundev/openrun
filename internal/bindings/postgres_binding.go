@@ -70,6 +70,13 @@ func (b *PostgresServiceBinding) InitializeService(ctx context.Context, logger *
 	return nil
 }
 
+func (b *PostgresServiceBinding) CloseService(ctx context.Context) error {
+	if b.adminConn == nil {
+		return nil
+	}
+	return b.adminConn.Close()
+}
+
 type PostgresContextKey string
 
 const POSTGRES_TRANSACTION_KEY PostgresContextKey = "postgres_sb_transaction"
@@ -429,4 +436,51 @@ func buildAccountURL(adminURL, user, password, schema string) (string, error) {
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+func (b *PostgresServiceBinding) RunCommand(ctx context.Context, bindingMetadata types.BindingMetadata, command string) (map[string]any, error) {
+	conn, err := pgx.Connect(ctx, bindingMetadata.Account["url"])
+	if err != nil {
+		return nil, fmt.Errorf("error opening connection: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	rows, err := conn.Query(ctx, command)
+	if err != nil {
+		return nil, fmt.Errorf("error executing command: %w", err)
+	}
+	defer rows.Close()
+
+	fieldDescriptions := rows.FieldDescriptions()
+	columns := make([]string, len(fieldDescriptions))
+	for i, fieldDescription := range fieldDescriptions {
+		columns[i] = string(fieldDescription.Name)
+	}
+
+	resultRows := make([]map[string]any, 0)
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			return nil, fmt.Errorf("error reading command result row: %w", err)
+		}
+
+		resultRow := make(map[string]any, len(columns))
+		for i, column := range columns {
+			resultRow[column] = values[i]
+		}
+		resultRows = append(resultRows, resultRow)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error reading command result: %w", err)
+	}
+	rows.Close()
+
+	commandTag := rows.CommandTag()
+	return map[string]any{
+		"columns":       columns,
+		"rows":          resultRows,
+		"rows_affected": commandTag.RowsAffected(),
+		"command_tag":   commandTag.String(),
+	}, nil
 }

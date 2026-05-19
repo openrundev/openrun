@@ -1381,6 +1381,29 @@ func (h *Handler) listBindings(r *http.Request) (any, error) {
 	return results, nil
 }
 
+func (h *Handler) runBindingCommand(r *http.Request) (any, error) {
+	var runRequest types.RunBindingCommandRequest
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&runRequest); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	if runRequest.BindingName == "" {
+		return nil, types.CreateRequestError("binding_name is required", http.StatusBadRequest)
+	}
+	if strings.TrimSpace(runRequest.Command) == "" {
+		return nil, types.CreateRequestError("command is required", http.StatusBadRequest)
+	}
+
+	updateTargetInContext(r, runRequest.BindingName, false)
+	updateOperationInContext(r, "binding_run_command")
+
+	result, err := h.server.RunBindingCommand(r.Context(), runRequest.BindingName, runRequest.UseStaging, runRequest.Command)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return result, nil
+}
+
 func (h *Handler) configGet(r *http.Request) (any, error) {
 	updateOperationInContext(r, "config_get")
 	return types.ConfigResponse{DynamicConfig: h.server.GetDynamicConfig()}, nil
@@ -1572,6 +1595,11 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to list bindings
 	r.Get("/bindings", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "list_bindings", h.listBindings, false)
+	}))
+
+	// API to run a command through a binding account
+	r.Post("/binding/run-command", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "binding_run_command", h.runBindingCommand, false)
 	}))
 
 	// API to get config

@@ -16,8 +16,12 @@ type ServiceBinding interface {
 	// Initialize the service with the given config. This is called when the service binding is created.
 	InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error
 
+	// Close the service connection. This is called when the service binding is no longer needed.
+	CloseService(ctx context.Context) error
+
 	// Begin a new transaction. This is called when the binding is created, before the account is generated.
 	// The transaction is used to generate the account and apply the grants. The transaction is expected to be saved in the context.
+	// The connection used for the transaction is the admin connection to the main database, not the binding account connection.
 	BeginTransaction(ctx context.Context) (context.Context, error)
 
 	// Commit the transaction.
@@ -35,6 +39,9 @@ type ServiceBinding interface {
 	// The grants are applied to the account on the endpoint specified in the service config. It can be called again if the grants are changed.
 	ApplyGrants(ctx context.Context, account map[string]string,
 		bindingMetadata, derivedFromMetadata types.BindingMetadata, reapplyAll bool) ([]types.BindingGrant, error)
+
+	// Run a command on the endpoint specified in the service config as the binding account.
+	RunCommand(ctx context.Context, bindingMetadata types.BindingMetadata, command string) (map[string]any, error)
 }
 
 type ServiceBindingBuilder func() ServiceBinding
