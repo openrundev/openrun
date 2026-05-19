@@ -24,11 +24,11 @@ cascade:
 
 {{< hextra/feature-grid >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="What is OpenRun?" icon="information-circle" subtitle="OpenRun™ is a web app deployment platform, with a focus on deploying internal tools. OpenRun makes it easy to declaratively deploy containerized web apps. OpenRun can deploy apps on a single-node or onto a Kubernetes cluster.<br><br>OpenRun provides declarative GitOps based blue-green deployment, OAuth/OIDC/SAML access controls, TLS certs & secrets management. OpenRun has RBAC and auditing features for teams to securely deploy internal tools.<br><br> " class="openrun-feature-card openrun-feature-card-dark" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="What is OpenRun?" icon="information-circle" subtitle="<br>OpenRun is a web app deployment platform for deploying internal tools. OpenRun is the easiest way to declaratively deploy web apps with GitOps, on a single-node or onto a Kubernetes cluster.<br><br>OpenRun adds the authentication, authorization and auditing features required by enterprises, with OAuth/OIDC/SAML based auth." class="openrun-feature-card openrun-feature-card-dark" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="OpenRun Features" icon="lightning-bolt" subtitle="Some of the unique features of OpenRun are:<br><br>➣ Create and manage apps declaratively<br>➣ Easily upgrade from single-node to K8S <br>➣ Domain based or path based routing, with auto-TLS<br>➣ OAuth/OpenID/SAML/Cert based auth<br>➣ RBAC for admin operation and for app access<br>➣ Scales idle apps down to zero<br>➣ Staged deployment, for code and config changes<br>➣ Atomic (all or nothing) updates across apps" class="openrun-feature-card openrun-feature-card-dark" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Motivation" icon="flag" subtitle="<br>OpenRun is built with these goals:<br><br>➣ Easy declarative deployments  for everyone<br>➣ Start on single-node, scale to Kubernetes if needed<br>➣ Make auth and RBAC easy for internal tools<br>➣ Stop paying the SSO Tax for SAML support<br>➣ Run thousands of apps - zero idle resource usage" class="openrun-feature-card openrun-feature-card-dark" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="How it Works" icon="beaker" subtitle="OpenRun is a single binary, which implements an webserver and application server. For single-node install, Docker/Podman is the only external dependency.<br><br>OpenRun supports:<br>➣ Single node deployment using SQLite database<br>➣ Kubernetes deployment with Postgres for metadata<br>➣ Linux, OSX and Windows platforms.<br>➣ Builds app images, runs continuous deployment and manages auth and request routing across apps" class="openrun-feature-card openrun-feature-card-dark" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="OpenRun Features" icon="light-bulb" subtitle="<br>Some of the unique features of OpenRun are:<br>➣ Create and manage apps declaratively<br>➣ Easily upgrade from single-node to K8S <br>➣ Domain based or path based routing, with auto-TLS<br>➣ OAuth/OpenID/SAML/Cert auth, with RBAC<br>➣ Scales idle apps down to zero<br>➣ Staged deployment, for code and config changes<br>➣ Atomic (all or nothing) updates across apps" class="openrun-feature-card openrun-feature-card-dark" >}}
 
 {{< /hextra/feature-grid >}}
 
@@ -37,10 +37,9 @@ cascade:
 <div style="position: relative; width: 100vw; margin-left: calc(-50vw + 50%); background: #007700; color: white; justify-content: center; box-sizing: border-box; padding: 25px; font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', 'Roboto', 'Arial', sans-serif;">
 <div style="max-width: 800px; width: 100%; margin: 0 auto; padding: 1rem;">
 
-<div style="font-weight: bold; margin-bottom: 20px; text-align: center;font-size: 24px; color: mintcream;">Installation</div>
-
+<div style="font-weight: bold; margin-bottom: 20px; text-align: center;font-size: 28px; color: #FEF08A; font-weight: 800; text-shadow: 0 2px 3px rgba(0,0,0,0.75), 0 0 14px rgba(254,240,138,0.35);">Installation</div>
 <div style="position: relative;">
-<div style="font-weight: bold; margin-bottom: 10px; color: lightgray;">Install OpenRun:</div>
+<div style="font-weight: bold; margin-bottom: 10px; color: #ECFCCB; font-weight: 700;">Install OpenRun:</div>
 <div style="padding-inline: 10px; padding-top: 5px; padding-bottom: 20px; font-size: 14px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;" id="code1">
 curl -sSL https://openrun.dev/install.sh | sh
 </div>
@@ -48,17 +47,17 @@ curl -sSL https://openrun.dev/install.sh | sh
 </div>
 
 <div style="position: relative;">
-<div style="font-weight: bold; margin-bottom: 10px; color: lightgray;">Start OpenRun server (in a new window):</div>
+<div style="font-weight: bold; margin-bottom: 10px; color: #ECFCCB; font-weight: 700;">Start OpenRun server (in a new window):</div>
 <div style="padding-inline: 10px; padding-top: 5px; padding-bottom: 20px; font-size: 14px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;" id="code2">
 openrun server start &
 </div>
 <button title="Copy" style="position: absolute; top: 5px; right: 5px;  padding: 10px 10px 1px 10px; font-size: 14px; cursor: pointer;" onclick="copyCode('code2', this)">⧉</button>
 </div>
 
-<div style="font-weight: bold; margin-top: 20px; margin-bottom: 20px; text-align: center;font-size: 24px; color: mintcream;">GitOps in One Command</div>
+<div style="font-weight: bold; margin-bottom: 20px; text-align: center;font-size: 28px; color: #FEF08A; font-weight: 800; text-shadow: 0 2px 3px rgba(0,0,0,0.75), 0 0 14px rgba(254,240,138,0.35);">GitOps in One Command</div>
 
 <div style="position: relative;">
-<div style="font-weight: bold; margin-bottom: 10px; color: lightgray;">Schedule a sync:</div>
+<div style="font-weight: bold; margin-bottom: 10px; color: #ECFCCB; font-weight: 700;">Schedule a sync:</div>
 <div style="padding-inline: 10px; padding-top: 5px; padding-bottom: 20px; font-size: 14px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;" id="code3">
 openrun sync schedule --approve --promote \ &nbsp;&nbsp;github.com/openrundev/openrun/examples/utils.star
 </div>
@@ -75,7 +74,7 @@ openrun sync schedule --approve --promote \ &nbsp;&nbsp;github.com/openrundev/op
   @media screen and (min-width: 768px) { .sample-config-box { width: 50%; } }
 </style>
 <div style="position: relative; width: 100vw; margin-left: calc(-50vw + 50%); display: flex; flex-direction: column; align-items: center; padding: 40px 0; box-sizing: border-box;">
-<div style="font-weight: bold; margin-bottom: 16px; font-size: 22px;">Sample OpenRun Config</div>
+<div style="font-weight: bold; margin-bottom: 20px; text-align: center;font-size: 28px; color: #00C200; font-weight: 800;">Sample OpenRun Config</div>
 <div class="sample-config-box" style="border-radius: 10px; overflow: hidden; border: 1px solid rgba(127,127,127,0.25); box-shadow: 0 2px 12px rgba(0,0,0,0.08);">
 <div style="padding: 10px 16px; font-size: 13px; font-weight: 600; letter-spacing: 0.02em; background: rgba(127,127,127,0.10); border-bottom: 1px solid rgba(127,127,127,0.2);">sample.star</div>
 <pre style="margin: 0; padding: 2px 20px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace; font-size: 13.5px; line-height: 1.6; overflow-x: auto; background: rgba(127,127,127,0.04);"><code style="font-family: inherit;">
@@ -147,7 +146,7 @@ function copyCode(codeId, buttonElem) {
 {{< hextra/feature-grid >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Comparison with other self-hosted solutions" icon="zoom-in" subtitle="Compared to solutions like Coolify, Kamal, Dokku etc, OpenRun has:<br />➣ **Declarative GitOps** interface, for code and for config. New apps can be added through config updates in git. **No ClickOps, No manual deployments**<br/>➣ Scale idle apps down to zero <br />➣ Single binary, Docker/Podman or Kubernetes is only dependency, does not depend on a third party webserver like Traefik/Nginx<br/><br/>OpenRun supports enterprise features needed by teams, like OAuth/OIDC/SAML with RBAC and audit logs. OpenRun is built as a self-hosted Google Cloud Run/AWS App Runner alternative as against full PaaS solution. OpenRun does not support deploying auxiliary services like databases and there is no Docker Compose support. " class="openrun-feature-card openrun-feature-card-dark" >}}
+{{< hextra/feature-card title="Comparison with other self-hosted solutions" icon="scale" subtitle="Compared to solutions like Coolify, Kamal, Dokku etc, OpenRun has:<br />➣ **Declarative GitOps** interface, for code and for config. New apps can be added through config updates in git. **No ClickOps, No manual deployments**<br/>➣ Scale idle apps down to zero <br />➣ Single binary, Docker/Podman or Kubernetes is only dependency, does not depend on a third party webserver like Traefik/Nginx<br/><br/>OpenRun supports enterprise features needed by teams, like OAuth/OIDC/SAML with RBAC and audit logs. OpenRun is built as a self-hosted Google Cloud Run/AWS App Runner alternative as against full PaaS solution. OpenRun does not support deploying auxiliary services like databases and there is no Docker Compose support. " class="openrun-feature-card openrun-feature-card-dark" >}}
 
 <!-- prettier-ignore -->
 {{< hextra/feature-card title="Comparison with DIY on Kubernetes" icon="cog" subtitle="Running OpenRun on Kubernetes gives you the benefits of Kubernetes without the pain. OpenRun provides:<br/>➣ Unified interface as against glueing together services like Jenkins for builds, ArgoCD/FluxCD for CD, IDP for app management etc.<br/>➣ Simple declarative config, **no YAML files, no webserver DSLs**.<br/>➣ Support for setting up auth policies using RBAC.<br/><br/>Compared to **Knative**, OpenRun has a much simpler config without requiring YAML files. Resource usage is lower with OpenRun since apps are loaded lazily, on the first API call. OpenRun app versions are maintained in the metadata database, reducing Kubernetes resources created. Knative requires an external build system and does not support auth for apps." class="openrun-feature-card openrun-feature-card-dark" >}}
