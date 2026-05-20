@@ -205,6 +205,61 @@ tests:
     command: ../openrun binding run-command /apps/b1full "select count(*) as n from test3" | jq -r '.rows[0].n'
     stdout: "1"
 
+  postgres0068: # full grant can target one specific table
+    command: ../openrun binding create --grant "full:test1" /apps/b1 /apps/b1fulltest1
+    stdout: "Binding /apps/b1fulltest1 created"
+
+  postgres0068a:
+    command: ../openrun binding run-command /apps/b1fulltest1 "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "2"
+
+  postgres0068b:
+    command: ../openrun binding run-command /apps/b1fulltest1 "insert into test1 (id, note) values (5, 'full table')"
+    stdout: '"rows_affected": 1'
+
+  postgres0068c: # table-specific full grant does not include other tables
+    command: ../openrun binding run-command /apps/b1fulltest1 "select count(*) as n from test2"
+    stderr: "permission denied for table test2"
+    exit-code: 1
+
+  postgres0068d: # table-specific full grant does not include schema create
+    command: ../openrun binding run-command /apps/b1fulltest1 "create table full_table_created (id integer)"
+    stderr: "permission denied for schema"
+    exit-code: 1
+
+  postgres0069: # multiple grants can be applied in one update
+    command: ../openrun binding create /apps/b1 /apps/b1multi
+    stdout: "Binding /apps/b1multi created"
+
+  postgres0069a:
+    command: ../openrun binding update --add-grant "read:test1" --add-grant "create:*" --promote /apps/b1multi
+    stdout: "Binding /apps/b1multi updated"
+
+  postgres0069b:
+    command: ../openrun binding run-command /apps/b1multi "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "3"
+
+  postgres0069c:
+    command: ../openrun binding run-command /apps/b1multi "create table multi_created (id integer)"
+    stdout: '"command_tag": "CREATE TABLE"'
+
+  postgres0069d:
+    command: ../openrun binding update --delete-grant "read:test1" --add-grant "read:test2" --promote /apps/b1multi
+    stdout: "Binding /apps/b1multi updated"
+
+  postgres0069e: # deleted grant was revoked
+    command: ../openrun binding run-command /apps/b1multi "select count(*) as n from test1"
+    stderr: "permission denied for table test1"
+    exit-code: 1
+
+  postgres0069f: # added grant was applied
+    command: ../openrun binding run-command /apps/b1multi "select count(*) as n from test2" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0069g: # untouched create grant remains
+    command: ../openrun binding run-command /apps/b1multi "create table multi_created_after_update (id integer)"
+    stdout: '"command_tag": "CREATE TABLE"'
+
   postgres0070: # revoke read:* from existing tables
     command: ../openrun binding update --delete-grant "read:*" --promote /apps/b1read
     stdout: "Binding /apps/b1read updated"
@@ -257,4 +312,4 @@ tests:
     exit-code: 1
 
   postgres9999:
-    command: (../openrun binding delete /apps/b1full; ../openrun binding delete /apps/b1stage; ../openrun binding delete /apps/b1create; ../openrun binding delete /apps/b1read; ../openrun binding delete /apps/b1partialread; ../openrun binding delete /apps/b1; ../openrun service delete postgres/pg1) || true
+    command: (../openrun binding delete /apps/b1multi; ../openrun binding delete /apps/b1fulltest1; ../openrun binding delete /apps/b1full; ../openrun binding delete /apps/b1stage; ../openrun binding delete /apps/b1create; ../openrun binding delete /apps/b1read; ../openrun binding delete /apps/b1partialread; ../openrun binding delete /apps/b1; ../openrun service delete postgres/pg1) || true
