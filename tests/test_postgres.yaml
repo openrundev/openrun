@@ -85,6 +85,23 @@ tests:
     command: ../openrun binding run-command /apps/b1read "select count(*) as n from test2" | jq -r '.rows[0].n'
     stdout: "1"
 
+  postgres0046a: # simulate an already-recorded grant missing from the database
+    command: bash -c 'role=$(../openrun binding get -f json /apps/b1read | jq -r ".[0].metadata.account.role"); ../openrun binding run-command /apps/b1 "revoke select on table test2 from \"$role\""'
+    stdout: '"command_tag": "REVOKE"'
+
+  postgres0046b:
+    command: ../openrun binding run-command /apps/b1read "select count(*) as n from test2"
+    stderr: "permission denied for table test2"
+    exit-code: 1
+
+  postgres0046c:
+    command: ../openrun binding update --reapply-all --promote /apps/b1read
+    stdout: "Binding /apps/b1read updated"
+
+  postgres0046d: # reapply-all restores grants that were already marked applied
+    command: ../openrun binding run-command /apps/b1read "select count(*) as n from test2" | jq -r '.rows[0].n'
+    stdout: "1"
+
   postgres0047: # read:* still cannot write to future tables
     command: ../openrun binding run-command /apps/b1read "insert into test2 (id, note) values (2, 'read')"
     stderr: "permission denied for table test2"

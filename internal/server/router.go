@@ -1314,6 +1314,10 @@ func (h *Handler) updateBinding(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	reapplyAll, err := parseBoolArg(r.URL.Query().Get("reapplyAll"), false)
+	if err != nil {
+		return nil, err
+	}
 
 	var updateRequest types.UpdateBindingRequest
 	decoder := json.NewDecoder(r.Body)
@@ -1328,7 +1332,7 @@ func (h *Handler) updateBinding(r *http.Request) (any, error) {
 	updateTargetInContext(r, updateRequest.Path, dryRun)
 	updateOperationInContext(r, "binding_update")
 
-	binding, err := h.server.UpdateBinding(r.Context(), updateRequest, dryRun, promote)
+	binding, err := h.server.UpdateBinding(r.Context(), updateRequest, dryRun, promote, reapplyAll)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}

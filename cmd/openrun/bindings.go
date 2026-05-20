@@ -22,6 +22,8 @@ const (
 	GRANT_FLAG        = "grant"
 	ADD_GRANT_FLAG    = "add-grant"
 	DELETE_GRANT_FLAG = "delete-grant"
+	REAPPLY_ALL_FLAG  = "reapply-all"
+	REAPPLY_ALL_ARG   = "reapplyAll"
 )
 
 func initBindingCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -127,6 +129,7 @@ func bindingUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			Usage: "Grant to delete from the binding metadata. Can be specified multiple times",
 		})
 	flags = append(flags, newBoolFlag(PROMOTE_FLAG, "p", "Promote staged grants to active metadata", false))
+	flags = append(flags, newBoolFlag(REAPPLY_ALL_FLAG, "", "Reapply all configured grants, including grants already recorded as applied", false))
 	flags = append(flags, dryRunFlag())
 
 	return &cli.Command{
@@ -142,6 +145,7 @@ Examples:
   Add a grant: openrun binding update /apps/p2 --add-grant "read:*"
   Delete a grant: openrun binding update /apps/p2 --delete-grant "read:*"
   Promote staged grants: openrun binding update --promote /apps/p2
+  Reapply all grants: openrun binding update --reapply-all --promote /apps/p2
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -151,13 +155,15 @@ Examples:
 			addGrants := cCtx.StringSlice(ADD_GRANT_FLAG)
 			deleteGrants := cCtx.StringSlice(DELETE_GRANT_FLAG)
 			promote := cCtx.Bool(PROMOTE_FLAG)
-			if len(addGrants) == 0 && len(deleteGrants) == 0 && !promote {
-				return fmt.Errorf("expected at least one --add-grant, --delete-grant, or --promote")
+			reapplyAll := cCtx.Bool(REAPPLY_ALL_FLAG)
+			if len(addGrants) == 0 && len(deleteGrants) == 0 && !promote && !reapplyAll {
+				return fmt.Errorf("expected at least one --add-grant, --delete-grant, --promote, or --reapply-all")
 			}
 
 			values := url.Values{}
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 			values.Add(PROMOTE_ARG, strconv.FormatBool(promote))
+			values.Add(REAPPLY_ALL_ARG, strconv.FormatBool(reapplyAll))
 
 			updateRequest := types.UpdateBindingRequest{
 				Path:         path,

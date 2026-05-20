@@ -221,10 +221,10 @@ tests:
     command: ../openrun binding get -f json /apps/b6 | jq -r '.[0].staged_metadata.grants | join(",")'
     stdout: "full:*"
 
-  binding0094: # no-op update without grant flags or promote is rejected client-side
+  binding0094: # no-op update without grant flags, promote, or reapply-all is rejected client-side
     command: ../openrun binding update /apps/b6
     exit-code: 1
-    stderr: "expected at least one --add-grant, --delete-grant, or --promote"
+    stderr: "expected at least one --add-grant, --delete-grant, --promote, or --reapply-all"
 
   binding0095: # grants_applied tracks the active full grant
     command: ../openrun binding get -f json /apps/b6 | jq '.[0].metadata.grants_applied | length'
@@ -233,6 +233,10 @@ tests:
   binding0096: # grants_applied has canonical grant type
     command: ../openrun binding get -f json /apps/b6 | jq -r '.[0].metadata.grants_applied[0].grant_type'
     stdout: "FULL"
+
+  binding0097: # reapply-all is accepted as an update operation
+    command: ../openrun binding update --reapply-all /apps/b6
+    stdout: "Binding /apps/b6 updated"
 
   # Table format includes path/source columns
   binding0100:

@@ -405,9 +405,9 @@ func mergeGrantUpdates(current, addGrants, deleteGrants []string) []string {
 	return merged
 }
 
-func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBindingRequest, dryRun, promote bool) (*types.Binding, error) {
-	if len(updateRequest.AddGrants) == 0 && len(updateRequest.DeleteGrants) == 0 && !promote {
-		return nil, fmt.Errorf("expected at least one grant update or promote")
+func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBindingRequest, dryRun, promote, reapplyAll bool) (*types.Binding, error) {
+	if len(updateRequest.AddGrants) == 0 && len(updateRequest.DeleteGrants) == 0 && !promote && !reapplyAll {
+		return nil, fmt.Errorf("expected at least one grant update, promote, or reapply-all")
 	}
 
 	tx, err := s.db.BeginTransaction(ctx)
@@ -443,14 +443,14 @@ func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBi
 			return nil, fmt.Errorf("error getting staging service: %w", err)
 		}
 	}
-	binding.StagedMetadata.GrantsApplied, err = s.applyBindingGrants(ctx, dryRun, stagingService, binding, derivedFrom, true, false)
+	binding.StagedMetadata.GrantsApplied, err = s.applyBindingGrants(ctx, dryRun, stagingService, binding, derivedFrom, true, reapplyAll)
 	if err != nil {
 		return nil, fmt.Errorf("error applying staging grants: %w", err)
 	}
 
 	if promote {
 		binding.Metadata.Grants = binding.StagedMetadata.Grants
-		binding.Metadata.GrantsApplied, err = s.applyBindingGrants(ctx, dryRun, service, binding, derivedFrom, false, false)
+		binding.Metadata.GrantsApplied, err = s.applyBindingGrants(ctx, dryRun, service, binding, derivedFrom, false, reapplyAll)
 		if err != nil {
 			return nil, err
 		}
