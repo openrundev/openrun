@@ -151,6 +151,28 @@ tests:
     command: ../openrun binding run-command /apps/b1stage "select count(*) as n from test1" | jq -r '.rows[0].n'
     stdout: "1"
 
+  postgres0059d: # delete-grant revokes staged access before prod
+    command: ../openrun binding update --delete-grant "read:*" /apps/b1stage
+    stdout: "Binding /apps/b1stage updated"
+
+  postgres0059e:
+    command: ../openrun binding run-command --staging /apps/b1stage "select count(*) as n from stg_only"
+    stderr: "permission denied for table stg_only"
+    exit-code: 1
+
+  postgres0059f: # prod grant remains until promote
+    command: ../openrun binding run-command /apps/b1stage "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0059g:
+    command: ../openrun binding update --promote /apps/b1stage
+    stdout: "Binding /apps/b1stage updated"
+
+  postgres0059h:
+    command: ../openrun binding run-command /apps/b1stage "select count(*) as n from test1"
+    stderr: "permission denied for table test1"
+    exit-code: 1
+
   postgres0060:
     command: ../openrun binding create --grant "full:*" /apps/b1 /apps/b1full
     stdout: "Binding /apps/b1full created"
@@ -182,6 +204,57 @@ tests:
   postgres0067:
     command: ../openrun binding run-command /apps/b1full "select count(*) as n from test3" | jq -r '.rows[0].n'
     stdout: "1"
+
+  postgres0070: # revoke read:* from existing tables
+    command: ../openrun binding update --delete-grant "read:*" --promote /apps/b1read
+    stdout: "Binding /apps/b1read updated"
+
+  postgres0071:
+    command: ../openrun binding run-command /apps/b1read "select count(*) as n from test1"
+    stderr: "permission denied for table test1"
+    exit-code: 1
+
+  postgres0072:
+    command: ../openrun binding run-command /apps/b1read "select count(*) as n from test2"
+    stderr: "permission denied for table test2"
+    exit-code: 1
+
+  postgres0073: # revoke read:* also removes default privileges for future tables
+    command: ../openrun binding run-command /apps/b1 "create table test_after_read_revoke (id integer primary key)"
+    stdout: '"command_tag": "CREATE TABLE"'
+
+  postgres0074:
+    command: ../openrun binding run-command /apps/b1read "select count(*) as n from test_after_read_revoke"
+    stderr: "permission denied for table test_after_read_revoke"
+    exit-code: 1
+
+  postgres0080: # revoke create:* removes schema create privilege
+    command: ../openrun binding update --delete-grant "create:*" --promote /apps/b1create
+    stdout: "Binding /apps/b1create updated"
+
+  postgres0081:
+    command: ../openrun binding run-command /apps/b1create "create table create_after_revoke (id integer)"
+    stderr: "permission denied for schema"
+    exit-code: 1
+
+  postgres0090: # revoke full:* removes table write/read and schema create privileges
+    command: ../openrun binding update --delete-grant "full:*" --promote /apps/b1full
+    stdout: "Binding /apps/b1full updated"
+
+  postgres0091:
+    command: ../openrun binding run-command /apps/b1full "insert into test1 (id, note) values (5, 'full revoked')"
+    stderr: "permission denied for table test1"
+    exit-code: 1
+
+  postgres0092:
+    command: ../openrun binding run-command /apps/b1full "select count(*) as n from test1"
+    stderr: "permission denied for table test1"
+    exit-code: 1
+
+  postgres0093:
+    command: ../openrun binding run-command /apps/b1full "create table full_after_revoke (id integer)"
+    stderr: "permission denied for schema"
+    exit-code: 1
 
   postgres9999:
     command: (../openrun binding delete /apps/b1full; ../openrun binding delete /apps/b1stage; ../openrun binding delete /apps/b1create; ../openrun binding delete /apps/b1read; ../openrun binding delete /apps/b1partialread; ../openrun binding delete /apps/b1; ../openrun service delete postgres/pg1) || true
