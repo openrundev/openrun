@@ -62,6 +62,7 @@ func (b *PostgresServiceBinding) InitializeService(ctx context.Context, logger *
 	}
 
 	if err := adminConn.PingContext(ctx); err != nil {
+		adminConn.Close() //nolint:errcheck
 		return fmt.Errorf("error verifying postgres connection: %w", err)
 	}
 

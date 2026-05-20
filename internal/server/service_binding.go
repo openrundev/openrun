@@ -61,6 +61,7 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config); err != nil {
 		return fmt.Errorf("error initializing service binding: %w", err)
 	}
+	defer serviceBinding.CloseService(ctx) //nolint:errcheck
 
 	count, err := s.db.CountServices(ctx, tx, service.ServiceType)
 	if err != nil {
@@ -280,6 +281,7 @@ func (s *Server) generateAccount(ctx context.Context, dryRun bool, service *type
 	if err != nil {
 		return nil, nil, fmt.Errorf("error getting service binding: %w", err)
 	}
+	defer serviceBinding.CloseService(ctx) //nolint:errcheck
 
 	metadata := binding.Metadata
 	if isStaging {
@@ -333,6 +335,7 @@ func (s *Server) applyBindingGrants(ctx context.Context, dryRun bool, service *t
 	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config); err != nil {
 		return nil, fmt.Errorf("error initializing service: %w", err)
 	}
+	defer serviceBinding.CloseService(ctx) //nolint:errcheck
 
 	metadata := binding.Metadata
 	if isStaging {
