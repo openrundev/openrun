@@ -444,7 +444,7 @@ func (b *PostgresServiceBinding) RunCommand(ctx context.Context, bindingMetadata
 	if err != nil {
 		return nil, fmt.Errorf("error opening connection: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 
 	rows, err := conn.Query(ctx, command)
 	if err != nil {
