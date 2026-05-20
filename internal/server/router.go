@@ -29,6 +29,7 @@ import (
 const (
 	DRY_RUN_ARG              = "dryRun"
 	PROMOTE_ARG              = "promote"
+	REAPPLY_ALL_ARG          = "reapplyAll"
 	DELEGATE_BUILD_OP        = "delegate_build"
 	MAX_DELEGATE_UPLOAD_SIZE = 512 << 20 // 512 MiB
 )
@@ -1302,7 +1303,7 @@ func (h *Handler) createBinding(r *http.Request) (any, error) {
 	if err := h.server.CreateBinding(r.Context(), &binding, dryRun); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
-	return binding, nil
+	return redactBindingAccount(&binding), nil
 }
 
 func (h *Handler) updateBinding(r *http.Request) (any, error) {
@@ -1314,7 +1315,7 @@ func (h *Handler) updateBinding(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	reapplyAll, err := parseBoolArg(r.URL.Query().Get("reapplyAll"), false)
+	reapplyAll, err := parseBoolArg(r.URL.Query().Get(REAPPLY_ALL_ARG), false)
 	if err != nil {
 		return nil, err
 	}
@@ -1336,7 +1337,7 @@ func (h *Handler) updateBinding(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
-	return binding, nil
+	return redactBindingAccount(binding), nil
 }
 
 func (h *Handler) deleteBinding(r *http.Request) (any, error) {
@@ -1372,6 +1373,26 @@ func (h *Handler) getBinding(r *http.Request) (any, error) {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 	return binding, nil
+}
+
+func (h *Handler) getBindingAccount(r *http.Request) (any, error) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		return nil, types.CreateRequestError("path is required", http.StatusBadRequest)
+	}
+	useStaging, err := parseBoolArg(r.URL.Query().Get("staging"), false)
+	if err != nil {
+		return nil, err
+	}
+
+	updateTargetInContext(r, path, false)
+	updateOperationInContext(r, "binding_show_account")
+
+	account, err := h.server.GetBindingAccount(r.Context(), path, useStaging)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return account, nil
 }
 
 func (h *Handler) listBindings(r *http.Request) (any, error) {
@@ -1599,6 +1620,11 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to list bindings
 	r.Get("/bindings", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "list_bindings", h.listBindings, false)
+	}))
+
+	// API to show binding account info
+	r.Get("/binding/account", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "binding_show_account", h.getBindingAccount, false)
 	}))
 
 	// API to run a command through a binding account

@@ -29,7 +29,7 @@ type BindingMetadata struct {
 	Grants        []string          `json:"grants"`
 	GrantsApplied []BindingGrant    `json:"grants_applied"`
 	Config        map[string]string `json:"config"`
-	Account       map[string]string `json:"account"`
+	Account       map[string]string `json:"account,omitempty"`
 	ApplyInfo     []byte            `json:"apply_info"`
 }
 

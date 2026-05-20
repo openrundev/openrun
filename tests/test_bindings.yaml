@@ -76,8 +76,20 @@ tests:
     command: ../openrun binding get -f json /apps/b3 | jq '.[0].metadata.config | length'
     stdout: "1"
 
-  binding0033: # account url was generated
-    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata.account.url | startswith("postgres://")'
+  binding0033: # account info is not included in binding get
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].metadata | has("account")'
+    stdout: "false"
+
+  binding0034: # staged account info is not included in binding get
+    command: ../openrun binding get -f json /apps/b3 | jq -r '.[0].staged_metadata | has("account")'
+    stdout: "false"
+
+  binding0035: # account url is available through show-account
+    command: ../openrun binding show-account /apps/b3 | jq -r '.url | startswith("postgres://")'
+    stdout: "true"
+
+  binding0036: # staged account url is available through show-account --staging
+    command: ../openrun binding show-account --staging /apps/b3 | jq -r '.url | startswith("postgres://")'
     stdout: "true"
 
   # Later --config entries override earlier entries
@@ -142,6 +154,14 @@ tests:
   binding0055: # all bindings resolve to the same service_type/service_name
     command: ../openrun binding list -f json | jq -r '[.[] | .service_type + "/" + .service_name] | unique | join(",")'
     stdout: "postgres/testbind"
+
+  binding0056: # account info is not included in binding list
+    command: ../openrun binding list -f json | jq -r '.[] | select(.path == "/apps/b3") | .metadata | has("account")'
+    stdout: "false"
+
+  binding0057: # staged account info is not included in binding list
+    command: ../openrun binding list -f json | jq -r '.[] | select(.path == "/apps/b3") | .staged_metadata | has("account")'
+    stdout: "false"
 
   # Update: grants on derived bindings
   binding0060:
@@ -358,33 +378,43 @@ tests:
     exit-code: 1
     stderr: "expected no args"
 
-  binding0312: # source referencing a missing service by type/name fails
+  binding0312: # show-account requires <path> arg
+    command: ../openrun binding show-account
+    exit-code: 1
+    stderr: "expected one arg"
+
+  binding0313: # show-account non-existent binding
+    command: ../openrun binding show-account /apps/missing
+    exit-code: 1
+    stderr: "binding not found with path: /apps/missing"
+
+  binding0314: # source referencing a missing service by type/name fails
     command: ../openrun binding create postgres/missing /apps/b_bad
     exit-code: 1
     stderr: "service postgres/missing not found"
 
-  binding0313: # source referencing a service type with no default fails
+  binding0315: # source referencing a service type with no default fails
     command: ../openrun binding create mysql /apps/b_bad
     exit-code: 1
     stderr: "service mysql not found"
 
-  binding0314: # empty source rejected
+  binding0316: # empty source rejected
     command: ../openrun binding create "" /apps/b_bad
     exit-code: 1
     stderr: "binding source is required"
 
-  binding0315: # creating a binding with an existing path fails
+  binding0317: # creating a binding with an existing path fails
     command: ../openrun binding create postgres /apps/b1
     exit-code: 1
     stderr: "binding already exists: /apps/b1"
 
-  binding0316: # source referencing a missing base binding fails
+  binding0318: # source referencing a missing base binding fails
     command: ../openrun binding create /apps/missing /apps/b_bad
     exit-code: 1
     stderr: "binding source /apps/missing not found"
 
   # Failed creates above must not have persisted
-  binding0317:
+  binding0319:
     command: ../openrun binding list -f json | jq 'length'
     stdout: "6"
 

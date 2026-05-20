@@ -35,6 +35,7 @@ func initBindingCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			bindingUpdateCommand(commonFlags, clientConfig),
 			bindingDeleteCommand(commonFlags, clientConfig),
 			bindingGetCommand(commonFlags, clientConfig),
+			bindingShowAccountCommand(commonFlags, clientConfig),
 			bindingListCommand(commonFlags, clientConfig),
 			bindingRunCommand(commonFlags, clientConfig),
 		},
@@ -266,6 +267,48 @@ Examples:
 	}
 }
 
+func bindingShowAccountCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
+	flags := make([]cli.Flag, 0, len(commonFlags)+1)
+	flags = append(flags, commonFlags...)
+	flags = append(flags, newBoolFlag(STAGING_FLAG, "s", "Show the staged binding account", false))
+
+	return &cli.Command{
+		Name:      "show-account",
+		Usage:     "Show binding account info as JSON",
+		Flags:     flags,
+		ArgsUsage: "<path>",
+		UsageText: `args: <path>
+
+<path> is the unique path of the binding.
+
+Examples:
+  Show account: openrun binding show-account /apps/p1
+  Show staged account: openrun binding show-account --staging /apps/p1
+`,
+		Action: func(cCtx *cli.Context) error {
+			if cCtx.NArg() != 1 {
+				return fmt.Errorf("expected one arg: <path>")
+			}
+			path := cCtx.Args().First()
+
+			values := url.Values{}
+			values.Add("path", path)
+			values.Add(STAGING_FLAG, strconv.FormatBool(cCtx.Bool(STAGING_FLAG)))
+
+			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			var account map[string]string
+			if err := client.Get("/_openrun/binding/account", values, &account); err != nil {
+				return err
+			}
+
+			enc := json.NewEncoder(cCtx.App.Writer)
+			enc.SetIndent("", "  ")
+			enc.Encode(account) //nolint:errcheck
+			return nil
+		},
+	}
+}
+
 func bindingListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+2)
 	flags = append(flags, commonFlags...)
@@ -372,16 +415,16 @@ func printBindingList(cCtx *cli.Context, bindings []types.Binding, format string
 			printStdout(cCtx, formatStr, b.Path, b.Source)
 		}
 	case FORMAT_TABLE, "":
-		formatStr := "%-30s %-30s %-25s %-30s %-30s %-s\n"
-		printStdout(cCtx, formatStr, "Path", "Source", "UpdateTime", "StagedMetadata", "Metadata", "Account")
+		formatStr := "%-30s %-30s %-25s %-30s %-30s\n"
+		printStdout(cCtx, formatStr, "Path", "Source", "UpdateTime", "StagedMetadata", "Metadata")
 		for _, b := range bindings {
 			printStdout(cCtx, formatStr, b.Path, b.Source, b.UpdateTime.Format("2006-01-02 15:04:05"),
-				formatMap(b.StagedMetadata.Config), formatMap(b.Metadata.Config), formatMap(b.Metadata.Account))
+				formatMap(b.StagedMetadata.Config), formatMap(b.Metadata.Config))
 		}
 	case FORMAT_CSV:
 		for _, b := range bindings {
-			printStdout(cCtx, "%s,%s,%s,%s,%s,%s,%s\n", b.Id, b.Path, b.Source, b.UpdateTime.Format("2006-01-02 15:04:05"),
-				formatMap(b.StagedMetadata.Config), formatMap(b.Metadata.Config), formatMap(b.Metadata.Account))
+			printStdout(cCtx, "%s,%s,%s,%s,%s,%s\n", b.Id, b.Path, b.Source, b.UpdateTime.Format("2006-01-02 15:04:05"),
+				formatMap(b.StagedMetadata.Config), formatMap(b.Metadata.Config))
 		}
 	default:
 		panic(fmt.Errorf("unknown format %s", format))

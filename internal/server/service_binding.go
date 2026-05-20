@@ -490,7 +490,11 @@ func (s *Server) GetBinding(ctx context.Context, path string) (*types.Binding, e
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	return s.db.GetBinding(ctx, tx, path)
+	binding, err := s.db.GetBinding(ctx, tx, path)
+	if err != nil {
+		return nil, err
+	}
+	return redactBindingAccount(binding), nil
 }
 
 func (s *Server) ListBindings(ctx context.Context, source string) ([]*types.Binding, error) {
@@ -500,7 +504,41 @@ func (s *Server) ListBindings(ctx context.Context, source string) ([]*types.Bind
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	return s.db.ListBindings(ctx, tx, source)
+	bindings, err := s.db.ListBindings(ctx, tx, source)
+	if err != nil {
+		return nil, err
+	}
+	for i, binding := range bindings {
+		bindings[i] = redactBindingAccount(binding)
+	}
+	return bindings, nil
+}
+
+func redactBindingAccount(binding *types.Binding) *types.Binding {
+	if binding == nil {
+		return nil
+	}
+	redacted := *binding
+	redacted.Metadata.Account = nil
+	redacted.StagedMetadata.Account = nil
+	return &redacted
+}
+
+func (s *Server) GetBindingAccount(ctx context.Context, path string, useStaging bool) (map[string]string, error) {
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	binding, err := s.db.GetBinding(ctx, tx, path)
+	if err != nil {
+		return nil, err
+	}
+	if useStaging {
+		return binding.StagedMetadata.Account, nil
+	}
+	return binding.Metadata.Account, nil
 }
 
 func (s *Server) RunBindingCommand(ctx context.Context, bindingName string, useStaging bool, command string) (map[string]any, error) {

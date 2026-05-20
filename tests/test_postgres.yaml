@@ -86,7 +86,7 @@ tests:
     stdout: "1"
 
   postgres0046a: # simulate an already-recorded grant missing from the database
-    command: bash -c 'role=$(../openrun binding get -f json /apps/b1read | jq -r ".[0].metadata.account.role"); ../openrun binding run-command /apps/b1 "revoke select on table test2 from \"$role\""'
+    command: bash -c 'role=$(../openrun binding show-account /apps/b1read | jq -r ".role"); ../openrun binding run-command /apps/b1 "revoke select on table test2 from \"$role\""'
     stdout: '"command_tag": "REVOKE"'
 
   postgres0046b:
