@@ -158,6 +158,7 @@ func appUpdateMetadataCommand(commonFlags []cli.Flag, clientConfig *types.Client
 			appUpdateConfig(commonFlags, clientConfig, "app-config", "conf", types.AppMetadataAppConfig, "config"),
 			appUpdateConfig(commonFlags, clientConfig, "auth", "", types.AppMetadataAuthnType, "<auth_type>"),
 			appUpdateConfig(commonFlags, clientConfig, "git-auth", "", types.AppMetadataGitAuthName, "<git_auth>"),
+			appUpdateConfig(commonFlags, clientConfig, "bindings", "bind", types.AppMetadataBindings, "binding_path"),
 		},
 	}
 }

@@ -253,12 +253,13 @@ if [[ -z $CL_SINGLE_TEST ]]; then
     if [[ -n "$TEST_POSTGRES_URL" ]]; then
         commander test $CL_TEST_VERBOSE test_service.yaml
         commander test $CL_TEST_VERBOSE test_bindings.yaml
+        commander test $CL_TEST_VERBOSE test_app_update_bindings.yaml
         commander test $CL_TEST_VERBOSE test_postgres.yaml
     else
         echo "Skipping postgres service and binding tests; TEST_POSTGRES_URL is not set"
     fi
 elif [[ $CL_SINGLE_TEST != "disable" ]]; then
-    if [[ $CL_SINGLE_TEST = "test_service.yaml" || $CL_SINGLE_TEST = "test_bindings.yaml" || $CL_SINGLE_TEST = "test_postgres.yaml" ]]; then
+    if [[ $CL_SINGLE_TEST = "test_service.yaml" || $CL_SINGLE_TEST = "test_bindings.yaml" || $CL_SINGLE_TEST = "test_app_update_bindings.yaml" || $CL_SINGLE_TEST = "test_postgres.yaml" ]]; then
         if [[ -n "$TEST_POSTGRES_URL" ]]; then
             commander test $CL_TEST_VERBOSE ./$CL_SINGLE_TEST
         else

@@ -1,0 +1,76 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+    TEST_POSTGRES_URL: ${TEST_POSTGRES_URL}
+tests:
+  appupdate_bindings0001: # setup service
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/appupdate
+    stdout: "Service postgres/appupdate created"
+
+  appupdate_bindings0010: # setup binding 1
+    command: ../openrun binding create postgres/appupdate /appupdate/b1
+    stdout: "Binding /appupdate/b1 created"
+
+  appupdate_bindings0020: # setup binding 2
+    command: ../openrun binding create postgres/appupdate /appupdate/b2
+    stdout: "Binding /appupdate/b2 created"
+
+  appupdate_bindings0030: # setup binding 3
+    command: ../openrun binding create postgres/appupdate /appupdate/b3
+    stdout: "Binding /appupdate/b3 created"
+
+  appupdate_bindings0040: # create fails for a missing binding
+    command: ../openrun app create --bind /appupdate/missing ./testapp /app_update_missing
+    exit-code: 1
+    stderr: "binding /appupdate/missing not found"
+
+  appupdate_bindings0050: # failed create did not persist
+    command: ../openrun app list -f json /app_update_missing | jq length
+    stdout: "0"
+
+  appupdate_bindings0060: # create app with ordered bindings
+    command: ../openrun app create --bind /appupdate/b1 --bind /appupdate/b2 ./testapp /app_update_bindings
+    stdout: "App: /app_update_bindings"
+
+  appupdate_bindings0070: # create stores binding order on prod and stage
+    command: ../openrun app list -i -f json /app_update_bindings | jq -r '[.[].metadata.bindings | join(",")] | unique | join(";")'
+    stdout:
+      exactly: "/appupdate/b1,/appupdate/b2\n"
+
+  appupdate_bindings0080: # update fails for a missing binding
+    command: ../openrun app update bindings /appupdate/b3 /appupdate/missing /app_update_bindings
+    exit-code: 1
+    stderr: "binding /appupdate/missing not found"
+
+  appupdate_bindings0090: # failed update did not change the staged binding order
+    command: ../openrun app list -i -f json /app_update_bindings | jq -r 'map(select(.path == "/app_update_bindings_cl_stage"))[0].metadata.bindings | join(",")'
+    stdout:
+      exactly: "/appupdate/b1,/appupdate/b2\n"
+
+  appupdate_bindings0100: # stage update replaces bindings in the requested order
+    command: ../openrun app update bindings /appupdate/b3 /appupdate/b2 /appupdate/b1 /app_update_bindings
+    stdout: "1 app(s) updated, 0 app(s) promoted."
+
+  appupdate_bindings0110: # staged app has the new order
+    command: ../openrun app list -i -f json /app_update_bindings | jq -r 'map(select(.path == "/app_update_bindings_cl_stage"))[0].metadata.bindings | join(",")'
+    stdout:
+      exactly: "/appupdate/b3,/appupdate/b2,/appupdate/b1\n"
+
+  appupdate_bindings0120: # prod app keeps the old order until promote
+    command: ../openrun app list -i -f json /app_update_bindings | jq -r 'map(select(.path == "/app_update_bindings"))[0].metadata.bindings | join(",")'
+    stdout:
+      exactly: "/appupdate/b1,/appupdate/b2\n"
+
+  appupdate_bindings0130: # promoted update copies the ordered list to prod
+    command: ../openrun app update bindings --promote /appupdate/b2 /appupdate/b1 /app_update_bindings
+    stdout: "1 app(s) updated, 1 app(s) promoted."
+
+  appupdate_bindings0140: # prod and stage have the promoted order
+    command: ../openrun app list -i -f json /app_update_bindings | jq -r '[.[].metadata.bindings | join(",")] | unique | join(";")'
+    stdout:
+      exactly: "/appupdate/b2,/appupdate/b1\n"
+
+  appupdate_bindings9999: # cleanup
+    command: ../openrun app delete /app_update_bindings && ../openrun binding delete /appupdate/b1 && ../openrun binding delete /appupdate/b2 && ../openrun binding delete /appupdate/b3 && ../openrun service delete postgres/appupdate

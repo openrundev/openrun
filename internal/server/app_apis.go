@@ -155,7 +155,12 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 	appEntry.Metadata.ContainerArgs = appRequest.ContainerArgs
 	appEntry.Metadata.ContainerVolumes = appRequest.ContainerVolumes
 	appEntry.Metadata.AppConfig = appRequest.AppConfig
+	appEntry.Metadata.Bindings = appRequest.Bindings
 	appEntry.UserID = system.GetContextUserId(ctx)
+
+	if err := s.validateAppBindings(ctx, currentTx, appEntry.Metadata.Bindings); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
 
 	auditResult, err := s.createApp(ctx, currentTx, &appEntry, approve, dryRun, appRequest.GitBranch, appRequest.GitCommit, appRequest.GitAuthName, appRequest, repoCache)
 	if err != nil {

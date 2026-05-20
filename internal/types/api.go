@@ -46,7 +46,8 @@ type CreateAppRequest struct {
 	ContainerArgs    map[string]string `json:"container_args"`
 	ContainerVolumes []string          `json:"container_volumes"`
 	AppConfig        map[string]string `json:"appconfig"`
-	// any new fields here will have to be merged in during apply (in applyAppUpdate)
+	Bindings         []string          `json:"bindings"`
+	// fields supported by declarative apply must be merged in applyAppUpdate
 }
 
 // UpdateAppRequest is the request body for updating an app settings

@@ -524,6 +524,7 @@ type AppMetadata struct {
 	AppConfig        map[string]string `json:"appconfig"`
 	AuthnType        AppAuthnType      `json:"authn_type"`
 	GitAuthName      string            `json:"git_auth_name"`
+	Bindings         []string          `json:"bindings"`
 }
 
 // AppSettings contains the settings for an app. Settings are not version controlled.
@@ -612,6 +613,7 @@ const (
 	AppMetadataContainerVolumes AppMetadataConfigType = "container_volumes"
 	AppMetadataAuthnType        AppMetadataConfigType = "auth"
 	AppMetadataGitAuthName      AppMetadataConfigType = "git_auth"
+	AppMetadataBindings         AppMetadataConfigType = "bindings"
 )
 
 type AppVersion struct {

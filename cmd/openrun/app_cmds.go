@@ -87,6 +87,12 @@ func appCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			Aliases: []string{"cvol"},
 			Usage:   "Set container volume entries",
 		})
+	flags = append(flags,
+		&cli.StringSliceFlag{
+			Name:    "binding",
+			Aliases: []string{"bindings", "bind"},
+			Usage:   "Link a binding path to the app. Repeat to preserve binding order",
+		})
 
 	flags = append(flags,
 		&cli.StringSliceFlag{
@@ -165,6 +171,7 @@ Examples:
 			if err := validateNoFlagLikeValues("--cvol", "container volume", containerVolumes); err != nil {
 				return err
 			}
+			bindings := cCtx.StringSlice("binding")
 
 			appConfig := cCtx.StringSlice("app-config")
 			confMap := make(map[string]string)
@@ -204,6 +211,7 @@ Examples:
 				ContainerArgs:    cargMap,
 				ContainerVolumes: containerVolumes,
 				AppConfig:        confMap,
+				Bindings:         bindings,
 			}
 			var createResult types.AppCreateResponse
 			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
