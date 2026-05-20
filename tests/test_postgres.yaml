@@ -1,0 +1,187 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+    TEST_POSTGRES_URL: ${TEST_POSTGRES_URL}
+
+tests:
+  postgres0001:
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/pg1
+    stdout: "Service postgres/pg1 created"
+    exit-code: 0
+
+  postgres0010:
+    command: ../openrun binding create postgres/pg1 /apps/b1
+    stdout: "Binding /apps/b1 created"
+    exit-code: 0
+
+  postgres0011: # prod and staging accounts use different schemas
+    command: bash -c 'prod=$(../openrun binding run-command /apps/b1 "select current_schema()" | jq -r ".rows[0].current_schema"); stage=$(../openrun binding run-command --staging /apps/b1 "select current_schema()" | jq -r ".rows[0].current_schema"); [[ "$prod" != "$stage" ]] && echo true'
+    stdout: "true"
+
+  postgres0020: # table-specific grant can be created before the table exists
+    command: ../openrun binding create --grant "read:test1" /apps/b1 /apps/b1partialread
+    stdout: "Binding /apps/b1partialread created"
+
+  postgres0021: # before creation, the target table is absent
+    command: ../openrun binding run-command /apps/b1partialread "select count(*) as n from test1"
+    stderr: 'relation "test1" does not exist'
+    exit-code: 1
+
+  postgres0030:
+    command: ../openrun binding run-command /apps/b1 "create table test1 (id integer primary key, note text)"
+    stdout: '"command_tag": "CREATE TABLE"'
+
+  postgres0031:
+    command: ../openrun binding run-command /apps/b1 "insert into test1 (id, note) values (1, 'base')"
+    stdout: '"rows_affected": 1'
+
+  postgres0032: # deferred table grant is not applied until the binding is updated
+    command: ../openrun binding run-command /apps/b1partialread "select count(*) as n from test1"
+    stderr: "permission denied for table test1"
+    exit-code: 1
+
+  postgres0033:
+    command: ../openrun binding update --promote /apps/b1partialread
+    stdout: "Binding /apps/b1partialread updated"
+
+  postgres0034:
+    command: ../openrun binding run-command /apps/b1partialread "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0035: # prod table is not visible through the staging schema
+    command: ../openrun binding run-command --staging /apps/b1 "select count(*) as n from test1"
+    stderr: 'relation "test1" does not exist'
+    exit-code: 1
+
+  postgres0040:
+    command: ../openrun binding create --grant "read:*" /apps/b1 /apps/b1read
+    stdout: "Binding /apps/b1read created"
+
+  postgres0041:
+    command: ../openrun binding run-command /apps/b1read "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0042: # read grant cannot insert into base tables
+    command: ../openrun binding run-command /apps/b1read "insert into test1 (id, note) values (2, 'read')"
+    stderr: "permission denied for table test1"
+    exit-code: 1
+
+  postgres0043: # read grant cannot create tables
+    command: ../openrun binding run-command /apps/b1read "create table read_created (id integer)"
+    stderr: "permission denied for schema"
+    exit-code: 1
+
+  postgres0044: # default privileges from read:* cover tables created after the grant
+    command: ../openrun binding run-command /apps/b1 "create table test2 (id integer primary key, note text)"
+    stdout: '"command_tag": "CREATE TABLE"'
+
+  postgres0045:
+    command: ../openrun binding run-command /apps/b1 "insert into test2 (id, note) values (1, 'future')"
+    stdout: '"rows_affected": 1'
+
+  postgres0046:
+    command: ../openrun binding run-command /apps/b1read "select count(*) as n from test2" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0047: # read:* still cannot write to future tables
+    command: ../openrun binding run-command /apps/b1read "insert into test2 (id, note) values (2, 'read')"
+    stderr: "permission denied for table test2"
+    exit-code: 1
+
+  postgres0048: # table-specific read does not leak to other tables
+    command: ../openrun binding run-command /apps/b1partialread "select count(*) as n from test2"
+    stderr: "permission denied for table test2"
+    exit-code: 1
+
+  postgres0050:
+    command: ../openrun binding create --grant "create:*" /apps/b1 /apps/b1create
+    stdout: "Binding /apps/b1create created"
+
+  postgres0051:
+    command: ../openrun binding run-command /apps/b1create "create table create_created (id integer)"
+    stdout: '"command_tag": "CREATE TABLE"'
+
+  postgres0052: # create grant does not include read on base tables
+    command: ../openrun binding run-command /apps/b1create "select count(*) as n from test1"
+    stderr: "permission denied for table test1"
+    exit-code: 1
+
+  postgres0053: # create grant does not include write on base tables
+    command: ../openrun binding run-command /apps/b1create "insert into test1 (id, note) values (3, 'create')"
+    stderr: "permission denied for table test1"
+    exit-code: 1
+
+  postgres0054: # grant updates apply to staging before production
+    command: ../openrun binding run-command --staging /apps/b1 "create table stg_only (id integer primary key)"
+    stdout: '"command_tag": "CREATE TABLE"'
+
+  postgres0055:
+    command: ../openrun binding run-command --staging /apps/b1 "insert into stg_only (id) values (1)"
+    stdout: '"rows_affected": 1'
+
+  postgres0056:
+    command: ../openrun binding create /apps/b1 /apps/b1stage
+    stdout: "Binding /apps/b1stage created"
+
+  postgres0057:
+    command: ../openrun binding run-command --staging /apps/b1stage "select count(*) as n from stg_only"
+    stderr: "permission denied for table stg_only"
+    exit-code: 1
+
+  postgres0058:
+    command: ../openrun binding update --add-grant "read:*" /apps/b1stage
+    stdout: "Binding /apps/b1stage updated"
+
+  postgres0059:
+    command: ../openrun binding run-command --staging /apps/b1stage "select count(*) as n from stg_only" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0059a: # prod remains unchanged until promote
+    command: ../openrun binding run-command /apps/b1stage "select count(*) as n from test1"
+    stderr: "permission denied for table test1"
+    exit-code: 1
+
+  postgres0059b:
+    command: ../openrun binding update --promote /apps/b1stage
+    stdout: "Binding /apps/b1stage updated"
+
+  postgres0059c:
+    command: ../openrun binding run-command /apps/b1stage "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0060:
+    command: ../openrun binding create --grant "full:*" /apps/b1 /apps/b1full
+    stdout: "Binding /apps/b1full created"
+
+  postgres0061:
+    command: ../openrun binding run-command /apps/b1full "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0062:
+    command: ../openrun binding run-command /apps/b1full "insert into test1 (id, note) values (4, 'full')"
+    stdout: '"rows_affected": 1'
+
+  postgres0063:
+    command: ../openrun binding run-command /apps/b1full "create table full_created (id integer)"
+    stdout: '"command_tag": "CREATE TABLE"'
+
+  postgres0064:
+    command: ../openrun binding run-command /apps/b1 "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "2"
+
+  postgres0065: # default privileges from full:* cover future tables and sequences
+    command: ../openrun binding run-command /apps/b1 "create table test3 (id integer generated always as identity primary key, note text)"
+    stdout: '"command_tag": "CREATE TABLE"'
+
+  postgres0066:
+    command: ../openrun binding run-command /apps/b1full "insert into test3 (note) values ('future full')"
+    stdout: '"rows_affected": 1'
+
+  postgres0067:
+    command: ../openrun binding run-command /apps/b1full "select count(*) as n from test3" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres9999:
+    command: (../openrun binding delete /apps/b1full; ../openrun binding delete /apps/b1stage; ../openrun binding delete /apps/b1create; ../openrun binding delete /apps/b1read; ../openrun binding delete /apps/b1partialread; ../openrun binding delete /apps/b1; ../openrun service delete postgres/pg1) || true
