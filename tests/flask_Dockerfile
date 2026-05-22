@@ -1,0 +1,71 @@
+# syntax=docker/dockerfile:1.7
+
+# First, build the application in the `/app` directory.
+# See `Dockerfile` for details.
+ARG PYTHON_VERSION=3.14
+ARG BUILDER_IMAGE=ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim
+ARG RUN_IMAGE=python:${PYTHON_VERSION}-slim-bookworm
+
+FROM ${BUILDER_IMAGE} AS builder
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+
+# Omit development dependencies
+ENV UV_NO_DEV=1
+
+# Disable Python downloads, because we want to use the system interpreter
+# across both images. If using a managed Python version, it needs to be
+# copied from the build image into the final image; see `standalone.Dockerfile`
+# for an example.
+ENV UV_PYTHON_DOWNLOADS=0
+
+WORKDIR /app
+
+# Copy dependency manifests first to maximize cache reuse.
+# Wildcards make uv.lock/requirements.txt optional while still supporting either flow.
+COPY pyproject.toml* uv.lock* requirements.txt* /app/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    set -eux; \
+    if [ -f uv.lock ]; then \
+        [ -f pyproject.toml ] || (echo "uv.lock found but pyproject.toml is missing" >&2; exit 1); \
+        uv sync --locked --no-install-project; \
+    elif [ -f requirements.txt ]; then \
+        uv venv /app/.venv; \
+        uv pip install --python /app/.venv/bin/python --requirement requirements.txt; \
+    else \
+        echo "Neither uv.lock nor requirements.txt found in build context" >&2; \
+        exit 1; \
+    fi
+
+COPY . /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    set -eux; \
+    if [ -f uv.lock ]; then \
+        uv sync --locked; \
+    fi
+
+
+# Then, use a final image without uv
+FROM ${RUN_IMAGE}
+# It is important to use the image that matches the builder, as the path to the
+# Python executable must be the same, e.g., using `python:3.13-slim-bookworm`
+# will fail.
+
+# Setup a non-root user
+RUN groupadd --system --gid 999 nonroot \
+ && useradd --system --gid 999 --uid 999 --create-home nonroot
+
+# Copy the application from the builder
+COPY --from=builder --chown=nonroot:nonroot /app /app
+
+# Place executables in the environment at the front of the path
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Use the non-root user to run our application
+USER nonroot
+
+# Use `/app` as the working directory
+WORKDIR /app
+
+# Run the application
+CMD ["python", "-m", "flask", "run", "--host=0.0.0.0"]

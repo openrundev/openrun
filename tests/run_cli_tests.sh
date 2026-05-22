@@ -84,7 +84,7 @@ start_forward_auth_testcontainer() {
   cp flask.py testauthapp/app.py
   printf "flask\n" > testauthapp/requirements.txt
 
-  $container_command build -q -t "$image_name" -f ../config/appspecs/python-flask/Containerfile testauthapp >/dev/null
+  $container_command build -q -t "$image_name" -f flask_Dockerfile testauthapp >/dev/null
   FORWARD_AUTH_CONTAINER_COMMAND="$container_command"
   FORWARD_AUTH_CONTAINER_ID=$($container_command run \
     --detach \
