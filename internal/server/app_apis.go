@@ -171,6 +171,11 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 }
 
 func (s *Server) validateAppAuthnType(authStr string) error {
+	authStr, _, err := s.checkAuthModifiers(authStr)
+	if err != nil {
+		return err
+	}
+
 	if strings.HasPrefix(authStr, SAML_AUTH_PREFIX) || strings.HasPrefix(authStr, rbac.RBAC_AUTH_PREFIX+SAML_AUTH_PREFIX) {
 		// saml auth, with or without rbac
 		if !s.samlManager.ValidateSAMLProvider(authStr) {
@@ -472,6 +477,25 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 	return ret, nil
 }
 
+func (s *Server) checkAuthModifiers(authTypeFull string) (string, *types.ForwardConfig, error) {
+	authType, modifier, ok := strings.Cut(authTypeFull, types.AUTH_MODIFIER_DELIMITER)
+	if !ok {
+		return authTypeFull, nil, nil
+	}
+
+	var forwardConfig types.ForwardConfig
+	forwardConfigName, ok := strings.CutPrefix(modifier, "forward_")
+	if ok {
+		forwardConfig, ok = s.config.Forward[forwardConfigName]
+		if !ok {
+			return "", nil, fmt.Errorf("forward config %s not found for forward modifier: %s", forwardConfigName, modifier)
+		}
+		return authType, &forwardConfig, nil
+	} else {
+		return "", nil, fmt.Errorf("invalid auth modifier %s, must be in the format of auth_type+forward_<name>", modifier)
+	}
+}
+
 func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request, app *app.App) {
 	var err error
 	appAuth := app.Metadata.AuthnType
@@ -482,6 +506,14 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	if appAuth == "" { // no default auth type set, default to system admin user auth
 		appAuth = types.AppAuthnSystem
 	}
+
+	// Check for auth modifiers which are used to implement forward_auth
+	appAuthStr, forwardConfig, err := s.checkAuthModifiers(string(appAuth))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	appAuth = types.AppAuthnType(appAuthStr)
 
 	userId := ""
 	userSubject := ""
@@ -611,12 +643,18 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	r = r.WithContext(ctx)
 	stripOpenRunCookies(r)
 
-	// Authentication successful, serve the app
+	var appHandler http.Handler
 	if !app.AppConfig.Security.DisableCSRFProtection {
-		s.csrfMiddleware.Handler(app).ServeHTTP(w, r)
+		// wrap the app with the csrf middleware
+		appHandler = s.csrfMiddleware.Handler(app)
 	} else {
-		app.ServeHTTP(w, r)
+		appHandler = app
 	}
+	if forwardConfig != nil {
+		appHandler = s.forwardAuthMiddleware(appHandler, forwardConfig)
+	}
+	// Authentication successful, serve the app
+	appHandler.ServeHTTP(w, r)
 }
 
 func usesSessionCookieAuth(authType string) bool {

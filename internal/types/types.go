@@ -91,8 +91,9 @@ const (
 )
 
 const (
-	ANONYMOUS_USER = "anonymous"
-	ADMIN_USER     = "admin"
+	ANONYMOUS_USER                 = "anonymous"
+	ADMIN_USER                     = "admin"
+	AUTH_MODIFIER_DELIMITER string = "+"
 )
 
 // Config entries shared between client and server
@@ -121,6 +122,7 @@ type ServerConfig struct {
 	SAML        map[string]SAMLConfig       `toml:"saml"`
 	ClientAuth  map[string]ClientCertConfig `toml:"client_auth"`
 	Secret      map[string]SecretConfig     `toml:"secret"`
+	Forward     map[string]ForwardConfig    `toml:"forward"`
 	ProfileMode string                      `toml:"profile_mode"`
 	AppConfig   AppConfig                   `toml:"app_config"`
 	NodeConfig  NodeConfig                  `toml:"node_config"`
@@ -308,6 +310,7 @@ type SystemConfig struct {
 	ListAppsTitle                       string   `toml:"list_apps_title"`                         // the title of the list apps page
 	ShowHostedWith                      bool     `toml:"show_hosted_with"`                        // whether to show "Hosted with OpenRun" in the list apps page
 	FallbackUnknownDomains              bool     `toml:"fallback_unknown_domains"`                // whether to fallback to default domain for unknown domains
+	ForwardAuthTimeoutSecs              int      `toml:"forward_auth_timeout_secs"`               // timeout in seconds for forward auth requests. Defaults to 30 seconds.
 	BuilderAuthToken                    string   `toml:"builder_auth_token"`                      // the token for the builder auth
 }
 
@@ -352,6 +355,12 @@ type AuthConfig struct {
 	DiscoveryUrl string   `toml:"discovery_url"` // the discovery url, used for OIDC
 	HostedDomain string   `toml:"hosted_domain"` // the hosted domain, used for Google
 	Scopes       []string `toml:"scopes"`        // oauth scopes
+}
+
+type ForwardConfig struct {
+	AuthUrl             string   `toml:"auth_url"`              // the auth url to send the GET request to
+	ForwardHeaders      []string `toml:"forward_headers"`       // the headers to forward to the auth url. If empty, all headers are forwarded.
+	CopyResponseHeaders []string `toml:"copy_response_headers"` // the headers to copy from the authserver response to app. Default is none
 }
 
 // PermissionsConfig is the permissions configuration for the server. This overrides the permissions configured in the app metadata.
@@ -867,6 +876,7 @@ const (
 	// OpenRun headers are used to pass information to the downstream service
 	OPENRUN_HEADER_PREFIX           = "X-Openrun-"
 	OPENRUN_HEADER_USER             = OPENRUN_HEADER_PREFIX + "User"
+	OPENRUN_HEADER_USER_STRIPPED    = OPENRUN_HEADER_PREFIX + "User-Stripped" // the user ID stripped of the provider prefix
 	OPENRUN_HEADER_USER_ID          = OPENRUN_HEADER_PREFIX + "User-Id"
 	OPENRUN_HEADER_USER_EMAIL       = OPENRUN_HEADER_PREFIX + "User-Email"
 	OPENRUN_HEADER_PERMS            = OPENRUN_HEADER_PREFIX + "Perms"

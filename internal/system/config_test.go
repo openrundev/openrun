@@ -59,6 +59,7 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsInt(t, "max build wait secs", 120, c.System.MaxBuildWaitSecs)
 	testutil.AssertEqualsInt(t, "file workers", 4, c.System.FileWorkers)
 	testutil.AssertEqualsBool(t, "fallback unknown domains", false, c.System.FallbackUnknownDomains)
+	testutil.AssertEqualsInt(t, "forward auth timeout", 30, c.System.ForwardAuthTimeoutSecs)
 
 	// Global Settings
 	testutil.AssertEqualsString(t, "server uri", "$OPENRUN_HOME/run/openrun.sock", c.ServerUri)

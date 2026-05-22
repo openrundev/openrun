@@ -34,6 +34,57 @@ When this is enabled, any app with `auth="none"` is denied at request time with 
 
 Use this when you want a server-wide guardrail to prevent accidentally exposing apps without authentication. The app can still use any supported auth mode such as `system`, OIDC/OAuth, SAML, mTLS, or the configured `app_default_auth_type`.
 
+## Forward Auth
+
+Forward auth lets OpenRun authenticate the user first, then call an external authorization service before the request is sent to the app. This is useful when authentication should stay in OpenRun, but per-request authorization policy is owned by another service.
+
+Forward auth is configured as a named `forward` entry in `openrun.toml`:
+
+```toml {filename="openrun.toml"}
+[forward.internal]
+auth_url = "http://authz.internal:8080/check"
+forward_headers = ["Authorization", "Cookie"]
+copy_response_headers = ["Remote-User", "Remote-Email>X-Auth-Email"]
+
+[system]
+forward_auth_timeout_secs = 30
+```
+
+The forward config name is enabled on an app by adding `+forward_<name>` to the app auth type. For example:
+
+```sh
+openrun app create --auth=system+forward_internal --spec python-flask ./myapp /myapp
+openrun app update auth --promote github_prod+forward_internal /myapp
+```
+
+In this example, OpenRun first performs `system` or `github_prod` authentication. If that succeeds, OpenRun sends a `GET` request to `auth_url`. A `2xx` response allows the request to continue to the app. Any non-`2xx` response denies the request; OpenRun returns the auth server status, headers, and body to the client.
+
+The auth request includes these request context headers:
+
+- `X-Forwarded-Method`: the original request method
+- `X-Forwarded-Proto`: the original request scheme, honoring `security.trusted_proxies`
+- `X-Forwarded-Host`: the original request host
+- `X-Forwarded-Uri`: the original request path and query string
+- `X-Forwarded-For`: the resolved client IP
+- `X-Real-IP`: the resolved client IP
+
+OpenRun also sends trusted identity and authorization context headers to the auth server:
+
+- `X-Openrun-User` : The user making teh API call, prefixed with provider name, like `google:test@example.com`
+- `X-Openrun-User-Stripped` : The user without the provider name prefix, like `test@example.com`
+- `X-Openrun-User-Id`
+- `X-Openrun-User-Email`
+- `X-Openrun-Perms`
+- `X-Openrun-Rbac-Enabled`
+
+Client-supplied `Forwarded`, `X-Forwarded-*`, `X-Real-IP`, and `X-Openrun-*` values are not trusted. OpenRun removes them before setting its own values.
+
+`forward_headers` controls which original client request headers are copied to the auth request. If it is empty, OpenRun copies all request headers except hop-by-hop headers. Set it explicitly when the auth service only needs selected headers such as `Authorization` or `Cookie`.
+
+`copy_response_headers` controls which headers from a successful auth response are copied into the request sent to the app. It defaults to no headers. Use `Source>Target` to rename a header while copying it, as shown with `Remote-Email>X-Auth-Email` above. Headers from deny responses are sent back to the client with the deny response.
+
+`system.forward_auth_timeout_secs` sets the timeout for forward auth requests. If it is not set or is less than or equal to zero, OpenRun uses `30` seconds.
+
 ## Client Cert Authentication (mTLS)
 
 Apps can be updated to use mutual TLS authentication. To enable this, first set `disable_client_certs` to `false` in the `https` section. Add a `client_auth` config entry in server config with the CA certificate to verify against. Multiple entries can be added, the entry name should be `cert` or should start with `cert_`. For example

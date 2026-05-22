@@ -153,6 +153,8 @@ type Server struct {
 	csrfMiddleware *http.CrossOriginProtection
 	telemetry      *telemetry.Providers
 
+	forwardAuthHTTPClient *http.Client
+
 	staleContainerCleanupTicker *time.Ticker
 	staleContainerCleanupStop   chan struct{}
 }
@@ -206,6 +208,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		secretsManager: secretsManager,
 		telemetry:      telemetryProviders,
 	}
+	server.forwardAuthHTTPClient = newForwardAuthHTTPClient(config)
 	db.AppNotifyFunc = server.appNotifyHandler
 	db.ConfigNotifyFunc = server.configNotifyHandler
 	server.apps = NewAppStore(l, server)
@@ -954,6 +957,10 @@ func (s *Server) ParseGlob(appGlob string) ([]types.AppInfo, error) {
 // same authentication types as used by the caller
 func (s *Server) AuthorizeList(userId string, app *types.AppInfo, groups []string) (bool, error) {
 	appAuthStr := string(app.Auth)
+	appAuthStr, _, err := s.checkAuthModifiers(appAuthStr)
+	if err != nil {
+		return false, err
+	}
 	if s.rbacManager.RbacConfig.Enabled {
 		// RBAC auth is enabled, verify access
 		return s.rbacManager.AuthorizeInt(userId, app.AppPathDomain, appAuthStr, types.PermissionList, groups, false)
@@ -969,6 +976,11 @@ func (s *Server) AuthorizeList(userId string, app *types.AppInfo, groups []strin
 	if appAuth == types.AppAuthnDefault {
 		appAuth = types.AppAuthnType(s.config.Security.AppDefaultAuthType)
 	}
+	appAuthStr, _, err = s.checkAuthModifiers(string(appAuth))
+	if err != nil {
+		return false, err
+	}
+	appAuth = types.AppAuthnType(appAuthStr)
 
 	// Verify user_id as set in authenticateAndServeApp
 	if appAuth == "" || appAuth == types.AppAuthnNone {

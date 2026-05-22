@@ -29,6 +29,14 @@ tests:
   container0040: # check curl dev works
     command: curl -sS localhost:${HTTP_PORT}/cont_flaskdev
     stdout: "hello"
+  container0041: # setup forward auth protected app
+    command: ../openrun app create --auth=system+forward_testauth --spec python-flask ./flaskapp /forwardtarget
+  container0042: # forward auth allows /allow
+    command: curl -sS -u admin:abcd -w ' status=%{http_code}' localhost:${HTTP_PORT}/forwardtarget/allow
+    stdout: "forward auth allowed status=200"
+  container0043: # forward auth denies /disallow
+    command: curl -sS -u admin:abcd -w ' status=%{http_code}' localhost:${HTTP_PORT}/forwardtarget/disallow
+    stdout: "forward auth denied status=403"
   container0050: # update app code
     command: perl -i -pe 's/"hello"/"updated"/g' flaskapp/app.py
   container0060: # check dev picked up change

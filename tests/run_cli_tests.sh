@@ -46,11 +46,16 @@ error_handler () {
 
 cleanup() {
   rm -rf metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
-  rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp
+  rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp
 
   if [[ -n "$POSTGRES_TEST_CONTAINER_ID" ]]; then
     $POSTGRES_TEST_CONTAINER_COMMAND rm -f "$POSTGRES_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
     POSTGRES_TEST_CONTAINER_ID=""
+  fi
+
+  if [[ -n "$FORWARD_AUTH_CONTAINER_ID" ]]; then
+    $FORWARD_AUTH_CONTAINER_COMMAND rm -f "$FORWARD_AUTH_CONTAINER_ID" >/dev/null 2>&1 || true
+    FORWARD_AUTH_CONTAINER_ID=""
   fi
 
   if [[ -d ../appspecs_bk ]]; then
@@ -66,6 +71,45 @@ cleanup() {
 
   # Github Actions does not seem to allow kill, the last echo is to allow the exit code to be zero
   echo "Done with cleanup"
+}
+
+start_forward_auth_testcontainer() {
+  local container_command="$1"
+  local port="$2"
+  local expected_forward_host="$3"
+  local image_name="openrun-testauth"
+
+  rm -rf testauthapp
+  mkdir testauthapp
+  cp flask.py testauthapp/app.py
+  printf "flask\n" > testauthapp/requirements.txt
+
+  $container_command build -q -t "$image_name" -f ../config/appspecs/python-flask/Containerfile testauthapp >/dev/null
+  FORWARD_AUTH_CONTAINER_COMMAND="$container_command"
+  FORWARD_AUTH_CONTAINER_ID=$($container_command run \
+    --detach \
+    --rm \
+    --publish 127.0.0.1:$port:5000 \
+    --env EXPECTED_FORWARD_HOST="$expected_forward_host" \
+    "$image_name")
+
+  for _ in {1..60}; do
+    if curl -fsS "http://127.0.0.1:$port/" >/dev/null 2>&1; then
+      return
+    fi
+    sleep 1
+  done
+
+  $container_command logs "$FORWARD_AUTH_CONTAINER_ID" || true
+  echo "Forward auth test container did not start"
+  return 1
+}
+
+stop_forward_auth_testcontainer() {
+  if [[ -n "$FORWARD_AUTH_CONTAINER_ID" ]]; then
+    $FORWARD_AUTH_CONTAINER_COMMAND rm -f "$FORWARD_AUTH_CONTAINER_ID" >/dev/null 2>&1 || true
+    FORWARD_AUTH_CONTAINER_ID=""
+  fi
 }
 
 start_postgres_testcontainer() {
@@ -302,7 +346,10 @@ port_base=9000
 for cmd in ${CL_CONTAINER_COMMANDS}; do
     http_port=`expr $port_base + 1`
     https_port=`expr $port_base + 2`
-    port_base=`expr $port_base + 2`
+    forward_auth_port=`expr $port_base + 3`
+    port_base=`expr $port_base + 3`
+
+    start_forward_auth_testcontainer "$cmd" "$forward_auth_port" "localhost:$http_port"
 
     cat <<EOF > config_container.toml
 [http]
@@ -312,7 +359,12 @@ port = $https_port
 [system]
 container_command="$cmd"
 
+[forward.testauth]
+auth_url = "http://127.0.0.1:$forward_auth_port/forward"
+copy_response_headers = []
+
 [security]
+admin_password_bcrypt = "\$2a\$10\$Hk5/XcvwrN.JRFrjdG0vjuGZxa5JaILdir1qflIj5i9DUPUyvIK7C"
 allowed_mounts = ["/tmp"]
 
 [[permissions.allow]]
@@ -336,6 +388,7 @@ EOF
     echo "********Testing containerized apps with $cmd*********"
     commander test $CL_TEST_VERBOSE test_containers.yaml
     CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+    stop_forward_auth_testcontainer
 done
 
 if [[ $KUBE_REGISTRY_URL != "" ]]; then

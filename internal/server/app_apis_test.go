@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
@@ -54,6 +55,84 @@ func newAuthRedirectTestApp(authType types.AppAuthnType) *appcore.App {
 				AuthnType: authType,
 			},
 		},
+	}
+}
+
+func TestValidateAppAuthnTypeChecksForwardModifier(t *testing.T) {
+	t.Parallel()
+
+	server := newAuthRedirectTestServer("example.com", false)
+	server.config.Forward = map[string]types.ForwardConfig{
+		"authz": {AuthUrl: "http://auth.example.com/check"},
+	}
+	server.oAuthManager.providerConfigs["github"] = &types.AuthConfig{}
+
+	if err := server.validateAppAuthnType("github+forward_authz"); err != nil {
+		t.Fatalf("validate auth with forward modifier: %v", err)
+	}
+	if err := server.validateAppAuthnType("rbac:github+forward_authz"); err != nil {
+		t.Fatalf("validate rbac auth with forward modifier: %v", err)
+	}
+	if err := server.validateAppAuthnType("github+forward_missing"); err == nil {
+		t.Fatal("expected missing forward config error")
+	}
+	if err := server.validateAppAuthnType("github+bad_authz"); err == nil {
+		t.Fatal("expected invalid auth modifier error")
+	}
+}
+
+func TestUpdateAppMetadataConfigValidatesForwardModifier(t *testing.T) {
+	t.Parallel()
+
+	server := newAuthRedirectTestServer("example.com", false)
+	server.config.Forward = map[string]types.ForwardConfig{
+		"authz": {AuthUrl: "http://auth.example.com/check"},
+	}
+	server.oAuthManager.providerConfigs["github"] = &types.AuthConfig{}
+	appEntry := &types.AppEntry{}
+
+	err := server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_missing"})
+	if err == nil {
+		t.Fatal("expected missing forward config error")
+	}
+
+	err = server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_authz"})
+	if err != nil {
+		t.Fatalf("update auth metadata: %v", err)
+	}
+	if appEntry.Metadata.AuthnType != "github+forward_authz" {
+		t.Fatalf("auth = %q, want %q", appEntry.Metadata.AuthnType, "github+forward_authz")
+	}
+}
+
+func TestAuthorizeListStripsForwardModifier(t *testing.T) {
+	t.Parallel()
+
+	server := newAuthRedirectTestServer("example.com", false)
+	server.config.Security.AppDefaultAuthType = "github+forward_authz"
+	server.config.Forward = map[string]types.ForwardConfig{
+		"authz": {AuthUrl: "http://auth.example.com/check"},
+	}
+
+	tests := map[string]types.AppAuthnType{
+		"explicit auth modifier": "github+forward_authz",
+		"default auth modifier":  types.AppAuthnDefault,
+	}
+
+	for name, authType := range tests {
+		t.Run(name, func(t *testing.T) {
+			appInfo := &types.AppInfo{
+				AppPathDomain: types.AppPathDomain{Path: "/myapp"},
+				Auth:          authType,
+			}
+			authorized, err := server.AuthorizeList("github:user-123", appInfo, nil)
+			if err != nil {
+				t.Fatalf("authorize list: %v", err)
+			}
+			if !authorized {
+				t.Fatal("expected list authorization")
+			}
+		})
 	}
 }
 

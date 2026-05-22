@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.17.4] - 2026-05-21
+
+### Added
+
+- Added forward auth support for apps using auth modifiers such as `system+forward_policy`, with named `[forward.<name>]` configs, trusted forwarded/OpenRun identity headers and configurable copied response headers.
+
 ## [v0.17.3] - 2026-05-18
 
 ### Changed

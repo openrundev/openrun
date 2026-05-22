@@ -499,6 +499,9 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		return info.AppAuthn
 	}, newInfo.AppAuthn, liveApp.Metadata.AuthnType, clobber)
 	if authChanged {
+		if err := s.validateAppAuthnType(string(newInfo.AppAuthn)); err != nil {
+			return nil, err
+		}
 		liveApp.Metadata.AuthnType = newInfo.AppAuthn
 	}
 
