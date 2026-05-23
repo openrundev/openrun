@@ -118,11 +118,12 @@ start_postgres_testcontainer() {
   fi
 
   POSTGRES_TEST_CONTAINER_COMMAND="${OPENRUN_TEST_CONTAINER_COMMAND:-docker}"
+  local publish_addr="${POSTGRES_TEST_CONTAINER_PUBLISH_ADDR:-127.0.0.1}"
   echo "Starting postgres test container with $POSTGRES_TEST_CONTAINER_COMMAND"
   POSTGRES_TEST_CONTAINER_ID=$($POSTGRES_TEST_CONTAINER_COMMAND run \
     --detach \
     --rm \
-    --publish 127.0.0.1::5432 \
+    --publish "${publish_addr}::5432" \
     --env POSTGRES_DB=openrun_cli \
     --env POSTGRES_USER=postgres \
     --env POSTGRES_PASSWORD=postgres \
@@ -288,6 +289,12 @@ EOF
 
 export TESTENV=abc
 export c1c2_c3=xyz
+if [[ "$CL_CONTAINER_COMMANDS" != "disable" && ( -z "$CL_SINGLE_TEST" || "$CL_SINGLE_TEST" = "test_postgres_container.yaml" ) ]]; then
+  # Containerized apps need to reach the test Postgres through the host gateway.
+  # Binding only to 127.0.0.1 works for the host OpenRun process, but not for
+  # sibling containers on Linux self-hosted runners.
+  export POSTGRES_TEST_CONTAINER_PUBLISH_ADDR="${POSTGRES_TEST_CONTAINER_PUBLISH_ADDR:-0.0.0.0}"
+fi
 start_postgres_testcontainer
 GOCOVERDIR=$GOCOVERDIR ../openrun server start &
 sleep 2
@@ -316,7 +323,7 @@ elif [[ $CL_SINGLE_TEST != "disable" ]]; then
     fi
 fi
 
-if [[ -n $CL_SINGLE_TEST && -z $CL_TEST_CONTAINER ]]; then
+if [[ -n $CL_SINGLE_TEST && -z $CL_TEST_CONTAINER && "$CL_SINGLE_TEST" != "test_containers.yaml" && "$CL_SINGLE_TEST" != "test_postgres_container.yaml" ]]; then
     CL_CONTAINER_COMMANDS="disable"
 fi
 
