@@ -40,10 +40,6 @@ const (
 	ContainerStateHealthFailure ContainerState = "health_failure"
 )
 
-const (
-	MAX_RETRIES_FOR_VERSION_MISMATCH = 10
-)
-
 type ContainerHandler struct {
 	*types.Logger
 	manager         container.ContainerManager
@@ -81,12 +77,16 @@ type ContainerHandler struct {
 	mountArgs         []string
 	cargs             map[string]string
 	proxyTracker      *Tracker // Track bytes sent and received by the proxy
+
+	envMap     map[string]string
+	envMapHash string
+	bindings   []*types.Binding
 }
 
 func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	serverConfig *types.ServerConfig, configPort int32, lifetime, scheme, health, buildDir string, sourceFS appfs.ReadableFS,
 	paramMap map[string]string, containerConfig types.Container, stripAppPath bool,
-	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any) (*ContainerHandler, error) {
+	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any, bindings []*types.Binding) (*ContainerHandler, error) {
 
 	var containerManager container.ContainerManager
 	var err error
@@ -180,7 +180,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		cargs_map[k] = val
 	}
 
-	m := &ContainerHandler{
+	h := &ContainerHandler{
 		Logger:          logger,
 		app:             app,
 		containerFile:   containerFile,
@@ -198,20 +198,26 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		currentState:    ContainerStateUnknown,
 		stripAppPath:    stripAppPath,
 		cargs:           cargs_map,
+		bindings:        bindings,
+	}
+
+	h.envMap, h.envMapHash, err = h.getEnvMapAndHash()
+	if err != nil {
+		return nil, fmt.Errorf("error getting env map hash: %w", err)
 	}
 
 	if containerConfig.IdleShutdownSecs > 0 &&
 		(!app.IsDev || containerConfig.IdleShutdownDevApps) {
 		// Start the idle shutdown check
-		m.idleShutdownTicker = time.NewTicker(time.Duration(containerConfig.IdleShutdownSecs) * time.Second)
-		go m.idleAppShutdown(context.Background())
+		h.idleShutdownTicker = time.NewTicker(time.Duration(containerConfig.IdleShutdownSecs) * time.Second)
+		go h.idleAppShutdown(context.Background())
 	}
 
-	m.health = m.GetHealthUrl(health)
-	if containerConfig.StatusCheckIntervalSecs > 0 && m.lifetime != types.CONTAINER_LIFETIME_COMMAND {
+	h.health = h.GetHealthUrl(health)
+	if containerConfig.StatusCheckIntervalSecs > 0 && h.lifetime != types.CONTAINER_LIFETIME_COMMAND {
 		// Start the health check goroutine
-		m.healthCheckTicker = time.NewTicker(time.Duration(containerConfig.StatusCheckIntervalSecs) * time.Second)
-		go m.healthChecker(context.Background())
+		h.healthCheckTicker = time.NewTicker(time.Duration(containerConfig.StatusCheckIntervalSecs) * time.Second)
+		go h.healthChecker(context.Background())
 	}
 
 	excludeGlob := []string{}
@@ -223,19 +229,19 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	if len(templateFiles) != 0 { // a.UsesHtmlTemplate is set in initRouter, so it cannot be used here
 		excludeGlob = app.codeConfig.Routing.ContainerExclude
 	}
-	m.excludeGlob = excludeGlob
+	h.excludeGlob = excludeGlob
 
 	volumeInfo := make([]*container.VolumeInfo, 0, len(volumes))
 	for _, vol := range volumes {
-		volInfo, err := m.parseVolumeString(vol)
+		volInfo, err := h.parseVolumeString(vol)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing volume %s: %w", vol, err)
 		}
 		volumeInfo = append(volumeInfo, volInfo)
 	}
-	m.volumeInfo = volumeInfo
+	h.volumeInfo = volumeInfo
 
-	return m, nil
+	return h, nil
 }
 
 const (
@@ -429,53 +435,39 @@ func getSliceHash(input []string) (string, error) {
 	return hex.EncodeToString(sha.Sum(nil)), nil
 }
 
-func (h *ContainerHandler) GetEnvMap() (map[string]string, string) {
-	paramKeys := []string{}
-	for k := range h.paramMap {
-		paramKeys = append(paramKeys, k)
-	}
-	slices.Sort(paramKeys) // Sort the keys to ensure consistent hash
-
-	ret := map[string]string{}
-	hashBuilder := strings.Builder{}
-	for _, paramName := range paramKeys {
-		paramVal := h.paramMap[paramName]
-		// Default to string
-		hashBuilder.WriteString(paramName)
-		hashBuilder.WriteByte(0)
-		hashBuilder.WriteString(paramVal)
-		hashBuilder.WriteByte(0)
+func (h *ContainerHandler) getEnvMap() map[string]string {
+	ret := make(map[string]string)
+	for paramName, paramVal := range h.paramMap {
 		ret[paramName] = paramVal
 	}
 
-	// Add the app path to the return map and hash
 	pathValue := h.app.Path
 	if pathValue == "/" {
 		pathValue = ""
 	}
-	hashBuilder.WriteString("CL_APP_PATH")
-	hashBuilder.WriteByte(0)
-	hashBuilder.WriteString(pathValue)
-	hashBuilder.WriteByte(0)
 	ret["CL_APP_PATH"] = pathValue
 
 	// Add the port number to use into the env
 	// Using PORT instead of CL_PORT since that seems to be the most common convention across apps
-	hashBuilder.WriteString("PORT")
-	hashBuilder.WriteByte(0)
-	portStr := strconv.FormatInt(int64(h.port), 10)
-	hashBuilder.WriteString(portStr)
-	hashBuilder.WriteByte(0)
-	ret["PORT"] = portStr
+	ret["PORT"] = strconv.FormatInt(int64(h.port), 10)
 
-	appUrl := types.GetAppUrl(h.app.AppPathDomain(), h.app.serverConfig)
-	hashBuilder.WriteString("CL_APP_URL")
-	hashBuilder.WriteByte(0)
-	hashBuilder.WriteString(appUrl)
-	hashBuilder.WriteByte(0)
-	ret["CL_APP_URL"] = appUrl
+	ret["CL_APP_URL"] = types.GetAppUrl(h.app.AppPathDomain(), h.app.serverConfig)
 
-	return ret, hashBuilder.String()
+	// Add the binding environment variables to the env map
+	bindingEnv := h.getBindingEnv()
+	for k, v := range bindingEnv {
+		ret[k] = v
+	}
+	return ret
+}
+
+func (h *ContainerHandler) getEnvMapAndHash() (map[string]string, string, error) {
+	envMap := h.getEnvMap()
+	envMapHash, err := getMapHash(envMap)
+	if err != nil {
+		return nil, "", err
+	}
+	return envMap, envMapHash, nil
 }
 
 func (h *ContainerHandler) createSpecFiles() ([]string, error) {
@@ -697,9 +689,8 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 		// Command lifetime, service is not started, commands will be run with the image
 		return nil
 	}
-	envMap, _ := h.GetEnvMap()
 	err = devCM.RunContainer(ctx, h.app.AppEntry, h.app.SourceUrl, containerName,
-		h.GenImageName, h.port, envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, "", h.IsImageSpec())
+		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, "", h.IsImageSpec())
 	if err != nil {
 		return fmt.Errorf("error running container: %w", err)
 	}
@@ -801,8 +792,6 @@ func (h *ContainerHandler) getAppHash() (string, error) {
 		return "", fmt.Errorf("error getting file hash: %w", err)
 	}
 
-	_, envHash := h.GetEnvMap()
-
 	coptHash, err := getMapHash(h.app.Metadata.ContainerOptions)
 	if err != nil {
 		return "", fmt.Errorf("error getting copt hash: %w", err)
@@ -832,7 +821,7 @@ func (h *ContainerHandler) getAppHash() (string, error) {
 		imageDigest = h.imageDigest
 		h.stateLock.RUnlock()
 	}
-	fullHashVal := fmt.Sprintf("%s-%s-%s-%s-%s", sourceHash, envHash, coptHash, cargHash, cvolHash)
+	fullHashVal := fmt.Sprintf("%s-%s-%s-%s-%s", sourceHash, h.envMapHash, coptHash, cargHash, cvolHash)
 	if imageDigest != "" {
 		fullHashVal += "-" + imageDigest
 	}
@@ -842,7 +831,7 @@ func (h *ContainerHandler) getAppHash() (string, error) {
 	}
 	fullHash := hex.EncodeToString(sha.Sum(nil))
 	h.Debug().Msgf("Source hash %s Env hash %s copt hash %s args hash %s cvol hash %s image digest %q Full hash %s",
-		sourceHash, envHash, coptHash, cargHash, cvolHash, imageDigest, fullHash)
+		sourceHash, h.envMapHash, coptHash, cargHash, cvolHash, imageDigest, fullHash)
 	return fullHash, nil
 }
 
@@ -1000,9 +989,8 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 		// Command lifetime, service is not started, commands will be run with the image
 		return nil
 	}
-	envMap, _ := h.GetEnvMap()
 	err = h.manager.RunContainer(ctx, h.app.AppEntry, sourceDir, containerName,
-		h.GenImageName, h.port, envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, fullHash, h.IsImageSpec())
+		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, fullHash, h.IsImageSpec())
 	if err != nil {
 		return fmt.Errorf("error starting container after update: %w", err)
 	}
@@ -1058,10 +1046,9 @@ func (h *ContainerHandler) Close() error {
 
 func (h *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []string, env []string) (*exec.Cmd, error) {
 	args := []string{"run", "--rm"}
-	envMap, _ := h.GetEnvMap()
 
 	// Add env args
-	for k, v := range envMap {
+	for k, v := range h.envMap {
 		args = append(args, "--env", fmt.Sprintf("%s=%s", k, v))
 	}
 
@@ -1082,8 +1069,38 @@ func (h *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []strin
 
 	args = append(args, string(h.GenImageName), path)
 	args = append(args, cmdArgs...)
-	h.Debug().Msgf("Running command with args: %v", args)
+	h.Debug().Msgf("Running command with args: %v", container.RedactEnvArgs(args))
 
 	cmd := exec.CommandContext(ctx, h.serverConfig.System.ContainerCommand, args...)
 	return cmd, nil
+}
+
+func (h *ContainerHandler) getBindingEnv() map[string]string {
+	useStaging := true // stage, dev and preview apps use staging binding
+	if strings.HasPrefix(string(h.app.AppEntry.Id), types.ID_PREFIX_APP_PROD) {
+		// this is a prod app.
+		useStaging = false
+	}
+
+	env := make(map[string]string)
+	serviceTypeCount := make(map[string]int)
+	for _, binding := range h.bindings {
+		serviceTypeCount[binding.ServiceType]++
+
+		countSuffix := ""
+		// first binding of postgres type will use POSTGRES_URL, second will use POSTGRES2_URL, etc.
+		if serviceTypeCount[binding.ServiceType] > 1 {
+			countSuffix = strconv.Itoa(serviceTypeCount[binding.ServiceType])
+		}
+		envPrefix := strings.ToUpper(binding.ServiceType) + countSuffix
+		account := binding.Metadata.Account
+		if useStaging {
+			account = binding.StagedMetadata.Account
+		}
+
+		for k, v := range account {
+			env[envPrefix+"_"+strings.ToUpper(k)] = v
+		}
+	}
+	return env
 }

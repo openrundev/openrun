@@ -497,6 +497,15 @@ func (s *Server) GetBinding(ctx context.Context, path string) (*types.Binding, e
 	return redactBindingAccount(binding), nil
 }
 
+// GetBindingWithAccount gets the binding with the account info un-redacted.
+func (s *Server) GetBindingWithAccount(ctx context.Context, tx types.Transaction, path string) (*types.Binding, error) {
+	binding, err := s.db.GetBinding(ctx, tx, path)
+	if err != nil {
+		return nil, err
+	}
+	return binding, nil
+}
+
 func (s *Server) ListBindings(ctx context.Context, source string) ([]*types.Binding, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {

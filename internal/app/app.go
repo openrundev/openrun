@@ -103,6 +103,7 @@ type App struct {
 	telemetryIdentityAttrs []attribute.KeyValue
 
 	activeContainerName container.ContainerName
+	bindings            []*types.Binding
 }
 
 type starlarkCacheEntry struct {
@@ -120,7 +121,7 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 	plugins map[string]types.PluginSettings, appConfig types.AppConfig, notifyClose chan<- types.AppPathDomain,
 	secretEvalFunc func([][]string, string, string) (string, error),
 	auditInsert func(*types.AuditEvent) error, serverConfig *types.ServerConfig,
-	rbacApi rbac.RBACAPI) (*App, error) {
+	rbacApi rbac.RBACAPI, bindings []*types.Binding) (*App, error) {
 	newApp := &App{
 		sourceFS:       sourceFS,
 		Logger:         logger,
@@ -133,6 +134,7 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 		auditInsert:    auditInsert,
 		serverConfig:   serverConfig,
 		rbacApi:        rbacApi,
+		bindings:       bindings,
 	}
 	newApp.plugins = NewAppPlugins(newApp, plugins, appEntry.Metadata.Accounts)
 	newApp.AppConfig = appConfig
@@ -550,7 +552,7 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 	a.containerHandler, err = NewContainerHandler(a.Logger, a,
 		fileName, a.serverConfig, portInt, lifetime, scheme, health, buildDir,
 		a.sourceFS, a.paramValuesStr, a.AppConfig.Container, stripAppPath, volumes,
-		a.getSecretsAllowed("container.in", "config"), cargs)
+		a.getSecretsAllowed("container.in", "config"), cargs, a.bindings)
 	if err != nil {
 		return fmt.Errorf("error creating container handler: %w", err)
 	}

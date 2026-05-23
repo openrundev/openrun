@@ -53,7 +53,7 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 		return nil, err
 	}
 
-	app, err := s.setupApp(appEntry, tx)
+	app, err := s.setupApp(ctx, appEntry, tx)
 	if err != nil {
 		return nil, fmt.Errorf("error setting up app %s: %w", appEntry, err)
 	}
@@ -92,7 +92,7 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 			return nil, err
 		}
 		promoteResults = append(promoteResults, appEntry.AppPathDomain())
-		prodApp, err := s.setupApp(prodAppEntry, tx)
+		prodApp, err := s.setupApp(ctx, prodAppEntry, tx)
 		if err != nil {
 			return nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
 		}
@@ -290,7 +290,7 @@ func (s *Server) StagedUpdateAppsTx(ctx context.Context, tx types.Transaction, a
 			}
 
 			// prod app audit result is not added to results, since it will be same as the staging app
-			prodApp, err := s.setupApp(prodAppEntry, tx)
+			prodApp, err := s.setupApp(ctx, prodAppEntry, tx)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
 			}
@@ -307,7 +307,7 @@ func (s *Server) StagedUpdateAppsTx(ctx context.Context, tx types.Transaction, a
 
 func (s *Server) auditHandler(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, args map[string]any) (any, types.AppPathDomain, error) {
 	appPathDomain := appEntry.AppPathDomain()
-	app, err := s.setupApp(appEntry, tx)
+	app, err := s.setupApp(ctx, appEntry, tx)
 	if err != nil {
 		return nil, appPathDomain, err
 	}
@@ -352,7 +352,7 @@ func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun boo
 			return nil, err
 		}
 
-		prodApp, err := s.setupApp(prodAppEntry, tx)
+		prodApp, err := s.setupApp(ctx, prodAppEntry, tx)
 		if err != nil {
 			return nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
 		}

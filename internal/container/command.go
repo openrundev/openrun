@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -369,7 +370,7 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
 	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool) error {
 	c.Debug().Msgf("Running container %s from image %s with port %d env %+v mountArgs %+v",
-		containerName, imageName, port, envMap, volumes)
+		containerName, imageName, port, slices.Collect(maps.Keys(envMap)), volumes)
 	publish := fmt.Sprintf("127.0.0.1::%d", port)
 
 	imageUrl := string(imageName)
@@ -420,7 +421,7 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 
 	args = append(args, imageUrl)
 
-	c.Debug().Msgf("Running container with args: %v", args)
+	c.Debug().Msgf("Running container with args: %v", RedactEnvArgs(args))
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

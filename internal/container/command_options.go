@@ -40,6 +40,35 @@ func CommandOptionArgs(options CommandOptions, allowedContainerArgs map[string]s
 	return args, nil
 }
 
+func RedactEnvArgs(args []string) []string {
+	redacted := make([]string, len(args))
+	copy(redacted, args)
+
+	for i := 0; i < len(redacted); i++ {
+		switch {
+		case redacted[i] == "--env" || redacted[i] == "-e":
+			if i+1 < len(redacted) {
+				redacted[i+1] = redactEnvAssignment(redacted[i+1])
+				i++
+			}
+		case strings.HasPrefix(redacted[i], "--env="):
+			redacted[i] = "--env=" + redactEnvAssignment(strings.TrimPrefix(redacted[i], "--env="))
+		case strings.HasPrefix(redacted[i], "-e="):
+			redacted[i] = "-e=" + redactEnvAssignment(strings.TrimPrefix(redacted[i], "-e="))
+		}
+	}
+
+	return redacted
+}
+
+func redactEnvAssignment(arg string) string {
+	key, _, ok := strings.Cut(arg, "=")
+	if !ok {
+		return arg
+	}
+	return key + "=<redacted>"
+}
+
 func commandOtherOptionArgs(options map[string]any, allowedContainerArgs map[string]string) ([]string, error) {
 	keys := make([]string, 0, len(options))
 	for k := range options {

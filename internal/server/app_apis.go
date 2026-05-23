@@ -267,7 +267,7 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	}
 
 	// Create the in memory app object
-	application, err := s.setupApp(workEntry, tx)
+	application, err := s.setupApp(ctx, workEntry, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +300,7 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 			return nil, err
 		}
 
-		prodApp, err := s.setupApp(appEntry, tx)
+		prodApp, err := s.setupApp(ctx, appEntry, tx)
 		if err != nil {
 			return nil, err
 		}
@@ -343,7 +343,7 @@ func (s *Server) getAppHttpsUrl(appEntry *types.AppEntry) string {
 	return fmt.Sprintf("%s://%s:%d%s", "https", domain, s.config.Https.Port, appEntry.Path)
 }
 
-func (s *Server) setupApp(appEntry *types.AppEntry, tx types.Transaction) (*app.App, error) {
+func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx types.Transaction) (*app.App, error) {
 	subLogger := s.With().Str("id", string(appEntry.Id)).Str("path", appEntry.Path).Logger()
 	appLogger := types.Logger{Logger: &subLogger}
 	var sourceFS *appfs.SourceFs
@@ -377,9 +377,36 @@ func (s *Server) setupApp(appEntry *types.AppEntry, tx types.Transaction) (*app.
 		&appfs.DiskWriteFS{
 			DiskReadFS: appfs.NewDiskReadFS(&appLogger, appPath, *appEntry.Metadata.SpecFiles),
 		})
+
+	bindings, err := s.getAppBindings(ctx, tx, appEntry)
+	if err != nil {
+		return nil, err
+	}
 	return app.NewApp(sourceFS, workFS, &appLogger, appEntry, &s.config.System,
 		s.config.Plugins, s.config.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
-		s.InsertAuditEvent, s.config, s.rbacManager)
+		s.InsertAuditEvent, s.config, s.rbacManager, bindings)
+}
+
+func (s *Server) getAppBindings(ctx context.Context, inpTx types.Transaction, appEntry *types.AppEntry) ([]*types.Binding, error) {
+	tx := inpTx
+	var err error
+	if !inpTx.IsInitialized() {
+		tx, err = s.db.BeginTransaction(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback() //nolint:errcheck
+	}
+
+	bindings := []*types.Binding{}
+	for _, bindingPath := range appEntry.Metadata.Bindings {
+		binding, err := s.GetBindingWithAccount(ctx, tx, bindingPath)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, nil
 }
 
 func (s *Server) GetAppApi(ctx context.Context, appPath string) (*types.AppGetResponse, error) {
@@ -417,7 +444,7 @@ func (s *Server) GetApp(ctx context.Context, pathDomain types.AppPathDomain, ini
 			return nil, err
 		}
 
-		application, err = s.setupApp(appEntry, types.Transaction{})
+		application, err = s.setupApp(ctx, appEntry, types.Transaction{})
 		if err != nil {
 			return nil, err
 		}
@@ -1282,7 +1309,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	}
 
 	// Create the in memory app object
-	application, err := s.setupApp(&previewAppEntry, tx)
+	application, err := s.setupApp(ctx, &previewAppEntry, tx)
 	if err != nil {
 		return nil, err
 	}
