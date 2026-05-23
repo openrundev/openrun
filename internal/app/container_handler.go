@@ -1076,11 +1076,8 @@ func (h *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []strin
 }
 
 func (h *ContainerHandler) getBindingEnv() map[string]string {
-	useStaging := true // stage, dev and preview apps use staging binding
-	if strings.HasPrefix(string(h.app.AppEntry.Id), types.ID_PREFIX_APP_PROD) {
-		// this is a prod app.
-		useStaging = false
-	}
+	// stage, dev and preview apps use staging binding
+	useProdAccount := strings.HasPrefix(string(h.app.Id), types.ID_PREFIX_APP_PROD)
 
 	env := make(map[string]string)
 	serviceTypeCount := make(map[string]int)
@@ -1093,9 +1090,9 @@ func (h *ContainerHandler) getBindingEnv() map[string]string {
 			countSuffix = strconv.Itoa(serviceTypeCount[binding.ServiceType])
 		}
 		envPrefix := strings.ToUpper(binding.ServiceType) + countSuffix
-		account := binding.Metadata.Account
-		if useStaging {
-			account = binding.StagedMetadata.Account
+		account := binding.StagedMetadata.Account
+		if useProdAccount {
+			account = binding.Metadata.Account
 		}
 
 		for k, v := range account {

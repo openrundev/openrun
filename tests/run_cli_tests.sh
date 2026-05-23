@@ -46,7 +46,7 @@ error_handler () {
 
 cleanup() {
   rm -rf metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
-  rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp
+  rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp
 
   if [[ -n "$POSTGRES_TEST_CONTAINER_ID" ]]; then
     $POSTGRES_TEST_CONTAINER_COMMAND rm -f "$POSTGRES_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
@@ -309,6 +309,8 @@ elif [[ $CL_SINGLE_TEST != "disable" ]]; then
         else
             echo "Skipping $CL_SINGLE_TEST; TEST_POSTGRES_URL is not set"
         fi
+    elif [[ $CL_SINGLE_TEST = "test_containers.yaml" || $CL_SINGLE_TEST = "test_postgres_container.yaml" ]]; then
+        echo "Deferring $CL_SINGLE_TEST to containerized app test phase"
     else
         commander test $CL_TEST_VERBOSE ./commander/$CL_SINGLE_TEST
     fi
@@ -344,6 +346,7 @@ fi
 export PYTHON_VERSION=3.14
 port_base=9000
 for cmd in ${CL_CONTAINER_COMMANDS}; do
+    export OPENRUN_CONTAINER_COMMAND="$cmd"
     http_port=`expr $port_base + 1`
     https_port=`expr $port_base + 2`
     forward_auth_port=`expr $port_base + 3`
@@ -386,7 +389,16 @@ EOF
 
     export HTTP_PORT=$http_port
     echo "********Testing containerized apps with $cmd*********"
-    commander test $CL_TEST_VERBOSE test_containers.yaml
+    if [[ -z "$CL_SINGLE_TEST" || "$CL_SINGLE_TEST" = "test_containers.yaml" ]]; then
+        commander test $CL_TEST_VERBOSE test_containers.yaml
+    fi
+    if [[ -z "$CL_SINGLE_TEST" || "$CL_SINGLE_TEST" = "test_postgres_container.yaml" ]]; then
+        if [[ -n "$TEST_POSTGRES_URL" ]]; then
+            commander test $CL_TEST_VERBOSE test_postgres_container.yaml
+        else
+            echo "Skipping test_postgres_container.yaml; TEST_POSTGRES_URL is not set"
+        fi
+    fi
     CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
     stop_forward_auth_testcontainer
 done

@@ -1,0 +1,119 @@
+config:
+  env:
+    CL_CONFIG_FILE: config_container.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    HTTP_PORT: ${HTTP_PORT}
+    OPENRUN_CONTAINER_COMMAND: ${OPENRUN_CONTAINER_COMMAND}
+    PATH: ${PATH}
+    TEST_POSTGRES_URL: ${TEST_POSTGRES_URL}
+
+tests:
+  postgres_container0010: # setup flask app
+    command: |
+      rm -rf ./pg_flaskapp
+      mkdir ./pg_flaskapp
+      cat > ./pg_flaskapp/requirements.txt <<'EOF'
+      flask
+      pg8000
+      EOF
+      cat > ./pg_flaskapp/app.py <<'EOF'
+      import os
+      from urllib.parse import unquote, urlparse
+
+      import pg8000.dbapi
+      from flask import Flask
+
+      app = Flask(__name__)
+
+
+      def connection_kwargs(url, host):
+          parsed = urlparse(url)
+          return {
+              "user": unquote(parsed.username or ""),
+              "password": unquote(parsed.password or ""),
+              "host": host,
+              "port": parsed.port or 5432,
+              "database": (parsed.path or "/").lstrip("/") or "postgres",
+          }
+
+
+      def candidate_hosts(url):
+          parsed = urlparse(url)
+          hosts = [parsed.hostname]
+          if parsed.hostname in ("127.0.0.1", "localhost"):
+              hosts.extend(["host.docker.internal", "host.containers.internal"])
+          seen = set()
+          for host in hosts:
+              if host and host not in seen:
+                  seen.add(host)
+                  yield host
+
+
+      @app.route("/")
+      def setup_db():
+          url = os.environ.get("POSTGRES_URL", "")
+          if not url:
+              return "POSTGRES_URL missing", 500
+
+          last_error = ""
+          for host in candidate_hosts(url):
+              try:
+                  conn = pg8000.dbapi.connect(**connection_kwargs(url, host))
+                  cursor = conn.cursor()
+                  cursor.execute("create table if not exists container_binding_items (id integer primary key, note text)")
+                  cursor.execute("create table if not exists container_binding_audit (id integer primary key, event text)")
+                  cursor.execute("insert into container_binding_items (id, note) values (1, 'from flask') on conflict (id) do nothing")
+                  cursor.execute("insert into container_binding_audit (id, event) values (1, 'created') on conflict (id) do nothing")
+                  conn.commit()
+                  cursor.execute("select current_schema(), count(*) from container_binding_items")
+                  schema, count = cursor.fetchone()
+                  cursor.close()
+                  conn.close()
+                  return f"source=POSTGRES_URL host={host} schema={schema} count={count}"
+              except Exception as exc:
+                  last_error = f"{type(exc).__name__}: {exc}"
+          return last_error, 500
+      EOF
+
+  postgres_container0020: # setup postgres service
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/pgcontainer
+    stdout: "Service postgres/pgcontainer created"
+
+  postgres_container0030: # setup binding
+    command: ../openrun binding create postgres/pgcontainer /pgcontainer/b1
+    stdout: "Binding /pgcontainer/b1 created"
+
+  postgres_container0040: # create app with postgres binding
+    command: |
+      extra_args=""
+      if [[ "${OPENRUN_CONTAINER_COMMAND:-}" = "docker" ]]; then
+        extra_args="--copt add-host=host.docker.internal:host-gateway"
+      fi
+      ../openrun app create --spec python-flask --bind /pgcontainer/b1 $extra_args ./pg_flaskapp /pg_container
+    stdout: "App: /pg_container"
+
+  postgres_container0050: # prod container receives POSTGRES_URL and creates the table
+    command: curl -sS localhost:${HTTP_PORT}/pg_container
+    stdout: "source=POSTGRES_URL"
+
+  postgres_container0060: # prod table was created through the binding account
+    command: ../openrun binding run-command /pgcontainer/b1 "select count(*) as n from container_binding_items" | jq -r '.rows[0].n'
+    stdout:
+      exactly: "1\n"
+
+  postgres_container0065: # prod app created a second table through the binding account
+    command: ../openrun binding run-command /pgcontainer/b1 "select count(*) as n from container_binding_audit" | jq -r '.rows[0].n'
+    stdout:
+      exactly: "1\n"
+
+  postgres_container0070: # stage container receives the staging POSTGRES_URL
+    command: curl -sS localhost:${HTTP_PORT}/pg_container_cl_stage
+    stdout: "schema=cl_sch_stg_"
+
+  postgres_container0080: # staging table was created in the staging binding schema
+    command: ../openrun binding run-command --staging /pgcontainer/b1 "select count(*) as n from container_binding_items" | jq -r '.rows[0].n'
+    stdout:
+      exactly: "1\n"
+
+  postgres_container9999: # cleanup
+    command: (../openrun app delete /pg_container; ../openrun binding delete /pgcontainer/b1; ../openrun service delete postgres/pgcontainer; rm -rf ./pg_flaskapp) || true
