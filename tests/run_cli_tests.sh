@@ -52,6 +52,10 @@ cleanup() {
     $POSTGRES_TEST_CONTAINER_COMMAND rm -f "$POSTGRES_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
     POSTGRES_TEST_CONTAINER_ID=""
   fi
+  if [[ -n "$POSTGRES_TEST_CONTAINER_NETWORK" ]]; then
+    $POSTGRES_TEST_CONTAINER_COMMAND network rm "$POSTGRES_TEST_CONTAINER_NETWORK" >/dev/null 2>&1 || true
+    POSTGRES_TEST_CONTAINER_NETWORK=""
+  fi
 
   if [[ -n "$FORWARD_AUTH_CONTAINER_ID" ]]; then
     $FORWARD_AUTH_CONTAINER_COMMAND rm -f "$FORWARD_AUTH_CONTAINER_ID" >/dev/null 2>&1 || true
@@ -119,11 +123,18 @@ start_postgres_testcontainer() {
 
   POSTGRES_TEST_CONTAINER_COMMAND="${OPENRUN_TEST_CONTAINER_COMMAND:-docker}"
   local publish_addr="${POSTGRES_TEST_CONTAINER_PUBLISH_ADDR:-127.0.0.1}"
+  local network_args=()
+  if [[ -n "$POSTGRES_TEST_CONTAINER_NETWORK" ]]; then
+    $POSTGRES_TEST_CONTAINER_COMMAND network rm "$POSTGRES_TEST_CONTAINER_NETWORK" >/dev/null 2>&1 || true
+    $POSTGRES_TEST_CONTAINER_COMMAND network create "$POSTGRES_TEST_CONTAINER_NETWORK" >/dev/null
+    network_args=(--network "$POSTGRES_TEST_CONTAINER_NETWORK" --network-alias openrun-postgres)
+  fi
   echo "Starting postgres test container with $POSTGRES_TEST_CONTAINER_COMMAND"
   POSTGRES_TEST_CONTAINER_ID=$($POSTGRES_TEST_CONTAINER_COMMAND run \
     --detach \
     --rm \
     --publish "${publish_addr}::5432" \
+    "${network_args[@]}" \
     --env POSTGRES_DB=openrun_cli \
     --env POSTGRES_USER=postgres \
     --env POSTGRES_PASSWORD=postgres \
@@ -290,10 +301,11 @@ EOF
 export TESTENV=abc
 export c1c2_c3=xyz
 if [[ "$CL_CONTAINER_COMMANDS" != "disable" && ( -z "$CL_SINGLE_TEST" || "$CL_SINGLE_TEST" = "test_postgres_container.yaml" ) ]]; then
-  # Containerized apps need to reach the test Postgres through the host gateway.
-  # Binding only to 127.0.0.1 works for the host OpenRun process, but not for
-  # sibling containers on Linux self-hosted runners.
+  # Containerized apps need to reach the test Postgres from inside their own
+  # container. Put the app and Postgres containers on one user-defined network
+  # so the app can connect to the postgres alias on port 5432.
   export POSTGRES_TEST_CONTAINER_PUBLISH_ADDR="${POSTGRES_TEST_CONTAINER_PUBLISH_ADDR:-0.0.0.0}"
+  export POSTGRES_TEST_CONTAINER_NETWORK="${POSTGRES_TEST_CONTAINER_NETWORK:-openrun-postgres-test}"
 fi
 start_postgres_testcontainer
 GOCOVERDIR=$GOCOVERDIR ../openrun server start &
@@ -401,7 +413,11 @@ EOF
     fi
     if [[ -z "$CL_SINGLE_TEST" || "$CL_SINGLE_TEST" = "test_postgres_container.yaml" ]]; then
         if [[ -n "$TEST_POSTGRES_URL" ]]; then
-            commander test $CL_TEST_VERBOSE test_postgres_container.yaml
+            if [[ -z "$POSTGRES_TEST_CONTAINER_COMMAND" || "$cmd" = "$POSTGRES_TEST_CONTAINER_COMMAND" ]]; then
+                commander test $CL_TEST_VERBOSE test_postgres_container.yaml
+            else
+                echo "Skipping test_postgres_container.yaml for $cmd; postgres test container is running under $POSTGRES_TEST_CONTAINER_COMMAND"
+            fi
         else
             echo "Skipping test_postgres_container.yaml; TEST_POSTGRES_URL is not set"
         fi
