@@ -61,7 +61,7 @@ tests:
           if not url:
               return "POSTGRES_URL missing", 500
 
-          last_error = ""
+          errors = []
           for host, port in candidate_endpoints(url):
               try:
                   conn = pg8000.dbapi.connect(**connection_kwargs(url, host, port))
@@ -77,8 +77,8 @@ tests:
                   conn.close()
                   return f"source=POSTGRES_URL host={host} port={port} schema={schema} count={count}"
               except Exception as exc:
-                  last_error = f"{type(exc).__name__}: {exc}"
-          return last_error, 500
+                  errors.append(f"{host}:{port} {type(exc).__name__}: {exc}")
+          return " | ".join(errors), 500
       EOF
 
   postgres_container0020: # setup postgres service
@@ -93,10 +93,10 @@ tests:
     command: |
       extra_args=""
       if [[ -n "${POSTGRES_TEST_CONTAINER_NETWORK:-}" ]]; then
-        extra_args="$extra_args --copt network=${POSTGRES_TEST_CONTAINER_NETWORK}"
+        extra_args="$extra_args --copt ${OPENRUN_CONTAINER_COMMAND}.network=${POSTGRES_TEST_CONTAINER_NETWORK}"
       fi
       if [[ "${OPENRUN_CONTAINER_COMMAND:-}" = "docker" ]]; then
-        extra_args="$extra_args --copt add-host=host.docker.internal:host-gateway"
+        extra_args="$extra_args --copt docker.add-host=host.docker.internal:host-gateway"
       fi
       ../openrun app create --spec python-flask --bind /pgcontainer/b1 $extra_args ./pg_flaskapp /pg_container
     stdout: "App: /pg_container"

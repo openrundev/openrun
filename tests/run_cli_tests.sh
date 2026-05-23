@@ -388,6 +388,7 @@ copy_response_headers = []
 [security]
 admin_password_bcrypt = "\$2a\$10\$Hk5/XcvwrN.JRFrjdG0vjuGZxa5JaILdir1qflIj5i9DUPUyvIK7C"
 allowed_mounts = ["/tmp"]
+allowed_container_args = { network = "regex:.*", add-host = "regex:.*" }
 
 [[permissions.allow]]
 plugin = "proxy.in"
