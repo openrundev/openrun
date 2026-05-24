@@ -1,0 +1,334 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    MYSQL_TEST_CONTAINER_COMMAND: ${MYSQL_TEST_CONTAINER_COMMAND}
+    MYSQL_TEST_CONTAINER_ID: ${MYSQL_TEST_CONTAINER_ID}
+    PATH: ${PATH}
+    TEST_MYSQL_URL: ${TEST_MYSQL_URL}
+
+tests:
+  mysql0001:
+    command: ../openrun service create --config url=${TEST_MYSQL_URL} mysql/my1
+    stdout: "Service mysql/my1 created"
+    exit-code: 0
+
+  mysql0010:
+    command: ../openrun binding create mysql/my1 /apps/my1
+    stdout: "Binding /apps/my1 created"
+    exit-code: 0
+
+  mysql0011: # prod and staging accounts use different databases
+    command: bash -c 'prod=$(../openrun binding run-command /apps/my1 "select database() as db" | jq -r ".rows[0].db"); stage=$(../openrun binding run-command --staging /apps/my1 "select database() as db" | jq -r ".rows[0].db"); [[ "$prod" != "$stage" ]] && echo true'
+    stdout: "true"
+
+  mysql0020: # table-specific grant can be created before the table exists
+    command: ../openrun binding create --grant "read:test1" /apps/my1 /apps/my1partialread
+    stdout: "Binding /apps/my1partialread created"
+
+  mysql0021: # before creation, the target table is absent
+    command: ../openrun binding run-command /apps/my1partialread "select count(*) as n from test1"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0030:
+    command: ../openrun binding run-command /apps/my1 "create table test1 (id integer primary key, note text)"
+    stdout: '"command_tag": "CREATE"'
+
+  mysql0031:
+    command: ../openrun binding run-command /apps/my1 "insert into test1 (id, note) values (1, 'base')"
+    stdout: '"rows_affected": 1'
+
+  mysql0032: # deferred table grant is not applied until the binding is updated
+    command: ../openrun binding run-command /apps/my1partialread "select count(*) as n from test1"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0033:
+    command: ../openrun binding update --promote /apps/my1partialread
+    stdout: "Binding /apps/my1partialread updated"
+
+  mysql0034:
+    command: ../openrun binding run-command /apps/my1partialread "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  mysql0035: # prod table is not visible through the staging database
+    command: ../openrun binding run-command --staging /apps/my1 "select count(*) as n from test1"
+    stderr: "doesn't exist"
+    exit-code: 1
+
+  mysql0040:
+    command: ../openrun binding create --grant "read:*" /apps/my1 /apps/my1read
+    stdout: "Binding /apps/my1read created"
+
+  mysql0041:
+    command: ../openrun binding run-command /apps/my1read "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  mysql0042: # read grant cannot insert into base tables
+    command: ../openrun binding run-command /apps/my1read "insert into test1 (id, note) values (2, 'read')"
+    stderr: "INSERT command denied"
+    exit-code: 1
+
+  mysql0043: # read grant cannot create tables
+    command: ../openrun binding run-command /apps/my1read "create table read_created (id integer)"
+    stderr: "CREATE command denied"
+    exit-code: 1
+
+  mysql0044: # database-level read:* covers tables created after the grant
+    command: ../openrun binding run-command /apps/my1 "create table test2 (id integer primary key, note text)"
+    stdout: '"command_tag": "CREATE"'
+
+  mysql0045:
+    command: ../openrun binding run-command /apps/my1 "insert into test2 (id, note) values (1, 'future')"
+    stdout: '"rows_affected": 1'
+
+  mysql0046:
+    command: ../openrun binding run-command /apps/my1read "select count(*) as n from test2" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  mysql0046a: # simulate an already-recorded grant missing from the database
+    command: "bash -c 'acct=$(../openrun binding show-account /apps/my1read); db=$(jq -r \".database\" <<<\"$acct\"); user=$(jq -r \".user\" <<<\"$acct\"); host=$(jq -r \".host\" <<<\"$acct\"); \"$MYSQL_TEST_CONTAINER_COMMAND\" exec \"$MYSQL_TEST_CONTAINER_ID\" mysql -uroot -pmysql -e \"REVOKE SELECT ON \\`$db\\`.* FROM '\\''$user'\\''@'\\''$host'\\'';\"; echo REVOKE'"
+    stdout: "REVOKE"
+
+  mysql0046b:
+    command: ../openrun binding run-command /apps/my1read "select count(*) as n from test2"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0046c:
+    command: ../openrun binding update --reapply-all --promote /apps/my1read
+    stdout: "Binding /apps/my1read updated"
+
+  mysql0046d: # reapply-all restores grants that were already marked applied
+    command: ../openrun binding run-command /apps/my1read "select count(*) as n from test2" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  mysql0047: # read:* still cannot write to future tables
+    command: ../openrun binding run-command /apps/my1read "insert into test2 (id, note) values (2, 'read')"
+    stderr: "INSERT command denied"
+    exit-code: 1
+
+  mysql0048: # table-specific read does not leak to other tables
+    command: ../openrun binding run-command /apps/my1partialread "select count(*) as n from test2"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0050:
+    command: ../openrun binding create --grant "create:*" /apps/my1 /apps/my1create
+    stdout: "Binding /apps/my1create created"
+
+  mysql0051:
+    command: ../openrun binding run-command /apps/my1create "create table create_created (id integer)"
+    stdout: '"command_tag": "CREATE"'
+
+  mysql0052: # create grant does not include read on base tables
+    command: ../openrun binding run-command /apps/my1create "select count(*) as n from test1"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0053: # create grant does not include write on base tables
+    command: ../openrun binding run-command /apps/my1create "insert into test1 (id, note) values (3, 'create')"
+    stderr: "INSERT command denied"
+    exit-code: 1
+
+  mysql0054: # grant updates apply to staging before production
+    command: ../openrun binding run-command --staging /apps/my1 "create table stg_only (id integer primary key)"
+    stdout: '"command_tag": "CREATE"'
+
+  mysql0055:
+    command: ../openrun binding run-command --staging /apps/my1 "insert into stg_only (id) values (1)"
+    stdout: '"rows_affected": 1'
+
+  mysql0056:
+    command: ../openrun binding create /apps/my1 /apps/my1stage
+    stdout: "Binding /apps/my1stage created"
+
+  mysql0057:
+    command: ../openrun binding run-command --staging /apps/my1stage "select count(*) as n from stg_only"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0058:
+    command: ../openrun binding update --add-grant "read:*" /apps/my1stage
+    stdout: "Binding /apps/my1stage updated"
+
+  mysql0059:
+    command: ../openrun binding run-command --staging /apps/my1stage "select count(*) as n from stg_only" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  mysql0059a: # prod remains unchanged until promote
+    command: ../openrun binding run-command /apps/my1stage "select count(*) as n from test1"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0059b:
+    command: ../openrun binding update --promote /apps/my1stage
+    stdout: "Binding /apps/my1stage updated"
+
+  mysql0059c:
+    command: ../openrun binding run-command /apps/my1stage "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  mysql0059d: # delete-grant revokes staged access before prod
+    command: ../openrun binding update --delete-grant "read:*" /apps/my1stage
+    stdout: "Binding /apps/my1stage updated"
+
+  mysql0059e:
+    command: ../openrun binding run-command --staging /apps/my1stage "select count(*) as n from stg_only"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0059f: # prod grant remains until promote
+    command: ../openrun binding run-command /apps/my1stage "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  mysql0059g:
+    command: ../openrun binding update --promote /apps/my1stage
+    stdout: "Binding /apps/my1stage updated"
+
+  mysql0059h:
+    command: ../openrun binding run-command /apps/my1stage "select count(*) as n from test1"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0060:
+    command: ../openrun binding create --grant "full:*" /apps/my1 /apps/my1full
+    stdout: "Binding /apps/my1full created"
+
+  mysql0061:
+    command: ../openrun binding run-command /apps/my1full "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  mysql0062:
+    command: ../openrun binding run-command /apps/my1full "insert into test1 (id, note) values (4, 'full')"
+    stdout: '"rows_affected": 1'
+
+  mysql0063:
+    command: ../openrun binding run-command /apps/my1full "create table full_created (id integer)"
+    stdout: '"command_tag": "CREATE"'
+
+  mysql0064:
+    command: ../openrun binding run-command /apps/my1 "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "2"
+
+  mysql0065: # database-level full:* covers future tables and auto-increment columns
+    command: ../openrun binding run-command /apps/my1 "create table test3 (id integer primary key auto_increment, note text)"
+    stdout: '"command_tag": "CREATE"'
+
+  mysql0066:
+    command: ../openrun binding run-command /apps/my1full "insert into test3 (note) values ('future full')"
+    stdout: '"rows_affected": 1'
+
+  mysql0067:
+    command: ../openrun binding run-command /apps/my1full "select count(*) as n from test3" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  mysql0068: # full grant can target one specific table
+    command: ../openrun binding create --grant "full:test1" /apps/my1 /apps/my1fulltest1
+    stdout: "Binding /apps/my1fulltest1 created"
+
+  mysql0068a:
+    command: ../openrun binding run-command /apps/my1fulltest1 "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "2"
+
+  mysql0068b:
+    command: ../openrun binding run-command /apps/my1fulltest1 "insert into test1 (id, note) values (5, 'full table')"
+    stdout: '"rows_affected": 1'
+
+  mysql0068c: # table-specific full grant does not include other tables
+    command: ../openrun binding run-command /apps/my1fulltest1 "select count(*) as n from test2"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0068d: # table-specific full grant does not include database create
+    command: ../openrun binding run-command /apps/my1fulltest1 "create table full_table_created (id integer)"
+    stderr: "CREATE command denied"
+    exit-code: 1
+
+  mysql0069: # multiple grants can be applied in one update
+    command: ../openrun binding create /apps/my1 /apps/my1multi
+    stdout: "Binding /apps/my1multi created"
+
+  mysql0069a:
+    command: ../openrun binding update --add-grant "read:test1" --add-grant "create:*" --promote /apps/my1multi
+    stdout: "Binding /apps/my1multi updated"
+
+  mysql0069b:
+    command: ../openrun binding run-command /apps/my1multi "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "3"
+
+  mysql0069c:
+    command: ../openrun binding run-command /apps/my1multi "create table multi_created (id integer)"
+    stdout: '"command_tag": "CREATE"'
+
+  mysql0069d:
+    command: ../openrun binding update --delete-grant "read:test1" --add-grant "read:test2" --promote /apps/my1multi
+    stdout: "Binding /apps/my1multi updated"
+
+  mysql0069e: # deleted grant was revoked
+    command: ../openrun binding run-command /apps/my1multi "select count(*) as n from test1"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0069f: # added grant was applied
+    command: ../openrun binding run-command /apps/my1multi "select count(*) as n from test2" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  mysql0069g: # untouched create grant remains
+    command: ../openrun binding run-command /apps/my1multi "create table multi_created_after_update (id integer)"
+    stdout: '"command_tag": "CREATE"'
+
+  mysql0070: # revoke read:* from existing and future tables
+    command: ../openrun binding update --delete-grant "read:*" --promote /apps/my1read
+    stdout: "Binding /apps/my1read updated"
+
+  mysql0071:
+    command: ../openrun binding run-command /apps/my1read "select count(*) as n from test1"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0072:
+    command: ../openrun binding run-command /apps/my1read "select count(*) as n from test2"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0073: # revoke read:* also removes access to future tables
+    command: ../openrun binding run-command /apps/my1 "create table test_after_read_revoke (id integer primary key)"
+    stdout: '"command_tag": "CREATE"'
+
+  mysql0074:
+    command: ../openrun binding run-command /apps/my1read "select count(*) as n from test_after_read_revoke"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0080: # revoke create:* removes database create privilege
+    command: ../openrun binding update --delete-grant "create:*" --promote /apps/my1create
+    stdout: "Binding /apps/my1create updated"
+
+  mysql0081:
+    command: ../openrun binding run-command /apps/my1create "create table create_after_revoke (id integer)"
+    stderr: "CREATE command denied"
+    exit-code: 1
+
+  mysql0090: # revoke full:* removes table write/read and database create privileges
+    command: ../openrun binding update --delete-grant "full:*" --promote /apps/my1full
+    stdout: "Binding /apps/my1full updated"
+
+  mysql0091:
+    command: ../openrun binding run-command /apps/my1full "insert into test1 (id, note) values (6, 'full revoked')"
+    stderr: "INSERT command denied"
+    exit-code: 1
+
+  mysql0092:
+    command: ../openrun binding run-command /apps/my1full "select count(*) as n from test1"
+    stderr: "SELECT command denied"
+    exit-code: 1
+
+  mysql0093:
+    command: ../openrun binding run-command /apps/my1full "create table full_after_revoke (id integer)"
+    stderr: "CREATE command denied"
+    exit-code: 1
+
+  mysql9999:
+    command: (../openrun binding delete /apps/my1multi; ../openrun binding delete /apps/my1fulltest1; ../openrun binding delete /apps/my1full; ../openrun binding delete /apps/my1stage; ../openrun binding delete /apps/my1create; ../openrun binding delete /apps/my1read; ../openrun binding delete /apps/my1partialread; ../openrun binding delete /apps/my1; ../openrun service delete mysql/my1) || true

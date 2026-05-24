@@ -57,6 +57,11 @@ cleanup() {
     POSTGRES_TEST_CONTAINER_NETWORK=""
   fi
 
+  if [[ -n "$MYSQL_TEST_CONTAINER_ID" ]]; then
+    $MYSQL_TEST_CONTAINER_COMMAND rm -f "$MYSQL_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
+    MYSQL_TEST_CONTAINER_ID=""
+  fi
+
   if [[ -n "$FORWARD_AUTH_CONTAINER_ID" ]]; then
     $FORWARD_AUTH_CONTAINER_COMMAND rm -f "$FORWARD_AUTH_CONTAINER_ID" >/dev/null 2>&1 || true
     FORWARD_AUTH_CONTAINER_ID=""
@@ -173,6 +178,58 @@ start_postgres_testcontainer() {
 
   export TEST_POSTGRES_URL="postgres://postgres:postgres@127.0.0.1:${port}/openrun_cli?sslmode=disable"
   echo "TEST_POSTGRES_URL=$TEST_POSTGRES_URL"
+}
+
+start_mysql_testcontainer() {
+  if [[ -z "$ENABLE_MYSQL_TESTCONTAINER" ]]; then
+    return
+  fi
+
+  export MYSQL_TEST_CONTAINER_COMMAND="${OPENRUN_TEST_CONTAINER_COMMAND:-docker}"
+  local publish_addr="${MYSQL_TEST_CONTAINER_PUBLISH_ADDR:-127.0.0.1}"
+  echo "Starting mysql test container with $MYSQL_TEST_CONTAINER_COMMAND"
+  MYSQL_TEST_CONTAINER_ID=$($MYSQL_TEST_CONTAINER_COMMAND run \
+    --detach \
+    --rm \
+    --publish "${publish_addr}::3306" \
+    --env MYSQL_DATABASE=openrun_cli \
+    --env MYSQL_ROOT_PASSWORD=mysql \
+    mysql:8.4)
+  export MYSQL_TEST_CONTAINER_ID
+
+  local port=""
+  for _ in {1..75}; do
+    port=$($MYSQL_TEST_CONTAINER_COMMAND inspect \
+      --format '{{with index .NetworkSettings.Ports "3306/tcp"}}{{(index . 0).HostPort}}{{end}}' \
+      "$MYSQL_TEST_CONTAINER_ID" 2>/dev/null || true)
+    if [[ -n "$port" ]]; then
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ -z "$port" ]]; then
+    echo "MySQL test container port was not published"
+    return 1
+  fi
+
+  local ready=""
+  for _ in {1..300}; do
+    if $MYSQL_TEST_CONTAINER_COMMAND exec "$MYSQL_TEST_CONTAINER_ID" mysqladmin ping -h127.0.0.1 -uroot -pmysql --silent >/dev/null 2>&1; then
+      ready="true"
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ -z "$ready" ]]; then
+    echo "MySQL test container did not become ready"
+    $MYSQL_TEST_CONTAINER_COMMAND logs "$MYSQL_TEST_CONTAINER_ID" || true
+    return 1
+  fi
+
+  export TEST_MYSQL_URL="mysql://root:mysql@127.0.0.1:${port}/openrun_cli?parseTime=true"
+  echo "TEST_MYSQL_URL=$TEST_MYSQL_URL"
 }
 
 # Test basic functionality
@@ -308,6 +365,7 @@ if [[ "$CL_CONTAINER_COMMANDS" != "disable" && ( -z "$CL_SINGLE_TEST" || "$CL_SI
   export POSTGRES_TEST_CONTAINER_NETWORK="${POSTGRES_TEST_CONTAINER_NETWORK:-openrun-postgres-test}"
 fi
 start_postgres_testcontainer
+start_mysql_testcontainer
 GOCOVERDIR=$GOCOVERDIR ../openrun server start &
 sleep 2
 
@@ -321,12 +379,23 @@ if [[ -z $CL_SINGLE_TEST ]]; then
     else
         echo "Skipping postgres service and binding tests; TEST_POSTGRES_URL is not set"
     fi
+    if [[ -n "$TEST_MYSQL_URL" ]]; then
+        commander test $CL_TEST_VERBOSE test_mysql.yaml
+    else
+        echo "Skipping mysql service and binding tests; TEST_MYSQL_URL is not set"
+    fi
 elif [[ $CL_SINGLE_TEST != "disable" ]]; then
     if [[ $CL_SINGLE_TEST = "test_service.yaml" || $CL_SINGLE_TEST = "test_bindings.yaml" || $CL_SINGLE_TEST = "test_app_update_bindings.yaml" || $CL_SINGLE_TEST = "test_postgres.yaml" ]]; then
         if [[ -n "$TEST_POSTGRES_URL" ]]; then
             commander test $CL_TEST_VERBOSE ./$CL_SINGLE_TEST
         else
             echo "Skipping $CL_SINGLE_TEST; TEST_POSTGRES_URL is not set"
+        fi
+    elif [[ $CL_SINGLE_TEST = "test_mysql.yaml" ]]; then
+        if [[ -n "$TEST_MYSQL_URL" ]]; then
+            commander test $CL_TEST_VERBOSE ./$CL_SINGLE_TEST
+        else
+            echo "Skipping $CL_SINGLE_TEST; TEST_MYSQL_URL is not set"
         fi
     elif [[ $CL_SINGLE_TEST = "test_containers.yaml" || $CL_SINGLE_TEST = "test_postgres_container.yaml" ]]; then
         echo "Deferring $CL_SINGLE_TEST to containerized app test phase"
