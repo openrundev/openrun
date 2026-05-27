@@ -15,7 +15,6 @@ import (
 	"slices"
 
 	"github.com/BurntSushi/toml"
-	"github.com/docker/cli/cli/config"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/metadata"
@@ -290,13 +289,14 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 				appPathDomain.Domain += s.config.System.DefaultDomain
 			}
 			if _, ok := applyConfig[appPathDomain]; ok {
-				return nil, nil, fmt.Errorf("duplicate app %s defined in file %s", config.Path, f)
+				return nil, nil, fmt.Errorf("duplicate app %s defined in file %s", appPathDomain, f)
 			}
 			applyConfig[appPathDomain] = appDef
 		}
 
 		bindingList = append(bindingList, bindingDefs...)
 	}
+	s.Trace().Msgf("Applying %d apps and %d bindings", len(applyConfig), len(bindingList))
 
 	filteredApps := make([]types.AppPathDomain, 0, len(applyConfig))
 	for appPathDomain := range applyConfig {
@@ -356,16 +356,18 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		allBindingsMap[binding.Path] = binding
 	}
 
-	newBindings := make([]*types.CreateBindingRequest, 0, len(bindingList))
-	updatedBindings := make([]*types.CreateBindingRequest, 0, len(bindingList))
-	for _, bindingDef := range bindingList {
-		if _, ok := allBindingsMap[bindingDef.Path]; !ok {
-			newBindings = append(newBindings, bindingDef)
-		} else {
-			updatedBindings = append(updatedBindings, bindingDef)
+	/*
+		newBindings := make([]*types.CreateBindingRequest, 0, len(bindingList))
+		updatedBindings := make([]*types.CreateBindingRequest, 0, len(bindingList))
+		for _, bindingDef := range bindingList {
+			if _, ok := allBindingsMap[bindingDef.Path]; !ok {
+				newBindings = append(newBindings, bindingDef)
+			} else {
+				updatedBindings = append(updatedBindings, bindingDef)
+			}
 		}
-	}
-	// TODO : handle binding updates
+		// TODO : handle binding updates
+	*/
 
 	createResults := make([]types.AppCreateResponse, 0, len(newApps))
 	for _, newApp := range newApps {
