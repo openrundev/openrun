@@ -78,6 +78,26 @@ func TestGetRequestSchemeRejectsBogusHeaderValue(t *testing.T) {
 	testutil.AssertEqualsString(t, "scheme", "http", GetRequestScheme(req, []string{"127.0.0.1"}))
 }
 
+func TestValidHostHeader(t *testing.T) {
+	testCases := []struct {
+		host string
+		want bool
+	}{
+		{host: "example.com", want: true},
+		{host: "example.com:8443", want: true},
+		{host: "[2001:db8::1]:8443", want: true},
+		{host: "example.com/health?x=", want: false},
+		{host: "exa mple.com", want: false},
+		{host: "", want: false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.host, func(t *testing.T) {
+			testutil.AssertEqualsBool(t, "valid host", tc.want, ValidHostHeader(tc.host))
+		})
+	}
+}
+
 func TestGetHostname(t *testing.T) {
 	testCases := []struct {
 		name string

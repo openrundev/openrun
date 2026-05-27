@@ -125,6 +125,7 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 		server: server,
 		router: router,
 	}
+	router.Use(handler.validateHostHeader)
 	if config.Http.RedirectToHttps {
 		router.Use(handler.httpsRedirectMiddleware)
 	}
@@ -162,6 +163,17 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 		})
 
 	return handler
+}
+
+func (h *Handler) validateHostHeader(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !system.ValidHostHeader(r.Host) {
+			h.Warn().Str("host", r.Host).Msg("Rejecting request with invalid Host header")
+			http.Error(w, "invalid Host header", http.StatusBadRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // httpsRedirectMiddleware checks if the request was made using HTTP (no TLS)

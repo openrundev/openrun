@@ -777,6 +777,17 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 		return rootWildcard, err
 	}
 
+	var canonicalProxyDomain string
+	if preserveHost {
+		canonicalProxyDomain = a.Domain
+		if canonicalProxyDomain == "" {
+			canonicalProxyDomain = a.serverConfig.System.DefaultDomain
+		}
+		if canonicalProxyDomain == "" {
+			return rootWildcard, fmt.Errorf("preserve_host requires the app domain or system.default_domain to be configured")
+		}
+	}
+
 	stripApp, err := apptype.GetBoolAttr(configAttr, "strip_app")
 	if err != nil {
 		return rootWildcard, err
@@ -820,14 +831,12 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	defaultDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		defaultDirector(req)
-		// To support WebSockets, we need to ensure that the `Connection`, `Upgrade`
-		// and `Host` headers are forwarded as-is and not modified.
+		// Forward Connection/Upgrade as-is so the WebSocket handshake survives.
 		if req.Header.Get("Upgrade") == "websocket" {
 			req.Header.Set("Connection", "Upgrade")
 			req.Header.Set("Upgrade", "websocket")
-		} else if !preserveHost {
-			// Set the Host header to target url for non-WebSocket requests, unless
-			// disabled in proxy config
+		}
+		if !preserveHost {
 			req.Host = urlParsed.Host
 		}
 	}
@@ -839,6 +848,14 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 
 	permsHandler := func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !system.ValidHostHeader(r.Host) {
+				http.Error(w, "invalid Host header", http.StatusBadRequest)
+				return
+			}
+			if preserveHost {
+				r.Host = canonicalProxyHost(r.Host, canonicalProxyDomain)
+			}
+
 			// If write API, check if preview/stage app is allowed access
 			isWriteRequest := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete
 			if isWriteRequest {
@@ -896,6 +913,40 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	}
 	router.Mount(pathStr, http.StripPrefix(stripPath, permsHandler(proxyWrapper)))
 	return rootWildcard, nil
+}
+
+// canonicalProxyHost returns the Host value to forward to the upstream when
+// preserve_host is set. The client Host is forwarded only when its hostname
+// matches canonicalDomain (with localhost/127.0.0.1/::1 treated as aliases)
+// and — if canonicalDomain pins a port — the ports match too. Otherwise
+// canonicalDomain replaces it, preserving the client port only when
+// canonicalDomain does not specify one of its own.
+func canonicalProxyHost(requestHost, canonicalDomain string) string {
+	requestName := strings.Trim(system.GetHostname(requestHost), "[]")
+	canonicalName := strings.Trim(system.GetHostname(canonicalDomain), "[]")
+	_, canonicalPort, _ := net.SplitHostPort(canonicalDomain)
+	_, requestPort, _ := net.SplitHostPort(requestHost)
+
+	sameHost := strings.EqualFold(requestName, canonicalName) ||
+		(isLocalProxyHost(requestName) && isLocalProxyHost(canonicalName))
+	if sameHost && (canonicalPort == "" || requestPort == canonicalPort) {
+		return requestHost
+	}
+	if canonicalPort == "" && requestPort != "" {
+		return net.JoinHostPort(canonicalName, requestPort)
+	}
+	return formatProxyHost(canonicalDomain)
+}
+
+func isLocalProxyHost(host string) bool {
+	return strings.EqualFold(host, "localhost") || host == "127.0.0.1" || host == "::1"
+}
+
+func formatProxyHost(host string) string {
+	if strings.Count(host, ":") > 1 && !strings.HasPrefix(host, "[") {
+		return "[" + host + "]"
+	}
+	return host
 }
 
 func (a *App) addAPIRoute(basePath string, router *chi.Mux, apiDef *starlarkstruct.Struct, defaultHandler starlark.Callable) error {

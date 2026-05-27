@@ -32,14 +32,14 @@ const (
 )
 
 func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, applyDev bool) ([]*types.CreateAppRequest, []*types.CreateBindingRequest, error) {
-	createAppBuiltin, createBindingBuiltin, appDefs, bindingDefs, err := s.builtinsForApply(applyDev)
+	applyBuiltins, err := s.builtinsForApply(applyDev)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	builtins := starlark.StringDict{
-		APP:            createAppBuiltin,
-		BINDING:        createBindingBuiltin,
+		APP:            applyBuiltins.createAppBuiltin,
+		BINDING:        applyBuiltins.createBindingBuiltin,
 		apptype.CONFIG: starlark.NewBuiltin(apptype.CONFIG, apptype.CreateConfigBuiltin(s.config.NodeConfig, s.config.System.AllowedEnv)),
 	}
 
@@ -60,16 +60,16 @@ func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, appl
 		return nil, nil, fmt.Errorf("error loading app definitions: %w", err)
 	}
 
-	retApp := make([]*types.CreateAppRequest, 0, len(appDefs))
-	retBinding := make([]*types.CreateBindingRequest, 0, len(bindingDefs))
-	for _, appDef := range appDefs {
+	retApp := make([]*types.CreateAppRequest, 0, len(applyBuiltins.appDefs))
+	retBinding := make([]*types.CreateBindingRequest, 0, len(applyBuiltins.bindingDefs))
+	for _, appDef := range applyBuiltins.appDefs {
 		appInfo, err := appDefToApplyInfo(appDef)
 		if err != nil {
 			return nil, nil, err
 		}
 		retApp = append(retApp, appInfo)
 	}
-	for _, bindingDef := range bindingDefs {
+	for _, bindingDef := range applyBuiltins.bindingDefs {
 		bindingInfo, err := bindingDefToApplyInfo(bindingDef)
 		if err != nil {
 			return nil, nil, err
@@ -757,8 +757,19 @@ func checkPropertyChanged(oldInfo *types.CreateAppRequest, fetchVal func(*types.
 	return !reflect.DeepEqual(oldVal, newVal) && !reflect.DeepEqual(liveVal, newVal)
 }
 
-func (s *Server) builtinsForApply(applyDev bool) (*starlark.Builtin, *starlark.Builtin, []*starlarkstruct.Struct, []*starlarkstruct.Struct, error) {
-	appDefs := make([]*starlarkstruct.Struct, 0)
+type applyBuiltins struct {
+	createAppBuiltin     *starlark.Builtin
+	createBindingBuiltin *starlark.Builtin
+	appDefs              []*starlarkstruct.Struct
+	bindingDefs          []*starlarkstruct.Struct
+}
+
+func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
+	collector := &applyBuiltins{
+		appDefs:     make([]*starlarkstruct.Struct, 0),
+		bindingDefs: make([]*starlarkstruct.Struct, 0),
+	}
+
 	createAppDefBuiltin := func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var path, source starlark.String
 		var dev starlark.Bool
@@ -794,11 +805,10 @@ func (s *Server) builtinsForApply(applyDev bool) (*starlark.Builtin, *starlark.B
 		}
 
 		appStruct := starlarkstruct.FromStringDict(starlark.String(APP), fields)
-		appDefs = append(appDefs, appStruct)
+		collector.appDefs = append(collector.appDefs, appStruct)
 		return appStruct, nil
 	}
 
-	bindingDefs := make([]*starlarkstruct.Struct, 0)
 	createBindingDefBuiltin := func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var path, source starlark.String
 		var config = starlark.NewDict(0)
@@ -816,11 +826,13 @@ func (s *Server) builtinsForApply(applyDev bool) (*starlark.Builtin, *starlark.B
 		}
 
 		bindingStruct := starlarkstruct.FromStringDict(starlark.String(APP), fields)
-		bindingDefs = append(bindingDefs, bindingStruct)
+		collector.bindingDefs = append(collector.bindingDefs, bindingStruct)
 		return bindingStruct, nil
 	}
 
-	return starlark.NewBuiltin(APP, createAppDefBuiltin), starlark.NewBuiltin(BINDING, createBindingDefBuiltin), appDefs, bindingDefs, nil
+	collector.createAppBuiltin = starlark.NewBuiltin(APP, createAppDefBuiltin)
+	collector.createBindingBuiltin = starlark.NewBuiltin(BINDING, createBindingDefBuiltin)
+	return collector, nil
 }
 
 func bindingDefToApplyInfo(bindingDef *starlarkstruct.Struct) (*types.CreateBindingRequest, error) {

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/types"
+	"golang.org/x/net/http/httpguts"
 )
 
 const (
@@ -218,6 +219,13 @@ func GetRequestUrl(r *http.Request, trustedProxies []string) string {
 	}
 	ret.WriteString(r.URL.RequestURI())
 	return ret.String()
+}
+
+// ValidHostHeader reports whether host is well-formed enough to be used as an
+// HTTP Host value. Empty is rejected — OpenRun's TCP router and app proxying
+// always require a concrete authority.
+func ValidHostHeader(host string) bool {
+	return host != "" && httpguts.ValidHostHeader(host)
 }
 
 // GetHostname returns the hostname portion of an HTTP host header, handling

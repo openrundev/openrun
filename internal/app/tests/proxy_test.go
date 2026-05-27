@@ -529,8 +529,51 @@ permissions=[
 }
 
 func TestProxyPreserveHost(t *testing.T) {
-	// Preserve host is false by default, the Host header is set to the target endpoint host.
-	// Apps like Grafana require the origin host header to be preserved
+	// Preserve host forwards the client Host header to the backend instead of
+	// rewriting it to the upstream URL. Apps like Grafana require the original
+	// Host so they can build absolute URLs (redirects, OAuth callbacks, etc.).
+	// The app domain anchors what we are willing to forward — a client Host
+	// that doesn't match the canonical authority is rewritten.
+	var backendHost string
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHost = r.Host
+		io.WriteString(w, "ok") //nolint:errcheck
+	}))
+
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": fmt.Sprintf(`
+load("proxy.in", "proxy")
+
+app = ace.app("testApp", routes = [ace.proxy("/", proxy.config("%s", preserve_host=True))],
+permissions=[
+	ace.permission("proxy.in", "config"),
+]
+)`, testServer.URL),
+	}
+
+	a, _, err := CreateTestAppPluginDomain(logger, "grafana.example.com", fileData, []string{"proxy.in"},
+		[]types.Permission{
+			{Plugin: "proxy.in", Method: "config"},
+		}, map[string]types.PluginSettings{})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test/abc", nil)
+	request.Host = "grafana.example.com"
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertEqualsString(t, "backend host", "grafana.example.com", backendHost)
+}
+
+func TestProxyPreserveHostRequiresCanonicalDomain(t *testing.T) {
+	// preserve_host requires a canonical authority so an attacker-controlled
+	// Host header can't be forwarded blindly to the backend. The test harness
+	// configures neither the app domain nor system.default_domain, so app load
+	// should fail fast.
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, r.Host) //nolint:errcheck
 	}))
@@ -547,6 +590,34 @@ permissions=[
 )`, testServer.URL),
 	}
 
+	_, _, err := CreateTestAppPlugin(logger, fileData, []string{"proxy.in"},
+		[]types.Permission{
+			{Plugin: "proxy.in", Method: "config"},
+		}, map[string]types.PluginSettings{})
+	if err == nil {
+		t.Fatal("expected error when preserve_host is true without a canonical domain")
+	}
+}
+
+func TestProxyRejectsInvalidHost(t *testing.T) {
+	called := false
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		io.WriteString(w, "test contents") //nolint:errcheck
+	}))
+
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": fmt.Sprintf(`
+load("proxy.in", "proxy")
+
+app = ace.app("testApp", routes = [ace.proxy("/", proxy.config("%s"))],
+permissions=[
+	ace.permission("proxy.in", "config"),
+]
+)`, testServer.URL),
+	}
+
 	a, _, err := CreateTestAppPlugin(logger, fileData, []string{"proxy.in"},
 		[]types.Permission{
 			{Plugin: "proxy.in", Method: "config"},
@@ -556,11 +627,50 @@ permissions=[
 	}
 
 	request := httptest.NewRequest("GET", "/test/abc", nil)
+	request.Host = "example.com/health?x="
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", http.StatusBadRequest, response.Code)
+	testutil.AssertEqualsBool(t, "backend called", false, called)
+}
+
+func TestProxyWebSocketDoesNotPreserveHostByDefault(t *testing.T) {
+	var backendHost string
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHost = r.Host
+		io.WriteString(w, "test contents") //nolint:errcheck
+	}))
+
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": fmt.Sprintf(`
+load("proxy.in", "proxy")
+
+app = ace.app("testApp", routes = [ace.proxy("/", proxy.config("%s"))],
+permissions=[
+	ace.permission("proxy.in", "config"),
+]
+)`, testServer.URL),
+	}
+
+	a, _, err := CreateTestAppPlugin(logger, fileData, []string{"proxy.in"},
+		[]types.Permission{
+			{Plugin: "proxy.in", Method: "config"},
+		}, map[string]types.PluginSettings{})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test/abc", nil)
+	request.Host = "attacker.example"
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertEqualsString(t, "body", "example.com", response.Body.String()) // httptest uses example.com
+	testutil.AssertEqualsString(t, "backend host", testServer.URL[7:], backendHost)
 }
 
 func TestProxyNoStripApp(t *testing.T) {

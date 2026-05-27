@@ -23,51 +23,56 @@ import (
 )
 
 func CreateDevModeTestApp(logger *types.Logger, fileData map[string]string) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, true, nil, nil, nil, "app_dev_testapp", types.AppSettings{}, nil, nil, nil)
+	return CreateTestAppInt(logger, "/test", "", fileData, true, nil, nil, nil, "app_dev_testapp", types.AppSettings{}, nil, nil, nil)
 }
 
 func CreateTestApp(logger *types.Logger, fileData map[string]string) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
+	return CreateTestAppInt(logger, "/test", "", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
 }
 
 func CreateTestAppConfig(logger *types.Logger, fileData map[string]string, appConfig types.AppConfig) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, &appConfig, nil)
+	return CreateTestAppInt(logger, "/test", "", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, &appConfig, nil)
 }
 
 func CreateTestAppParams(logger *types.Logger, fileData map[string]string, params map[string]string) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, params, nil, nil)
+	return CreateTestAppInt(logger, "/test", "", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, params, nil, nil)
 }
 
 func CreateTestAppRoot(logger *types.Logger, fileData map[string]string) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
+	return CreateTestAppInt(logger, "/", "", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
 }
 
 func CreateTestAppPlugin(logger *types.Logger, fileData map[string]string,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
+	return CreateTestAppInt(logger, "/test", "", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
+}
+
+func CreateTestAppPluginDomain(logger *types.Logger, domain string, fileData map[string]string,
+	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings) (*app.App, *appfs.WorkFs, error) {
+	return CreateTestAppInt(logger, "/test", domain, fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
 }
 
 func CreateTestAppPluginRoot(logger *types.Logger, fileData map[string]string,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
+	return CreateTestAppInt(logger, "/", "", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
 }
 
 func CreateDevAppPlugin(logger *types.Logger, fileData map[string]string, plugins []string,
 	permissions []types.Permission, pluginConfig map[string]types.PluginSettings) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, true, plugins, permissions, pluginConfig, "app_dev_testapp", types.AppSettings{}, nil, nil, nil)
+	return CreateTestAppInt(logger, "/test", "", fileData, true, plugins, permissions, pluginConfig, "app_dev_testapp", types.AppSettings{}, nil, nil, nil)
 }
 
 func CreateTestAppPluginId(logger *types.Logger, fileData map[string]string,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings, id string, settings types.AppSettings) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, plugins, permissions, pluginConfig, id, settings, nil, nil, nil)
+	return CreateTestAppInt(logger, "/test", "", fileData, false, plugins, permissions, pluginConfig, id, settings, nil, nil, nil)
 }
 
 func CreateTestAppAuthorizer(logger *types.Logger, fileData map[string]string,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings, rbacApi rbac.RBACAPI) (*app.App, *appfs.WorkFs, error) {
-	return CreateTestAppInt(logger, "/test", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, rbacApi)
+	return CreateTestAppInt(logger, "/test", "", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, rbacApi)
 }
 
-func CreateTestAppInt(logger *types.Logger, path string, fileData map[string]string, isDev bool,
+func CreateTestAppInt(logger *types.Logger, path, domain string, fileData map[string]string, isDev bool,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings,
 	id string, settings types.AppSettings, params map[string]string, appConfig *types.AppConfig,
 	rbacApi rbac.RBACAPI) (*app.App, *appfs.WorkFs, error) {
@@ -113,7 +118,7 @@ func CreateTestAppInt(logger *types.Logger, path string, fileData map[string]str
 	}
 	workFS := appfs.NewWorkFs("", &TestWriteFS{TestReadFS: &TestReadFS{fileData: map[string]string{}}})
 	a, err := app.NewApp(sourceFS, workFS, logger,
-		createTestAppEntry(id, path, isDev, metadata), &systemConfig, pluginConfig, *appConfig,
+		createTestAppEntry(id, path, domain, isDev, metadata), &systemConfig, pluginConfig, *appConfig,
 		nil, secretManager.AppEvalTemplate, nil, &types.ServerConfig{}, rbacApi, []*types.Binding{})
 	if err != nil {
 		return nil, nil, err
@@ -122,11 +127,11 @@ func CreateTestAppInt(logger *types.Logger, path string, fileData map[string]str
 	return a, workFS, err
 }
 
-func createTestAppEntry(id, path string, isDev bool, metadata types.AppMetadata) *types.AppEntry {
+func createTestAppEntry(id, path, domain string, isDev bool, metadata types.AppMetadata) *types.AppEntry {
 	return &types.AppEntry{
 		Id:        types.AppId(id),
 		Path:      path,
-		Domain:    "",
+		Domain:    domain,
 		SourceUrl: ".",
 		IsDev:     isDev,
 		Metadata:  metadata,

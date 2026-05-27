@@ -101,6 +101,23 @@ func TestRouterNewTCPHandler_RedirectToHTTPS(t *testing.T) {
 	}
 }
 
+func TestRouterNewTCPHandlerRejectsInvalidHost(t *testing.T) {
+	config, server, logger := newRouterTestServer(false, true)
+	handler := NewTCPHandler(logger, config, server)
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/myapp", nil)
+	req.Host = "example.com/health?x="
+	rec := httptest.NewRecorder()
+	handler.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: want %d got %d", http.StatusBadRequest, rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "" {
+		t.Fatalf("Location should not be set for invalid Host, got %q", got)
+	}
+}
+
 func TestRouterNewUDSHandler_NoAppRoutes(t *testing.T) {
 	config, server, logger := newRouterTestServer(false, false)
 	handler := NewUDSHandler(logger, config, server)
