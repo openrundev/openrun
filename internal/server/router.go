@@ -1289,21 +1289,22 @@ func (h *Handler) createBinding(r *http.Request) (any, error) {
 		return nil, err
 	}
 
-	var binding types.Binding
-	if err = json.NewDecoder(r.Body).Decode(&binding); err != nil {
+	var createRequest types.CreateBindingRequest
+	if err = json.NewDecoder(r.Body).Decode(&createRequest); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
-	if binding.Path == "" {
+	if createRequest.Path == "" {
 		return nil, types.CreateRequestError("path is required", http.StatusBadRequest)
 	}
 
-	updateTargetInContext(r, binding.Path, dryRun)
+	updateTargetInContext(r, createRequest.Path, dryRun)
 	updateOperationInContext(r, "binding_create")
 
-	if err := h.server.CreateBinding(r.Context(), &binding, dryRun); err != nil {
+	binding, err := h.server.CreateBinding(r.Context(), &createRequest, dryRun)
+	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
-	return redactBindingAccount(&binding), nil
+	return redactBindingAccount(binding), nil
 }
 
 func (h *Handler) updateBinding(r *http.Request) (any, error) {

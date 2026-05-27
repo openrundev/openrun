@@ -50,6 +50,7 @@ func bindingCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			Name:    CONFIG_FLAG,
 			Aliases: []string{"c"},
 			Usage:   "Set a config entry. Format is key=value. Can be specified multiple times",
+			Value:   cli.NewStringSlice("key=value"),
 		})
 	flags = append(flags,
 		&cli.StringSliceFlag{
@@ -69,7 +70,7 @@ func bindingCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <binding_path> is the unique path of the binding.
 
 Examples:
-  Create a binding: openrun binding create --config role=reader postgres/p1 /apps/p1
+  Create a binding: openrun binding create --config inherit_default:true postgres/p1 /apps/p1
   Create with grants: openrun binding create --grant "read:*" /apps/p1 /apps/p2
 `,
 		Action: func(cCtx *cli.Context) error {
@@ -85,17 +86,11 @@ Examples:
 			}
 			grants := cCtx.StringSlice(GRANT_FLAG)
 
-			binding := types.Binding{
+			createRequest := types.CreateBindingRequest{
 				Path:   path,
 				Source: source,
-				Metadata: types.BindingMetadata{
-					Grants: append([]string(nil), grants...),
-					Config: config,
-				},
-				StagedMetadata: types.BindingMetadata{
-					Grants: append([]string(nil), grants...),
-					Config: config,
-				},
+				Grants: grants,
+				Config: config,
 			}
 
 			values := url.Values{}
@@ -103,7 +98,7 @@ Examples:
 
 			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
 			var response types.Binding
-			if err := client.Post("/_openrun/binding", values, &binding, &response); err != nil {
+			if err := client.Post("/_openrun/binding", values, &createRequest, &response); err != nil {
 				return err
 			}
 

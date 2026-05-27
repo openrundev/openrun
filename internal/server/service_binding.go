@@ -149,27 +149,52 @@ func (s *Server) ListServices(ctx context.Context, serviceType, name string) ([]
 	return s.db.ListServices(ctx, tx, serviceType, name)
 }
 
-func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryRun bool) error {
+func (s *Server) CreateBinding(ctx context.Context, createRequest *types.CreateBindingRequest, dryRun bool) (*types.Binding, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	binding, err := s.CreateBindingTx(ctx, tx, createRequest, dryRun)
+	if err != nil {
+		return nil, err
+	}
+
+	if dryRun {
+		return binding, nil
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return binding, nil
+}
+
+func (s *Server) CreateBindingTx(ctx context.Context, tx types.Transaction, createRequest *types.CreateBindingRequest, dryRun bool) (*types.Binding, error) {
+	var err error
+	binding := types.Binding{
+		Path:   createRequest.Path,
+		Source: createRequest.Source,
+		StagedMetadata: types.BindingMetadata{
+			Grants: normalizeGrantList(createRequest.Grants),
+			Config: createRequest.Config,
+		},
+	}
 	binding.Id, err = newPrefixedId(types.ID_PREFIX_BINDING)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	_, err = s.db.GetBinding(ctx, tx, binding.Path)
 	if err == nil {
-		return fmt.Errorf("binding already exists: %s", binding.Path)
+		return nil, fmt.Errorf("binding already exists: %s", binding.Path)
 	}
 
 	if binding.Source == "" {
-		return fmt.Errorf("binding source is required")
+		return nil, fmt.Errorf("binding source is required")
 	}
-	binding.StagedMetadata.Grants = normalizeGrantList(binding.StagedMetadata.Grants)
 
 	var service *types.Service
 	var derivedFrom *types.Binding
@@ -177,7 +202,7 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 		// Reference another binding by path - derived binding
 		derivedFrom, err = s.db.GetBinding(ctx, tx, binding.Source)
 		if err != nil {
-			return fmt.Errorf("binding source %s not found", binding.Source)
+			return nil, fmt.Errorf("binding source %s not found", binding.Source)
 		}
 
 		// Reject multi-level nesting. A derived binding must be derived from a
@@ -185,7 +210,7 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 		// binding). Allowing derived-of-derived would make ALTER DEFAULT
 		// PRIVILEGES reference the wrong creator role
 		if derivedFrom.DerivedFrom != "" {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"cannot derive binding %s from another derived binding %s; "+
 					"derive from the base binding %s instead",
 				binding.Path, derivedFrom.Path, derivedFrom.DerivedFrom)
@@ -197,25 +222,25 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 
 		service, err = s.db.GetService(ctx, tx, derivedFrom.ServiceType, derivedFrom.ServiceName)
 		if err != nil {
-			return fmt.Errorf("error getting base binding service: %w", err)
+			return nil, fmt.Errorf("error getting base binding service: %w", err)
 		}
 	} else {
 		// Base binding
 		if len(binding.StagedMetadata.Grants) > 0 {
-			return fmt.Errorf("grants are not supported for base bindings, only derived bindings can have grants")
+			return nil, fmt.Errorf("grants are not supported for base bindings, only derived bindings can have grants")
 		}
 		serviceType, name, ok := strings.Cut(binding.Source, "/")
 		if !ok {
 			// Reference a service by type alone
 			service, err = s.db.GetDefaultService(ctx, tx, binding.Source)
 			if err != nil {
-				return fmt.Errorf("service %s not found", binding.Source)
+				return nil, fmt.Errorf("service %s not found", binding.Source)
 			}
 		} else {
 			// Reference a service by type and name
 			service, err = s.db.GetService(ctx, tx, serviceType, name)
 			if err != nil {
-				return fmt.Errorf("service %s not found", binding.Source)
+				return nil, fmt.Errorf("service %s not found", binding.Source)
 			}
 		}
 
@@ -225,40 +250,36 @@ func (s *Server) CreateBinding(ctx context.Context, binding *types.Binding, dryR
 	}
 	binding.Metadata = binding.StagedMetadata
 
-	if err := s.db.CreateBinding(ctx, tx, binding); err != nil {
-		return err
+	if err := s.db.CreateBinding(ctx, tx, &binding); err != nil {
+		return nil, err
 	}
 
 	stagingService := service
 	if service.Staging != "" {
 		stagingService, err = s.db.GetService(ctx, tx, service.ServiceType, service.Staging)
 		if err != nil {
-			return fmt.Errorf("error getting staging service: %w", err)
+			return nil, fmt.Errorf("error getting staging service: %w", err)
 		}
 	}
 
 	// Not dry run, generate the account info
 	// Generate the staging account info, either against the staging service if set or against the main service
-	binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, err = s.generateAccount(ctx, dryRun, stagingService, binding, derivedFrom, true, true)
+	binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, err = s.generateAccount(ctx, dryRun, stagingService, &binding, derivedFrom, true, true)
 	if err != nil {
-		return fmt.Errorf("error generating staging account: %w", err)
+		return nil, fmt.Errorf("error generating staging account: %w", err)
 	}
 
 	// Generate the production account info
 	// This runs as a separate transaction, since it might not be against same database as the metadata database
-	binding.Metadata.Account, binding.Metadata.GrantsApplied, err = s.generateAccount(ctx, dryRun, service, binding, derivedFrom, false, true)
+	binding.Metadata.Account, binding.Metadata.GrantsApplied, err = s.generateAccount(ctx, dryRun, service, &binding, derivedFrom, false, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := s.db.UpdateBinding(ctx, tx, binding); err != nil {
-		return err
-	}
-
-	if dryRun {
-		return nil
+	if err := s.db.UpdateBinding(ctx, tx, &binding); err != nil {
+		return nil, err
 	}
 
-	return tx.Commit()
+	return &binding, nil
 }
 
 func (s *Server) getServiceBinding(ctx context.Context, service *types.Service, binding *types.Binding) (bindings.ServiceBinding, error) {

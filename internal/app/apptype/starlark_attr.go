@@ -187,6 +187,29 @@ func GetDictAttr(s starlark.HasAttrs, key string, optional bool) (map[string]any
 	return retDict, nil
 }
 
+func GetDictStringAttr(s starlark.HasAttrs, key string, optional bool) (map[string]string, error) {
+	v, err := s.Attr(key)
+	if err != nil {
+		if optional {
+			return map[string]string{}, nil
+		} else {
+			return nil, fmt.Errorf("error getting %s: %s", key, err)
+		}
+	}
+
+	ret, err := starlark_type.UnmarshalStarlark(v)
+	if err != nil {
+		return nil, err
+	}
+
+	retDict, ok := ret.(map[string]string)
+	if !ok {
+		return nil, fmt.Errorf("%s is not a string dict", key)
+	}
+
+	return retDict, nil
+}
+
 func GetListListStringAttr(s starlark.HasAttrs, key string, optional bool) ([][]string, error) {
 	v, err := s.Attr(key)
 	if err != nil {

@@ -15,6 +15,7 @@ import (
 	"slices"
 
 	"github.com/BurntSushi/toml"
+	"github.com/docker/cli/cli/config"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/metadata"
@@ -27,53 +28,19 @@ import (
 )
 
 const (
-	APP = "app"
+	APP     = "app"
+	BINDING = "binding"
 )
 
-func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, applyDev bool) ([]*types.CreateAppRequest, error) {
-	appDefs := make([]*starlarkstruct.Struct, 0)
-
-	createAppBuiltin := func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-		var path, source starlark.String
-		var dev starlark.Bool
-		var params = starlark.NewDict(0)
-		var auth, gitAuth, gitBranch, gitCommit, appSpec starlark.String
-		var appConfig = starlark.NewDict(0)
-		var containerOpts = starlark.NewDict(0)
-		var containerArgs = starlark.NewDict(0)
-		var containerVols = &starlark.List{}
-
-		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "dev?", &dev,
-			"auth?", &auth, "git_auth?", &gitAuth, "git_branch?", &gitBranch, "git_commit?", &gitCommit,
-			"params?", &params, "spec?", &appSpec, "app_config", &appConfig,
-			"container_opts?", &containerOpts, "container_args?", &containerArgs, "container_vols?", &containerVols,
-		); err != nil {
-			return nil, err
-		}
-
-		fields := starlark.StringDict{
-			"path":           path,
-			"source":         source,
-			"dev":            cmp.Or(dev, starlark.Bool(applyDev)),
-			"auth":           auth,
-			"git_auth":       gitAuth,
-			"git_branch":     gitBranch,
-			"git_commit":     gitCommit,
-			"params":         params,
-			"spec":           appSpec,
-			"app_config":     appConfig,
-			"container_opts": containerOpts,
-			"container_args": containerArgs,
-			"container_vols": containerVols,
-		}
-
-		appStruct := starlarkstruct.FromStringDict(starlark.String(APP), fields)
-		appDefs = append(appDefs, appStruct)
-		return appStruct, nil
+func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, applyDev bool) ([]*types.CreateAppRequest, []*types.CreateBindingRequest, error) {
+	createAppBuiltin, createBindingBuiltin, appDefs, bindingDefs, err := s.builtinsForApply(applyDev)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	builtins := starlark.StringDict{
-		APP:            starlark.NewBuiltin(APP, createAppBuiltin),
+		APP:            createAppBuiltin,
+		BINDING:        createBindingBuiltin,
 		apptype.CONFIG: starlark.NewBuiltin(apptype.CONFIG, apptype.CreateConfigBuiltin(s.config.NodeConfig, s.config.System.AllowedEnv)),
 	}
 
@@ -86,24 +53,32 @@ func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, appl
 	thread.SetLocal(types.TL_DEV, applyDev)
 
 	options := syntax.FileOptions{}
-	_, err := starlark.ExecFileOptions(&options, thread, fileName, data, builtins)
+	_, err = starlark.ExecFileOptions(&options, thread, fileName, data, builtins)
 	if err != nil {
 		if evalErr, ok := err.(*starlark.EvalError); ok {
 			s.Error().Err(evalErr).Msgf("Error loading app definitions: %s", evalErr.Backtrace())
 		}
-		return nil, fmt.Errorf("error loading app definitions: %w", err)
+		return nil, nil, fmt.Errorf("error loading app definitions: %w", err)
 	}
 
-	ret := make([]*types.CreateAppRequest, 0, len(appDefs))
+	retApp := make([]*types.CreateAppRequest, 0, len(appDefs))
+	retBinding := make([]*types.CreateBindingRequest, 0, len(bindingDefs))
 	for _, appDef := range appDefs {
-		applyConfig, err := appDefToApplyInfo(appDef)
+		appInfo, err := appDefToApplyInfo(appDef)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		ret = append(ret, applyConfig)
+		retApp = append(retApp, appInfo)
+	}
+	for _, bindingDef := range bindingDefs {
+		bindingInfo, err := bindingDefToApplyInfo(bindingDef)
+		if err != nil {
+			return nil, nil, err
+		}
+		retBinding = append(retBinding, bindingInfo)
 	}
 
-	return ret, nil
+	return retApp, retBinding, nil
 }
 
 func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, error) {
@@ -289,6 +264,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	if len(globFiles) == 0 {
 		return nil, nil, fmt.Errorf("no matching files found in %s", applyPath)
 	}
+	bindingList := make([]*types.CreateBindingRequest, 0)
 	for _, f := range globFiles {
 		s.Trace().Msgf("Applying file %s", f)
 		fileBytes, err := sourceFS.ReadFile(f)
@@ -296,13 +272,13 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 			return nil, nil, fmt.Errorf("error reading file %s: %w", f, err)
 		}
 
-		fileConfig, err := s.loadApplyInfo(f, fileBytes, branch, isDev)
+		appDefs, bindingDefs, err := s.loadApplyInfo(f, fileBytes, branch, isDev)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		for _, config := range fileConfig {
-			appPathDomain, err := parseAppPath(config.Path)
+		for _, appDef := range appDefs {
+			appPathDomain, err := parseAppPath(appDef.Path)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -316,8 +292,10 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 			if _, ok := applyConfig[appPathDomain]; ok {
 				return nil, nil, fmt.Errorf("duplicate app %s defined in file %s", config.Path, f)
 			}
-			applyConfig[appPathDomain] = config
+			applyConfig[appPathDomain] = appDef
 		}
+
+		bindingList = append(bindingList, bindingDefs...)
 	}
 
 	filteredApps := make([]types.AppPathDomain, 0, len(applyConfig))
@@ -367,6 +345,27 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 			updatedApps = append(updatedApps, appPath)
 		}
 	}
+
+	// Get list of all bindings in the database
+	allBindings, err := s.ListBindings(ctx, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	allBindingsMap := make(map[string]*types.Binding)
+	for _, binding := range allBindings {
+		allBindingsMap[binding.Path] = binding
+	}
+
+	newBindings := make([]*types.CreateBindingRequest, 0, len(bindingList))
+	updatedBindings := make([]*types.CreateBindingRequest, 0, len(bindingList))
+	for _, bindingDef := range bindingList {
+		if _, ok := allBindingsMap[bindingDef.Path]; !ok {
+			newBindings = append(newBindings, bindingDef)
+		} else {
+			updatedBindings = append(updatedBindings, bindingDef)
+		}
+	}
+	// TODO : handle binding updates
 
 	createResults := make([]types.AppCreateResponse, 0, len(newApps))
 	for _, newApp := range newApps {
@@ -754,4 +753,99 @@ func checkPropertyChanged(oldInfo *types.CreateAppRequest, fetchVal func(*types.
 	}
 	var oldVal = fetchVal(oldInfo)
 	return !reflect.DeepEqual(oldVal, newVal) && !reflect.DeepEqual(liveVal, newVal)
+}
+
+func (s *Server) builtinsForApply(applyDev bool) (*starlark.Builtin, *starlark.Builtin, []*starlarkstruct.Struct, []*starlarkstruct.Struct, error) {
+	appDefs := make([]*starlarkstruct.Struct, 0)
+	createAppDefBuiltin := func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+		var path, source starlark.String
+		var dev starlark.Bool
+		var params = starlark.NewDict(0)
+		var auth, gitAuth, gitBranch, gitCommit, appSpec starlark.String
+		var appConfig = starlark.NewDict(0)
+		var containerOpts = starlark.NewDict(0)
+		var containerArgs = starlark.NewDict(0)
+		var containerVols = &starlark.List{}
+
+		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "dev?", &dev,
+			"auth?", &auth, "git_auth?", &gitAuth, "git_branch?", &gitBranch, "git_commit?", &gitCommit,
+			"params?", &params, "spec?", &appSpec, "app_config", &appConfig,
+			"container_opts?", &containerOpts, "container_args?", &containerArgs, "container_vols?", &containerVols,
+		); err != nil {
+			return nil, err
+		}
+
+		fields := starlark.StringDict{
+			"path":           path,
+			"source":         source,
+			"dev":            cmp.Or(dev, starlark.Bool(applyDev)),
+			"auth":           auth,
+			"git_auth":       gitAuth,
+			"git_branch":     gitBranch,
+			"git_commit":     gitCommit,
+			"params":         params,
+			"spec":           appSpec,
+			"app_config":     appConfig,
+			"container_opts": containerOpts,
+			"container_args": containerArgs,
+			"container_vols": containerVols,
+		}
+
+		appStruct := starlarkstruct.FromStringDict(starlark.String(APP), fields)
+		appDefs = append(appDefs, appStruct)
+		return appStruct, nil
+	}
+
+	bindingDefs := make([]*starlarkstruct.Struct, 0)
+	createBindingDefBuiltin := func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+		var path, source starlark.String
+		var config = starlark.NewDict(0)
+		var grants = &starlark.List{}
+
+		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "grants?", &grants, "config?", &config); err != nil {
+			return nil, err
+		}
+
+		fields := starlark.StringDict{
+			"path":   path,
+			"source": source,
+			"grants": grants,
+			"config": config,
+		}
+
+		bindingStruct := starlarkstruct.FromStringDict(starlark.String(APP), fields)
+		bindingDefs = append(bindingDefs, bindingStruct)
+		return bindingStruct, nil
+	}
+
+	return starlark.NewBuiltin(APP, createAppDefBuiltin), starlark.NewBuiltin(BINDING, createBindingDefBuiltin), appDefs, bindingDefs, nil
+}
+
+func bindingDefToApplyInfo(bindingDef *starlarkstruct.Struct) (*types.CreateBindingRequest, error) {
+	path, err := apptype.GetStringAttr(bindingDef, "path")
+	if err != nil {
+		return nil, err
+	}
+
+	source, err := apptype.GetStringAttr(bindingDef, "source")
+	if err != nil {
+		return nil, err
+	}
+
+	grants, err := apptype.GetListStringAttr(bindingDef, "grants", true)
+	if err != nil {
+		return nil, err
+	}
+
+	config, err := apptype.GetDictStringAttr(bindingDef, "config", true)
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.CreateBindingRequest{
+		Path:   path,
+		Source: source,
+		Grants: grants,
+		Config: config,
+	}, nil
 }

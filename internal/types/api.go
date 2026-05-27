@@ -84,6 +84,14 @@ func CreateUpdateAppMetadataRequest() UpdateAppMetadataRequest {
 	}
 }
 
+// CreateBindingRequest is the request body for creating a binding.
+type CreateBindingRequest struct {
+	Path   string            `json:"path"`
+	Source string            `json:"source"`
+	Grants []string          `json:"grants"`
+	Config map[string]string `json:"config"`
+}
+
 // UpdateBindingRequest is the request body for updating a binding. Binding
 // updates are limited to grant changes.
 type UpdateBindingRequest struct {
