@@ -50,7 +50,6 @@ func bindingCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			Name:    CONFIG_FLAG,
 			Aliases: []string{"c"},
 			Usage:   "Set a config entry. Format is key=value. Can be specified multiple times",
-			Value:   cli.NewStringSlice("key=value"),
 		})
 	flags = append(flags,
 		&cli.StringSliceFlag{
