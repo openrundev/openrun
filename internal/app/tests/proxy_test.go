@@ -635,6 +635,135 @@ permissions=[
 	testutil.AssertEqualsBool(t, "backend called", false, called)
 }
 
+func TestProxyRewritesUpstreamLocationHeader(t *testing.T) {
+	// The upstream issues a 307 trailing-slash redirect whose Location absolute
+	// URL points at itself — exactly what uvicorn/Starlette does. The proxy's
+	// ModifyResponse must rewrite it to a path-absolute URL so the upstream
+	// authority doesn't leak to the client.
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Mimic Starlette: redirect to the same path with a trailing slash,
+		// using the upstream's Host to build an absolute URL.
+		w.Header().Set("Location", "http://"+r.Host+r.URL.Path+"/")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": fmt.Sprintf(`
+load("proxy.in", "proxy")
+
+app = ace.app("testApp", routes = [ace.proxy("/", proxy.config("%s"))],
+permissions=[
+	ace.permission("proxy.in", "config"),
+]
+)`, testServer.URL),
+	}
+
+	a, _, err := CreateTestAppPluginConfig(logger, fileData, []string{"proxy.in"},
+		[]types.Permission{
+			{Plugin: "proxy.in", Method: "config"},
+		}, map[string]types.PluginSettings{}, &types.AppConfig{Proxy: types.Proxy{RewriteLocation: true}})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test/abc", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", http.StatusTemporaryRedirect, response.Code)
+	// Path should round-trip; scheme+host must not appear (no upstream leak).
+	testutil.AssertEqualsString(t, "location", "/test/abc/", response.Header().Get("Location"))
+}
+
+func TestProxyRewritesUpstreamLocationWithStripApp(t *testing.T) {
+	// With strip_app=True the upstream doesn't know the public path prefix.
+	// Its Location must have the prefix restored on the way out, whether the
+	// Location is absolute or path-absolute.
+	var hits int
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if hits == 1 {
+			// Absolute URL pointing at upstream.
+			w.Header().Set("Location", "http://"+r.Host+"/bar?x=1")
+		} else {
+			// Path-absolute Location from upstream's perspective.
+			w.Header().Set("Location", "/bar?x=1")
+		}
+		w.WriteHeader(http.StatusFound)
+	}))
+
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": fmt.Sprintf(`
+load("proxy.in", "proxy")
+
+app = ace.app("testApp", routes = [ace.proxy("/", proxy.config("%s", strip_app=True))],
+permissions=[
+	ace.permission("proxy.in", "config"),
+]
+)`, testServer.URL),
+	}
+
+	a, _, err := CreateTestAppPluginConfig(logger, fileData, []string{"proxy.in"},
+		[]types.Permission{
+			{Plugin: "proxy.in", Method: "config"},
+		}, map[string]types.PluginSettings{}, &types.AppConfig{Proxy: types.Proxy{RewriteLocation: true}})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	// First request: absolute Location.
+	request := httptest.NewRequest("GET", "/test/foo", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code (absolute)", http.StatusFound, response.Code)
+	testutil.AssertEqualsString(t, "location (absolute)", "/test/bar?x=1", response.Header().Get("Location"))
+
+	// Second request: path-absolute Location, should be re-prefixed with /test.
+	request = httptest.NewRequest("GET", "/test/foo", nil)
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code (path-absolute)", http.StatusFound, response.Code)
+	testutil.AssertEqualsString(t, "location (path-absolute)", "/test/bar?x=1", response.Header().Get("Location"))
+}
+
+func TestProxyDoesNotRewriteExternalLocation(t *testing.T) {
+	// A Location pointing at an unrelated host (an OAuth/SSO redirect, say)
+	// must pass through untouched.
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://accounts.example.com/login?return=/foo")
+		w.WriteHeader(http.StatusFound)
+	}))
+
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": fmt.Sprintf(`
+load("proxy.in", "proxy")
+
+app = ace.app("testApp", routes = [ace.proxy("/", proxy.config("%s"))],
+permissions=[
+	ace.permission("proxy.in", "config"),
+]
+)`, testServer.URL),
+	}
+
+	a, _, err := CreateTestAppPlugin(logger, fileData, []string{"proxy.in"},
+		[]types.Permission{
+			{Plugin: "proxy.in", Method: "config"},
+		}, map[string]types.PluginSettings{})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test/abc", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", http.StatusFound, response.Code)
+	testutil.AssertEqualsString(t, "location", "https://accounts.example.com/login?return=/foo", response.Header().Get("Location"))
+}
+
 func TestProxyWebSocketDoesNotPreserveHostByDefault(t *testing.T) {
 	var backendHost string
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

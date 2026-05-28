@@ -186,6 +186,7 @@ kubernetes.scaling_threshold_cpu = 80
 proxy.max_idle_conns = 250
 proxy.idle_conn_timeout_secs = 15
 proxy.disable_compression = true
+proxy.rewrite_location = true
 
 # FS plugin related settings
 fs.file_access = ["$TEMPDIR", "/tmp"]

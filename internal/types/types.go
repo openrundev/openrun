@@ -202,6 +202,7 @@ type Proxy struct {
 	MaxIdleConns        int  `toml:"max_idle_conns"`
 	IdleConnTimeoutSecs int  `toml:"idle_conn_timeout_secs"`
 	DisableCompression  bool `toml:"disable_compression"`
+	RewriteLocation     bool `toml:"rewrite_location"`
 }
 
 type PluginContext struct {

@@ -47,6 +47,11 @@ func CreateTestAppPlugin(logger *types.Logger, fileData map[string]string,
 	return CreateTestAppInt(logger, "/test", "", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
 }
 
+func CreateTestAppPluginConfig(logger *types.Logger, fileData map[string]string,
+	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings, appConfig *types.AppConfig) (*app.App, *appfs.WorkFs, error) {
+	return CreateTestAppInt(logger, "/test", "", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, appConfig, nil)
+}
+
 func CreateTestAppPluginDomain(logger *types.Logger, domain string, fileData map[string]string,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings) (*app.App, *appfs.WorkFs, error) {
 	return CreateTestAppInt(logger, "/test", domain, fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)

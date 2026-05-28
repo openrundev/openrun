@@ -841,6 +841,18 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 		}
 	}
 
+	// stripPath is finalized just before router.Mount below; the closure
+	// captures it by reference so the runtime value (including the stripApp
+	// join with a.Path) is what gets used when rewriting.
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		if loc := resp.Header.Get("Location"); loc != "" && a.AppConfig.Proxy.RewriteLocation {
+			if rewritten, ok := rewriteProxyLocation(loc, urlParsed, stripPath); ok {
+				resp.Header.Set("Location", rewritten)
+			}
+		}
+		return nil
+	}
+
 	proxyWrapper := NewTracker(proxy, a.AppConfig.Container.IdleShutdownSecs, a.telemetryIdentityAttrs...)
 	if originalUrlStr == apptype.CONTAINER_URL {
 		a.containerHandler.proxyTracker = proxyWrapper
@@ -947,6 +959,64 @@ func formatProxyHost(host string) string {
 		return "[" + host + "]"
 	}
 	return host
+}
+
+// rewriteProxyLocation rewrites an upstream redirect's Location header so the
+// upstream URL doesn't leak to the client. Two cases are handled:
+//
+//   - Location is absolute and its host matches the upstream we proxy to:
+//     drop the scheme+host so the client resolves against the public URL.
+//     This happens when the upstream builds a Location from its Host header
+//     (uvicorn/Starlette's automatic trailing-slash redirect is a common
+//     trigger when preserve_host is false).
+//
+//   - Location is path-absolute ("/foo") and the proxy stripped a prefix
+//     before forwarding: re-prepend the stripped prefix so the client's
+//     follow-up request hits the same route.
+//
+// In both cases the returned Location is path-absolute; the client's scheme
+// and host come from the original request, keeping the public authority
+// intact. Cross-host absolute Locations and truly relative Locations
+// ("foo/bar") are passed through unchanged.
+func rewriteProxyLocation(loc string, upstream *url.URL, stripPath string) (string, bool) {
+	locURL, err := url.Parse(loc)
+	if err != nil {
+		return "", false
+	}
+
+	hasStrip := stripPath != "" && stripPath != "/"
+	if locURL.IsAbs() {
+		if !strings.EqualFold(locURL.Host, upstream.Host) {
+			return "", false
+		}
+	} else if !strings.HasPrefix(loc, "/") {
+		// Truly relative reference — the client resolves it against the
+		// request URL, so re-prefixing isn't safe and isn't needed.
+		return "", false
+	} else if !hasStrip {
+		// Path-absolute with no stripped prefix to restore; nothing to do.
+		return "", false
+	}
+
+	newPath := locURL.EscapedPath()
+	if newPath == "" {
+		newPath = "/"
+	}
+	if hasStrip {
+		newPath = stripPath + newPath
+	}
+
+	var sb strings.Builder
+	sb.WriteString(newPath)
+	if locURL.RawQuery != "" {
+		sb.WriteByte('?')
+		sb.WriteString(locURL.RawQuery)
+	}
+	if locURL.Fragment != "" {
+		sb.WriteByte('#')
+		sb.WriteString(locURL.EscapedFragment())
+	}
+	return sb.String(), true
 }
 
 func (a *App) addAPIRoute(basePath string, router *chi.Mux, apiDef *starlarkstruct.Struct, defaultHandler starlark.Callable) error {
