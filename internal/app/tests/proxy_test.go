@@ -764,7 +764,18 @@ permissions=[
 	testutil.AssertEqualsString(t, "location", "https://accounts.example.com/login?return=/foo", response.Header().Get("Location"))
 }
 
-func TestProxyWebSocketDoesNotPreserveHostByDefault(t *testing.T) {
+func TestProxyWebSocketForwardsClientHost(t *testing.T) {
+	// WebSocket upgrades always forward the client Host to the upstream, even
+	// when preserve_host=false. Upstream WebSocket frameworks (Starlette/ASGI,
+	// Tornado, etc.) reject the handshake as a "disallowed origin" when the
+	// browser-supplied Origin's host doesn't match the request's Host, so the
+	// proxy must leave Host alone for upgrades.
+	//
+	// This is safe in the live server: by the time a request hits this code,
+	// Host has been constrained to a registered app domain by MatchApp and
+	// validated by system.ValidHostHeader. The "attacker.example" value here
+	// stands in for one of those registered domains; the test bypasses
+	// MatchApp by calling ServeHTTP directly.
 	var backendHost string
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		backendHost = r.Host
@@ -799,7 +810,7 @@ permissions=[
 	a.ServeHTTP(response, request)
 
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertEqualsString(t, "backend host", testServer.URL[7:], backendHost)
+	testutil.AssertEqualsString(t, "backend host", "attacker.example", backendHost)
 }
 
 func TestProxyNoStripApp(t *testing.T) {

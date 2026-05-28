@@ -831,12 +831,17 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	defaultDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		defaultDirector(req)
-		// Forward Connection/Upgrade as-is so the WebSocket handshake survives.
 		if req.Header.Get("Upgrade") == "websocket" {
+			// Forward Connection/Upgrade as-is so the handshake survives. Host
+			// is intentionally left untouched (even when preserve_host=false):
+			// upstream WebSocket frameworks reject the handshake as a
+			// "disallowed origin" when the browser-supplied Origin's host
+			// doesn't match Host. The Host that reaches this code has already
+			// been constrained by MatchApp and system.ValidHostHeader, so it
+			// is a registered app domain — not an attacker-controlled value.
 			req.Header.Set("Connection", "Upgrade")
 			req.Header.Set("Upgrade", "websocket")
-		}
-		if !preserveHost {
+		} else if !preserveHost {
 			req.Host = urlParsed.Host
 		}
 	}
