@@ -86,10 +86,11 @@ func CreateUpdateAppMetadataRequest() UpdateAppMetadataRequest {
 
 // CreateBindingRequest is the request body for creating a binding.
 type CreateBindingRequest struct {
-	Path   string            `json:"path"`
-	Source string            `json:"source"`
-	Grants []string          `json:"grants"`
-	Config map[string]string `json:"config"`
+	Path      string            `json:"path"`
+	Source    string            `json:"source"`
+	Grants    []string          `json:"grants"`
+	Config    map[string]string `json:"config"`
+	ApplyInfo []byte            `json:"-"`
 }
 
 // UpdateBindingRequest is the request body for updating a binding. Binding
@@ -182,16 +183,19 @@ type AppApplyResult struct {
 }
 
 type AppApplyResponse struct {
-	DryRun         bool                `json:"dry_run"`
-	CommitId       string              `json:"commit_id"`
-	SkippedApply   bool                `json:"skipped_apply"`
-	CreateResults  []AppCreateResponse `json:"create_results"`
-	UpdateResults  []AppPathDomain     `json:"update_results"`
-	ApproveResults []ApproveResult     `json:"approve_results"`
-	PromoteResults []AppPathDomain     `json:"promote_results"`
-	ReloadResults  []AppPathDomain     `json:"reload_results"`
-	SkippedResults []AppPathDomain     `json:"skipped_results"`
-	FilteredApps   []AppPathDomain     `json:"filtered_apps"`
+	DryRun                bool                `json:"dry_run"`
+	CommitId              string              `json:"commit_id"`
+	SkippedApply          bool                `json:"skipped_apply"`
+	CreateResults         []AppCreateResponse `json:"create_results"`
+	UpdateResults         []AppPathDomain     `json:"update_results"`
+	ApproveResults        []ApproveResult     `json:"approve_results"`
+	PromoteResults        []AppPathDomain     `json:"promote_results"`
+	ReloadResults         []AppPathDomain     `json:"reload_results"`
+	SkippedResults        []AppPathDomain     `json:"skipped_results"`
+	FilteredApps          []AppPathDomain     `json:"filtered_apps"`
+	CreateBindingResults  []string            `json:"create_binding_results"`
+	UpdateBindingResults  []string            `json:"update_binding_results"`
+	PromoteBindingResults []string            `json:"promote_binding_results"`
 }
 
 type AppPromoteResponse struct {

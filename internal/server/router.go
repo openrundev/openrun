@@ -1128,7 +1128,7 @@ func (h *Handler) apply(r *http.Request) (any, error) {
 		return nil, err
 	}
 
-	ret, _, err := h.server.Apply(r.Context(), types.Transaction{}, applyPath, appPathGlob, approve, dryRun, promote,
+	ret, _, _, err := h.server.Apply(r.Context(), types.Transaction{}, applyPath, appPathGlob, approve, dryRun, promote,
 		types.AppReloadOption(r.URL.Query().Get("reload")),
 		r.URL.Query().Get("branch"), r.URL.Query().Get("commit"), r.URL.Query().Get("gitAuth"),
 		clobber, forceReload, "", nil, dev)

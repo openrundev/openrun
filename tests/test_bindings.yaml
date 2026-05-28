@@ -436,6 +436,109 @@ tests:
     exit-code: 1
     stderr: "no binding found with path /apps/b4"
 
+  binding0500: # apply creates base and derived bindings
+    command: ../openrun apply ./apply_files/apply_bindings1.ace /apps/apply**
+    stdout: "2 binding(s) created, 0 binding(s) updated, 0 binding(s) promoted."
+
+  binding0501: # apply stored base binding config in prod
+    command: ../openrun binding get -f json /apps/applybase | jq -r '.[0].metadata.config.inherit_default'
+    stdout: "false"
+
+  binding0502: # apply stored base binding config in staging
+    command: ../openrun binding get -f json /apps/applybase | jq -r '.[0].staged_metadata.config.inherit_default'
+    stdout: "false"
+
+  binding0503: # apply stored derived binding grant in prod
+    command: ../openrun binding get -f json /apps/applyread | jq -r '.[0].metadata.grants | join(",")'
+    stdout: "read:test_apply1"
+
+  binding0504: # non-declarative staged grant should be preserved by three-way merge
+    command: ../openrun binding update --add-grant "create:*" /apps/applyread
+    stdout: "Binding /apps/applyread updated"
+
+  binding0510: # apply updates staged metadata using a three-way merge
+    command: ../openrun apply --reload=none ./apply_files/apply_bindings2.ace /apps/apply**
+    stdout: "0 binding(s) created, 1 binding(s) updated, 0 binding(s) promoted."
+
+  binding0511: # staged base config is unchanged
+    command: ../openrun binding get -f json /apps/applybase | jq -r '.[0].staged_metadata.config.inherit_default'
+    stdout: "false"
+
+  binding0512: # prod base config is unchanged until promote
+    command: ../openrun binding get -f json /apps/applybase | jq -r '.[0].metadata.config.inherit_default'
+    stdout: "false"
+
+  binding0513: # staged grants remove old declarative, add new declarative, and keep CLI grant
+    command: ../openrun binding get -f json /apps/applyread | jq -r '.[0].staged_metadata.grants | sort | join(",")'
+    stdout: "create:*,read:test_apply2"
+
+  binding0514: # prod grants are unchanged until promote
+    command: ../openrun binding get -f json /apps/applyread | jq -r '.[0].metadata.grants | join(",")'
+    stdout: "read:test_apply1"
+
+  binding0520: # promote copies staged binding metadata to prod
+    command: ../openrun apply --promote --reload=none ./apply_files/apply_bindings2.ace /apps/apply**
+    stdout: "0 binding(s) created, 0 binding(s) updated, 1 binding(s) promoted."
+
+  binding0521: # prod base config is unchanged
+    command: ../openrun binding get -f json /apps/applybase | jq -r '.[0].metadata.config.inherit_default'
+    stdout: "false"
+
+  binding0522: # prod derived grants were promoted
+    command: ../openrun binding get -f json /apps/applyread | jq -r '.[0].metadata.grants | sort | join(",")'
+    stdout: "create:*,read:test_apply2"
+
+  binding0530: # clobber removes non-declarative staged grants
+    command: ../openrun apply --clobber --reload=none ./apply_files/apply_bindings2.ace /apps/applyread
+    stdout: "0 binding(s) created, 1 binding(s) updated, 0 binding(s) promoted."
+
+  binding0531: # staged grants now exactly match the apply file
+    command: ../openrun binding get -f json /apps/applyread | jq -r '.[0].staged_metadata.grants | join(",")'
+    stdout: "read:test_apply2"
+
+  binding0540: # source changes are rejected
+    command: ../openrun apply --reload=none ./apply_files/apply_bindings_source_change.ace /apps/applybase
+    exit-code: 1
+    stderr: "binding /apps/applybase already exists with different source: postgres/testbind"
+
+  binding0541: # config updates are rejected for existing bindings
+    command: ../openrun apply --reload=none ./apply_files/apply_bindings_config_update.ace /apps/applybase
+    exit-code: 1
+    stderr: "binding config updates are not supported for existing binding /apps/applybase"
+
+  binding0542: # binding config values must be strings
+    command: ../openrun apply --reload=none ./apply_files/apply_bindings_bad_config.ace /apps/applybadconfig
+    exit-code: 1
+    stderr: "config value inherit_default is not a string"
+
+  binding0543: # bindings are applied even when the app glob matches no apps
+    command: ../openrun apply --reload=none ./apply_files/apply_bindings_glob.ace /does/not/match
+    stdout: "1 binding(s) created, 0 binding(s) updated, 0 binding(s) promoted."
+
+  binding0544: # glob-created binding exists
+    command: ../openrun binding get -f json /apps/applyglob | jq -r '.[0].path'
+    stdout: "/apps/applyglob"
+
+  binding0550: # setup CLI-created binding for first apply adoption
+    command: ../openrun binding create postgres/testbind /apps/applyclibase
+    stdout: "Binding /apps/applyclibase created"
+
+  binding0551: # setup CLI-created derived binding with an old grant
+    command: ../openrun binding create --grant "read:test_cli_old" /apps/applyclibase /apps/applycliread
+    stdout: "Binding /apps/applycliread created"
+
+  binding0552: # first apply with promote reports bindings as both updated and promoted
+    command: ../openrun apply --promote --reload=none ./apply_files/apply_bindings_cli_adopt.ace /does/not/match
+    stdout: "0 binding(s) created, 2 binding(s) updated, 2 binding(s) promoted."
+
+  binding0553: # old CLI grant was removed on first apply
+    command: ../openrun binding get -f json /apps/applycliread | jq -r '.[0].staged_metadata.grants | join(",")'
+    stdout: "read:test_cli_new"
+
+  binding0554: # promoted metadata also has the adopted grant
+    command: ../openrun binding get -f json /apps/applycliread | jq -r '.[0].metadata.grants | join(",")'
+    stdout: "read:test_cli_new"
+
   # Cleanup: remove remaining bindings and the source service
   binding99999:
-    command: (../openrun binding delete /apps/b6; ../openrun binding delete /apps/b1; ../openrun binding delete /apps/b2; ../openrun binding delete /apps/b3; ../openrun binding delete /apps/b5; ../openrun service delete postgres/testbind) || true
+    command: (../openrun binding delete /apps/applycliread; ../openrun binding delete /apps/applyclibase; ../openrun binding delete /apps/applyglob; ../openrun binding delete /apps/applyread; ../openrun binding delete /apps/applybase; ../openrun binding delete /apps/b6; ../openrun binding delete /apps/b1; ../openrun binding delete /apps/b2; ../openrun binding delete /apps/b3; ../openrun binding delete /apps/b5; ../openrun service delete postgres/testbind) || true

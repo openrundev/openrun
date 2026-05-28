@@ -1,0 +1,1 @@
+binding("/apps/applybadconfig", "postgres/testbind", config={"inherit_default": False})

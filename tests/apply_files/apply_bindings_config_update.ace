@@ -1,0 +1,1 @@
+binding("/apps/applybase", "postgres/testbind", config={"inherit_default": "true"})

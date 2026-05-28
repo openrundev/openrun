@@ -160,6 +160,43 @@ func printApplyResponse(cCtx *cli.Context, applyResponse *types.AppApplyResponse
 		printStdout(cCtx, "\n")
 	}
 
+	if len(applyResponse.CreateBindingResults) > 0 {
+		printStdout(cCtx, "Created bindings: ")
+		for i, createResult := range applyResponse.CreateBindingResults {
+			if i > 0 {
+				printStdout(cCtx, ", ")
+			}
+			printStdout(cCtx, "%s", createResult)
+		}
+		printStdout(cCtx, "\n")
+	}
+
+	if len(applyResponse.UpdateBindingResults) > 0 {
+		printStdout(cCtx, "Updated bindings: ")
+		for i, updateResult := range applyResponse.UpdateBindingResults {
+			if i > 0 {
+				printStdout(cCtx, ", ")
+			}
+			printStdout(cCtx, "%s", updateResult)
+		}
+		printStdout(cCtx, "\n")
+	}
+
+	if len(applyResponse.PromoteBindingResults) > 0 {
+		printStdout(cCtx, "Promoted bindings: ")
+		for i, promoteResult := range applyResponse.PromoteBindingResults {
+			if i > 0 {
+				printStdout(cCtx, ", ")
+			}
+			printStdout(cCtx, "%s", promoteResult)
+		}
+		printStdout(cCtx, "\n")
+	}
+
 	printStdout(cCtx, "%d app(s) created, %d app(s) updated, %d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted.\n",
 		len(applyResponse.CreateResults), len(applyResponse.UpdateResults), len(applyResponse.ReloadResults), len(applyResponse.SkippedResults), len(applyResponse.ApproveResults), len(applyResponse.PromoteResults))
+	if len(applyResponse.CreateBindingResults) > 0 || len(applyResponse.UpdateBindingResults) > 0 || len(applyResponse.PromoteBindingResults) > 0 {
+		printStdout(cCtx, "%d binding(s) created, %d binding(s) updated, %d binding(s) promoted.\n",
+			len(applyResponse.CreateBindingResults), len(applyResponse.UpdateBindingResults), len(applyResponse.PromoteBindingResults))
+	}
 }

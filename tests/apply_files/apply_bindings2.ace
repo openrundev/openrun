@@ -1,0 +1,2 @@
+binding("/apps/applybase", "postgres/testbind", config={"inherit_default": "false"})
+binding("/apps/applyread", "/apps/applybase", grants=["read:test_apply2"])

@@ -258,8 +258,11 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		lastRunCommitId = entry.Status.CommitId
 	}
 
-	applyInfo, updatedApps, applyErr := s.Apply(ctx, tx, entry.Path, "all", entry.Metadata.Approve, dryRun, entry.Metadata.Promote, types.AppReloadOption(entry.Metadata.Reload),
+	applyInfo, updatedApps, applyEffects, applyErr := s.Apply(ctx, tx, entry.Path, "all", entry.Metadata.Approve, dryRun, entry.Metadata.Promote, types.AppReloadOption(entry.Metadata.Reload),
 		entry.Metadata.GitBranch, "", entry.Metadata.GitAuth, entry.Metadata.Clobber, entry.Metadata.ForceReload, lastRunCommitId, repoCache, false)
+	if applyEffects != nil {
+		defer applyEffects.rollbackAndClose()
+	}
 
 	status := types.SyncJobStatus{
 		LastExecutionTime: time.Now(),
@@ -367,6 +370,9 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	}
 
 	if status.Error == "" && inputTx.Tx == nil {
+		if err := applyEffects.commit(); err != nil {
+			return nil, nil, err
+		}
 		if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "sync"); err != nil {
 			return nil, nil, err
 		}

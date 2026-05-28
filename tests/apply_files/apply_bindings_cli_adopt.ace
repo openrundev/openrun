@@ -1,0 +1,2 @@
+binding("/apps/applyclibase", "postgres/testbind")
+binding("/apps/applycliread", "/apps/applyclibase", grants=["read:test_cli_new"])

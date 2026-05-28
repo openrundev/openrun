@@ -193,15 +193,33 @@ func (s *Server) setupSource(applyPath, branch, commit, gitAuth string, repoCach
 	return repo, applyFile, nil
 }
 
+type applySideEffects struct {
+	bindingGrantTxs *bindingGrantTxManager
+}
+
+func (e *applySideEffects) commit() error {
+	if e == nil || e.bindingGrantTxs == nil {
+		return nil
+	}
+	return e.bindingGrantTxs.commit()
+}
+
+func (e *applySideEffects) rollbackAndClose() {
+	if e == nil || e.bindingGrantTxs == nil {
+		return
+	}
+	e.bindingGrantTxs.rollbackAndClose()
+}
+
 func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath string, appPathGlob string, approve, dryRun, promote bool,
 	reload types.AppReloadOption, branch, commit, gitAuth string, clobber,
-	forceReload bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (*types.AppApplyResponse, []types.AppPathDomain, error) {
+	forceReload bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (*types.AppApplyResponse, []types.AppPathDomain, *applySideEffects, error) {
 	var tx types.Transaction
 	var err error
 	if inputTx.Tx == nil {
 		tx, err = s.db.BeginTransaction(ctx)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		defer tx.Rollback() //nolint:errcheck
 	} else {
@@ -216,7 +234,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	if repoCache == nil {
 		repoCache, err = NewRepoCache(s)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		defer repoCache.Cleanup()
 	}
@@ -226,7 +244,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		branch = cmp.Or(branch, "main")
 		newSha, err = repoCache.GetSha(applyPath, branch, gitAuth)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
+			return nil, nil, nil, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
 		}
 		if !forceReload && (reload != types.AppReloadOptionMatched) &&
 			lastRunCommitId != "" && newSha == lastRunCommitId && (commit == "" || commit == lastRunCommitId) {
@@ -237,23 +255,24 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 				DryRun:       dryRun,
 				SkippedApply: true,
 				CommitId:     newSha,
-			}, nil, nil
+			}, nil, nil, nil
 		}
 	}
 
 	dir, file, err := s.setupSource(applyPath, branch, commit, gitAuth, repoCache, isDev)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	sourceFS, err := appfs.NewSourceFs(dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	applyConfig := map[types.AppPathDomain]*types.CreateAppRequest{}
+	bindingConfig := map[string]*types.CreateBindingRequest{}
 	globFiles, err := sourceFS.Glob(file)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	if !system.IsGit(applyPath) {
@@ -261,40 +280,54 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	}
 
 	if len(globFiles) == 0 {
-		return nil, nil, fmt.Errorf("no matching files found in %s", applyPath)
+		return nil, nil, nil, fmt.Errorf("no matching files found in %s", applyPath)
 	}
-	bindingList := make([]*types.CreateBindingRequest, 0)
+	bindingList := make([]string, 0)
 	for _, f := range globFiles {
 		s.Trace().Msgf("Applying file %s", f)
 		fileBytes, err := sourceFS.ReadFile(f)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error reading file %s: %w", f, err)
+			return nil, nil, nil, fmt.Errorf("error reading file %s: %w", f, err)
 		}
 
 		appDefs, bindingDefs, err := s.loadApplyInfo(f, fileBytes, branch, isDev)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		for _, appDef := range appDefs {
 			appPathDomain, err := parseAppPath(appDef.Path)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			if appPathDomain.Domain != "" && appPathDomain.Domain[len(appPathDomain.Domain)-1] == '.' {
 				// If domain ends with a dot, append the default domain
 				if s.config.System.DefaultDomain == "" {
-					return nil, nil, types.CreateRequestError("Domain cannot end with a dot since default_domain is not configured", http.StatusBadRequest)
+					return nil, nil, nil, types.CreateRequestError("Domain cannot end with a dot since default_domain is not configured", http.StatusBadRequest)
 				}
 				appPathDomain.Domain += s.config.System.DefaultDomain
 			}
 			if _, ok := applyConfig[appPathDomain]; ok {
-				return nil, nil, fmt.Errorf("duplicate app %s defined in file %s", appPathDomain, f)
+				return nil, nil, nil, fmt.Errorf("duplicate app %s defined in file %s", appPathDomain, f)
 			}
 			applyConfig[appPathDomain] = appDef
 		}
 
-		bindingList = append(bindingList, bindingDefs...)
+		for _, bindingDef := range bindingDefs {
+			bindingPathDomain, err := parseAppPath(bindingDef.Path)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			if bindingPathDomain.Domain != "" {
+				return nil, nil, nil, fmt.Errorf("binding %s cannot include a domain", bindingDef.Path)
+			}
+			bindingDef.Path = bindingPathDomain.Path
+			if _, ok := bindingConfig[bindingDef.Path]; ok {
+				return nil, nil, nil, fmt.Errorf("duplicate binding %s defined in file %s", bindingDef.Path, f)
+			}
+			bindingConfig[bindingDef.Path] = bindingDef
+			bindingList = append(bindingList, bindingDef.Path)
+		}
 	}
 	s.Trace().Msgf("Applying %d apps and %d bindings", len(applyConfig), len(bindingList))
 
@@ -302,7 +335,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	for appPathDomain := range applyConfig {
 		match, err := rbac.MatchGlob(appPathGlob, appPathDomain)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if !match {
 			continue
@@ -318,7 +351,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 
 	allApps, err := s.apps.GetAllAppsInfo()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	allAppsMap := make(map[types.AppPathDomain]types.AppInfo)
 	for _, appInfo := range allApps {
@@ -336,10 +369,10 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		} else {
 			applyInfo := applyConfig[appPath]
 			if appInfo.SourceUrl != applyInfo.SourceUrl {
-				return nil, nil, fmt.Errorf("app %s already exists with different source url: %s", appPath, appInfo.SourceUrl)
+				return nil, nil, nil, fmt.Errorf("app %s already exists with different source url: %s", appPath, appInfo.SourceUrl)
 			}
 			if appInfo.IsDev != applyInfo.IsDev {
-				return nil, nil, fmt.Errorf("app %s already exists with different dev status: %t", appPath, appInfo.IsDev)
+				return nil, nil, nil, fmt.Errorf("app %s already exists with different dev status: %t", appPath, appInfo.IsDev)
 			}
 
 			updatedApps = append(updatedApps, appPath)
@@ -349,25 +382,26 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	// Get list of all bindings in the database
 	allBindings, err := s.ListBindings(ctx, "")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	allBindingsMap := make(map[string]*types.Binding)
 	for _, binding := range allBindings {
 		allBindingsMap[binding.Path] = binding
 	}
 
-	/*
-		newBindings := make([]*types.CreateBindingRequest, 0, len(bindingList))
-		updatedBindings := make([]*types.CreateBindingRequest, 0, len(bindingList))
-		for _, bindingDef := range bindingList {
-			if _, ok := allBindingsMap[bindingDef.Path]; !ok {
-				newBindings = append(newBindings, bindingDef)
-			} else {
-				updatedBindings = append(updatedBindings, bindingDef)
+	newBindings := make([]string, 0, len(bindingList))
+	updatedBindings := make([]string, 0, len(bindingList))
+	for _, bindingPath := range bindingList {
+		bindingDef := bindingConfig[bindingPath]
+		if bindingInfo, ok := allBindingsMap[bindingPath]; !ok {
+			newBindings = append(newBindings, bindingPath)
+		} else {
+			if bindingInfo.Source != bindingDef.Source {
+				return nil, nil, nil, fmt.Errorf("binding %s already exists with different source: %s", bindingPath, bindingInfo.Source)
 			}
+			updatedBindings = append(updatedBindings, bindingPath)
 		}
-		// TODO : handle binding updates
-	*/
+	}
 
 	createResults := make([]types.AppCreateResponse, 0, len(newApps))
 	for _, newApp := range newApps {
@@ -378,10 +412,48 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		}
 		res, err := s.CreateAppTx(ctx, tx, newApp.String(), approve, dryRun, applyInfo, repoCache)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		createResults = append(createResults, *res)
+	}
+
+	createBindingResults := make([]string, 0, len(newBindings))
+	bindingGrantTxs := s.newBindingGrantTxManager(ctx, dryRun)
+	sideEffects := &applySideEffects{bindingGrantTxs: bindingGrantTxs}
+	releaseSideEffects := false
+	defer func() {
+		if !releaseSideEffects {
+			sideEffects.rollbackAndClose()
+		}
+	}()
+	for _, newBinding := range newBindings {
+		s.Trace().Msgf("Applying create binding %s", newBinding)
+		applyInfo := bindingConfig[newBinding]
+		if err := prepareBindingApplyInfo(applyInfo); err != nil {
+			return nil, nil, nil, err
+		}
+		if _, err := s.CreateBindingWithGrantManager(ctx, tx, applyInfo, dryRun, bindingGrantTxs); err != nil {
+			return nil, nil, nil, err
+		}
+		createBindingResults = append(createBindingResults, newBinding)
+	}
+
+	updateBindingResults := make([]string, 0, len(updatedBindings))
+	promoteBindingResults := make([]string, 0, len(updatedBindings))
+	for _, updateBinding := range updatedBindings {
+		s.Trace().Msgf("Applying update binding %s", updateBinding)
+		applyInfo := bindingConfig[updateBinding]
+		updated, promoted, err := s.applyBindingUpdate(ctx, tx, bindingGrantTxs, applyInfo, promote, clobber, forceReload)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if updated {
+			updateBindingResults = append(updateBindingResults, updateBinding)
+		}
+		if promoted {
+			promoteBindingResults = append(promoteBindingResults, updateBinding)
+		}
 	}
 
 	for _, updateApp := range updatedApps {
@@ -390,7 +462,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		applyResult, err := s.applyAppUpdate(ctx, tx, updateApp, applyInfo, approve, dryRun,
 			promote, reload, clobber, repoCache, forceReload)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		updateResults = append(updateResults, applyResult.Updated...)
@@ -422,26 +494,34 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	allUpdatedApps = slices.Collect(maps.Keys(allAppMap))
 
 	if inputTx.Tx == nil {
-		// Commit the transaction if not dry run and update the in memory app store
-		if err := s.CompleteTransaction(ctx, tx, allUpdatedApps, dryRun, "apply"); err != nil {
-			return nil, nil, err
+		if err := sideEffects.commit(); err != nil {
+			return nil, nil, nil, err
 		}
+		// Commit the metadata transaction after the service-side binding transactions.
+		if err := s.CompleteTransaction(ctx, tx, allUpdatedApps, dryRun, "apply"); err != nil {
+			return nil, nil, nil, err
+		}
+	} else {
+		releaseSideEffects = true
 	}
 
 	ret := &types.AppApplyResponse{
-		DryRun:         dryRun,
-		CommitId:       newSha,
-		SkippedApply:   false,
-		CreateResults:  createResults,
-		UpdateResults:  updateResults,
-		ApproveResults: approveResults,
-		PromoteResults: promoteResults,
-		ReloadResults:  reloadResults,
-		SkippedResults: skippedResults,
-		FilteredApps:   filteredApps,
+		DryRun:                dryRun,
+		CommitId:              newSha,
+		SkippedApply:          false,
+		CreateResults:         createResults,
+		UpdateResults:         updateResults,
+		ApproveResults:        approveResults,
+		PromoteResults:        promoteResults,
+		ReloadResults:         reloadResults,
+		SkippedResults:        skippedResults,
+		FilteredApps:          filteredApps,
+		CreateBindingResults:  createBindingResults,
+		UpdateBindingResults:  updateBindingResults,
+		PromoteBindingResults: promoteBindingResults,
 	}
 
-	return ret, allUpdatedApps, nil
+	return ret, allUpdatedApps, sideEffects, nil
 }
 
 func convertToMapString(input map[string]any, convertToml bool) (map[string]string, error) {
@@ -466,6 +546,18 @@ func convertToMapString(input map[string]any, convertToml bool) (map[string]stri
 			}
 			ret[k] = string(val)
 		}
+	}
+	return ret, nil
+}
+
+func convertToStringMap(input map[string]any) (map[string]string, error) {
+	ret := make(map[string]string, len(input))
+	for k, v := range input {
+		value, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("config value %s is not a string", k)
+		}
+		ret[k] = value
 	}
 	return ret, nil
 }
@@ -632,6 +724,179 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	ret.Updated = updatedApps
 	ret.Promoted = promoteApp
 	return ret, nil
+}
+
+func prepareBindingApplyInfo(newInfo *types.CreateBindingRequest) error {
+	newInfo.Grants = normalizeGrantList(newInfo.Grants)
+	if newInfo.Config == nil {
+		newInfo.Config = map[string]string{}
+	}
+	applyInfo, err := json.Marshal(newInfo)
+	if err != nil {
+		return err
+	}
+	newInfo.ApplyInfo = applyInfo
+	return nil
+}
+
+func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, bindingGrantTxs *bindingGrantTxManager, newInfo *types.CreateBindingRequest,
+	promote, clobber, reapplyAll bool) (bool, bool, error) {
+	if err := prepareBindingApplyInfo(newInfo); err != nil {
+		return false, false, err
+	}
+
+	binding, err := s.db.GetBinding(ctx, tx, newInfo.Path)
+	if err != nil {
+		return false, false, err
+	}
+	if binding.Source != newInfo.Source {
+		return false, false, fmt.Errorf("binding %s already exists with different source: %s", newInfo.Path, binding.Source)
+	}
+	if binding.DerivedFrom == "" && len(newInfo.Grants) > 0 {
+		return false, false, fmt.Errorf("grants are not supported for base bindings, only derived bindings can have grants")
+	}
+
+	if binding.StagedMetadata.Config == nil {
+		binding.StagedMetadata.Config = map[string]string{}
+	}
+
+	var oldInfo *types.CreateBindingRequest
+	oldInfoStr := string(binding.StagedMetadata.ApplyInfo)
+	if oldInfoStr != "" {
+		if err := json.Unmarshal([]byte(oldInfoStr), &oldInfo); err != nil {
+			return false, false, fmt.Errorf("error unmarshalling stored binding info: %w", err)
+		}
+		oldInfo.Grants = normalizeGrantList(oldInfo.Grants)
+		if oldInfo.Config == nil {
+			oldInfo.Config = map[string]string{}
+		}
+	}
+
+	var oldGrants []string
+	if oldInfo != nil {
+		oldGrants = oldInfo.Grants
+	} else {
+		oldGrants = append([]string{}, binding.StagedMetadata.Grants...)
+	}
+	configChanged := !stringMapEqual(binding.StagedMetadata.Config, newInfo.Config)
+	if configChanged {
+		return false, false, fmt.Errorf("binding config updates are not supported for existing binding %s", newInfo.Path)
+	}
+	grantsChanged := mergeSlice(oldGrants, newInfo.Grants, &binding.StagedMetadata.Grants, clobber)
+	applyInfoChanged := string(binding.StagedMetadata.ApplyInfo) != string(newInfo.ApplyInfo)
+
+	stagingGrantsAppliedChanged := false
+	if binding.DerivedFrom != "" {
+		derivedFrom, service, err := s.getBindingUpdateRefs(ctx, tx, binding)
+		if err != nil {
+			return false, false, err
+		}
+		stagingService := service
+		if service.Staging != "" {
+			stagingService, err = s.db.GetService(ctx, tx, service.ServiceType, service.Staging)
+			if err != nil {
+				return false, false, fmt.Errorf("error getting staging service: %w", err)
+			}
+		}
+		grantsApplied, err := bindingGrantTxs.applyGrants(stagingService, binding, derivedFrom, true, reapplyAll)
+		if err != nil {
+			return false, false, fmt.Errorf("error applying staging grants: %w", err)
+		}
+		if !bindingGrantSetEqual(binding.StagedMetadata.GrantsApplied, grantsApplied) {
+			binding.StagedMetadata.GrantsApplied = grantsApplied
+			stagingGrantsAppliedChanged = true
+		}
+	}
+
+	updated := grantsChanged || applyInfoChanged || stagingGrantsAppliedChanged
+	if updated {
+		binding.StagedMetadata.ApplyInfo = append([]byte{}, newInfo.ApplyInfo...)
+	}
+
+	promoted := false
+	if promote && !stringMapEqual(binding.Metadata.Config, binding.StagedMetadata.Config) {
+		return false, false, fmt.Errorf("binding config promotion is not supported for existing binding %s", newInfo.Path)
+	}
+	if promote && !bindingMetadataPromoteEqual(binding.Metadata, binding.StagedMetadata) {
+		binding.Metadata.Config = maps.Clone(binding.StagedMetadata.Config)
+		binding.Metadata.Grants = append([]string{}, binding.StagedMetadata.Grants...)
+		binding.Metadata.ApplyInfo = append([]byte{}, binding.StagedMetadata.ApplyInfo...)
+		if binding.DerivedFrom != "" {
+			derivedFrom, service, err := s.getBindingUpdateRefs(ctx, tx, binding)
+			if err != nil {
+				return false, false, err
+			}
+			binding.Metadata.GrantsApplied, err = bindingGrantTxs.applyGrants(service, binding, derivedFrom, false, reapplyAll)
+			if err != nil {
+				return false, false, err
+			}
+		} else {
+			binding.Metadata.GrantsApplied = append([]types.BindingGrant{}, binding.StagedMetadata.GrantsApplied...)
+		}
+		promoted = true
+	}
+
+	if updated || promoted {
+		if err := s.db.UpdateBinding(ctx, tx, binding); err != nil {
+			return false, false, err
+		}
+	}
+
+	return updated, promoted, nil
+}
+
+func (s *Server) getBindingUpdateRefs(ctx context.Context, tx types.Transaction, binding *types.Binding) (*types.Binding, *types.Service, error) {
+	derivedFrom, err := s.db.GetBinding(ctx, tx, binding.DerivedFrom)
+	if err != nil {
+		return nil, nil, fmt.Errorf("base binding %s not found: %w", binding.DerivedFrom, err)
+	}
+
+	service, err := s.db.GetService(ctx, tx, binding.ServiceType, binding.ServiceName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error getting binding service: %w", err)
+	}
+	return derivedFrom, service, nil
+}
+
+func bindingMetadataPromoteEqual(a, b types.BindingMetadata) bool {
+	return stringSetEqual(normalizeGrantList(a.Grants), normalizeGrantList(b.Grants)) &&
+		stringMapEqual(a.Config, b.Config) &&
+		bindingGrantSetEqual(a.GrantsApplied, b.GrantsApplied) &&
+		string(a.ApplyInfo) == string(b.ApplyInfo)
+}
+
+func stringMapEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		if b[k] != av {
+			return false
+		}
+	}
+	return true
+}
+
+func stringSetEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ac := append([]string{}, a...)
+	bc := append([]string{}, b...)
+	slices.Sort(ac)
+	slices.Sort(bc)
+	return slices.Equal(ac, bc)
+}
+
+func bindingGrantSetEqual(a, b []types.BindingGrant) bool {
+	toStrings := func(grants []types.BindingGrant) []string {
+		ret := make([]string, 0, len(grants))
+		for _, grant := range grants {
+			ret = append(ret, grant.String())
+		}
+		return ret
+	}
+	return stringSetEqual(toStrings(a), toStrings(b))
 }
 
 func mergeMap(old, new, live map[string]string, clobber bool) bool {
@@ -814,7 +1079,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 		var config = starlark.NewDict(0)
 		var grants = &starlark.List{}
 
-		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "grants?", &grants, "config?", &config); err != nil {
+		if err := starlark.UnpackArgs(BINDING, args, kwargs, "path", &path, "source", &source, "grants?", &grants, "config?", &config); err != nil {
 			return nil, err
 		}
 
@@ -825,7 +1090,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 			"config": config,
 		}
 
-		bindingStruct := starlarkstruct.FromStringDict(starlark.String(APP), fields)
+		bindingStruct := starlarkstruct.FromStringDict(starlark.String(BINDING), fields)
 		collector.bindingDefs = append(collector.bindingDefs, bindingStruct)
 		return bindingStruct, nil
 	}
@@ -851,7 +1116,11 @@ func bindingDefToApplyInfo(bindingDef *starlarkstruct.Struct) (*types.CreateBind
 		return nil, err
 	}
 
-	config, err := apptype.GetDictStringAttr(bindingDef, "config", true)
+	config, err := apptype.GetDictAttr(bindingDef, "config", true)
+	if err != nil {
+		return nil, err
+	}
+	configStr, err := convertToStringMap(config)
 	if err != nil {
 		return nil, err
 	}
@@ -860,6 +1129,6 @@ func bindingDefToApplyInfo(bindingDef *starlarkstruct.Struct) (*types.CreateBind
 		Path:   path,
 		Source: source,
 		Grants: grants,
-		Config: config,
+		Config: configStr,
 	}, nil
 }
