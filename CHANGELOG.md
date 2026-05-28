@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.17.5] - 2026-05-28
+
 ### Changed
 
 - Proxied responses now rewrite the `Location` header so upstream redirects don't leak the internal backend authority. Absolute Locations pointing at the proxy target are converted to path-only URLs, and path-absolute Locations get any stripped prefix (`strip_app` / `strip_path`) restored so the client's next request lands on the same public route. Cross-host Locations (OAuth/SSO and similar) pass through unchanged.
