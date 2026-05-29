@@ -193,6 +193,9 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 			ApplyInfo: createRequest.ApplyInfo,
 		},
 	}
+	if err := validateBindingCreatePath(binding.Path); err != nil {
+		return nil, err
+	}
 	binding.Id, err = newPrefixedId(types.ID_PREFIX_BINDING)
 	if err != nil {
 		return nil, err
@@ -299,6 +302,13 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 	}
 
 	return &binding, nil
+}
+
+func validateBindingCreatePath(bindingPath string) error {
+	if strings.HasPrefix(bindingPath, "/auto") {
+		return fmt.Errorf("binding path cannot start with /auto; /auto is reserved for autobindings")
+	}
+	return nil
 }
 
 func (s *Server) getServiceBinding(ctx context.Context, service *types.Service, binding *types.Binding) (bindings.ServiceBinding, error) {

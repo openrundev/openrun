@@ -413,8 +413,13 @@ tests:
     exit-code: 1
     stderr: "binding source /apps/missing not found"
 
+  binding0319: # /auto is reserved for autobindings
+    command: ../openrun binding create postgres/testbind /auto/bad
+    exit-code: 1
+    stderr: "/auto is reserved for autobindings"
+
   # Failed creates above must not have persisted
-  binding0319:
+  binding0320:
     command: ../openrun binding list -f json | jq 'length'
     stdout: "6"
 
