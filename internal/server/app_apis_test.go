@@ -91,12 +91,12 @@ func TestUpdateAppMetadataConfigValidatesForwardModifier(t *testing.T) {
 	server.oAuthManager.providerConfigs["github"] = &types.AuthConfig{}
 	appEntry := &types.AppEntry{}
 
-	err := server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_missing"})
+	err := server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_missing"}, false)
 	if err == nil {
 		t.Fatal("expected missing forward config error")
 	}
 
-	err = server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_authz"})
+	err = server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_authz"}, false)
 	if err != nil {
 		t.Fatalf("update auth metadata: %v", err)
 	}

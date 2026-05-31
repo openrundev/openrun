@@ -554,6 +554,7 @@ func (s *Server) updateParamHandler(ctx context.Context, tx types.Transaction, a
 
 func (s *Server) updateMetadataHandler(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, args map[string]any) (any, types.AppPathDomain, error) {
 	updateMetadata := args["metadata"].(types.UpdateAppMetadataRequest)
+	dryRun, _ := args["dryRun"].(bool)
 
 	if updateMetadata.Spec != types.StringValueUndefined {
 		// The type is being updated
@@ -573,7 +574,7 @@ func (s *Server) updateMetadataHandler(ctx context.Context, tx types.Transaction
 	}
 
 	if updateMetadata.ConfigType != "" && updateMetadata.ConfigType != types.AppMetadataConfigType(types.StringValueUndefined) {
-		err := s.updateAppMetadataConfig(ctx, tx, appEntry, updateMetadata.ConfigType, updateMetadata.ConfigEntries)
+		err := s.updateAppMetadataConfig(ctx, tx, appEntry, updateMetadata.ConfigType, updateMetadata.ConfigEntries, dryRun)
 		if err != nil {
 			return nil, appEntry.AppPathDomain(), err
 		}
@@ -584,7 +585,7 @@ func (s *Server) updateMetadataHandler(ctx context.Context, tx types.Transaction
 }
 
 // updateAppMetadataConfig updates the app metadata config.
-func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, configType types.AppMetadataConfigType, configEntries []string) error {
+func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, configType types.AppMetadataConfigType, configEntries []string, dryRun bool) error {
 	if len(configEntries) == 0 {
 		return nil
 	}
@@ -600,10 +601,11 @@ func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transacti
 		appEntry.Metadata.ContainerVolumes = configEntries
 		return nil
 	case types.AppMetadataBindings:
-		if err := s.validateAppBindings(ctx, tx, configEntries); err != nil {
+		resolvedBindings, err := s.resolveAppBindings(ctx, tx, autoBindingAppID(appEntry), configEntries, dryRun)
+		if err != nil {
 			return err
 		}
-		appEntry.Metadata.Bindings = configEntries
+		appEntry.Metadata.Bindings = resolvedBindings
 		return nil
 	case types.AppMetadataAuthnType:
 		if err := s.validateAppAuthnType(string(value)); err != nil {
@@ -661,17 +663,5 @@ func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transacti
 		}
 	}
 
-	return nil
-}
-
-func (s *Server) validateAppBindings(ctx context.Context, tx types.Transaction, bindingPaths []string) error {
-	for _, bindingPath := range bindingPaths {
-		if bindingPath == "" {
-			return fmt.Errorf("binding path cannot be empty")
-		}
-		if _, err := s.db.GetBinding(ctx, tx, bindingPath); err != nil {
-			return fmt.Errorf("binding %s not found: %w", bindingPath, err)
-		}
-	}
 	return nil
 }

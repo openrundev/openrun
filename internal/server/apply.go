@@ -138,6 +138,10 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	if err != nil {
 		return nil, err
 	}
+	bindings, err := apptype.GetListStringAttr(appDef, "bindings", true)
+	if err != nil {
+		return nil, err
+	}
 
 	paramStr, err := convertToMapString(params, false)
 	if err != nil {
@@ -170,6 +174,7 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 		ContainerOptions: containerOptsStr,
 		ContainerArgs:    containerArgsStr,
 		ContainerVolumes: containerVols,
+		Bindings:         bindings,
 	}, nil
 }
 
@@ -587,6 +592,10 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		oldInfo.AppAuthn = cmp.Or(oldInfo.AppAuthn, types.AppAuthnDefault)
 	}
 	newInfo.AppAuthn = cmp.Or(newInfo.AppAuthn, types.AppAuthnDefault)
+	newInfo.Bindings, err = s.resolveAppBindings(ctx, tx, autoBindingAppID(liveApp), newInfo.Bindings, dryRun)
+	if err != nil {
+		return nil, err
+	}
 
 	authChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
 		return info.AppAuthn
@@ -668,8 +677,14 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	}
 	appConfigChanged := mergeMap(oldAppConfig, newInfo.AppConfig, liveApp.Metadata.AppConfig, clobber)
 
+	var oldBindings []string
+	if oldInfo != nil {
+		oldBindings = oldInfo.Bindings
+	}
+	bindingsChanged := mergeSlice(oldBindings, newInfo.Bindings, &liveApp.Metadata.Bindings, clobber)
+
 	updated := specChanged || gitBranchChanged || gitCommitChanged || paramsChanged ||
-		contConfigChanged || contArgsChanged || contVolsChanged || appConfigChanged || authChanged || gitAuthChanged
+		contConfigChanged || contArgsChanged || contVolsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged
 	updatedApps := make([]types.AppPathDomain, 0)
 	if updated {
 		liveApp.Metadata.VersionMetadata.ApplyInfo, err = json.Marshal(newInfo)
@@ -1044,11 +1059,13 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 		var containerOpts = starlark.NewDict(0)
 		var containerArgs = starlark.NewDict(0)
 		var containerVols = &starlark.List{}
+		var bindings = &starlark.List{}
 
 		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "dev?", &dev,
 			"auth?", &auth, "git_auth?", &gitAuth, "git_branch?", &gitBranch, "git_commit?", &gitCommit,
 			"params?", &params, "spec?", &appSpec, "app_config", &appConfig,
 			"container_opts?", &containerOpts, "container_args?", &containerArgs, "container_vols?", &containerVols,
+			"bindings?", &bindings,
 		); err != nil {
 			return nil, err
 		}
@@ -1067,6 +1084,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 			"container_opts": containerOpts,
 			"container_args": containerArgs,
 			"container_vols": containerVols,
+			"bindings":       bindings,
 		}
 
 		appStruct := starlarkstruct.FromStringDict(starlark.String(APP), fields)

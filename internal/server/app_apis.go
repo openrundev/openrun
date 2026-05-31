@@ -24,7 +24,6 @@ import (
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"github.com/segmentio/ksuid"
 )
 
 func parseAppPath(inp string) (types.AppPathDomain, error) {
@@ -55,6 +54,18 @@ func normalizePath(inp string) string {
 		return "/"
 	}
 	return inp
+}
+
+func newAppID(isDev bool) (types.AppId, error) {
+	prefix := types.ID_PREFIX_APP_PROD
+	if isDev {
+		prefix = types.ID_PREFIX_APP_DEV
+	}
+	id, err := newPrefixedId(prefix)
+	if err != nil {
+		return "", err
+	}
+	return types.AppId(id), nil
 }
 
 func (s *Server) CreateApp(ctx context.Context, appPath string,
@@ -155,12 +166,17 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 	appEntry.Metadata.ContainerArgs = appRequest.ContainerArgs
 	appEntry.Metadata.ContainerVolumes = appRequest.ContainerVolumes
 	appEntry.Metadata.AppConfig = appRequest.AppConfig
-	appEntry.Metadata.Bindings = appRequest.Bindings
 	appEntry.UserID = system.GetContextUserId(ctx)
+	appEntry.Id, err = newAppID(appEntry.IsDev)
+	if err != nil {
+		return nil, err
+	}
 
-	if err := s.validateAppBindings(ctx, currentTx, appEntry.Metadata.Bindings); err != nil {
+	appEntry.Metadata.Bindings, err = s.resolveAppBindings(ctx, currentTx, appEntry.Id, appRequest.Bindings, dryRun)
+	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
+	appRequest.Bindings = append([]string{}, appEntry.Metadata.Bindings...)
 
 	auditResult, err := s.createApp(ctx, currentTx, &appEntry, approve, dryRun, appRequest.GitBranch, appRequest.GitCommit, appRequest.GitAuthName, appRequest, repoCache)
 	if err != nil {
@@ -202,17 +218,12 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 		}
 	}
 
-	genId, err := ksuid.NewRandom()
-	if err != nil {
-		return nil, err
-	}
-
-	idStr := strings.ToLower(genId.String()) // Lowercase the ID, helps use the ID in container names
-
-	if appEntry.IsDev {
-		appEntry.Id = types.AppId(types.ID_PREFIX_APP_DEV + idStr)
-	} else {
-		appEntry.Id = types.AppId(types.ID_PREFIX_APP_PROD + idStr)
+	if appEntry.Id == "" {
+		var err error
+		appEntry.Id, err = newAppID(appEntry.IsDev)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if appEntry.Metadata.Spec != "" {
@@ -242,10 +253,11 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 
 		if tx.Tx != nil {
 			// Save the apply info in the app metadata (if called from apply context)
-			stageAppEntry.Metadata.VersionMetadata.ApplyInfo, err = json.Marshal(applyInfo)
+			applyInfoBytes, err := json.Marshal(applyInfo)
 			if err != nil {
 				return nil, err
 			}
+			stageAppEntry.Metadata.VersionMetadata.ApplyInfo = applyInfoBytes
 		}
 		if err := s.db.CreateApp(ctx, tx, &stageAppEntry); err != nil {
 			return nil, err

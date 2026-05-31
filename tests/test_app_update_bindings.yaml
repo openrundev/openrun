@@ -72,5 +72,33 @@ tests:
     stdout:
       exactly: "/appupdate/b2,/appupdate/b1\n"
 
+  appupdate_bindings0150: # create app with service id auto-creates a binding
+    command: ../openrun app create --bind postgres/appupdate --bind postgres/appupdate ./testapp /app_update_auto
+    stdout: "App: /app_update_auto"
+
+  appupdate_bindings0160: # create stores the deduplicated auto binding path on prod and stage
+    command: bash -c 'id=$(../openrun app list -i -f json /app_update_auto | jq -r "map(select(.path == \"/app_update_auto\"))[0].id"); bindings=$(../openrun app list -i -f json /app_update_auto | jq -r "[.[].metadata.bindings | join(\",\")] | unique | join(\";\")"); [[ "$bindings" == "/auto/${id}/postgres" ]] && echo true'
+    stdout: "true"
+
+  appupdate_bindings0170: # auto binding points at the requested service
+    command: bash -c 'id=$(../openrun app list -i -f json /app_update_auto | jq -r "map(select(.path == \"/app_update_auto\"))[0].id"); ../openrun binding get -f json "/auto/${id}/postgres" | jq -r ".[0].source"'
+    stdout: "postgres/appupdate"
+
+  appupdate_bindings0175: # derived binding can reference an auto binding by its canonical app id path
+    command: bash -c 'id=$(../openrun app list -i -f json /app_update_auto | jq -r "map(select(.path == \"/app_update_auto\"))[0].id"); ../openrun binding create "/auto/${id}/postgres" /appupdate/auto_derived >/dev/null && ../openrun binding get -f json /appupdate/auto_derived | jq -r ".[0].source == \"/auto/${id}/postgres\""'
+    stdout: "true"
+
+  appupdate_bindings0180: # update with duplicate service ids auto-creates one binding for the app
+    command: ../openrun app update bindings postgres/appupdate postgres/appupdate /app_update_bindings
+    stdout: "1 app(s) updated, 0 app(s) promoted."
+
+  appupdate_bindings0190: # staged update stores the main app auto binding path
+    command: bash -c 'id=$(../openrun app list -i -f json /app_update_bindings | jq -r "map(select(.path == \"/app_update_bindings\"))[0].id"); bindings=$(../openrun app list -i -f json /app_update_bindings | jq -r "map(select(.path == \"/app_update_bindings_cl_stage\"))[0].metadata.bindings | join(\",\")"); [[ "$bindings" == "/auto/${id}/postgres" ]] && echo true'
+    stdout: "true"
+
+  appupdate_bindings0200: # staged update auto binding points at the requested service
+    command: bash -c 'id=$(../openrun app list -i -f json /app_update_bindings | jq -r "map(select(.path == \"/app_update_bindings\"))[0].id"); ../openrun binding get -f json "/auto/${id}/postgres" | jq -r ".[0].source"'
+    stdout: "postgres/appupdate"
+
   appupdate_bindings9999: # cleanup
-    command: ../openrun app delete /app_update_bindings && ../openrun binding delete /appupdate/b1 && ../openrun binding delete /appupdate/b2 && ../openrun binding delete /appupdate/b3 && ../openrun service delete postgres/appupdate
+    command: bash -c 'auto_id=$(../openrun app list -i -f json /app_update_auto | jq -r "map(select(.path == \"/app_update_auto\"))[0].id"); bindings_id=$(../openrun app list -i -f json /app_update_bindings | jq -r "map(select(.path == \"/app_update_bindings\"))[0].id"); ../openrun app delete /app_update_auto && ../openrun app delete /app_update_bindings && ../openrun binding delete /appupdate/auto_derived && ../openrun binding delete "/auto/${auto_id}/postgres" && ../openrun binding delete "/auto/${bindings_id}/postgres" && ../openrun binding delete /appupdate/b1 && ../openrun binding delete /appupdate/b2 && ../openrun binding delete /appupdate/b3 && ../openrun service delete postgres/appupdate'

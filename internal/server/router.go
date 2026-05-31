@@ -959,6 +959,7 @@ func (h *Handler) updateAppMetadata(r *http.Request) (any, error) {
 
 	args := map[string]any{
 		"metadata": updateAppRequest,
+		"dryRun":   dryRun,
 	}
 
 	updateResult, err := h.server.StagedUpdate(r.Context(), appPathGlob, dryRun, promote, h.server.updateMetadataHandler, args, "update_metadata")

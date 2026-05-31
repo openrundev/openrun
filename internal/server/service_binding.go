@@ -173,16 +173,16 @@ func (s *Server) CreateBinding(ctx context.Context, createRequest *types.CreateB
 }
 
 func (s *Server) CreateBindingTx(ctx context.Context, tx types.Transaction, createRequest *types.CreateBindingRequest, dryRun bool) (*types.Binding, error) {
-	return s.createBindingTx(ctx, tx, createRequest, dryRun, nil)
+	return s.createBindingTx(ctx, tx, createRequest, dryRun, nil, false)
 }
 
 func (s *Server) CreateBindingWithGrantManager(ctx context.Context, tx types.Transaction, createRequest *types.CreateBindingRequest,
 	dryRun bool, grantTxs *bindingGrantTxManager) (*types.Binding, error) {
-	return s.createBindingTx(ctx, tx, createRequest, dryRun, grantTxs)
+	return s.createBindingTx(ctx, tx, createRequest, dryRun, grantTxs, false)
 }
 
 func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, createRequest *types.CreateBindingRequest, dryRun bool,
-	grantTxs *bindingGrantTxManager) (*types.Binding, error) {
+	grantTxs *bindingGrantTxManager, allowAutoPath bool) (*types.Binding, error) {
 	var err error
 	binding := types.Binding{
 		Path:   createRequest.Path,
@@ -193,7 +193,7 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 			ApplyInfo: createRequest.ApplyInfo,
 		},
 	}
-	if err := validateBindingCreatePath(binding.Path); err != nil {
+	if err := validateBindingCreatePath(binding.Path, allowAutoPath); err != nil {
 		return nil, err
 	}
 	binding.Id, err = newPrefixedId(types.ID_PREFIX_BINDING)
@@ -243,19 +243,9 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 		if len(binding.StagedMetadata.Grants) > 0 {
 			return nil, fmt.Errorf("grants are not supported for base bindings, only derived bindings can have grants")
 		}
-		serviceType, name, ok := strings.Cut(binding.Source, "/")
-		if !ok {
-			// Reference a service by type alone
-			service, err = s.db.GetDefaultService(ctx, tx, binding.Source)
-			if err != nil {
-				return nil, fmt.Errorf("service %s not found", binding.Source)
-			}
-		} else {
-			// Reference a service by type and name
-			service, err = s.db.GetService(ctx, tx, serviceType, name)
-			if err != nil {
-				return nil, fmt.Errorf("service %s not found", binding.Source)
-			}
+		service, err = s.serviceForBindingSource(ctx, tx, binding.Source)
+		if err != nil {
+			return nil, err
 		}
 
 		binding.ServiceType = service.ServiceType
@@ -304,8 +294,8 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 	return &binding, nil
 }
 
-func validateBindingCreatePath(bindingPath string) error {
-	if strings.HasPrefix(bindingPath, "/auto") {
+func validateBindingCreatePath(bindingPath string, allowAutoPath bool) error {
+	if !allowAutoPath && (bindingPath == autoBindingPathPrefix || strings.HasPrefix(bindingPath, autoBindingPathPrefix+"/")) {
 		return fmt.Errorf("binding path cannot start with /auto; /auto is reserved for autobindings")
 	}
 	return nil
