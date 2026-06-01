@@ -12,4 +12,5 @@ Details on how to install and manage OpenRun apps.
 {{< card link="lifecycle" title="App Lifecycle" subtitle="Various types of apps: dev, prod, staging and preview; app promotion" icon="selector" >}}
 {{< card link="appsecurity" title="App Security" subtitle="App security and sandboxing details" icon="badge-check" >}}
 {{< card link="audit" title="Audit Events" subtitle="Auditing and viewing events" icon="view-list" >}}
+{{< card link="servicebindings" title="Service Bindings" subtitle="Provision database accounts for apps" icon="table" >}}
 {{< /cards >}}
