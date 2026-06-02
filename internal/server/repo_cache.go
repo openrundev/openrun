@@ -145,6 +145,8 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 	repoKey := Repo{repo, branch, commit, gitAuth}
 	dir, ok := r.cache[repoKey]
 	if ok {
+		r.server.Debug().Str("repo", repo).Str("branch", branch).
+			Str("commit", commit).Str("git_auth", gitAuth).Str("dir", dir.dir).Msg("Using cached git checkout")
 		return dir.dir, folder, dir.commitMessage, dir.hash, nil
 	}
 
@@ -188,6 +190,10 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 
 	// Configure the repo to Clone
 	r.server.Info().Msgf("Cloning git repo %s to %s", repo, targetPath)
+	r.server.Trace().Str("source_url", sourceUrl).Str("repo", repo).Str("folder", folder).
+		Str("branch", branch).Str("commit", commit).Str("git_auth", gitAuth).Bool("is_dev", isDev).
+		Bool("single_branch", cloneOptions.SingleBranch).Int("depth", cloneOptions.Depth).
+		Str("target_path", targetPath).Msg("Starting git clone for app source")
 	gitRepo, err := git.PlainClone(targetPath, false, &cloneOptions)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("error checking out branch %s: %w", branch, err)
@@ -197,22 +203,32 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 	if err != nil {
 		return "", "", "", "", err
 	}
-	// Checkout specified hash
-	options := git.CheckoutOptions{}
 	if commit != "" {
+		// PlainClone checks out the requested branch when commit is empty. A second
+		// checkout can fail on Windows if go-git sees the fresh worktree as dirty.
+		options := git.CheckoutOptions{
+			Hash: plumbing.NewHash(commit),
+		}
 		r.server.Info().Msgf("Checking out commit %s", commit)
-		options.Hash = plumbing.NewHash(commit)
-	} else {
-		options.Branch = plumbing.NewBranchReferenceName(branch)
-	}
 
-	/* Sparse checkout seems to not be reliable with go-git
-	if folder != "" {
-		options.SparseCheckoutDirectories = []string{folder}
-	}
-	*/
-	if err := w.Checkout(&options); err != nil {
-		return "", "", "", "", fmt.Errorf("error checking out branch %s commit %s: %w", branch, commit, err)
+		/* Sparse checkout seems to not be reliable with go-git
+		if folder != "" {
+			options.SparseCheckoutDirectories = []string{folder}
+		}
+		*/
+		if err := w.Checkout(&options); err != nil {
+			if status, statusErr := w.Status(); statusErr == nil && !status.IsClean() {
+				r.server.Debug().Str("repo", repo).Str("branch", branch).Str("commit", commit).Str("target_path", targetPath).
+					Interface("worktree_status", status).Msg("Git checkout failed with dirty worktree")
+			} else if statusErr != nil {
+				r.server.Debug().Err(statusErr).Str("repo", repo).Str("branch", branch).Str("commit", commit).
+					Str("target_path", targetPath).Msg("Git checkout failed and worktree status could not be read")
+			}
+			return "", "", "", "", fmt.Errorf("error checking out branch %s commit %s: %w", branch, commit, err)
+		}
+	} else {
+		r.server.Trace().Str("repo", repo).Str("branch", branch).Str("target_path", targetPath).
+			Msg("Skipping explicit branch checkout after clone")
 	}
 
 	ref, err := gitRepo.Head()
