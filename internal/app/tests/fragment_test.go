@@ -331,6 +331,16 @@ def handler(req):
 	testutil.AssertEqualsString(t, "redirect", "/test/abc?q=1#frag", response.Header().Get("Location"))
 
 	request = httptest.NewRequest("POST", "/test/abc/frag", nil)
+	request.Header.Set("Referer", "http://example.com//evil.com")
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	// Same-origin referer with a network-path redirect target is ignored.
+	testutil.AssertEqualsInt(t, "code", http.StatusOK, response.Code)
+	testutil.AssertEqualsString(t, "body", "Template main myvalue.  fragdata myvalue2 ", response.Body.String())
+	testutil.AssertEqualsString(t, "redirect", "", response.Header().Get("Location"))
+
+	request = httptest.NewRequest("POST", "/test/abc/frag", nil)
 	request.Header.Set("Referer", "http://evil.com/test/abc")
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)

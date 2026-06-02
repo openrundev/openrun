@@ -7,9 +7,15 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
+## [v0.17.7] - 2026-06-02
+
+### Security
+
+- Fixed an open redirect issue reported by @Fushuling https://github.com/openrundev/openrun/security/advisories/GHSA-h5g6-xmh4-hc37
 
 ## [v0.17.6] - 2026-06-01
+
+### Added
 
 - Added Windows Service Control Manager support for `openrun server start`, allowing OpenRun to run as a native Windows service registered with `sc.exe`.
 

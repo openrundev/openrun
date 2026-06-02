@@ -114,6 +114,9 @@ func (a *App) validatedRefererRedirect(r *http.Request, referrer string) (string
 	if redirectTarget == "" {
 		redirectTarget = "/"
 	}
+	if strings.HasPrefix(redirectTarget, "//") {
+		return "", false
+	}
 	if refURL.RawQuery != "" {
 		redirectTarget += "?" + refURL.RawQuery
 	}
