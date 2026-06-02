@@ -225,7 +225,7 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	golang.org/x/crypto v0.52.0
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/sys v0.45.0
 )
 
 replace cloud.google.com/go/compute/metadata => cloud.google.com/go/compute/metadata v0.2.3

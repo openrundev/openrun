@@ -18,19 +18,11 @@ To install the latest release build on Linux, OSX or Windows with WSL, run the i
 curl -sSL https://openrun.dev/install.sh | sh
 ```
 
-On Windows, to install the OpenRun application, run
-
-```shell
-powershell -Command "iwr https://openrun.dev/install.ps1 -useb | iex"
-```
-
-The app is installed under `$HOME/clhome` by default. Note down the generated password for the admin user. Open a new terminal (to get the updated ENV values) and run
+Open a new terminal to get the updated environment values, then run:
 
 ```shell
 openrun server start
 ```
-
-to start the OpenRun server.
 
 To install apps declaratively, run
 
@@ -40,15 +32,34 @@ openrun apply --approve github.com/openrundev/openrun/examples/utils.star all
 
 Open https://localhost:25223 to access the app listing UI.
 
-To install a bookmark manager app using the CLI, run
+See [start the service]({{< ref "#start-the-service" >}}) for details.
 
-```shell
-openrun app create --approve github.com/openrundev/apps/utils/bookmarks /book
+## Install On Windows
+
+To install the OpenRun application on Windows, run:
+
+```powershell
+powershell -Command "iwr https://openrun.dev/install.ps1 -useb | iex"
 ```
 
-The bookmark manager app should be available at [https://localhost:25223/book](https://localhost:25223/book).
+The app is installed under `$env:OPENRUN_HOME`, defaulting to `$HOME\openrun`. Note down the generated password for the admin user. Open a new terminal to get the updated environment values, then run:
 
-See [start the service]({{< ref "#start-the-service" >}}) for details.
+```powershell
+openrun server start
+```
+
+To run OpenRun as a Windows service, register `openrun server start` with the Windows Service Control Manager from an elevated shell:
+
+```powershell
+$OpenRunExe = Join-Path $env:OPENRUN_HOME 'bin\openrun.exe'
+$OpenRunConfig = Join-Path $env:OPENRUN_HOME 'openrun.toml'
+sc.exe create openrun start= auto binPath= "`"$OpenRunExe`" --config-file `"$OpenRunConfig`" server start"
+sc.exe start openrun
+```
+
+When started this way, OpenRun reports service status to Windows and handles service stop/shutdown requests as graceful server shutdowns.
+
+Open https://localhost:25223 to access the app listing UI.
 
 ## Brew Install
 

@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+## [v0.17.6] - 2026-06-01
+
+- Added Windows Service Control Manager support for `openrun server start`, allowing OpenRun to run as a native Windows service registered with `sc.exe`.
+
 ## [v0.17.5] - 2026-05-28
 
 ### Changed

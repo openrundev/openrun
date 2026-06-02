@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"time"
 
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -90,6 +91,7 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 		addr := fmt.Sprintf("https://%s:%d", serverConfig.Https.Host, serverConfig.Https.Port)
 		fmt.Fprintf(os.Stderr, "Server listening on %s\n", addr)
 	}
+	system.NotifyServiceReady()
 
 	clHome := os.ExpandEnv("$OPENRUN_HOME")
 	switch serverConfig.ProfileMode {
@@ -117,21 +119,30 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 	}
 	if serverConfig.ProfileMode != "" {
 		fmt.Fprintf(os.Stderr, "Profiling enabled: %s\n", serverConfig.ProfileMode)
-		select {} // block forever, profiling will exit on interrupt
 	}
 
-	c := make(chan os.Signal, 1)
-	// We'll accept graceful shutdowns when quit via SIGINT (Ctrl+C)
-	signal.Notify(c, os.Interrupt)
+	waitForShutdownSignal()
 
-	// Block until we receive our signal.
-	<-c
+	system.NotifyServiceStopping()
+	defer system.NotifyServiceStopped()
 
 	// Create a deadline to wait for.
-	ctxTimeout, cancel := context.WithTimeout(context.Background(), 30)
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_ = server.Stop(ctxTimeout)
 	return nil
+}
+
+func waitForShutdownSignal() {
+	c := make(chan os.Signal, 1)
+	// We'll accept graceful shutdowns when quit via SIGINT (Ctrl+C)
+	signal.Notify(c, os.Interrupt)
+	defer signal.Stop(c)
+
+	select {
+	case <-c:
+	case <-system.ServiceStopNotify():
+	}
 }
 
 func stopServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
