@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://openrun.dev/openrun.png" alt="OpenRun-logo" width="300" height="250"/>
 
-  <p align="center">Platform for code-first internal tools. Deploy code-first apps with Retool-like ease. Declarative deployments, authentication, auditing, and RBAC for code-first apps. Easily deploy internal tools, on a single node with Docker/Podman or onto a Kubernetes cluster.</p>
+  <p align="center">Deployment platform for code-first internal tools. Turn generated code into secure internal tools with GitOps, RBAC, and auditing. Easily deploy on a single node with Docker/Podman or onto a Kubernetes cluster.</p>
 </p>
 
 <p>

@@ -29,8 +29,8 @@ noClasses = false
 
 # Default Page Parameters
 [params]
-title = "OpenRun - Deployment platform for code-first internal tools"
-description = "Deploy code-first apps with Retool-like ease. Declarative deployments, authentication, auditing, and RBAC for code-first apps."
+title = "OpenRun - The deployment layer for internal tools"
+description = "Deployment platform for code-first internal tools. Turn generated code into secure internal tools with GitOps, RBAC, and auditing."
 
 [params.navbar]
 displayTitle = false

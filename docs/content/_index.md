@@ -7,13 +7,13 @@ cascade:
 
 <div class="hx:mb-4" style="background: #277A9F; background: linear-gradient(180deg, #277A9F, #359ece); color: transparent; background-clip: text; -webkit-background-clip: text;">
 {{< hextra/hero-headline >}}
-  Platform for code-first internal tools
+  The deployment layer for internal tools
 {{< /hextra/hero-headline >}}
 </div>
 
 <div class="hx:mb-6">
 {{< hextra/hero-subtitle >}}
-  Deploy code-first apps with Retool-like ease.&nbsp;<br class="hx:sm:block hx:hidden"/>Declarative deployments, authentication, auditing, and RBAC for internal tools.
+  Deployment platform for code-first internal tools.&nbsp;<br class="hx:sm:block hx:hidden"/>Turn generated code into secure internal tools with GitOps, RBAC, and auditing.
 {{< /hextra/hero-subtitle >}}
 </div>
 
@@ -134,7 +134,7 @@ function copyCode(codeId, buttonElem) {
 {{< hextra/feature-card title="Scale down to zero" link="/docs/container/overview/" subtitle="Apps are initialized lazily, on demand and scale down to zero when idle."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Service bindings Support" link="/docs/applications/servicebindings" subtitle="Easily provision Postgres/MySQL database access for applications"  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="Service bindings support" link="/docs/applications/servicebindings" subtitle="Easily provision Postgres/MySQL database access for applications"  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
 {{< hextra/feature-card title="Flexible Auth" link="/docs/configuration/authentication/" subtitle="OAuth/OpenID/SAML/Client-cert based auth, with full RBAC support"  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
