@@ -121,7 +121,7 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 		fmt.Fprintf(os.Stderr, "Profiling enabled: %s\n", serverConfig.ProfileMode)
 	}
 
-	waitForShutdownSignal()
+	waitForShutdownSignal(server.StopNotify())
 
 	system.NotifyServiceStopping()
 	defer system.NotifyServiceStopped()
@@ -133,7 +133,7 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 	return nil
 }
 
-func waitForShutdownSignal() {
+func waitForShutdownSignal(serverStop <-chan struct{}) {
 	c := make(chan os.Signal, 1)
 	// We'll accept graceful shutdowns when quit via SIGINT (Ctrl+C)
 	signal.Notify(c, os.Interrupt)
@@ -141,7 +141,7 @@ func waitForShutdownSignal() {
 
 	select {
 	case <-c:
-	case <-system.ServiceStopNotify():
+	case <-serverStop:
 	}
 }
 
@@ -150,10 +150,7 @@ func stopServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
 
 	var response types.AppVersionListResponse
 	err := client.Post("/_openrun/stop", nil, nil, &response)
-	if err == nil {
-		return fmt.Errorf("expected error response when stopping server")
-	}
-	if !errors.Is(err, io.EOF) {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
 	return nil

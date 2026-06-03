@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +25,8 @@ const (
 	DEFAULT_FILE_LIMIT = 10_000
 	MAX_FILE_LIMIT     = 100_000
 )
+
+var runtimeGOOS = runtime.GOOS
 
 type AccessType string
 
@@ -71,6 +74,10 @@ func resolveDirs(allowed []string) ([]string, error) {
 		// Resolve symbolic links and canonicalize the paths
 		realPath, err := filepath.EvalSymlinks(key)
 		if err != nil {
+			if runtimeGOOS == "windows" && key == "/tmp" && os.IsNotExist(err) {
+				// Skip missing /tmp directory on Windows
+				continue
+			}
 			return nil, fmt.Errorf("failed to resolve path symlinks: %w", err)
 		}
 

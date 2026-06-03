@@ -157,6 +157,11 @@ type Server struct {
 
 	staleContainerCleanupTicker *time.Ticker
 	staleContainerCleanupStop   chan struct{}
+
+	stopRequested   chan struct{}
+	stopRequestOnce sync.Once
+	stopOnce        sync.Once
+	stopErr         error
 }
 
 // NewServer creates a new instance of the OpenRun Server
@@ -207,6 +212,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		db:             db,
 		secretsManager: secretsManager,
 		telemetry:      telemetryProviders,
+		stopRequested:  make(chan struct{}),
 	}
 	server.forwardAuthHTTPClient = newForwardAuthHTTPClient(config)
 	db.AppNotifyFunc = server.appNotifyHandler
@@ -583,7 +589,7 @@ func (s *Server) Start() error {
 
 		s.Info().Str("address", serverUri).Msg("Starting unix domain socket server")
 		go func() {
-			if err := s.udsServer.Serve(socket); err != nil {
+			if err := s.udsServer.Serve(socket); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				s.Error().Err(err).Msg("UDS server error")
 				if s.httpServer != nil {
 					s.httpServer.Shutdown(context.Background()) //nolint:errcheck
@@ -646,7 +652,7 @@ func (s *Server) Start() error {
 		s.Info().Str("address", addr).Msg("Starting HTTP server")
 
 		go func() {
-			if err := s.httpServer.Serve(listener); err != nil {
+			if err := s.httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				s.Error().Err(err).Msg("HTTP server error")
 				if s.httpsServer != nil {
 					s.httpsServer.Shutdown(context.Background()) //nolint:errcheck
@@ -669,7 +675,7 @@ func (s *Server) Start() error {
 		addr = fmt.Sprintf("%s:%d", system.MapServerHost(s.config.Https.Host), s.config.Https.Port)
 		s.Info().Str("address", addr).Msg("Starting HTTPS server")
 		go func() {
-			if err := s.httpsServer.Serve(listener); err != nil {
+			if err := s.httpsServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				s.Error().Err(err).Msg("HTTPS server error")
 				if s.httpServer != nil {
 					s.httpServer.Shutdown(context.Background()) //nolint:errcheck
@@ -851,26 +857,39 @@ func loadRootCAs(rootCertFile string) (*x509.CertPool, error) {
 
 // Stop stops the OpenRun Server
 func (s *Server) Stop(ctx context.Context) error {
-	s.Info().Msg("Stopping service")
-	if s.staleContainerCleanupStop != nil {
-		close(s.staleContainerCleanupStop)
-		s.staleContainerCleanupStop = nil
-	}
-	s.db.Close()
+	s.stopOnce.Do(func() {
+		s.Info().Msg("Stopping service")
+		if s.staleContainerCleanupStop != nil {
+			close(s.staleContainerCleanupStop)
+			s.staleContainerCleanupStop = nil
+		}
+		s.db.Close()
 
-	var err1, err2, err3 error
-	if s.httpServer != nil {
-		err1 = s.httpServer.Shutdown(ctx)
-	}
-	if s.httpsServer != nil {
-		err2 = s.httpsServer.Shutdown(ctx)
-	}
-	if s.udsServer != nil {
-		err3 = s.udsServer.Shutdown(ctx)
-	}
-	err4 := s.telemetry.Shutdown(ctx)
+		var err1, err2, err3 error
+		if s.httpServer != nil {
+			err1 = s.httpServer.Shutdown(ctx)
+		}
+		if s.httpsServer != nil {
+			err2 = s.httpsServer.Shutdown(ctx)
+		}
+		if s.udsServer != nil {
+			err3 = s.udsServer.Shutdown(ctx)
+		}
+		err4 := s.telemetry.Shutdown(ctx)
 
-	return cmp.Or(err1, err2, err3, err4)
+		s.stopErr = cmp.Or(err1, err2, err3, err4)
+	})
+	return s.stopErr
+}
+
+func (s *Server) RequestStop() {
+	s.stopRequestOnce.Do(func() {
+		close(s.stopRequested)
+	})
+}
+
+func (s *Server) StopNotify() <-chan struct{} {
+	return s.stopRequested
 }
 
 func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {

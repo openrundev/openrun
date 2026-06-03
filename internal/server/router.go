@@ -678,10 +678,7 @@ func (h *Handler) getApps(r *http.Request) (any, error) {
 func (h *Handler) stopServer(r *http.Request) (any, error) {
 	h.Warn().Msgf("Server stop called")
 	updateOperationInContext(r, "stop_server")
-	err := h.server.Stop(r.Context())
-	if err != nil {
-		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
-	}
+	h.server.RequestStop()
 
 	return map[string]any{}, nil
 }

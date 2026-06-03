@@ -52,3 +52,22 @@ func (s *Server) Start() error {
 func (s *Server) Stop(ctx context.Context) error {
 	return s.server.Stop(ctx)
 }
+
+// StopNotify returns a channel that is closed when server shutdown is requested.
+func (s *Server) StopNotify() <-chan struct{} {
+	serverStop := s.server.StopNotify()
+	serviceStop := system.ServiceStopNotify()
+	if serviceStop == nil {
+		return serverStop
+	}
+
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-serverStop:
+		case <-serviceStop:
+		}
+		close(stop)
+	}()
+	return stop
+}

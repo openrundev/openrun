@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.17.8] - 2026-06-03
+
+### Fixed
+
+- Fixed service stop error when running as windows service
+
 ## [v0.17.7] - 2026-06-02
 
 ### Security
