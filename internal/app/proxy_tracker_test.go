@@ -25,6 +25,16 @@ func newTestReverseProxy(t *testing.T, target *url.URL) *httputil.ReverseProxy {
 	return proxy
 }
 
+func newTestHTTPClient(t *testing.T) *http.Client {
+	t.Helper()
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
+	t.Cleanup(transport.CloseIdleConnections)
+
+	return &http.Client{Transport: transport}
+}
+
 func TestTracker_BasicByteTracking(t *testing.T) {
 	t.Parallel()
 
@@ -360,7 +370,7 @@ func TestTracker_LargePayloads(t *testing.T) {
 	}
 }
 
-func TestTracker_SpreadOver5Seconds(t *testing.T) {
+func TestTracker_SpreadOverInterval(t *testing.T) {
 	t.Parallel()
 
 	// Create backend that streams data
@@ -377,15 +387,30 @@ func TestTracker_SpreadOver5Seconds(t *testing.T) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.WriteHeader(http.StatusOK)
 
-		// Send data over 5 seconds in chunks
+		// Send data over a bounded interval. Keeping this well below
+		// httptest.Server's 5-second Close warning avoids noisy cleanup races
+		// when a CI worker stalls or a client-side read fails.
 		chunkSize := 1000
-		numChunks := 50 // 50 chunks over 5 seconds = 100ms per chunk
+		numChunks := 20 // 20 chunks over 1 second = 50ms per chunk
 		chunk := bytes.Repeat([]byte("G"), chunkSize)
 
 		for i := 0; i < numChunks; i++ {
-			w.Write(chunk) //nolint:errcheck
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+			}
+
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
 			flusher.Flush()
-			time.Sleep(100 * time.Millisecond)
+
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-r.Context().Done():
+				return
+			}
 		}
 
 		// Note the request size for verification
@@ -405,8 +430,9 @@ func TestTracker_SpreadOver5Seconds(t *testing.T) {
 	requestPayload := bytes.Repeat([]byte("H"), 5000) // 5KB request
 
 	// Start the request
+	client := newTestHTTPClient(t)
 	startTime := time.Now()
-	resp, err := http.Post(frontend.URL, "application/octet-stream", bytes.NewReader(requestPayload))
+	resp, err := client.Post(frontend.URL, "application/octet-stream", bytes.NewReader(requestPayload))
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
@@ -428,13 +454,13 @@ func TestTracker_SpreadOver5Seconds(t *testing.T) {
 
 	duration := time.Since(startTime)
 
-	// Verify duration is approximately 5 seconds
-	if duration < 4*time.Second || duration > 6*time.Second {
-		t.Errorf("Duration = %v, want ~5 seconds", duration)
+	// Verify duration is approximately 1 second, with CI scheduling margin.
+	if duration < 750*time.Millisecond || duration > 3*time.Second {
+		t.Errorf("Duration = %v, want ~1 second", duration)
 	}
 
 	// Verify total bytes read
-	expectedSent := uint64(50 * 1000) // 50 chunks of 1000 bytes
+	expectedSent := uint64(20 * 1000) // 20 chunks of 1000 bytes
 	if totalRead != expectedSent {
 		t.Errorf("Total read = %d, want %d", totalRead, expectedSent)
 	}
