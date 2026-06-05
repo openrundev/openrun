@@ -111,13 +111,15 @@ type RunBindingCommandRequest struct {
 
 // ApproveResult represents the result of an app approval audit
 type ApproveResult struct {
-	Id                  AppId         `json:"id"`
-	AppPathDomain       AppPathDomain `json:"app_path_domain"`
-	NewLoads            []string      `json:"new_loads"`
-	NewPermissions      []Permission  `json:"new_permissions"`
-	ApprovedLoads       []string      `json:"approved_loads"`
-	ApprovedPermissions []Permission  `json:"approved_permissions"`
-	NeedsApproval       bool          `json:"needs_approval"`
+	Id                         AppId         `json:"id"`
+	AppPathDomain              AppPathDomain `json:"app_path_domain"`
+	NewLoads                   []string      `json:"new_loads"`
+	NewPermissions             []Permission  `json:"new_permissions"`
+	ApprovedLoads              []string      `json:"approved_loads"`
+	ApprovedPermissions        []Permission  `json:"approved_permissions"`
+	NewBindingSourcePerms      []string      `json:"new_binding_source_perms"`
+	ApprovedBindingSourcePerms []string      `json:"approved_binding_source_perms"`
+	NeedsApproval              bool          `json:"needs_approval"`
 }
 
 type AppResponse struct {

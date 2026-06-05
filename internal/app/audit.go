@@ -121,6 +121,10 @@ func needsApproval(a *types.ApproveResult) bool {
 		return true
 	}
 
+	if !slices.Equal(a.NewBindingSourcePerms, a.ApprovedBindingSourcePerms) {
+		return true
+	}
+
 	permEquals := func(a, b types.Permission) bool {
 		if a.Plugin != b.Plugin || a.Method != b.Method {
 			return false
@@ -151,7 +155,7 @@ func needsApproval(a *types.ApproveResult) bool {
 
 // needsApprovalWithServerConfig re-evaluates whether approval is needed after accounting
 // for loads and permissions that are already covered by the server config.
-func needsApprovalWithServerConfig(a *types.ApproveResult, serverPerms []types.Permission) bool {
+func needsApprovalWithServerConfig(a *types.ApproveResult, serverPerms []types.Permission, serverBindingSourcePerms []string) bool {
 	serverPlugins := make(map[string]bool)
 	for _, sp := range serverPerms {
 		serverPlugins[sp.Plugin] = true
@@ -188,6 +192,29 @@ func needsApprovalWithServerConfig(a *types.ApproveResult, serverPerms []types.P
 		}
 	}
 
+	approvedBindingSources := make(map[string]bool)
+	for _, source := range a.ApprovedBindingSourcePerms {
+		approvedBindingSources[source] = true
+	}
+	for _, source := range a.NewBindingSourcePerms {
+		if !approvedBindingSources[source] && !bindingSourceCoveredByServerConfig(source, serverBindingSourcePerms) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func bindingSourceCoveredByServerConfig(source string, serverBindingSourcePerms []string) bool {
+	for _, serverSource := range serverBindingSourcePerms {
+		if source == serverSource {
+			return true
+		}
+		match, err := types.RegexMatch(serverSource, source)
+		if err == nil && match {
+			return true
+		}
+	}
 	return false
 }
 
@@ -238,19 +265,21 @@ func (a *App) createApproveResponse(loads []string, globals starlark.StringDict)
 
 	perms := []types.Permission{}
 	results := types.ApproveResult{
-		AppPathDomain:       a.AppPathDomain(),
-		Id:                  a.Id,
-		NewLoads:            loads,
-		NewPermissions:      perms,
-		ApprovedLoads:       a.Metadata.Loads,
-		ApprovedPermissions: a.Metadata.Permissions,
+		AppPathDomain:              a.AppPathDomain(),
+		Id:                         a.Id,
+		NewLoads:                   loads,
+		NewPermissions:             perms,
+		ApprovedLoads:              a.Metadata.Loads,
+		ApprovedPermissions:        a.Metadata.Permissions,
+		NewBindingSourcePerms:      a.Metadata.BindingSourcePerms,
+		ApprovedBindingSourcePerms: a.Metadata.ApprovedBindingSourcePerms,
 	}
 	permissions, err := appDef.Attr("permissions")
 	if err != nil {
 		// permission order needs to match for now
 		results.NeedsApproval = needsApproval(&results)
-		if results.NeedsApproval && len(a.serverConfig.Permissions.Allow) > 0 {
-			results.NeedsApproval = needsApprovalWithServerConfig(&results, a.serverConfig.Permissions.Allow)
+		if results.NeedsApproval && (len(a.serverConfig.Permissions.Allow) > 0 || len(a.serverConfig.Permissions.BindingSourcePerms) > 0) {
+			results.NeedsApproval = needsApprovalWithServerConfig(&results, a.serverConfig.Permissions.Allow, a.serverConfig.Permissions.BindingSourcePerms)
 		}
 		return &results, nil
 	}
@@ -305,8 +334,8 @@ func (a *App) createApproveResponse(loads []string, globals starlark.StringDict)
 	}
 	results.NewPermissions = perms
 	results.NeedsApproval = needsApproval(&results)
-	if results.NeedsApproval && len(a.serverConfig.Permissions.Allow) > 0 {
-		results.NeedsApproval = needsApprovalWithServerConfig(&results, a.serverConfig.Permissions.Allow)
+	if results.NeedsApproval && (len(a.serverConfig.Permissions.Allow) > 0 || len(a.serverConfig.Permissions.BindingSourcePerms) > 0) {
+		results.NeedsApproval = needsApprovalWithServerConfig(&results, a.serverConfig.Permissions.Allow, a.serverConfig.Permissions.BindingSourcePerms)
 	}
 	return &results, nil
 }

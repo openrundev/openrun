@@ -403,6 +403,12 @@ func printApproveResult(approveResult types.ApproveResult) {
 	for _, load := range approveResult.NewLoads {
 		fmt.Printf("    %s\n", load)
 	}
+	if len(approveResult.NewBindingSourcePerms) > 0 {
+		fmt.Printf("  Binding Sources:\n")
+		for _, source := range approveResult.NewBindingSourcePerms {
+			fmt.Printf("    %s\n", source)
+		}
+	}
 	fmt.Printf("  Permissions:\n")
 	for _, perm := range approveResult.NewPermissions {
 		secrets := ""

@@ -64,15 +64,15 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 	}
 
 	var approvalResult *types.ApproveResult
-	if auditResult.NeedsApproval {
-		if !approve {
-			return nil, fmt.Errorf("app %s needs approval", appEntry)
-		} else {
-			app.Metadata.Loads = auditResult.NewLoads
-			app.Metadata.Permissions = auditResult.NewPermissions
-			if err := s.db.UpdateAppMetadata(ctx, tx, app.AppEntry); err != nil {
-				return nil, err
-			}
+	if auditResult.NeedsApproval && !approve {
+		return nil, fmt.Errorf("app %s needs approval", appEntry)
+	}
+	if approve {
+		s.approveAuditResult(app, auditResult)
+		if err := s.db.UpdateAppMetadata(ctx, tx, app.AppEntry); err != nil {
+			return nil, err
+		}
+		if auditResult.NeedsApproval {
 			approvalResult = auditResult
 		}
 	}
@@ -606,6 +606,9 @@ func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transacti
 			return err
 		}
 		appEntry.Metadata.Bindings = resolvedBindings
+		return nil
+	case types.AppMetadataBindingPerms:
+		appEntry.Metadata.BindingSourcePerms = configEntries
 		return nil
 	case types.AppMetadataAuthnType:
 		if err := s.validateAppAuthnType(string(value)); err != nil {

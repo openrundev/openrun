@@ -125,6 +125,9 @@ db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_app_store.db"
 [plugin."fs.in"]
 db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_fs.db"
 
+[permissions]
+binding_source_perms = ["postgres", "mysql"] # default postgres and mysql binding sources are allowed by default
+
 [[permissions.allow]]
 plugin = "proxy.in"
 method = "config"

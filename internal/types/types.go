@@ -366,8 +366,10 @@ type ForwardConfig struct {
 
 // PermissionsConfig is the permissions configuration for the server. This overrides the permissions configured in the app metadata.
 type PermissionsConfig struct {
-	Allow      []Permission `toml:"allow"`       // the permissions that are allowed for all apps, without requiring explicit approval
-	FullAccess []string     `toml:"full_access"` // the apps that have full access to all plugins
+	Allow              []Permission `toml:"allow"`                // the permissions that are allowed for all apps, without requiring explicit approval
+	FullAccess         []string     `toml:"full_access"`          // the apps that have full access to all plugins
+	BindingSourcePerms []string     `toml:"binding_source_perms"` // the binding sources that are allowed for all apps, without requiring explicit approval
+	// supports a regex for the binding path, like "regex:/appdata/.*"
 }
 
 type ClientCertConfig struct {
@@ -520,21 +522,23 @@ func (ae *AppEntry) AppPathDomain() AppPathDomain {
 
 // AppMetadata contains the configuration for an app. App configurations are version controlled.
 type AppMetadata struct {
-	Name             string            `json:"name"`
-	VersionMetadata  VersionMetadata   `json:"version_metadata"`
-	Loads            []string          `json:"loads"`
-	Permissions      []Permission      `json:"permissions"`
-	Accounts         []AccountLink     `json:"accounts"`
-	ParamValues      map[string]string `json:"param_values"`
-	Spec             AppSpec           `json:"spec"`
-	SpecFiles        *SpecFiles        `json:"spec_files"`
-	ContainerOptions map[string]string `json:"container_options"`
-	ContainerArgs    map[string]string `json:"container_args"`
-	ContainerVolumes []string          `json:"container_volumes"`
-	AppConfig        map[string]string `json:"appconfig"`
-	AuthnType        AppAuthnType      `json:"authn_type"`
-	GitAuthName      string            `json:"git_auth_name"`
-	Bindings         []string          `json:"bindings"`
+	Name                       string            `json:"name"`
+	VersionMetadata            VersionMetadata   `json:"version_metadata"`
+	Loads                      []string          `json:"loads"`
+	Permissions                []Permission      `json:"permissions"`
+	Accounts                   []AccountLink     `json:"accounts"`
+	BindingSourcePerms         []string          `json:"binding_source_perms"`          // the binding source permissions that are requested for the app
+	ApprovedBindingSourcePerms []string          `json:"approved_binding_source_perms"` // the binding source permissions that are approved for the app
+	ParamValues                map[string]string `json:"param_values"`
+	Spec                       AppSpec           `json:"spec"`
+	SpecFiles                  *SpecFiles        `json:"spec_files"`
+	ContainerOptions           map[string]string `json:"container_options"`
+	ContainerArgs              map[string]string `json:"container_args"`
+	ContainerVolumes           []string          `json:"container_volumes"`
+	AppConfig                  map[string]string `json:"appconfig"`
+	AuthnType                  AppAuthnType      `json:"authn_type"`
+	GitAuthName                string            `json:"git_auth_name"`
+	Bindings                   []string          `json:"bindings"`
 }
 
 // AppSettings contains the settings for an app. Settings are not version controlled.
@@ -624,6 +628,7 @@ const (
 	AppMetadataAuthnType        AppMetadataConfigType = "auth"
 	AppMetadataGitAuthName      AppMetadataConfigType = "git_auth"
 	AppMetadataBindings         AppMetadataConfigType = "bindings"
+	AppMetadataBindingPerms     AppMetadataConfigType = "bind_perm"
 )
 
 type AppVersion struct {
