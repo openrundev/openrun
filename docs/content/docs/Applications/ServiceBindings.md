@@ -192,6 +192,38 @@ openrun app update bindings /apps/reporting-read /apps/metrics-read /reporting
 
 This updates staging. Add `--promote` to update prod in the same command.
 
+## Binding Source Permissions
+
+Apps can only use bindings whose source is allowed by the app metadata (or at the system level in `openrun.toml`). The `--bind-perm` option records the allowed binding sources for an app. If `--approve` is also used, the requested binding source permissions are copied into the approved list.
+
+```shell
+openrun app create \
+  --bind-perm postgres/main \
+  --approve \
+  github.com/example/reporting-app \
+  /reporting
+
+openrun app update bind-perm --approve postgres/main /reporting
+```
+
+By default at the system level, bindings are allowed to the default postgres and mysql services. This can be configured by updating `openrun.toml`:
+
+```toml {filename="openrun.toml"}
+[permissions]
+binding_source_perms = ["postgres", "mysql"] # default postgres and mysql binding sources are allowed by default
+```
+
+For declarative apply files, use `bind_perm` in the app definition:
+
+```python {filename="apps.ace"}
+app(
+    "/reporting",
+    "github.com/example/reporting-app",
+    bindings=["/apps/reporting-db"],
+    bind_perm=["postgres/main"],
+)
+```
+
 ## Auto Bindings
 
 When the value passed to `--bind` starts with `/`, OpenRun treats it as an existing binding path. When it does not start with `/`, OpenRun treats it as a service source and creates a base binding automatically.

@@ -330,13 +330,16 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 
 	time.Sleep(60 * time.Second) // wait for 1 minute to let the app start up
 	h.Debug().Msgf("Health checker started for app %s", h.app.Id)
-	fullHash, err := h.getAppHash()
-	if err != nil {
-		h.Error().Err(err).Msgf("Error getting app hash for %s", h.app.Id)
-		return
-	}
-	containerName := container.GenContainerName(h.app.Id, h.manager, fullHash, h.manager.SupportsInPlaceUpdate())
 	for range h.healthCheckTicker.C {
+		h.stateLock.RLock()
+		containerName := h.activeContainerName
+		running := h.currentState == ContainerStateRunning && containerName != ""
+		h.stateLock.RUnlock()
+		if !running {
+			h.Trace().Msgf("Health checker waiting for app %s to start", h.app.Id)
+			continue
+		}
+
 		err := h.WaitForHealth(h.containerConfig.StatusHealthAttempts, containerName, "")
 		if err == nil {
 			continue
@@ -351,7 +354,7 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 		h.stateLock.Lock()
 		h.currentState = ContainerStateHealthFailure
 
-		err = h.manager.StopContainer(ctx, container.GenContainerName(h.app.Id, h.manager, fullHash, h.manager.SupportsInPlaceUpdate()))
+		err = h.manager.StopContainer(ctx, containerName)
 		if err != nil {
 			h.Error().Err(err).Msgf("Error stopping app %s after health failure", h.app.Id)
 		}
