@@ -33,20 +33,21 @@ func (r RequestError) Error() string {
 // CreateAppRequest is the request body for creating an app
 // This gets saved as ApplyInfo when doing declarative app creation
 type CreateAppRequest struct {
-	Path             string            `json:"path"`
-	SourceUrl        string            `json:"source_url"`
-	IsDev            bool              `json:"is_dev"`
-	AppAuthn         AppAuthnType      `json:"app_authn"`
-	GitBranch        string            `json:"git_branch"`
-	GitCommit        string            `json:"git_commit"`
-	GitAuthName      string            `json:"git_auth_name"`
-	Spec             AppSpec           `json:"spec"`
-	ParamValues      map[string]string `json:"param_values"`
-	ContainerOptions map[string]string `json:"container_options"`
-	ContainerArgs    map[string]string `json:"container_args"`
-	ContainerVolumes []string          `json:"container_volumes"`
-	AppConfig        map[string]string `json:"appconfig"`
-	Bindings         []string          `json:"bindings"`
+	Path               string            `json:"path"`
+	SourceUrl          string            `json:"source_url"`
+	IsDev              bool              `json:"is_dev"`
+	AppAuthn           AppAuthnType      `json:"app_authn"`
+	GitBranch          string            `json:"git_branch"`
+	GitCommit          string            `json:"git_commit"`
+	GitAuthName        string            `json:"git_auth_name"`
+	Spec               AppSpec           `json:"spec"`
+	ParamValues        map[string]string `json:"param_values"`
+	ContainerOptions   map[string]string `json:"container_options"`
+	ContainerArgs      map[string]string `json:"container_args"`
+	ContainerVolumes   []string          `json:"container_volumes"`
+	AppConfig          map[string]string `json:"appconfig"`
+	Bindings           []string          `json:"bindings"`
+	BindingSourcePerms []string          `json:"binding_source_perms"`
 	// fields supported by declarative apply must be merged in applyAppUpdate
 }
 

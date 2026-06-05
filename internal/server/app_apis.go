@@ -166,6 +166,7 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 	appEntry.Metadata.ContainerArgs = appRequest.ContainerArgs
 	appEntry.Metadata.ContainerVolumes = appRequest.ContainerVolumes
 	appEntry.Metadata.AppConfig = appRequest.AppConfig
+	appEntry.Metadata.BindingSourcePerms = append([]string{}, appRequest.BindingSourcePerms...)
 	appEntry.UserID = system.GetContextUserId(ctx)
 	appEntry.Id, err = newAppID(appEntry.IsDev)
 	if err != nil {

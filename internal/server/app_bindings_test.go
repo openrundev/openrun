@@ -41,10 +41,10 @@ func TestAutoBindingAppIDUsesMainAppID(t *testing.T) {
 	}
 }
 
-func TestLoadApplyInfoParsesAppBindings(t *testing.T) {
+func TestLoadApplyInfoParsesAppBindingsAndBindingPerms(t *testing.T) {
 	server := &Server{config: &types.ServerConfig{}}
 
-	apps, bindings, err := server.loadApplyInfo("test.ace", []byte(`app("/p1", "-", bindings=["postgres", "/existing"])`), "", false)
+	apps, bindings, err := server.loadApplyInfo("test.ace", []byte(`app("/p1", "-", bindings=["postgres", "/existing"], bind_perm=["postgres/private"])`), "", false)
 	if err != nil {
 		t.Fatalf("loadApplyInfo returned error: %v", err)
 	}
@@ -56,5 +56,8 @@ func TestLoadApplyInfoParsesAppBindings(t *testing.T) {
 	}
 	if got := apps[0].Bindings; len(got) != 2 || got[0] != "postgres" || got[1] != "/existing" {
 		t.Fatalf("app bindings = %#v, want [postgres /existing]", got)
+	}
+	if got := apps[0].BindingSourcePerms; len(got) != 1 || got[0] != "postgres/private" {
+		t.Fatalf("app binding source perms = %#v, want [postgres/private]", got)
 	}
 }

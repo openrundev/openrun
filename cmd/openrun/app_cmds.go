@@ -93,6 +93,12 @@ func appCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			Aliases: []string{"bindings", "bind"},
 			Usage:   "Link a binding path to the app. Repeat to preserve binding order",
 		})
+	flags = append(flags,
+		&cli.StringSliceFlag{
+			Name:    "bind-perm",
+			Aliases: []string{"bind_perm"},
+			Usage:   "Request a binding source permission for the app. Repeat to preserve order",
+		})
 
 	flags = append(flags,
 		&cli.StringSliceFlag{
@@ -172,6 +178,7 @@ Examples:
 				return err
 			}
 			bindings := cCtx.StringSlice("binding")
+			bindingSourcePerms := cCtx.StringSlice("bind-perm")
 
 			appConfig := cCtx.StringSlice("app-config")
 			confMap := make(map[string]string)
@@ -198,20 +205,21 @@ Examples:
 			}
 
 			body := types.CreateAppRequest{
-				Path:             cCtx.Args().Get(1),
-				SourceUrl:        sourceUrl,
-				IsDev:            cCtx.Bool("dev"),
-				AppAuthn:         types.AppAuthnType(cCtx.String("auth")),
-				GitBranch:        cCtx.String("branch"),
-				GitCommit:        cCtx.String("commit"),
-				GitAuthName:      cCtx.String("git-auth"),
-				Spec:             types.AppSpec(cCtx.String("spec")),
-				ParamValues:      paramValues,
-				ContainerOptions: coptMap,
-				ContainerArgs:    cargMap,
-				ContainerVolumes: containerVolumes,
-				AppConfig:        confMap,
-				Bindings:         bindings,
+				Path:               cCtx.Args().Get(1),
+				SourceUrl:          sourceUrl,
+				IsDev:              cCtx.Bool("dev"),
+				AppAuthn:           types.AppAuthnType(cCtx.String("auth")),
+				GitBranch:          cCtx.String("branch"),
+				GitCommit:          cCtx.String("commit"),
+				GitAuthName:        cCtx.String("git-auth"),
+				Spec:               types.AppSpec(cCtx.String("spec")),
+				ParamValues:        paramValues,
+				ContainerOptions:   coptMap,
+				ContainerArgs:      cargMap,
+				ContainerVolumes:   containerVolumes,
+				AppConfig:          confMap,
+				Bindings:           bindings,
+				BindingSourcePerms: bindingSourcePerms,
 			}
 			var createResult types.AppCreateResponse
 			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)

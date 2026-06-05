@@ -142,6 +142,10 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	if err != nil {
 		return nil, err
 	}
+	bindingSourcePerms, err := apptype.GetListStringAttr(appDef, "bind_perm", true)
+	if err != nil {
+		return nil, err
+	}
 
 	paramStr, err := convertToMapString(params, false)
 	if err != nil {
@@ -161,20 +165,21 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	}
 
 	return &types.CreateAppRequest{
-		Path:             path,
-		SourceUrl:        source,
-		IsDev:            dev,
-		ParamValues:      paramStr,
-		AppAuthn:         types.AppAuthnType(auth),
-		GitAuthName:      gitAuth,
-		GitBranch:        gitBranch,
-		GitCommit:        gitCommit,
-		Spec:             types.AppSpec(spec),
-		AppConfig:        appConfigStr,
-		ContainerOptions: containerOptsStr,
-		ContainerArgs:    containerArgsStr,
-		ContainerVolumes: containerVols,
-		Bindings:         bindings,
+		Path:               path,
+		SourceUrl:          source,
+		IsDev:              dev,
+		ParamValues:        paramStr,
+		AppAuthn:           types.AppAuthnType(auth),
+		GitAuthName:        gitAuth,
+		GitBranch:          gitBranch,
+		GitCommit:          gitCommit,
+		Spec:               types.AppSpec(spec),
+		AppConfig:          appConfigStr,
+		ContainerOptions:   containerOptsStr,
+		ContainerArgs:      containerArgsStr,
+		ContainerVolumes:   containerVols,
+		Bindings:           bindings,
+		BindingSourcePerms: bindingSourcePerms,
 	}, nil
 }
 
@@ -683,8 +688,29 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	}
 	bindingsChanged := mergeSlice(oldBindings, newInfo.Bindings, &liveApp.Metadata.Bindings, clobber)
 
+	var oldBindingSourcePerms []string
+	if oldInfo != nil {
+		oldBindingSourcePerms = oldInfo.BindingSourcePerms
+	}
+	bindingSourcePermsChanged := mergeSlice(oldBindingSourcePerms, newInfo.BindingSourcePerms, &liveApp.Metadata.BindingSourcePerms, clobber)
+	var approvalResult *types.ApproveResult
+	if bindingSourcePermsChanged && approve {
+		liveApp.Metadata.ApprovedBindingSourcePerms = append([]string{}, liveApp.Metadata.BindingSourcePerms...)
+		approvalResult = &types.ApproveResult{
+			Id:                         liveApp.Id,
+			AppPathDomain:              liveApp.AppPathDomain(),
+			NewLoads:                   liveApp.Metadata.Loads,
+			NewPermissions:             liveApp.Metadata.Permissions,
+			ApprovedLoads:              liveApp.Metadata.Loads,
+			ApprovedPermissions:        liveApp.Metadata.Permissions,
+			NewBindingSourcePerms:      liveApp.Metadata.BindingSourcePerms,
+			ApprovedBindingSourcePerms: liveApp.Metadata.ApprovedBindingSourcePerms,
+			NeedsApproval:              true,
+		}
+	}
+
 	updated := specChanged || gitBranchChanged || gitCommitChanged || paramsChanged ||
-		contConfigChanged || contArgsChanged || contVolsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged
+		contConfigChanged || contArgsChanged || contVolsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged || bindingSourcePermsChanged
 	updatedApps := make([]types.AppPathDomain, 0)
 	if updated {
 		liveApp.Metadata.VersionMetadata.ApplyInfo, err = json.Marshal(newInfo)
@@ -701,7 +727,8 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	reloadApp := reload == types.AppReloadOptionMatched || updated && reload == types.AppReloadOptionUpdated
 	promoteApp := false
 	ret := &types.AppApplyResult{
-		DryRun: dryRun,
+		DryRun:        dryRun,
+		ApproveResult: approvalResult,
 	}
 	if reloadApp {
 		// Reload does the version increment and promotion
@@ -1060,12 +1087,13 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 		var containerArgs = starlark.NewDict(0)
 		var containerVols = &starlark.List{}
 		var bindings = &starlark.List{}
+		var bindingSourcePerms = &starlark.List{}
 
 		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "dev?", &dev,
 			"auth?", &auth, "git_auth?", &gitAuth, "git_branch?", &gitBranch, "git_commit?", &gitCommit,
 			"params?", &params, "spec?", &appSpec, "app_config", &appConfig,
 			"container_opts?", &containerOpts, "container_args?", &containerArgs, "container_vols?", &containerVols,
-			"bindings?", &bindings,
+			"bindings?", &bindings, "bind_perm?", &bindingSourcePerms,
 		); err != nil {
 			return nil, err
 		}
@@ -1085,6 +1113,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 			"container_args": containerArgs,
 			"container_vols": containerVols,
 			"bindings":       bindings,
+			"bind_perm":      bindingSourcePerms,
 		}
 
 		appStruct := starlarkstruct.FromStringDict(starlark.String(APP), fields)
