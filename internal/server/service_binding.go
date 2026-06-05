@@ -681,6 +681,11 @@ func (s *Server) GetBindingWithAccount(ctx context.Context, tx types.Transaction
 	if err != nil {
 		return nil, err
 	}
+	service, err := s.db.GetService(ctx, tx, binding.ServiceType, binding.ServiceName)
+	if err != nil {
+		return nil, fmt.Errorf("error getting binding service: %w", err)
+	}
+	binding.ServiceIsDefault = service.IsDefault
 	return binding, nil
 }
 

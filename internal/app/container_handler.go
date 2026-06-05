@@ -201,11 +201,6 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		bindings:        bindings,
 	}
 
-	h.envMap, h.envMapHash, err = h.getEnvMapAndHash()
-	if err != nil {
-		return nil, fmt.Errorf("error getting env map hash: %w", err)
-	}
-
 	if containerConfig.IdleShutdownSecs > 0 &&
 		(!app.IsDev || containerConfig.IdleShutdownDevApps) {
 		// Start the idle shutdown check
@@ -435,7 +430,7 @@ func getSliceHash(input []string) (string, error) {
 	return hex.EncodeToString(sha.Sum(nil)), nil
 }
 
-func (h *ContainerHandler) getEnvMap() map[string]string {
+func (h *ContainerHandler) getEnvMap() (map[string]string, error) {
 	ret := make(map[string]string)
 	for paramName, paramVal := range h.paramMap {
 		ret[paramName] = paramVal
@@ -454,15 +449,21 @@ func (h *ContainerHandler) getEnvMap() map[string]string {
 	ret["CL_APP_URL"] = types.GetAppUrl(h.app.AppPathDomain(), h.app.serverConfig)
 
 	// Add the binding environment variables to the env map
-	bindingEnv := h.getBindingEnv()
+	bindingEnv, err := h.getBindingEnv()
+	if err != nil {
+		return nil, err
+	}
 	for k, v := range bindingEnv {
 		ret[k] = v
 	}
-	return ret
+	return ret, nil
 }
 
 func (h *ContainerHandler) getEnvMapAndHash() (map[string]string, string, error) {
-	envMap := h.getEnvMap()
+	envMap, err := h.getEnvMap()
+	if err != nil {
+		return nil, "", err
+	}
 	envMapHash, err := getMapHash(envMap)
 	if err != nil {
 		return nil, "", err
@@ -625,6 +626,7 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 	if !ok {
 		return fmt.Errorf("container manager does not support dev operations")
 	}
+	var err error
 
 	if dryRun {
 		// The image could be rebuild in case of a dry run, without touching the container.
@@ -638,6 +640,11 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 	}
 	if h.serverConfig.Registry.URL != "" {
 		return fmt.Errorf("remote registry is not supported in dev mode")
+	}
+
+	h.envMap, h.envMapHash, err = h.getEnvMapAndHash()
+	if err != nil {
+		return fmt.Errorf("error getting env map hash: %w", err)
 	}
 
 	h.GenImageName = container.ImageName(h.image)
@@ -856,6 +863,8 @@ func (h *ContainerHandler) ActiveContainerName() (container.ContainerName, bool)
 }
 
 func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
+	var err error
+
 	// For image-spec apps (where the operator supplied an upstream image
 	// reference via `--spec image`/`image:`), resolve the current digest
 	// from the registry before computing the identity hash. This both
@@ -871,6 +880,11 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 		h.stateLock.Lock()
 		h.imageDigest = digest
 		h.stateLock.Unlock()
+	}
+
+	h.envMap, h.envMapHash, err = h.getEnvMapAndHash()
+	if err != nil {
+		return fmt.Errorf("error getting env map hash: %w", err)
 	}
 
 	fullHash, err := h.getAppHash()
@@ -1047,8 +1061,13 @@ func (h *ContainerHandler) Close() error {
 func (h *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []string, env []string) (*exec.Cmd, error) {
 	args := []string{"run", "--rm"}
 
+	envMap, _, err := h.getEnvMapAndHash()
+	if err != nil {
+		return nil, fmt.Errorf("error getting env map hash: %w", err)
+	}
+
 	// Add env args
-	for k, v := range h.envMap {
+	for k, v := range envMap {
 		args = append(args, "--env", fmt.Sprintf("%s=%s", k, v))
 	}
 
@@ -1075,13 +1094,17 @@ func (h *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []strin
 	return cmd, nil
 }
 
-func (h *ContainerHandler) getBindingEnv() map[string]string {
+func (h *ContainerHandler) getBindingEnv() (map[string]string, error) {
 	// stage, dev and preview apps use staging binding
 	useProdAccount := strings.HasPrefix(string(h.app.Id), types.ID_PREFIX_APP_PROD)
 
 	env := make(map[string]string)
 	serviceTypeCount := make(map[string]int)
 	for _, binding := range h.bindings {
+		if !h.bindingSourceApproved(binding) {
+			return nil, fmt.Errorf("app %s is not approved to use binding source %s. Audit the app and approve binding source permissions", h.app.Path, binding.Source)
+		}
+
 		serviceTypeCount[binding.ServiceType]++
 
 		countSuffix := ""
@@ -1099,5 +1122,38 @@ func (h *ContainerHandler) getBindingEnv() map[string]string {
 			env[envPrefix+"_"+strings.ToUpper(k)] = v
 		}
 	}
-	return env
+	return env, nil
+}
+
+func (h *ContainerHandler) bindingSourceApproved(binding *types.Binding) bool {
+	if h.bindingSourceInList(binding, h.serverConfig.Permissions.BindingSourcePerms) {
+		return true
+	}
+	return h.bindingSourceInList(binding, h.app.Metadata.ApprovedBindingSourcePerms)
+}
+
+func (h *ContainerHandler) bindingSourceInList(binding *types.Binding, approvedSources []string) bool {
+	for _, approvedSource := range approvedSources {
+		if bindingSourceMatches(binding, approvedSource) {
+			return true
+		}
+	}
+	return false
+}
+
+func bindingSourceMatches(binding *types.Binding, approvedSource string) bool {
+	if approvedSource == binding.Source {
+		return true
+	}
+
+	defaultSource := binding.ServiceType + "/" + binding.ServiceName
+	if binding.ServiceIsDefault && binding.Source == binding.ServiceType && approvedSource == defaultSource {
+		return true
+	}
+	if binding.ServiceIsDefault && approvedSource == binding.ServiceType && binding.Source == defaultSource {
+		return true
+	}
+
+	match, err := types.RegexMatch(approvedSource, binding.Source)
+	return err == nil && match
 }

@@ -5,6 +5,7 @@ package app
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/types"
@@ -103,5 +104,103 @@ func TestParseVolumeStringLeavesNamedVolumesUnchanged(t *testing.T) {
 	}
 	if vol.VolumeName != "cache" {
 		t.Fatalf("VolumeName = %q, want cache", vol.VolumeName)
+	}
+}
+
+func newBindingEnvTestHandler(approvedSources []string, serverSources []string, bindingSource string) *ContainerHandler {
+	return &ContainerHandler{
+		app: &App{
+			AppEntry: &types.AppEntry{
+				Id:   types.AppId(types.ID_PREFIX_APP_PROD + "binding_env_test"),
+				Path: "/binding-env",
+				Metadata: types.AppMetadata{
+					ApprovedBindingSourcePerms: approvedSources,
+				},
+			},
+		},
+		serverConfig: &types.ServerConfig{
+			Permissions: types.PermissionsConfig{
+				BindingSourcePerms: serverSources,
+			},
+		},
+		bindings: []*types.Binding{
+			{
+				Source:           bindingSource,
+				ServiceType:      "postgres",
+				ServiceName:      "default",
+				ServiceIsDefault: true,
+				Metadata: types.BindingMetadata{
+					Account: map[string]string{"url": "postgres://prod"},
+				},
+			},
+		},
+	}
+}
+
+func TestGetBindingEnvRejectsUnapprovedBindingSource(t *testing.T) {
+	t.Parallel()
+
+	h := newBindingEnvTestHandler(nil, nil, "postgres/private")
+
+	_, err := h.getBindingEnv()
+	if err == nil {
+		t.Fatal("expected unapproved binding source error")
+	}
+	if !strings.Contains(err.Error(), "not approved to use binding source postgres/private") {
+		t.Fatalf("error = %q", err.Error())
+	}
+}
+
+func TestGetBindingEnvAllowsApprovedBindingSource(t *testing.T) {
+	t.Parallel()
+
+	h := newBindingEnvTestHandler([]string{"postgres/private"}, nil, "postgres/private")
+
+	env, err := h.getBindingEnv()
+	if err != nil {
+		t.Fatalf("getBindingEnv: %v", err)
+	}
+	if env["POSTGRES_URL"] != "postgres://prod" {
+		t.Fatalf("POSTGRES_URL = %q", env["POSTGRES_URL"])
+	}
+}
+
+func TestGetBindingEnvAllowsServerBindingSource(t *testing.T) {
+	t.Parallel()
+
+	h := newBindingEnvTestHandler(nil, []string{"postgres/private"}, "postgres/private")
+
+	if _, err := h.getBindingEnv(); err != nil {
+		t.Fatalf("getBindingEnv: %v", err)
+	}
+}
+
+func TestBindingSourceMatchesDefaultServiceShorthand(t *testing.T) {
+	t.Parallel()
+
+	binding := &types.Binding{
+		Source:           "postgres",
+		ServiceType:      "postgres",
+		ServiceName:      "default",
+		ServiceIsDefault: true,
+	}
+	if !bindingSourceMatches(binding, "postgres/default") {
+		t.Fatal("expected default service approval to allow shorthand source")
+	}
+
+	binding.Source = "postgres/default"
+	if !bindingSourceMatches(binding, "postgres") {
+		t.Fatal("expected shorthand approval to allow default service source")
+	}
+
+	binding.ServiceName = "private"
+	binding.ServiceIsDefault = false
+	if bindingSourceMatches(binding, "postgres") {
+		t.Fatal("did not expect shorthand approval to allow non-default service source")
+	}
+
+	binding.Source = "postgres/private"
+	if bindingSourceMatches(binding, "postgres") {
+		t.Fatal("did not expect shorthand approval to allow explicit non-default service source")
 	}
 }

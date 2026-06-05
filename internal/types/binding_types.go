@@ -13,16 +13,17 @@ import (
 // Binding is a binding entry in the metadata database
 // A binding is a link between a service and a source service
 type Binding struct {
-	Id             string          `json:"id"`           // the id of the binding
-	Path           string          `json:"path"`         // the path of the binding
-	Source         string          `json:"source"`       // service id, or the base binding path
-	ServiceType    string          `json:"service_type"` // the type of the service
-	ServiceName    string          `json:"service_name"` // the name of the service
-	DerivedFrom    string          `json:"derived_from"` // the base binding path this is derived from
-	StagedMetadata BindingMetadata `json:"staged_metadata"`
-	Metadata       BindingMetadata `json:"metadata"`
-	CreateTime     time.Time       `json:"create_time"`
-	UpdateTime     time.Time       `json:"update_time"`
+	Id               string          `json:"id"`           // the id of the binding
+	Path             string          `json:"path"`         // the path of the binding
+	Source           string          `json:"source"`       // service id, or the base binding path
+	ServiceType      string          `json:"service_type"` // the type of the service
+	ServiceName      string          `json:"service_name"` // the name of the service
+	ServiceIsDefault bool            `json:"-"`
+	DerivedFrom      string          `json:"derived_from"` // the base binding path this is derived from
+	StagedMetadata   BindingMetadata `json:"staged_metadata"`
+	Metadata         BindingMetadata `json:"metadata"`
+	CreateTime       time.Time       `json:"create_time"`
+	UpdateTime       time.Time       `json:"update_time"`
 }
 
 type BindingMetadata struct {

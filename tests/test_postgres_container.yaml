@@ -124,5 +124,41 @@ tests:
     stdout:
       exactly: "1\n"
 
+  postgres_container0090: # setup non-default postgres service
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/pgprivate
+    stdout: "Service postgres/pgprivate created"
+
+  postgres_container0091: # setup binding to non-default service source
+    command: ../openrun binding create postgres/pgprivate /pgcontainer/private
+    stdout: "Binding /pgcontainer/private created"
+
+  postgres_container0092: # create app with non-default binding source
+    command: |
+      extra_args=""
+      if [[ -n "${POSTGRES_TEST_CONTAINER_NETWORK:-}" ]]; then
+        extra_args="$extra_args --copt ${OPENRUN_CONTAINER_COMMAND}.network=${POSTGRES_TEST_CONTAINER_NETWORK}"
+      fi
+      if [[ "${OPENRUN_CONTAINER_COMMAND:-}" = "docker" ]]; then
+        extra_args="$extra_args --copt docker.add-host=host.docker.internal:host-gateway"
+      fi
+      ../openrun app create --spec python-flask --bind /pgcontainer/private $extra_args ./pg_flaskapp /pg_container_private
+    stdout: "App: /pg_container_private"
+
+  postgres_container0093: # non-default binding source is blocked until approved
+    command: curl -sS localhost:${HTTP_PORT}/pg_container_private
+    stdout: "not approved to use binding source postgres/pgprivate"
+
+  postgres_container0094: # request non-default binding source permission
+    command: ../openrun app update bind-perm postgres/pgprivate /pg_container_private
+    stdout: "1 app(s) updated, 0 app(s) promoted."
+
+  postgres_container0095: # approve and promote the non-default source permission
+    command: ../openrun app approve --promote /pg_container_private
+    stdout: "1 app(s) audited, 1 app(s) approved, 1 app(s) promoted."
+
+  postgres_container0096: # approved non-default binding source now reaches the container
+    command: curl -sS localhost:${HTTP_PORT}/pg_container_private
+    stdout: "source=POSTGRES_URL"
+
   postgres_container9999: # cleanup
-    command: (../openrun app delete /pg_container; ../openrun binding delete /pgcontainer/b1; ../openrun service delete postgres/pgcontainer; rm -rf ./pg_flaskapp) || true
+    command: (../openrun app delete /pg_container_private; ../openrun app delete /pg_container; ../openrun binding delete /pgcontainer/private; ../openrun binding delete /pgcontainer/b1; ../openrun service delete postgres/pgprivate; ../openrun service delete postgres/pgcontainer; rm -rf ./pg_flaskapp) || true
