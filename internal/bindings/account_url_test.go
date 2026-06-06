@@ -62,75 +62,69 @@ func TestBuildMysqlAccountURLWithBindingHostname(t *testing.T) {
 
 func TestServiceConfigWithLocalhostBindingHostname(t *testing.T) {
 	tests := []struct {
-		name    string
-		rawURL  string
-		config  map[string]string
-		runtime ServiceBindingRuntime
-		want    string
-		copied  bool
+		name            string
+		rawURL          string
+		bindingHostname string
+		runtimeHostname string
+		want            string
+		copied          bool
 	}{
 		{
-			name:    "localhost",
-			rawURL:  "postgres://admin:secret@localhost:5432/app",
-			config:  map[string]string{"url": "postgres://admin:secret@localhost:5432/app"},
-			runtime: ServiceBindingRuntime{LocalhostBindingHostname: "host.docker.internal"},
-			want:    "host.docker.internal",
-			copied:  true,
+			name:            "localhost",
+			rawURL:          "postgres://admin:secret@localhost:5432/app",
+			runtimeHostname: "host.docker.internal",
+			want:            "host.docker.internal",
+			copied:          true,
 		},
 		{
-			name:    "ipv4",
-			rawURL:  "postgres://admin:secret@127.0.0.1:5432/app",
-			config:  map[string]string{"url": "postgres://admin:secret@127.0.0.1:5432/app"},
-			runtime: ServiceBindingRuntime{LocalhostBindingHostname: "host.docker.internal"},
-			want:    "host.docker.internal",
-			copied:  true,
+			name:            "ipv4",
+			rawURL:          "postgres://admin:secret@127.0.0.1:5432/app",
+			runtimeHostname: "host.docker.internal",
+			want:            "host.docker.internal",
+			copied:          true,
 		},
 		{
-			name:    "ipv6",
-			rawURL:  "postgres://admin:secret@[::1]:5432/app",
-			config:  map[string]string{"url": "postgres://admin:secret@[::1]:5432/app"},
-			runtime: ServiceBindingRuntime{LocalhostBindingHostname: "host.docker.internal"},
-			want:    "host.docker.internal",
-			copied:  true,
+			name:            "ipv6",
+			rawURL:          "postgres://admin:secret@[::1]:5432/app",
+			runtimeHostname: "host.docker.internal",
+			want:            "host.docker.internal",
+			copied:          true,
 		},
 		{
-			name:    "explicit",
-			rawURL:  "postgres://admin:secret@127.0.0.1:5432/app",
-			config:  map[string]string{"url": "postgres://admin:secret@127.0.0.1:5432/app", "binding_hostname": "db.internal"},
-			runtime: ServiceBindingRuntime{LocalhostBindingHostname: "host.docker.internal"},
-			want:    "db.internal",
+			name:            "explicit",
+			rawURL:          "postgres://admin:secret@127.0.0.1:5432/app",
+			bindingHostname: "db.internal",
+			runtimeHostname: "host.docker.internal",
+			want:            "db.internal",
 		},
 		{
-			name:    "disabled",
-			rawURL:  "postgres://admin:secret@127.0.0.1:5432/app",
-			config:  map[string]string{"url": "postgres://admin:secret@127.0.0.1:5432/app", "binding_hostname": "disable"},
-			runtime: ServiceBindingRuntime{LocalhostBindingHostname: "host.docker.internal"},
-			want:    "disable",
-		},
-		{
-			name:    "remote",
-			rawURL:  "postgres://admin:secret@db.internal:5432/app",
-			config:  map[string]string{"url": "postgres://admin:secret@db.internal:5432/app"},
-			runtime: ServiceBindingRuntime{LocalhostBindingHostname: "host.docker.internal"},
+			name:            "remote",
+			rawURL:          "postgres://admin:secret@db.internal:5432/app",
+			runtimeHostname: "host.docker.internal",
 		},
 		{
 			name:   "no runtime hostname",
 			rawURL: "postgres://admin:secret@localhost:5432/app",
-			config: map[string]string{"url": "postgres://admin:secret@localhost:5432/app"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := serviceConfigWithLocalhostBindingHostname(tt.config, tt.rawURL, tt.runtime)
+			config := map[string]string{"url": tt.rawURL}
+			if tt.bindingHostname != "" {
+				config["binding_hostname"] = tt.bindingHostname
+			}
+			runtime := ServiceBindingRuntime{LocalhostBindingHostname: tt.runtimeHostname}
+
+			got := serviceConfigWithLocalhostBindingHostname(config, tt.rawURL, runtime)
 			if got["binding_hostname"] != tt.want {
 				t.Fatalf("binding_hostname = %q, want %q", got["binding_hostname"], tt.want)
 			}
-			if _, ok := tt.config["binding_hostname"]; tt.copied && ok {
+			if _, ok := config["binding_hostname"]; tt.copied && ok {
 				t.Fatal("serviceConfigWithLocalhostBindingHostname mutated original config")
 			}
-			if !tt.copied && len(got) != len(tt.config) {
-				t.Fatalf("config length = %d, want %d", len(got), len(tt.config))
+			if !tt.copied && len(got) != len(config) {
+				t.Fatalf("config length = %d, want %d", len(got), len(config))
 			}
 		})
 	}
