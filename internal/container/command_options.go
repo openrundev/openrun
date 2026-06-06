@@ -5,12 +5,54 @@ package container
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/openrundev/openrun/internal/types"
 )
 
 const regexAllowedContainerArgPrefix = "regex:"
+
+const (
+	DockerLocalhostBindingHostname = "host.docker.internal"
+	OtherLocalhostBindingHostname  = "host.containers.internal"
+	dockerHostGatewayTarget        = "host-gateway"
+)
+
+// LocalhostBindingHostname returns the hostname app containers should use to
+// reach services bound to localhost on the OpenRun host.
+func LocalhostBindingHostname(containerCommand string) string {
+	switch containerCommandName(containerCommand) {
+	case "":
+		return ""
+	case types.CONTAINER_KUBERNETES:
+		return ""
+	case DOCKER_COMMAND:
+		return DockerLocalhostBindingHostname
+	default:
+		return OtherLocalhostBindingHostname
+	}
+}
+
+// LocalhostHostGatewayArgs returns runtime args needed for host.docker.internal
+// to resolve inside Docker app containers.
+func LocalhostHostGatewayArgs(containerCommand string) []string {
+	if containerCommandName(containerCommand) != DOCKER_COMMAND {
+		return nil
+	}
+	return []string{"--add-host", DockerLocalhostBindingHostname + ":" + dockerHostGatewayTarget}
+}
+
+func containerCommandName(containerCommand string) string {
+	if containerCommand == "" {
+		return ""
+	}
+	normalized := strings.ReplaceAll(containerCommand, "\\", string(filepath.Separator))
+	base := strings.ToLower(filepath.Base(normalized))
+	return strings.TrimSuffix(base, ".exe")
+}
 
 // CommandOptionArgs converts parsed container options into CLI args.
 // Built-in OpenRun options are parsed explicitly. Any remaining Docker/Podman

@@ -347,7 +347,7 @@ EOF
 export TESTENV=abc
 export c1c2_c3=xyz
 if [[ "$CL_CONTAINER_COMMANDS" != "disable" && ( -z "$CL_SINGLE_TEST" || "$CL_SINGLE_TEST" = "test_postgres_container.yaml" ) ]]; then
-  # Containerized apps connect to the test Postgres through POSTGRES_URL_BINDING.
+  # Containerized apps connect to the test Postgres through POSTGRES_URL.
   # Publish on all host interfaces so Docker/Podman host aliases can reach the
   # mapped port from inside the app container.
   export POSTGRES_TEST_CONTAINER_PUBLISH_ADDR="${POSTGRES_TEST_CONTAINER_PUBLISH_ADDR:-0.0.0.0}"
@@ -423,11 +423,6 @@ export PYTHON_VERSION=3.14
 port_base=9000
 for cmd in ${CL_CONTAINER_COMMANDS}; do
     export OPENRUN_CONTAINER_COMMAND="$cmd"
-    if [[ "$cmd" = "podman" ]]; then
-        export TEST_POSTGRES_BINDING_HOSTNAME="host.containers.internal"
-    else
-        export TEST_POSTGRES_BINDING_HOSTNAME="host.docker.internal"
-    fi
     http_port=`expr $port_base + 1`
     https_port=`expr $port_base + 2`
     forward_auth_port=`expr $port_base + 3`
@@ -450,7 +445,7 @@ copy_response_headers = []
 [security]
 admin_password_bcrypt = "\$2a\$10\$Hk5/XcvwrN.JRFrjdG0vjuGZxa5JaILdir1qflIj5i9DUPUyvIK7C"
 allowed_mounts = ["/tmp"]
-allowed_container_args = { network = "regex:.*", add-host = "regex:.*" }
+allowed_container_args = { network = "regex:.*" }
 
 [[permissions.allow]]
 plugin = "proxy.in"

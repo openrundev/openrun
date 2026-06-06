@@ -1079,6 +1079,7 @@ func (h *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []strin
 	if err != nil {
 		return nil, err
 	}
+	args = append(args, container.LocalhostHostGatewayArgs(h.serverConfig.System.ContainerCommand)...)
 	commandOptionArgs, err := container.CommandOptionArgs(commandOptions, h.serverConfig.Security.AllowedContainerArgs)
 	if err != nil {
 		return nil, err

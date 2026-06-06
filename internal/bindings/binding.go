@@ -15,9 +15,15 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
+const BindingHostnameDisable = "disable"
+
+type ServiceBindingRuntime struct {
+	LocalhostBindingHostname string
+}
+
 type ServiceBinding interface {
 	// Initialize the service with the given config. This is called when the service binding is created.
-	InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error
+	InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string, runtime ServiceBindingRuntime) error
 
 	// Close the service connection. This is called when the service binding is no longer needed.
 	CloseService(ctx context.Context) error
@@ -77,6 +83,28 @@ func verifyKeys(inputKeys []string, requiredKeys []string, optionalKeys []string
 	return nil
 }
 
+func serviceConfigWithLocalhostBindingHostname(serviceConfig map[string]string, serviceURL string, runtime ServiceBindingRuntime) map[string]string {
+	if serviceConfig["binding_hostname"] != "" || runtime.LocalhostBindingHostname == "" {
+		return serviceConfig
+	}
+
+	parsedURL, err := url.Parse(serviceURL)
+	if err != nil || !isLocalBindingHost(parsedURL.Hostname()) {
+		return serviceConfig
+	}
+
+	effectiveConfig := make(map[string]string, len(serviceConfig)+1)
+	for k, v := range serviceConfig {
+		effectiveConfig[k] = v
+	}
+	effectiveConfig["binding_hostname"] = runtime.LocalhostBindingHostname
+	return effectiveConfig
+}
+
+func isLocalBindingHost(host string) bool {
+	return strings.EqualFold(host, "localhost") || host == "127.0.0.1" || host == "::1"
+}
+
 func parseGrants(grants []string, supportedGrantTypes []types.GrantType) ([]types.BindingGrant, error) {
 	parsedGrants := make([]types.BindingGrant, 0, len(grants))
 	for _, grant := range grants {
@@ -106,7 +134,7 @@ func diffGrants(currentGrants []types.BindingGrant, newGrants []types.BindingGra
 }
 
 func setURLHostname(u *url.URL, hostname string) {
-	if hostname == "" {
+	if hostname == "" || strings.EqualFold(hostname, BindingHostnameDisable) {
 		return
 	}
 	hostname = strings.TrimPrefix(strings.TrimSuffix(hostname, "]"), "[")

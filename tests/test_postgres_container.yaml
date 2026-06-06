@@ -5,7 +5,6 @@ config:
     HTTP_PORT: ${HTTP_PORT}
     OPENRUN_CONTAINER_COMMAND: ${OPENRUN_CONTAINER_COMMAND}
     PATH: ${PATH}
-    TEST_POSTGRES_BINDING_HOSTNAME: ${TEST_POSTGRES_BINDING_HOSTNAME}
     TEST_POSTGRES_URL: ${TEST_POSTGRES_URL}
 
 tests:
@@ -40,12 +39,16 @@ tests:
 
       @app.route("/")
       def setup_db():
-          source = "POSTGRES_URL_BINDING"
+          source = "POSTGRES_URL"
           url = os.environ.get(source, "")
           if not url:
               return f"{source} missing", 500
+          direct_url = os.environ.get("POSTGRES_URL_DIRECT", "")
+          if not direct_url:
+              return "POSTGRES_URL_DIRECT missing", 500
 
           parsed = urlparse(url)
+          direct_parsed = urlparse(direct_url)
           conn = pg8000.dbapi.connect(**connection_kwargs(url))
           cursor = conn.cursor()
           cursor.execute("create table if not exists container_binding_items (id integer primary key, note text)")
@@ -57,11 +60,11 @@ tests:
           schema, count = cursor.fetchone()
           cursor.close()
           conn.close()
-          return f"source={source} host={parsed.hostname} port={parsed.port or 5432} schema={schema} count={count}"
+          return f"source={source} host={parsed.hostname} direct_host={direct_parsed.hostname} port={parsed.port or 5432} schema={schema} count={count}"
       EOF
 
   postgres_container0020: # setup postgres service
-    command: ../openrun service create --config url=${TEST_POSTGRES_URL} --config binding_hostname=${TEST_POSTGRES_BINDING_HOSTNAME} postgres/pgcontainer
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/pgcontainer
     stdout: "Service postgres/pgcontainer created"
 
   postgres_container0030: # setup binding
@@ -69,17 +72,12 @@ tests:
     stdout: "Binding /pgcontainer/b1 created"
 
   postgres_container0040: # create app with postgres binding
-    command: |
-      extra_args=""
-      if [[ "${OPENRUN_CONTAINER_COMMAND:-}" = "docker" ]]; then
-        extra_args="$extra_args --copt docker.add-host=host.docker.internal:host-gateway"
-      fi
-      ../openrun app create --spec python-flask --bind /pgcontainer/b1 $extra_args ./pg_flaskapp /pg_container
+    command: ../openrun app create --spec python-flask --bind /pgcontainer/b1 ./pg_flaskapp /pg_container
     stdout: "App: /pg_container"
 
-  postgres_container0050: # prod container receives POSTGRES_URL_BINDING and creates the table
+  postgres_container0050: # prod container receives POSTGRES_URL and creates the table
     command: curl -sS localhost:${HTTP_PORT}/pg_container
-    stdout: "source=POSTGRES_URL_BINDING"
+    stdout: "source=POSTGRES_URL"
 
   postgres_container0060: # prod table was created through the binding account
     command: ../openrun binding run-command /pgcontainer/b1 "select count(*) as n from container_binding_items" | jq -r '.rows[0].n'
@@ -101,7 +99,7 @@ tests:
       exactly: "1\n"
 
   postgres_container0090: # setup non-default postgres service
-    command: ../openrun service create --config url=${TEST_POSTGRES_URL} --config binding_hostname=${TEST_POSTGRES_BINDING_HOSTNAME} postgres/pgprivate
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/pgprivate
     stdout: "Service postgres/pgprivate created"
 
   postgres_container0091: # setup binding to non-default service source
@@ -109,12 +107,7 @@ tests:
     stdout: "Binding /pgcontainer/private created"
 
   postgres_container0092: # create app with non-default binding source
-    command: |
-      extra_args=""
-      if [[ "${OPENRUN_CONTAINER_COMMAND:-}" = "docker" ]]; then
-        extra_args="$extra_args --copt docker.add-host=host.docker.internal:host-gateway"
-      fi
-      ../openrun app create --spec python-flask --bind /pgcontainer/private $extra_args ./pg_flaskapp /pg_container_private
+    command: ../openrun app create --spec python-flask --bind /pgcontainer/private ./pg_flaskapp /pg_container_private
     stdout: "App: /pg_container_private"
 
   postgres_container0093: # non-default binding source is blocked until approved

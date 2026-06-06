@@ -49,7 +49,7 @@ func NewPostgresServiceBinding() ServiceBinding {
 	return &PostgresServiceBinding{}
 }
 
-func (b *PostgresServiceBinding) InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error {
+func (b *PostgresServiceBinding) InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string, runtime ServiceBindingRuntime) error {
 	b.Logger = logger
 	if err := verifyKeys(slices.Collect(maps.Keys(serviceConfig)), []string{"url"}, []string{"binding_hostname"}); err != nil {
 		return err
@@ -66,7 +66,7 @@ func (b *PostgresServiceBinding) InitializeService(ctx context.Context, logger *
 		return fmt.Errorf("error verifying postgres connection: %w", err)
 	}
 
-	b.serviceConfig = serviceConfig
+	b.serviceConfig = serviceConfigWithLocalhostBindingHostname(serviceConfig, connURL, runtime)
 	b.adminConn = adminConn
 	return nil
 }
@@ -179,20 +179,20 @@ func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId,
 		return nil, fmt.Errorf("error setting search_path on role %s: %w", roleName, err)
 	}
 
-	accountURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, "")
+	accountDirectURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, "")
 	if err != nil {
 		return nil, fmt.Errorf("error building account url: %w", err)
 	}
-	accountBindingURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, b.serviceConfig["binding_hostname"])
+	accountURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, b.serviceConfig["binding_hostname"])
 	if err != nil {
 		return nil, fmt.Errorf("error building binding account url: %w", err)
 	}
 
 	return map[string]string{
-		"url":         accountURL,
-		"url_binding": accountBindingURL,
-		"schema":      schemaName,
-		"role":        roleName,
+		"url":        accountURL,
+		"url_direct": accountDirectURL,
+		"schema":     schemaName,
+		"role":       roleName,
 	}, nil
 }
 
@@ -442,7 +442,7 @@ func buildAccountURL(adminURL, user, password, bindingHostname string) (string, 
 }
 
 func (b *PostgresServiceBinding) RunCommand(ctx context.Context, bindingMetadata types.BindingMetadata, command string) (map[string]any, error) {
-	conn, err := pgx.Connect(ctx, bindingMetadata.Account["url"])
+	conn, err := pgx.Connect(ctx, bindingMetadata.Account["url_direct"])
 	if err != nil {
 		return nil, fmt.Errorf("error opening connection: %w", err)
 	}

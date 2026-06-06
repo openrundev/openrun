@@ -9,7 +9,7 @@ config:
 
 tests:
   mysql0001:
-    command: ../openrun service create --config url=${TEST_MYSQL_URL} --config binding_hostname=host.docker.internal mysql/my1
+    command: ../openrun service create --config url=${TEST_MYSQL_URL} mysql/my1
     stdout: "Service mysql/my1 created"
     exit-code: 0
 
@@ -18,13 +18,17 @@ tests:
     stdout: "Binding /apps/my1 created"
     exit-code: 0
 
-  mysql0010a: # binding account url uses service binding_hostname
-    command: ../openrun binding show-account /apps/my1 | jq -r '.url_binding | startswith("mysql://") and contains("@host.docker.internal")'
+  mysql0010a: # account url automatically maps localhost to a container hostname
+    command: ../openrun binding show-account /apps/my1 | jq -r '.url | startswith("mysql://") and (contains("@host.docker.internal") or contains("@host.containers.internal"))'
     stdout: "true"
 
   mysql0010b: # direct account url keeps the service hostname
-    command: ../openrun binding show-account /apps/my1 | jq -r '.url != .url_binding'
+    command: ../openrun binding show-account /apps/my1 | jq -r '.url != .url_direct'
     stdout: "true"
+
+  mysql0010c: # old binding-specific url key is not present
+    command: ../openrun binding show-account /apps/my1 | jq -r 'has("url_binding")'
+    stdout: "false"
 
   mysql0011: # prod and staging accounts use different databases
     command: bash -c 'prod=$(../openrun binding run-command /apps/my1 "select database() as db" | jq -r ".rows[0].db"); stage=$(../openrun binding run-command --staging /apps/my1 "select database() as db" | jq -r ".rows[0].db"); [[ "$prod" != "$stage" ]] && echo true'

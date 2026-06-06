@@ -98,7 +98,7 @@ func parseCommandOptions(command string, options map[string]string) (CommandOpti
 }
 
 func ParseCommandOptions(containerCommand string, options map[string]string) (CommandOptions, error) {
-	return parseCommandOptions(path.Base(containerCommand), options)
+	return parseCommandOptions(containerCommandName(containerCommand), options)
 }
 
 type CommandCM struct {
@@ -413,6 +413,7 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 	if err != nil {
 		return fmt.Errorf("error parsing command options: %w", err)
 	}
+	args = append(args, LocalhostHostGatewayArgs(c.config.System.ContainerCommand)...)
 	commandOptionArgs, err := CommandOptionArgs(commandOptions, c.config.Security.AllowedContainerArgs)
 	if err != nil {
 		return err

@@ -86,7 +86,7 @@ func NewMysqlServiceBinding() ServiceBinding {
 	return &MysqlServiceBinding{}
 }
 
-func (b *MysqlServiceBinding) InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error {
+func (b *MysqlServiceBinding) InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string, runtime ServiceBindingRuntime) error {
 	b.Logger = logger
 	if err := verifyKeys(slices.Collect(maps.Keys(serviceConfig)), []string{"url"}, []string{"host_pattern", "binding_hostname"}); err != nil {
 		return err
@@ -112,7 +112,7 @@ func (b *MysqlServiceBinding) InitializeService(ctx context.Context, logger *typ
 		return fmt.Errorf("error verifying mysql connection: %w", err)
 	}
 
-	b.serviceConfig = serviceConfig
+	b.serviceConfig = serviceConfigWithLocalhostBindingHostname(serviceConfig, serviceConfig["url"], runtime)
 	b.hostPattern = hostPattern
 	b.adminConn = adminConn
 	return nil
@@ -269,21 +269,21 @@ func (b *MysqlServiceBinding) GenerateAccount(ctx context.Context, bindingId, bi
 		}
 	}
 
-	accountURL, err := buildMysqlAccountURL(b.serviceConfig["url"], userName, password, databaseName, "")
+	accountDirectURL, err := buildMysqlAccountURL(b.serviceConfig["url"], userName, password, databaseName, "")
 	if err != nil {
 		return nil, fmt.Errorf("error building account url: %w", err)
 	}
-	accountBindingURL, err := buildMysqlAccountURL(b.serviceConfig["url"], userName, password, databaseName, b.serviceConfig["binding_hostname"])
+	accountURL, err := buildMysqlAccountURL(b.serviceConfig["url"], userName, password, databaseName, b.serviceConfig["binding_hostname"])
 	if err != nil {
 		return nil, fmt.Errorf("error building binding account url: %w", err)
 	}
 
 	return map[string]string{
-		"url":         accountURL,
-		"url_binding": accountBindingURL,
-		"database":    databaseName,
-		"user":        userName,
-		"host":        host,
+		"url":        accountURL,
+		"url_direct": accountDirectURL,
+		"database":   databaseName,
+		"user":       userName,
+		"host":       host,
 	}, nil
 }
 
@@ -598,7 +598,7 @@ func mysqlURLToDSN(rawURL, overrideDB string) (string, error) {
 
 // buildMysqlAccountURL constructs a new mysql:// URL using the admin URL's
 // host/port and the supplied user, password and default database. The result
-// is what we store in BindingMetadata.Account["url"] and hand back to apps.
+// is what we store in BindingMetadata.Account and hand back to apps.
 func buildMysqlAccountURL(adminURL, user, password, database, bindingHostname string) (string, error) {
 	u, err := url.Parse(adminURL)
 	if err != nil {
@@ -611,7 +611,7 @@ func buildMysqlAccountURL(adminURL, user, password, database, bindingHostname st
 }
 
 func (b *MysqlServiceBinding) RunCommand(ctx context.Context, bindingMetadata types.BindingMetadata, command string) (map[string]any, error) {
-	dsn, err := mysqlURLToDSN(bindingMetadata.Account["url"], "")
+	dsn, err := mysqlURLToDSN(bindingMetadata.Account["url_direct"], "")
 	if err != nil {
 		return nil, fmt.Errorf("error parsing account url: %w", err)
 	}

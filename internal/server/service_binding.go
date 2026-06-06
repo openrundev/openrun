@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/openrundev/openrun/internal/bindings"
+	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/segmentio/ksuid"
 )
@@ -58,7 +59,7 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 	}
 
 	serviceBinding := builder()
-	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config); err != nil {
+	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config, s.serviceBindingRuntime()); err != nil {
 		return fmt.Errorf("error initializing service binding: %w", err)
 	}
 	defer serviceBinding.CloseService(ctx) //nolint:errcheck
@@ -309,11 +310,21 @@ func (s *Server) getServiceBinding(ctx context.Context, service *types.Service, 
 
 	var err error
 	serviceBinding := builder()
-	if err = serviceBinding.InitializeService(ctx, s.Logger, service.Config); err != nil {
+	if err = serviceBinding.InitializeService(ctx, s.Logger, service.Config, s.serviceBindingRuntime()); err != nil {
 		return nil, fmt.Errorf("error initializing service: %w", err)
 	}
 
 	return serviceBinding, nil
+}
+
+func (s *Server) serviceBindingRuntime() bindings.ServiceBindingRuntime {
+	containerCommand := ""
+	if s.config != nil {
+		containerCommand = s.config.System.ContainerCommand
+	}
+	return bindings.ServiceBindingRuntime{
+		LocalhostBindingHostname: container.LocalhostBindingHostname(containerCommand),
+	}
 }
 
 func (s *Server) generateAccount(ctx context.Context, dryRun bool, service *types.Service, binding *types.Binding, derivedFrom *types.Binding, isStaging, reapplyAll bool) (map[string]string, []types.BindingGrant, error) {
@@ -372,7 +383,7 @@ func (s *Server) applyBindingGrants(ctx context.Context, dryRun bool, service *t
 	}
 
 	serviceBinding := builder()
-	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config); err != nil {
+	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config, s.serviceBindingRuntime()); err != nil {
 		return nil, fmt.Errorf("error initializing service: %w", err)
 	}
 	defer serviceBinding.CloseService(ctx) //nolint:errcheck

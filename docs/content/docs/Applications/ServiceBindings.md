@@ -294,14 +294,13 @@ Postgres services require `url`. They also support `binding_hostname`.
 | Key                | Required | Description                                                                                      |
 | :----------------- | :------- | :----------------------------------------------------------------------------------------------- |
 | `url`              | Yes      | Admin Postgres connection URL                                                                    |
-| `binding_hostname` | No       | Hostname to use in generated `url_binding` account URLs. The original `url` hostname is unchanged |
+| `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs. `url_direct` keeps the original service URL hostname. If omitted for a `localhost` or `127.0.0.1` service URL outside Kubernetes, OpenRun automatically uses a container-reachable host name. Set to `disable` to keep `url` unchanged and skip automatic mapping |
 
 For example:
 
 ```shell
 openrun service create postgres/main \
-  --config url=postgres://admin:secret@localhost:5432/appdb \
-  --config binding_hostname=host.docker.internal
+  --config url=postgres://admin:secret@localhost:5432/appdb
 ```
 
 The admin user in the URL must be able to create roles, create schemas, grant privileges and alter default privileges.
@@ -323,7 +322,7 @@ openrun binding create \
 
 If `inherit_default` is set to `false`, the generated role is created with `NOINHERIT`.
 
-For a base binding, OpenRun creates a schema and a login role. The generated `url` account value uses the service URL with the generated username and password. The generated `url_binding` account value uses the same URL, but replaces the hostname with `binding_hostname` when that service option is set. OpenRun sets the generated role's default `search_path` to the binding schema.
+For a base binding, OpenRun creates a schema and a login role. The generated account includes `url` and `url_direct`. `url` uses the service URL with the generated username and password, replacing the hostname with `binding_hostname` when that service option is set. If `binding_hostname` is omitted, the service URL hostname is `localhost` or `127.0.0.1`, and OpenRun is not running in Kubernetes mode, OpenRun automatically uses `host.docker.internal` for Docker and `host.containers.internal` for other local container runtimes. Set `binding_hostname=disable` to opt out of both explicit hostname substitution and automatic mapping. `url_direct` uses the original service URL hostname. Containers receive both values as environment variables, for example `POSTGRES_URL` and `POSTGRES_URL_DIRECT`. `binding run-command` uses `url_direct`. OpenRun sets the generated role's default `search_path` to the binding schema.
 
 For a derived binding, OpenRun creates a separate login role and uses the base binding schema. The derived role gets `USAGE` on the schema before grants are applied.
 
@@ -348,20 +347,19 @@ MySQL services require `url`. They also support `host_pattern` and `binding_host
 | :----------------- | :------- | :----------------------------------------------------------------------------------------------- |
 | `url`              | Yes      | Admin MySQL URL                                                                                  |
 | `host_pattern`     | No       | Host part for generated MySQL users. Defaults to `%`                                              |
-| `binding_hostname` | No       | Hostname to use in generated `url_binding` account URLs. The original `url` hostname is unchanged |
+| `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs. `url_direct` keeps the original service URL hostname. If omitted for a `localhost` or `127.0.0.1` service URL outside Kubernetes, OpenRun automatically uses a container-reachable host name. Set to `disable` to keep `url` unchanged and skip automatic mapping |
 
 For example:
 
 ```shell
 openrun service create mysql/main \
   --config url=mysql://admin:secret@localhost:3306/ \
-  --config host_pattern=10.0.% \
-  --config binding_hostname=host.docker.internal
+  --config host_pattern=10.0.%
 ```
 
 The admin user in the URL must be able to create users, create databases, and grant and revoke privileges.
 
-For a base binding, OpenRun creates a database and user. The base user gets `ALL PRIVILEGES` on the generated database. The generated account includes `url` and `url_binding`; `url_binding` uses `binding_hostname` when that service option is set.
+For a base binding, OpenRun creates a database and user. The base user gets `ALL PRIVILEGES` on the generated database. The generated account includes `url` and `url_direct`; `url` uses `binding_hostname` when that service option is set. If `binding_hostname` is omitted, the service URL hostname is `localhost` or `127.0.0.1`, and OpenRun is not running in Kubernetes mode, OpenRun automatically uses `host.docker.internal` for Docker and `host.containers.internal` for other local container runtimes. Set `binding_hostname=disable` to opt out of both explicit hostname substitution and automatic mapping. `url_direct` keeps the original service URL hostname. Containers receive both values as environment variables, for example `MYSQL_URL` and `MYSQL_URL_DIRECT`. `binding run-command` uses `url_direct`.
 
 For a derived binding, OpenRun creates a separate user and uses the base binding database. The derived user gets a minimal database-level `SHOW VIEW` grant so it can connect using the generated database as the default database.
 

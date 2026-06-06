@@ -8,7 +8,7 @@ config:
 tests:
   # Setup: create the source service used by all bindings below
   binding0001:
-    command: ../openrun service create --config url=${TEST_POSTGRES_URL} --config binding_hostname=host.docker.internal postgres/testbind
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/testbind
     stdout: "Service postgres/testbind created"
     exit-code: 0
 
@@ -92,13 +92,17 @@ tests:
     command: ../openrun binding show-account --staging /apps/b3 | jq -r '.url | startswith("postgres://")'
     stdout: "true"
 
-  binding0037: # binding account url uses service binding_hostname
-    command: ../openrun binding show-account /apps/b3 | jq -r '.url_binding | startswith("postgres://") and contains("@host.docker.internal")'
+  binding0037: # account url automatically maps localhost to a container hostname
+    command: ../openrun binding show-account /apps/b3 | jq -r '.url | startswith("postgres://") and (contains("@host.docker.internal") or contains("@host.containers.internal"))'
     stdout: "true"
 
   binding0038: # direct account url keeps the service hostname
-    command: ../openrun binding show-account /apps/b3 | jq -r '.url != .url_binding'
+    command: ../openrun binding show-account /apps/b3 | jq -r '.url != .url_direct'
     stdout: "true"
+
+  binding0039: # old binding-specific url key is not present
+    command: ../openrun binding show-account /apps/b3 | jq -r 'has("url_binding")'
+    stdout: "false"
 
   # Later --config entries override earlier entries
   binding0040:
@@ -116,6 +120,26 @@ tests:
   binding0043: # one config key present
     command: ../openrun binding get -f json /apps/b4 | jq '.[0].metadata.config | length'
     stdout: "1"
+
+  binding0044: # disable binding hostname prevents automatic localhost mapping
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} --config binding_hostname=disable postgres/testbind_disable
+    stdout: "Service postgres/testbind_disable created"
+
+  binding0044a:
+    command: ../openrun binding create postgres/testbind_disable /apps/b4disable
+    stdout: "Binding /apps/b4disable created"
+
+  binding0044b: # url remains direct when binding hostname is disabled
+    command: ../openrun binding show-account /apps/b4disable | jq -r '.url == .url_direct and (.url | contains("@127.0.0.1:"))'
+    stdout: "true"
+
+  binding0044c:
+    command: ../openrun binding delete /apps/b4disable
+    stdout: "Binding /apps/b4disable deleted"
+
+  binding0044d:
+    command: ../openrun service delete postgres/testbind_disable
+    stdout: "Service postgres/testbind_disable deleted"
 
   # Source = "<service_type>" alone resolves to the default service of that type
   binding0045:

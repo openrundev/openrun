@@ -35,6 +35,49 @@ func TestCommandOptionArgsAllowedExactAndRegex(t *testing.T) {
 	}
 }
 
+func TestLocalhostBindingHostname(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "docker", command: "docker", want: DockerLocalhostBindingHostname},
+		{name: "docker path", command: "/usr/local/bin/docker", want: DockerLocalhostBindingHostname},
+		{name: "windows docker exe path", command: `C:\Program Files\Docker\Docker\resources\bin\docker.exe`, want: DockerLocalhostBindingHostname},
+		{name: "windows docker mixed case", command: `C:\Program Files\Docker\Docker\resources\bin\Docker.EXE`, want: DockerLocalhostBindingHostname},
+		{name: "podman", command: "podman", want: OtherLocalhostBindingHostname},
+		{name: "windows podman exe path", command: `C:\Program Files\RedHat\Podman\podman.exe`, want: OtherLocalhostBindingHostname},
+		{name: "other command", command: "nerdctl", want: OtherLocalhostBindingHostname},
+		{name: "kubernetes", command: types.CONTAINER_KUBERNETES, want: ""},
+		{name: "empty", command: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := LocalhostBindingHostname(tt.command); got != tt.want {
+				t.Fatalf("LocalhostBindingHostname(%q) = %q, want %q", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLocalhostHostGatewayArgs(t *testing.T) {
+	got := LocalhostHostGatewayArgs("/usr/local/bin/docker")
+	want := []string{"--add-host", "host.docker.internal:host-gateway"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("LocalhostHostGatewayArgs(docker) = %#v, want %#v", got, want)
+	}
+
+	got = LocalhostHostGatewayArgs(`C:\Program Files\Docker\Docker\resources\bin\docker.exe`)
+	if !slices.Equal(got, want) {
+		t.Fatalf("LocalhostHostGatewayArgs(windows docker) = %#v, want %#v", got, want)
+	}
+
+	if got := LocalhostHostGatewayArgs("podman"); len(got) != 0 {
+		t.Fatalf("LocalhostHostGatewayArgs(podman) = %#v, want empty", got)
+	}
+}
+
 func TestParseCommandOptionsFiltersByContainerCommand(t *testing.T) {
 	got, err := ParseCommandOptions("/usr/local/bin/docker", map[string]string{
 		"docker.init":    "",
@@ -57,6 +100,23 @@ func TestParseCommandOptionsFiltersByContainerCommand(t *testing.T) {
 	}
 	if _, ok := got.Other["ignored.option"]; ok {
 		t.Fatalf("unprefixed unknown option should not be decoded, got %#v", got.Other["ignored.option"])
+	}
+}
+
+func TestParseCommandOptionsNormalizesWindowsCommandPath(t *testing.T) {
+	got, err := ParseCommandOptions(`C:\Program Files\Docker\Docker\resources\bin\docker.exe`, map[string]string{
+		"docker.init":   "",
+		"docker.memory": "512m",
+	})
+	if err != nil {
+		t.Fatalf("ParseCommandOptions returned error: %v", err)
+	}
+
+	if got.Memory != "512m" {
+		t.Fatalf("Memory = %q, want 512m", got.Memory)
+	}
+	if got.Other["init"] != "" {
+		t.Fatalf("Other[init] = %#v, want empty string", got.Other["init"])
 	}
 }
 

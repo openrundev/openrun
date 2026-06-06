@@ -98,7 +98,7 @@ Like all metadata updates, option updates are staged. Pass `--promote` to promot
 
 OpenRun parses `cpus` and `memory` before passing them to the container runtime. CPU values can be specified as cores (`2`, `0.5`) or millicores (`500m`). Memory values can be specified using Docker-style units (`512m`, `1g`) or Kubernetes quantities (`512Mi`, `1Gi`).
 
-Additional Docker/Podman runtime flags are disabled by default. To allow an app to set a raw runtime flag with `--copt`, the server admin must add the flag to `security.allowed_container_args` in `openrun.toml`.
+Additional Docker/Podman runtime flags are disabled by default, except `add-host`, which is allowed so local host mappings can be configured when needed. To allow an app to set any other raw runtime flag with `--copt`, the server admin must add the flag to `security.allowed_container_args` in `openrun.toml`.
 
 ```toml {filename="openrun.toml"}
 [security]

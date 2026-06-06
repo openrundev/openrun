@@ -130,7 +130,10 @@ func newBindingEnvTestHandler(approvedSources []string, serverSources []string, 
 				ServiceName:      "default",
 				ServiceIsDefault: true,
 				Metadata: types.BindingMetadata{
-					Account: map[string]string{"url": "postgres://prod"},
+					Account: map[string]string{
+						"url":        "postgres://prod-substituted",
+						"url_direct": "postgres://prod-direct",
+					},
 				},
 			},
 		},
@@ -160,8 +163,11 @@ func TestGetBindingEnvAllowsApprovedBindingSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getBindingEnv: %v", err)
 	}
-	if env["POSTGRES_URL"] != "postgres://prod" {
+	if env["POSTGRES_URL"] != "postgres://prod-substituted" {
 		t.Fatalf("POSTGRES_URL = %q", env["POSTGRES_URL"])
+	}
+	if env["POSTGRES_URL_DIRECT"] != "postgres://prod-direct" {
+		t.Fatalf("POSTGRES_URL_DIRECT = %q", env["POSTGRES_URL_DIRECT"])
 	}
 }
 
