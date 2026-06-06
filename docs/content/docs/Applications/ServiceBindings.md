@@ -289,17 +289,19 @@ With `--promote`, apply promotes binding metadata after updating staged metadata
 
 ## Postgres Config and Behavior
 
-Postgres services require one config key:
+Postgres services require `url`. They also support `binding_hostname`.
 
-| Key   | Required | Description                   |
-| :---- | :------- | :---------------------------- |
-| `url` | Yes      | Admin Postgres connection URL |
+| Key                | Required | Description                                                                                      |
+| :----------------- | :------- | :----------------------------------------------------------------------------------------------- |
+| `url`              | Yes      | Admin Postgres connection URL                                                                    |
+| `binding_hostname` | No       | Hostname to use in generated `url_binding` account URLs. The original `url` hostname is unchanged |
 
 For example:
 
 ```shell
 openrun service create postgres/main \
-  --config url=postgres://admin:secret@db.example.com:5432/appdb
+  --config url=postgres://admin:secret@localhost:5432/appdb \
+  --config binding_hostname=host.docker.internal
 ```
 
 The admin user in the URL must be able to create roles, create schemas, grant privileges and alter default privileges.
@@ -321,7 +323,7 @@ openrun binding create \
 
 If `inherit_default` is set to `false`, the generated role is created with `NOINHERIT`.
 
-For a base binding, OpenRun creates a schema and a login role. The generated account URL uses the service URL with the generated username and password. The URL also sets `search_path` to the generated schema.
+For a base binding, OpenRun creates a schema and a login role. The generated `url` account value uses the service URL with the generated username and password. The generated `url_binding` account value uses the same URL, but replaces the hostname with `binding_hostname` when that service option is set. OpenRun sets the generated role's default `search_path` to the binding schema.
 
 For a derived binding, OpenRun creates a separate login role and uses the base binding schema. The derived role gets `USAGE` on the schema before grants are applied.
 
@@ -340,24 +342,26 @@ the grant for that run. Skipped grants are applied on the next update/apply run.
 
 ## MySQL Config and Behavior
 
-MySQL services require `url`. They also support `host_pattern`.
+MySQL services require `url`. They also support `host_pattern` and `binding_hostname`.
 
-| Key            | Required | Description                                          |
-| :------------- | :------- | :--------------------------------------------------- |
-| `url`          | Yes      | Admin MySQL URL                                      |
-| `host_pattern` | No       | Host part for generated MySQL users. Defaults to `%` |
+| Key                | Required | Description                                                                                      |
+| :----------------- | :------- | :----------------------------------------------------------------------------------------------- |
+| `url`              | Yes      | Admin MySQL URL                                                                                  |
+| `host_pattern`     | No       | Host part for generated MySQL users. Defaults to `%`                                              |
+| `binding_hostname` | No       | Hostname to use in generated `url_binding` account URLs. The original `url` hostname is unchanged |
 
 For example:
 
 ```shell
 openrun service create mysql/main \
-  --config url=mysql://admin:secret@db.example.com:3306/ \
-  --config host_pattern=10.0.%
+  --config url=mysql://admin:secret@localhost:3306/ \
+  --config host_pattern=10.0.% \
+  --config binding_hostname=host.docker.internal
 ```
 
 The admin user in the URL must be able to create users, create databases, and grant and revoke privileges.
 
-For a base binding, OpenRun creates a database and user. The base user gets `ALL PRIVILEGES` on the generated database.
+For a base binding, OpenRun creates a database and user. The base user gets `ALL PRIVILEGES` on the generated database. The generated account includes `url` and `url_binding`; `url_binding` uses `binding_hostname` when that service option is set.
 
 For a derived binding, OpenRun creates a separate user and uses the base binding database. The derived user gets a minimal database-level `SHOW VIEW` grant so it can connect using the generated database as the default database.
 

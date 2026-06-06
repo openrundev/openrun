@@ -51,7 +51,7 @@ func NewPostgresServiceBinding() ServiceBinding {
 
 func (b *PostgresServiceBinding) InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error {
 	b.Logger = logger
-	if err := verifyKeys(slices.Collect(maps.Keys(serviceConfig)), []string{"url"}, []string{}); err != nil {
+	if err := verifyKeys(slices.Collect(maps.Keys(serviceConfig)), []string{"url"}, []string{"binding_hostname"}); err != nil {
 		return err
 	}
 
@@ -179,15 +179,20 @@ func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId,
 		return nil, fmt.Errorf("error setting search_path on role %s: %w", roleName, err)
 	}
 
-	accountURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, schemaName)
+	accountURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, "")
 	if err != nil {
 		return nil, fmt.Errorf("error building account url: %w", err)
 	}
+	accountBindingURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, b.serviceConfig["binding_hostname"])
+	if err != nil {
+		return nil, fmt.Errorf("error building binding account url: %w", err)
+	}
 
 	return map[string]string{
-		"url":    accountURL,
-		"schema": schemaName,
-		"role":   roleName,
+		"url":         accountURL,
+		"url_binding": accountBindingURL,
+		"schema":      schemaName,
+		"role":        roleName,
 	}, nil
 }
 
@@ -425,17 +430,14 @@ func quoteLiteral(s string) string {
 }
 
 // buildAccountURL constructs a new postgres URL using the admin URL's host/port/database
-// but with the supplied user, password and a search_path set to the new schema.
-func buildAccountURL(adminURL, user, password, schema string) (string, error) {
+// but with the supplied user and password.
+func buildAccountURL(adminURL, user, password, bindingHostname string) (string, error) {
 	u, err := url.Parse(adminURL)
 	if err != nil {
 		return "", err
 	}
 	u.User = url.UserPassword(user, password)
-
-	q := u.Query()
-	q.Set("search_path", schema)
-	u.RawQuery = q.Encode()
+	setURLHostname(u, bindingHostname)
 	return u.String(), nil
 }
 

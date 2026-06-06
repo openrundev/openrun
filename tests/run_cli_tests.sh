@@ -35,8 +35,6 @@ export OPENRUN_HOME=.
 unset CL_CONFIG_FILE
 unset SSH_AUTH_SOCK
 
-DEFAULT_POSTGRES_TEST_CONTAINER_NETWORK="openrun-postgres-test"
-
 trap "error_handler" ERR
 
 error_handler () {
@@ -44,34 +42,6 @@ error_handler () {
     cleanup
     echo "Test failed"
     exit 1
-}
-
-cleanup_postgres_test_network() {
-  local network="${1:-${POSTGRES_TEST_CONTAINER_NETWORK:-$DEFAULT_POSTGRES_TEST_CONTAINER_NETWORK}}"
-  if [[ -z "$network" ]]; then
-    return
-  fi
-
-  local container_command="${POSTGRES_TEST_CONTAINER_COMMAND:-${OPENRUN_TEST_CONTAINER_COMMAND:-docker}}"
-  if ! command -v "$container_command" >/dev/null 2>&1; then
-    return
-  fi
-  if ! $container_command network inspect "$network" >/dev/null 2>&1; then
-    return
-  fi
-
-  # This network is owned by run_cli_tests. If a previous run was interrupted,
-  # OpenRun app containers can keep it alive and make the next network create
-  # fail with "network ... already exists".
-  if [[ "$network" = "$DEFAULT_POSTGRES_TEST_CONTAINER_NETWORK" ]]; then
-    local attached_containers
-    attached_containers=$($container_command ps -aq --filter "network=$network" 2>/dev/null || true)
-    if [[ -n "$attached_containers" ]]; then
-      $container_command rm -f $attached_containers >/dev/null 2>&1 || true
-    fi
-  fi
-
-  $container_command network rm "$network" >/dev/null 2>&1 || true
 }
 
 cleanup() {
@@ -82,8 +52,6 @@ cleanup() {
     $POSTGRES_TEST_CONTAINER_COMMAND rm -f "$POSTGRES_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
     POSTGRES_TEST_CONTAINER_ID=""
   fi
-  cleanup_postgres_test_network
-  POSTGRES_TEST_CONTAINER_NETWORK=""
 
   if [[ -n "$MYSQL_TEST_CONTAINER_ID" ]]; then
     $MYSQL_TEST_CONTAINER_COMMAND rm -f "$MYSQL_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
@@ -156,18 +124,11 @@ start_postgres_testcontainer() {
 
   POSTGRES_TEST_CONTAINER_COMMAND="${OPENRUN_TEST_CONTAINER_COMMAND:-docker}"
   local publish_addr="${POSTGRES_TEST_CONTAINER_PUBLISH_ADDR:-127.0.0.1}"
-  local network_args=()
-  if [[ -n "$POSTGRES_TEST_CONTAINER_NETWORK" ]]; then
-    cleanup_postgres_test_network
-    $POSTGRES_TEST_CONTAINER_COMMAND network create "$POSTGRES_TEST_CONTAINER_NETWORK" >/dev/null
-    network_args=(--network "$POSTGRES_TEST_CONTAINER_NETWORK" --network-alias openrun-postgres)
-  fi
   echo "Starting postgres test container with $POSTGRES_TEST_CONTAINER_COMMAND"
   POSTGRES_TEST_CONTAINER_ID=$($POSTGRES_TEST_CONTAINER_COMMAND run \
     --detach \
     --rm \
     --publish "${publish_addr}::5432" \
-    "${network_args[@]}" \
     --env POSTGRES_DB=openrun_cli \
     --env POSTGRES_USER=postgres \
     --env POSTGRES_PASSWORD=postgres \
@@ -386,11 +347,10 @@ EOF
 export TESTENV=abc
 export c1c2_c3=xyz
 if [[ "$CL_CONTAINER_COMMANDS" != "disable" && ( -z "$CL_SINGLE_TEST" || "$CL_SINGLE_TEST" = "test_postgres_container.yaml" ) ]]; then
-  # Containerized apps need to reach the test Postgres from inside their own
-  # container. Put the app and Postgres containers on one user-defined network
-  # so the app can connect to the postgres alias on port 5432.
+  # Containerized apps connect to the test Postgres through POSTGRES_URL_BINDING.
+  # Publish on all host interfaces so Docker/Podman host aliases can reach the
+  # mapped port from inside the app container.
   export POSTGRES_TEST_CONTAINER_PUBLISH_ADDR="${POSTGRES_TEST_CONTAINER_PUBLISH_ADDR:-0.0.0.0}"
-  export POSTGRES_TEST_CONTAINER_NETWORK="${POSTGRES_TEST_CONTAINER_NETWORK:-openrun-postgres-test}"
 fi
 start_postgres_testcontainer
 start_mysql_testcontainer
@@ -463,6 +423,11 @@ export PYTHON_VERSION=3.14
 port_base=9000
 for cmd in ${CL_CONTAINER_COMMANDS}; do
     export OPENRUN_CONTAINER_COMMAND="$cmd"
+    if [[ "$cmd" = "podman" ]]; then
+        export TEST_POSTGRES_BINDING_HOSTNAME="host.containers.internal"
+    else
+        export TEST_POSTGRES_BINDING_HOSTNAME="host.docker.internal"
+    fi
     http_port=`expr $port_base + 1`
     https_port=`expr $port_base + 2`
     forward_auth_port=`expr $port_base + 3`

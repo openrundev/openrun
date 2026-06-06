@@ -8,7 +8,7 @@ config:
 tests:
   # Setup: create the source service used by all bindings below
   binding0001:
-    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/testbind
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} --config binding_hostname=host.docker.internal postgres/testbind
     stdout: "Service postgres/testbind created"
     exit-code: 0
 
@@ -90,6 +90,14 @@ tests:
 
   binding0036: # staged account url is available through show-account --staging
     command: ../openrun binding show-account --staging /apps/b3 | jq -r '.url | startswith("postgres://")'
+    stdout: "true"
+
+  binding0037: # binding account url uses service binding_hostname
+    command: ../openrun binding show-account /apps/b3 | jq -r '.url_binding | startswith("postgres://") and contains("@host.docker.internal")'
+    stdout: "true"
+
+  binding0038: # direct account url keeps the service hostname
+    command: ../openrun binding show-account /apps/b3 | jq -r '.url != .url_binding'
     stdout: "true"
 
   # Later --config entries override earlier entries

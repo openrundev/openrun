@@ -6,7 +6,10 @@ package bindings
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/openrundev/openrun/internal/types"
@@ -100,4 +103,22 @@ func diffGrants(currentGrants []types.BindingGrant, newGrants []types.BindingGra
 		}
 	}
 	return revokeGrants, applyGrants
+}
+
+func setURLHostname(u *url.URL, hostname string) {
+	if hostname == "" {
+		return
+	}
+	hostname = strings.TrimPrefix(strings.TrimSuffix(hostname, "]"), "[")
+
+	port := u.Port()
+	if port == "" {
+		if strings.Contains(hostname, ":") {
+			u.Host = "[" + hostname + "]"
+			return
+		}
+		u.Host = hostname
+		return
+	}
+	u.Host = net.JoinHostPort(hostname, port)
 }

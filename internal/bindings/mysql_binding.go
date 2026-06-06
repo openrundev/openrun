@@ -88,7 +88,7 @@ func NewMysqlServiceBinding() ServiceBinding {
 
 func (b *MysqlServiceBinding) InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string) error {
 	b.Logger = logger
-	if err := verifyKeys(slices.Collect(maps.Keys(serviceConfig)), []string{"url"}, []string{"host_pattern"}); err != nil {
+	if err := verifyKeys(slices.Collect(maps.Keys(serviceConfig)), []string{"url"}, []string{"host_pattern", "binding_hostname"}); err != nil {
 		return err
 	}
 
@@ -269,16 +269,21 @@ func (b *MysqlServiceBinding) GenerateAccount(ctx context.Context, bindingId, bi
 		}
 	}
 
-	accountURL, err := buildMysqlAccountURL(b.serviceConfig["url"], userName, password, databaseName)
+	accountURL, err := buildMysqlAccountURL(b.serviceConfig["url"], userName, password, databaseName, "")
 	if err != nil {
 		return nil, fmt.Errorf("error building account url: %w", err)
 	}
+	accountBindingURL, err := buildMysqlAccountURL(b.serviceConfig["url"], userName, password, databaseName, b.serviceConfig["binding_hostname"])
+	if err != nil {
+		return nil, fmt.Errorf("error building binding account url: %w", err)
+	}
 
 	return map[string]string{
-		"url":      accountURL,
-		"database": databaseName,
-		"user":     userName,
-		"host":     host,
+		"url":         accountURL,
+		"url_binding": accountBindingURL,
+		"database":    databaseName,
+		"user":        userName,
+		"host":        host,
 	}, nil
 }
 
@@ -594,12 +599,13 @@ func mysqlURLToDSN(rawURL, overrideDB string) (string, error) {
 // buildMysqlAccountURL constructs a new mysql:// URL using the admin URL's
 // host/port and the supplied user, password and default database. The result
 // is what we store in BindingMetadata.Account["url"] and hand back to apps.
-func buildMysqlAccountURL(adminURL, user, password, database string) (string, error) {
+func buildMysqlAccountURL(adminURL, user, password, database, bindingHostname string) (string, error) {
 	u, err := url.Parse(adminURL)
 	if err != nil {
 		return "", err
 	}
 	u.User = url.UserPassword(user, password)
+	setURLHostname(u, bindingHostname)
 	u.Path = "/" + database
 	return u.String(), nil
 }

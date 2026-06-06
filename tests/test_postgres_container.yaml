@@ -4,8 +4,8 @@ config:
     GOCOVERDIR: ${GOCOVERDIR}/../client
     HTTP_PORT: ${HTTP_PORT}
     OPENRUN_CONTAINER_COMMAND: ${OPENRUN_CONTAINER_COMMAND}
-    POSTGRES_TEST_CONTAINER_NETWORK: ${POSTGRES_TEST_CONTAINER_NETWORK}
     PATH: ${PATH}
+    TEST_POSTGRES_BINDING_HOSTNAME: ${TEST_POSTGRES_BINDING_HOSTNAME}
     TEST_POSTGRES_URL: ${TEST_POSTGRES_URL}
 
 tests:
@@ -27,62 +27,41 @@ tests:
       app = Flask(__name__)
 
 
-      def connection_kwargs(url, host, port):
+      def connection_kwargs(url):
           parsed = urlparse(url)
           return {
               "user": unquote(parsed.username or ""),
               "password": unquote(parsed.password or ""),
-              "host": host,
-              "port": port,
+              "host": parsed.hostname,
+              "port": parsed.port or 5432,
               "database": (parsed.path or "/").lstrip("/") or "postgres",
           }
 
 
-      def candidate_endpoints(url):
-          parsed = urlparse(url)
-          endpoints = [("openrun-postgres", 5432)]
-          endpoints.append((parsed.hostname, parsed.port or 5432))
-          if parsed.hostname in ("127.0.0.1", "localhost"):
-              endpoints.extend([
-                  ("host.docker.internal", parsed.port or 5432),
-                  ("host.containers.internal", parsed.port or 5432),
-              ])
-          seen = set()
-          for host, port in endpoints:
-              key = (host, port)
-              if host and key not in seen:
-                  seen.add(key)
-                  yield host, port
-
-
       @app.route("/")
       def setup_db():
-          url = os.environ.get("POSTGRES_URL", "")
+          source = "POSTGRES_URL_BINDING"
+          url = os.environ.get(source, "")
           if not url:
-              return "POSTGRES_URL missing", 500
+              return f"{source} missing", 500
 
-          errors = []
-          for host, port in candidate_endpoints(url):
-              try:
-                  conn = pg8000.dbapi.connect(**connection_kwargs(url, host, port))
-                  cursor = conn.cursor()
-                  cursor.execute("create table if not exists container_binding_items (id integer primary key, note text)")
-                  cursor.execute("create table if not exists container_binding_audit (id integer primary key, event text)")
-                  cursor.execute("insert into container_binding_items (id, note) values (1, 'from flask') on conflict (id) do nothing")
-                  cursor.execute("insert into container_binding_audit (id, event) values (1, 'created') on conflict (id) do nothing")
-                  conn.commit()
-                  cursor.execute("select current_schema(), count(*) from container_binding_items")
-                  schema, count = cursor.fetchone()
-                  cursor.close()
-                  conn.close()
-                  return f"source=POSTGRES_URL host={host} port={port} schema={schema} count={count}"
-              except Exception as exc:
-                  errors.append(f"{host}:{port} {type(exc).__name__}: {exc}")
-          return " | ".join(errors), 500
+          parsed = urlparse(url)
+          conn = pg8000.dbapi.connect(**connection_kwargs(url))
+          cursor = conn.cursor()
+          cursor.execute("create table if not exists container_binding_items (id integer primary key, note text)")
+          cursor.execute("create table if not exists container_binding_audit (id integer primary key, event text)")
+          cursor.execute("insert into container_binding_items (id, note) values (1, 'from flask') on conflict (id) do nothing")
+          cursor.execute("insert into container_binding_audit (id, event) values (1, 'created') on conflict (id) do nothing")
+          conn.commit()
+          cursor.execute("select current_schema(), count(*) from container_binding_items")
+          schema, count = cursor.fetchone()
+          cursor.close()
+          conn.close()
+          return f"source={source} host={parsed.hostname} port={parsed.port or 5432} schema={schema} count={count}"
       EOF
 
   postgres_container0020: # setup postgres service
-    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/pgcontainer
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} --config binding_hostname=${TEST_POSTGRES_BINDING_HOSTNAME} postgres/pgcontainer
     stdout: "Service postgres/pgcontainer created"
 
   postgres_container0030: # setup binding
@@ -92,18 +71,15 @@ tests:
   postgres_container0040: # create app with postgres binding
     command: |
       extra_args=""
-      if [[ -n "${POSTGRES_TEST_CONTAINER_NETWORK:-}" ]]; then
-        extra_args="$extra_args --copt ${OPENRUN_CONTAINER_COMMAND}.network=${POSTGRES_TEST_CONTAINER_NETWORK}"
-      fi
       if [[ "${OPENRUN_CONTAINER_COMMAND:-}" = "docker" ]]; then
         extra_args="$extra_args --copt docker.add-host=host.docker.internal:host-gateway"
       fi
       ../openrun app create --spec python-flask --bind /pgcontainer/b1 $extra_args ./pg_flaskapp /pg_container
     stdout: "App: /pg_container"
 
-  postgres_container0050: # prod container receives POSTGRES_URL and creates the table
+  postgres_container0050: # prod container receives POSTGRES_URL_BINDING and creates the table
     command: curl -sS localhost:${HTTP_PORT}/pg_container
-    stdout: "source=POSTGRES_URL"
+    stdout: "source=POSTGRES_URL_BINDING"
 
   postgres_container0060: # prod table was created through the binding account
     command: ../openrun binding run-command /pgcontainer/b1 "select count(*) as n from container_binding_items" | jq -r '.rows[0].n'
@@ -125,7 +101,7 @@ tests:
       exactly: "1\n"
 
   postgres_container0090: # setup non-default postgres service
-    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/pgprivate
+    command: ../openrun service create --config url=${TEST_POSTGRES_URL} --config binding_hostname=${TEST_POSTGRES_BINDING_HOSTNAME} postgres/pgprivate
     stdout: "Service postgres/pgprivate created"
 
   postgres_container0091: # setup binding to non-default service source
@@ -135,9 +111,6 @@ tests:
   postgres_container0092: # create app with non-default binding source
     command: |
       extra_args=""
-      if [[ -n "${POSTGRES_TEST_CONTAINER_NETWORK:-}" ]]; then
-        extra_args="$extra_args --copt ${OPENRUN_CONTAINER_COMMAND}.network=${POSTGRES_TEST_CONTAINER_NETWORK}"
-      fi
       if [[ "${OPENRUN_CONTAINER_COMMAND:-}" = "docker" ]]; then
         extra_args="$extra_args --copt docker.add-host=host.docker.internal:host-gateway"
       fi
