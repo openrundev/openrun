@@ -38,7 +38,7 @@ func (s *Server) TokenList(ctx context.Context, appPath string) (*types.TokenLis
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	appEntry, err := s.db.GetAppTx(ctx, tx, appPathDomain)
+	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (s *Server) TokenCreate(ctx context.Context, appPath string, webhookType ty
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	appEntry, err := s.db.GetAppTx(ctx, tx, appPathDomain)
+	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func (s *Server) TokenDelete(ctx context.Context, appPath string, webhookType ty
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	appEntry, err := s.db.GetAppTx(ctx, tx, appPathDomain)
+	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
 		return nil, err
 	}

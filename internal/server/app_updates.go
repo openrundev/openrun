@@ -454,7 +454,7 @@ func (s *Server) UpdateAppSettings(ctx context.Context, appPathGlob string, dryR
 }
 
 func (s *Server) updateAppSettings(ctx context.Context, tx types.Transaction, appPathDomain types.AppPathDomain, updateAppRequest types.UpdateAppRequest) ([]types.AppPathDomain, error) {
-	mainAppEntry, err := s.db.GetAppTx(ctx, tx, appPathDomain)
+	mainAppEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
 		return nil, err
 	}

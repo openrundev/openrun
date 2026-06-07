@@ -8,10 +8,12 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	appcore "github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/types"
 	saml2 "github.com/russellhaering/gosaml2"
@@ -119,6 +121,98 @@ func TestUpdateAppMetadataConfigBindingPerms(t *testing.T) {
 	want := []string{"postgres/custom", "mysql"}
 	if strings.Join(appEntry.Metadata.BindingSourcePerms, ",") != strings.Join(want, ",") {
 		t.Fatalf("binding source perms = %v, want %v", appEntry.Metadata.BindingSourcePerms, want)
+	}
+}
+
+func TestGetAppsDoesNotResolveBindingServices(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
+	config := &types.ServerConfig{
+		Metadata: types.MetadataConfig{
+			DBConnection: "sqlite:" + filepath.Join(t.TempDir(), "metadata.db"),
+			AutoUpgrade:  true,
+		},
+	}
+	db, err := metadata.NewMetadata(logger, config)
+	if err != nil {
+		t.Fatalf("new metadata: %v", err)
+	}
+	defer db.Close()
+
+	server := &Server{
+		Logger: logger,
+		config: config,
+		db:     db,
+		rbacManager: &rbac.RBACManager{
+			Logger:     logger,
+			RbacConfig: &types.RBACConfig{},
+		},
+	}
+
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	binding := &types.Binding{
+		Id:          types.ID_PREFIX_BINDING + "stale",
+		Path:        "/stale",
+		Source:      "postgres/deleted",
+		ServiceType: "postgres",
+		ServiceName: "deleted",
+	}
+	if err := db.CreateBinding(ctx, tx, binding); err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+
+	prod := &types.AppEntry{
+		Id:        types.ID_PREFIX_APP_PROD + "stale",
+		Path:      "/bound",
+		SourceUrl: t.TempDir(),
+		Metadata: types.AppMetadata{
+			Name:     "Bound",
+			Bindings: []string{binding.Path},
+			VersionMetadata: types.VersionMetadata{
+				Version: 1,
+			},
+		},
+	}
+	stage := &types.AppEntry{
+		Id:        types.ID_PREFIX_APP_STAGE + "stale",
+		Path:      "/bound" + types.STAGE_SUFFIX,
+		MainApp:   prod.Id,
+		SourceUrl: prod.SourceUrl,
+		Metadata: types.AppMetadata{
+			Name:     "Bound stage",
+			Bindings: []string{binding.Path},
+			VersionMetadata: types.VersionMetadata{
+				Version: 1,
+			},
+		},
+	}
+	if err := db.CreateApp(ctx, tx, prod); err != nil {
+		t.Fatalf("create prod app: %v", err)
+	}
+	if err := db.CreateApp(ctx, tx, stage); err != nil {
+		t.Fatalf("create stage app: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	apps, err := server.GetApps(ctx, "", false)
+	if err != nil {
+		t.Fatalf("get apps: %v", err)
+	}
+	if len(apps) != 1 {
+		t.Fatalf("apps length = %d, want 1", len(apps))
+	}
+	if apps[0].Path != prod.Path {
+		t.Fatalf("app path = %q, want %q", apps[0].Path, prod.Path)
+	}
+	if got := strings.Join(apps[0].Metadata.Bindings, ","); got != binding.Path {
+		t.Fatalf("app bindings = %q, want %q", got, binding.Path)
 	}
 }
 

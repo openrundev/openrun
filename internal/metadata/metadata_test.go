@@ -130,7 +130,7 @@ func TestMetadata_AppLifecycle(t *testing.T) {
 	testutil.AssertNoError(t, m.UpdateAppSettings(ctx, tx, prod))
 	testutil.AssertNoError(t, tx.Commit())
 
-	gotProd, err := m.GetApp(types.CreateAppPathDomain(prod.Path, prod.Domain))
+	gotProd, err := m.GetAppEntry(ctx, types.CreateAppPathDomain(prod.Path, prod.Domain))
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsString(t, "updated source", prod.SourceUrl, gotProd.SourceUrl)
 	testutil.AssertEqualsString(t, "updated name", prod.Metadata.Name, gotProd.Metadata.Name)
@@ -171,7 +171,7 @@ func TestMetadata_AppLifecycle(t *testing.T) {
 	testutil.AssertNoError(t, m.DeleteApp(ctx, tx, prod.Id))
 	testutil.AssertNoError(t, tx.Commit())
 
-	_, err = m.GetApp(types.CreateAppPathDomain(prod.Path, prod.Domain))
+	_, err = m.GetAppEntry(ctx, types.CreateAppPathDomain(prod.Path, prod.Domain))
 	testutil.AssertErrorContains(t, err, "app not found")
 }
 

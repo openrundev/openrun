@@ -302,7 +302,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		appMap := map[types.AppPathDomain]*types.AppEntry{}
 		appMissing := false
 		for _, appPath := range lastRunApps {
-			app, err := s.db.GetAppTx(ctx, tx, appPath)
+			app, err := s.db.GetAppEntryTx(ctx, tx, appPath)
 			if err != nil {
 				appMissing = true
 				s.Error().Err(err).Msgf("Error getting app %s", appPath)

@@ -434,7 +434,7 @@ func (s *Server) GetAppApi(ctx context.Context, appPath string) (*types.AppGetRe
 		return nil, err
 	}
 
-	appEntry, error := s.db.GetAppTx(ctx, tx, pathDomain)
+	appEntry, error := s.db.GetAppEntryTx(ctx, tx, pathDomain)
 	if error != nil {
 		return nil, error
 	}
@@ -445,14 +445,14 @@ func (s *Server) GetAppApi(ctx context.Context, appPath string) (*types.AppGetRe
 }
 
 func (s *Server) GetAppEntry(ctx context.Context, tx types.Transaction, pathDomain types.AppPathDomain) (*types.AppEntry, error) {
-	return s.db.GetAppTx(ctx, tx, pathDomain)
+	return s.db.GetAppEntryTx(ctx, tx, pathDomain)
 }
 
 func (s *Server) GetApp(ctx context.Context, pathDomain types.AppPathDomain, init bool) (*app.App, error) {
 	application, err := s.apps.GetApp(pathDomain)
 	if err != nil {
 		// App not found in cache, get from DB
-		appEntry, err := s.db.GetApp(pathDomain)
+		appEntry, err := s.db.GetAppEntry(ctx, pathDomain)
 		if err != nil {
 			return nil, err
 		}
@@ -991,7 +991,7 @@ func (s *Server) getStageApp(ctx context.Context, tx types.Transaction, appEntry
 	}
 
 	stageAppPath := types.AppPathDomain{Domain: appEntry.Domain, Path: appEntry.Path + types.STAGE_SUFFIX}
-	stageAppEntry, err := s.db.GetAppTx(ctx, tx, stageAppPath)
+	stageAppEntry, err := s.db.GetAppEntryTx(ctx, tx, stageAppPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1255,14 +1255,14 @@ func (s *Server) GetApps(ctx context.Context, appPathGlob string, internal bool)
 		if !authorized {
 			continue
 		}
-		retApp, err := s.GetApp(ctx, app.AppPathDomain, false)
+		retApp, err := s.db.GetAppEntryTx(ctx, tx, app.AppPathDomain)
 		if err != nil {
 			return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
 		}
 
 		stagedChanges := false
 		if strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_PROD) {
-			stageApp, err := s.getStageApp(ctx, tx, retApp.AppEntry)
+			stageApp, err := s.getStageApp(ctx, tx, retApp)
 			if err != nil {
 				return nil, err
 			}
@@ -1271,7 +1271,7 @@ func (s *Server) GetApps(ctx context.Context, appPathGlob string, internal bool)
 				stagedChanges = true
 			}
 		}
-		ret = append(ret, types.AppResponse{AppEntry: *retApp.AppEntry, StagedChanges: stagedChanges})
+		ret = append(ret, types.AppResponse{AppEntry: *retApp, StagedChanges: stagedChanges})
 	}
 	return ret, nil
 }
@@ -1294,7 +1294,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	}
 	defer repoCache.Cleanup()
 
-	mainAppEntry, err := s.db.GetAppTx(ctx, tx, mainAppPathDomain)
+	mainAppEntry, err := s.db.GetAppEntryTx(ctx, tx, mainAppPathDomain)
 	if err != nil {
 		return nil, err
 	}
@@ -1310,7 +1310,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	previewAppEntry.UserID = system.GetContextUserId(ctx)
 
 	// Check if it already exists
-	if _, err = s.db.GetAppTx(ctx, tx, previewAppEntry.AppPathDomain()); err == nil {
+	if _, err = s.db.GetAppEntryTx(ctx, tx, previewAppEntry.AppPathDomain()); err == nil {
 		return nil, fmt.Errorf("preview app %s already exists", previewAppEntry.AppPathDomain())
 	}
 

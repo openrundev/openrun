@@ -26,7 +26,7 @@ func (s *Server) VersionList(ctx context.Context, mainAppPath string) (*types.Ap
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	appEntry, err := s.db.GetAppTx(ctx, tx, appPathDomain)
+	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +64,7 @@ func (s *Server) VersionFiles(ctx context.Context, mainAppPath, version string) 
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	appEntry, err := s.db.GetAppTx(ctx, tx, appPathDomain)
+	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func (s *Server) VersionSwitch(ctx context.Context, mainAppPath string, dryRun b
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	appEntry, err := s.db.GetAppTx(ctx, tx, appPathDomain)
+	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
 		return nil, err
 	}

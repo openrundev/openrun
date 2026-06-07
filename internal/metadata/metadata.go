@@ -471,16 +471,16 @@ func (m *Metadata) CreateApp(ctx context.Context, tx types.Transaction, app *typ
 	return nil
 }
 
-func (m *Metadata) GetApp(pathDomain types.AppPathDomain) (*types.AppEntry, error) {
-	tx, err := m.BeginTransaction(context.Background())
+func (m *Metadata) GetAppEntry(ctx context.Context, pathDomain types.AppPathDomain) (*types.AppEntry, error) {
+	tx, err := m.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	return m.GetAppTx(context.Background(), tx, pathDomain)
+	return m.GetAppEntryTx(ctx, tx, pathDomain)
 }
 
-func (m *Metadata) GetAppTx(ctx context.Context, tx types.Transaction, pathDomain types.AppPathDomain) (*types.AppEntry, error) {
+func (m *Metadata) GetAppEntryTx(ctx context.Context, tx types.Transaction, pathDomain types.AppPathDomain) (*types.AppEntry, error) {
 	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select id, path, domain, main_app, source_url, is_dev, user_id, create_time, update_time, settings, metadata from apps where path = ? and domain = ?`))
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
