@@ -41,6 +41,44 @@ func TestAutoBindingAppIDUsesMainAppID(t *testing.T) {
 	}
 }
 
+func TestAutoBindingAppIDUsesDevAppID(t *testing.T) {
+	appEntry := &types.AppEntry{
+		Id:      "app_dev_456",
+		Path:    "/p1",
+		Domain:  "example.com",
+		MainApp: "app_prd_123",
+		IsDev:   true,
+	}
+
+	got := autoBindingAppID(appEntry)
+	if got != "app_dev_456" {
+		t.Fatalf("autoBindingAppID = %q, want app_dev_456", got)
+	}
+}
+
+func TestUseStagedBindingMetadata(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		useStaging bool
+		want       bool
+	}{
+		{name: "explicit staging", path: "/apps/b1", useStaging: true, want: true},
+		{name: "dev auto binding", path: "/auto/app_dev_456/postgres", want: true},
+		{name: "prod auto binding", path: "/auto/app_prd_123/postgres", want: false},
+		{name: "regular binding", path: "/apps/b1", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			binding := &types.Binding{Path: tc.path}
+			if got := useStagedBindingMetadata(binding, tc.useStaging); got != tc.want {
+				t.Fatalf("useStagedBindingMetadata = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadApplyInfoParsesAppBindingsAndBindingPerms(t *testing.T) {
 	server := &Server{config: &types.ServerConfig{}}
 

@@ -413,21 +413,6 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		}
 	}
 
-	createResults := make([]types.AppCreateResponse, 0, len(newApps))
-	for _, newApp := range newApps {
-		s.Trace().Msgf("Applying create app %s", newApp)
-		applyInfo := applyConfig[newApp]
-		if isDev {
-			applyInfo.IsDev = isDev // Override the dev status from the apply command cli
-		}
-		res, err := s.CreateAppTx(ctx, tx, newApp.String(), approve, dryRun, applyInfo, repoCache)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		createResults = append(createResults, *res)
-	}
-
 	createBindingResults := make([]string, 0, len(newBindings))
 	bindingGrantTxs := s.newBindingGrantTxManager(ctx, dryRun)
 	sideEffects := &applySideEffects{bindingGrantTxs: bindingGrantTxs}
@@ -464,6 +449,21 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		if promoted {
 			promoteBindingResults = append(promoteBindingResults, updateBinding)
 		}
+	}
+
+	createResults := make([]types.AppCreateResponse, 0, len(newApps))
+	for _, newApp := range newApps {
+		s.Trace().Msgf("Applying create app %s", newApp)
+		applyInfo := applyConfig[newApp]
+		if isDev {
+			applyInfo.IsDev = isDev // Override the dev status from the apply command cli
+		}
+		res, err := s.CreateAppTx(ctx, tx, newApp.String(), approve, dryRun, applyInfo, repoCache)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		createResults = append(createResults, *res)
 	}
 
 	for _, updateApp := range updatedApps {

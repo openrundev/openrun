@@ -738,7 +738,7 @@ func (s *Server) GetBindingAccount(ctx context.Context, path string, useStaging 
 	if err != nil {
 		return nil, err
 	}
-	if useStaging {
+	if useStagedBindingMetadata(binding, useStaging) {
 		return binding.StagedMetadata.Account, nil
 	}
 	return binding.Metadata.Account, nil
@@ -767,8 +767,14 @@ func (s *Server) RunBindingCommand(ctx context.Context, bindingName string, useS
 	}
 
 	metadata := binding.Metadata
-	if useStaging {
+	if useStagedBindingMetadata(binding, useStaging) {
 		metadata = binding.StagedMetadata
+		if service.Staging != "" {
+			service, err = s.db.GetService(ctx, tx, service.ServiceType, service.Staging)
+			if err != nil {
+				return nil, fmt.Errorf("error getting staging service: %w", err)
+			}
+		}
 	}
 
 	serviceBinding, err := s.getServiceBinding(ctx, service, binding)

@@ -18,10 +18,21 @@ func autoBindingPathForAppID(appID types.AppId, serviceType string) string {
 }
 
 func autoBindingAppID(appEntry *types.AppEntry) types.AppId {
+	if appEntry.IsDev {
+		return appEntry.Id
+	}
 	if appEntry.MainApp != "" {
 		return appEntry.MainApp
 	}
 	return appEntry.Id
+}
+
+func isDevAutoBindingPath(bindingPath string) bool {
+	return strings.HasPrefix(bindingPath, autoBindingPathPrefix+"/"+types.ID_PREFIX_APP_DEV)
+}
+
+func useStagedBindingMetadata(binding *types.Binding, useStaging bool) bool {
+	return useStaging || isDevAutoBindingPath(binding.Path)
 }
 
 // resolveAppBindings resolves the binding references on an app. A reference that

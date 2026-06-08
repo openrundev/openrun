@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,6 +224,66 @@ func TestFileStoreRejectsSymlinksInSource(t *testing.T) {
 	if !strings.Contains(err.Error(), "symlinks are not allowed") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
+	testutil.AssertNoError(t, tx.Rollback())
+}
+
+func TestFileStoreSkipsSocketInSource(t *testing.T) {
+	m, cleanup := setupTestMetadata(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	sourceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceDir, "app.star"), []byte("app = ace.app(\"test\")\n"), 0o600); err != nil {
+		t.Fatalf("write app file: %v", err)
+	}
+
+	runDir := filepath.Join(sourceDir, "run")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatalf("create run dir: %v", err)
+	}
+	socketPath := filepath.Join(runDir, "openrun.sock")
+	socket, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Skipf("unix sockets unsupported in test environment: %v", err)
+	}
+	defer socket.Close() //nolint:errcheck
+
+	appEntry := &types.AppEntry{
+		Id:        types.AppId(types.ID_PREFIX_APP_PROD + "sockettest"),
+		Path:      "/socket",
+		Domain:    "example.com",
+		SourceUrl: sourceDir,
+		UserID:    "u1",
+		Metadata: types.AppMetadata{
+			SpecFiles: &types.SpecFiles{},
+		},
+	}
+
+	tx, err := m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, m.CreateApp(ctx, tx, appEntry))
+
+	fileStore, err := NewFileStore(appEntry.Id, 0, m, tx)
+	testutil.AssertNoError(t, err)
+
+	err = fileStore.AddAppVersionDisk(ctx, tx, types.AppMetadata{
+		VersionMetadata: types.VersionMetadata{
+			Version: 1,
+		},
+	}, sourceDir)
+	testutil.AssertNoError(t, err)
+
+	var count int
+	err = tx.QueryRowContext(ctx, `select count(*) from app_files where appid = ? and version = ? and name = ?`,
+		appEntry.Id, 1, "run/openrun.sock").Scan(&count)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "socket app file count", 0, count)
+
+	err = tx.QueryRowContext(ctx, `select count(*) from app_files where appid = ? and version = ? and name = ?`,
+		appEntry.Id, 1, "app.star").Scan(&count)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "regular app file count", 1, count)
 
 	testutil.AssertNoError(t, tx.Rollback())
 }
