@@ -255,6 +255,19 @@ func permissionCoveredByServerConfig(perm types.Permission, serverPerms []types.
 	return false
 }
 
+func (a *App) auditBindingSourcePerms() []string {
+	bindingSourcePerms := append([]string{}, a.Metadata.BindingSourcePerms...)
+	for _, binding := range a.bindings {
+		if binding == nil || binding.DerivedFrom == "" || binding.Source == "" {
+			continue
+		}
+		if !slices.Contains(bindingSourcePerms, binding.Source) {
+			bindingSourcePerms = append(bindingSourcePerms, binding.Source)
+		}
+	}
+	return bindingSourcePerms
+}
+
 func (a *App) createApproveResponse(loads []string, globals starlark.StringDict) (*types.ApproveResult, error) {
 	// the App entry should not get updated during the audit call, since there
 	// can be audit calls when the app is running.
@@ -271,7 +284,7 @@ func (a *App) createApproveResponse(loads []string, globals starlark.StringDict)
 		NewPermissions:             perms,
 		ApprovedLoads:              a.Metadata.Loads,
 		ApprovedPermissions:        a.Metadata.Permissions,
-		NewBindingSourcePerms:      a.Metadata.BindingSourcePerms,
+		NewBindingSourcePerms:      a.auditBindingSourcePerms(),
 		ApprovedBindingSourcePerms: a.Metadata.ApprovedBindingSourcePerms,
 	}
 	permissions, err := appDef.Attr("permissions")

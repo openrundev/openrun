@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -164,6 +165,16 @@ app("/apps/uses-derived", %q, bindings=["/apps/derived"])
 	}
 	if len(response.CreateResults) != 1 {
 		t.Fatalf("created apps = %v, want 1 app", response.CreateResults)
+	}
+	if len(response.CreateResults[0].ApproveResults) == 0 {
+		t.Fatal("created app did not include approval results")
+	}
+	approveResult := response.CreateResults[0].ApproveResults[0]
+	if !approveResult.NeedsApproval {
+		t.Fatal("created app with derived binding did not require approval")
+	}
+	if !slices.Contains(approveResult.NewBindingSourcePerms, "/apps/base") {
+		t.Fatalf("binding source perms = %v, want /apps/base", approveResult.NewBindingSourcePerms)
 	}
 
 	readTx, err := db.BeginTransaction(ctx)
