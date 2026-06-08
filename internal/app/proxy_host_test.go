@@ -125,6 +125,14 @@ func TestRewriteProxyLocation(t *testing.T) {
 			wantOK:    true,
 		},
 		{
+			name:      "absolute URL with existing stripPath is not double-prefixed",
+			loc:       "http://127.0.0.1:32899/app1/bar",
+			upstream:  "http://127.0.0.1:32899",
+			stripPath: "/app1",
+			want:      "/app1/bar",
+			wantOK:    true,
+		},
+		{
 			name:     "absolute URL with empty path becomes root",
 			loc:      "http://127.0.0.1:32899",
 			upstream: "http://127.0.0.1:32899",
@@ -146,6 +154,14 @@ func TestRewriteProxyLocation(t *testing.T) {
 		{
 			name:      "path-absolute Location is re-prefixed when stripPath is set",
 			loc:       "/foo",
+			upstream:  "http://127.0.0.1:32899",
+			stripPath: "/app1",
+			want:      "/app1/foo",
+			wantOK:    true,
+		},
+		{
+			name:      "path-absolute Location with existing stripPath is not double-prefixed",
+			loc:       "/app1/foo",
 			upstream:  "http://127.0.0.1:32899",
 			stripPath: "/app1",
 			want:      "/app1/foo",

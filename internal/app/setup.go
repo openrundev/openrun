@@ -1007,7 +1007,7 @@ func rewriteProxyLocation(loc string, upstream *url.URL, stripPath string) (stri
 	if newPath == "" {
 		newPath = "/"
 	}
-	if hasStrip {
+	if hasStrip && !pathHasPrefix(newPath, stripPath) {
 		newPath = stripPath + newPath
 	}
 
@@ -1022,6 +1022,16 @@ func rewriteProxyLocation(loc string, upstream *url.URL, stripPath string) (stri
 		sb.WriteString(locURL.EscapedFragment())
 	}
 	return sb.String(), true
+}
+
+func pathHasPrefix(p, prefix string) bool {
+	if prefix == "" || prefix == "/" {
+		return true
+	}
+	if p == prefix {
+		return true
+	}
+	return strings.HasPrefix(p, strings.TrimRight(prefix, "/")+"/")
 }
 
 func (a *App) addAPIRoute(basePath string, router *chi.Mux, apiDef *starlarkstruct.Struct, defaultHandler starlark.Callable) error {
