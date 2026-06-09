@@ -1,0 +1,6 @@
+python-fasthtml>=0.0.8
+uvicorn>=0.29
+python-multipart
+fastsql
+psycopg[binary]>=3
+pymysql>=1.1
