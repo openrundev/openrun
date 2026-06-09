@@ -59,7 +59,7 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 		return nil, err
 	}
 	if syncStatus.Error != "" {
-		// The sync job job failed, delete the entry
+		// The sync job failed, delete the entry
 		return nil, errors.New(syncStatus.Error)
 	}
 
@@ -258,8 +258,9 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		lastRunCommitId = entry.Status.CommitId
 	}
 
+	verify := entry.Metadata.Verify && !dryRun
 	applyInfo, updatedApps, applyEffects, applyErr := s.Apply(ctx, tx, entry.Path, "all", entry.Metadata.Approve, dryRun, entry.Metadata.Promote, types.AppReloadOption(entry.Metadata.Reload),
-		entry.Metadata.GitBranch, "", entry.Metadata.GitAuth, entry.Metadata.Clobber, entry.Metadata.ForceReload, lastRunCommitId, repoCache, false)
+		entry.Metadata.GitBranch, "", entry.Metadata.GitAuth, entry.Metadata.Clobber, entry.Metadata.ForceReload, verify, lastRunCommitId, repoCache, false)
 	if applyEffects != nil {
 		defer applyEffects.rollbackAndClose()
 	}
@@ -323,7 +324,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 				app := appMap[appPath]
 				var reloadResult *types.AppReloadResult
 				reloadResult, reloadErr = s.ReloadApp(ctx, tx, app, nil, entry.Metadata.Approve, false, entry.Metadata.Promote,
-					app.Metadata.VersionMetadata.GitBranch, "", app.Metadata.GitAuthName, repoCache, entry.Metadata.ForceReload, false)
+					app.Metadata.VersionMetadata.GitBranch, "", app.Metadata.GitAuthName, repoCache, entry.Metadata.ForceReload, verify)
 				if reloadErr != nil {
 					s.Error().Err(reloadErr).Msgf("Error reloading app %s sync job %s", appPath, entry.Id)
 					status.Error = reloadErr.Error()

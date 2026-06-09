@@ -181,13 +181,13 @@ tests:
     stdout: "0 app(s) reloaded, 2 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   reload0507a: # reload verify stdout
     command: ../openrun app reload --verify "/reload_git*"
-    stdout: "0 app(s) reloaded, 2 app(s) skipped, 0 app(s) approved, 0 app(s) promoted, 0 app(s) verify failed."
+    stdout: "0 app(s) reloaded, 2 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   reload0507b: # reload stdout
     command: ../openrun app reload --force-reload "/reload_git*"
     stdout: "2 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   reload0507c: # reload verify stdout
     command: ../openrun app reload --verify --force-reload "/reload_git*"
-    stdout: "2 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted, 0 app(s) verify failed."
+    stdout: "2 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   reload0508: # promote stdout
     command: ../openrun app promote "/reload_git*"
     stdout: "2 app(s) promoted."
@@ -196,7 +196,7 @@ tests:
     stdout: "4 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 2 app(s) promoted."
   reload0509a: # reload with verify and promote stdout
     command: ../openrun app reload --verify --promote --force-reload "/reload_git*"
-    stdout: "4 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 2 app(s) promoted, 0 app(s) verify failed."
+    stdout: "4 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 2 app(s) promoted."
   reload0510: # audit stdout
     command: ../openrun app approve --promote "/reload_git*"
     stdout: "2 app(s) audited, 0 app(s) approved, 2 app(s) promoted."

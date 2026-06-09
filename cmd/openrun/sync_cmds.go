@@ -36,6 +36,7 @@ func syncScheduleCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 	flags = append(flags, newBoolFlag("approve", "a", "Approve the app permissions", false))
 	flags = append(flags, newStringFlag("reload", "r", "Which apps to reload: none, updated, matched", ""))
 	flags = append(flags, newBoolFlag("promote", "p", "Promote changes from stage to prod", false))
+	flags = append(flags, newBoolFlag("verify", "", "Verify reload by reloading app containers", false))
 	flags = append(flags, newIntFlag("minutes", "s", "Schedule sync for every N minutes", 0))
 	flags = append(flags, newBoolFlag("clobber", "", "Force update app config, overwriting non-declarative changes", false))
 	flags = append(flags, newBoolFlag("force-reload", "f", "Force reload even if there are no new commits", false))
@@ -54,6 +55,7 @@ Examples:
   Create scheduled sync, reloading apps with code changes: openrun sync schedule ./app.ace
   Create scheduled sync, reloading only apps with a config change: openrun sync schedule --reload=updated github.com/openrundev/apps/apps.ace
   Create scheduled sync, promoting changes: openrun sync schedule --promote --approve github.com/openrundev/apps/apps.ace
+  Create scheduled sync, verifying reload before promoting changes: openrun sync schedule --verify --promote --approve github.com/openrundev/apps/apps.ace
   Create scheduled sync, overwriting changes: openrun sync schedule --promote --clobber github.com/openrundev/apps/apps.ace
 `,
 		Action: func(cCtx *cli.Context) error {
@@ -78,6 +80,7 @@ Examples:
 				GitAuth:           cCtx.String("git-auth"),
 				Promote:           cCtx.Bool("promote"),
 				Approve:           cCtx.Bool("approve"),
+				Verify:            cCtx.Bool("verify"),
 				Reload:            string(reloadMode),
 				Clobber:           cCtx.Bool("clobber"),
 				ForceReload:       cCtx.Bool("force-reload"),
@@ -251,17 +254,17 @@ func printSyncList(cCtx *cli.Context, sync []*types.SyncEntry, format string) {
 			printStdout(cCtx, formatStr, s.Id, s.Status.State, getSyncType(s), s.Path)
 		}
 	case FORMAT_TABLE:
-		formatStrHead := "%-35s %-9s %-12s %-8s %-8s %-7s %-7s %-10s %-15s %-60s %-s\n"
-		formatStrData := "%-35s %-9s %-12s %-8s %-8t %-7t %-7t %-10s %-15s %-60s %-s\n"
-		printStdout(cCtx, formatStrHead, "Id", "State", "SyncType", "Reload", "Promote", "Approve", "Clobber", "GitAuth", "Branch", "Path", "Error")
+		formatStrHead := "%-35s %-9s %-12s %-8s %-8s %-7s %-7s %-7s %-10s %-15s %-60s %-s\n"
+		formatStrData := "%-35s %-9s %-12s %-8s %-8t %-7t %-7t %-7t %-10s %-15s %-60s %-s\n"
+		printStdout(cCtx, formatStrHead, "Id", "State", "SyncType", "Reload", "Promote", "Approve", "Verify", "Clobber", "GitAuth", "Branch", "Path", "Error")
 
 		for _, s := range sync {
 			printStdout(cCtx, formatStrData, s.Id, s.Status.State, getSyncType(s), s.Metadata.Reload, s.Metadata.Promote,
-				s.Metadata.Approve, s.Metadata.Clobber, s.Metadata.GitAuth, s.Metadata.GitBranch, s.Path, s.Status.Error)
+				s.Metadata.Approve, s.Metadata.Verify, s.Metadata.Clobber, s.Metadata.GitAuth, s.Metadata.GitBranch, s.Path, s.Status.Error)
 		}
 	case FORMAT_CSV:
 		for _, s := range sync {
-			printStdout(cCtx, "%s,%s,%s,%s,%t,%t,%t,%s,%s,%s,%s,%s\n", s.Id, s.Status.State, getSyncType(s), s.Metadata.Reload, s.Metadata.Promote, s.Metadata.Approve, s.Metadata.Clobber,
+			printStdout(cCtx, "%s,%s,%s,%s,%t,%t,%t,%t,%s,%s,%s,%s,%s\n", s.Id, s.Status.State, getSyncType(s), s.Metadata.Reload, s.Metadata.Promote, s.Metadata.Approve, s.Metadata.Verify, s.Metadata.Clobber,
 				s.Metadata.GitAuth, s.Metadata.GitBranch, s.Path, s.Metadata.WebhookUrl, s.Status.Error)
 		}
 	default:

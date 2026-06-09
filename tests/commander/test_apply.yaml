@@ -115,6 +115,9 @@ tests:
   apply0070: ## Check reload all with promote
     command: ../openrun apply --promote ./apply_files/apply2.ace all
     stdout: "0 app(s) created, 0 app(s) updated, 7 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 3 app(s) promoted."
+  apply0070a: ## Check reload all with verify and promote
+    command: ../openrun apply --verify --promote ./apply_files/apply2.ace all
+    stdout: "0 app(s) created, 0 app(s) updated, 7 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 3 app(s) promoted."
   apply0071: ## Check reload all without promote
     command: ../openrun apply ./apply_files/apply2.ace all
     stdout: "0 app(s) created, 0 app(s) updated, 4 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."

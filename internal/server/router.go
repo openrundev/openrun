@@ -1112,6 +1112,10 @@ func (h *Handler) apply(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	verify, err := parseBoolArg(r.URL.Query().Get("verify"), false)
+	if err != nil {
+		return nil, err
+	}
 
 	dryRun, err := parseBoolArg(r.URL.Query().Get(DRY_RUN_ARG), false)
 	if err != nil {
@@ -1133,7 +1137,7 @@ func (h *Handler) apply(r *http.Request) (any, error) {
 	ret, _, _, err := h.server.Apply(r.Context(), types.Transaction{}, applyPath, appPathGlob, approve, dryRun, promote,
 		types.AppReloadOption(r.URL.Query().Get("reload")),
 		r.URL.Query().Get("branch"), r.URL.Query().Get("commit"), r.URL.Query().Get("gitAuth"),
-		clobber, forceReload, "", nil, dev)
+		clobber, forceReload, verify, "", nil, dev)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
 	}

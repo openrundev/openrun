@@ -24,6 +24,7 @@ func initApplyCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 	flags = append(flags, newBoolFlag("approve", "a", "Approve the app permissions", false))
 	flags = append(flags, newStringFlag("reload", "r", "Which apps to reload: none, updated, matched", ""))
 	flags = append(flags, newBoolFlag("promote", "p", "Promote changes from stage to prod", false))
+	flags = append(flags, newBoolFlag("verify", "", "Verify reload by reloading app containers", false))
 	flags = append(flags, newBoolFlag("clobber", "", "Force update app config, overwriting non-declarative changes", false))
 	flags = append(flags, newBoolFlag("force-reload", "f", "Force reload even if there is no new commit", false))
 	flags = append(flags, dryRunFlag())
@@ -43,6 +44,7 @@ Examples:
   Apply app config, reloading all apps: openrun apply ./app.ace
   Apply app config for example.com domain apps: openrun apply --reload=updated ./app.ace example.com:**
   Apply app config from git for all apps: openrun apply --promote --approve github.com/openrundev/apps/apps.ace all
+  Apply app config with reload verification: openrun apply --verify --promote --approve github.com/openrundev/apps/apps.ace all
   Apply app config from git for all apps, overwriting changes: openrun apply --promote --clobber github.com/openrundev/apps/apps.ace all
 `,
 
@@ -71,6 +73,7 @@ Examples:
 			values.Add("gitAuth", cCtx.String("git-auth"))
 			values.Add("reload", string(reloadMode))
 			values.Add("promote", strconv.FormatBool(cCtx.Bool("promote")))
+			values.Add("verify", strconv.FormatBool(cCtx.Bool("verify")))
 			values.Add("clobber", strconv.FormatBool(cCtx.Bool("clobber")))
 			values.Add("forceReload", strconv.FormatBool(cCtx.Bool("force-reload")))
 			values.Add("dev", strconv.FormatBool(cCtx.Bool("dev")))

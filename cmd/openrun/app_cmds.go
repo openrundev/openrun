@@ -660,24 +660,8 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 				printStdout(cCtx, "\n")
 			}
 
-			if len(reloadResponse.VerifyFailed) > 0 {
-				printStdout(cCtx, "Verify failed apps: ")
-				for i, verifyFailed := range reloadResponse.VerifyFailed {
-					if i > 0 {
-						printStdout(cCtx, ", ")
-					}
-					printStdout(cCtx, "%s", verifyFailed)
-				}
-				printStdout(cCtx, "\n")
-			}
-
-			if cCtx.Bool("verify") && !cCtx.Bool(DRY_RUN_FLAG) {
-				printStdout(cCtx, "%d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted, %d app(s) verify failed.\n",
-					len(reloadResponse.ReloadResults), len(reloadResponse.SkippedResults), len(reloadResponse.ApproveResults), len(reloadResponse.PromoteResults), len(reloadResponse.VerifyFailed))
-			} else {
-				printStdout(cCtx, "%d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted.\n",
-					len(reloadResponse.ReloadResults), len(reloadResponse.SkippedResults), len(reloadResponse.ApproveResults), len(reloadResponse.PromoteResults))
-			}
+			printStdout(cCtx, "%d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted.\n",
+				len(reloadResponse.ReloadResults), len(reloadResponse.SkippedResults), len(reloadResponse.ApproveResults), len(reloadResponse.PromoteResults))
 
 			if reloadResponse.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)

@@ -754,6 +754,7 @@ type SyncMetadata struct {
 
 	Promote     bool   `json:"promote"`      // whether this sync does a promote
 	Approve     bool   `json:"approve"`      // whether this sync does an approve
+	Verify      bool   `json:"verify"`       // whether this sync verifies container reloads
 	Reload      string `json:"reload"`       // which apps to reload after the sync
 	Clobber     bool   `json:"clobber"`      // whether to force update the sync, overwriting non-declarative changes
 	ForceReload bool   `json:"force_reload"` // whether to force reload even if there is no new commit

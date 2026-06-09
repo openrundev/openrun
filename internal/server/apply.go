@@ -223,9 +223,10 @@ func (e *applySideEffects) rollbackAndClose() {
 
 func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath string, appPathGlob string, approve, dryRun, promote bool,
 	reload types.AppReloadOption, branch, commit, gitAuth string, clobber,
-	forceReload bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (*types.AppApplyResponse, []types.AppPathDomain, *applySideEffects, error) {
+	forceReload, verify bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (*types.AppApplyResponse, []types.AppPathDomain, *applySideEffects, error) {
 	var tx types.Transaction
 	var err error
+	verify = verify && !dryRun
 	if inputTx.Tx == nil {
 		tx, err = s.db.BeginTransaction(ctx)
 		if err != nil {
@@ -470,7 +471,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		s.Trace().Msgf("Applying update app %s", updateApp)
 		applyInfo := applyConfig[updateApp]
 		applyResult, err := s.applyAppUpdate(ctx, tx, updateApp, applyInfo, approve, dryRun,
-			promote, reload, clobber, repoCache, forceReload)
+			promote, reload, clobber, repoCache, forceReload, verify)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -573,7 +574,8 @@ func convertToStringMap(input map[string]any) (map[string]string, error) {
 }
 
 func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPathDomain types.AppPathDomain, newInfo *types.CreateAppRequest,
-	approve, dryRun, promote bool, reload types.AppReloadOption, clobber bool, repoCache *RepoCache, forceReload bool) (*types.AppApplyResult, error) {
+	approve, dryRun, promote bool, reload types.AppReloadOption, clobber bool, repoCache *RepoCache, forceReload, verify bool) (*types.AppApplyResult, error) {
+	verify = verify && !dryRun
 	liveApp, err := s.GetAppEntry(ctx, tx, appPathDomain)
 	if err != nil {
 		return nil, fmt.Errorf("app missing during update %w", err)
@@ -733,7 +735,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	if reloadApp {
 		// Reload does the version increment and promotion
 		reloadResult, err := s.ReloadApp(ctx, tx, prodApp, liveApp, approve, dryRun, promote,
-			newInfo.GitBranch, newInfo.GitCommit, newInfo.GitAuthName, repoCache, forceReload, false)
+			newInfo.GitBranch, newInfo.GitCommit, newInfo.GitAuthName, repoCache, forceReload, verify)
 		if err != nil {
 			return nil, err
 		}

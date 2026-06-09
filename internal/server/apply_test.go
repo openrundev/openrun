@@ -150,7 +150,7 @@ app("/apps/uses-derived", %q, bindings=["/apps/derived"])
 	}
 
 	response, _, sideEffects, err := server.Apply(ctx, types.Transaction{}, applyPath, "/apps/**", false, false, false,
-		types.AppReloadOptionNone, "", "", "", false, false, "", nil, false)
+		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
 	if sideEffects != nil {
 		defer sideEffects.rollbackAndClose()
 	}

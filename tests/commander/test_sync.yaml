@@ -5,7 +5,7 @@ config:
     PATH: ${PATH}
 tests:
   sync0001: ## setup
-    command: ../openrun sync schedule --approve --promote github.com/openrundev/openrun/examples/utils.star
+    command: ../openrun sync schedule --approve --promote --verify github.com/openrundev/openrun/examples/utils.star
     stdout: "Sync job created with Id"
   sync0010:
     command: ../openrun sync list
@@ -15,6 +15,9 @@ tests:
         - "examples/utils.star"
   sync0020:
     command: ../openrun sync list -f json | jq -r '.[0].id' > sync_test_id.tmp
+  sync0021:
+    command: ../openrun sync list -f json | jq -r '.[0].metadata.verify'
+    stdout: "true"
   sync0030:
     command: sh -c 'id=$(cat sync_test_id.tmp); ../openrun sync run "$id"'
     stdout: "0 app(s) created, 0 app(s) updated, 2 app(s) reloaded, 6 app(s) skipped, 0 app(s) approved, 1 app(s) promoted" # proxy app is always reloaded because there is no source to check against
@@ -28,6 +31,30 @@ tests:
     command: sh -c 'id=$(cat sync_test_id.tmp); ../openrun sync delete "$id"'
     stdout: "deleted"
   sync0070:
+    command: ../openrun sync list
+    stdout:
+      line-count: 1
+  sync0080: ## setup non-verify sync job
+    command: ../openrun sync schedule --approve --promote github.com/openrundev/openrun/examples/utils.star
+    stdout: "Sync job created with Id"
+  sync0090:
+    command: ../openrun sync list
+    stdout:
+      line-count: 2
+      contains:
+        - "examples/utils.star"
+  sync0091:
+    command: ../openrun sync list -f json | jq -r '.[0].metadata.verify'
+    stdout: "false"
+  sync0092:
+    command: ../openrun sync list -f json | jq -r '.[0].id' > sync_test_id.tmp
+  sync0093:
+    command: sh -c 'id=$(cat sync_test_id.tmp); ../openrun sync run "$id"'
+    stdout: "0 app(s) created, 0 app(s) updated, 2 app(s) reloaded, 6 app(s) skipped, 0 app(s) approved, 1 app(s) promoted"
+  sync0094:
+    command: sh -c 'id=$(cat sync_test_id.tmp); ../openrun sync delete "$id"'
+    stdout: "deleted"
+  sync0100:
     command: ../openrun sync list
     stdout:
       line-count: 1

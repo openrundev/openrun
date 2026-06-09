@@ -74,24 +74,25 @@ tests:
     command: ../openrun app reload --verify --promote --dry-run "/cont_verify_*"
     stdout: "4 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 2 app(s) promoted."
   container0135: # verify reload reports failure and skips all promotion
-    command: ../openrun app reload --verify --promote "/cont_verify_*" | tee cont_verify_reload.log
-    stdout: "1 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted, 1 app(s) verify failed."
+    command: bash -o pipefail -c '../openrun app reload --verify --promote "/cont_verify_*" 2>&1 | tee cont_verify_reload.log'
+    stdout: "verify failed for app /cont_verify_fail_cl_stage:"
+    exit-code: 1
   container0136: # failed app is reported
-    command: 'grep "Verify failed apps: /cont_verify_fail_cl_stage" cont_verify_reload.log'
-  container0137: # passing app stage is reloaded
-    command: 'grep "Reloaded apps: /cont_verify_ok_cl_stage" cont_verify_reload.log'
+    command: 'grep "verify failed for app /cont_verify_fail_cl_stage:" cont_verify_reload.log'
+  container0137: # failure reports rollback
+    command: 'grep "All changes have been reverted" cont_verify_reload.log'
   container0138: # passing app prod is not promoted because another app failed verification
     command: curl -sS localhost:${HTTP_PORT}/cont_verify_ok
     stdout: "updated"
-  container0139: # passing app stage has the verified reload
+  container0139: # passing app stage is reverted because another app failed verification
     command: curl -sS localhost:${HTTP_PORT}/cont_verify_ok_cl_stage
-    stdout: "verify-ok"
+    stdout: "updated"
   container0140: # failing app prod is not promoted
     command: curl -sS localhost:${HTTP_PORT}/cont_verify_fail
     stdout: "updated"
   container0141: # successful verify reload promotes prod
     command: ../openrun app reload --verify --promote --force-reload /cont_verify_ok
-    stdout: "2 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 1 app(s) promoted, 0 app(s) verify failed."
+    stdout: "2 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 1 app(s) promoted."
   container0142: # prod is updated after successful verification
     command: curl -sS localhost:${HTTP_PORT}/cont_verify_ok
     stdout: "verify-ok"
@@ -143,3 +144,6 @@ tests:
   container0610: # check curl
     command: curl -sS localhost:${HTTP_PORT}/cont_goapp
     stdout: "Hello, Gopher!"
+
+  container_cleanup: # Cleanup generated test sources
+    command: rm -rf ./flaskverify_ok ./flaskverify_fail ./cont_verify_reload.log
