@@ -560,6 +560,7 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 	flags = append(flags, commonFlags...)
 	flags = append(flags, newBoolFlag("approve", "a", "Approve the app permissions", false))
 	flags = append(flags, newBoolFlag("promote", "p", "Promote the change from stage to prod", false))
+	flags = append(flags, newBoolFlag("verify", "", "Verify reload by reloading the app container", false))
 	flags = append(flags, newBoolFlag("force-reload", "f", "Force reload even if there is no new commit", false))
 	flags = append(flags, newStringFlag("branch", "b", "The branch to checkout if using git source", ""))
 	flags = append(flags, newStringFlag("commit", "c", "The commit SHA to checkout if using git source. This takes precedence over branch", ""))
@@ -579,11 +580,13 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 	If --approve option is specified, the app permissions are audited and approved. If --approve is not specified and the app needs additional
 	permissions, the reload will fail. If --promote is specified, the stage app is promoted to prod after reload. If --promote is not specified,
 	the stage app is reloaded but not promoted. If --approve and --promote are both specified, the stage app is promoted to prod after approval.
+	If --verify is specified, containers are reloaded during verification. If verification fails for any app, promotion is skipped.
 
 	Examples:
 	  Reload all apps, across domains: openrun app reload all
 	  Reload apps in the example.com domain: openrun app reload "example.com:**"
 	  Reload and promote apps in the example.com domain: openrun app reload --promote "example.com:**"
+	  Reload, verify and promote apps in the example.com domain: openrun app reload --verify --promote "example.com:**"
 	  Reload, approve and promote apps in the example.com domain: openrun app reload --approve --promote "example.com:**"
 	  Reload all apps from main branch: openrun app reload --branch main all
 	  Reload an app from particular commit: openrun app reload --commit 1c119e7c5845e19845dd1d794268b350ced5b71b /myapp1`,
@@ -598,6 +601,7 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			values.Add("appPathGlob", cCtx.Args().First())
 			values.Add("approve", strconv.FormatBool(cCtx.Bool("approve")))
 			values.Add("promote", strconv.FormatBool(cCtx.Bool("promote")))
+			values.Add("verify", strconv.FormatBool(cCtx.Bool("verify")))
 			values.Add("forceReload", strconv.FormatBool(cCtx.Bool("force-reload")))
 			values.Add("branch", cCtx.String("branch"))
 			values.Add("commit", cCtx.String("commit"))
@@ -656,8 +660,24 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 				printStdout(cCtx, "\n")
 			}
 
-			printStdout(cCtx, "%d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted.\n",
-				len(reloadResponse.ReloadResults), len(reloadResponse.SkippedResults), len(reloadResponse.ApproveResults), len(reloadResponse.PromoteResults))
+			if len(reloadResponse.VerifyFailed) > 0 {
+				printStdout(cCtx, "Verify failed apps: ")
+				for i, verifyFailed := range reloadResponse.VerifyFailed {
+					if i > 0 {
+						printStdout(cCtx, ", ")
+					}
+					printStdout(cCtx, "%s", verifyFailed)
+				}
+				printStdout(cCtx, "\n")
+			}
+
+			if cCtx.Bool("verify") && !cCtx.Bool(DRY_RUN_FLAG) {
+				printStdout(cCtx, "%d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted, %d app(s) verify failed.\n",
+					len(reloadResponse.ReloadResults), len(reloadResponse.SkippedResults), len(reloadResponse.ApproveResults), len(reloadResponse.PromoteResults), len(reloadResponse.VerifyFailed))
+			} else {
+				printStdout(cCtx, "%d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted.\n",
+					len(reloadResponse.ReloadResults), len(reloadResponse.SkippedResults), len(reloadResponse.ApproveResults), len(reloadResponse.PromoteResults))
+			}
 
 			if reloadResponse.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)

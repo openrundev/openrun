@@ -557,7 +557,7 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 	}
 
 	if reload {
-		resp, err = h.server.ReloadApps(r.Context(), appPath, false, false, promote, "", "", "", true)
+		resp, err = h.server.ReloadApps(r.Context(), appPath, false, false, promote, "", "", "", true, false)
 	} else {
 		// promote operation
 		resp, err = h.server.PromoteApps(r.Context(), appPath, false)
@@ -814,6 +814,10 @@ func (h *Handler) reloadApps(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	verify, err := parseBoolArg(r.URL.Query().Get("verify"), false)
+	if err != nil {
+		return nil, err
+	}
 
 	if appPathGlob == "" {
 		return nil, types.CreateRequestError("appPathGlob is required", http.StatusBadRequest)
@@ -831,7 +835,7 @@ func (h *Handler) reloadApps(r *http.Request) (any, error) {
 	updateOperationInContext(r, genOperationName("reload_apps", promote, approve))
 
 	ret, err := h.server.ReloadApps(r.Context(), appPathGlob, approve, dryRun, promote,
-		r.URL.Query().Get("branch"), r.URL.Query().Get("commit"), r.URL.Query().Get("gitAuth"), forceReload)
+		r.URL.Query().Get("branch"), r.URL.Query().Get("commit"), r.URL.Query().Get("gitAuth"), forceReload, verify)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}

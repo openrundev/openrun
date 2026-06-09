@@ -438,6 +438,10 @@ port = $https_port
 [system]
 container_command="$cmd"
 
+[app_config]
+container.health_attempts_after_startup = 5
+container.health_timeout_secs = 1
+
 [forward.testauth]
 auth_url = "http://127.0.0.1:$forward_auth_port/forward"
 copy_response_headers = []

@@ -165,6 +165,7 @@ type AppReloadResult struct {
 	ApproveResult  *ApproveResult  `json:"approve_result"`
 	PromoteResults []AppPathDomain `json:"promote_results"`
 	SkippedResults []AppPathDomain `json:"skipped_results"`
+	VerifyFailed   []AppPathDomain `json:"verify_failed"`
 }
 
 type AppReloadResponse struct {
@@ -173,6 +174,7 @@ type AppReloadResponse struct {
 	ApproveResults []ApproveResult `json:"approve_results"`
 	PromoteResults []AppPathDomain `json:"promote_results"`
 	SkippedResults []AppPathDomain `json:"skipped_results"`
+	VerifyFailed   []AppPathDomain `json:"verify_failed"`
 }
 
 type AppApplyResult struct {

@@ -733,7 +733,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	if reloadApp {
 		// Reload does the version increment and promotion
 		reloadResult, err := s.ReloadApp(ctx, tx, prodApp, liveApp, approve, dryRun, promote,
-			newInfo.GitBranch, newInfo.GitCommit, newInfo.GitAuthName, repoCache, forceReload)
+			newInfo.GitBranch, newInfo.GitCommit, newInfo.GitAuthName, repoCache, forceReload, false)
 		if err != nil {
 			return nil, err
 		}

@@ -16,7 +16,8 @@ import (
 )
 
 func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, stageAppEntry *types.AppEntry,
-	approve, dryRun, promote bool, branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool) (*types.AppReloadResult, error) {
+	approve, dryRun, promote bool, branch, commit, gitAuth string, repoCache *RepoCache, forceReload, verify bool) (*types.AppReloadResult, error) {
+	verify = verify && !dryRun
 	prodAppEntry := appEntry
 	var err error
 	if !appEntry.IsDev {
@@ -41,6 +42,7 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 			ReloadResults:  []types.AppPathDomain{},
 			PromoteResults: []types.AppPathDomain{},
 			SkippedResults: []types.AppPathDomain{appEntry.AppPathDomain()},
+			VerifyFailed:   []types.AppPathDomain{},
 		}
 		return ret, nil
 	}
@@ -78,7 +80,19 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 	}
 	reloadResults := make([]types.AppPathDomain, 0)
 	promoteResults := make([]types.AppPathDomain, 0)
-	if _, err := app.Reload(ctx, true, true, types.DryRun(dryRun), false); err != nil {
+	verifyFailed := make([]types.AppPathDomain, 0)
+	if _, err := app.Reload(ctx, true, true, types.DryRun(dryRun), verify); err != nil {
+		if verify {
+			verifyFailed = append(verifyFailed, appEntry.AppPathDomain())
+			return &types.AppReloadResult{
+				DryRun:         dryRun,
+				ApproveResult:  approvalResult,
+				ReloadResults:  reloadResults,
+				PromoteResults: promoteResults,
+				SkippedResults: []types.AppPathDomain{},
+				VerifyFailed:   verifyFailed,
+			}, nil
+		}
 		return nil, fmt.Errorf("error reloading app %s: %w", appEntry, err)
 	}
 	// Persist name in metadata
@@ -97,7 +111,18 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 			return nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
 		}
 
-		if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun), false); err != nil {
+		if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun), verify); err != nil {
+			if verify {
+				verifyFailed = append(verifyFailed, prodAppEntry.AppPathDomain())
+				return &types.AppReloadResult{
+					DryRun:         dryRun,
+					ApproveResult:  approvalResult,
+					ReloadResults:  reloadResults,
+					PromoteResults: promoteResults,
+					SkippedResults: []types.AppPathDomain{},
+					VerifyFailed:   verifyFailed,
+				}, nil
+			}
 			return nil, fmt.Errorf("error reloading prod app %s: %w", appEntry, err)
 		}
 		// Persist name in metadata
@@ -113,12 +138,14 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 		ReloadResults:  reloadResults,
 		PromoteResults: promoteResults,
 		SkippedResults: []types.AppPathDomain{},
+		VerifyFailed:   verifyFailed,
 	}
 	return ret, nil
 }
 
 func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dryRun, promote bool,
-	branch, commit, gitAuth string, forceReload bool) (*types.AppReloadResponse, error) {
+	branch, commit, gitAuth string, forceReload, verify bool) (*types.AppReloadResponse, error) {
+	verify = verify && !dryRun
 	filteredApps, err := s.FilterApps(appPathGlob, false)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
@@ -140,6 +167,12 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	approveResults := make([]types.ApproveResult, 0, len(filteredApps))
 	promoteResults := make([]types.AppPathDomain, 0, len(filteredApps))
 	skippedResults := make([]types.AppPathDomain, 0, len(filteredApps))
+	verifyFailed := make([]types.AppPathDomain, 0)
+	type promoteCandidate struct {
+		stageAppEntry *types.AppEntry
+		prodAppEntry  *types.AppEntry
+	}
+	promoteCandidates := make([]promoteCandidate, 0, len(filteredApps))
 
 	// Track the staging and prod apps
 	for _, appInfo := range filteredApps {
@@ -147,8 +180,15 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 		if err != nil {
 			return nil, err
 		}
-		ret, err := s.ReloadApp(ctx, tx, appEntry, nil, approve, dryRun, promote,
-			branch, commit, gitAuth, repoCache, forceReload)
+		stageAppEntry := appEntry
+		if !appEntry.IsDev {
+			stageAppEntry, err = s.getStageApp(ctx, tx, appEntry)
+			if err != nil {
+				return nil, err
+			}
+		}
+		ret, err := s.ReloadApp(ctx, tx, appEntry, stageAppEntry, approve, dryRun, promote && !verify,
+			branch, commit, gitAuth, repoCache, forceReload, verify)
 		if err != nil {
 			return nil, err
 		}
@@ -159,10 +199,40 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 		}
 		promoteResults = append(promoteResults, ret.PromoteResults...)
 		skippedResults = append(skippedResults, ret.SkippedResults...)
+		verifyFailed = append(verifyFailed, ret.VerifyFailed...)
+		if verify && promote && len(ret.ReloadResults) > 0 && len(ret.VerifyFailed) == 0 && !appEntry.IsDev {
+			promoteCandidates = append(promoteCandidates, promoteCandidate{stageAppEntry: stageAppEntry, prodAppEntry: appEntry})
+		}
+	}
+
+	if verify && promote && len(verifyFailed) == 0 {
+		for _, candidate := range promoteCandidates {
+			if err = s.promoteApp(ctx, tx, candidate.stageAppEntry, candidate.prodAppEntry); err != nil {
+				return nil, err
+			}
+			promoteResults = append(promoteResults, candidate.stageAppEntry.AppPathDomain())
+
+			prodApp, err := s.setupApp(ctx, candidate.prodAppEntry, tx)
+			if err != nil {
+				return nil, fmt.Errorf("error setting up prod app %s: %w", candidate.prodAppEntry, err)
+			}
+
+			if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun), verify); err != nil {
+				verifyFailed = append(verifyFailed, candidate.prodAppEntry.AppPathDomain())
+				continue
+			}
+			if err := s.db.UpdateAppMetadata(ctx, tx, candidate.prodAppEntry); err != nil {
+				return nil, err
+			}
+			reloadResults = append(reloadResults, candidate.prodAppEntry.AppPathDomain())
+		}
 	}
 
 	// Commit the transaction if not dry run and update the in memory app store
-	if err := s.CompleteTransaction(ctx, tx, reloadResults, dryRun, "reload"); err != nil {
+	updatedApps := make([]types.AppPathDomain, 0, len(reloadResults)+len(verifyFailed))
+	updatedApps = append(updatedApps, reloadResults...)
+	updatedApps = append(updatedApps, verifyFailed...)
+	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "reload"); err != nil {
 		return nil, err
 	}
 
@@ -172,6 +242,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 		ApproveResults: approveResults,
 		PromoteResults: promoteResults,
 		SkippedResults: skippedResults,
+		VerifyFailed:   verifyFailed,
 	}
 
 	return ret, nil
