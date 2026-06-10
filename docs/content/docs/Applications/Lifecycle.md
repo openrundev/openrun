@@ -13,6 +13,33 @@ An OpenRun application can be one of four types:
 - **Staging Apps** : For reviewing code and config changes before they are pushed to prod. Every prod app has one staging app.
 - **Preview Apps** : For creating a review environment for code changes, useful as part of code review.
 
+## Lifecycle without Git
+
+If not using git, a workflow would be:
+
+- Create a dev mode app, like `openrun app create --dev --approve ~/myappcode /myapp_dev`
+- Create a prod mode app, like `openrun app create --approve ~/myappcode /myapp`
+- As code changes are saved to disk, the changes are immediately live at `https://localhost:25223/myapp_dev`
+- When code is in a stable state, run `openrun app reload /myapp`. This will update the staging app with the most recent code from `~/myappcode` folder.
+- The staging app is available at `https://localhost:25223/myapp_cl_stage` for verification.
+- To promote the code to prod, run `openrun app promote /myapp`. The staged code is promoted to prod, live at `https://localhost:25223/myapp`.
+
+Having a staging environment helps catch code and config issues before the changes are live on prod. OpenRun implements versioning for prod apps, even when source is not from git.
+
+## Lifecycle With Git
+
+If using git, a workflow would be:
+
+- Create a dev mode app on dev machine, like `openrun app create --dev --approve ~/myappcode /myapp_dev`
+- Create a prod mode app on prod server, like `openrun app create --approve github.com/myorg/repo /myapp`
+- As code changes are saved to disk, the changes are immediately live at `https://localhost:25223/myapp_dev`
+- When code is in a stable state, check in the dev code to git.
+- Run `openrun app reload /myapp`. This will update the staging app with the most recent code from `main` branch in git.
+- The staging app is live at `https://localhost:25223/myapp_cl_stage`. Verify the functionality of the staging app.
+- To promote the code to prod, run `openrun app promote /myapp`. The staged code is promoted to prod, live at `https://localhost:25223/myapp`.
+
+To avoid need to manually reload, setup a [sync]({{< ref "/docs/applications/overview/#automated-sync" >}}) job which will automatically update existing apps and create new apps.
+
 ## Development Apps
 
 Development mode apps are used for developing or updating OpenRun apps. The source for these apps has to be on local disk, it cannot be git. Any code or config changes are live reloaded immediately for dev apps. To create a dev mode app, add the `--dev` option to the `app create` command. For example,

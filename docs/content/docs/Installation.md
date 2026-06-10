@@ -73,6 +73,8 @@ brew services start openrun
 
 ## Install from Source
 
+The release binaries are available at [releases](https://github.com/openrundev/openrun/releases).
+
 To install from source
 
 - Ensure that a recent version of [Go](https://go.dev/doc/install) is available, version 1.21.0 or newer.

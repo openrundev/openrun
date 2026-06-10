@@ -4,7 +4,7 @@ weight: 50
 summary: "Quick Start guide on using OpenRun"
 ---
 
-OpenRun is an Apache-2.0 licensed web app deployment platform for internal tools. OpenRun is built in Go and runs on Linux, macOS and Windows.
+OpenRun is an Apache-2.0 licensed web app deployment platform for internal tools. OpenRun is distributed as a single binary and runs natively on Linux, macOS and Windows, using Docker/Podman on a single-node or working with Kubernetes for a distributed setup.
 
 ## Installation
 
@@ -46,27 +46,74 @@ Once OpenRun server is running, to install apps declaratively, open a new window
 openrun apply --approve github.com/openrundev/openrun/examples/utils.star
 ```
 
+#### Setup Dev Environment
+
+To instead setup a dev environment for apps, run
+
+```
+openrun apply --dev --approve github.com/openrundev/openrun/examples/utils.star
+```
+
+This creates a local copy of the source code and sets up a live reload url for each app.
+
+#### Setup GitOps Pipeline
+
+To setup an automatic GitOps sync, run
+
+```
+openrun sync schedule --approve --promote \
+    github.com/openrundev/openrun/examples/utils.star
+```
+
+This starts a background sync which automatically creates new apps and updates existing apps, reading latest app config and code from Git.
+
+#### Install Apps using CLI
+
 To install apps using the CLI, run
 
 ```
-openrun app create --approve github.com/openrundev/apps/system/list_files /files
-openrun app create --approve github.com/openrundev/apps/system/disk_usage /disk_usage
 openrun app create --approve github.com/openrundev/apps/utils/bookmarks /book
 ```
 
-Open https://localhost:25223 to see the app listing. The disk usage app is available at https://localhost:25223/disk_usage (port 25222 for HTTP). The bookmark manager is available at https://localhost:25223/book, the list files app is available at https://localhost:25223/files.
-
-The release binaries are also available at [releases](https://github.com/openrundev/openrun/releases).
+Open https://localhost:25223 to see the app listing. The bookmark manager is available at https://localhost:25223/book.
 
 ## Application Types
 
 OpenRun allows easy management of multiple apps on one OpenRun server installation. There are three main types of OpenRun apps:
 
-- **Action apps** - App backend is defined in Starlark and an auto generated form UI and report is created by OpenRun. These are the simplest apps.
-- **Containerized Apps** - App backend (in any language/framework) runs in a container. OpenRun acts as an application server doing reverse proxying for the app APIs. This allows OpenRun to install and manage apps built in frameworks like Streamlit/Gradio/FastHTML/FastAPI/Flask etc.
+- **Containerized Apps** - App backend (in any language/framework) runs in a container. OpenRun acts as an application server doing reverse proxying for the app APIs. This allows OpenRun to install and manage apps built in frameworks like Streamlit/Gradio/FastHTML/FastAPI/Flask etc. Frameworks which have a `appspec` defined for OpenRun can be used without any further manual configuration. AppSpecs define how the container should be built and started and also how the request routing should be done to the app. For other frameworks, a Dockerfile is required in the app sources.
+- **Action apps** - App backend is defined in Starlark and an auto generated form UI and report is created by OpenRun. These apps can be use dto related Rundeck/Jenkins type of operational automation use cases.
 - **Hypermedia apps** - The app is completely customizable, allowing combining containerized apps with actions and custom API handlers, building Hypermedia driven UIs.
 
 For all apps, OpenRun provides blue-green staged deployment, OAuth access controls, secrets management, TLS cert management etc.
+
+## Containerized Applications
+
+OpenRun can run any app which run in a container. OpenRun works with Docker and Podman. Using an [app spec]({{< ref "app/overview/#building-apps-from-spec" >}}) allows you to use OpenRun without requiring any changes to your app. No container file is even required. For example, the command
+
+```
+openrun app create --spec python-streamlit --branch master --approve \
+   github.com/streamlit/streamlit-example /streamlit
+```
+
+does the following:
+
+- Checks out the `github.com/streamlit/streamlit-example`
+- Copies any missing files from the `python-streamlit` app specification into the repo
+- Load the app source and metadata into the OpenRun server metadata database (SQLite)
+
+When the first API call is done to the app (lazy-loading), the OpenRun server will build the container image from the `Dockerfile` defined in the spec, start the container and set up the proxy for the app APIs.
+
+Any env params which need to be passed to the app can be configured as [app params]({{< ref "app/overview/#app-parameters" >}}). Params are set during app creation using `app create --param port=9000` or after creation using `param update port 9000 /myapp`.
+
+If the source repo has a `Containerfile` or `Dockerfile`, the `container` spec can be used. It is a generic spec which works with any language or framework. If the container file defines a port using the `EXPOSE` directive, then port is not required. Otherwise, specify a port, for example
+
+```
+openrun app create --spec container --approve \
+   --param port=8000 github.com/myorg/myrepo /myapp
+```
+
+See [containerized apps]({{< ref "container/overview/" >}}) for details.
 
 ## Action Apps
 
@@ -100,43 +147,6 @@ The app, when accessed will look as shown below, with the `ls` command output di
   <source media="(prefers-color-scheme: light)" srcset="/images/list_files_light.png">
   <img alt="List files app" src="/images/list_files_light.png">
 </picture>
-
-See list files [code](https://github.com/openrundev/apps/tree/main/system/list_files):[demo](https://utils.demo.clace.io/list_files) for the above app. See dictionary [code](https://github.com/openrundev/apps/tree/main/misc/dictionary):[demo](https://utils.demo.clace.io/dict) for another actions example app which shows different type of reports. [Actions]({{< ref "actions" >}}) has more details on building app actions.
-
-## Containerized Applications
-
-OpenRun apps which are implemented in [Starlark](https://github.com/google/starlark-go) run within the OpenRun server. No containers are required for running those apps. For apps where the backend is implemented in any other language, containers are used to run the app. OpenRun works with Docker and Podman. By default, the server looks for the `podman` client CLI. If not found, it looks for the `docker` client CLI. To customize this, add in server config
-
-```toml {filename="openrun.toml"}
-[system]
-container_command = "/path/to/container_manager_cli"
-```
-
-There are two options for using containerized apps. One is to include the required files in the app repo. This will mean there should be `app.star` with the app config, a `Containerfile` or `Dockerfile` with the container config. The other option is to use an [app spec]({{< ref "app/overview/#building-apps-from-spec" >}}). This allows you to use OpenRun without requiring any changes to your app. No container file is even required. For example, the command
-
-```
-openrun app create --spec python-streamlit --branch master --approve \
-   github.com/streamlit/streamlit-example /streamlit
-```
-
-does the following:
-
-- Checks out the `github.com/streamlit/streamlit-example`
-- Copy any missing files from the app specification `python-streamlit` into the repo
-- Load the app source and metadata into the OpenRun server metadata database (SQLite)
-
-When the first API call is done to the app (lazy-loading), the OpenRun server will build the container image from the `Containerfile` defined in the spec, start the container and set up the proxy for the app APIs.
-
-Any env params which need to be passed to the app can be configured as [app params]({{< ref "app/overview/#app-parameters" >}}). Params are set during app creation using `app create --param port=9000` or after creation using `param update port 9000 /myapp`.
-
-If the source repo has a `Containerfile` or `Dockerfile`, the `container` spec is a generic spec which works with any language or framework. If the container file defines a port using the `EXPOSE` directive, then port is not required. Otherwise, specify a port, for example
-
-```
-openrun app create --spec container --approve --param port=8000 \
-     github.com/myorg/myrepo /myapp
-```
-
-See [containerized apps]({{< ref "container/overview/" >}}) for details.
 
 ## Managing Applications
 
@@ -180,17 +190,11 @@ openrun app reload --approve --promote "/disk_usage*"
 
 For apps created from GitHub source, `app reload` will pick up the [latest changes]({{< ref "applications/lifecycle/#github-reload" >}}) from the branch specified during `app create` (default is `main`). For apps created from local disk sources, the reload loads from the folder originally used during the create. For non-dev apps, the source code is loaded into the SQLite metadata database managed by the OpenRun server. This allows for versioning, even when working with local sources.
 
-## App Security
+## Service Bindings
 
-Application config is specified in Starlark code in the `app.star` file. By default, the app does not have any permissions. All external actions an app can perform are done through plugin API calls. Every plugin API call needs to [be approved]({{< ref "applications/appsecurity/#security-model" >}}) before it is allowed. This allows for multiple apps to run on the OpenRun server without interfering with each other.
+Service bindings are an easy way to configure one database installation properly (with backups, fault tolerance, security etc) and then safely share that database across multiple apps. This is an alternate approach as against usual deployment tooling where each app is assumed to create its own database from scratch, which ignores the challenges with ensuring that the database is properly administered.
 
-To approve an app's permissions, run
-
-```shell
-openrun app approve /disk_usage
-```
-
-The `--approve` option can be specified during the `app create` and `app reload` command to automatically approve the permissions.
+Service bindings are supported for Postgres and MySQL currently. See details in [service bindings]({{< ref "applications/servicebindings/" >}})
 
 ## Staged Deployments
 
@@ -214,66 +218,8 @@ openrun app promote all
 
 or `openrun app promote "/disk_usage*"` to promote specific apps. Use the `--dry-run` option to verify commands before they are actually applied.
 
-## Lifecycle without Git
-
-If not using git, a workflow would be:
-
-- Create a dev mode app, like `openrun app create --dev --approve ~/myappcode /myapp_dev`
-- Create a prod mode app, like `openrun app create --approve ~/myappcode /myapp`
-- As code changes are saved to disk, the changes are immediately live at `https://localhost:25223/myapp_dev`
-- When code is in a stable state, run `openrun app reload /myapp`. This will update the staging app with the most recent code from ` ~/myappcode` folder.
-- The staging app is available at `https://localhost:25223/myapp_cl_stage` for verification.
-- To promote the code to prod, run `openrun app promote /myapp`. The staged code is promoted to prod, live at `https://localhost:25223/myapp`.
-
-Having a staging environment helps catch code and config issues before the changes are live on prod. OpenRun implements versioning for prod apps, even when source is not from git.
-
-## Lifecycle With Git
-
-If using git, a workflow would be:
-
-- Create a dev mode app, like `openrun app create --dev --approve ~/myappcode /myapp_dev `
-- Create a prod mode app, like `openrun app create --approve github.com/myorg/repo /myapp `
-- As code changes are saved to disk, the changes are immediately live at `https://localhost:25223/myapp_dev`
-- When code is in a stable state, check in the dev code to git.
-- Run `openrun app reload /myapp`. This will update the staging app with the most recent code from `main` branch in git.
-- The staging app is live at `https://localhost:25223/myapp_cl_stage`. Verify the functionality of the staging app.
-- To promote the code to prod, run `openrun app promote /myapp`. The staged code is promoted to prod, live at `https://localhost:25223/myapp`.
-
 ## App Listing
 
 Use `openrun app list` to get list of installed app. By default, all apps are listed. Use a glob pattern like `example.com:**` to list specific apps. Pass the `--internal` or `-i` option to `list` to include the internal apps in the app listing. The pattern matches the main apps, and if the internal option is specified, the matched app's linked apps are also listed.
 
 Use `openrun version list` to get list of versions for an app. `openrun version switch` allows switching between versions. The version command can be run separately on the staging app and prod app, like `openrun version list /myapp_cl_stage` and `openrun version list /myapp`. The current version is indicated in the output.
-
-```shell
-$ openrun version list /dugit
-Active  Version Previous CreateTime                     GitCommit            GitMessage
-              1        0 2024-02-16 19:39:05 +0000 UTC  03ccaa35927667977646 Added version file listing support
-
-              2        1 2024-02-16 19:55:51 +0000 UTC  03ccaa35927667977646 Added version file listing support
-
-=====>        3        2 2024-02-16 21:18:16 +0000 UTC  c00d7b1e99712de13745 Added version switching support
-
-$ openrun version list /dugit_cl_stage
-Active  Version Previous CreateTime                     GitCommit            GitMessage
-              1        0 2024-02-16 19:39:05 +0000 UTC  03ccaa35927667977646 Added version file listing support
-
-              2        1 2024-02-16 19:54:22 +0000 UTC  03ccaa35927667977646 Added version file listing support
-
-              3        2 2024-02-16 20:38:44 +0000 UTC  c00d7b1e99712de13745 Added version switching support
-
-=====>        4        3 2024-02-16 21:18:42 +0000 UTC  c00d7b1e99712de13745 Added version switching support
-
-$ openrun app list -i /dugit
-Id                                  Type  Version Auth GitInfo                        Domain:Path                                                  SourceUrl
-app_prd_2cSkPeHiATfH46pcUX8EdZqdWQb PROD*       3 SYST main:c00d7b1e99712de13745      /dugit                                                      github.com/openrundev/openrun/examples/disk_usage
-app_stg_2cSkPeHiATfH46pcUX8EdZqdWQb STG         4 SYST main:c00d7b1e99712de13745      /dugit_cl_stage                                             github.com/openrundev/openrun/examples/disk_usage
-```
-
-In the above listing, the staging app is on version 4, prod app on version 3. The `*` in the `app list` output indicates that the prod app has staged changes waiting to be promoted. Running `openrun app promote /dugit` will update prod with the staged changes. `version revert` reverts to previous version. `version switch` can be used to switch to particular version, `next` and `previous` are shortcuts for version numbers. Version commands run against the specific app, so revert can be done on the staging app or the main app independently.
-
-## Developing Apps
-
-OpenRun app backend can be written in any language, running in a container. Action and Hypermedia based apps can be written in [Starlark](https://github.com/google/starlark-go) and [Go HTML templates](https://pkg.go.dev/text/template), in which case no containers are required.
-
-See [develop]({{< ref "develop/" >}}) for a quick start overview on developing OpenRun applications.
