@@ -95,6 +95,10 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	if err != nil {
 		return nil, err
 	}
+	verify, err := apptype.GetOptionalBoolAttr(appDef, "verify")
+	if err != nil {
+		return nil, err
+	}
 
 	auth, err := apptype.GetStringAttr(appDef, "auth")
 	if err != nil {
@@ -180,6 +184,7 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 		ContainerVolumes:   containerVols,
 		Bindings:           bindings,
 		BindingSourcePerms: bindingSourcePerms,
+		Verify:             verify,
 	}, nil
 }
 
@@ -343,6 +348,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	s.Trace().Msgf("Applying %d apps and %d bindings", len(applyConfig), len(bindingList))
 
 	filteredApps := make([]types.AppPathDomain, 0, len(applyConfig))
+	verifyRequested := verify
 	for appPathDomain := range applyConfig {
 		match, err := rbac.MatchGlob(appPathGlob, appPathDomain)
 		if err != nil {
@@ -351,6 +357,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		if !match {
 			continue
 		}
+		verifyRequested = verifyRequested || applyConfig[appPathDomain].Verify
 		filteredApps = append(filteredApps, appPathDomain)
 	}
 
@@ -459,9 +466,15 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		if isDev {
 			applyInfo.IsDev = isDev // Override the dev status from the apply command cli
 		}
+		appVerify := verify || applyInfo.Verify
 		res, err := s.CreateAppTx(ctx, tx, newApp.String(), approve, dryRun, applyInfo, repoCache)
 		if err != nil {
 			return nil, nil, nil, err
+		}
+		if appVerify && !dryRun {
+			if err := s.verifyCreatedApp(ctx, tx, newApp); err != nil {
+				return nil, nil, nil, err
+			}
 		}
 
 		createResults = append(createResults, *res)
@@ -470,8 +483,9 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	for _, updateApp := range updatedApps {
 		s.Trace().Msgf("Applying update app %s", updateApp)
 		applyInfo := applyConfig[updateApp]
+		appVerify := verify || applyInfo.Verify
 		applyResult, err := s.applyAppUpdate(ctx, tx, updateApp, applyInfo, approve, dryRun,
-			promote, reload, clobber, repoCache, forceReload, verify)
+			promote, reload, clobber, repoCache, forceReload, appVerify)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -484,6 +498,12 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		skippedResults = append(skippedResults, applyResult.Skipped...)
 		if applyResult.ApproveResult != nil {
 			approveResults = append(approveResults, *applyResult.ApproveResult)
+		}
+	}
+
+	if verifyRequested && !dryRun {
+		if err := s.reapplyPendingBindingGrants(ctx, tx, bindingGrantTxs, bindingList); err != nil {
+			return nil, nil, nil, err
 		}
 	}
 
@@ -889,6 +909,90 @@ func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, b
 	return updated, promoted, nil
 }
 
+func (s *Server) verifyCreatedApp(ctx context.Context, tx types.Transaction, appPathDomain types.AppPathDomain) error {
+	appEntry, err := s.GetAppEntry(ctx, tx, appPathDomain)
+	if err != nil {
+		return err
+	}
+
+	verifyApp := func(entry *types.AppEntry) error {
+		application, err := s.setupApp(ctx, entry, tx)
+		if err != nil {
+			return fmt.Errorf("error setting up app %s: %w", entry.AppPathDomain(), err)
+		}
+		if _, err := application.Reload(ctx, true, true, types.DryRun(false), true); err != nil {
+			return fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", entry.AppPathDomain(), err)
+		}
+		return nil
+	}
+
+	if !appEntry.IsDev {
+		stageAppEntry, err := s.getStageApp(ctx, tx, appEntry)
+		if err != nil {
+			return err
+		}
+		if err := verifyApp(stageAppEntry); err != nil {
+			return err
+		}
+	}
+	if err := verifyApp(appEntry); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) reapplyPendingBindingGrants(ctx context.Context, tx types.Transaction, bindingGrantTxs *bindingGrantTxManager, bindingPaths []string) error {
+	for _, bindingPath := range bindingPaths {
+		binding, err := s.db.GetBinding(ctx, tx, bindingPath)
+		if err != nil {
+			return err
+		}
+		if binding.DerivedFrom == "" {
+			continue
+		}
+
+		derivedFrom, service, err := s.getBindingUpdateRefs(ctx, tx, binding)
+		if err != nil {
+			return err
+		}
+
+		updated := false
+		stagingService := service
+		if service.Staging != "" {
+			stagingService, err = s.db.GetService(ctx, tx, service.ServiceType, service.Staging)
+			if err != nil {
+				return fmt.Errorf("error getting staging service: %w", err)
+			}
+		}
+
+		stagedGrantsApplied, err := bindingGrantTxs.applyGrants(stagingService, binding, derivedFrom, true, false)
+		if err != nil {
+			return fmt.Errorf("error reapplying staging grants for binding %s: %w", binding.Path, err)
+		}
+		if !bindingGrantSetEqual(binding.StagedMetadata.GrantsApplied, stagedGrantsApplied) {
+			binding.StagedMetadata.GrantsApplied = stagedGrantsApplied
+			updated = true
+		}
+
+		prodGrantsApplied, err := bindingGrantTxs.applyGrants(service, binding, derivedFrom, false, false)
+		if err != nil {
+			return fmt.Errorf("error reapplying production grants for binding %s: %w", binding.Path, err)
+		}
+		if !bindingGrantSetEqual(binding.Metadata.GrantsApplied, prodGrantsApplied) {
+			binding.Metadata.GrantsApplied = prodGrantsApplied
+			updated = true
+		}
+
+		if updated {
+			if err := s.db.UpdateBinding(ctx, tx, binding); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 func (s *Server) getBindingUpdateRefs(ctx context.Context, tx types.Transaction, binding *types.Binding) (*types.Binding, *types.Service, error) {
 	derivedFrom, err := s.db.GetBinding(ctx, tx, binding.DerivedFrom)
 	if err != nil {
@@ -1081,7 +1185,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 
 	createAppDefBuiltin := func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var path, source starlark.String
-		var dev starlark.Bool
+		var dev, verify starlark.Bool
 		var params = starlark.NewDict(0)
 		var auth, gitAuth, gitBranch, gitCommit, appSpec starlark.String
 		var appConfig = starlark.NewDict(0)
@@ -1095,7 +1199,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 			"auth?", &auth, "git_auth?", &gitAuth, "git_branch?", &gitBranch, "git_commit?", &gitCommit,
 			"params?", &params, "spec?", &appSpec, "app_config", &appConfig,
 			"container_opts?", &containerOpts, "container_args?", &containerArgs, "container_vols?", &containerVols,
-			"bindings?", &bindings, "bind_perm?", &bindingSourcePerms,
+			"bindings?", &bindings, "bind_perm?", &bindingSourcePerms, "verify?", &verify,
 		); err != nil {
 			return nil, err
 		}
@@ -1116,6 +1220,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 			"container_vols": containerVols,
 			"bindings":       bindings,
 			"bind_perm":      bindingSourcePerms,
+			"verify":         verify,
 		}
 
 		appStruct := starlarkstruct.FromStringDict(starlark.String(APP), fields)

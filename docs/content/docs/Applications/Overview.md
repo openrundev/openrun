@@ -177,6 +177,8 @@ By default, changes are applied to the stage app. Add the `--promote` option to 
 
 The `--reload` option controls whether new source code is loaded for apps during the apply operation. Setting it to `none` means no apps are reloaded, `updated` means apps which have a config update are reloaded. `matched` (the default) means all apps matched by the app glob are reloaded, even if there is no config update.
 
+Use the top-level `--verify` option to verify reloads for every matched app. To verify specific apps in a declarative apply file, set `verify=True` on those app definitions. When any apply verification runs successfully, OpenRun retries pending service binding grants for bindings in the current apply file after the app reload, so grants for tables created during startup can be applied. Grants already recorded in `grants_applied` are not retried.
+
 By default, changes are applied as a three way merge. The old config and new config are compared against the live config. If there are changes between old and new declarative config, those changes are applied. Changes done imperatively are not overwritten. Using the `--force` option will overwrite any changes applied imperatively through the CLI or UI. The new declarative config overwrites any existing state when `--force` is used.
 
 If `--dev` option is specified for the apply, the apps are created in dev mode. For apps with source path pointing to git, a local source folder is created under `$OPENRUN_HOME/app_src`. This allows for easy zero-config dev environment setup.
@@ -200,6 +202,7 @@ The declarative app configuration uses Starlark syntax. An app is defined using 
 | container_opts |   true   |    dict     |         |                  The container options for the app                  |
 | container_args |   true   |    dict     |         |            The container build args options for the app             |
 | container_vols |   true   | list string |         |                  The container volumes for the app                  |
+|     verify     |   true   |    bool     |  false  |                   Verify reload for this app only                   |
 
 For example, a definition like
 

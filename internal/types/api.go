@@ -48,6 +48,7 @@ type CreateAppRequest struct {
 	AppConfig          map[string]string `json:"appconfig"`
 	Bindings           []string          `json:"bindings"`
 	BindingSourcePerms []string          `json:"binding_source_perms"`
+	Verify             bool              `json:"verify"`
 	// fields supported by declarative apply must be merged in applyAppUpdate
 }
 
