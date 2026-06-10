@@ -21,6 +21,23 @@ type ServiceBindingRuntime struct {
 	LocalhostBindingHostname string
 }
 
+type ArtifactType string
+
+const (
+	ArtifactRole     ArtifactType = "role"
+	ArtifactSchema   ArtifactType = "schema"
+	ArtifactUser     ArtifactType = "user"
+	ArtifactDatabase ArtifactType = "database"
+)
+
+// Artifact identifies one object created on the service by GenerateAccount, such as a
+// role/schema (postgres) or user/database (mysql). The caller tracks the created
+// artifacts and passes them back to DeleteArtifact to undo the creation on rollback.
+type Artifact struct {
+	Type ArtifactType
+	Name string
+}
+
 type ServiceBinding interface {
 	// Initialize the service with the given config. This is called when the service binding is created.
 	InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string, runtime ServiceBindingRuntime) error
@@ -28,24 +45,22 @@ type ServiceBinding interface {
 	// Close the service connection. This is called when the service binding is no longer needed.
 	CloseService(ctx context.Context) error
 
-	// Begin a new transaction. This is called when the binding is created, before the account is generated.
-	// The transaction is used to generate the account and apply the grants. The transaction is expected to be saved in the context.
-	// The connection used for the transaction is the admin connection to the main database, not the binding account connection.
-	BeginTransaction(ctx context.Context) (context.Context, error)
-
-	// Commit the transaction.
-	CommitTransaction(ctx context.Context) error
-
-	// Rollback the transaction.
-	RollbackTransaction(ctx context.Context) error
-
 	// Generate the account based on the binding config. This is called once when the binding is created, after the service is initialized.
-	// The account is created on the endpoint specified in the service config.
+	// The account and its backing artifacts (role/schema, user/database) are created on the endpoint specified in the service config
+	// and are persisted immediately. The artifacts that were created are returned in creation order; pre-existing objects that the
+	// account merely references (like the base binding's schema for a derived binding) must not be included. If creation fails
+	// partway and already-created artifacts cannot be rolled back internally, they are returned along with the error so the
+	// caller can clean them up.
 	GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata,
-		derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, error)
+		derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, []Artifact, error)
+
+	// Delete one artifact previously reported as created by GenerateAccount. The caller only passes back artifacts
+	// created during the current operation; the implementation must delete only the named artifact.
+	DeleteArtifact(ctx context.Context, artifact Artifact) error
 
 	// Apply the grants to the account. This is called when the binding is created, after the account is generated.
-	// The grants are applied to the account on the endpoint specified in the service config. It can be called again if the grants are changed.
+	// The grants are applied to the account on the endpoint specified in the service config and are persisted immediately.
+	// It can be called again if the grants are changed.
 	ApplyGrants(ctx context.Context, account map[string]string,
 		bindingMetadata, derivedFromMetadata types.BindingMetadata, reapplyAll bool) ([]types.BindingGrant, error)
 

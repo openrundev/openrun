@@ -20,6 +20,96 @@ tests:
     command: bash -c 'prod=$(../openrun binding run-command /apps/b1 "select current_schema()" | jq -r ".rows[0].current_schema"); stage=$(../openrun binding run-command --staging /apps/b1 "select current_schema()" | jq -r ".rows[0].current_schema"); [[ "$prod" != "$stage" ]] && echo true'
     stdout: "true"
 
+  postgres0012: # setup container app that touches postgres during startup
+    command: |
+      rm -rf ./pg_verifyapp
+      mkdir ./pg_verifyapp
+      cat > ./pg_verifyapp/requirements.txt <<'EOF'
+      flask
+      pg8000
+      EOF
+      cat > ./pg_verifyapp/app.py <<'EOF'
+      import os
+      from urllib.parse import unquote, urlparse
+
+      import pg8000.dbapi
+      from flask import Flask
+
+      app = Flask(__name__)
+
+
+      def connection_kwargs(url):
+          parsed = urlparse(url)
+          return {
+              "user": unquote(parsed.username or ""),
+              "password": unquote(parsed.password or ""),
+              "host": parsed.hostname,
+              "port": parsed.port or 5432,
+              "database": (parsed.path or "/").lstrip("/") or "postgres",
+          }
+
+
+      def initialize_db():
+          url = os.environ.get("POSTGRES_URL", "")
+          if not url:
+              raise RuntimeError("POSTGRES_URL missing")
+          conn = pg8000.dbapi.connect(**connection_kwargs(url))
+          cursor = conn.cursor()
+          cursor.execute("create table if not exists verify_startup_items (id integer primary key, note text)")
+          cursor.execute("insert into verify_startup_items (id, note) values (1, 'verified') on conflict (id) do nothing")
+          conn.commit()
+          cursor.close()
+          conn.close()
+
+
+      initialize_db()
+
+
+      @app.route("/")
+      def index():
+          return "verified"
+      EOF
+      cat > ./pg_verify.star <<'EOF'
+      verify_data = binding("/apps/bverify", "postgres/pg1")
+      app("/pg_verify_app", "./pg_verifyapp", spec="python-flask", bindings=[verify_data.path], verify=True)
+      EOF
+
+  postgres0013: # apply creates the binding and verified container app together
+    command: ../openrun apply --approve ./pg_verify.star /pg_verify_app
+    stdout: "1 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
+
+  postgres0014: # verified prod container created a table through the new binding account
+    command: ../openrun binding run-command /apps/bverify "select count(*) as n from verify_startup_items" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0015: # verified stage container also used the staging binding account
+    command: ../openrun binding run-command --staging /apps/bverify "select count(*) as n from verify_startup_items" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0016: # failed verify rolls back the binding and deletes the role/schema artifacts
+    command: |
+      rm -rf ./pg_failapp
+      mkdir ./pg_failapp
+      cat > ./pg_failapp/requirements.txt <<'EOF'
+      flask
+      EOF
+      cat > ./pg_failapp/app.py <<'EOF'
+      raise RuntimeError("startup failure for verify rollback test")
+      EOF
+      cat > ./pg_failverify.star <<'EOF'
+      fail_data = binding("/apps/bfailverify", "postgres/pg1")
+      app("/pg_fail_app", "./pg_failapp", spec="python-flask", bindings=[fail_data.path], verify=True)
+      EOF
+      count_artifacts() {
+        ../openrun binding run-command /apps/b1 "select (select count(*) from pg_roles where rolname like 'cl_rol_%') as roles, (select count(*) from pg_namespace where nspname like 'cl_sch_%') as schemas" | jq -r '"\(.rows[0].roles)/\(.rows[0].schemas)"'
+      }
+      before=$(count_artifacts)
+      ../openrun apply --approve ./pg_failverify.star /pg_fail_app && echo "apply unexpectedly succeeded"
+      after=$(count_artifacts)
+      ../openrun binding list | grep bfailverify && echo "binding unexpectedly persisted"
+      [ "$before" = "$after" ] && echo "artifacts_rolled_back"
+    stdout: "artifacts_rolled_back"
+
   postgres0020: # table-specific grant can be created before the table exists
     command: ../openrun binding create --grant "read:test1" /apps/b1 /apps/b1partialread
     stdout: "Binding /apps/b1partialread created"
@@ -329,4 +419,4 @@ tests:
     exit-code: 1
 
   postgres9999:
-    command: (../openrun binding delete /apps/b1multi; ../openrun binding delete /apps/b1fulltest1; ../openrun binding delete /apps/b1full; ../openrun binding delete /apps/b1stage; ../openrun binding delete /apps/b1create; ../openrun binding delete /apps/b1read; ../openrun binding delete /apps/b1partialread; ../openrun binding delete /apps/b1; ../openrun service delete postgres/pg1) || true
+    command: (../openrun app delete /pg_verify_app; ../openrun binding delete /apps/bverify; ../openrun binding delete /apps/b1multi; ../openrun binding delete /apps/b1fulltest1; ../openrun binding delete /apps/b1full; ../openrun binding delete /apps/b1stage; ../openrun binding delete /apps/b1create; ../openrun binding delete /apps/b1read; ../openrun binding delete /apps/b1partialread; ../openrun binding delete /apps/b1; ../openrun service delete postgres/pg1; rm -rf ./pg_verifyapp ./pg_verify.star ./pg_failapp ./pg_failverify.star) || true

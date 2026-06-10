@@ -90,9 +90,14 @@ func (s *Server) ensureAutoBinding(ctx context.Context, tx types.Transaction, bi
 		Path:   bindingPath,
 		Source: source,
 	}
-	if _, err := s.createBindingTx(ctx, tx, createRequest, dryRun, nil, true); err != nil {
+	accounts := s.newBindingAccountManager(dryRun)
+	defer accounts.rollbackAndClose(ctx)
+	if _, err := s.createBindingTx(ctx, tx, createRequest, accounts, true); err != nil {
 		return fmt.Errorf("error creating auto binding %s for service %s: %w", bindingPath, source, err)
 	}
+	// The auto binding account is kept once created; it is not removed if the
+	// caller's metadata transaction is rolled back.
+	accounts.commit()
 	return nil
 }
 

@@ -157,7 +157,10 @@ func (s *Server) CreateBinding(ctx context.Context, createRequest *types.CreateB
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	binding, err := s.CreateBindingTx(ctx, tx, createRequest, dryRun)
+	accounts := s.newBindingAccountManager(dryRun)
+	defer accounts.rollbackAndClose(ctx)
+
+	binding, err := s.createBindingTx(ctx, tx, createRequest, accounts, false)
 	if err != nil {
 		return nil, err
 	}
@@ -169,21 +172,13 @@ func (s *Server) CreateBinding(ctx context.Context, createRequest *types.CreateB
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	accounts.commit()
 
 	return binding, nil
 }
 
-func (s *Server) CreateBindingTx(ctx context.Context, tx types.Transaction, createRequest *types.CreateBindingRequest, dryRun bool) (*types.Binding, error) {
-	return s.createBindingTx(ctx, tx, createRequest, dryRun, nil, false)
-}
-
-func (s *Server) CreateBindingWithGrantManager(ctx context.Context, tx types.Transaction, createRequest *types.CreateBindingRequest,
-	dryRun bool, grantTxs *bindingGrantTxManager) (*types.Binding, error) {
-	return s.createBindingTx(ctx, tx, createRequest, dryRun, grantTxs, false)
-}
-
-func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, createRequest *types.CreateBindingRequest, dryRun bool,
-	grantTxs *bindingGrantTxManager, allowAutoPath bool) (*types.Binding, error) {
+func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, createRequest *types.CreateBindingRequest,
+	accounts *bindingAccountManager, allowAutoPath bool) (*types.Binding, error) {
 	var err error
 	binding := types.Binding{
 		Path:   createRequest.Path,
@@ -267,24 +262,16 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 		}
 	}
 
-	// Not dry run, generate the account info
-	// Generate the staging account info, either against the staging service if set or against the main service
-	if grantTxs != nil {
-		binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, err = grantTxs.generateAccount(stagingService, &binding, derivedFrom, true, true)
-	} else {
-		binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, err = s.generateAccount(ctx, dryRun, stagingService, &binding, derivedFrom, true, true)
-	}
+	// Generate the staging account info, either against the staging service if set or against the main service.
+	// The account artifacts are persisted on the service immediately (outside the metadata transaction);
+	// the account manager deletes them if the operation is rolled back. Skipped on dry run.
+	binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, err = accounts.generateAccount(ctx, stagingService, &binding, derivedFrom, true, true)
 	if err != nil {
 		return nil, fmt.Errorf("error generating staging account: %w", err)
 	}
 
 	// Generate the production account info
-	// This runs as a separate transaction, since it might not be against same database as the metadata database
-	if grantTxs != nil {
-		binding.Metadata.Account, binding.Metadata.GrantsApplied, err = grantTxs.generateAccount(service, &binding, derivedFrom, false, true)
-	} else {
-		binding.Metadata.Account, binding.Metadata.GrantsApplied, err = s.generateAccount(ctx, dryRun, service, &binding, derivedFrom, false, true)
-	}
+	binding.Metadata.Account, binding.Metadata.GrantsApplied, err = accounts.generateAccount(ctx, service, &binding, derivedFrom, false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -327,179 +314,67 @@ func (s *Server) serviceBindingRuntime() bindings.ServiceBindingRuntime {
 	}
 }
 
-func (s *Server) generateAccount(ctx context.Context, dryRun bool, service *types.Service, binding *types.Binding, derivedFrom *types.Binding, isStaging, reapplyAll bool) (map[string]string, []types.BindingGrant, error) {
-	serviceBinding, err := s.getServiceBinding(ctx, service, binding)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error getting service binding: %w", err)
-	}
-	defer serviceBinding.CloseService(ctx) //nolint:errcheck
-
-	metadata := binding.Metadata
-	if isStaging {
-		metadata = binding.StagedMetadata
-	}
-
-	var derivedFromMetadata *types.BindingMetadata
-	if derivedFrom != nil {
-		derivedFromMetadata = &derivedFrom.Metadata
-		if isStaging {
-			derivedFromMetadata = &derivedFrom.StagedMetadata
-		}
-	}
-
-	ctx, err = serviceBinding.BeginTransaction(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error beginning transaction: %w", err)
-	}
-	defer serviceBinding.RollbackTransaction(ctx) //nolint:errcheck
-
-	account, err := serviceBinding.GenerateAccount(ctx, binding.Id, binding.Path, metadata, derivedFromMetadata, isStaging)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error generating account: %w", err)
-	}
-
-	grantsApplied := []types.BindingGrant{}
-	if derivedFrom != nil {
-		grantsApplied, err = serviceBinding.ApplyGrants(ctx, account, metadata, *derivedFromMetadata, reapplyAll)
-		if err != nil {
-			return nil, nil, fmt.Errorf("error applying grants: %w", err)
-		}
-	}
-
-	if !dryRun {
-		if err := serviceBinding.CommitTransaction(ctx); err != nil {
-			return nil, nil, fmt.Errorf("error committing transaction: %w", err)
-		}
-	}
-
-	return account, grantsApplied, nil
+// bindingAccountManager caches service binding connections and tracks the artifacts
+// (roles, schemas, users, databases) created on external services. Artifacts are
+// persisted on the service as soon as they are created, so apps using the binding
+// (e.g. during verify) see them right away. If the metadata transaction is rolled
+// back, rollbackAndClose deletes the artifacts created since the last commit. Only
+// artifacts reported as created by GenerateAccount during this manager's lifetime are
+// ever deleted; pre-existing objects on the service are never touched.
+// On dry run no service connections are opened and no artifacts are created.
+type bindingAccountManager struct {
+	server   *Server
+	dryRun   bool
+	services map[string]bindings.ServiceBinding
+	created  []createdArtifact
 }
 
-func (s *Server) applyBindingGrants(ctx context.Context, dryRun bool, service *types.Service,
-	binding *types.Binding, derivedFrom *types.Binding, isStaging bool, reapplyAll bool) ([]types.BindingGrant, error) {
-	builder, ok := bindings.ServiceBindings[service.ServiceType]
-	if !ok {
-		return nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
-	}
-
-	serviceBinding := builder()
-	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config, s.serviceBindingRuntime()); err != nil {
-		return nil, fmt.Errorf("error initializing service: %w", err)
-	}
-	defer serviceBinding.CloseService(ctx) //nolint:errcheck
-
-	metadata := binding.Metadata
-	if isStaging {
-		metadata = binding.StagedMetadata
-	}
-
-	derivedFromMetadata := derivedFrom.Metadata
-	if isStaging {
-		derivedFromMetadata = derivedFrom.StagedMetadata
-	}
-
-	ctx, err := serviceBinding.BeginTransaction(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("error beginning transaction: %w", err)
-	}
-	defer serviceBinding.RollbackTransaction(ctx) //nolint:errcheck
-
-	grantsApplied, err := serviceBinding.ApplyGrants(ctx, metadata.Account, metadata, derivedFromMetadata, reapplyAll)
-	if err != nil {
-		return nil, fmt.Errorf("error applying grants: %w", err)
-	}
-
-	if !dryRun {
-		if err := serviceBinding.CommitTransaction(ctx); err != nil {
-			return nil, fmt.Errorf("error committing transaction: %w", err)
-		}
-	}
-
-	return grantsApplied, nil
-}
-
-type bindingGrantTxManager struct {
-	server *Server
-	ctx    context.Context
-	dryRun bool
-	txs    map[string]*bindingGrantServiceTx
-}
-
-type bindingGrantServiceTx struct {
-	service        *types.Service
+type createdArtifact struct {
 	serviceBinding bindings.ServiceBinding
-	ctx            context.Context
-	committed      bool
+	artifact       bindings.Artifact
 }
 
-func (s *Server) newBindingGrantTxManager(ctx context.Context, dryRun bool) *bindingGrantTxManager {
-	return &bindingGrantTxManager{
-		server: s,
-		ctx:    ctx,
-		dryRun: dryRun,
-		txs:    map[string]*bindingGrantServiceTx{},
+func (s *Server) newBindingAccountManager(dryRun bool) *bindingAccountManager {
+	return &bindingAccountManager{
+		server:   s,
+		dryRun:   dryRun,
+		services: map[string]bindings.ServiceBinding{},
 	}
 }
 
-func bindingGrantTxKey(service *types.Service) string {
+func bindingServiceKey(service *types.Service) string {
 	return service.ServiceType + "/" + service.Name
 }
 
-func (m *bindingGrantTxManager) getServiceTx(service *types.Service, binding *types.Binding) (*bindingGrantServiceTx, error) {
-	key := bindingGrantTxKey(service)
-	if tx, ok := m.txs[key]; ok {
-		return tx, nil
+func (m *bindingAccountManager) getServiceBinding(ctx context.Context, service *types.Service, binding *types.Binding) (bindings.ServiceBinding, error) {
+	key := bindingServiceKey(service)
+	if serviceBinding, ok := m.services[key]; ok {
+		return serviceBinding, nil
 	}
 
-	serviceBinding, err := m.server.getServiceBinding(m.ctx, service, binding)
+	serviceBinding, err := m.server.getServiceBinding(ctx, service, binding)
 	if err != nil {
 		return nil, err
 	}
-
-	txCtx, err := serviceBinding.BeginTransaction(m.ctx)
-	if err != nil {
-		serviceBinding.CloseService(m.ctx) //nolint:errcheck
-		return nil, fmt.Errorf("error beginning transaction: %w", err)
-	}
-
-	tx := &bindingGrantServiceTx{
-		service:        service,
-		serviceBinding: serviceBinding,
-		ctx:            txCtx,
-	}
-	m.txs[key] = tx
-	return tx, nil
+	m.services[key] = serviceBinding
+	return serviceBinding, nil
 }
 
-func (m *bindingGrantTxManager) applyGrants(service *types.Service, binding *types.Binding, derivedFrom *types.Binding,
-	isStaging bool, reapplyAll bool) ([]types.BindingGrant, error) {
-	serviceTx, err := m.getServiceTx(service, binding)
-	if err != nil {
-		return nil, err
-	}
-
-	metadata := binding.Metadata
-	if isStaging {
-		metadata = binding.StagedMetadata
-	}
-
-	derivedFromMetadata := derivedFrom.Metadata
-	if isStaging {
-		derivedFromMetadata = derivedFrom.StagedMetadata
-	}
-
-	grantsApplied, err := serviceTx.serviceBinding.ApplyGrants(serviceTx.ctx, metadata.Account, metadata, derivedFromMetadata, reapplyAll)
-	if err != nil {
-		return nil, fmt.Errorf("error applying grants: %w", err)
-	}
-	return grantsApplied, nil
-}
-
-func (m *bindingGrantTxManager) generateAccount(service *types.Service, binding *types.Binding, derivedFrom *types.Binding,
+// generateAccount creates the binding account on the service and applies the grants for
+// derived bindings. The created account is tracked so rollbackAndClose can delete it.
+// On dry run nothing is created and an empty account is returned.
+func (m *bindingAccountManager) generateAccount(ctx context.Context, service *types.Service, binding *types.Binding, derivedFrom *types.Binding,
 	isStaging, reapplyAll bool) (map[string]string, []types.BindingGrant, error) {
-	serviceTx, err := m.getServiceTx(service, binding)
+	if _, ok := bindings.ServiceBindings[service.ServiceType]; !ok {
+		return nil, nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
+	}
+	if m.dryRun {
+		return nil, nil, nil
+	}
+
+	serviceBinding, err := m.getServiceBinding(ctx, service, binding)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error getting service transaction: %w", err)
+		return nil, nil, err
 	}
 
 	metadata := binding.Metadata
@@ -515,14 +390,20 @@ func (m *bindingGrantTxManager) generateAccount(service *types.Service, binding 
 		}
 	}
 
-	account, err := serviceTx.serviceBinding.GenerateAccount(serviceTx.ctx, binding.Id, binding.Path, metadata, derivedFromMetadata, isStaging)
+	// Track the created artifacts before checking the error: on a partial failure the
+	// artifacts that were already created are returned with the error, and the
+	// deferred rollbackAndClose deletes them.
+	account, createdArtifacts, err := serviceBinding.GenerateAccount(ctx, binding.Id, binding.Path, metadata, derivedFromMetadata, isStaging)
+	for _, artifact := range createdArtifacts {
+		m.created = append(m.created, createdArtifact{serviceBinding: serviceBinding, artifact: artifact})
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("error generating account: %w", err)
 	}
 
 	grantsApplied := []types.BindingGrant{}
 	if derivedFromMetadata != nil {
-		grantsApplied, err = serviceTx.serviceBinding.ApplyGrants(serviceTx.ctx, account, metadata, *derivedFromMetadata, reapplyAll)
+		grantsApplied, err = serviceBinding.ApplyGrants(ctx, account, metadata, *derivedFromMetadata, reapplyAll)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error applying grants: %w", err)
 		}
@@ -531,29 +412,72 @@ func (m *bindingGrantTxManager) generateAccount(service *types.Service, binding 
 	return account, grantsApplied, nil
 }
 
-func (m *bindingGrantTxManager) commit() error {
+// applyGrants applies the grants for a derived binding. Grant changes are persisted
+// on the service immediately. On dry run nothing is changed and the currently
+// applied grants are returned.
+func (m *bindingAccountManager) applyGrants(ctx context.Context, service *types.Service, binding *types.Binding, derivedFrom *types.Binding,
+	isStaging bool, reapplyAll bool) ([]types.BindingGrant, error) {
+	if _, ok := bindings.ServiceBindings[service.ServiceType]; !ok {
+		return nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
+	}
+
+	metadata := binding.Metadata
+	if isStaging {
+		metadata = binding.StagedMetadata
+	}
 	if m.dryRun {
-		return nil
+		return metadata.GrantsApplied, nil
 	}
-	for _, tx := range m.txs {
-		if tx.committed {
-			continue
-		}
-		if err := tx.serviceBinding.CommitTransaction(tx.ctx); err != nil {
-			return fmt.Errorf("error committing binding transaction for service %s/%s: %w", tx.service.ServiceType, tx.service.Name, err)
-		}
-		tx.committed = true
+
+	serviceBinding, err := m.getServiceBinding(ctx, service, binding)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+
+	derivedFromMetadata := derivedFrom.Metadata
+	if isStaging {
+		derivedFromMetadata = derivedFrom.StagedMetadata
+	}
+
+	grantsApplied, err := serviceBinding.ApplyGrants(ctx, metadata.Account, metadata, derivedFromMetadata, reapplyAll)
+	if err != nil {
+		return nil, fmt.Errorf("error applying grants: %w", err)
+	}
+	return grantsApplied, nil
 }
 
-func (m *bindingGrantTxManager) rollbackAndClose() {
-	for _, tx := range m.txs {
-		if !tx.committed {
-			tx.serviceBinding.RollbackTransaction(tx.ctx) //nolint:errcheck
-		}
-		tx.serviceBinding.CloseService(m.ctx) //nolint:errcheck
+// commit keeps the created artifacts. Call after the metadata transaction has committed;
+// the artifacts are already persisted on the services, this just stops rollbackAndClose
+// from deleting them.
+func (m *bindingAccountManager) commit() {
+	if m == nil {
+		return
 	}
+	m.created = nil
+}
+
+// rollbackAndClose deletes the artifacts created since the last commit, in reverse
+// creation order, and closes the service connections. Deletes are best-effort;
+// failures are logged.
+func (m *bindingAccountManager) rollbackAndClose(ctx context.Context) {
+	if m == nil {
+		return
+	}
+	// Use a non-cancelable context so cleanup still runs when rolling back due to
+	// cancellation of the original context.
+	cleanupCtx := context.WithoutCancel(ctx)
+	for i := len(m.created) - 1; i >= 0; i-- {
+		created := m.created[i]
+		if err := created.serviceBinding.DeleteArtifact(cleanupCtx, created.artifact); err != nil {
+			m.server.Warn().Err(err).Str("type", string(created.artifact.Type)).Str("name", created.artifact.Name).
+				Msg("error deleting binding artifact during rollback")
+		}
+	}
+	m.created = nil
+	for _, serviceBinding := range m.services {
+		serviceBinding.CloseService(cleanupCtx) //nolint:errcheck
+	}
+	m.services = map[string]bindings.ServiceBinding{}
 }
 
 func normalizeGrantForStorage(grant string) string {
@@ -632,14 +556,18 @@ func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBi
 			return nil, fmt.Errorf("error getting staging service: %w", err)
 		}
 	}
-	binding.StagedMetadata.GrantsApplied, err = s.applyBindingGrants(ctx, dryRun, stagingService, binding, derivedFrom, true, reapplyAll)
+
+	accounts := s.newBindingAccountManager(dryRun)
+	defer accounts.rollbackAndClose(ctx)
+
+	binding.StagedMetadata.GrantsApplied, err = accounts.applyGrants(ctx, stagingService, binding, derivedFrom, true, reapplyAll)
 	if err != nil {
 		return nil, fmt.Errorf("error applying staging grants: %w", err)
 	}
 
 	if promote {
 		binding.Metadata.Grants = binding.StagedMetadata.Grants
-		binding.Metadata.GrantsApplied, err = s.applyBindingGrants(ctx, dryRun, service, binding, derivedFrom, false, reapplyAll)
+		binding.Metadata.GrantsApplied, err = accounts.applyGrants(ctx, service, binding, derivedFrom, false, reapplyAll)
 		if err != nil {
 			return nil, err
 		}

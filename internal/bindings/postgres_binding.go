@@ -78,35 +78,7 @@ func (b *PostgresServiceBinding) CloseService(ctx context.Context) error {
 	return b.adminConn.Close()
 }
 
-type PostgresContextKey string
-
-const POSTGRES_TRANSACTION_KEY PostgresContextKey = "postgres_sb_transaction"
-
-func (b *PostgresServiceBinding) BeginTransaction(ctx context.Context) (context.Context, error) {
-	tx, err := b.adminConn.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("error starting transaction: %w", err)
-	}
-	return context.WithValue(ctx, POSTGRES_TRANSACTION_KEY, tx), nil
-}
-
-func (b *PostgresServiceBinding) CommitTransaction(ctx context.Context) error {
-	tx, ok := ctx.Value(POSTGRES_TRANSACTION_KEY).(*sql.Tx)
-	if !ok {
-		return fmt.Errorf("transaction not found in context")
-	}
-	return tx.Commit()
-}
-
-func (b *PostgresServiceBinding) RollbackTransaction(ctx context.Context) error {
-	tx, ok := ctx.Value(POSTGRES_TRANSACTION_KEY).(*sql.Tx)
-	if !ok {
-		return fmt.Errorf("transaction not found in context")
-	}
-	return tx.Rollback()
-}
-
-func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata, derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, error) {
+func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata, derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, []Artifact, error) {
 	inheritDefault := true
 	var err error
 
@@ -114,14 +86,14 @@ func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId,
 	if ok {
 		inheritDefault, err = strconv.ParseBool(inheritDefaultStr)
 		if err != nil {
-			return nil, fmt.Errorf("error parsing inherit_default: %w", err)
+			return nil, nil, fmt.Errorf("error parsing inherit_default: %w", err)
 		}
 	}
 
 	// Create a new schema, create a login role and grant full access on the schema for that role.
 	password, err := randomHex(32)
 	if err != nil {
-		return nil, fmt.Errorf("error generating random password: %w", err)
+		return nil, nil, fmt.Errorf("error generating random password: %w", err)
 	}
 	modePrefix := "prd_"
 	if isStaging {
@@ -145,47 +117,57 @@ func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId,
 		roleOptions += " NOINHERIT"
 	}
 
-	tx, ok := ctx.Value(POSTGRES_TRANSACTION_KEY).(*sql.Tx)
-	if !ok {
-		return nil, fmt.Errorf("transaction not found in context")
+	// All the statements run in a single transaction so a partial failure leaves no
+	// artifacts behind; no artifacts are reported as created on error.
+	tx, err := b.adminConn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error starting transaction: %w", err)
 	}
+	defer tx.Rollback() //nolint:errcheck
 
 	createRoleSQL := fmt.Sprintf("CREATE ROLE %s WITH %s PASSWORD %s", quotedRole, roleOptions, quotedPassword)
 	if _, err := tx.ExecContext(ctx, createRoleSQL); err != nil {
-		return nil, fmt.Errorf("error creating role %s: %w", roleName, err)
+		return nil, nil, fmt.Errorf("error creating role %s: %w", roleName, err)
 	}
+	artifacts := []Artifact{{Type: ArtifactRole, Name: roleName}}
 
 	if derivedFromMetadata == nil {
 		// Base binding, create a new schema
 		createSchemaSQL := fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s", quotedSchema, quotedRole)
 		if _, err := tx.ExecContext(ctx, createSchemaSQL); err != nil {
-			return nil, fmt.Errorf("error creating schema %s: %w", schemaName, err)
+			return nil, nil, fmt.Errorf("error creating schema %s: %w", schemaName, err)
 		}
+		artifacts = append(artifacts, Artifact{Type: ArtifactSchema, Name: schemaName})
 
 		grantSQL := fmt.Sprintf("GRANT ALL ON SCHEMA %s TO %s", quotedSchema, quotedRole)
 		if _, err := tx.ExecContext(ctx, grantSQL); err != nil {
-			return nil, fmt.Errorf("error granting privileges on schema %s: %w", schemaName, err)
+			return nil, nil, fmt.Errorf("error granting privileges on schema %s: %w", schemaName, err)
 		}
 	} else {
-		// Derived binding, grant usage on the base binding's schema
+		// Derived binding, grant usage on the base binding's schema. The schema belongs
+		// to the base binding and is not reported as a created artifact.
 		grantUsageSQL := fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s", quotedSchema, quotedRole)
 		if _, err := tx.ExecContext(ctx, grantUsageSQL); err != nil {
-			return nil, fmt.Errorf("error granting usage privileges on schema %s: %w", schemaName, err)
+			return nil, nil, fmt.Errorf("error granting usage privileges on schema %s: %w", schemaName, err)
 		}
 	}
 
 	setSearchPathSQL := fmt.Sprintf("ALTER ROLE %s SET search_path = %s", quotedRole, quotedSchema)
 	if _, err := tx.ExecContext(ctx, setSearchPathSQL); err != nil {
-		return nil, fmt.Errorf("error setting search_path on role %s: %w", roleName, err)
+		return nil, nil, fmt.Errorf("error setting search_path on role %s: %w", roleName, err)
 	}
 
 	accountDirectURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, "")
 	if err != nil {
-		return nil, fmt.Errorf("error building account url: %w", err)
+		return nil, nil, fmt.Errorf("error building account url: %w", err)
 	}
 	accountURL, err := buildAccountURL(b.serviceConfig["url"], roleName, password, b.serviceConfig["binding_hostname"])
 	if err != nil {
-		return nil, fmt.Errorf("error building binding account url: %w", err)
+		return nil, nil, fmt.Errorf("error building binding account url: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("error committing transaction: %w", err)
 	}
 
 	return map[string]string{
@@ -193,7 +175,52 @@ func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId,
 		"url_direct": accountDirectURL,
 		"schema":     schemaName,
 		"role":       roleName,
-	}, nil
+	}, artifacts, nil
+}
+
+// DeleteArtifact drops one role or schema previously reported as created by
+// GenerateAccount. The caller only passes back artifacts created during the current
+// operation, so a newly created role cannot own pre-existing objects and a schema
+// drop only removes objects created since the schema itself was created.
+func (b *PostgresServiceBinding) DeleteArtifact(ctx context.Context, artifact Artifact) error {
+	if artifact.Name == "" {
+		return fmt.Errorf("artifact name is required")
+	}
+
+	tx, err := b.adminConn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	switch artifact.Type {
+	case ArtifactSchema:
+		quotedSchema := pgx.Identifier{artifact.Name}.Sanitize()
+		if _, err := tx.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE"); err != nil {
+			return fmt.Errorf("error dropping schema %s: %w", artifact.Name, err)
+		}
+	case ArtifactRole:
+		var exists bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)", artifact.Name).Scan(&exists); err != nil {
+			return fmt.Errorf("error checking role %s: %w", artifact.Name, err)
+		}
+		if !exists {
+			return nil
+		}
+		quotedRole := pgx.Identifier{artifact.Name}.Sanitize()
+		// DROP OWNED clears all the dependencies on the role so it can be dropped: it
+		// drops any objects the role created and revokes the privileges (including
+		// default privileges) granted to it.
+		if _, err := tx.ExecContext(ctx, "DROP OWNED BY "+quotedRole+" CASCADE"); err != nil {
+			return fmt.Errorf("error dropping objects owned by role %s: %w", artifact.Name, err)
+		}
+		if _, err := tx.ExecContext(ctx, "DROP ROLE "+quotedRole); err != nil {
+			return fmt.Errorf("error dropping role %s: %w", artifact.Name, err)
+		}
+	default:
+		return fmt.Errorf("unsupported postgres artifact type %s", artifact.Type)
+	}
+	return tx.Commit()
 }
 
 func (b *PostgresServiceBinding) ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata types.BindingMetadata,
@@ -202,16 +229,22 @@ func (b *PostgresServiceBinding) ApplyGrants(ctx context.Context, account map[st
 		return nil, err
 	}
 
-	tx, ok := ctx.Value(POSTGRES_TRANSACTION_KEY).(*sql.Tx)
-	if !ok {
-		return nil, fmt.Errorf("transaction not found in context")
+	// The grant statements run in a single transaction (also needed for the savepoint
+	// handling of missing tables) and are committed before returning.
+	tx, err := b.adminConn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error starting transaction: %w", err)
 	}
+	defer tx.Rollback() //nolint:errcheck
 
 	grantsProcessed, err := b.processGrants(ctx, tx, account["role"], account["schema"], derivedFromMetadata.Account["role"], bindingMetadata, reapplyAll)
 	if err != nil {
 		return nil, fmt.Errorf("error processing grants: %w", err)
 	}
 
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("error committing transaction: %w", err)
+	}
 	return grantsProcessed, nil
 }
 

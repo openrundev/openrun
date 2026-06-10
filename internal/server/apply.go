@@ -208,27 +208,9 @@ func (s *Server) setupSource(applyPath, branch, commit, gitAuth string, repoCach
 	return repo, applyFile, nil
 }
 
-type applySideEffects struct {
-	bindingGrantTxs *bindingGrantTxManager
-}
-
-func (e *applySideEffects) commit() error {
-	if e == nil || e.bindingGrantTxs == nil {
-		return nil
-	}
-	return e.bindingGrantTxs.commit()
-}
-
-func (e *applySideEffects) rollbackAndClose() {
-	if e == nil || e.bindingGrantTxs == nil {
-		return
-	}
-	e.bindingGrantTxs.rollbackAndClose()
-}
-
 func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath string, appPathGlob string, approve, dryRun, promote bool,
 	reload types.AppReloadOption, branch, commit, gitAuth string, clobber,
-	forceReload, verify bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (*types.AppApplyResponse, []types.AppPathDomain, *applySideEffects, error) {
+	forceReload, verify bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (*types.AppApplyResponse, []types.AppPathDomain, *bindingAccountManager, error) {
 	var tx types.Transaction
 	var err error
 	verify = verify && !dryRun
@@ -422,12 +404,11 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	}
 
 	createBindingResults := make([]string, 0, len(newBindings))
-	bindingGrantTxs := s.newBindingGrantTxManager(ctx, dryRun)
-	sideEffects := &applySideEffects{bindingGrantTxs: bindingGrantTxs}
-	releaseSideEffects := false
+	bindingAccounts := s.newBindingAccountManager(dryRun)
+	releaseBindingAccounts := false
 	defer func() {
-		if !releaseSideEffects {
-			sideEffects.rollbackAndClose()
+		if !releaseBindingAccounts {
+			bindingAccounts.rollbackAndClose(ctx)
 		}
 	}()
 	for _, newBinding := range newBindings {
@@ -436,7 +417,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		if err := prepareBindingApplyInfo(applyInfo); err != nil {
 			return nil, nil, nil, err
 		}
-		if _, err := s.CreateBindingWithGrantManager(ctx, tx, applyInfo, dryRun, bindingGrantTxs); err != nil {
+		if _, err := s.createBindingTx(ctx, tx, applyInfo, bindingAccounts, false); err != nil {
 			return nil, nil, nil, err
 		}
 		createBindingResults = append(createBindingResults, newBinding)
@@ -447,7 +428,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	for _, updateBinding := range updatedBindings {
 		s.Trace().Msgf("Applying update binding %s", updateBinding)
 		applyInfo := bindingConfig[updateBinding]
-		updated, promoted, err := s.applyBindingUpdate(ctx, tx, bindingGrantTxs, applyInfo, promote, clobber, forceReload)
+		updated, promoted, err := s.applyBindingUpdate(ctx, tx, bindingAccounts, applyInfo, promote, clobber, forceReload)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -502,7 +483,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	}
 
 	if verifyRequested && !dryRun {
-		if err := s.reapplyPendingBindingGrants(ctx, tx, bindingGrantTxs, bindingList); err != nil {
+		if err := s.reapplyPendingBindingGrants(ctx, tx, bindingAccounts, bindingList); err != nil {
 			return nil, nil, nil, err
 		}
 	}
@@ -525,15 +506,16 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	allUpdatedApps = slices.Collect(maps.Keys(allAppMap))
 
 	if inputTx.Tx == nil {
-		if err := sideEffects.commit(); err != nil {
-			return nil, nil, nil, err
-		}
-		// Commit the metadata transaction after the service-side binding transactions.
 		if err := s.CompleteTransaction(ctx, tx, allUpdatedApps, dryRun, "apply"); err != nil {
 			return nil, nil, nil, err
 		}
+		// The metadata transaction has committed, keep the binding accounts created
+		// on the services.
+		bindingAccounts.commit()
 	} else {
-		releaseSideEffects = true
+		// The caller owns the transaction and is responsible for calling commit or
+		// rollbackAndClose on the returned binding account manager.
+		releaseBindingAccounts = true
 	}
 
 	ret := &types.AppApplyResponse{
@@ -552,7 +534,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		PromoteBindingResults: promoteBindingResults,
 	}
 
-	return ret, allUpdatedApps, sideEffects, nil
+	return ret, allUpdatedApps, bindingAccounts, nil
 }
 
 func convertToMapString(input map[string]any, convertToml bool) (map[string]string, error) {
@@ -803,7 +785,7 @@ func prepareBindingApplyInfo(newInfo *types.CreateBindingRequest) error {
 	return nil
 }
 
-func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, bindingGrantTxs *bindingGrantTxManager, newInfo *types.CreateBindingRequest,
+func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, bindingAccounts *bindingAccountManager, newInfo *types.CreateBindingRequest,
 	promote, clobber, reapplyAll bool) (bool, bool, error) {
 	if err := prepareBindingApplyInfo(newInfo); err != nil {
 		return false, false, err
@@ -862,7 +844,7 @@ func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, b
 				return false, false, fmt.Errorf("error getting staging service: %w", err)
 			}
 		}
-		grantsApplied, err := bindingGrantTxs.applyGrants(stagingService, binding, derivedFrom, true, reapplyAll)
+		grantsApplied, err := bindingAccounts.applyGrants(ctx, stagingService, binding, derivedFrom, true, reapplyAll)
 		if err != nil {
 			return false, false, fmt.Errorf("error applying staging grants: %w", err)
 		}
@@ -890,7 +872,7 @@ func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, b
 			if err != nil {
 				return false, false, err
 			}
-			binding.Metadata.GrantsApplied, err = bindingGrantTxs.applyGrants(service, binding, derivedFrom, false, reapplyAll)
+			binding.Metadata.GrantsApplied, err = bindingAccounts.applyGrants(ctx, service, binding, derivedFrom, false, reapplyAll)
 			if err != nil {
 				return false, false, err
 			}
@@ -941,7 +923,7 @@ func (s *Server) verifyCreatedApp(ctx context.Context, tx types.Transaction, app
 	return nil
 }
 
-func (s *Server) reapplyPendingBindingGrants(ctx context.Context, tx types.Transaction, bindingGrantTxs *bindingGrantTxManager, bindingPaths []string) error {
+func (s *Server) reapplyPendingBindingGrants(ctx context.Context, tx types.Transaction, bindingAccounts *bindingAccountManager, bindingPaths []string) error {
 	for _, bindingPath := range bindingPaths {
 		binding, err := s.db.GetBinding(ctx, tx, bindingPath)
 		if err != nil {
@@ -965,7 +947,7 @@ func (s *Server) reapplyPendingBindingGrants(ctx context.Context, tx types.Trans
 			}
 		}
 
-		stagedGrantsApplied, err := bindingGrantTxs.applyGrants(stagingService, binding, derivedFrom, true, false)
+		stagedGrantsApplied, err := bindingAccounts.applyGrants(ctx, stagingService, binding, derivedFrom, true, false)
 		if err != nil {
 			return fmt.Errorf("error reapplying staging grants for binding %s: %w", binding.Path, err)
 		}
@@ -974,7 +956,7 @@ func (s *Server) reapplyPendingBindingGrants(ctx context.Context, tx types.Trans
 			updated = true
 		}
 
-		prodGrantsApplied, err := bindingGrantTxs.applyGrants(service, binding, derivedFrom, false, false)
+		prodGrantsApplied, err := bindingAccounts.applyGrants(ctx, service, binding, derivedFrom, false, false)
 		if err != nil {
 			return fmt.Errorf("error reapplying production grants for binding %s: %w", binding.Path, err)
 		}

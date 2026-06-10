@@ -28,22 +28,14 @@ func (b *applyTestServiceBinding) CloseService(context.Context) error {
 	return nil
 }
 
-func (b *applyTestServiceBinding) BeginTransaction(ctx context.Context) (context.Context, error) {
-	return ctx, nil
-}
-
-func (b *applyTestServiceBinding) CommitTransaction(context.Context) error {
-	return nil
-}
-
-func (b *applyTestServiceBinding) RollbackTransaction(context.Context) error {
+func (b *applyTestServiceBinding) DeleteArtifact(context.Context, bindings.Artifact) error {
 	return nil
 }
 
 func (b *applyTestServiceBinding) GenerateAccount(_ context.Context, bindingId, bindingPath string, _ types.BindingMetadata,
-	derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, error) {
+	derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, []bindings.Artifact, error) {
 	if derivedFromMetadata != nil && derivedFromMetadata.Account["role"] == "" {
-		return nil, fmt.Errorf("derived binding account not visible")
+		return nil, nil, fmt.Errorf("derived binding account not visible")
 	}
 
 	mode := "prod"
@@ -51,10 +43,11 @@ func (b *applyTestServiceBinding) GenerateAccount(_ context.Context, bindingId, 
 		mode = "stage"
 	}
 	accountName := strings.TrimPrefix(bindingPath, "/")
+	role := bindingId + "_" + mode
 	return map[string]string{
-		"role":   bindingId + "_" + mode,
+		"role":   role,
 		"schema": strings.ReplaceAll(accountName, "/", "_") + "_" + mode,
-	}, nil
+	}, []bindings.Artifact{{Type: bindings.ArtifactRole, Name: role}}, nil
 }
 
 func (b *applyTestServiceBinding) ApplyGrants(_ context.Context, _ map[string]string, bindingMetadata, derivedFromMetadata types.BindingMetadata,
@@ -78,6 +71,56 @@ type applyPendingGrantServiceBinding struct {
 	reapplyAllCalls   *int
 }
 
+type applyAccountTrackingServiceBinding struct {
+	generateCalls    *int
+	failAfterCreate  *bool
+	deletedArtifacts *[]bindings.Artifact
+	closed           *int
+}
+
+func (b *applyAccountTrackingServiceBinding) InitializeService(context.Context, *types.Logger, map[string]string, bindings.ServiceBindingRuntime) error {
+	return nil
+}
+
+func (b *applyAccountTrackingServiceBinding) CloseService(context.Context) error {
+	*b.closed = *b.closed + 1
+	return nil
+}
+
+func (b *applyAccountTrackingServiceBinding) GenerateAccount(_ context.Context, bindingId, _ string, _ types.BindingMetadata,
+	_ *types.BindingMetadata, isStaging bool) (map[string]string, []bindings.Artifact, error) {
+	*b.generateCalls = *b.generateCalls + 1
+	mode := "prod"
+	if isStaging {
+		mode = "stage"
+	}
+	role := bindingId + "_role_" + mode
+	schema := bindingId + "_schema_" + mode
+	artifacts := []bindings.Artifact{
+		{Type: bindings.ArtifactRole, Name: role},
+		{Type: bindings.ArtifactSchema, Name: schema},
+	}
+	if b.failAfterCreate != nil && *b.failAfterCreate {
+		// Partial failure: the role was created but the schema creation failed
+		return nil, artifacts[:1], fmt.Errorf("simulated partial account creation failure")
+	}
+	return map[string]string{"role": role, "schema": schema}, artifacts, nil
+}
+
+func (b *applyAccountTrackingServiceBinding) DeleteArtifact(_ context.Context, artifact bindings.Artifact) error {
+	*b.deletedArtifacts = append(*b.deletedArtifacts, artifact)
+	return nil
+}
+
+func (b *applyAccountTrackingServiceBinding) ApplyGrants(context.Context, map[string]string, types.BindingMetadata,
+	types.BindingMetadata, bool) ([]types.BindingGrant, error) {
+	return nil, nil
+}
+
+func (b *applyAccountTrackingServiceBinding) RunCommand(context.Context, types.BindingMetadata, string) (map[string]any, error) {
+	return nil, nil
+}
+
 func (b *applyPendingGrantServiceBinding) InitializeService(context.Context, *types.Logger, map[string]string, bindings.ServiceBindingRuntime) error {
 	return nil
 }
@@ -86,28 +129,21 @@ func (b *applyPendingGrantServiceBinding) CloseService(context.Context) error {
 	return nil
 }
 
-func (b *applyPendingGrantServiceBinding) BeginTransaction(ctx context.Context) (context.Context, error) {
-	return ctx, nil
-}
-
-func (b *applyPendingGrantServiceBinding) CommitTransaction(context.Context) error {
-	return nil
-}
-
-func (b *applyPendingGrantServiceBinding) RollbackTransaction(context.Context) error {
+func (b *applyPendingGrantServiceBinding) DeleteArtifact(context.Context, bindings.Artifact) error {
 	return nil
 }
 
 func (b *applyPendingGrantServiceBinding) GenerateAccount(_ context.Context, bindingId, bindingPath string, _ types.BindingMetadata,
-	_ *types.BindingMetadata, isStaging bool) (map[string]string, error) {
+	_ *types.BindingMetadata, isStaging bool) (map[string]string, []bindings.Artifact, error) {
 	mode := "prod"
 	if isStaging {
 		mode = "stage"
 	}
+	role := bindingId + "_" + mode
 	return map[string]string{
-		"role":   bindingId + "_" + mode,
+		"role":   role,
 		"schema": strings.TrimPrefix(bindingPath, "/") + "_" + mode,
-	}, nil
+	}, []bindings.Artifact{{Type: bindings.ArtifactRole, Name: role}}, nil
 }
 
 func (b *applyPendingGrantServiceBinding) ApplyGrants(_ context.Context, _ map[string]string, bindingMetadata, _ types.BindingMetadata,
@@ -217,10 +253,10 @@ app("/apps/uses-derived", %q, bindings=["/apps/derived"])
 		t.Fatalf("write apply file: %v", err)
 	}
 
-	response, _, sideEffects, err := server.Apply(ctx, types.Transaction{}, applyPath, "/apps/**", false, false, false,
+	response, _, bindingAccounts, err := server.Apply(ctx, types.Transaction{}, applyPath, "/apps/**", false, false, false,
 		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
-	if sideEffects != nil {
-		defer sideEffects.rollbackAndClose()
+	if bindingAccounts != nil {
+		defer bindingAccounts.rollbackAndClose(ctx)
 	}
 	if err != nil {
 		t.Fatalf("apply: %v", err)
@@ -308,10 +344,10 @@ func TestApplyVerifiesCreatedAppWithoutCountingInternalReload(t *testing.T) {
 		t.Fatalf("write apply file: %v", err)
 	}
 
-	response, _, sideEffects, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
+	response, _, bindingAccounts, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
 		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
-	if sideEffects != nil {
-		defer sideEffects.rollbackAndClose()
+	if bindingAccounts != nil {
+		defer bindingAccounts.rollbackAndClose(ctx)
 	}
 	if err != nil {
 		t.Fatalf("apply: %v", err)
@@ -321,6 +357,184 @@ func TestApplyVerifiesCreatedAppWithoutCountingInternalReload(t *testing.T) {
 	}
 	if len(response.ReloadResults) != 0 {
 		t.Fatalf("reload results = %v, want created-app verification not counted", response.ReloadResults)
+	}
+}
+
+func TestBindingAccountManagerRollbackDeletesUncommittedArtifacts(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	generateCalls := 0
+	failAfterCreate := false
+	deletedArtifacts := []bindings.Artifact{}
+	closed := 0
+	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["accounttest"]
+	bindings.ServiceBindings["accounttest"] = func() bindings.ServiceBinding {
+		return &applyAccountTrackingServiceBinding{
+			generateCalls:    &generateCalls,
+			failAfterCreate:  &failAfterCreate,
+			deletedArtifacts: &deletedArtifacts,
+			closed:           &closed,
+		}
+	}
+	defer func() {
+		if hadPreviousBuilder {
+			bindings.ServiceBindings["accounttest"] = previousBuilder
+		} else {
+			delete(bindings.ServiceBindings, "accounttest")
+		}
+	}()
+
+	service := &types.Service{
+		Name:        "primary",
+		ServiceType: "accounttest",
+		Config:      map[string]string{},
+	}
+	binding := &types.Binding{
+		Id:   types.ID_PREFIX_BINDING + "account",
+		Path: "/apps/account",
+		Metadata: types.BindingMetadata{
+			Config: map[string]string{},
+		},
+		StagedMetadata: types.BindingMetadata{
+			Config: map[string]string{},
+		},
+	}
+
+	// Artifacts created without a commit are deleted on rollback, in reverse creation order
+	accounts := server.newBindingAccountManager(false)
+	if _, _, err := accounts.generateAccount(ctx, service, binding, nil, true, true); err != nil {
+		t.Fatalf("generate staging account: %v", err)
+	}
+	if _, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true); err != nil {
+		t.Fatalf("generate prod account: %v", err)
+	}
+	accounts.rollbackAndClose(ctx)
+	wantDeleted := []bindings.Artifact{
+		{Type: bindings.ArtifactSchema, Name: binding.Id + "_schema_prod"},
+		{Type: bindings.ArtifactRole, Name: binding.Id + "_role_prod"},
+		{Type: bindings.ArtifactSchema, Name: binding.Id + "_schema_stage"},
+		{Type: bindings.ArtifactRole, Name: binding.Id + "_role_stage"},
+	}
+	if !slices.Equal(deletedArtifacts, wantDeleted) {
+		t.Fatalf("deleted artifacts = %v, want %v in reverse creation order", deletedArtifacts, wantDeleted)
+	}
+	if closed != 1 {
+		t.Fatalf("close calls = %d, want 1 for the cached service connection", closed)
+	}
+
+	// Committed artifacts are kept on rollback
+	deletedArtifacts = nil
+	accounts = server.newBindingAccountManager(false)
+	if _, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true); err != nil {
+		t.Fatalf("generate account: %v", err)
+	}
+	accounts.commit()
+	accounts.rollbackAndClose(ctx)
+	if len(deletedArtifacts) != 0 {
+		t.Fatalf("deleted artifacts = %v, want none after commit", deletedArtifacts)
+	}
+
+	// Artifacts created before a partial GenerateAccount failure are deleted on rollback
+	deletedArtifacts = nil
+	failAfterCreate = true
+	accounts = server.newBindingAccountManager(false)
+	if _, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true); err == nil {
+		t.Fatal("generate account did not return the partial failure")
+	}
+	accounts.rollbackAndClose(ctx)
+	wantDeleted = []bindings.Artifact{{Type: bindings.ArtifactRole, Name: binding.Id + "_role_prod"}}
+	if !slices.Equal(deletedArtifacts, wantDeleted) {
+		t.Fatalf("deleted artifacts after partial failure = %v, want %v", deletedArtifacts, wantDeleted)
+	}
+	failAfterCreate = false
+
+	// Dry run creates no artifacts
+	generateCalls = 0
+	accounts = server.newBindingAccountManager(true)
+	account, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true)
+	if err != nil {
+		t.Fatalf("dry run generate account: %v", err)
+	}
+	if account != nil || generateCalls != 0 {
+		t.Fatalf("dry run account = %v with %d generate calls, want no account generation", account, generateCalls)
+	}
+	accounts.rollbackAndClose(ctx)
+}
+
+func TestCreateSyncEntryKeepsBindingAccountsAfterOuterCommit(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	generateCalls := 0
+	failAfterCreate := false
+	deletedArtifacts := []bindings.Artifact{}
+	closed := 0
+	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["syncaccounttest"]
+	bindings.ServiceBindings["syncaccounttest"] = func() bindings.ServiceBinding {
+		return &applyAccountTrackingServiceBinding{
+			generateCalls:    &generateCalls,
+			failAfterCreate:  &failAfterCreate,
+			deletedArtifacts: &deletedArtifacts,
+			closed:           &closed,
+		}
+	}
+	defer func() {
+		if hadPreviousBuilder {
+			bindings.ServiceBindings["syncaccounttest"] = previousBuilder
+		} else {
+			delete(bindings.ServiceBindings, "syncaccounttest")
+		}
+	}()
+
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	service := &types.Service{
+		Id:          types.ID_PREFIX_SERVICE + "syncaccounttest",
+		Name:        "primary",
+		ServiceType: "syncaccounttest",
+		IsDefault:   true,
+		Config:      map[string]string{},
+	}
+	if err := db.CreateService(ctx, tx, service); err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit service: %v", err)
+	}
+
+	applyPath := filepath.Join(t.TempDir(), "sync-bindings.ace")
+	if err := os.WriteFile(applyPath, []byte(`binding("/apps/synced", "syncaccounttest/primary")
+`), 0600); err != nil {
+		t.Fatalf("write apply file: %v", err)
+	}
+
+	response, err := server.CreateSyncEntry(ctx, applyPath, true, false, &types.SyncMetadata{})
+	if err != nil {
+		t.Fatalf("create sync entry: %v", err)
+	}
+	if len(response.SyncJobStatus.ApplyResponse.CreateBindingResults) != 1 ||
+		response.SyncJobStatus.ApplyResponse.CreateBindingResults[0] != "/apps/synced" {
+		t.Fatalf("created bindings = %v, want [/apps/synced]", response.SyncJobStatus.ApplyResponse.CreateBindingResults)
+	}
+	if len(deletedArtifacts) != 0 {
+		t.Fatalf("deleted artifacts after successful sync = %v, want none", deletedArtifacts)
+	}
+
+	readTx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin read transaction: %v", err)
+	}
+	defer readTx.Rollback() //nolint:errcheck
+	binding, err := db.GetBinding(ctx, readTx, "/apps/synced")
+	if err != nil {
+		t.Fatalf("get synced binding: %v", err)
+	}
+	if binding.Metadata.Account["role"] == "" || binding.StagedMetadata.Account["role"] == "" {
+		t.Fatalf("synced binding account metadata = prod %v stage %v, want populated accounts",
+			binding.Metadata.Account, binding.StagedMetadata.Account)
 	}
 }
 
@@ -418,17 +632,15 @@ func TestReapplyPendingBindingGrantsAppliesOnlyCurrentPendingGrants(t *testing.T
 	if err != nil {
 		t.Fatalf("begin update transaction: %v", err)
 	}
-	grantTxs := server.newBindingGrantTxManager(ctx, false)
-	if err := server.reapplyPendingBindingGrants(ctx, updateTx, grantTxs, []string{"/apps/base", "/apps/derived"}); err != nil {
+	grantAccounts := server.newBindingAccountManager(false)
+	if err := server.reapplyPendingBindingGrants(ctx, updateTx, grantAccounts, []string{"/apps/base", "/apps/derived"}); err != nil {
 		t.Fatalf("reapply grants: %v", err)
-	}
-	if err := grantTxs.commit(); err != nil {
-		t.Fatalf("commit grant txs: %v", err)
 	}
 	if err := updateTx.Commit(); err != nil {
 		t.Fatalf("commit metadata: %v", err)
 	}
-	grantTxs.rollbackAndClose()
+	grantAccounts.commit()
+	grantAccounts.rollbackAndClose(ctx)
 
 	verifyTx, err := db.BeginTransaction(ctx)
 	if err != nil {
@@ -466,17 +678,15 @@ func TestReapplyPendingBindingGrantsAppliesOnlyCurrentPendingGrants(t *testing.T
 	if err != nil {
 		t.Fatalf("begin retry transaction: %v", err)
 	}
-	grantTxs = server.newBindingGrantTxManager(ctx, false)
-	if err := server.reapplyPendingBindingGrants(ctx, retryTx, grantTxs, []string{"/apps/derived"}); err != nil {
+	grantAccounts = server.newBindingAccountManager(false)
+	if err := server.reapplyPendingBindingGrants(ctx, retryTx, grantAccounts, []string{"/apps/derived"}); err != nil {
 		t.Fatalf("second reapply grants: %v", err)
-	}
-	if err := grantTxs.commit(); err != nil {
-		t.Fatalf("commit second grant txs: %v", err)
 	}
 	if err := retryTx.Commit(); err != nil {
 		t.Fatalf("commit second metadata: %v", err)
 	}
-	grantTxs.rollbackAndClose()
+	grantAccounts.commit()
+	grantAccounts.rollbackAndClose(ctx)
 	if pendingApplyCalls != 2 {
 		t.Fatalf("pending grant apply calls after second retry = %d, want still 2", pendingApplyCalls)
 	}

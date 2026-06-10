@@ -54,7 +54,8 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 		return nil, err
 	}
 
-	syncStatus, updatedApps, err := s.runSyncJob(ctx, tx, &syncEntry, dryRun, true, nil)
+	syncStatus, updatedApps, applyEffects, err := s.runSyncJob(ctx, tx, &syncEntry, dryRun, true, nil)
+	defer applyEffects.rollbackAndClose(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +76,9 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "create_sync"); err != nil {
 		return nil, err
 	}
+	// The metadata transaction has committed, keep the binding accounts created
+	// on the services.
+	applyEffects.commit()
 
 	return &ret, nil
 }
@@ -91,7 +95,8 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (*types.Sy
 		return nil, err
 	}
 
-	syncStatus, updatedApps, err := s.runSyncJob(ctx, tx, syncEntry, dryRun, true, nil)
+	syncStatus, updatedApps, applyEffects, err := s.runSyncJob(ctx, tx, syncEntry, dryRun, true, nil)
+	defer applyEffects.rollbackAndClose(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +108,9 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (*types.Sy
 	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "sync_run"); err != nil {
 		return nil, err
 	}
+	// The metadata transaction has committed, keep the binding accounts created
+	// on the services.
+	applyEffects.commit()
 	return syncStatus, nil
 }
 
@@ -210,7 +218,7 @@ func (s *Server) runSyncJobs() error {
 			continue
 		}
 
-		_, updatedApps, err := s.runSyncJob(ctx, types.Transaction{}, entry, false, true, repoCache) // each sync runs in its own transaction
+		_, updatedApps, _, err := s.runSyncJob(ctx, types.Transaction{}, entry, false, true, repoCache) // each sync runs in its own transaction
 		if err != nil {
 			s.Error().Err(err).Msgf("Error running sync job %s", entry.Id)
 			// One failure does not stop the rest
@@ -228,13 +236,13 @@ func (s *Server) runSyncJobs() error {
 }
 
 func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entry *types.SyncEntry,
-	dryRun, checkCommitHash bool, repoCache *RepoCache) (*types.SyncJobStatus, []types.AppPathDomain, error) {
+	dryRun, checkCommitHash bool, repoCache *RepoCache) (*types.SyncJobStatus, []types.AppPathDomain, *bindingAccountManager, error) {
 	var tx types.Transaction
 	var err error
 	if inputTx.Tx == nil {
 		tx, err = s.db.BeginTransaction(ctx)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		defer tx.Rollback() //nolint:errcheck
 	} else {
@@ -247,7 +255,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		// Create a new repo cache if not passed in
 		repoCache, err = NewRepoCache(s)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		defer repoCache.Cleanup()
 	}
@@ -261,8 +269,8 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	verify := entry.Metadata.Verify && !dryRun
 	applyInfo, updatedApps, applyEffects, applyErr := s.Apply(ctx, tx, entry.Path, "all", entry.Metadata.Approve, dryRun, entry.Metadata.Promote, types.AppReloadOption(entry.Metadata.Reload),
 		entry.Metadata.GitBranch, "", entry.Metadata.GitAuth, entry.Metadata.Clobber, entry.Metadata.ForceReload, verify, lastRunCommitId, repoCache, false)
-	if applyEffects != nil {
-		defer applyEffects.rollbackAndClose()
+	if inputTx.Tx == nil {
+		defer applyEffects.rollbackAndClose(ctx)
 	}
 
 	status := types.SyncJobStatus{
@@ -315,7 +323,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		if appMissing {
 			// App has been deleted, run the full apply with the latest commit even if it was already applied
 			if !checkCommitHash {
-				return nil, nil, fmt.Errorf("unexpected error, sync rerun with no commit hash")
+				return nil, nil, applyEffects, fmt.Errorf("unexpected error, sync rerun with no commit hash")
 			}
 			return s.runSyncJob(ctx, inputTx, entry, dryRun, false, repoCache)
 		} else {
@@ -358,7 +366,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		// Use a new transaction to update the sync status
 		tx, err = s.db.BeginTransaction(ctx)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, applyEffects, err
 		}
 		defer tx.Rollback() //nolint:errcheck
 		updatedApps = nil
@@ -367,17 +375,21 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	status.ApplyResponse = *applyInfo
 	err = s.db.UpdateSyncStatus(ctx, tx, entry.Id, &status)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, applyEffects, err
 	}
 
 	if status.Error == "" && inputTx.Tx == nil {
-		if err := applyEffects.commit(); err != nil {
-			return nil, nil, err
-		}
 		if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "sync"); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
+		// The metadata transaction has committed, keep the binding accounts created
+		// on the services.
+		applyEffects.commit()
+		return &status, updatedApps, nil, nil
+	}
+	if inputTx.Tx == nil {
+		return &status, updatedApps, nil, nil
 	}
 
-	return &status, updatedApps, nil
+	return &status, updatedApps, applyEffects, nil
 }

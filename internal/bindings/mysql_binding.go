@@ -125,77 +125,10 @@ func (b *MysqlServiceBinding) CloseService(ctx context.Context) error {
 	return b.adminConn.Close()
 }
 
-type MysqlContextKey string
-
-const MYSQL_TX_STATE_KEY MysqlContextKey = "mysql_sb_tx_state"
-
-// mysqlTxState tracks objects created during a logical "transaction" so they
-// can be cleaned up on rollback. MySQL DDL auto-commits, so the binding
-// interface's transaction methods cannot give us true atomicity; instead we
-// record compensating actions and run them if RollbackTransaction is called
-// without a matching CommitTransaction.
-type mysqlTxState struct {
-	createdUsers     []string // user identities in form `'name'@'host'` (already SQL-quoted)
-	createdDatabases []string // database identifiers (already backtick-quoted)
-	committed        bool
-}
-
-func (b *MysqlServiceBinding) BeginTransaction(ctx context.Context) (context.Context, error) {
-	// MySQL DDL (CREATE USER, GRANT, CREATE DATABASE, ...) implicitly commits
-	// any open transaction, so we cannot use sql.Tx for atomicity. Stash a
-	// tracker in the context so RollbackTransaction can issue compensating
-	// DROP statements for anything we created in this logical transaction.
-	return context.WithValue(ctx, MYSQL_TX_STATE_KEY, &mysqlTxState{}), nil
-}
-
-func (b *MysqlServiceBinding) CommitTransaction(ctx context.Context) error {
-	state, ok := ctx.Value(MYSQL_TX_STATE_KEY).(*mysqlTxState)
-	if !ok {
-		return fmt.Errorf("transaction state not found in context")
-	}
-	state.committed = true
-	return nil
-}
-
-func (b *MysqlServiceBinding) RollbackTransaction(ctx context.Context) error {
-	state, ok := ctx.Value(MYSQL_TX_STATE_KEY).(*mysqlTxState)
-	if !ok {
-		return fmt.Errorf("transaction state not found in context")
-	}
-	if state.committed {
-		// Commit already ran — nothing to undo.
-		return nil
-	}
-
-	// Best-effort cleanup. We use a fresh context.Background() so that
-	// cancellation of the outer context does not abort the cleanup. Failures
-	// are logged but not propagated; an operator may need to clean up
-	// manually if a DROP also fails.
-	cleanupCtx := context.Background()
-	for i := len(state.createdUsers) - 1; i >= 0; i-- {
-		stmt := "DROP USER IF EXISTS " + state.createdUsers[i]
-		if _, err := b.adminConn.ExecContext(cleanupCtx, stmt); err != nil {
-			b.Warn().Err(err).Str("user", state.createdUsers[i]).Msg("error dropping user during mysql binding rollback")
-		}
-	}
-	for i := len(state.createdDatabases) - 1; i >= 0; i-- {
-		stmt := "DROP DATABASE IF EXISTS " + state.createdDatabases[i]
-		if _, err := b.adminConn.ExecContext(cleanupCtx, stmt); err != nil {
-			b.Warn().Err(err).Str("database", state.createdDatabases[i]).Msg("error dropping database during mysql binding rollback")
-		}
-	}
-	return nil
-}
-
-func (b *MysqlServiceBinding) GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata, derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, error) {
-	state, ok := ctx.Value(MYSQL_TX_STATE_KEY).(*mysqlTxState)
-	if !ok {
-		return nil, fmt.Errorf("transaction state not found in context")
-	}
-
+func (b *MysqlServiceBinding) GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata, derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, []Artifact, error) {
 	password, err := randomHex(32)
 	if err != nil {
-		return nil, fmt.Errorf("error generating random password: %w", err)
+		return nil, nil, fmt.Errorf("error generating random password: %w", err)
 	}
 
 	userPrefix := mysqlUserPrefixProd
@@ -212,15 +145,15 @@ func (b *MysqlServiceBinding) GenerateAccount(ctx context.Context, bindingId, bi
 		// Derived binding, reuse the base binding's database
 		databaseName = derivedFromMetadata.Account["database"]
 		if databaseName == "" {
-			return nil, fmt.Errorf("derived binding base account is missing the database field")
+			return nil, nil, fmt.Errorf("derived binding base account is missing the database field")
 		}
 	}
 
 	if len(userName) > 32 {
-		return nil, fmt.Errorf("computed mysql user name %q exceeds the 32-char identifier limit", userName)
+		return nil, nil, fmt.Errorf("computed mysql user name %q exceeds the 32-char identifier limit", userName)
 	}
 	if len(databaseName) > 64 {
-		return nil, fmt.Errorf("computed mysql database name %q exceeds the 64-char identifier limit", databaseName)
+		return nil, nil, fmt.Errorf("computed mysql database name %q exceeds the 64-char identifier limit", databaseName)
 	}
 
 	host := b.hostPattern
@@ -228,35 +161,40 @@ func (b *MysqlServiceBinding) GenerateAccount(ctx context.Context, bindingId, bi
 	quotedDB := quoteMysqlIdent(databaseName)
 	quotedPassword := quoteMysqlString(password)
 
+	// MySQL DDL auto-commits each statement, so a partial failure cannot be rolled
+	// back here. The artifacts created so far are returned along with the error so
+	// the caller can delete them.
+	artifacts := []Artifact{}
 	if derivedFromMetadata == nil {
 		// Base binding: create database, then user, then grant ALL on the database.
 		createDBSQL := fmt.Sprintf("CREATE DATABASE %s", quotedDB)
 		if _, err := b.adminConn.ExecContext(ctx, createDBSQL); err != nil {
-			return nil, fmt.Errorf("error creating database %s: %w", databaseName, err)
+			return nil, artifacts, fmt.Errorf("error creating database %s: %w", databaseName, err)
 		}
-		state.createdDatabases = append(state.createdDatabases, quotedDB)
+		artifacts = append(artifacts, Artifact{Type: ArtifactDatabase, Name: databaseName})
 
 		createUserSQL := fmt.Sprintf("CREATE USER %s IDENTIFIED BY %s", userRef, quotedPassword)
 		if _, err := b.adminConn.ExecContext(ctx, createUserSQL); err != nil {
-			return nil, fmt.Errorf("error creating user %s: %w", userName, err)
+			return nil, artifacts, fmt.Errorf("error creating user %s: %w", userName, err)
 		}
-		state.createdUsers = append(state.createdUsers, userRef)
+		artifacts = append(artifacts, Artifact{Type: ArtifactUser, Name: userName})
 
 		// ALL on the new database. A database-level grant in MySQL covers
 		// every current and future table in that database, so this is also
 		// how the base user owns objects later created by derived bindings.
 		grantSQL := fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO %s", quotedDB, userRef)
 		if _, err := b.adminConn.ExecContext(ctx, grantSQL); err != nil {
-			return nil, fmt.Errorf("error granting privileges on database %s: %w", databaseName, err)
+			return nil, artifacts, fmt.Errorf("error granting privileges on database %s: %w", databaseName, err)
 		}
 	} else {
 		// Derived binding: create the user in the base binding's database.
-		// Application privileges are still assigned only by ApplyGrants.
+		// Application privileges are still assigned only by ApplyGrants. The database
+		// belongs to the base binding and is not reported as a created artifact.
 		createUserSQL := fmt.Sprintf("CREATE USER %s IDENTIFIED BY %s", userRef, quotedPassword)
 		if _, err := b.adminConn.ExecContext(ctx, createUserSQL); err != nil {
-			return nil, fmt.Errorf("error creating user %s: %w", userName, err)
+			return nil, artifacts, fmt.Errorf("error creating user %s: %w", userName, err)
 		}
-		state.createdUsers = append(state.createdUsers, userRef)
+		artifacts = append(artifacts, Artifact{Type: ArtifactUser, Name: userName})
 
 		// Let the derived account select the database so negative permission
 		// checks fail on the intended table/DDL privilege instead of during
@@ -265,17 +203,17 @@ func (b *MysqlServiceBinding) GenerateAccount(ctx context.Context, bindingId, bi
 		// privilege and keep full:* grants from revoking it.
 		grantUsageSQL := fmt.Sprintf("GRANT SHOW VIEW ON %s.* TO %s", quotedDB, userRef)
 		if _, err := b.adminConn.ExecContext(ctx, grantUsageSQL); err != nil {
-			return nil, fmt.Errorf("error granting baseline privileges on database %s: %w", databaseName, err)
+			return nil, artifacts, fmt.Errorf("error granting baseline privileges on database %s: %w", databaseName, err)
 		}
 	}
 
 	accountDirectURL, err := buildMysqlAccountURL(b.serviceConfig["url"], userName, password, databaseName, "")
 	if err != nil {
-		return nil, fmt.Errorf("error building account url: %w", err)
+		return nil, artifacts, fmt.Errorf("error building account url: %w", err)
 	}
 	accountURL, err := buildMysqlAccountURL(b.serviceConfig["url"], userName, password, databaseName, b.serviceConfig["binding_hostname"])
 	if err != nil {
-		return nil, fmt.Errorf("error building binding account url: %w", err)
+		return nil, artifacts, fmt.Errorf("error building binding account url: %w", err)
 	}
 
 	return map[string]string{
@@ -284,17 +222,37 @@ func (b *MysqlServiceBinding) GenerateAccount(ctx context.Context, bindingId, bi
 		"database":   databaseName,
 		"user":       userName,
 		"host":       host,
-	}, nil
+	}, artifacts, nil
+}
+
+// DeleteArtifact drops one user or database previously reported as created by
+// GenerateAccount. The caller only passes back artifacts created during the current
+// operation; pre-existing databases are never reported as created and so are never
+// dropped here.
+func (b *MysqlServiceBinding) DeleteArtifact(ctx context.Context, artifact Artifact) error {
+	if artifact.Name == "" {
+		return fmt.Errorf("artifact name is required")
+	}
+
+	switch artifact.Type {
+	case ArtifactUser:
+		if _, err := b.adminConn.ExecContext(ctx, "DROP USER IF EXISTS "+mysqlUserRef(artifact.Name, b.hostPattern)); err != nil {
+			return fmt.Errorf("error dropping user %s: %w", artifact.Name, err)
+		}
+	case ArtifactDatabase:
+		if _, err := b.adminConn.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteMysqlIdent(artifact.Name)); err != nil {
+			return fmt.Errorf("error dropping database %s: %w", artifact.Name, err)
+		}
+	default:
+		return fmt.Errorf("unsupported mysql artifact type %s", artifact.Type)
+	}
+	return nil
 }
 
 func (b *MysqlServiceBinding) ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata types.BindingMetadata,
 	derivedFromMetadata types.BindingMetadata, reapplyAll bool) ([]types.BindingGrant, error) {
 	if err := verifyKeys(slices.Collect(maps.Keys(bindingMetadata.Config)), []string{}, []string{}); err != nil {
 		return nil, err
-	}
-
-	if _, ok := ctx.Value(MYSQL_TX_STATE_KEY).(*mysqlTxState); !ok {
-		return nil, fmt.Errorf("transaction state not found in context")
 	}
 
 	grantsProcessed, err := b.processGrants(ctx, account["user"], account["host"], account["database"], bindingMetadata, reapplyAll)
