@@ -165,6 +165,7 @@ OPTIONS:
    --approve, -a               Approve the app permissions (default: false)
    --reload value, -r value    Which apps to reload: none, updated, matched
    --promote, -p               Promote changes from stage to prod (default: false)
+   --verify                    Verify reload by reloading app containers (default: false)
    --clobber                   Force update app config, overwriting non-declarative changes (default: false)
    --force-reload, -f          Force reload even if there is no new commit (default: false)
    --dry-run                   Verify command but don't commit any changes (default: false)
@@ -177,9 +178,16 @@ By default, changes are applied to the stage app. Add the `--promote` option to 
 
 The `--reload` option controls whether new source code is loaded for apps during the apply operation. Setting it to `none` means no apps are reloaded, `updated` means apps which have a config update are reloaded. `matched` (the default) means all apps matched by the app glob are reloaded, even if there is no config update.
 
-Use the top-level `--verify` option to verify reloads for every matched app. To verify specific apps in a declarative apply file, set `verify=True` on those app definitions. When any apply verification runs successfully, OpenRun retries pending service binding grants for bindings in the current apply file after the app reload, so grants for tables created during startup can be applied. Grants already recorded in `grants_applied` are not retried.
+Use the top-level `--verify` option to verify reloads for every matched app. Verification starts the reloaded app container before the metadata transaction is committed. If verification fails for any app, the apply operation fails and the changes are reverted. To verify specific apps in a declarative apply file, set `verify=True` on those app definitions:
 
-By default, changes are applied as a three way merge. The old config and new config are compared against the live config. If there are changes between old and new declarative config, those changes are applied. Changes done imperatively are not overwritten. Using the `--force` option will overwrite any changes applied imperatively through the CLI or UI. The new declarative config overwrites any existing state when `--force` is used.
+```python {filename="apps.ace"}
+app("/todo/admin", "github.com/example/todo", bindings=["/todo-data/admin"], verify=True)
+app("/todo/app", "github.com/example/todo", bindings=["/todo-data/app"])
+```
+
+When any apply verification runs successfully, OpenRun retries pending service binding grants for bindings in the current apply file after the app reload, so grants for tables created during startup can be applied. Grants already recorded in `grants_applied` are not retried.
+
+By default, changes are applied as a three way merge. The old config and new config are compared against the live config. If there are changes between old and new declarative config, those changes are applied. Changes done imperatively are not overwritten. Using the `--clobber` option will overwrite any changes applied imperatively through the CLI or UI. The new declarative config overwrites any existing state when `--clobber` is used.
 
 If `--dev` option is specified for the apply, the apps are created in dev mode. For apps with source path pointing to git, a local source folder is created under `$OPENRUN_HOME/app_src`. This allows for easy zero-config dev environment setup.
 
@@ -255,6 +263,7 @@ USAGE:
      Create scheduled sync, reloading apps with code changes: openrun sync schedule ./app.ace
      Create scheduled sync, reloading only apps with a config change: openrun sync schedule --reload=updated github.com/openrundev/apps/apps.ace
      Create scheduled sync, promoting changes: openrun sync schedule --promote --approve github.com/openrundev/apps/apps.ace
+     Create scheduled sync, verifying reload before promoting changes: openrun sync schedule --verify --promote --approve github.com/openrundev/apps/apps.ace
      Create scheduled sync, overwriting changes: openrun sync schedule --promote --clobber github.com/openrundev/apps/apps.ace
 
 
@@ -265,13 +274,14 @@ OPTIONS:
    --reload value, -r value    Which apps to reload: none, updated, matched
    --promote, -p               Promote changes from stage to prod (default: false)
    --minutes value, -s value   Schedule sync for every N minutes (default: 0)
+   --verify                    Verify reload by reloading app containers (default: false)
    --clobber                   Force update app config, overwriting non-declarative changes (default: false)
    --force-reload, -f          Force reload even if there are no new commits (default: false)
    --dry-run                   Verify command but don't commit any changes (default: false)
    --help, -h                  show help
 ```
 
-Scheduled sync takes all the same options as the `apply` command. The apply is done automatically by OpenRun on schedule.
+Scheduled sync takes all the same options as the `apply` command except `--dev` and `--commit`. The apply is done automatically by OpenRun on schedule. If `--verify` is set on a scheduled sync, each sync run verifies app reloads before promoting changes.
 
 Use `openrun sync list` to list all jobs and `openrun sync delete <sync_id>` to delete a sync job.
 

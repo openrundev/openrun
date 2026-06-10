@@ -65,6 +65,14 @@ Delete a service with:
 openrun service delete postgres/main
 ```
 
+## Hostname Mapping Basics
+
+Service connection URLs are used in two different places: OpenRun uses the admin URL to create and manage binding accounts, and app containers use generated account URLs to connect at runtime. These hostnames can be different.
+
+Generated binding accounts include both `url` and `url_direct`. `url` is intended for app containers and can replace the service URL hostname using the service config key `binding_hostname`. `url_direct` keeps the original service URL hostname and is used by OpenRun commands such as `binding run-command`.
+
+This matters for local database services. If a Postgres or MySQL service URL points at `localhost` or `127.0.0.1`, app containers usually cannot use that hostname to reach the host database. Outside Kubernetes, OpenRun automatically maps those local hostnames to a container-reachable hostname. Docker uses `host.docker.internal`; other local container runtimes use `host.containers.internal`. Set `binding_hostname` explicitly to override that value, or set `binding_hostname=disable` to keep the service URL hostname unchanged.
+
 ## Staging Services
 
 A service can specify a separate staging service. The staging service has to be of the same service type. When a binding is created, OpenRun creates the staged account using the staging service and the prod account using the main service. Create the staging service first, then reference it from the main service:
@@ -194,7 +202,7 @@ This updates staging. Add `--promote` to update prod in the same command.
 
 ## Binding Source Permissions
 
-Apps can only use bindings whose source is allowed by the app metadata (or at the system level in `openrun.toml`). The `--bind-perm` option records the allowed binding sources for an app. If `--approve` is also used, the requested binding source permissions are copied into the approved list.
+Apps can only use bindings whose source is allowed by the app metadata or by the system-level `permissions.binding_source_perms` setting in `openrun.toml`. The `--bind-perm` option records the binding sources an app is requesting permission to use. If `--approve` is also used during app creation, the requested binding source permissions are copied into the app's approved list.
 
 ```shell
 openrun app create \
@@ -203,8 +211,11 @@ openrun app create \
   github.com/example/reporting-app \
   /reporting
 
-openrun app update bind-perm --approve postgres/main /reporting
+openrun app update bind-perm postgres/main /reporting
+openrun app approve --promote /reporting
 ```
+
+Runtime binding access is checked against the approved binding source permissions. Updating `bind-perm` on an existing app stages the requested source list, but it does not approve it. Run `openrun app approve` after the update, or use `openrun apply --approve` for declarative updates, so the new binding sources are approved before the app uses them.
 
 By default at the system level, bindings are allowed to the default postgres and mysql services. This can be configured by updating `openrun.toml`:
 
@@ -226,11 +237,13 @@ app(
 
 ## Auto Bindings
 
-When the value passed to `--bind` starts with `/`, OpenRun treats it as an existing binding path. When it does not start with `/`, OpenRun treats it as a service source and creates a base binding automatically.
+When the value passed to `--bind` starts with `/`, OpenRun treats it as an existing binding path. When it does not start with `/`, OpenRun treats it as a service source and creates a base binding automatically if the binding does not already exist.
 
 ```shell
 openrun app create \
   --bind postgres/main \
+  --bind-perm postgres/main \
+  --approve \
   github.com/example/reporting-app \
   /reporting
 ```
@@ -291,9 +304,9 @@ With `--promote`, apply promotes binding metadata after updating staged metadata
 
 Postgres services require `url`. They also support `binding_hostname`.
 
-| Key                | Required | Description                                                                                      |
-| :----------------- | :------- | :----------------------------------------------------------------------------------------------- |
-| `url`              | Yes      | Admin Postgres connection URL                                                                    |
+| Key                | Required | Description                                                                                                                                                                                                                                                                                                                 |
+| :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`              | Yes      | Admin Postgres connection URL                                                                                                                                                                                                                                                                                               |
 | `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs. `url_direct` keeps the original service URL hostname. If omitted for a `localhost` or `127.0.0.1` service URL outside Kubernetes, OpenRun automatically uses a container-reachable host name. Set to `disable` to keep `url` unchanged and skip automatic mapping |
 
 For example:
@@ -343,10 +356,10 @@ the grant for that run. Skipped grants are applied on the next update/apply run.
 
 MySQL services require `url`. They also support `host_pattern` and `binding_hostname`.
 
-| Key                | Required | Description                                                                                      |
-| :----------------- | :------- | :----------------------------------------------------------------------------------------------- |
-| `url`              | Yes      | Admin MySQL URL                                                                                  |
-| `host_pattern`     | No       | Host part for generated MySQL users. Defaults to `%`                                              |
+| Key                | Required | Description                                                                                                                                                                                                                                                                                                                 |
+| :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`              | Yes      | Admin MySQL URL                                                                                                                                                                                                                                                                                                             |
+| `host_pattern`     | No       | Host part for generated MySQL users. Defaults to `%`                                                                                                                                                                                                                                                                        |
 | `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs. `url_direct` keeps the original service URL hostname. If omitted for a `localhost` or `127.0.0.1` service URL outside Kubernetes, OpenRun automatically uses a container-reachable host name. Set to `disable` to keep `url` unchanged and skip automatic mapping |
 
 For example:

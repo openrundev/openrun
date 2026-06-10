@@ -93,6 +93,14 @@ If the application code change requires new permissions, the reload operation wi
 
 To do the reload, approval and promotion is one step, do `openrun app reload --approve --promote example.com:/`.
 
+Add `--verify` to check that the reloaded app container starts successfully before promotion:
+
+```sh
+openrun app reload --verify --promote example.com:/
+```
+
+For production apps, reload updates the staging app first. With `--verify`, OpenRun reloads the staging container during verification. If `--promote` is also set, the prod container is verified before promotion completes. If verification fails for any matched app, the reload operation fails and the staged changes are not promoted. `--dry-run` does not start containers, so verification is skipped in dry-run mode.
+
 ## GitHub Reload
 
 The rules for fetching source code from local disk and GitHub are:
