@@ -1,0 +1,32 @@
+# https://d2lang.com diagram. Use make to generate SVG.
+
+direction: right
+
+service: {
+  label: "Service: Postgres instance\n(admin credentials)"
+  shape: rectangle
+  style: {stroke-width: 2}
+}
+
+bindings: {
+  label: "Bindings"
+  base: "Base Binding\n/todo-data/admin\nnew schema + role,\nfull access"
+  app: "Derived Binding\n/todo-data/app\ngrants: read:*, full:todo"
+  view: "Derived Binding\n/todo-data/view\ngrants: read:*"
+
+  base -> app: "same schema,\nunique role"
+  base -> view: "same schema,\nunique role"
+}
+
+apps: {
+  label: "Apps"
+  admin: "App /todo/admin\nfull access to schema"
+  todo: "App /todo/app\nread all tables,\nwrite todo table"
+  view: "App /todo/view\nread-only"
+}
+
+service -> bindings.base: "admin creds create\nschema and roles"
+
+bindings.base -> apps.admin: "creds injected\ninto app ENV"
+bindings.app -> apps.todo: "creds injected\ninto app ENV"
+bindings.view -> apps.view: "creds injected\ninto app ENV"

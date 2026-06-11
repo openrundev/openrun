@@ -30,6 +30,10 @@ There is a one-time cost of initially setting up the service. After that, each n
 
 See the [example](https://github.com/openrundev/openrun/blob/main/examples/todo.star) for a sample declaration where two apps are created, each gets its own unique database/schema.
 
+<picture class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
+  <img alt="Base binding layout: a service with admin credentials, two base bindings each creating an isolated schema and role, and two apps which get their credentials through the ENV" src="/d2/base_binding.svg">
+</picture>
+
 ## Staging Environment
 
 OpenRun apps come with a [staging app]({{< ref "docs/applications/lifecycle/#staging-apps" >}}). Since the database credentials are managed by OpenRun, OpenRun automatically ensures that the staging apps get a separate database/schema. No additional work is required for this. By default, the staging environment is on the same database instance as production. At the service level, it is possible to set up a [staging service]({{< ref "/docs/applications/servicebindings/#staging-services" >}}). If this is done, staging environments for that service are on a separate database instance, ensuring that there is performance isolation between staging and production.
@@ -46,6 +50,10 @@ A more interesting use case of this approach is when multiple apps can access th
 Authorization functionality is generally some of the more difficult code to implement and verify. Enforcing privileges at the database layer has the advantage that you get a second level of correctness checks.
 
 See the [example](https://github.com/openrundev/openrun/blob/main/examples/todo_derived.star) for a sample declaration where three apps are created. The admin app has full access to a schema. The todo app has full access to one table and read access to another. A third view app, which shares the source code with the todo app, has read-only access to both tables.
+
+<picture class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
+  <img alt="Service binding layout: a service with admin credentials, a base binding which creates the schema and role, derived bindings which share the schema with unique roles, and the apps which get the credentials through their ENV" src="/d2/service_binding.svg">
+</picture>
 
 ## Row-Level Security
 
