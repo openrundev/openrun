@@ -53,8 +53,8 @@ default = "system"
 displayToggle = true
 
 [params.banner]
-key = "announcement-kubernetes"
-message = "📌 OpenRun now enables easy app deployments to Kubernetes. [Learn more](https://openrun.dev/docs/container/kubernetes/)."
+key = "announcement-service-bindings"
+message = "📌 Provide isolated databases for apps with [Service Bindings](https://openrun.dev/blog/service-binding)."
 
 [params.page.contextMenu]
 enable = true
