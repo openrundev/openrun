@@ -11,6 +11,7 @@ TAG :=
 .PHONY: help install-d2 update-diagrams
 
 DIAGRAMS := $(wildcard ./static/d2/*.d2)
+ARTICLE_HEADER_SIZE := 744x400
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -21,4 +22,6 @@ install-d2: ## Install d2
 update-diagrams: ## Update diagrams
 > @for d in $(DIAGRAMS); do \
 > d2 --layout elk --theme 104 --dark-theme 201 "$$d"; \
+> d2 --layout elk --theme 104 "$$d" "$${d%.d2}.png"; \
+> magick "$${d%.d2}.png" -resize '$(ARTICLE_HEADER_SIZE)' -background white -gravity center -extent '$(ARTICLE_HEADER_SIZE)' -alpha remove -alpha off -strip -define png:compression-level=9 "$${d%.d2}_small.png"; \
 > done
