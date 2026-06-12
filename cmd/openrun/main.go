@@ -215,7 +215,7 @@ func main() {
 		},
 	}
 
-	if err := app.Run(os.Args); err != nil {
+	if err := app.Run(normalizeInterspersedFlags(app, os.Args)); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s", err) //nolint:errcheck
 		os.Exit(1)
 	}

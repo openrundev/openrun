@@ -8,7 +8,7 @@ config:
 tests:
   # Setup: create the source service used by all bindings below
   binding0001:
-    command: ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/testbind
+    command: ../openrun service create postgres/testbind --config url=${TEST_POSTGRES_URL}
     stdout: "Service postgres/testbind created"
     exit-code: 0
 
@@ -48,7 +48,7 @@ tests:
 
   # Create with config key=value entries
   binding0020:
-    command: ../openrun binding create --config inherit_default=false postgres/testbind /apps/b2
+    command: ../openrun binding create postgres/testbind /apps/b2 --config inherit_default=false
     stdout: "Binding /apps/b2 created"
 
   binding0021: # config inherit_default stored in metadata
@@ -65,7 +65,7 @@ tests:
 
   # Create with --config
   binding0030:
-    command: ../openrun binding create --config inherit_default=true postgres/testbind /apps/b3
+    command: ../openrun binding create postgres/testbind /apps/b3 --config inherit_default=true
     stdout: "Binding /apps/b3 created"
 
   binding0031: # string from config
@@ -106,7 +106,7 @@ tests:
 
   # Later --config entries override earlier entries
   binding0040:
-    command: ../openrun binding create --config inherit_default=true --config inherit_default=false postgres/testbind /apps/b4
+    command: ../openrun binding create postgres/testbind /apps/b4 --config inherit_default=true --config inherit_default=false
     stdout: "Binding /apps/b4 created"
 
   binding0041: # later config overrode earlier inherit_default
@@ -122,7 +122,7 @@ tests:
     stdout: "1"
 
   binding0044: # disable binding hostname prevents automatic localhost mapping
-    command: ../openrun service create --config url=${TEST_POSTGRES_URL} --config binding_hostname=disable postgres/testbind_disable
+    command: ../openrun service create postgres/testbind_disable --config url=${TEST_POSTGRES_URL} --config binding_hostname=disable
     stdout: "Service postgres/testbind_disable created"
 
   binding0044a:
@@ -197,7 +197,7 @@ tests:
 
   # Update: grants on derived bindings
   binding0060:
-    command: ../openrun binding create --grant "read:*" /apps/b1 /apps/b6
+    command: ../openrun binding create /apps/b1 /apps/b6 --grant "read:*"
     stdout: "Binding /apps/b6 created"
 
   binding0061: # derived binding source is the base binding path
@@ -213,7 +213,7 @@ tests:
     stdout: "read:*"
 
   binding0064: # add a grant
-    command: ../openrun binding update --add-grant "create:*" /apps/b6
+    command: ../openrun binding update /apps/b6 --add-grant "create:*"
     stdout: "Binding /apps/b6 updated"
 
   binding0065: # active metadata is unchanged until promote
