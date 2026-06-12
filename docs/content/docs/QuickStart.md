@@ -33,7 +33,7 @@ brew services start openrun
 To install on Windows, run
 
 ```
-powershell -Command "iwr https://openrun.dev/install.ps1 -useb | iex"
+powershell -Command "irm https://openrun.dev/install.ps1 | iex"
 ```
 
 Start a new command window (to get the updated env) and run `openrun server start` to start the OpenRun service.

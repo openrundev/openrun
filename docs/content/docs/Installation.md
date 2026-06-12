@@ -39,7 +39,7 @@ See [start the service]({{< ref "#start-the-service" >}}) for details.
 To install the OpenRun application on Windows, run:
 
 ```powershell
-powershell -Command "iwr https://openrun.dev/install.ps1 -useb | iex"
+powershell -Command "irm https://openrun.dev/install.ps1 | iex"
 ```
 
 The app is installed under `$env:OPENRUN_HOME`, defaulting to `$HOME\openrun`. Note down the generated password for the admin user. Open a new terminal to get the updated environment values, then run:

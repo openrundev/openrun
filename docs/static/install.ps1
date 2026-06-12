@@ -29,9 +29,8 @@ $OpenRunUri = "https://github.com/openrundev/openrun/releases/download/$Version/
 
 if ( $Version -eq "latest") {
   try {
-    $Response = Invoke-WebRequest "https://api.github.com/repos/openrundev/openrun/releases/$Version"
-    $jsonResponse = $Response.Content | ConvertFrom-Json
-    $Version = $jsonResponse.tag_name
+    $Response = Invoke-RestMethod "https://api.github.com/repos/openrundev/openrun/releases/$Version"
+    $Version = $Response.tag_name
     $OpenRunUri = "https://github.com/openrundev/openrun/releases/download/$Version/openrun-$Version-windows-amd64.zip"
   }
   catch {
@@ -102,4 +101,3 @@ if (Test-Path -Path $OpenRunConfig -PathType Leaf) {
 Write-Output "openrun $Version was installed successfully to $OpenRunExe."
 Write-Output "Open new command shell and run 'openrun' to get started."
 Write-Output "See https://openrun.dev/docs/quickstart/ for quick start guide."
-
