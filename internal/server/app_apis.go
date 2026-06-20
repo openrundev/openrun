@@ -239,10 +239,6 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 		appEntry.Metadata.SpecFiles = &tf
 	}
 
-	if err := s.db.CreateApp(ctx, tx, appEntry); err != nil {
-		return nil, err
-	}
-
 	// Create the stage app entry if not dev
 	stageAppEntry := *appEntry
 	workEntry := appEntry
@@ -250,8 +246,13 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 		stageAppEntry.Path = appEntry.Path + types.STAGE_SUFFIX
 		stageAppEntry.Id = types.AppId(types.ID_PREFIX_APP_STAGE + string(appEntry.Id)[len(types.ID_PREFIX_APP_PROD):])
 		stageAppEntry.MainApp = appEntry.Id
+		stageAppEntry.LinkedAppPath = appEntry.Path
+		appEntry.LinkedAppPath = stageAppEntry.Path
 		stageAppEntry.Metadata.VersionMetadata.Version = 1
 
+		if err := s.db.CreateApp(ctx, tx, appEntry); err != nil {
+			return nil, err
+		}
 		if tx.Tx != nil {
 			// Save the apply info in the app metadata (if called from apply context)
 			applyInfoBytes, err := json.Marshal(applyInfo)
@@ -264,6 +265,10 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 			return nil, err
 		}
 		workEntry = &stageAppEntry // Work on the stage app for prod apps, it will be promoted later
+	} else {
+		if err := s.db.CreateApp(ctx, tx, appEntry); err != nil {
+			return nil, err
+		}
 	}
 
 	if system.IsGit(workEntry.SourceUrl) {
@@ -1306,6 +1311,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	previewAppEntry := *mainAppEntry
 	previewAppEntry.Path = mainAppEntry.Path + types.PREVIEW_SUFFIX + "_" + commitId
 	previewAppEntry.MainApp = mainAppEntry.Id
+	previewAppEntry.LinkedAppPath = mainAppEntry.Path
 	previewAppEntry.Id = types.AppId(types.ID_PREFIX_APP_PREVIEW + string(mainAppEntry.Id)[len(types.ID_PREFIX_APP_PROD):])
 	previewAppEntry.UserID = system.GetContextUserId(ctx)
 

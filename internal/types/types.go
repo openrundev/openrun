@@ -492,10 +492,13 @@ type VersionMetadata struct {
 
 // AppEntry is the application configuration in the DB
 type AppEntry struct {
-	Id         AppId       `json:"id"`
-	Path       string      `json:"path"`
-	Domain     string      `json:"domain"`
-	MainApp    AppId       `json:"main_app"` // the id of the app that this app is linked to
+	Id            AppId  `json:"id"`
+	Path          string `json:"path"`
+	Domain        string `json:"domain"`
+	MainApp       AppId  `json:"main_app"`        // the id of the app that this app is linked to
+	LinkedAppPath string `json:"linked_app_path"` // the path of the app that this app is linked to
+	// for main app, points to the stage app. For stage app, points to the main app.
+	// For preview apps, points to the base app. Not set for dev apps.
 	SourceUrl  string      `json:"source_url"`
 	IsDev      bool        `json:"is_dev"`
 	UserID     string      `json:"user_id"`

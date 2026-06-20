@@ -5,6 +5,7 @@ package metadata
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net"
@@ -71,17 +72,93 @@ func TestMetadata_InitializationAndNotifications(t *testing.T) {
 	testutil.AssertNoError(t, m.RollbackTransaction(tx))
 }
 
+func TestMetadata_MigrateLinkedAppPathsBackfillsInternalApps(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "metadata.db")
+	db, err := sql.Open("sqlite", dbPath)
+	testutil.AssertNoError(t, err)
+
+	_, err = db.Exec(`create table version (version int, last_upgraded datetime)`)
+	testutil.AssertNoError(t, err)
+	_, err = db.Exec(`insert into version values (11, datetime('now'))`)
+	testutil.AssertNoError(t, err)
+	_, err = db.Exec(`create table apps(id text, path text, domain text, source_url text, is_dev bool, main_app text, user_id text, create_time datetime, update_time datetime, settings json, metadata json, UNIQUE(id), UNIQUE(path, domain))`)
+	testutil.AssertNoError(t, err)
+	_, err = db.Exec(`insert into apps(id, path, domain, source_url, is_dev, main_app, user_id, create_time, update_time, settings, metadata) values
+		('app_prd_1', '/prod', '', 'https://example.com/repo.git', false, '', 'u1', datetime('now'), datetime('now'), '{}', '{}'),
+		('app_prd_abc', '/abc', '', 'https://example.com/repo.git', false, '', 'u1', datetime('now'), datetime('now'), '{}', '{}'),
+		('app_prd_domain_root', '', 'def', 'https://example.com/repo.git', false, '', 'u1', datetime('now'), datetime('now'), '{}', '{}'),
+		('app_prd_domain_abc', '/abc', 'def', 'https://example.com/repo.git', false, '', 'u1', datetime('now'), datetime('now'), '{}', '{}'),
+		('app_dev_1', '/dev', '', '/tmp/dev', true, '', 'u1', datetime('now'), datetime('now'), '{}', '{}'),
+		('app_stg_1', '/prod_cl_stage', '', 'https://example.com/repo.git', false, 'app_prd_1', 'u1', datetime('now'), datetime('now'), '{}', '{}'),
+		('app_pre_1', '/prod_cl_preview_abc123', '', 'https://example.com/repo.git', false, 'app_prd_1', 'u1', datetime('now'), datetime('now'), '{}', '{}'),
+		('app_pre_2', '/legacy_preview', '', 'https://example.com/repo.git', false, 'app_prd_1', 'u1', datetime('now'), datetime('now'), '{}', '{}')`)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, db.Close())
+
+	config := &types.ServerConfig{
+		Metadata: types.MetadataConfig{
+			DBConnection: "sqlite:" + dbPath,
+			AutoUpgrade:  true,
+		},
+	}
+	logger := types.NewLogger(&types.LogConfig{Level: "INFO"})
+	m, err := NewMetadata(logger, config)
+	testutil.AssertNoError(t, err)
+	defer m.db.Close() //nolint:errcheck
+
+	var prodLinkedPath, stageLinkedPath, previewLinkedPath string
+	err = m.db.QueryRow(`select linked_app_path from apps where id = 'app_prd_1'`).Scan(&prodLinkedPath)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "prod linked path", "/prod"+types.STAGE_SUFFIX, prodLinkedPath)
+
+	err = m.db.QueryRow(`select linked_app_path from apps where id = 'app_prd_abc'`).Scan(&prodLinkedPath)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "prod linked path without domain", "/abc"+types.STAGE_SUFFIX, prodLinkedPath)
+
+	err = m.db.QueryRow(`select linked_app_path from apps where id = 'app_prd_domain_root'`).Scan(&prodLinkedPath)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "prod linked path with domain and empty path", "def:/"+types.STAGE_SUFFIX, prodLinkedPath)
+
+	err = m.db.QueryRow(`select linked_app_path from apps where id = 'app_prd_domain_abc'`).Scan(&prodLinkedPath)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "prod linked path with domain", "def:/abc"+types.STAGE_SUFFIX, prodLinkedPath)
+
+	err = m.db.QueryRow(`select linked_app_path from apps where id = 'app_stg_1'`).Scan(&stageLinkedPath)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "stage linked path", "/prod", stageLinkedPath)
+
+	err = m.db.QueryRow(`select linked_app_path from apps where id = 'app_pre_1'`).Scan(&previewLinkedPath)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "preview linked path", "/prod", previewLinkedPath)
+
+	prod, err := m.GetAppEntry(context.Background(), types.CreateAppPathDomain("/prod", ""))
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "prod linked path", "/prod"+types.STAGE_SUFFIX, prod.LinkedAppPath)
+
+	dev, err := m.GetAppEntry(context.Background(), types.CreateAppPathDomain("/dev", ""))
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "dev linked path", "", dev.LinkedAppPath)
+
+	tx, err := m.BeginTransaction(context.Background())
+	testutil.AssertNoError(t, err)
+	linkedApps, err := m.GetLinkedApps(context.Background(), tx, types.AppId("app_prd_1"))
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "linked app count", 3, len(linkedApps))
+	testutil.AssertNoError(t, tx.Rollback())
+}
+
 func TestMetadata_AppLifecycle(t *testing.T) {
 	m, cleanup := setupTestMetadata(t)
 	defer cleanup()
 	ctx := context.Background()
 
 	prod := &types.AppEntry{
-		Id:        types.AppId(types.ID_PREFIX_APP_PROD + "1"),
-		Path:      "/prod",
-		Domain:    "example.com",
-		SourceUrl: "https://example.com/repo.git",
-		UserID:    "u1",
+		Id:            types.AppId(types.ID_PREFIX_APP_PROD + "1"),
+		Path:          "/prod",
+		Domain:        "example.com",
+		LinkedAppPath: "/prod" + types.STAGE_SUFFIX,
+		SourceUrl:     "https://example.com/repo.git",
+		UserID:        "u1",
 		Metadata: types.AppMetadata{
 			Name: "Prod app",
 			VersionMetadata: types.VersionMetadata{
@@ -95,12 +172,13 @@ func TestMetadata_AppLifecycle(t *testing.T) {
 		},
 	}
 	preview := &types.AppEntry{
-		Id:        types.AppId(types.ID_PREFIX_APP_PREVIEW + "1"),
-		Path:      "/preview",
-		Domain:    "example.com",
-		MainApp:   prod.Id,
-		SourceUrl: "https://example.com/repo.git",
-		UserID:    "u2",
+		Id:            types.AppId(types.ID_PREFIX_APP_PREVIEW + "1"),
+		Path:          "/preview",
+		Domain:        "example.com",
+		MainApp:       prod.Id,
+		LinkedAppPath: prod.Path,
+		SourceUrl:     "https://example.com/repo.git",
+		UserID:        "u2",
 		Metadata: types.AppMetadata{
 			Name: "Preview app",
 		},
@@ -134,6 +212,7 @@ func TestMetadata_AppLifecycle(t *testing.T) {
 	gotProd, err := m.GetAppEntry(ctx, types.CreateAppPathDomain(prod.Path, prod.Domain))
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsString(t, "updated source", prod.SourceUrl, gotProd.SourceUrl)
+	testutil.AssertEqualsString(t, "linked app path", prod.LinkedAppPath, gotProd.LinkedAppPath)
 	testutil.AssertEqualsString(t, "updated name", prod.Metadata.Name, gotProd.Metadata.Name)
 	if gotProd.Metadata.SpecFiles == nil {
 		t.Fatal("expected spec files map to be initialized")
@@ -157,6 +236,7 @@ func TestMetadata_AppLifecycle(t *testing.T) {
 	linkedApps, err := m.GetLinkedApps(ctx, tx, prod.Id)
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsInt(t, "linked app count", 1, len(linkedApps))
+	testutil.AssertEqualsString(t, "linked app path", preview.LinkedAppPath, linkedApps[0].LinkedAppPath)
 	testutil.AssertNoError(t, tx.Rollback())
 
 	var versionMetadataJSON string

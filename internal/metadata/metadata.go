@@ -24,7 +24,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 11
+const CURRENT_DB_VERSION = 12
 
 // Metadata is the metadata persistence layer
 type Metadata struct {
@@ -348,6 +348,16 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 	}
 
+	if version < 12 {
+		m.Info().Msg("Upgrading to version 12")
+		if err := m.migrateLinkedAppPaths(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `update version set version=12, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -462,9 +472,9 @@ func (m *Metadata) CreateApp(ctx context.Context, tx types.Transaction, app *typ
 	}
 
 	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into apps(id, path, domain, main_app, source_url, is_dev, user_id, create_time, update_time, settings, metadata)`+
-			` values(?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+", "+system.FuncNow(m.dbType)+", ?, ?)"),
-		app.Id, app.Path, app.Domain, app.MainApp, app.SourceUrl, app.IsDev, app.UserID, settingsJson, metadataJson)
+		`INSERT into apps(id, path, domain, main_app, linked_app_path, source_url, is_dev, user_id, create_time, update_time, settings, metadata)`+
+			` values(?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+", "+system.FuncNow(m.dbType)+", ?, ?)"),
+		app.Id, app.Path, app.Domain, app.MainApp, app.LinkedAppPath, app.SourceUrl, app.IsDev, app.UserID, settingsJson, metadataJson)
 	if err != nil {
 		return fmt.Errorf("error inserting app: %w", err)
 	}
@@ -481,7 +491,7 @@ func (m *Metadata) GetAppEntry(ctx context.Context, pathDomain types.AppPathDoma
 }
 
 func (m *Metadata) GetAppEntryTx(ctx context.Context, tx types.Transaction, pathDomain types.AppPathDomain) (*types.AppEntry, error) {
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select id, path, domain, main_app, source_url, is_dev, user_id, create_time, update_time, settings, metadata from apps where path = ? and domain = ?`))
+	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select id, path, domain, main_app, linked_app_path, source_url, is_dev, user_id, create_time, update_time, settings, metadata from apps where path = ? and domain = ?`))
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
@@ -489,14 +499,17 @@ func (m *Metadata) GetAppEntryTx(ctx context.Context, tx types.Transaction, path
 
 	row := stmt.QueryRow(pathDomain.Path, pathDomain.Domain)
 	var app types.AppEntry
-	var settings, metadata sql.NullString
-	err = row.Scan(&app.Id, &app.Path, &app.Domain, &app.MainApp, &app.SourceUrl, &app.IsDev, &app.UserID, &app.CreateTime, &app.UpdateTime, &settings, &metadata)
+	var linkedAppPath, settings, metadata sql.NullString
+	err = row.Scan(&app.Id, &app.Path, &app.Domain, &app.MainApp, &linkedAppPath, &app.SourceUrl, &app.IsDev, &app.UserID, &app.CreateTime, &app.UpdateTime, &settings, &metadata)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, errors.New("app not found")
 		}
 		m.Error().Err(err).Msgf("query %s %s", pathDomain.Path, pathDomain.Domain)
 		return nil, fmt.Errorf("error querying app: %w", err)
+	}
+	if linkedAppPath.Valid {
+		app.LinkedAppPath = linkedAppPath.String
 	}
 
 	if metadata.Valid && metadata.String != "" {
@@ -638,7 +651,7 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 
 // GetLinkedApps gets all the apps linked to the given main app (staging and preview apps)
 func (m *Metadata) GetLinkedApps(ctx context.Context, tx types.Transaction, mainAppId types.AppId) ([]*types.AppEntry, error) {
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select id, path, domain, main_app, source_url, is_dev, user_id, create_time, update_time, settings, metadata from apps where main_app = ?`))
+	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select id, path, domain, main_app, linked_app_path, source_url, is_dev, user_id, create_time, update_time, settings, metadata from apps where main_app = ?`))
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
@@ -652,14 +665,17 @@ func (m *Metadata) GetLinkedApps(ctx context.Context, tx types.Transaction, main
 	defer rows.Close() //nolint:errcheck
 	for rows.Next() {
 		var app types.AppEntry
-		var settings, metadata sql.NullString
-		err = rows.Scan(&app.Id, &app.Path, &app.Domain, &app.MainApp, &app.SourceUrl, &app.IsDev, &app.UserID, &app.CreateTime, &app.UpdateTime, &settings, &metadata)
+		var linkedAppPath, settings, metadata sql.NullString
+		err = rows.Scan(&app.Id, &app.Path, &app.Domain, &app.MainApp, &linkedAppPath, &app.SourceUrl, &app.IsDev, &app.UserID, &app.CreateTime, &app.UpdateTime, &settings, &metadata)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return apps, nil // No linked apps found, return empty slice
 			}
 			m.Error().Err(err).Msgf("query %s", mainAppId)
 			return nil, fmt.Errorf("error querying appy: %w", err)
+		}
+		if linkedAppPath.Valid {
+			app.LinkedAppPath = linkedAppPath.String
 		}
 
 		if metadata.Valid && metadata.String != "" {
@@ -1443,6 +1459,79 @@ func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, sourc
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
 	}
 	return bindings, nil
+}
+
+func (m *Metadata) migrateLinkedAppPaths(ctx context.Context, tx types.Transaction) error {
+	_, err := tx.ExecContext(ctx, `alter table apps add column linked_app_path text`)
+	if err != nil {
+		return fmt.Errorf("error migrating linked app paths: %w", err)
+	}
+
+	rows, err := tx.QueryContext(ctx, `select id, path, domain from apps`)
+	if err != nil {
+		return fmt.Errorf("error querying apps for linked path migration: %w", err)
+	}
+	rowsClosed := false
+	defer func() {
+		if !rowsClosed {
+			_ = rows.Close()
+		}
+	}()
+
+	linkedAppPaths := make(map[types.AppId]string)
+	for rows.Next() {
+		var id types.AppId
+		var path, domain string
+		if err := rows.Scan(&id, &path, &domain); err != nil {
+			return fmt.Errorf("error scanning app for linked path migration: %w", err)
+		}
+
+		switch {
+		case strings.HasPrefix(string(id), types.ID_PREFIX_APP_PROD):
+			linkedAppPaths[id] = formatLinkedAppMigrationPath(domain, stagePathForMigration(path))
+		case strings.HasPrefix(string(id), types.ID_PREFIX_APP_STAGE) && strings.HasSuffix(path, types.STAGE_SUFFIX):
+			prodPath := strings.TrimSuffix(path, types.STAGE_SUFFIX)
+			linkedAppPaths[id] = formatLinkedAppMigrationPath(domain, prodPath)
+		case strings.HasPrefix(string(id), types.ID_PREFIX_APP_PREVIEW):
+			if previewIndex := strings.Index(path, types.PREVIEW_SUFFIX); previewIndex >= 0 {
+				linkedAppPaths[id] = formatLinkedAppMigrationPath(domain, path[:previewIndex])
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating apps for linked path migration: %w", err)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return fmt.Errorf("error closing app rows for linked path migration: %w", closeErr)
+	}
+	rowsClosed = true
+
+	updateStmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `update apps set linked_app_path = ? where id = ?`))
+	if err != nil {
+		return fmt.Errorf("error preparing linked path update: %w", err)
+	}
+	defer updateStmt.Close() //nolint:errcheck
+
+	for id, linkedAppPath := range linkedAppPaths {
+		if _, err := updateStmt.ExecContext(ctx, linkedAppPath, id); err != nil {
+			return fmt.Errorf("error updating linked app path for %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func stagePathForMigration(path string) string {
+	if path == "" {
+		path = "/"
+	}
+	return path + types.STAGE_SUFFIX
+}
+
+func formatLinkedAppMigrationPath(domain, path string) string {
+	if domain == "" {
+		return path
+	}
+	return domain + ":" + path
 }
 
 func toNullTime(t *time.Time) sql.NullTime {
