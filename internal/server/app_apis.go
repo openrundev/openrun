@@ -246,8 +246,8 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 		stageAppEntry.Path = appEntry.Path + types.STAGE_SUFFIX
 		stageAppEntry.Id = types.AppId(types.ID_PREFIX_APP_STAGE + string(appEntry.Id)[len(types.ID_PREFIX_APP_PROD):])
 		stageAppEntry.MainApp = appEntry.Id
-		stageAppEntry.LinkedAppPath = appEntry.Path
-		appEntry.LinkedAppPath = stageAppEntry.Path
+		stageAppEntry.LinkedAppPath = appEntry.AppPathDomain().String()
+		appEntry.LinkedAppPath = stageAppEntry.AppPathDomain().String()
 		stageAppEntry.Metadata.VersionMetadata.Version = 1
 
 		if err := s.db.CreateApp(ctx, tx, appEntry); err != nil {
@@ -988,20 +988,41 @@ func (s *Server) CompleteTransaction(ctx context.Context, tx types.Transaction, 
 }
 
 func (s *Server) getStageApp(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry) (*types.AppEntry, error) {
-	if appEntry.IsDev {
+	if strings.HasPrefix(string(appEntry.Id), types.ID_PREFIX_APP_DEV) {
 		return nil, fmt.Errorf("cannot get stage for dev app %s", appEntry.AppPathDomain())
 	}
-	if strings.HasSuffix(appEntry.Path, types.STAGE_SUFFIX) {
+	if strings.HasPrefix(string(appEntry.Id), types.ID_PREFIX_APP_STAGE) {
 		return nil, fmt.Errorf("app is already a stage app %s", appEntry.AppPathDomain())
 	}
+	if !strings.HasPrefix(string(appEntry.Id), types.ID_PREFIX_APP_PROD) {
+		return nil, fmt.Errorf("cannot get stage for non-prod app %s", appEntry.AppPathDomain())
+	}
 
-	stageAppPath := types.AppPathDomain{Domain: appEntry.Domain, Path: appEntry.Path + types.STAGE_SUFFIX}
+	stageAppPath, err := linkedAppPathDomain(appEntry)
+	if err != nil {
+		return nil, err
+	}
 	stageAppEntry, err := s.db.GetAppEntryTx(ctx, tx, stageAppPath)
 	if err != nil {
 		return nil, err
 	}
 
 	return stageAppEntry, nil
+}
+
+func linkedAppPathDomain(appEntry *types.AppEntry) (types.AppPathDomain, error) {
+	pathDomain, err := parseLinkedAppPathDomain(appEntry.LinkedAppPath)
+	if err != nil {
+		return types.AppPathDomain{}, fmt.Errorf("invalid linked app path for app %s: %w", appEntry.AppPathDomain(), err)
+	}
+	return pathDomain, nil
+}
+
+func parseLinkedAppPathDomain(linkedAppPath string) (types.AppPathDomain, error) {
+	if linkedAppPath == "" {
+		return types.AppPathDomain{}, fmt.Errorf("linked app path is not set")
+	}
+	return parseAppPath(linkedAppPath)
 }
 
 const REPO_FOLDER_SEPERATOR = "//"
@@ -1311,7 +1332,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	previewAppEntry := *mainAppEntry
 	previewAppEntry.Path = mainAppEntry.Path + types.PREVIEW_SUFFIX + "_" + commitId
 	previewAppEntry.MainApp = mainAppEntry.Id
-	previewAppEntry.LinkedAppPath = mainAppEntry.Path
+	previewAppEntry.LinkedAppPath = mainAppEntry.AppPathDomain().String()
 	previewAppEntry.Id = types.AppId(types.ID_PREFIX_APP_PREVIEW + string(mainAppEntry.Id)[len(types.ID_PREFIX_APP_PROD):])
 	previewAppEntry.UserID = system.GetContextUserId(ctx)
 

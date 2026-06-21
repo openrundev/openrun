@@ -586,7 +586,7 @@ func (m *Metadata) GetAppsForDomain(domain string) ([]string, error) {
 }
 
 func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
-	sqlStr := `select domain, path, is_dev, id, main_app, settings, metadata, source_url, update_time from apps`
+	sqlStr := `select domain, path, is_dev, id, main_app, linked_app_path, settings, metadata, source_url, update_time from apps`
 	if !includeInternal {
 		sqlStr += ` where main_app = ''`
 	}
@@ -607,9 +607,9 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 	for rows.Next() {
 		var path, domain, id, mainApp, sourceUrl string
 		var isDev bool
-		var settingsStr, metadataStr sql.NullString
+		var linkedAppPath, settingsStr, metadataStr sql.NullString
 		var updateTime *time.Time
-		err = rows.Scan(&domain, &path, &isDev, &id, &mainApp, &settingsStr, &metadataStr, &sourceUrl, &updateTime)
+		err = rows.Scan(&domain, &path, &isDev, &id, &mainApp, &linkedAppPath, &settingsStr, &metadataStr, &sourceUrl, &updateTime)
 		if err != nil {
 			return nil, fmt.Errorf("error querying next app: %w", err)
 		}
@@ -630,6 +630,10 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 				return nil, fmt.Errorf("error unmarshalling settings: %w", err)
 			}
 		}
+		linkedPath := ""
+		if linkedAppPath.Valid {
+			linkedPath = linkedAppPath.String
+		}
 
 		retainVersions := m.config.AppConfig.FS.RetainVersions
 		if val, ok := metadata.AppConfig["fs.retain_versions"]; ok {
@@ -639,7 +643,7 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 		}
 
 		apps = append(apps, types.CreateAppInfo(types.AppId(id), metadata.Name, path, domain, isDev,
-			types.AppId(mainApp), metadata.AuthnType, sourceUrl, metadata.Spec,
+			types.AppId(mainApp), linkedPath, metadata.AuthnType, sourceUrl, metadata.Spec,
 			metadata.VersionMetadata.Version, metadata.VersionMetadata.GitCommit, metadata.VersionMetadata.GitMessage,
 			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"]), *updateTime, retainVersions))
 	}

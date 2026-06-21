@@ -101,17 +101,15 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		if path != "" {
 			// If path glob is specified, check if app matches. If internal apps are to be included,
 			// check if main app matches
-			appPath := app.Path
+			appPathDomain := app.AppPathDomain
 			if include_internal && app.MainApp != "" {
-				appPath = strings.TrimSuffix(appPath, types.STAGE_SUFFIX)
-				appPath = strings.TrimSuffix(appPath, types.PREVIEW_SUFFIX)
-			}
-			tmpPath := types.AppPathDomain{
-				Domain: app.Domain,
-				Path:   appPath,
+				appPathDomain, err = parseLinkedAppPathDomain(app.LinkedAppPath)
+				if err != nil {
+					return nil, err
+				}
 			}
 
-			match, err := rbac.MatchGlob(path.GoString(), tmpPath)
+			match, err := rbac.MatchGlob(path.GoString(), appPathDomain)
 			if err != nil {
 				return nil, err
 			}
@@ -136,25 +134,40 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		v.SetKey(starlark.String("path"), starlark.String(app.String()))
 		pathSplit := starlark.List{}
 		pathSplitGlob := starlark.List{}
-		appDomain := ""
 		if app.Domain != "" {
 			pathSplit.Append(starlark.String(app.Domain))
-			pathSplitGlob.Append(starlark.String(app.Domain + ":**"))
-			appDomain = app.Domain + ":"
 		}
-		appPath := ""
-		splitPath := strings.Split(app.Path, "/")
-		for i, path := range splitPath {
+		for _, path := range strings.Split(app.Path, "/") {
 			if path != "" {
 				pathSplit.Append(starlark.String("/" + path)) //nolint:errcheck
+			}
+		}
+
+		globDomain := app.Domain
+		globPath := app.Path
+		if app.MainApp != "" {
+			linkedPathDomain, err := parseLinkedAppPathDomain(app.LinkedAppPath)
+			if err != nil {
+				return nil, err
+			}
+			globDomain = linkedPathDomain.Domain
+			globPath = linkedPathDomain.Path
+		}
+		globDomainPrefix := ""
+		if globDomain != "" {
+			pathSplitGlob.Append(starlark.String(globDomain + ":**"))
+			globDomainPrefix = globDomain + ":"
+		}
+		appPath := ""
+		splitPath := strings.Split(globPath, "/")
+		for i, path := range splitPath {
+			if path != "" {
 				appPath += "/" + path
 				if i == len(splitPath)-1 {
-					appPath = strings.TrimSuffix(appPath, types.STAGE_SUFFIX)
-					appPath = strings.TrimSuffix(appPath, types.PREVIEW_SUFFIX)
 					// Last path, no glob
-					pathSplitGlob.Append(starlark.String(appDomain + appPath)) //nolint:errcheck
+					pathSplitGlob.Append(starlark.String(globDomainPrefix + appPath)) //nolint:errcheck
 				} else {
-					pathSplitGlob.Append(starlark.String(appDomain + appPath + "/**")) //nolint:errcheck
+					pathSplitGlob.Append(starlark.String(globDomainPrefix + appPath + "/**")) //nolint:errcheck
 				}
 			}
 		}

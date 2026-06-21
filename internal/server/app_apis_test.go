@@ -191,6 +191,8 @@ func TestGetAppsDoesNotResolveBindingServices(t *testing.T) {
 			},
 		},
 	}
+	prod.LinkedAppPath = stage.AppPathDomain().String()
+	stage.LinkedAppPath = prod.AppPathDomain().String()
 	if err := db.CreateApp(ctx, tx, prod); err != nil {
 		t.Fatalf("create prod app: %v", err)
 	}

@@ -350,7 +350,7 @@ func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun boo
 
 	result := make([]types.AppPathDomain, 0, len(filteredApps))
 	for _, appInfo := range filteredApps {
-		if appInfo.IsDev {
+		if !strings.HasPrefix(string(appInfo.Id), types.ID_PREFIX_APP_PROD) {
 			// Not a prod app, skip
 			continue
 		}

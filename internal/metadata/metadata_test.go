@@ -176,7 +176,7 @@ func TestMetadata_AppLifecycle(t *testing.T) {
 		Path:          "/preview",
 		Domain:        "example.com",
 		MainApp:       prod.Id,
-		LinkedAppPath: prod.Path,
+		LinkedAppPath: prod.AppPathDomain().String(),
 		SourceUrl:     "https://example.com/repo.git",
 		UserID:        "u2",
 		Metadata: types.AppMetadata{

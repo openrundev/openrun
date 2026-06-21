@@ -414,6 +414,7 @@ type AppInfo struct {
 	Id             AppId
 	IsDev          bool
 	MainApp        AppId
+	LinkedAppPath  string
 	Auth           AppAuthnType
 	SourceUrl      string
 	Spec           AppSpec
@@ -433,7 +434,7 @@ func CreateAppPathDomain(path, domain string) AppPathDomain {
 	}
 }
 
-func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppId,
+func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppId, linkedAppPath string,
 	auth AppAuthnType, sourceUrl string, spec AppSpec,
 	version int, gitSha, gitMessage, branch, starBase string, updatedAt time.Time, retainVersions int) AppInfo {
 	return AppInfo{
@@ -445,6 +446,7 @@ func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppI
 		Id:             id,
 		IsDev:          isDev,
 		MainApp:        mainApp,
+		LinkedAppPath:  linkedAppPath,
 		Auth:           auth,
 		SourceUrl:      sourceUrl,
 		Spec:           spec,

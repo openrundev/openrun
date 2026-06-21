@@ -6,7 +6,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -194,10 +193,15 @@ func (a *AppStore) ClearLinkedApps(pathDomain types.AppPathDomain) error {
 	appPaths := []types.AppPathDomain{}
 	appPaths = append(appPaths, pathDomain)
 
-	// TODO: create audit entry for linked apps
-	linkedAppPrefix := pathDomain.Path + types.INTERNAL_APP_DELIM
 	for key, app := range a.appMap {
-		if app.Domain == pathDomain.Domain && strings.HasPrefix(app.Path, linkedAppPrefix) {
+		if app.LinkedAppPath == "" {
+			continue
+		}
+		linkedPathDomain, err := parseLinkedAppPathDomain(app.LinkedAppPath)
+		if err != nil {
+			return err
+		}
+		if linkedPathDomain == pathDomain {
 			a.clearApp(key)
 			appPaths = append(appPaths, key)
 		}
