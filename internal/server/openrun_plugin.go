@@ -157,6 +157,17 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 				}
 			}
 		}
+		// Stage/preview apps can display internal path breadcrumbs like
+		// /_cl_stage while filtering still targets the linked main app path.
+		if pathSplitGlob.Len() < pathSplit.Len() {
+			filterPath := mainPathDomain.String()
+			if filterPath == "" {
+				filterPath = "/"
+			}
+			for pathSplitGlob.Len() < pathSplit.Len() {
+				pathSplitGlob.Append(starlark.String(filterPath)) //nolint:errcheck
+			}
+		}
 		v.SetKey(starlark.String("path_split"), &pathSplit)
 		v.SetKey(starlark.String("path_split_glob"), &pathSplitGlob)
 		v.SetKey(starlark.String("id"), starlark.String(app.Id))
