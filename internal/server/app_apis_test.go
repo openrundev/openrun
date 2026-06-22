@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -57,6 +58,244 @@ func newAuthRedirectTestApp(authType types.AppAuthnType) *appcore.App {
 				AuthnType: authType,
 			},
 		},
+	}
+}
+
+func TestMainAppPathDomain(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		self          types.AppPathDomain
+		mainApp       types.AppId
+		linkedAppPath string
+		want          types.AppPathDomain
+	}{
+		{
+			name: "prod app returns self",
+			self: types.AppPathDomain{Path: "/app"},
+			want: types.AppPathDomain{Path: "/app"},
+		},
+		{
+			name:          "stage path mode resolves to main",
+			self:          types.AppPathDomain{Path: "/app" + types.STAGE_SUFFIX},
+			mainApp:       types.AppId("app_prd_1"),
+			linkedAppPath: "/app",
+			want:          types.AppPathDomain{Path: "/app"},
+		},
+		{
+			name:          "stage domain mode resolves to main domain",
+			self:          types.AppPathDomain{Domain: "stage.app.example.com", Path: "/"},
+			mainApp:       types.AppId("app_prd_1"),
+			linkedAppPath: "app.example.com:/",
+			want:          types.AppPathDomain{Domain: "app.example.com", Path: "/"},
+		},
+		{
+			name:          "preview resolves to base",
+			self:          types.AppPathDomain{Path: "/app" + types.PREVIEW_SUFFIX + "_abc"},
+			mainApp:       types.AppId("app_pre_1"),
+			linkedAppPath: "/app",
+			want:          types.AppPathDomain{Path: "/app"},
+		},
+		{
+			name:    "legacy fallback trims stage suffix when linked path missing",
+			self:    types.AppPathDomain{Path: "/app" + types.STAGE_SUFFIX},
+			mainApp: types.AppId("app_stg_1"),
+			want:    types.AppPathDomain{Path: "/app"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := mainAppPathDomain(tc.self, tc.mainApp, tc.linkedAppPath)
+			if got != tc.want {
+				t.Fatalf("mainAppPathDomain = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStageAppPathDomain(t *testing.T) {
+	t.Parallel()
+
+	server := &Server{
+		config: &types.ServerConfig{
+			System: types.SystemConfig{
+				DefaultDomain: "apps.example.com",
+			},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		prod    types.AppPathDomain
+		stageAt string
+		want    types.AppPathDomain
+	}{
+		{
+			name: "default mode is domain",
+			prod: types.AppPathDomain{Domain: "app.apps.example.com", Path: "/tools/app"},
+			want: types.AppPathDomain{Domain: "stage.app.apps.example.com", Path: "/tools/app"},
+		},
+		{
+			name:    "path mode",
+			prod:    types.AppPathDomain{Domain: "app.apps.example.com", Path: "/"},
+			stageAt: "path",
+			want:    types.AppPathDomain{Domain: "app.apps.example.com", Path: "/_cl_stage"},
+		},
+		{
+			name:    "domain mode subdomain",
+			prod:    types.AppPathDomain{Domain: "app.apps.example.com", Path: "/"},
+			stageAt: "domain",
+			want:    types.AppPathDomain{Domain: "stage.app.apps.example.com", Path: "/"},
+		},
+		{
+			name:    "domain mode default domain",
+			prod:    types.AppPathDomain{Path: "/"},
+			stageAt: "domain",
+			want:    types.AppPathDomain{Domain: "stage.apps.example.com", Path: "/"},
+		},
+		{
+			name:    "auto is treated as explicit domain",
+			prod:    types.AppPathDomain{Path: "/tools/app"},
+			stageAt: "auto",
+			want:    types.AppPathDomain{Domain: "auto", Path: "/tools/app"},
+		},
+		{
+			name:    "explicit domain",
+			prod:    types.AppPathDomain{Domain: "app.apps.example.com", Path: "/tools/app"},
+			stageAt: "stage.example.net",
+			want:    types.AppPathDomain{Domain: "stage.example.net", Path: "/tools/app"},
+		},
+		{
+			name:    "explicit relative domain",
+			prod:    types.AppPathDomain{Path: "/"},
+			stageAt: "stage.",
+			want:    types.AppPathDomain{Domain: "stage.apps.example.com", Path: "/"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := server.stageAppPathDomain(tc.prod, tc.stageAt)
+			if err != nil {
+				t.Fatalf("stageAppPathDomain returned error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("stageAppPathDomain = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func newAppAPIMetadataTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Context) {
+	t.Helper()
+	ctx := context.Background()
+	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
+	config := &types.ServerConfig{
+		Metadata: types.MetadataConfig{
+			DBConnection: "sqlite:" + filepath.Join(t.TempDir(), "metadata.db"),
+			AutoUpgrade:  true,
+		},
+		System: types.SystemConfig{
+			DefaultDomain:      "localhost",
+			DefaultStageDomain: "stage",
+			StageAt:            "domain",
+		},
+	}
+	db, err := metadata.NewMetadata(logger, config)
+	if err != nil {
+		t.Fatalf("new metadata: %v", err)
+	}
+	server := &Server{
+		Logger:      logger,
+		config:      config,
+		db:          db,
+		notifyClose: make(chan types.AppPathDomain),
+		rbacManager: &rbac.RBACManager{
+			Logger:     logger,
+			RbacConfig: &types.RBACConfig{},
+		},
+	}
+	server.apps = NewAppStore(logger, server)
+	return server, db, ctx
+}
+
+func TestCreateAppRejectsStageDomainRouteOverlap(t *testing.T) {
+	t.Parallel()
+
+	server, db, ctx := newAppAPIMetadataTestServer(t)
+	defer db.Close()
+
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	existing := &types.AppEntry{
+		Id:        types.ID_PREFIX_APP_PROD + "stagechild",
+		Domain:    "stage.example.com",
+		Path:      "/foo/bar",
+		SourceUrl: t.TempDir(),
+	}
+	if err := db.CreateApp(ctx, tx, existing); err != nil {
+		t.Fatalf("create existing app: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit existing app: %v", err)
+	}
+
+	_, err = server.CreateAppTx(ctx, types.Transaction{}, "example.com:/foo", false, false, &types.CreateAppRequest{
+		SourceUrl: t.TempDir(),
+	}, nil)
+	if err == nil {
+		t.Fatal("expected stage route overlap error")
+	}
+	if !strings.Contains(err.Error(), "stage app overlaps with existing app at stage.example.com:/foo/bar") {
+		t.Fatalf("error = %q, want stage overlap", err.Error())
+	}
+	if _, err := db.GetAppEntry(ctx, types.AppPathDomain{Domain: "example.com", Path: "/foo"}); !errors.Is(err, metadata.ErrAppNotFound) {
+		t.Fatalf("prod app lookup error = %v, want ErrAppNotFound", err)
+	}
+}
+
+func TestGetStageAppFallsBackToLegacyStageSuffix(t *testing.T) {
+	t.Parallel()
+
+	server, db, ctx := newAppAPIMetadataTestServer(t)
+	defer db.Close()
+
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	prod := &types.AppEntry{
+		Id:        types.ID_PREFIX_APP_PROD + "legacy",
+		Path:      "/legacy",
+		SourceUrl: t.TempDir(),
+	}
+	stage := &types.AppEntry{
+		Id:            types.ID_PREFIX_APP_STAGE + "legacy",
+		Path:          "/legacy" + types.STAGE_SUFFIX,
+		MainApp:       prod.Id,
+		LinkedAppPath: prod.AppPathDomain().String(),
+		SourceUrl:     prod.SourceUrl,
+	}
+	if err := db.CreateApp(ctx, tx, prod); err != nil {
+		t.Fatalf("create prod app: %v", err)
+	}
+	if err := db.CreateApp(ctx, tx, stage); err != nil {
+		t.Fatalf("create stage app: %v", err)
+	}
+	got, err := server.getStageApp(ctx, tx, prod)
+	if err != nil {
+		t.Fatalf("getStageApp returned error: %v", err)
+	}
+	if got.Id != stage.Id {
+		t.Fatalf("stage app id = %q, want %q", got.Id, stage.Id)
 	}
 }
 
@@ -312,6 +551,46 @@ func TestMatchAppRejectsUnknownHostWhenFallbackDisabled(t *testing.T) {
 
 	if _, err := server.MatchApp("unknown.test", "/myapp"); err == nil {
 		t.Fatal("MatchApp should reject unknown hosts when fallback_unknown_domains is disabled")
+	}
+}
+
+func TestMatchAppRootDoesNotShadowInternalApps(t *testing.T) {
+	t.Parallel()
+
+	server := newAuthRedirectTestServer("example.com", false)
+	server.apps = &AppStore{
+		Logger: server.Logger,
+		server: server,
+		allApps: []types.AppInfo{
+			{AppPathDomain: types.AppPathDomain{Path: "/"}},
+			{AppPathDomain: types.AppPathDomain{Path: "/" + types.STAGE_SUFFIX}},
+			{AppPathDomain: types.AppPathDomain{Path: "/" + types.PREVIEW_SUFFIX + "_abc123"}},
+		},
+		allDomains: map[string]bool{
+			"example.com": true,
+		},
+	}
+
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "stage", path: "/" + types.STAGE_SUFFIX, want: "/" + types.STAGE_SUFFIX},
+		{name: "preview", path: "/" + types.PREVIEW_SUFFIX + "_abc123", want: "/" + types.PREVIEW_SUFFIX + "_abc123"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			appInfo, err := server.MatchApp("example.com", tc.path)
+			if err != nil {
+				t.Fatalf("MatchApp returned error: %v", err)
+			}
+			if appInfo.Path != tc.want {
+				t.Fatalf("matched path = %q, want %q", appInfo.Path, tc.want)
+			}
+		})
 	}
 }
 

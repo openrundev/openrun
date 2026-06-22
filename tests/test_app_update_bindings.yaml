@@ -31,7 +31,7 @@ tests:
     stdout: "0"
 
   appupdate_bindings0060: # create app with ordered bindings
-    command: ../openrun app create --bind /appupdate/b1 --bind /appupdate/b2 ./testapp /app_update_bindings
+    command: ../openrun app create --stage-at path --bind /appupdate/b1 --bind /appupdate/b2 ./testapp /app_update_bindings
     stdout: "App: /app_update_bindings"
 
   appupdate_bindings0070: # create stores binding order on prod and stage

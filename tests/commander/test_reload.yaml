@@ -8,9 +8,9 @@ tests:
   reload0020: # create dev app
     command: ../openrun app create --dev ./reloadtest /reload_dev
   reload0030: # create local1 app
-    command: ../openrun app create ./reloadtest /reload_local1
+    command: ../openrun app create --stage-at path ./reloadtest /reload_local1
   reload0040: # create local2 app
-    command: ../openrun app create ./reloadtest /reload_local2
+    command: ../openrun app create --stage-at path ./reloadtest /reload_local2
   reload0050: # create domain level app
     command: ../openrun app create ./reloadtest reload.localhost:/
   reload0060: # check curl
@@ -20,8 +20,8 @@ tests:
     command: perl -i -pe 's/111/222/g' ./reloadtest/app.star
   reload0080: # Reload one app, without promote
     command: ../openrun app reload reload.localhost:/
-  reload0090: # check stage is updated
-    command: curl -su "admin:qwerty" reload.localhost:25222/_cl_stage/test1
+  reload0090: # check stage is updated at the default stage domain
+    command: curl -su "admin:qwerty" stage.reload.localhost:25222/test1
     stdout: "222"
   reload0091: # check versions
     command: ../openrun app list --internal --format csv reload.localhost:/ | grep reload | grep ",2," | wc -l
@@ -101,9 +101,9 @@ tests:
 
   # Test git based apps. This requires a previous commit which has the test app returning 555 instead of 111
   reload0400: # create git app from commit
-    command: ../openrun app create --commit 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec https://github.com/openrundev/openrun/tests/testapp /reload_git1
+    command: ../openrun app create --stage-at path --commit 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec https://github.com/openrundev/openrun/tests/testapp /reload_git1
   reload0410: # create git app from main
-    command: ../openrun app create https://github.com/openrundev/openrun/tests/testapp /reload_git2
+    command: ../openrun app create --stage-at path https://github.com/openrundev/openrun/tests/testapp /reload_git2
   reload0420: # check curl for app1 stage
     command: curl -su "admin:qwerty" localhost:25222/reload_git1_cl_stage/test1
     stdout: "555"

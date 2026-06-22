@@ -88,6 +88,8 @@ node_path = ""                      # node module lookup paths https://esbuild.g
 container_command = "auto"          # "auto" or "docker" or "podman" or "kubernetes"
 stale_container_cleanup_interval_mins = 5 # stop stale OpenRun containers every N minutes for Docker/Podman. Set <= 0 to disable.
 default_domain = "localhost"        # default domain for apps
+stage_at = "domain"                 # "domain", "path", or a domain for staging apps
+default_stage_domain = "stage"      # domain prefix for staging apps when stage_at is "domain"
 root_serve_list_apps = "auto"       # "auto" means serve list_apps app for default domain, "disable" means don't server for any domain,
                                     # any other value means serve for specified domain
 enable_compression = false          # enable compression for HTTP responses

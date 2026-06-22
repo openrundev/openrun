@@ -125,6 +125,10 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	if err != nil {
 		return nil, err
 	}
+	stageAt, err := apptype.GetStringAttr(appDef, "stage_at")
+	if err != nil {
+		return nil, err
+	}
 
 	appConfig, err := apptype.GetDictAttr(appDef, "app_config", true)
 	if err != nil {
@@ -184,6 +188,7 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 		ContainerVolumes:   containerVols,
 		Bindings:           bindings,
 		BindingSourcePerms: bindingSourcePerms,
+		StageAt:            stageAt,
 		Verify:             verify,
 	}, nil
 }
@@ -1169,7 +1174,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 		var path, source starlark.String
 		var dev, verify starlark.Bool
 		var params = starlark.NewDict(0)
-		var auth, gitAuth, gitBranch, gitCommit, appSpec starlark.String
+		var auth, gitAuth, gitBranch, gitCommit, appSpec, stageAt starlark.String
 		var appConfig = starlark.NewDict(0)
 		var containerOpts = starlark.NewDict(0)
 		var containerArgs = starlark.NewDict(0)
@@ -1179,7 +1184,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 
 		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "dev?", &dev,
 			"auth?", &auth, "git_auth?", &gitAuth, "git_branch?", &gitBranch, "git_commit?", &gitCommit,
-			"params?", &params, "spec?", &appSpec, "app_config", &appConfig,
+			"params?", &params, "spec?", &appSpec, "stage_at?", &stageAt, "app_config", &appConfig,
 			"container_opts?", &containerOpts, "container_args?", &containerArgs, "container_vols?", &containerVols,
 			"bindings?", &bindings, "bind_perm?", &bindingSourcePerms, "verify?", &verify,
 		); err != nil {
@@ -1196,6 +1201,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 			"git_commit":     gitCommit,
 			"params":         params,
 			"spec":           appSpec,
+			"stage_at":       stageAt,
 			"app_config":     appConfig,
 			"container_opts": containerOpts,
 			"container_args": containerArgs,

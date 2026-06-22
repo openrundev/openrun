@@ -7,6 +7,13 @@ tests:
   apply0001: ## setup
     command: rm -rf /tmp/testapp && cp -r ./testapp /tmp
     exit-code: 0
+  apply0002: ## declarative app creation defaults stage_at to domain
+    command: ../openrun apply ./apply_files/apply_stage_default.ace all
+    stdout: "1 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
+  apply0003:
+    command: ../openrun app list -i -f json applystage.localhost:/ | jq -r 'map(select(.id | startswith("app_stg_")))[0] | .domain + ":" + .path'
+    stdout:
+      exactly: "stage.applystage.localhost:/"
   apply0010: ## create all apps
     command: ../openrun apply ./apply_files/apply1.ace all
     stdout: "4 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."

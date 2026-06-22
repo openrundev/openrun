@@ -11,9 +11,9 @@ tests:
   versions0020: # create dev app
     command: ../openrun app create --dev ./versionstest /versions_dev
   versions0030: # create local1 app
-    command: ../openrun app create ./versionstest /versions_local1
+    command: ../openrun app create --stage-at path ./versionstest /versions_local1
   versions0040: # create local2 app
-    command: ../openrun app create ./versionstest /versions_local2
+    command: ../openrun app create --stage-at path ./versionstest /versions_local2
   versions0050: # check curl
     command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
     stdout: "1"

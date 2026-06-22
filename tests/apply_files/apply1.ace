@@ -1,6 +1,6 @@
-app("/applytest/app1", "/tmp/testapp") 
+app("/applytest/app1", "/tmp/testapp", stage_at="path") 
 app("/applytest/app2", "/tmp/testapp", dev=True) 
-app("/applytest/app3", "/tmp/testapp", auth="none", git_branch="test", spec="python-flask")
+app("/applytest/app3", "/tmp/testapp", auth="none", git_branch="test", spec="python-flask", stage_at="path")
 app("/applytest/app4", "/tmp/testapp", params={"p1":["1", "2"]}, container_opts={"co1": 1, "co2":[2, 3]},
-    container_vols=["v1:/abc", "v2"], app_config={"ac1": 11, "ac2": ["a", "b"]}
-) 
+    container_vols=["v1:/abc", "v2"], app_config={"ac1": 11, "ac2": ["a", "b"]}, stage_at="path"
+)

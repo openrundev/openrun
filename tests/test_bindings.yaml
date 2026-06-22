@@ -324,7 +324,7 @@ tests:
 
   # App binding source permission approval flow
   binding0140: # create app used for binding source permission approval checks
-    command: ../openrun app create ./testapp /apps/bindperm
+    command: ../openrun app create --stage-at path ./testapp /apps/bindperm
     stdout: "App created. No approval required"
 
   binding0141: # non-default binding source permission is staged

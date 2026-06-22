@@ -8,9 +8,9 @@ tests:
   perms0102: # Update code to WRITE type
     command: perl -i -pe 's/"abs"/"abs", type="WRITE"/g' ./perms_disk_usage/app.star
   perms0103: # Create app1
-    command: ../openrun app create --approve ./perms_disk_usage /perms1
+    command: ../openrun app create --stage-at path --approve ./perms_disk_usage /perms1
   perms0104: # Create app2
-    command: ../openrun app create --approve ./perms_disk_usage /perms2
+    command: ../openrun app create --stage-at path --approve ./perms_disk_usage /perms2
   perms0105: # test prod app
     command: curl -su "admin:qwerty" localhost:25222/perms1
     stdout: "Disk Usage"

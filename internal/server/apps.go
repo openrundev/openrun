@@ -194,12 +194,11 @@ func (a *AppStore) ClearLinkedApps(pathDomain types.AppPathDomain) error {
 	appPaths = append(appPaths, pathDomain)
 
 	for key, app := range a.appMap {
-		if app.LinkedAppPath == "" {
-			continue
-		}
+		// Clear stage/preview apps that point back to the app being cleared. Apps without a
+		// (parseable) linked app path are skipped rather than aborting the whole clear.
 		linkedPathDomain, err := parseLinkedAppPathDomain(app.LinkedAppPath)
 		if err != nil {
-			return err
+			continue
 		}
 		if linkedPathDomain == pathDomain {
 			a.clearApp(key)

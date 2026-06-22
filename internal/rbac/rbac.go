@@ -66,10 +66,8 @@ func (h *RBACManager) AuthorizeInt(user string, appPathDomain types.AppPathDomai
 		return true, nil
 	}
 
-	// Trim stage and preview suffixes, grant check are done on the main app path
-	appPathDomain.Path = strings.TrimSuffix(appPathDomain.Path, types.STAGE_SUFFIX)
-	appPathDomain.Path = strings.TrimSuffix(appPathDomain.Path, types.PREVIEW_SUFFIX)
-
+	// Callers resolve stage/preview apps to their main app path before this point, so
+	// grant checks run against the main app path directly.
 	return h.checkGrants(user, appPathDomain, permission, groups, isAppLevelPermission)
 }
 

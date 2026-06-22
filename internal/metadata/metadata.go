@@ -26,6 +26,9 @@ import (
 
 const CURRENT_DB_VERSION = 12
 
+// ErrAppNotFound is returned when an app entry does not exist in the metadata store.
+var ErrAppNotFound = errors.New("app not found")
+
 // Metadata is the metadata persistence layer
 type Metadata struct {
 	*types.Logger
@@ -503,7 +506,7 @@ func (m *Metadata) GetAppEntryTx(ctx context.Context, tx types.Transaction, path
 	err = row.Scan(&app.Id, &app.Path, &app.Domain, &app.MainApp, &linkedAppPath, &app.SourceUrl, &app.IsDev, &app.UserID, &app.CreateTime, &app.UpdateTime, &settings, &metadata)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, errors.New("app not found")
+			return nil, ErrAppNotFound
 		}
 		m.Error().Err(err).Msgf("query %s %s", pathDomain.Path, pathDomain.Domain)
 		return nil, fmt.Errorf("error querying app: %w", err)
@@ -1466,49 +1469,17 @@ func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, sourc
 }
 
 func (m *Metadata) migrateLinkedAppPaths(ctx context.Context, tx types.Transaction) error {
-	_, err := tx.ExecContext(ctx, `alter table apps add column linked_app_path text`)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `alter table apps add column linked_app_path text`); err != nil {
 		return fmt.Errorf("error migrating linked app paths: %w", err)
 	}
 
-	rows, err := tx.QueryContext(ctx, `select id, path, domain from apps`)
+	// Reconstruct the linked app path for existing apps from the legacy suffix based naming.
+	// Rows that do not match the legacy convention are left null; the runtime falls back to
+	// suffix trimming for those.
+	linkedAppPaths, err := m.collectLinkedAppPaths(ctx, tx)
 	if err != nil {
-		return fmt.Errorf("error querying apps for linked path migration: %w", err)
+		return err
 	}
-	rowsClosed := false
-	defer func() {
-		if !rowsClosed {
-			_ = rows.Close()
-		}
-	}()
-
-	linkedAppPaths := make(map[types.AppId]string)
-	for rows.Next() {
-		var id types.AppId
-		var path, domain string
-		if err := rows.Scan(&id, &path, &domain); err != nil {
-			return fmt.Errorf("error scanning app for linked path migration: %w", err)
-		}
-
-		switch {
-		case strings.HasPrefix(string(id), types.ID_PREFIX_APP_PROD):
-			linkedAppPaths[id] = formatLinkedAppMigrationPath(domain, stagePathForMigration(path))
-		case strings.HasPrefix(string(id), types.ID_PREFIX_APP_STAGE) && strings.HasSuffix(path, types.STAGE_SUFFIX):
-			prodPath := strings.TrimSuffix(path, types.STAGE_SUFFIX)
-			linkedAppPaths[id] = formatLinkedAppMigrationPath(domain, prodPath)
-		case strings.HasPrefix(string(id), types.ID_PREFIX_APP_PREVIEW):
-			if previewIndex := strings.Index(path, types.PREVIEW_SUFFIX); previewIndex >= 0 {
-				linkedAppPaths[id] = formatLinkedAppMigrationPath(domain, path[:previewIndex])
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating apps for linked path migration: %w", err)
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return fmt.Errorf("error closing app rows for linked path migration: %w", closeErr)
-	}
-	rowsClosed = true
 
 	updateStmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `update apps set linked_app_path = ? where id = ?`))
 	if err != nil {
@@ -1524,18 +1495,45 @@ func (m *Metadata) migrateLinkedAppPaths(ctx context.Context, tx types.Transacti
 	return nil
 }
 
-func stagePathForMigration(path string) string {
-	if path == "" {
-		path = "/"
+// collectLinkedAppPaths reads all apps and derives, for each linked app, the path of its
+// counterpart using the legacy suffix based naming (prod<->stage, preview->base).
+func (m *Metadata) collectLinkedAppPaths(ctx context.Context, tx types.Transaction) (map[types.AppId]string, error) {
+	rows, err := tx.QueryContext(ctx, `select id, path, domain from apps`)
+	if err != nil {
+		return nil, fmt.Errorf("error querying apps for linked path migration: %w", err)
 	}
-	return path + types.STAGE_SUFFIX
-}
+	defer rows.Close() //nolint:errcheck
 
-func formatLinkedAppMigrationPath(domain, path string) string {
-	if domain == "" {
-		return path
+	linkedAppPaths := make(map[types.AppId]string)
+	for rows.Next() {
+		var id types.AppId
+		var path, domain string
+		if err := rows.Scan(&id, &path, &domain); err != nil {
+			return nil, fmt.Errorf("error scanning app for linked path migration: %w", err)
+		}
+
+		linked := types.AppPathDomain{Domain: domain}
+		switch {
+		case strings.HasPrefix(string(id), types.ID_PREFIX_APP_PROD):
+			if path == "" {
+				path = "/"
+			}
+			linked.Path = path + types.STAGE_SUFFIX
+		case strings.HasPrefix(string(id), types.ID_PREFIX_APP_STAGE) && strings.HasSuffix(path, types.STAGE_SUFFIX):
+			linked.Path = strings.TrimSuffix(path, types.STAGE_SUFFIX)
+		case strings.HasPrefix(string(id), types.ID_PREFIX_APP_PREVIEW):
+			if previewIndex := strings.Index(path, types.PREVIEW_SUFFIX); previewIndex >= 0 {
+				linked.Path = path[:previewIndex]
+			}
+		}
+		if linked.Path != "" {
+			linkedAppPaths[id] = linked.String()
+		}
 	}
-	return domain + ":" + path
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating apps for linked path migration: %w", err)
+	}
+	return linkedAppPaths, nil
 }
 
 func toNullTime(t *time.Time) sql.NullTime {

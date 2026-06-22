@@ -981,8 +981,10 @@ func (s *Server) AuthorizeList(userId string, app *types.AppInfo, groups []strin
 		return false, err
 	}
 	if s.rbacManager.RbacConfig.Enabled {
-		// RBAC auth is enabled, verify access
-		return s.rbacManager.AuthorizeInt(userId, app.AppPathDomain, appAuthStr, types.PermissionList, groups, false)
+		// RBAC auth is enabled, verify access. Grant checks for stage/preview apps are
+		// done against the main app path.
+		grantPathDomain := mainAppPathDomain(app.AppPathDomain, app.MainApp, app.LinkedAppPath)
+		return s.rbacManager.AuthorizeInt(userId, grantPathDomain, appAuthStr, types.PermissionList, groups, false)
 	}
 
 	if userId != "" && userId == types.ADMIN_USER {

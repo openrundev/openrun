@@ -234,7 +234,7 @@ tests:
       exactly: "1"
     exit-code: 0
   basic601: # After reload, stage app should be at version 2
-    command: '../openrun app list --internal --format csv /test2 | grep _stage | grep ",2," | wc -l'
+    command: '../openrun app list --internal --format csv /test2 | grep app_stg_ | grep ",2," | wc -l'
     stdout:
       exactly: "1"
     exit-code: 0

@@ -88,6 +88,9 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 			continue
 		}
 
+		// For stage/preview apps, glob matching is done against the main app path
+		mainPathDomain := mainAppPathDomain(app.AppPathDomain, app.MainApp, app.LinkedAppPath)
+
 		// Check query filter
 		if query != "" {
 			queryStr := strings.ToLower(query.GoString())
@@ -99,17 +102,8 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		}
 
 		if path != "" {
-			// If path glob is specified, check if app matches. If internal apps are to be included,
-			// check if main app matches
-			appPathDomain := app.AppPathDomain
-			if include_internal && app.MainApp != "" {
-				appPathDomain, err = parseLinkedAppPathDomain(app.LinkedAppPath)
-				if err != nil {
-					return nil, err
-				}
-			}
-
-			match, err := rbac.MatchGlob(path.GoString(), appPathDomain)
+			// If path glob is specified, check if the app (or its main app) matches
+			match, err := rbac.MatchGlob(path.GoString(), mainPathDomain)
 			if err != nil {
 				return nil, err
 			}
@@ -143,16 +137,8 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 			}
 		}
 
-		globDomain := app.Domain
-		globPath := app.Path
-		if app.MainApp != "" {
-			linkedPathDomain, err := parseLinkedAppPathDomain(app.LinkedAppPath)
-			if err != nil {
-				return nil, err
-			}
-			globDomain = linkedPathDomain.Domain
-			globPath = linkedPathDomain.Path
-		}
+		globDomain := mainPathDomain.Domain
+		globPath := mainPathDomain.Path
 		globDomainPrefix := ""
 		if globDomain != "" {
 			pathSplitGlob.Append(starlark.String(globDomain + ":**"))

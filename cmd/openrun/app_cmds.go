@@ -62,6 +62,7 @@ func appCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 	flags = append(flags, newStringFlag("commit", "c", "The commit SHA to checkout if using git source. This takes precedence over branch", ""))
 	flags = append(flags, newStringFlag("git-auth", "g", "The name of the git_auth entry in server config to use", ""))
 	flags = append(flags, newStringFlag("spec", "", "The spec to use for the app", ""))
+	flags = append(flags, newStringFlag("stage-at", "", `Where to create the staging app: "domain", "path", or a staging domain. Defaults to system stage_at ("domain" by default)`, ""))
 	flags = append(flags,
 		&cli.StringSliceFlag{
 			Name:    "param",
@@ -220,6 +221,7 @@ Examples:
 				AppConfig:          confMap,
 				Bindings:           bindings,
 				BindingSourcePerms: bindingSourcePerms,
+				StageAt:            cCtx.String("stage-at"),
 			}
 			var createResult types.AppCreateResponse
 			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)

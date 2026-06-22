@@ -61,6 +61,25 @@ func (b *applyTestServiceBinding) ApplyGrants(_ context.Context, _ map[string]st
 	return []types.BindingGrant{{GrantType: types.GrantTypeRead, GrantTarget: "*"}}, nil
 }
 
+func TestLoadApplyInfoStageAt(t *testing.T) {
+	t.Parallel()
+
+	server := &Server{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		config: &types.ServerConfig{},
+	}
+	apps, _, err := server.loadApplyInfo("stage_at.ace", []byte(`app("/apps/stage-at", "/tmp/app", stage_at="stage.example.com")`), "", false)
+	if err != nil {
+		t.Fatalf("loadApplyInfo returned error: %v", err)
+	}
+	if len(apps) != 1 {
+		t.Fatalf("apps length = %d, want 1", len(apps))
+	}
+	if apps[0].StageAt != "stage.example.com" {
+		t.Fatalf("StageAt = %q, want %q", apps[0].StageAt, "stage.example.com")
+	}
+}
+
 func (b *applyTestServiceBinding) RunCommand(context.Context, types.BindingMetadata, string) (map[string]any, error) {
 	return nil, nil
 }
@@ -178,6 +197,9 @@ func newApplyTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Cont
 		Metadata: types.MetadataConfig{
 			DBConnection: "sqlite:" + filepath.Join(t.TempDir(), "metadata.db"),
 			AutoUpgrade:  true,
+		},
+		System: types.SystemConfig{
+			DefaultDomain: "localhost",
 		},
 	}
 	db, err := metadata.NewMetadata(logger, config)

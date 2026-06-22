@@ -1,1 +1,1 @@
-app("/apps/applybindperm", "/tmp/testapp", bind_perm=["external/apply"])
+app("/apps/applybindperm", "/tmp/testapp", bind_perm=["external/apply"], stage_at="path")

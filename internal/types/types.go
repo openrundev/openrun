@@ -313,6 +313,11 @@ type SystemConfig struct {
 	FallbackUnknownDomains              bool     `toml:"fallback_unknown_domains"`                // whether to fallback to default domain for unknown domains
 	ForwardAuthTimeoutSecs              int      `toml:"forward_auth_timeout_secs"`               // timeout in seconds for forward auth requests. Defaults to 30 seconds.
 	BuilderAuthToken                    string   `toml:"builder_auth_token"`                      // the token for the builder auth
+	// StageAt is the default staging mode for new prod apps. "domain" stages at domain level,
+	// "path" stages at path level, and any other value is treated as the staging domain.
+	// Defaults to "domain".
+	StageAt            string `toml:"stage_at"`
+	DefaultStageDomain string `toml:"default_stage_domain"`
 }
 
 type RegistryConfig struct {

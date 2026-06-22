@@ -13,7 +13,7 @@ tests:
     stdout: "App: /disk_usage_dev"
     exit-code: 0
   load0030: # create prod app
-    command: ../openrun app create ./disk_usage /disk_usage_prod
+    command: ../openrun app create --stage-at path ./disk_usage /disk_usage_prod
     stderr:
       line-count: 0
     stdout: "App: /disk_usage_prod"

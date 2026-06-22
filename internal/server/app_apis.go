@@ -110,12 +110,9 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
-	if appPathDomain.Domain != "" && appPathDomain.Domain[len(appPathDomain.Domain)-1] == '.' {
-		// If domain ends with a dot, append the default domain
-		if s.config.System.DefaultDomain == "" {
-			return nil, types.CreateRequestError("Domain cannot end with a dot since default_domain is not configured", http.StatusBadRequest)
-		}
-		appPathDomain.Domain += s.config.System.DefaultDomain
+	appPathDomain.Domain, err = s.normalizeRelativeDomain(appPathDomain.Domain, "Domain")
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
 	matchedApp, err := s.CheckAppValid(appPathDomain.Domain, appPathDomain.Path)
@@ -239,36 +236,32 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 		appEntry.Metadata.SpecFiles = &tf
 	}
 
-	// Create the stage app entry if not dev
-	stageAppEntry := *appEntry
+	var stageAppEntry *types.AppEntry
 	workEntry := appEntry
 	if !appEntry.IsDev {
-		stageAppEntry.Path = appEntry.Path + types.STAGE_SUFFIX
-		stageAppEntry.Id = types.AppId(types.ID_PREFIX_APP_STAGE + string(appEntry.Id)[len(types.ID_PREFIX_APP_PROD):])
-		stageAppEntry.MainApp = appEntry.Id
-		stageAppEntry.LinkedAppPath = appEntry.AppPathDomain().String()
-		appEntry.LinkedAppPath = stageAppEntry.AppPathDomain().String()
-		stageAppEntry.Metadata.VersionMetadata.Version = 1
+		var err error
+		stageAppEntry, err = s.prepareStageAppEntry(appEntry, applyInfo, tx)
+		if err != nil {
+			return nil, err
+		}
+	}
 
-		if err := s.db.CreateApp(ctx, tx, appEntry); err != nil {
+	// Insert prod before stage because stage.MainApp references the prod id. Route
+	// overlap validation for both entries has already run.
+	if err := s.db.CreateApp(ctx, tx, appEntry); err != nil {
+		return nil, err
+	}
+
+	if stageAppEntry != nil {
+		if _, err := s.db.GetAppEntryTx(ctx, tx, stageAppEntry.AppPathDomain()); err == nil {
+			return nil, fmt.Errorf("stage app %s already exists", stageAppEntry.AppPathDomain())
+		} else if !errors.Is(err, metadata.ErrAppNotFound) {
 			return nil, err
 		}
-		if tx.Tx != nil {
-			// Save the apply info in the app metadata (if called from apply context)
-			applyInfoBytes, err := json.Marshal(applyInfo)
-			if err != nil {
-				return nil, err
-			}
-			stageAppEntry.Metadata.VersionMetadata.ApplyInfo = applyInfoBytes
-		}
-		if err := s.db.CreateApp(ctx, tx, &stageAppEntry); err != nil {
+		if err := s.db.CreateApp(ctx, tx, stageAppEntry); err != nil {
 			return nil, err
 		}
-		workEntry = &stageAppEntry // Work on the stage app for prod apps, it will be promoted later
-	} else {
-		if err := s.db.CreateApp(ctx, tx, appEntry); err != nil {
-			return nil, err
-		}
+		workEntry = stageAppEntry
 	}
 
 	if system.IsGit(workEntry.SourceUrl) {
@@ -314,7 +307,7 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	results := []types.ApproveResult{*auditResult}
 	if !workEntry.IsDev {
 		// Update the prod app metadata, promote from stage
-		if err = s.promoteApp(ctx, tx, &stageAppEntry, appEntry); err != nil {
+		if err = s.promoteApp(ctx, tx, stageAppEntry, appEntry); err != nil {
 			return nil, err
 		}
 
@@ -341,6 +334,43 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	}
 
 	return ret, nil
+}
+
+func (s *Server) prepareStageAppEntry(appEntry *types.AppEntry, applyInfo *types.CreateAppRequest, tx types.Transaction) (*types.AppEntry, error) {
+	stageAt := ""
+	if applyInfo != nil {
+		stageAt = applyInfo.StageAt
+	}
+	stagePathDomain, err := s.stageAppPathDomain(appEntry.AppPathDomain(), stageAt)
+	if err != nil {
+		return nil, err
+	}
+
+	stageAppEntry := *appEntry
+	stageAppEntry.Path = stagePathDomain.Path
+	stageAppEntry.Domain = stagePathDomain.Domain
+	stageAppEntry.Id = types.AppId(types.ID_PREFIX_APP_STAGE + string(appEntry.Id)[len(types.ID_PREFIX_APP_PROD):])
+	stageAppEntry.MainApp = appEntry.Id
+	stageAppEntry.LinkedAppPath = appEntry.AppPathDomain().String()
+	stageAppEntry.Metadata.VersionMetadata.Version = 1
+	appEntry.LinkedAppPath = stageAppEntry.AppPathDomain().String()
+
+	matchedStageApp, err := s.CheckAppValid(stageAppEntry.Domain, stageAppEntry.Path)
+	if err != nil {
+		return nil, fmt.Errorf("error matching stage app: %s", err)
+	}
+	if matchedStageApp != "" {
+		return nil, fmt.Errorf("stage app overlaps with existing app at %s", matchedStageApp)
+	}
+	if tx.Tx != nil {
+		// Save the apply info in the app metadata (if called from apply context)
+		applyInfoBytes, err := json.Marshal(applyInfo)
+		if err != nil {
+			return nil, err
+		}
+		stageAppEntry.Metadata.VersionMetadata.ApplyInfo = applyInfoBytes
+	}
+	return &stageAppEntry, nil
 }
 
 // getAppHttpUrl returns the HTTP URL for accessing the app
@@ -646,7 +676,9 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 
 	s.Trace().Msgf("Authenticated user %s, doing authorization check", userId)
-	authorized, err := s.rbacManager.AuthorizeInt(userId, app.AppPathDomain(), string(appAuth), types.PermissionAccess, groups, false)
+	// Grant checks for stage/preview apps are done against the main app path
+	grantPathDomain := mainAppPathDomain(app.AppPathDomain(), app.MainApp, app.LinkedAppPath)
+	authorized, err := s.rbacManager.AuthorizeInt(userId, grantPathDomain, string(appAuth), types.PermissionAccess, groups, false)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -662,7 +694,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	ctx = context.WithValue(ctx, types.USER_SUBJECT, userSubject)
 	ctx = context.WithValue(ctx, types.USER_EMAIL, userEmail)
 	ctx = context.WithValue(ctx, types.APP_ID, string(app.Id))
-	ctx = context.WithValue(ctx, types.APP_PATH_DOMAIN, app.AppPathDomain())
+	ctx = context.WithValue(ctx, types.APP_PATH_DOMAIN, grantPathDomain)
 	ctx = context.WithValue(ctx, types.APP_AUTH, appAuth)
 	ctx = context.WithValue(ctx, types.GROUPS, groups)
 
@@ -899,8 +931,7 @@ func (s *Server) MatchApp(hostHeader, matchPath string) (types.AppInfo, error) {
 
 		if strings.HasPrefix(matchPath, appInfo.Path) {
 			if len(appInfo.Path) == 1 || len(appInfo.Path) == len(matchPath) || matchPath[len(appInfo.Path)] == '/' {
-				if appInfo.Path == "/" && strings.HasPrefix(matchPath, "/"+types.STAGE_SUFFIX) {
-					// Do not match /_cl_stage to /
+				if appInfo.Path == "/" && isInternalAppPath(matchPath) {
 					continue
 				}
 				s.Debug().Msgf("Matched app %s for path %s", appInfo, matchPath)
@@ -988,34 +1019,70 @@ func (s *Server) CompleteTransaction(ctx context.Context, tx types.Transaction, 
 }
 
 func (s *Server) getStageApp(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry) (*types.AppEntry, error) {
-	if strings.HasPrefix(string(appEntry.Id), types.ID_PREFIX_APP_DEV) {
-		return nil, fmt.Errorf("cannot get stage for dev app %s", appEntry.AppPathDomain())
-	}
-	if strings.HasPrefix(string(appEntry.Id), types.ID_PREFIX_APP_STAGE) {
-		return nil, fmt.Errorf("app is already a stage app %s", appEntry.AppPathDomain())
-	}
 	if !strings.HasPrefix(string(appEntry.Id), types.ID_PREFIX_APP_PROD) {
 		return nil, fmt.Errorf("cannot get stage for non-prod app %s", appEntry.AppPathDomain())
 	}
 
-	stageAppPath, err := linkedAppPathDomain(appEntry)
+	stageAppPath, err := parseLinkedAppPathDomain(appEntry.LinkedAppPath)
 	if err != nil {
-		return nil, err
+		stageAppPath = pathBasedStageApp(appEntry)
 	}
-	stageAppEntry, err := s.db.GetAppEntryTx(ctx, tx, stageAppPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return stageAppEntry, nil
+	return s.db.GetAppEntryTx(ctx, tx, stageAppPath)
 }
 
-func linkedAppPathDomain(appEntry *types.AppEntry) (types.AppPathDomain, error) {
-	pathDomain, err := parseLinkedAppPathDomain(appEntry.LinkedAppPath)
-	if err != nil {
-		return types.AppPathDomain{}, fmt.Errorf("invalid linked app path for app %s: %w", appEntry.AppPathDomain(), err)
+func pathBasedStageApp(appEntry *types.AppEntry) types.AppPathDomain {
+	stageAppPath := appEntry.AppPathDomain()
+	stageAppPath.Path += types.STAGE_SUFFIX
+	return stageAppPath
+}
+
+func (s *Server) stageAppPathDomain(prodApp types.AppPathDomain, stageAt string) (types.AppPathDomain, error) {
+	stageAt = cmp.Or(strings.TrimSpace(stageAt), strings.TrimSpace(s.config.System.StageAt), "domain")
+	switch strings.ToLower(stageAt) {
+	case "path":
+		return types.AppPathDomain{Domain: prodApp.Domain, Path: prodApp.Path + types.STAGE_SUFFIX}, nil
+	case "domain":
+		domain := cmp.Or(prodApp.Domain, s.config.System.DefaultDomain)
+		if domain == "" {
+			return types.AppPathDomain{}, fmt.Errorf("stage app domain could not be derived because app domain and default_domain are empty")
+		}
+		return types.AppPathDomain{Domain: stageDomain(domain, s.config.System.DefaultStageDomain), Path: prodApp.Path}, nil
+	default:
+		domain, err := s.normalizeStageDomain(stageAt)
+		if err != nil {
+			return types.AppPathDomain{}, err
+		}
+		return types.AppPathDomain{Domain: domain, Path: prodApp.Path}, nil
 	}
-	return pathDomain, nil
+}
+
+func (s *Server) normalizeStageDomain(domain string) (string, error) {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return "", fmt.Errorf("stage domain cannot be empty")
+	}
+	if strings.Contains(domain, ":") {
+		return "", fmt.Errorf("stage domain %q cannot contain ':'", domain)
+	}
+	return s.normalizeRelativeDomain(domain, "stage domain")
+}
+
+func (s *Server) normalizeRelativeDomain(domain, label string) (string, error) {
+	if strings.HasSuffix(domain, ".") {
+		if s.config.System.DefaultDomain == "" {
+			return "", fmt.Errorf("%s cannot end with '.' since default_domain is not configured", label)
+		}
+		domain += s.config.System.DefaultDomain
+	}
+	return domain, nil
+}
+
+func stageDomain(domain, defaultStageDomain string) string {
+	defaultStageDomain = cmp.Or(strings.TrimSpace(defaultStageDomain), "stage")
+	if strings.HasSuffix(defaultStageDomain, ".") {
+		return defaultStageDomain + domain
+	}
+	return defaultStageDomain + "." + domain
 }
 
 func parseLinkedAppPathDomain(linkedAppPath string) (types.AppPathDomain, error) {
@@ -1023,6 +1090,27 @@ func parseLinkedAppPathDomain(linkedAppPath string) (types.AppPathDomain, error)
 		return types.AppPathDomain{}, fmt.Errorf("linked app path is not set")
 	}
 	return parseAppPath(linkedAppPath)
+}
+
+func isInternalAppPath(path string) bool {
+	return strings.HasPrefix(path, "/"+types.STAGE_SUFFIX) ||
+		strings.HasPrefix(path, "/"+types.PREVIEW_SUFFIX)
+}
+
+// mainAppPathDomain returns the path-domain used for grant checks and glob matching.
+// For prod/dev apps it is the app's own path-domain. For linked (stage/preview) apps it is
+// the main app's path-domain, resolved from the stored linked app path, falling back to
+// legacy suffix trimming for apps that predate the linked_app_path column.
+func mainAppPathDomain(inpApp types.AppPathDomain, mainApp types.AppId, linkedAppPath string) types.AppPathDomain {
+	if mainApp == "" {
+		return inpApp
+	}
+	if pathDomain, err := parseLinkedAppPathDomain(linkedAppPath); err == nil {
+		return pathDomain
+	}
+	inpApp.Path = strings.TrimSuffix(inpApp.Path, types.STAGE_SUFFIX)
+	inpApp.Path = strings.TrimSuffix(inpApp.Path, types.PREVIEW_SUFFIX)
+	return inpApp
 }
 
 const REPO_FOLDER_SEPERATOR = "//"

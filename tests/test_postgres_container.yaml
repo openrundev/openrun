@@ -72,7 +72,7 @@ tests:
     stdout: "Binding /pgcontainer/b1 created"
 
   postgres_container0040: # create app with postgres binding
-    command: ../openrun app create --spec python-flask --bind /pgcontainer/b1 ./pg_flaskapp /pg_container
+    command: ../openrun app create --stage-at path --spec python-flask --bind /pgcontainer/b1 ./pg_flaskapp /pg_container
     stdout: "App: /pg_container"
 
   postgres_container0050: # prod container receives POSTGRES_URL and creates the table
