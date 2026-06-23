@@ -776,18 +776,22 @@ func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.C
 				return nil
 			}
 			statusCode = strconv.Itoa(resp.StatusCode)
+			err = fmt.Errorf("health check returned status %s", statusCode)
 		}
 
 		if resp != nil {
 			resp.Body.Close() //nolint:errcheck
 		}
 
-		h.Debug().Msgf("Attempt %d failed on %s : status %s err %s", attempt, proxyUrl, statusCode, err)
+		h.Debug().Msgf("Attempt %d failed on %s : status %s err %v", attempt, proxyUrl, statusCode, err)
 		sleepMillis *= 2
 		sleepTimeMillis := math.Min(float64(sleepMillis), 2000)
 		time.Sleep(time.Duration(sleepTimeMillis) * time.Millisecond)
 	}
 
+	if err == nil {
+		err = fmt.Errorf("health check did not complete")
+	}
 	h.Error().Msgf("Health check failed for app %s after %d attempts: %v", h.app.Id, attempts, err)
 	return err
 }

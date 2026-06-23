@@ -4,12 +4,104 @@
 package app
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/types"
 )
+
+type healthTestManager struct {
+	hostNamePort string
+	running      bool
+}
+
+func (m *healthTestManager) BuildImage(context.Context, container.ImageName, string, string, map[string]string) error {
+	return nil
+}
+
+func (m *healthTestManager) ImageExists(context.Context, container.ImageName) (bool, error) {
+	return true, nil
+}
+
+func (m *healthTestManager) RefreshImage(context.Context, container.ImageName) (string, error) {
+	return "", nil
+}
+
+func (m *healthTestManager) GetContainerState(context.Context, container.ContainerName, string) (string, bool, error) {
+	return m.hostNamePort, m.running, nil
+}
+
+func (m *healthTestManager) StartContainer(context.Context, container.ContainerName) error {
+	return nil
+}
+
+func (m *healthTestManager) StopContainer(context.Context, container.ContainerName) error {
+	return nil
+}
+
+func (m *healthTestManager) RunContainer(context.Context, *types.AppEntry, string, container.ContainerName,
+	container.ImageName, int32, map[string]string, []*container.VolumeInfo, map[string]string, map[string]string, string, bool) error {
+	return nil
+}
+
+func (m *healthTestManager) GetContainerLogs(context.Context, container.ContainerName, int) (string, error) {
+	return "", nil
+}
+
+func (m *healthTestManager) VolumeExists(context.Context, container.VolumeName) bool {
+	return true
+}
+
+func (m *healthTestManager) VolumeCreate(context.Context, container.VolumeName) error {
+	return nil
+}
+
+func (m *healthTestManager) SupportsInPlaceUpdate() bool {
+	return false
+}
+
+func TestWaitForHealthFailsOnNonOKStatus(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not healthy", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	hostNamePort := strings.TrimPrefix(srv.URL, "http://")
+	h := &ContainerHandler{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app: &App{
+			AppEntry: &types.AppEntry{
+				Id:   types.AppId(types.ID_PREFIX_APP_PROD + "health_status_test"),
+				Path: "/health-status",
+			},
+		},
+		manager: &healthTestManager{
+			hostNamePort: hostNamePort,
+			running:      true,
+		},
+		scheme:       "http",
+		health:       "health",
+		stripAppPath: true,
+		containerConfig: types.Container{
+			HealthTimeoutSecs: 1,
+		},
+	}
+
+	err := h.WaitForHealth(1, container.ContainerName("health-status-test"), "")
+	if err == nil {
+		t.Fatal("WaitForHealth returned nil for HTTP 500")
+	}
+	if !strings.Contains(err.Error(), "status 500") {
+		t.Fatalf("WaitForHealth error = %q, want status 500", err.Error())
+	}
+}
 
 func newVolumeTestHandler(t *testing.T) (*ContainerHandler, string) {
 	t.Helper()
