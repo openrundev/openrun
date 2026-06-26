@@ -1143,6 +1143,31 @@ func (a *App) createInternalRoutes(router *chi.Mux) error {
 	}
 
 	router.Get(types.APP_INTERNAL_URL_PREFIX+"/file/{file_id}", a.userFileHandler)
+	router.Get(types.APP_INTERNAL_URL_PREFIX+"/verify_file/{file_name}", func(w http.ResponseWriter, r *http.Request) {
+		fileName := chi.URLParam(r, "file_name")
+		cleanFileName, err := system.CleanRelativePath(fileName)
+		if err != nil {
+			http.Error(w, "400 Bad Request", http.StatusBadRequest)
+			return
+		}
+		fileName = cleanFileName
+
+		if !fileExists(a.sourceFS, fileName) {
+			http.Error(w, "404 Not Found", http.StatusNotFound)
+			return
+		}
+		fileSize, err := a.sourceFS.Stat(fileName)
+		if err != nil {
+			http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		ret := map[string]string{
+			"file_path":   fileName,
+			"file_exists": "true",
+			"file_size":   strconv.FormatInt(fileSize.Size(), 10),
+		}
+		json.NewEncoder(w).Encode(ret) //nolint:errcheck
+	})
 	return nil
 }
 

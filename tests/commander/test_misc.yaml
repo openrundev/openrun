@@ -120,6 +120,12 @@ tests:
   static0300:
     command: curl -su "admin:qwerty" localhost:25222/static_app1/test_certs.yaml
     stdout: certs010
+  static0350:
+    command: curl -su "admin:qwerty" localhost:25222/static_app1/_openrun_app/verify_file/test_misc.yaml | jq -r '.file_exists + " " + .file_path'
+    stdout: "true test_misc.yaml"
+  static0360:
+    command: curl -su "admin:qwerty" -o /dev/null -w "%{http_code}" 'localhost:25222/static_app1/_openrun_app/verify_file/..%5Ctest_misc.yaml'
+    stdout: "400"
   static0400: # Create app, with test folder user as input
     command: ../openrun app create --approve  --spec static --param index=test_misc.yaml --param single_file=True ./commander /static_app2
   static0500:

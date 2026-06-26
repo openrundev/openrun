@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.18.2] - 2026-06-28
+
+### Added
+
+- Added the app internal `/_openrun_app/verify_file/{file_name}` API to verify that an app-relative source file exists and return its size.
+
 ## [v0.17.8] - 2026-06-03
 
 ### Fixed
