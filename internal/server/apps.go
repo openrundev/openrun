@@ -258,6 +258,7 @@ func (a *AppStore) ClearAppsAudit(ctx context.Context, pathDomains []types.AppPa
 	if len(pathDomains) == 0 {
 		return nil
 	}
+	defer a.ClearApps(pathDomains)
 
 	appInfo, error := a.GetAllAppsInfo()
 	if error != nil {
@@ -288,7 +289,6 @@ func (a *AppStore) ClearAppsAudit(ctx context.Context, pathDomains []types.AppPa
 		}
 	}
 
-	a.ClearApps(pathDomains)
 	return nil
 }
 

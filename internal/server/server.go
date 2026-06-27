@@ -949,7 +949,7 @@ func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 		return nil, err
 	}
 
-	_, err = s.listAppsApp.Reload(ctx, true, true, types.DryRunFalse, true)
+	_, err = s.listAppsApp.Reload(ctx, true, true, types.DryRunFalse, app.ReloadOptions{ReloadContainer: true, Verify: false})
 	if err != nil {
 		return nil, err
 	}

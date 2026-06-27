@@ -1002,15 +1002,21 @@ func (s *Server) CompleteTransaction(ctx context.Context, tx types.Transaction, 
 		return nil
 	}
 
+	committed := false
 	if tx.Tx != nil { // Used when called in a context where the transaction is handled by the caller
 		if err := tx.Commit(); err != nil {
 			return err
 		}
+		committed = true
 	}
 
 	// Update the in memory cache
 	if entries != nil {
 		if err := s.apps.ClearAppsAudit(ctx, entries, op); err != nil {
+			if committed {
+				s.Error().Err(err).Msg("post-commit app audit cleanup failed")
+				return nil
+			}
 			return err
 		}
 	}

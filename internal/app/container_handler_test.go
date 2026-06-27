@@ -5,6 +5,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -16,8 +17,11 @@ import (
 )
 
 type healthTestManager struct {
-	hostNamePort string
-	running      bool
+	hostNamePort    string
+	running         bool
+	supportsInPlace bool
+	currentHash     string
+	currentHashErr  error
 }
 
 func (m *healthTestManager) BuildImage(context.Context, container.ImageName, string, string, map[string]string) error {
@@ -45,8 +49,13 @@ func (m *healthTestManager) StopContainer(context.Context, container.ContainerNa
 }
 
 func (m *healthTestManager) RunContainer(context.Context, *types.AppEntry, string, container.ContainerName,
-	container.ImageName, int32, map[string]string, []*container.VolumeInfo, map[string]string, map[string]string, string, bool) error {
+	container.ImageName, int32, map[string]string, []*container.VolumeInfo, map[string]string, map[string]string, string, bool,
+	*container.HealthProbe) error {
 	return nil
+}
+
+func (m *healthTestManager) DeployContainer(context.Context, container.DeployRequest) (container.DeployResult, error) {
+	return container.DeployResult{}, nil
 }
 
 func (m *healthTestManager) GetContainerLogs(context.Context, container.ContainerName, int) (string, error) {
@@ -62,7 +71,14 @@ func (m *healthTestManager) VolumeCreate(context.Context, container.VolumeName) 
 }
 
 func (m *healthTestManager) SupportsInPlaceUpdate() bool {
-	return false
+	return m.supportsInPlace
+}
+
+func (m *healthTestManager) CurrentVersionHash(context.Context, container.ContainerName) (string, error) {
+	if m.currentHashErr != nil {
+		return "", m.currentHashErr
+	}
+	return m.currentHash, nil
 }
 
 func TestWaitForHealthFailsOnNonOKStatus(t *testing.T) {
@@ -100,6 +116,177 @@ func TestWaitForHealthFailsOnNonOKStatus(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "status 500") {
 		t.Fatalf("WaitForHealth error = %q, want status 500", err.Error())
+	}
+}
+
+func TestWaitForHealthUsesProxyPathAfterContainerReady(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok") //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	h := &ContainerHandler{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app: &App{
+			AppEntry: &types.AppEntry{
+				Id:   types.AppId(types.ID_PREFIX_APP_PROD + "proxy_ready_test"),
+				Path: "/proxy-ready",
+			},
+		},
+		manager: &healthTestManager{
+			hostNamePort: strings.TrimPrefix(srv.URL, "http://"),
+			running:      true,
+		},
+		scheme:       "http",
+		health:       "health",
+		stripAppPath: true,
+		containerConfig: types.Container{
+			HealthTimeoutSecs: 1,
+		},
+	}
+
+	if err := h.WaitForHealth(1, container.ContainerName("proxy-ready-test"), "hash"); err != nil {
+		t.Fatalf("WaitForHealth returned error: %v", err)
+	}
+}
+
+func TestBuildHealthProbeUsesDeployHealthConfig(t *testing.T) {
+	t.Parallel()
+
+	h := &ContainerHandler{
+		app:    &App{AppEntry: &types.AppEntry{Path: "/my-app"}},
+		port:   8080,
+		health: "ready",
+		containerConfig: types.Container{
+			HealthAttemptsAfterStartup: 12,
+			HealthTimeoutSecs:          5,
+			StatusHealthAttempts:       4,
+			DeployProbePeriodSecs:      2,
+			DeployHealthAttempts:       9,
+		},
+	}
+
+	probe := h.buildHealthProbe()
+	if probe == nil {
+		t.Fatal("buildHealthProbe returned nil")
+	}
+	if probe.PeriodSecs != 2 {
+		t.Fatalf("PeriodSecs = %d, want 2", probe.PeriodSecs)
+	}
+	if probe.TimeoutSecs != 5 {
+		t.Fatalf("TimeoutSecs = %d, want configured timeout 5", probe.TimeoutSecs)
+	}
+	if probe.FailureThreshold != 4 {
+		t.Fatalf("FailureThreshold = %d, want 4", probe.FailureThreshold)
+	}
+	if probe.StartupFailures != 12 {
+		t.Fatalf("StartupFailures = %d, want 12", probe.StartupFailures)
+	}
+}
+
+func TestBuildHealthProbeDefaultsInvalidTimingValues(t *testing.T) {
+	t.Parallel()
+
+	h := &ContainerHandler{
+		app:    &App{AppEntry: &types.AppEntry{Path: "/my-app"}},
+		port:   8080,
+		health: "ready",
+	}
+
+	probe := h.buildHealthProbe()
+	if probe == nil {
+		t.Fatal("buildHealthProbe returned nil")
+	}
+	if probe.PeriodSecs != 1 {
+		t.Fatalf("PeriodSecs = %d, want default 1", probe.PeriodSecs)
+	}
+	if probe.TimeoutSecs != 1 {
+		t.Fatalf("TimeoutSecs = %d, want default 1", probe.TimeoutSecs)
+	}
+	if probe.FailureThreshold != 1 {
+		t.Fatalf("FailureThreshold = %d, want default 1", probe.FailureThreshold)
+	}
+	if probe.StartupFailures != 1 {
+		t.Fatalf("StartupFailures = %d, want default 1", probe.StartupFailures)
+	}
+}
+
+func TestStaleInPlaceHandlerDetectsNewerDeploymentVersion(t *testing.T) {
+	t.Parallel()
+
+	h := &ContainerHandler{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app: &App{AppEntry: &types.AppEntry{
+			Id:   types.AppId(types.ID_PREFIX_APP_PROD + "stale_handler_test"),
+			Path: "/stale-handler",
+		}},
+		manager: &healthTestManager{
+			supportsInPlace: true,
+			currentHash:     "new-version",
+		},
+	}
+
+	if !h.staleInPlaceHandler(context.Background(), container.ContainerName("stale-handler-test"), "old-version") {
+		t.Fatal("expected stale handler when live deployment hash differs from active hash")
+	}
+}
+
+func TestStaleInPlaceHandlerAllowsCurrentDeploymentVersion(t *testing.T) {
+	t.Parallel()
+
+	h := &ContainerHandler{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app: &App{AppEntry: &types.AppEntry{
+			Id:   types.AppId(types.ID_PREFIX_APP_PROD + "current_handler_test"),
+			Path: "/current-handler",
+		}},
+		manager: &healthTestManager{
+			supportsInPlace: true,
+			currentHash:     "same-version",
+		},
+	}
+
+	if h.staleInPlaceHandler(context.Background(), container.ContainerName("current-handler-test"), "same-version") {
+		t.Fatal("did not expect stale handler when live deployment hash matches active hash")
+	}
+}
+
+func TestStaleInPlaceHandlerTreatsMissingActiveHashAsStale(t *testing.T) {
+	t.Parallel()
+
+	h := &ContainerHandler{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app: &App{AppEntry: &types.AppEntry{
+			Id:   types.AppId(types.ID_PREFIX_APP_PROD + "missing_hash_test"),
+			Path: "/missing-hash",
+		}},
+		manager: &healthTestManager{supportsInPlace: true},
+	}
+
+	if !h.staleInPlaceHandler(context.Background(), container.ContainerName("missing-hash-test"), "") {
+		t.Fatal("expected stale handler when in-place manager has no active hash recorded")
+	}
+}
+
+func TestStaleInPlaceHandlerKeepsRunningOnVersionLookupError(t *testing.T) {
+	t.Parallel()
+
+	h := &ContainerHandler{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app: &App{AppEntry: &types.AppEntry{
+			Id:   types.AppId(types.ID_PREFIX_APP_PROD + "lookup_error_test"),
+			Path: "/lookup-error",
+		}},
+		manager: &healthTestManager{
+			supportsInPlace: true,
+			currentHashErr:  fmt.Errorf("temporary version lookup failure"),
+		},
+	}
+
+	if h.staleInPlaceHandler(context.Background(), container.ContainerName("lookup-error-test"), "old-version") {
+		t.Fatal("did not expect stale handler when current version lookup temporarily fails")
 	}
 }
 

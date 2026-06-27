@@ -17,12 +17,18 @@ import (
 	"github.com/segmentio/ksuid"
 )
 
-func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dryRun bool, sync *types.SyncMetadata) (*types.SyncCreateResponse, error) {
+func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dryRun bool, sync *types.SyncMetadata) (_ *types.SyncCreateResponse, retErr error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	// Own the operation-level cluster rollback for apps reloaded by the sync job
+	// below, so that if the job or this transaction's commit fails, in-place
+	// Kubernetes changes are reverted along with the DB transaction.
+	ctx, dscope := s.beginDeployScope(ctx, true)
+	defer func() { retErr = dscope.finish(ctx, retErr) }()
 
 	genId, err := ksuid.NewRandom()
 	if err != nil {
@@ -79,16 +85,21 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 	// The metadata transaction has committed, keep the binding accounts created
 	// on the services.
 	applyEffects.commit()
+	dscope.commit(ctx)
 
 	return &ret, nil
 }
 
-func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (*types.SyncJobStatus, error) {
+func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.SyncJobStatus, retErr error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	// Own the operation-level cluster rollback for the sync job below.
+	ctx, dscope := s.beginDeployScope(ctx, true)
+	defer func() { retErr = dscope.finish(ctx, retErr) }()
 
 	syncEntry, err := s.db.GetSyncEntry(ctx, tx, id)
 	if err != nil {
@@ -111,6 +122,7 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (*types.Sy
 	// The metadata transaction has committed, keep the binding accounts created
 	// on the services.
 	applyEffects.commit()
+	dscope.commit(ctx)
 	return syncStatus, nil
 }
 
@@ -236,7 +248,7 @@ func (s *Server) runSyncJobs() error {
 }
 
 func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entry *types.SyncEntry,
-	dryRun, checkCommitHash bool, repoCache *RepoCache) (*types.SyncJobStatus, []types.AppPathDomain, *bindingAccountManager, error) {
+	dryRun, checkCommitHash bool, repoCache *RepoCache) (_ *types.SyncJobStatus, _ []types.AppPathDomain, _ *bindingAccountManager, retErr error) {
 	var tx types.Transaction
 	var err error
 	if inputTx.Tx == nil {
@@ -249,6 +261,15 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		tx = inputTx
 		// No rollback here if transaction is passed in
 	}
+
+	// origCtx is the context before the rollback stack is attached; it is used
+	// for the recursive full-apply call so that nested call owns a fresh stack.
+	origCtx := ctx
+	// Own the cluster rollback only when we own the DB transaction (the
+	// runSyncJobs path passes an empty transaction). When a transaction is
+	// passed in, the caller (CreateSyncEntry/RunSync) owns it.
+	ctx, dscope := s.beginDeployScope(ctx, inputTx.Tx == nil)
+	defer func() { retErr = dscope.finish(ctx, retErr) }()
 
 	s.Debug().Msgf("Running sync job %s", entry.Id)
 	if repoCache == nil {
@@ -325,9 +346,16 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 			if !checkCommitHash {
 				return nil, nil, applyEffects, fmt.Errorf("unexpected error, sync rerun with no commit hash")
 			}
-			return s.runSyncJob(ctx, inputTx, entry, dryRun, false, repoCache)
+			// The apply was skipped, so our rollback stack is empty here. Hand
+			// off to the recursive full apply using origCtx so it owns a fresh
+			// stack; mark this scope committed so its (empty) rollback is a no-op.
+			dscope.commit(ctx)
+			return s.runSyncJob(origCtx, inputTx, entry, dryRun, false, repoCache)
 		} else {
 			var reloadErr error
+			// In-place reloads register on the operation-level rollback stack
+			// (in ctx); the deferred finish reverts earlier apps if a later one
+			// fails, so the cluster matches the rolled-back DB transaction.
 			for _, appPath := range lastRunApps {
 				app := appMap[appPath]
 				var reloadResult *types.AppReloadResult
@@ -385,6 +413,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		// The metadata transaction has committed, keep the binding accounts created
 		// on the services.
 		applyEffects.commit()
+		dscope.commit(ctx)
 		return &status, updatedApps, nil, nil
 	}
 	if inputTx.Tx == nil {

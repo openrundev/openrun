@@ -22,6 +22,7 @@ import (
 	openruntypes "github.com/openrundev/openrun/internal/types"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
@@ -310,6 +311,25 @@ func TestGetDockerConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("image reference is not prefixed with configured registry", func(t *testing.T) {
+		ref, opts, err := GetImageReferenceConfig(context.Background(), "nginx", &openruntypes.RegistryConfig{
+			URL:      "registry.orb.local:5000",
+			Insecure: true,
+		})
+		if err != nil {
+			t.Fatalf("GetImageReferenceConfig returned error: %v", err)
+		}
+		if strings.Contains(ref.String(), "registry.orb.local:5000") {
+			t.Fatalf("ref.String() = %q, should not include configured registry", ref.String())
+		}
+		if ref.Context().RegistryStr() != "index.docker.io" {
+			t.Fatalf("registry = %q, want index.docker.io", ref.Context().RegistryStr())
+		}
+		if len(opts) != 2 {
+			t.Fatalf("len(opts) = %d, want 2", len(opts))
+		}
+	})
+
 	t.Run("errors when password file does not exist", func(t *testing.T) {
 		_, _, err := GetDockerConfig(context.Background(), "proj/app:latest", &openruntypes.RegistryConfig{
 			URL:          "registry.example.com",
@@ -570,6 +590,35 @@ func TestCreateOrUpdateSecret(t *testing.T) {
 	if string(got.Data["k"]) != "v2" || got.Type != corev1.SecretTypeDockerConfigJson {
 		t.Fatalf("updated secret mismatch: type=%q data=%q", got.Type, string(got.Data["k"]))
 	}
+}
+
+func TestCleanupKanikoResources(t *testing.T) {
+	ctx := context.Background()
+	client := k8sfake.NewSimpleClientset(
+		&batchv1.Job{
+			ObjectMeta: meta.ObjectMeta{Name: "build-job", Namespace: "ns"},
+		},
+		&corev1.Secret{
+			ObjectMeta: meta.ObjectMeta{Name: "build-job-dockercfg", Namespace: "ns"},
+		},
+		&corev1.Secret{
+			ObjectMeta: meta.ObjectMeta{Name: "build-job-certs", Namespace: "ns"},
+		},
+	)
+
+	cleanupKanikoResources(nil, client, "ns", "build-job", []string{"build-job-dockercfg", "build-job-certs", "missing-secret"})
+
+	if _, err := client.BatchV1().Jobs("ns").Get(ctx, "build-job", meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("job get error = %v, want not found", err)
+	}
+	if _, err := client.CoreV1().Secrets("ns").Get(ctx, "build-job-dockercfg", meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("dockercfg secret get error = %v, want not found", err)
+	}
+	if _, err := client.CoreV1().Secrets("ns").Get(ctx, "build-job-certs", meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("cert secret get error = %v, want not found", err)
+	}
+
+	cleanupKanikoResources(nil, client, "ns", "build-job", []string{"build-job-dockercfg"})
 }
 
 func TestGetPodForJob(t *testing.T) {

@@ -167,6 +167,8 @@ cors.max_age = "2678400"                                                        
 container.health_url = "/"
 container.health_attempts_after_startup = 30
 container.health_timeout_secs = 5
+container.deploy_probe_period_secs = 1
+container.deploy_health_attempts = 75
 
 # Idle Shutdown Config
 container.idle_shutdown_secs = 180
@@ -184,7 +186,6 @@ container.show_logs_for_failure = true
 
 # Kubernetes related settings
 kubernetes.default_volume_size = "10Gi"
-kubernetes.strict_version_check = true
 kubernetes.scaling_threshold_cpu = 80
 
 # Proxy related settings

@@ -210,24 +210,43 @@ func getAuthFromRegistryConfig(registryConfig *types.RegistryConfig) (*authn.Bas
 }
 
 func GetDockerConfig(ctx context.Context, imageRef string, registryConfig *types.RegistryConfig) (name.Reference, []remote.Option, error) {
+	return getDockerConfig(ctx, imageRef, registryConfig, true)
+}
+
+func GetImageReferenceConfig(ctx context.Context, imageRef string, registryConfig *types.RegistryConfig) (name.Reference, []remote.Option, error) {
+	return getDockerConfig(ctx, imageRef, registryConfig, false)
+}
+
+func getDockerConfig(ctx context.Context, imageRef string, registryConfig *types.RegistryConfig, prependRegistry bool) (name.Reference, []remote.Option, error) {
 	var parseOpts []name.Option
-	if registryConfig.Insecure {
+
+	useRegistryConfig := prependRegistry
+	if prependRegistry {
+		imageRef = registryConfig.URL + "/" + imageRef
+	} else if registryConfig != nil && registryConfig.URL != "" {
+		useRegistryConfig = imageUsesRegistryConfig(imageRef, registryConfig)
+	}
+
+	if useRegistryConfig && registryConfig.Insecure {
 		parseOpts = append(parseOpts, name.Insecure)
 	}
 
-	imageRef = registryConfig.URL + "/" + imageRef
 	ref, err := name.ParseReference(imageRef, parseOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse ref: %w", err)
+	}
+
+	var opts = []remote.Option{remote.WithContext(ctx)}
+	if !useRegistryConfig {
+		opts = append(opts, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+		return ref, opts, nil
 	}
 
 	tr, err := BuildHTTPTransport(registryConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build http transport: %w", err)
 	}
-
-	var opts = []remote.Option{remote.WithTransport(tr), remote.WithContext(ctx)}
-
+	opts = append(opts, remote.WithTransport(tr))
 	if strings.EqualFold(registryConfig.Type, "ecr") {
 		region := inferECRRegion(ref.Context().RegistryStr(), registryConfig.AWSRegion)
 		awsCfg, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region))
@@ -266,8 +285,39 @@ func GetDockerConfig(ctx context.Context, imageRef string, registryConfig *types
 	return ref, opts, nil
 }
 
+func imageUsesRegistryConfig(imageRef string, registryConfig *types.RegistryConfig) bool {
+	cfgHost, err := mustHost(registryConfig.URL)
+	if err != nil {
+		return false
+	}
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(ref.Context().RegistryStr(), cfgHost)
+}
+
 func CheckImagesExists(ctx context.Context, logger *types.Logger, imageRef string, registryConfig *types.RegistryConfig) (ExistsResult, error) {
 	ref, opts, err := GetDockerConfig(ctx, imageRef, registryConfig)
+	if err != nil {
+		return ExistsResult{}, fmt.Errorf("get remote config: %w", err)
+	}
+	desc, err := remote.Head(ref, opts...)
+	if err != nil {
+		var terr *transport.Error
+		if errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound {
+			logger.Info().Msgf("image %s does not exist", imageRef)
+			return ExistsResult{Exists: false}, nil
+		}
+		logger.Info().Msgf("image %s head error: %v", imageRef, err)
+		return ExistsResult{}, fmt.Errorf("manifest head: %w", err)
+	}
+	logger.Info().Msgf("image %s exists with digest %s", imageRef, desc.Digest.String())
+	return ExistsResult{Exists: true, Digest: desc.Digest.String()}, nil
+}
+
+func CheckImageReferenceExists(ctx context.Context, logger *types.Logger, imageRef string, registryConfig *types.RegistryConfig) (ExistsResult, error) {
+	ref, opts, err := GetImageReferenceConfig(ctx, imageRef, registryConfig)
 	if err != nil {
 		return ExistsResult{}, fmt.Errorf("get remote config: %w", err)
 	}
@@ -334,6 +384,10 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs kubernetes.Interfac
 	); err != nil {
 		return fmt.Errorf("create/update docker cfg secret: %w", err)
 	}
+	cleanupSecrets := []string{dcfgSecretName}
+	defer func() {
+		cleanupKanikoResources(logger, cs, ns, kb.JobName, cleanupSecrets)
+	}()
 
 	// Optional certs secret + per-registry flags
 	certData := map[string][]byte{}
@@ -384,6 +438,7 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs kubernetes.Interfac
 		if err := CreateOrUpdateSecret(ctx, cs, ns, certSecretName, certData, corev1.SecretTypeOpaque); err != nil {
 			return fmt.Errorf("create/update cert secret: %w", err)
 		}
+		cleanupSecrets = append(cleanupSecrets, certSecretName)
 		vols = append(vols, corev1.Volume{
 			Name: "certs",
 			VolumeSource: corev1.VolumeSource{
@@ -410,6 +465,7 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs kubernetes.Interfac
 	logger.Info().Msgf("submitting kaniko job %s, destination %s, args %v", kb.JobName, kb.Destination, args)
 
 	backoff := int32(0)
+	ttl := int32(3600)
 	job := &batchv1.Job{
 		ObjectMeta: meta.ObjectMeta{
 			Name:      kb.JobName,
@@ -417,7 +473,8 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs kubernetes.Interfac
 			Labels:    map[string]string{"app": "kaniko"},
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit: &backoff,
+			BackoffLimit:            &backoff,
+			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: meta.ObjectMeta{
 					Labels: map[string]string{"app": "kaniko"},
@@ -480,6 +537,22 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs kubernetes.Interfac
 	}
 
 	return nil
+}
+
+func cleanupKanikoResources(logger *types.Logger, cs kubernetes.Interface, ns, jobName string, secretNames []string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	propagation := meta.DeletePropagationBackground
+	if err := cs.BatchV1().Jobs(ns).Delete(cleanupCtx, jobName, meta.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) && logger != nil {
+		logger.Warn().Msgf("error deleting kaniko job %s/%s: %v", ns, jobName, err)
+	}
+
+	for _, name := range secretNames {
+		if err := cs.CoreV1().Secrets(ns).Delete(cleanupCtx, name, meta.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) && logger != nil {
+			logger.Warn().Msgf("error deleting kaniko secret %s/%s: %v", ns, name, err)
+		}
+	}
 }
 
 func getPodForJob(ctx context.Context, cs kubernetes.Interface, ns, jobName string) (*corev1.Pod, error) {

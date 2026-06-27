@@ -15,8 +15,10 @@ import (
 	"slices"
 
 	"github.com/BurntSushi/toml"
+	apppkg "github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
@@ -215,7 +217,7 @@ func (s *Server) setupSource(applyPath, branch, commit, gitAuth string, repoCach
 
 func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath string, appPathGlob string, approve, dryRun, promote bool,
 	reload types.AppReloadOption, branch, commit, gitAuth string, clobber,
-	forceReload, verify bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (*types.AppApplyResponse, []types.AppPathDomain, *bindingAccountManager, error) {
+	forceReload, verify bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (_ *types.AppApplyResponse, _ []types.AppPathDomain, _ *bindingAccountManager, retErr error) {
 	var tx types.Transaction
 	var err error
 	verify = verify && !dryRun
@@ -229,6 +231,15 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		tx = inputTx
 		// No rollback here if transaction is passed in
 	}
+
+	// Operation-level cluster rollback: if any app fails after earlier apps
+	// already mutated their Kubernetes deployments in-place, roll those earlier
+	// changes back so the cluster matches the rolled-back DB transaction. We own
+	// the rollback only when we own the DB transaction; when a transaction is
+	// passed in, the caller owns the commit (and therefore the rollback) and we
+	// just register into its stack.
+	ctx, dscope := s.beginDeployScope(ctx, inputTx.Tx == nil)
+	defer func() { retErr = dscope.finish(ctx, retErr) }()
 
 	if reload == "" {
 		reload = types.AppReloadOptionUpdated
@@ -522,6 +533,10 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		// rollbackAndClose on the returned binding account manager.
 		releaseBindingAccounts = true
 	}
+	// Apply succeeded and (if we own it) the DB transaction has committed; keep
+	// the in-place cluster changes. When the caller owns the transaction, this
+	// is a no-op and the caller's scope decides.
+	dscope.commit(ctx)
 
 	ret := &types.AppApplyResponse{
 		DryRun:                dryRun,
@@ -907,8 +922,11 @@ func (s *Server) verifyCreatedApp(ctx context.Context, tx types.Transaction, app
 		if err != nil {
 			return fmt.Errorf("error setting up app %s: %w", entry.AppPathDomain(), err)
 		}
-		if _, err := application.Reload(ctx, true, true, types.DryRun(false), true); err != nil {
-			return fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", entry.AppPathDomain(), err)
+		if _, err := application.Reload(ctx, true, true, types.DryRun(false), apppkg.ReloadOptions{ReloadContainer: true, Verify: true}); err != nil {
+			if container.ClusterRollbackClean(err) {
+				return fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", entry.AppPathDomain(), err)
+			}
+			return fmt.Errorf("verify failed for app %s: %w", entry.AppPathDomain(), err)
 		}
 		return nil
 	}

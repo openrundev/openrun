@@ -40,6 +40,38 @@ type VolumeInfo struct {
 	ReadOnly   bool
 }
 
+// HealthProbe describes an HTTP health check that a container manager can
+// translate into a native readiness/startup probe. A nil *HealthProbe means
+// no probe should be configured (e.g. command-lifetime apps or apps without a
+// health URL).
+type HealthProbe struct {
+	Path             string
+	Port             int32
+	Scheme           string // "HTTP" or "HTTPS"
+	PeriodSecs       int32
+	TimeoutSecs      int32
+	FailureThreshold int32 // steady-state readiness tolerance
+	StartupFailures  int32 // startup probe tolerance for slow boots
+}
+
+// HasPersistentVolume reports whether any mount is PVC-backed (a named volume
+// or UNNAMED_VOLUME). Secrets (IsSecret) and config-maps (VolumeName == "")
+// are per-pod and impose no single-writer constraint, so they are excluded.
+// Under the default ReadWriteOnce access mode such a volume cannot be
+// multi-attached, so its presence forces a downtime (Recreate) deploy rather
+// than a surge-based rolling update.
+//
+// TODO: exempt volumes once per-app ReadOnlyMany/ReadWriteMany access modes
+// are supported.
+func HasPersistentVolume(volumes []*VolumeInfo) bool {
+	for _, v := range volumes {
+		if !v.IsSecret && v.VolumeName != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // ContainerManager is the interface for managing containers
 type ContainerManager interface {
 	BuildImage(ctx context.Context, name ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error
@@ -54,11 +86,35 @@ type ContainerManager interface {
 	StopContainer(ctx context.Context, name ContainerName) error
 	RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 		imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
-		containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool) error
+		containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool,
+		healthProbe *HealthProbe) error
+	DeployContainer(ctx context.Context, req DeployRequest) (DeployResult, error)
 	GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error)
 	VolumeExists(ctx context.Context, name VolumeName) bool
 	VolumeCreate(ctx context.Context, name VolumeName) error
 	SupportsInPlaceUpdate() bool
+}
+
+// VersionReporter is implemented by managers that can report the version hash
+// currently configured on a live workload.
+type VersionReporter interface {
+	CurrentVersionHash(ctx context.Context, name ContainerName) (string, error)
+}
+
+// AsVersionReporter unwraps any decorating container managers and returns the
+// underlying VersionReporter if one is present.
+func AsVersionReporter(cm ContainerManager) (VersionReporter, bool) {
+	for cm != nil {
+		if vr, ok := cm.(VersionReporter); ok {
+			return vr, true
+		}
+		u, ok := cm.(interface{ Unwrap() ContainerManager })
+		if !ok {
+			break
+		}
+		cm = u.Unwrap()
+	}
+	return nil, false
 }
 
 // DevContainerManager is the interface for managing containers in dev mode
@@ -68,7 +124,7 @@ type DevContainerManager interface {
 	RemoveContainer(ctx context.Context, name ContainerName) error
 }
 
-func GenContainerName(appId types.AppId, cm ContainerManager, contentHash string, supportsInPlaceUpdate bool) ContainerName {
+func GenContainerName(appId types.AppId, contentHash string, supportsInPlaceUpdate bool) ContainerName {
 	if supportsInPlaceUpdate {
 		return ContainerName(fmt.Sprintf("clc-%s", appId))
 	} else {

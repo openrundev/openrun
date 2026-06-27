@@ -7,7 +7,7 @@ tests:
   kubernetes010: # setup flask app
     command: rm -rf ./flaskapp && mkdir flaskapp && cp flask.py flaskapp/app.py
   kubernetes030: # setup flask prod app
-    command: ../openrun app create --stage-at path --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpus=0.5 --copt memory=0.5g --approve ./flaskapp /kube_flaskprod
+    command: ../openrun app create --stage-at path --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpus=0.05 --copt memory=0.5g --approve ./flaskapp /kube_flaskprod
   kubernetes031:
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
   kubernetes032: # check curl
@@ -35,7 +35,7 @@ tests:
     stdout: "updated"
 
   kubernetes200: # setup streamlit app
-    command: ../openrun app create --stage-at path --spec python-streamlit --branch master --approve --copt cpus=0.5 --copt kubernetes.memory=300m --copt max_replicas=2 github.com/streamlit/streamlit-example /kube_streamlit
+    command: ../openrun app create --stage-at path --spec python-streamlit --branch master --approve --copt cpus=0.05 --copt kubernetes.memory=300m --copt max_replicas=2 github.com/streamlit/streamlit-example /kube_streamlit
   kubernetes210: # check stage
     command: curl -sS localhost:${HTTP_PORT}/kube_streamlit_cl_stage/_stcore/health
     stdout: ok
@@ -97,3 +97,33 @@ tests:
   kubernetes708: # check new val is retained after reload (mount was used)
     command: curl -sS localhost:${HTTP_PORT}/kube_sql/value
     stdout: "testval1"
+
+  # Test app reload --verify: a passing reload updates the app, a failing one
+  # (health check returns 500) is rolled back and the old version keeps serving.
+  kubernetes800: # setup verify test app (no volume)
+    command: rm -rf ./verifyapp_tmp && cp -rf verifyapp verifyapp_tmp
+  kubernetes801: # create app
+    command: ../openrun app create --stage-at path --spec python-flask --approve ./verifyapp_tmp /kube_verify
+  kubernetes802: # check initial version
+    command: curl -sS localhost:${HTTP_PORT}/kube_verify/version
+    stdout: "V1"
+  kubernetes810: # update app code to a valid new version
+    command: perl -i -pe 's/"V1"/"V2"/g' verifyapp_tmp/app.py
+  kubernetes811: # reload --verify succeeds
+    command: ../openrun app reload --verify --promote /kube_verify
+    exit-code: 0
+  kubernetes812: # version is updated
+    command: curl -sS localhost:${HTTP_PORT}/kube_verify/version
+    stdout: "V2"
+  kubernetes820: # break the health endpoint (returns 500) and bump version
+    command: perl -i -pe 's/return "ok", 200/return "broken", 500/g; s/"V2"/"V3"/g' verifyapp_tmp/app.py
+  kubernetes821: # reload --verify fails health and is reverted
+    command: ../openrun app reload --verify --promote /kube_verify
+    exit-code: 1
+    stderr: "verify failed"
+  kubernetes822: # version is unchanged (rolled back, old version kept serving)
+    command: curl -sS localhost:${HTTP_PORT}/kube_verify/version
+    stdout: "V2"
+  kubernetes823: # health endpoint still serves the old, working version
+    command: curl -sS localhost:${HTTP_PORT}/kube_verify
+    stdout: "ok"

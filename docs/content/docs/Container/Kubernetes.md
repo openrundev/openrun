@@ -105,11 +105,4 @@ OpenRun is installed as a Kubernetes Deployment, with a Service for routing API 
 
 All Kubernetes resources are created lazily, on the first API call to the app. If app is running version 1, and a code/config change is done which updates it to version 2, the deployment update will happen on the next API call to the app. The API call is blocked, the container image is rebuild if required and the deployment is updated using Server Side Apply API calls.
 
-By default, OpenRun will wait to ensure that the app is running pods with only the new version, before processing further API calls. This behavior can be relaxed by setting
-
-```toml {filename="openrun.toml"}
-[app_config]
-kubernetes.strict_version_check = false
-```
-
-in which case OpenRun just makes sure that the new version started successfully,
+OpenRun waits until Kubernetes reports the expected new version rollout is complete before processing further API calls.

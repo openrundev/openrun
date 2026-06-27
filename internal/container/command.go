@@ -368,7 +368,8 @@ const LABEL_PREFIX = "dev.openrun."
 
 func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
-	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool) error {
+	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool,
+	_ *HealthProbe) error {
 	c.Debug().Msgf("Running container %s from image %s with port %d env %+v mountArgs %+v",
 		containerName, imageName, port, slices.Collect(maps.Keys(envMap)), volumes)
 	publish := fmt.Sprintf("127.0.0.1::%d", port)
@@ -430,6 +431,23 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 	}
 
 	return nil
+}
+
+func (c *CommandCM) DeployContainer(ctx context.Context, req DeployRequest) (DeployResult, error) {
+	if err := c.RunContainer(ctx, req.AppEntry, req.SourceDir, req.ContainerName,
+		req.ImageName, req.Port, req.EnvMap, req.Volumes, req.ContainerOptions, req.ParamMap,
+		req.VersionHash, req.IsImageSpec, req.HealthProbe); err != nil {
+		return DeployResult{}, err
+	}
+	hostNamePort, _, err := c.GetContainerState(ctx, req.ContainerName, req.VersionHash)
+	if err != nil {
+		return DeployResult{}, err
+	}
+	return DeployResult{
+		ContainerName: req.ContainerName,
+		VersionHash:   req.VersionHash,
+		HostNamePort:  hostNamePort,
+	}, nil
 }
 
 // RefreshImage pulls the named image and returns its content-addressable

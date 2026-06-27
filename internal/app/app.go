@@ -176,7 +176,7 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 func (a *App) Initialize(ctx context.Context, dryRun types.DryRun) error {
 	var reloaded bool
 	var err error
-	if reloaded, err = a.Reload(ctx, false, true, dryRun, true); err != nil {
+	if reloaded, err = a.Reload(ctx, false, true, dryRun, ReloadOptions{ReloadContainer: true, Verify: false}); err != nil {
 		return err
 	}
 
@@ -235,7 +235,20 @@ func (a *App) ResetFS() {
 	a.sourceFS.Reset()
 }
 
-func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.DryRun, reloadContainer bool) (bool, error) {
+// ReloadOptions controls how App.Reload handles the prod container.
+type ReloadOptions struct {
+	// ReloadContainer, when true, (re)loads the prod container (rebuild/restart
+	// as needed). It is true for reload and initialize operations; only the
+	// metadata-only paths leave it false. Image-spec apps always reload.
+	ReloadContainer bool
+	// Verify indicates the caller wants a verified, rollback-capable update.
+	// For in-place container managers (Kubernetes) this makes a missing
+	// rollback snapshot a fatal error rather than proceeding with an
+	// irreversible in-place update.
+	Verify bool
+}
+
+func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.DryRun, opts ReloadOptions) (bool, error) {
 	requestTime := time.Now()
 
 	a.initMutex.Lock()
@@ -301,7 +314,7 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 	}
 
 	// Load Starlark config, AppConfig is updated with the settings contents
-	if err = a.loadStarlarkConfig(ctx, dryRun, reloadContainer); err != nil {
+	if err = a.loadStarlarkConfig(ctx, dryRun, opts); err != nil {
 		return false, fmt.Errorf("error during initial setup: %w", err)
 	}
 	a.Metadata.Name = a.Name
@@ -775,7 +788,7 @@ func (a *App) startWatcher() error {
 
 					inReload.Store(true)
 					defer inReload.Store(false)
-					_, err := a.Reload(context.Background(), true, false, types.DryRun(false), true)
+					_, err := a.Reload(context.Background(), true, false, types.DryRun(false), ReloadOptions{ReloadContainer: true, Verify: false})
 					a.reloadError = err
 					if err != nil {
 						a.Error().Err(err).Msg("Error reloading app")

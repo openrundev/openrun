@@ -43,6 +43,7 @@ const (
 type ContainerHandler struct {
 	*types.Logger
 	manager         container.ContainerManager
+	isKubernetes    bool
 	app             *App
 	serverConfig    *types.ServerConfig
 	containerFile   string
@@ -65,6 +66,7 @@ type ContainerHandler struct {
 	stateLock           sync.RWMutex
 	currentState        ContainerState
 	activeContainerName container.ContainerName
+	activeVersionHash   string
 	// imageDigest is the digest (e.g. "sha256:abc...") resolved by the most
 	// recent RefreshImage call during ProdReload. Only set for image-spec
 	// apps. Folded into getAppHash so a moved upstream tag forces a recreate
@@ -89,6 +91,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any, bindings []*types.Binding) (*ContainerHandler, error) {
 
 	var containerManager container.ContainerManager
+	var isKubernetes bool
 	var err error
 	containerManagerKind := "command"
 	switch serverConfig.System.ContainerCommand {
@@ -98,6 +101,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		if err != nil {
 			return nil, fmt.Errorf("error creating kubernetes container manager: %w", err)
 		}
+		isKubernetes = true
 	default:
 		containerManager = container.NewCommandCM(logger, serverConfig, app.Id, app.AppRunPath)
 	}
@@ -192,6 +196,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		buildDir:        buildDir,
 		sourceFS:        sourceFS,
 		manager:         containerManager,
+		isKubernetes:    isKubernetes,
 		paramMap:        paramMap,
 		containerConfig: containerConfig,
 		stateLock:       sync.RWMutex{},
@@ -272,7 +277,11 @@ func dedupVolumes(volumes []string) []string {
 
 func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 	for range h.idleShutdownTicker.C {
-		if h.currentState != ContainerStateRunning {
+		h.stateLock.RLock()
+		currentState := h.currentState
+		versionHash := h.activeVersionHash
+		h.stateLock.RUnlock()
+		if currentState != ContainerStateRunning {
 			continue
 		}
 		idleTimeSecs := time.Now().Unix() - h.app.lastRequestTime.Load()
@@ -301,6 +310,10 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 			h.Error().Err(err).Msgf("Error getting app hash for %s", h.app.Id)
 			break
 		}
+		containerName := container.GenContainerName(h.app.Id, fullHash, h.manager.SupportsInPlaceUpdate())
+		if h.staleInPlaceHandler(ctx, containerName, versionHash) {
+			break
+		}
 
 		if h.app.notifyClose != nil {
 			// Notify the server to close the app so that it gets reinitialized on next API call
@@ -310,7 +323,7 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 		h.stateLock.Lock()
 		h.currentState = ContainerStateIdleShutdown
 
-		err = h.manager.StopContainer(ctx, container.GenContainerName(h.app.Id, h.manager, fullHash, h.manager.SupportsInPlaceUpdate()))
+		err = h.manager.StopContainer(ctx, containerName)
 		if err != nil {
 			h.Error().Err(err).Msgf("Error stopping idle app %s", h.app.Id)
 		}
@@ -333,11 +346,15 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 	for range h.healthCheckTicker.C {
 		h.stateLock.RLock()
 		containerName := h.activeContainerName
+		versionHash := h.activeVersionHash
 		running := h.currentState == ContainerStateRunning && containerName != ""
 		h.stateLock.RUnlock()
 		if !running {
 			h.Trace().Msgf("Health checker waiting for app %s to start", h.app.Id)
 			continue
+		}
+		if h.staleInPlaceHandler(ctx, containerName, versionHash) {
+			return
 		}
 
 		err := h.WaitForHealth(h.containerConfig.StatusHealthAttempts, containerName, "")
@@ -345,6 +362,13 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 			continue
 		}
 		h.Info().Msgf("Health check failed for app %s: %s", h.app.Id, err)
+		if h.staleInPlaceHandler(ctx, containerName, versionHash) {
+			return
+		}
+		if h.manager.SupportsInPlaceUpdate() {
+			h.Info().Msgf("Leaving app %s running after background health failure; Kubernetes readiness controls traffic", h.app.Id)
+			continue
+		}
 
 		if h.app.notifyClose != nil {
 			// Notify the server to close the app so that it gets reinitialized on next API call
@@ -363,6 +387,30 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 	}
 
 	h.Debug().Msgf("Health checker stopped for app %s", h.app.Id)
+}
+
+func (h *ContainerHandler) staleInPlaceHandler(ctx context.Context, containerName container.ContainerName, versionHash string) bool {
+	if !h.manager.SupportsInPlaceUpdate() {
+		return false
+	}
+	if versionHash == "" {
+		h.Info().Msgf("App %s has no active deployment version recorded; stopping stale background checker", h.app.Id)
+		return true
+	}
+	vr, ok := container.AsVersionReporter(h.manager)
+	if !ok {
+		return false
+	}
+	currentHash, err := vr.CurrentVersionHash(ctx, containerName)
+	if err != nil {
+		h.Debug().Err(err).Msgf("Could not check current version for app %s; keeping background checker active", h.app.Id)
+		return false
+	}
+	if currentHash == "" || currentHash == container.TrimLabelValue(versionHash) {
+		return false
+	}
+	h.Info().Msgf("App %s is managed by a newer deployment version; stopping stale background checker", h.app.Id)
+	return true
 }
 
 func extractVolumes(node *parser.Node) []string {
@@ -505,7 +553,9 @@ func (h *ContainerHandler) createVolumes(ctx context.Context) error {
 
 		genVolumeName := container.GenVolumeName(h.app.Id, dir)
 		h.Info().Msgf("Applying volume %s for app %s dir %s", genVolumeName, h.app.Id, dir)
-		if !h.manager.VolumeExists(ctx, genVolumeName) {
+		if h.manager.VolumeExists(ctx, genVolumeName) {
+			h.Warn().Msgf("Reusing existing volume %s for app %s dir %s; previous data will be mounted", genVolumeName, h.app.Id, dir)
+		} else {
 			err := h.manager.VolumeCreate(ctx, genVolumeName)
 			if err != nil {
 				return fmt.Errorf("error creating volume %s: %w", genVolumeName, err)
@@ -654,7 +704,7 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 	if h.GenImageName == "" {
 		h.GenImageName = container.GenImageName(h.app.Id, "")
 	}
-	containerName := container.GenContainerName(h.app.Id, h.manager, "", h.manager.SupportsInPlaceUpdate())
+	containerName := container.GenContainerName(h.app.Id, "", h.manager.SupportsInPlaceUpdate())
 
 	_, running, err := devCM.GetContainerState(ctx, containerName, "")
 	if err != nil {
@@ -700,7 +750,7 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 		return nil
 	}
 	err = devCM.RunContainer(ctx, h.app.AppEntry, h.app.SourceUrl, containerName,
-		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, "", h.IsImageSpec())
+		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, "", h.IsImageSpec(), nil)
 	if err != nil {
 		return fmt.Errorf("error running container: %w", err)
 	}
@@ -821,14 +871,13 @@ func (h *ContainerHandler) getAppHash() (string, error) {
 	// For image-spec apps where RefreshImage has resolved a digest, fold the
 	// digest into the identity hash so that a moved tag (e.g.
 	// mycompany/jp-app:latest pointing to new content) yields a different
-	// container name and forces ProdReload down the recreate path.
+	// deployment version.
 	//
 	// The digest is only appended when non-empty so that:
 	//   1. non-image apps produce the exact same hash as before this change
 	//      (no spurious container rebuild on upgrade), and
-	//   2. image-spec apps whose manager returns no digest (e.g. Kubernetes,
-	//      where RefreshImage is currently a no-op) also keep their existing
-	//      hash and container lifecycle.
+	//   2. image-spec apps whose manager cannot resolve a digest also keep
+	//      their existing hash and container lifecycle.
 	imageDigest := ""
 	if h.image != "" {
 		h.stateLock.RLock()
@@ -869,7 +918,12 @@ func (h *ContainerHandler) ActiveContainerName() (container.ContainerName, bool)
 	return h.activeContainerName, true
 }
 
-func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
+// ProdReload reloads the prod container. verify indicates the caller wants the
+// update to be verified and rollback-capable; for in-place managers this makes
+// a snapshot failure fatal (we refuse to mutate the live Deployment when we
+// cannot capture the state needed to roll it back), rather than proceeding with
+// an irreversible update.
+func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify bool) error {
 	var err error
 
 	// For image-spec apps (where the operator supplied an upstream image
@@ -884,9 +938,18 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 		if err != nil {
 			return fmt.Errorf("error refreshing image %s: %w", h.image, err)
 		}
-		h.stateLock.Lock()
-		h.imageDigest = digest
-		h.stateLock.Unlock()
+		if digest != "" {
+			h.stateLock.Lock()
+			h.imageDigest = digest
+			h.stateLock.Unlock()
+		} else {
+			h.stateLock.RLock()
+			prevDigest := h.imageDigest
+			h.stateLock.RUnlock()
+			if prevDigest != "" {
+				h.Warn().Msgf("could not resolve a fresh digest for image %s; reusing last known digest %s", h.image, prevDigest)
+			}
+		}
 	}
 
 	h.envMap, h.envMapHash, err = h.getEnvMapAndHash()
@@ -917,61 +980,32 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 		return nil
 	}
 
-	containerName := container.GenContainerName(h.app.Id, h.manager, fullHash, h.manager.SupportsInPlaceUpdate())
+	if h.isKubernetes {
+		return h.prodReloadKubernetes(ctx, fullHash, verify)
+	}
 
+	containerName := container.GenContainerName(h.app.Id, fullHash, false)
+	startedExisting := false
 	if h.lifetime != types.CONTAINER_LIFETIME_COMMAND {
 		hostNamePort, running, err := h.manager.GetContainerState(ctx, containerName, fullHash)
 		if err != nil {
 			return fmt.Errorf("error getting running containers: %w", err)
 		}
-
-		// For image-spec apps on managers that update workloads in-place
-		// (i.e. Kubernetes), we deliberately bypass the "service already
-		// healthy, reuse it" short-circuit and always fall through to
-		// RunContainer. The upstream tag may have moved while the existing
-		// Deployment's pod-template hash is unchanged (RefreshImage is a
-		// no-op on Kubernetes so the digest is not folded into fullHash),
-		// so re-applying the Deployment is what surfaces the new image:
-		// createDeployment bumps a pod-template annotation on every reload
-		// and sets imagePullPolicy=Always, triggering a RollingUpdate that
-		// pulls the latest image content. Build-spec apps and command-based
-		// managers (Docker/Podman, where the digest is in fullHash) keep
-		// the existing reuse fast path.
-		canReuse := !h.IsImageSpec() || !h.manager.SupportsInPlaceUpdate()
-		h.Debug().Msgf("current state: hostNamePort %s running %t expectHash %s canReuse %t", hostNamePort, running, fullHash, canReuse)
-		if hostNamePort != "" && canReuse {
-			// Service is present, make sure deployment it is in the correct state
+		if hostNamePort != "" && running {
 			h.stateLock.Lock()
-			defer h.stateLock.Unlock()
-
-			if !running {
-				// This does not handle the case where volume list has changed
-				h.Debug().Msgf("container not running, starting")
-				err = h.manager.StartContainer(ctx, containerName)
-				if err != nil {
-					return fmt.Errorf("error starting container: %w", err)
-				}
-
-				if h.health != "" {
-					err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName, fullHash)
-					if err != nil {
-						if h.containerConfig.ShowLogsForFailure {
-							logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
-							return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
-						}
-						return fmt.Errorf("error waiting for health: %w", err)
-					}
-				}
-			} else {
-				// TODO handle case where image name is specified and param values change, need to restart container in that case
-				h.hostNamePort = hostNamePort
-				h.Debug().Msg("container already running")
-			}
-
 			h.currentState = ContainerStateRunning
 			h.activeContainerName = containerName
-			h.Debug().Msgf("updating port to %s", h.hostNamePort)
+			h.activeVersionHash = fullHash
+			h.hostNamePort = hostNamePort
+			h.stateLock.Unlock()
+			h.Debug().Msgf("app %s already on version %s, reusing", h.app.Id, fullHash)
 			return nil
+		}
+		if hostNamePort != "" && !running {
+			if err := h.manager.StartContainer(ctx, containerName); err != nil {
+				return fmt.Errorf("error starting stopped container: %w", err)
+			}
+			startedExisting = true
 		}
 	}
 
@@ -1004,28 +1038,28 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 
 	h.stateLock.Lock()
 	defer h.stateLock.Unlock()
-	// Start the container with newly built image
 
 	if h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
-		// Command lifetime, service is not started, commands will be run with the image
+		// Command lifetime: no service is started, commands run with the image.
 		return nil
 	}
-	err = h.manager.RunContainer(ctx, h.app.AppEntry, sourceDir, containerName,
-		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, fullHash, h.IsImageSpec())
-	if err != nil {
-		return fmt.Errorf("error starting container after update: %w", err)
+
+	if !startedExisting {
+		if err := h.manager.RunContainer(ctx, h.app.AppEntry, sourceDir, containerName,
+			h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, fullHash, h.IsImageSpec(),
+			nil); err != nil {
+			return fmt.Errorf("error starting container after update: %w", err)
+		}
 	}
 
 	if sourceDir != "" {
-		// Cleanup temp dir after image has been built and mount template file has been generated
-		if err = os.RemoveAll(sourceDir); err != nil {
+		if err := os.RemoveAll(sourceDir); err != nil {
 			return fmt.Errorf("error removing temp source dir: %w", err)
 		}
 	}
 
 	if h.health != "" {
-		err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName, fullHash)
-		if err != nil {
+		if err := h.WaitForHealth(h.containerConfig.DeployHealthAttempts, containerName, fullHash); err != nil {
 			if h.containerConfig.ShowLogsForFailure {
 				logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
 				return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
@@ -1038,8 +1072,6 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 	if err != nil {
 		return fmt.Errorf("error getting running containers: %w", err)
 	}
-
-	h.Debug().Msgf("containerState hostNamePort %s running %t expectedHash %s", hostNamePort, running, container.TrimLabelValue(fullHash))
 	if hostNamePort == "" || !running {
 		if h.containerConfig.ShowLogsForFailure {
 			logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
@@ -1047,10 +1079,130 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 		}
 		return fmt.Errorf("container not running")
 	}
+
 	h.currentState = ContainerStateRunning
 	h.activeContainerName = containerName
+	h.activeVersionHash = fullHash
 	h.hostNamePort = hostNamePort
 	return nil
+}
+
+func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash string, verify bool) error {
+	containerName := container.GenContainerName(h.app.Id, fullHash, true)
+
+	sourceDir := ""
+	if h.image == "" {
+		imageExists, err := h.manager.ImageExists(ctx, h.GenImageName)
+		if err != nil {
+			return fmt.Errorf("error getting images: %w", err)
+		}
+		if !imageExists {
+			sourceDir, err = h.sourceFS.CreateTempSourceDir()
+			if err != nil {
+				return fmt.Errorf("error creating temp source dir: %w", err)
+			}
+			buildDir := path.Join(sourceDir, h.buildDir)
+			if err := h.manager.BuildImage(ctx, h.GenImageName, buildDir, h.containerFile, h.cargs); err != nil {
+				return fmt.Errorf("error building image: %w", err)
+			}
+		}
+	}
+
+	if err := h.createVolumes(ctx); err != nil {
+		if sourceDir != "" {
+			if rmErr := os.RemoveAll(sourceDir); rmErr != nil {
+				h.Warn().Err(rmErr).Msgf("error removing temp source dir for app %s", h.app.Id)
+			}
+		}
+		return err
+	}
+
+	h.stateLock.Lock()
+	defer h.stateLock.Unlock()
+
+	if h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
+		if sourceDir != "" {
+			if rmErr := os.RemoveAll(sourceDir); rmErr != nil {
+				h.Warn().Err(rmErr).Msgf("error removing temp source dir for app %s", h.app.Id)
+			}
+		}
+		return nil
+	}
+
+	result, err := h.manager.DeployContainer(ctx, container.DeployRequest{
+		AppEntry:           h.app.AppEntry,
+		SourceDir:          sourceDir,
+		ContainerName:      containerName,
+		ImageName:          h.GenImageName,
+		Port:               h.port,
+		EnvMap:             h.envMap,
+		Volumes:            h.volumeInfo,
+		ContainerOptions:   h.app.Metadata.ContainerOptions,
+		ParamMap:           h.paramMap,
+		VersionHash:        fullHash,
+		IsImageSpec:        h.IsImageSpec(),
+		HealthProbe:        h.buildHealthProbe(),
+		Verify:             verify,
+		DeployAttempts:     h.containerConfig.DeployHealthAttempts,
+		LogLinesToShow:     h.containerConfig.LogLinesToShow,
+		ShowLogsForFailure: h.containerConfig.ShowLogsForFailure,
+	})
+	if err != nil {
+		return err
+	}
+
+	h.currentState = ContainerStateRunning
+	h.activeContainerName = result.ContainerName
+	h.activeVersionHash = result.VersionHash
+	h.hostNamePort = result.HostNamePort
+	return nil
+}
+
+// buildHealthProbe constructs the native readiness/startup probe config from
+// the handler's health URL and configured timings. Returns nil when there is no
+// health URL or for command-lifetime apps (which have no service).
+func (h *ContainerHandler) buildHealthProbe() *container.HealthProbe {
+	if h.health == "" || h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
+		return nil
+	}
+	scheme := "HTTP"
+	if strings.EqualFold(h.scheme, "https") {
+		scheme = "HTTPS"
+	}
+	// Mirror WaitForHealth's URL construction: when the app path is not
+	// stripped, the container serves the health endpoint under the app path
+	// (e.g. Streamlit), so the native probe must hit the same path or it will
+	// 404 and the pod will never become Ready.
+	probePath := h.health
+	if !h.stripAppPath {
+		probePath = path.Join("/", h.app.Path, h.health)
+	}
+	period := int32(h.containerConfig.DeployProbePeriodSecs)
+	if period <= 0 {
+		period = 1
+	}
+	timeout := int32(h.containerConfig.HealthTimeoutSecs)
+	if timeout <= 0 {
+		timeout = 1
+	}
+	failureThreshold := int32(h.containerConfig.StatusHealthAttempts)
+	if failureThreshold <= 0 {
+		failureThreshold = 1
+	}
+	startupFailures := int32(h.containerConfig.HealthAttemptsAfterStartup)
+	if startupFailures <= 0 {
+		startupFailures = 1
+	}
+	return &container.HealthProbe{
+		Path:             probePath,
+		Port:             h.port,
+		Scheme:           scheme,
+		PeriodSecs:       period,
+		TimeoutSecs:      timeout,
+		FailureThreshold: failureThreshold,
+		// StartupFailures × period bounds total startup time (default ~30s).
+		StartupFailures: startupFailures,
+	}
 }
 
 func (h *ContainerHandler) Close() error {

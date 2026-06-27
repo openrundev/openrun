@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -43,7 +44,7 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 
 	// File is cached, should be served from cache even if file server is closed
 	testServer.Close()
-	ok, err := a.Reload(context.Background(), true, true, types.DryRunFalse, true)
+	ok, err := a.Reload(context.Background(), true, true, types.DryRunFalse, app.ReloadOptions{ReloadContainer: true})
 	if !ok || err != nil {
 		t.Fatalf("Error %s", err)
 	}

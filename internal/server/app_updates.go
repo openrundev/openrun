@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 
+	apppkg "github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -79,9 +81,12 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 	}
 	reloadResults := make([]types.AppPathDomain, 0)
 	promoteResults := make([]types.AppPathDomain, 0)
-	if _, err := app.Reload(ctx, true, true, types.DryRun(dryRun), verify); err != nil {
+	if _, err := app.Reload(ctx, true, true, types.DryRun(dryRun), apppkg.ReloadOptions{ReloadContainer: true, Verify: verify}); err != nil {
 		if verify {
-			return nil, fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", appEntry.AppPathDomain(), err)
+			if container.ClusterRollbackClean(err) {
+				return nil, fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", appEntry.AppPathDomain(), err)
+			}
+			return nil, fmt.Errorf("verify failed for app %s: %w", appEntry.AppPathDomain(), err)
 		}
 		return nil, fmt.Errorf("error reloading app %s: %w", appEntry, err)
 	}
@@ -101,9 +106,12 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 			return nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
 		}
 
-		if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun), verify); err != nil {
+		if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun), apppkg.ReloadOptions{ReloadContainer: true, Verify: verify}); err != nil {
 			if verify {
-				return nil, fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", prodAppEntry.AppPathDomain(), err)
+				if container.ClusterRollbackClean(err) {
+					return nil, fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", prodAppEntry.AppPathDomain(), err)
+				}
+				return nil, fmt.Errorf("verify failed for app %s: %w", prodAppEntry.AppPathDomain(), err)
 			}
 			return nil, fmt.Errorf("error reloading prod app %s: %w", appEntry, err)
 		}
@@ -125,7 +133,7 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 }
 
 func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dryRun, promote bool,
-	branch, commit, gitAuth string, forceReload, verify bool) (*types.AppReloadResponse, error) {
+	branch, commit, gitAuth string, forceReload, verify bool) (_ *types.AppReloadResponse, retErr error) {
 	verify = verify && !dryRun
 	filteredApps, err := s.FilterApps(appPathGlob, false)
 	if err != nil {
@@ -137,6 +145,12 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	// Operation-level cluster rollback: if any app fails after earlier apps
+	// already mutated their Kubernetes deployments in-place, roll those earlier
+	// changes back too, so the cluster matches the rolled-back DB transaction.
+	ctx, dscope := s.beginDeployScope(ctx, true)
+	defer func() { retErr = dscope.finish(ctx, retErr) }()
 
 	repoCache, err := NewRepoCache(s)
 	if err != nil {
@@ -182,6 +196,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "reload"); err != nil {
 		return nil, err
 	}
+	dscope.commit(ctx)
 
 	ret := &types.AppReloadResponse{
 		DryRun:         dryRun,
@@ -373,7 +388,7 @@ func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun boo
 		if err != nil {
 			return nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
 		}
-		if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun), false); err != nil {
+		if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun), apppkg.ReloadOptions{ReloadContainer: false, Verify: false}); err != nil {
 			return nil, fmt.Errorf("error reloading prod app %s: %w", prodApp.AppEntry, err)
 		}
 		result = append(result, appInfo.AppPathDomain)

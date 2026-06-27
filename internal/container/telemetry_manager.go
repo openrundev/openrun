@@ -77,11 +77,25 @@ func (m *telemetryContainerManager) StopContainer(ctx context.Context, name Cont
 
 func (m *telemetryContainerManager) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
-	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool) error {
+	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool,
+	healthProbe *HealthProbe) error {
 	start := time.Now()
-	err := m.ContainerManager.RunContainer(ctx, appEntry, sourceDir, containerName, imageName, port, envMap, volumes, containerOptions, paramMap, versionHash, isImageSpec)
+	err := m.ContainerManager.RunContainer(ctx, appEntry, sourceDir, containerName, imageName, port, envMap, volumes, containerOptions, paramMap, versionHash, isImageSpec, healthProbe)
 	telemetry.RecordContainerCall(ctx, m.kind, "run_container", start, err, telemetry.AppIdentityAttributes(appEntry)...)
 	return err
+}
+
+func (m *telemetryContainerManager) DeployContainer(ctx context.Context, req DeployRequest) (DeployResult, error) {
+	start := time.Now()
+	result, err := m.ContainerManager.DeployContainer(ctx, req)
+	telemetry.RecordContainerCall(ctx, m.kind, "deploy_container", start, err, telemetry.AppIdentityAttributes(req.AppEntry)...)
+	return result, err
+}
+
+// Unwrap exposes the wrapped manager so helpers can reach optional interfaces
+// implemented by the underlying manager.
+func (m *telemetryContainerManager) Unwrap() ContainerManager {
+	return m.ContainerManager
 }
 
 func (m *telemetryContainerManager) GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error) {

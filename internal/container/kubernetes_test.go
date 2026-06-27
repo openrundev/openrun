@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,7 +12,9 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8sapitypes "k8s.io/apimachinery/pkg/types"
@@ -179,6 +182,36 @@ func TestKubernetesCMImageExistsRequiresRegistryURL(t *testing.T) {
 	}
 }
 
+func TestKubernetesCMRefreshImageRejectsInvalidReference(t *testing.T) {
+	k := &KubernetesCM{
+		Logger: newTestLogger(),
+		config: &types.ServerConfig{},
+	}
+
+	_, err := k.RefreshImage(context.Background(), ImageName("not a valid image ref"))
+	if err == nil {
+		t.Fatal("RefreshImage should fail for an invalid image reference")
+	}
+	if !strings.Contains(err.Error(), "parse ref") {
+		t.Fatalf("error = %q, expected parse ref message", err)
+	}
+}
+
+func TestImageRefreshFatalClassification(t *testing.T) {
+	for _, msg := range []string{
+		"manifest head: GET https://example/v2/: 401 Unauthorized",
+		"manifest head: GET https://example/v2/: 403 Forbidden",
+		"authentication required",
+	} {
+		if !isImageRefreshFatal(msg) {
+			t.Fatalf("isImageRefreshFatal(%q) = false, want true", msg)
+		}
+	}
+	if isImageRefreshFatal("manifest head: dial tcp: i/o timeout") {
+		t.Fatal("timeout should not be classified as fatal")
+	}
+}
+
 func TestKubernetesCMBuildImageValidation(t *testing.T) {
 	t.Run("requires registry URL", func(t *testing.T) {
 		k := &KubernetesCM{
@@ -272,7 +305,7 @@ func TestKubernetesCMGetContainerState(t *testing.T) {
 			Logger:       newTestLogger(),
 			appNamespace: "apps",
 			config:       &types.ServerConfig{},
-			appConfig:    &types.AppConfig{Kubernetes: types.Kubernetes{StrictVersionCheck: true}},
+			appConfig:    &types.AppConfig{},
 			clientSet:    client,
 		}
 		host, running, err := k.GetContainerState(ctx, ContainerName("myapp"), "expected")
@@ -333,7 +366,7 @@ func TestKubernetesCMGetContainerState(t *testing.T) {
 			Logger:       newTestLogger(),
 			appNamespace: "apps",
 			config:       &types.ServerConfig{},
-			appConfig:    &types.AppConfig{Kubernetes: types.Kubernetes{StrictVersionCheck: true}},
+			appConfig:    &types.AppConfig{},
 			clientSet:    client,
 		}
 		host, running, err := k.GetContainerState(ctx, ContainerName("myapp"), hash)
@@ -375,7 +408,7 @@ func TestKubernetesCMGetContainerState(t *testing.T) {
 			Logger:       newTestLogger(),
 			appNamespace: "apps",
 			config:       &types.ServerConfig{Kubernetes: types.KubernetesConfig{UseNodePort: true}},
-			appConfig:    &types.AppConfig{Kubernetes: types.Kubernetes{StrictVersionCheck: false}},
+			appConfig:    &types.AppConfig{},
 			clientSet:    client,
 		}
 		host, running, err := k.GetContainerState(ctx, ContainerName("myapp"), "")
@@ -541,6 +574,25 @@ func TestKubernetesCMProcessVolumes(t *testing.T) {
 	if len(podVolumes) != 3 || len(mounts) != 3 {
 		t.Fatalf("unexpected volume/mount counts: %d volumes, %d mounts", len(podVolumes), len(mounts))
 	}
+
+	longWorkloadName := "clc-app-stg-3fh4ceunz5euxiftqywraidepfm-b755db8cce9f79c1"
+	podVolumes, mounts, err = k.processVolumes(ctx, longWorkloadName, volumes[:1], sourceDir, map[string]string{"token": "abc123"})
+	if err != nil {
+		t.Fatalf("processVolumes with long workload returned error: %v", err)
+	}
+	if podVolumes[0].Name == nil || len(*podVolumes[0].Name) > KUBERNETES_NAME_MAX {
+		t.Fatalf("secret volume name = %q, want length <= %d", valueOrEmpty(podVolumes[0].Name), KUBERNETES_NAME_MAX)
+	}
+	if mounts[0].Name == nil || *mounts[0].Name != *podVolumes[0].Name {
+		t.Fatalf("mount name = %q, want matching volume name %q", valueOrEmpty(mounts[0].Name), valueOrEmpty(podVolumes[0].Name))
+	}
+}
+
+func valueOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func TestKubernetesCMCreateDeploymentValidationErrors(t *testing.T) {
@@ -560,12 +612,12 @@ func TestKubernetesCMCreateDeploymentValidationErrors(t *testing.T) {
 		},
 	}
 
-	_, err := k.createDeployment(context.Background(), "myapp", "img:latest", 8080, nil, nil, "", nil, appEntry, "hash", KubernetesOptions{Cpus: "invalid"}, false)
+	_, err := k.createDeployment(context.Background(), "myapp", "myapp", true, "img:latest", 8080, nil, nil, "", nil, appEntry, "hash", KubernetesOptions{Cpus: "invalid"}, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "error parsing cpus value") {
 		t.Fatalf("error = %v, want cpu parse error", err)
 	}
 
-	_, err = k.createDeployment(context.Background(), "myapp", "img:latest", 8080, nil, nil, "", nil, appEntry, "hash", KubernetesOptions{Memory: "invalid"}, false)
+	_, err = k.createDeployment(context.Background(), "myapp", "myapp", true, "img:latest", 8080, nil, nil, "", nil, appEntry, "hash", KubernetesOptions{Memory: "invalid"}, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "error parsing memory value") {
 		t.Fatalf("error = %v, want memory parse error", err)
 	}
@@ -573,6 +625,479 @@ func TestKubernetesCMCreateDeploymentValidationErrors(t *testing.T) {
 
 func newTestLogger() *types.Logger {
 	return types.NewLogger(&types.LogConfig{Level: "INFO"})
+}
+
+// captureDeploymentApply records the apply-patch bytes sent for deployments so
+// tests can inspect the rendered Deployment spec (the fake clientset does not
+// natively apply server-side patches).
+func captureDeploymentApply(client *k8sfake.Clientset) *[]byte {
+	patch := new([]byte)
+	client.PrependReactor("patch", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		pa, ok := action.(k8stesting.PatchAction)
+		if !ok || pa.GetPatchType() != k8sapitypes.ApplyPatchType {
+			return false, nil, nil
+		}
+		*patch = pa.GetPatch()
+		return true, &appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: pa.GetName(), Namespace: pa.GetNamespace()}}, nil
+	})
+	return patch
+}
+
+func serviceApplyReactor(client *k8sfake.Clientset) {
+	addApplyPatchReactor(client, "services", func(name, namespace string) runtime.Object {
+		return &corev1.Service{
+			ObjectMeta: meta.ObjectMeta{Name: name, Namespace: namespace},
+			Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}}},
+		}
+	})
+}
+
+func TestWorkloadNaming(t *testing.T) {
+	if got := workloadName("clc-app", "deadbeefcafe", true); got != "clc-app" {
+		t.Fatalf("PV workload name=%q, want clc-app", got)
+	}
+	if got := workloadName("clc-app", "deadbeefcafe1234567890", false); got != "clc-app-deadbeefcafe1234" {
+		t.Fatalf("stateless workload name=%q, want clc-app-deadbeefcafe1234", got)
+	}
+	longName := workloadName("clc-this-is-a-very-long-service-name-that-needs-trimming", "deadbeefcafe1234567890", false)
+	if len(longName) > 63 {
+		t.Fatalf("workload name length=%d, want <= 63: %q", len(longName), longName)
+	}
+	sel := versionSelector("clc-app", "deadbeefcafe")
+	if sel["app"] != "clc-app" || sel[VERSION_HASH_LABEL] != "deadbeefcafe" {
+		t.Fatalf("service selector=%v, want app+version", sel)
+	}
+	pvSel := workloadSelector("clc-app", "deadbeefcafe", true)
+	if _, ok := pvSel[VERSION_HASH_LABEL]; ok {
+		t.Fatal("PV workload selector must not include the version hash")
+	}
+	longBase := strings.Repeat("a", 60)
+	first := suffixedKubernetesName(longBase+"1111111111111111", "-secret-0")
+	second := suffixedKubernetesName(longBase+"2222222222222222", "-secret-0")
+	if len(first) > KUBERNETES_NAME_MAX || len(second) > KUBERNETES_NAME_MAX {
+		t.Fatalf("suffixed names must fit Kubernetes limit: %q (%d), %q (%d)", first, len(first), second, len(second))
+	}
+	if first == second {
+		t.Fatalf("suffixed names collided for distinct long bases: %q", first)
+	}
+}
+
+func TestKubernetesCMPromoteVersion(t *testing.T) {
+	ctx := context.Background()
+	client := k8sfake.NewSimpleClientset(&corev1.Service{
+		ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "myapp", VERSION_HASH_LABEL: "oldhash"}},
+	})
+	k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client}
+
+	prev, prevSelector, err := k.PromoteVersion(ctx, "myapp", "newhash")
+	if err != nil {
+		t.Fatalf("PromoteVersion: %v", err)
+	}
+	if prev != "oldhash" {
+		t.Fatalf("prev=%q, want oldhash", prev)
+	}
+	if prevSelector[VERSION_HASH_LABEL] != "oldhash" {
+		t.Fatalf("prev selector version=%q, want oldhash", prevSelector[VERSION_HASH_LABEL])
+	}
+	svc, _ := client.CoreV1().Services("apps").Get(ctx, "myapp", meta.GetOptions{})
+	if svc.Spec.Selector[VERSION_HASH_LABEL] != "newhash" {
+		t.Fatalf("selector version=%q, want newhash", svc.Spec.Selector[VERSION_HASH_LABEL])
+	}
+	// Promoting the already-active version reports no previous version to GC.
+	if prev2, _, err := k.PromoteVersion(ctx, "myapp", "newhash"); err != nil || prev2 != "" {
+		t.Fatalf("re-promote prev=%q err=%v, want empty,nil", prev2, err)
+	}
+}
+
+func TestKubernetesCMRemoveVersion(t *testing.T) {
+	ctx := context.Background()
+	wl := workloadName("myapp", "newhash", false) // myapp-newhash
+	client := k8sfake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: wl, Namespace: "apps"}},
+		&autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: meta.ObjectMeta{Name: wl, Namespace: "apps"}},
+		&corev1.Secret{ObjectMeta: meta.ObjectMeta{Name: wl + "-secret-0", Namespace: "apps", Labels: ownershipLabels(wl)}},
+		// A different version's Deployment must survive.
+		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: workloadName("myapp", "otherhash", false), Namespace: "apps"}},
+	)
+	k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client}
+
+	if err := k.RemoveVersion(ctx, "myapp", "newhash"); err != nil {
+		t.Fatalf("RemoveVersion: %v", err)
+	}
+	if _, err := client.AppsV1().Deployments("apps").Get(ctx, wl, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("deployment %s should be deleted, err=%v", wl, err)
+	}
+	if _, err := client.AutoscalingV2().HorizontalPodAutoscalers("apps").Get(ctx, wl, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("hpa %s should be deleted, err=%v", wl, err)
+	}
+	if _, err := client.CoreV1().Secrets("apps").Get(ctx, wl+"-secret-0", meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("secret should be deleted, err=%v", err)
+	}
+	if _, err := client.AppsV1().Deployments("apps").Get(ctx, workloadName("myapp", "otherhash", false), meta.GetOptions{}); err != nil {
+		t.Fatalf("other version should survive, err=%v", err)
+	}
+	// Empty hash is a no-op.
+	if err := k.RemoveVersion(ctx, "myapp", ""); err != nil {
+		t.Fatalf("RemoveVersion(empty): %v", err)
+	}
+}
+
+func TestKubernetesCMCleanupInactiveWorkloads(t *testing.T) {
+	ctx := context.Background()
+	serviceName := "myapp"
+	active := workloadName(serviceName, "activehash", false)
+	staleVersioned := workloadName(serviceName, "stalehash", false)
+	staleStable := serviceName
+	other := workloadName("otherapp", "stalehash", false)
+	client := k8sfake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: active, Namespace: "apps", Labels: map[string]string{"app": serviceName}}},
+		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: staleVersioned, Namespace: "apps", Labels: map[string]string{"app": serviceName}}},
+		&autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: meta.ObjectMeta{Name: staleVersioned, Namespace: "apps"}},
+		&corev1.Secret{ObjectMeta: meta.ObjectMeta{Name: staleVersioned + "-secret-0", Namespace: "apps", Labels: ownershipLabels(staleVersioned)}},
+		&corev1.ConfigMap{ObjectMeta: meta.ObjectMeta{Name: staleVersioned + "-config-0", Namespace: "apps", Labels: ownershipLabels(staleVersioned)}},
+		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: staleStable, Namespace: "apps", Labels: map[string]string{"app": serviceName}}},
+		&corev1.Secret{ObjectMeta: meta.ObjectMeta{Name: staleStable + "-secret-0", Namespace: "apps", Labels: ownershipLabels(staleStable)}},
+		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: other, Namespace: "apps", Labels: map[string]string{"app": "otherapp"}}},
+	)
+	k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client}
+
+	if err := k.cleanupInactiveWorkloads(ctx, ContainerName(serviceName), active); err != nil {
+		t.Fatalf("cleanupInactiveWorkloads: %v", err)
+	}
+	if _, err := client.AppsV1().Deployments("apps").Get(ctx, active, meta.GetOptions{}); err != nil {
+		t.Fatalf("active deployment should survive: %v", err)
+	}
+	for _, name := range []string{staleVersioned, staleStable} {
+		if _, err := client.AppsV1().Deployments("apps").Get(ctx, name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("inactive deployment %s should be deleted, err=%v", name, err)
+		}
+	}
+	if _, err := client.AutoscalingV2().HorizontalPodAutoscalers("apps").Get(ctx, staleVersioned, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("inactive hpa should be deleted, err=%v", err)
+	}
+	if _, err := client.CoreV1().Secrets("apps").Get(ctx, staleVersioned+"-secret-0", meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("inactive secret should be deleted, err=%v", err)
+	}
+	if _, err := client.CoreV1().ConfigMaps("apps").Get(ctx, staleVersioned+"-config-0", meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("inactive configmap should be deleted, err=%v", err)
+	}
+	if _, err := client.AppsV1().Deployments("apps").Get(ctx, other, meta.GetOptions{}); err != nil {
+		t.Fatalf("other app deployment should survive: %v", err)
+	}
+}
+
+func TestKubernetesCMCreateDeploymentStrategy(t *testing.T) {
+	ctx := context.Background()
+	appEntry := &types.AppEntry{Metadata: types.AppMetadata{VersionMetadata: types.VersionMetadata{Version: 1}}}
+	probe := &HealthProbe{Path: "/health", Port: 8080, Scheme: "HTTP", PeriodSecs: 10, TimeoutSecs: 5, FailureThreshold: 3, StartupFailures: 30}
+
+	t.Run("no volume uses rolling update with surge and probes", func(t *testing.T) {
+		client := k8sfake.NewSimpleClientset()
+		depPatch := captureDeploymentApply(client)
+		serviceApplyReactor(client)
+		k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client}
+
+		if _, err := k.createDeployment(ctx, "myapp", "myapp-hash", true, "img:latest", 8080, nil, nil, "", nil, appEntry, "hash", KubernetesOptions{MinReplicas: 2}, false, probe); err != nil {
+			t.Fatalf("createDeployment: %v", err)
+		}
+
+		var dep appsv1.Deployment
+		if err := json.Unmarshal(*depPatch, &dep); err != nil {
+			t.Fatalf("unmarshal deployment patch: %v", err)
+		}
+		if dep.Spec.Strategy.Type != appsv1.RollingUpdateDeploymentStrategyType {
+			t.Fatalf("strategy=%v, want RollingUpdate", dep.Spec.Strategy.Type)
+		}
+		if dep.Spec.Strategy.RollingUpdate == nil || dep.Spec.Strategy.RollingUpdate.MaxUnavailable == nil ||
+			dep.Spec.Strategy.RollingUpdate.MaxUnavailable.IntValue() != 0 {
+			t.Fatalf("maxUnavailable not 0: %+v", dep.Spec.Strategy.RollingUpdate)
+		}
+		if dep.Spec.Replicas == nil || *dep.Spec.Replicas != 2 {
+			t.Fatalf("replicas=%v, want 2", dep.Spec.Replicas)
+		}
+		if dep.Spec.ProgressDeadlineSeconds == nil {
+			t.Fatal("progressDeadlineSeconds not set")
+		}
+		if len(dep.Spec.Template.Spec.Containers) == 0 {
+			t.Fatal("no containers")
+		}
+		c := dep.Spec.Template.Spec.Containers[0]
+		if c.ReadinessProbe == nil || c.ReadinessProbe.HTTPGet == nil || c.ReadinessProbe.HTTPGet.Path != "/health" {
+			t.Fatalf("readiness probe missing or wrong: %+v", c.ReadinessProbe)
+		}
+		if c.StartupProbe == nil || c.StartupProbe.FailureThreshold != 30 {
+			t.Fatalf("startup probe missing or wrong: %+v", c.StartupProbe)
+		}
+	})
+
+	t.Run("persistent volume uses recreate single replica and skips hpa", func(t *testing.T) {
+		client := k8sfake.NewSimpleClientset()
+		depPatch := captureDeploymentApply(client)
+		serviceApplyReactor(client)
+		hpaApplied := false
+		client.PrependReactor("patch", "horizontalpodautoscalers", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			if pa, ok := action.(k8stesting.PatchAction); ok && pa.GetPatchType() == k8sapitypes.ApplyPatchType {
+				hpaApplied = true
+			}
+			return false, nil, nil
+		})
+		k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client, appId: "app1"}
+		vols := []*VolumeInfo{{VolumeName: "data", TargetPath: "/data"}}
+
+		if _, err := k.createDeployment(ctx, "myapp", "myapp", true, "img:latest", 8080, nil, vols, "", nil, appEntry, "hash", KubernetesOptions{MinReplicas: 3, MaxReplicas: 5}, false, probe); err != nil {
+			t.Fatalf("createDeployment: %v", err)
+		}
+
+		var dep appsv1.Deployment
+		if err := json.Unmarshal(*depPatch, &dep); err != nil {
+			t.Fatalf("unmarshal deployment patch: %v", err)
+		}
+		if dep.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+			t.Fatalf("strategy=%v, want Recreate", dep.Spec.Strategy.Type)
+		}
+		if dep.Spec.Strategy.RollingUpdate != nil {
+			t.Fatalf("rollingUpdate should be nil for Recreate: %+v", dep.Spec.Strategy.RollingUpdate)
+		}
+		if dep.Spec.Replicas == nil || *dep.Spec.Replicas != 1 {
+			t.Fatalf("replicas=%v, want 1 (PV apps pinned to single replica)", dep.Spec.Replicas)
+		}
+		if hpaApplied {
+			t.Fatal("HPA should not be created for a PV-backed app")
+		}
+	})
+}
+
+func TestKubernetesCMGetContainerStateExpectHashRequiresRollout(t *testing.T) {
+	ctx := context.Background()
+	replicas := int32(2)
+	hash := "expected-hash"
+	// Deployment template matches expectHash, one ready pod, but the rollout is
+	// not complete (only 1 of 2 updated/ready). With expectHash set this must
+	// report not-running.
+	client := k8sfake.NewSimpleClientset(
+		&corev1.Service{
+			ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps"},
+			Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}}},
+		},
+		&appsv1.Deployment{
+			ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps", Generation: 2},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Template: corev1.PodTemplateSpec{ObjectMeta: meta.ObjectMeta{Labels: map[string]string{VERSION_HASH_LABEL: TrimLabelValue(hash)}}},
+			},
+			Status: appsv1.DeploymentStatus{
+				ObservedGeneration:  2,
+				UpdatedReplicas:     1,
+				ReadyReplicas:       1,
+				UnavailableReplicas: 1,
+				Replicas:            2,
+			},
+		},
+		&corev1.Pod{
+			ObjectMeta: meta.ObjectMeta{Name: "myapp-pod", Namespace: "apps", Labels: map[string]string{"app": "myapp", VERSION_HASH_LABEL: TrimLabelValue(hash)}},
+			Status: corev1.PodStatus{
+				Phase:      corev1.PodRunning,
+				Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			},
+		},
+	)
+	k := &KubernetesCM{
+		Logger:       newTestLogger(),
+		appNamespace: "apps",
+		config:       &types.ServerConfig{},
+		appConfig:    &types.AppConfig{},
+		clientSet:    client,
+	}
+	_, running, err := k.GetContainerState(ctx, ContainerName("myapp"), hash)
+	if err != nil {
+		t.Fatalf("GetContainerState returned error: %v", err)
+	}
+	if running {
+		t.Fatal("running=true, want false (incomplete rollout must not report running when a hash is expected)")
+	}
+}
+
+func TestKubernetesCMGetContainerStateProgressDeadlineExceeded(t *testing.T) {
+	ctx := context.Background()
+	replicas := int32(1)
+	hash := "expected-hash"
+	// A deployment whose template matches expectHash but whose rollout Kubernetes
+	// has declared failed must surface an error so the caller stops waiting and
+	// rolls back, instead of polling until its own timeout.
+	client := k8sfake.NewSimpleClientset(
+		&corev1.Service{
+			ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps"},
+			Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}}},
+		},
+		&appsv1.Deployment{
+			ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps", Generation: 2},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Template: corev1.PodTemplateSpec{ObjectMeta: meta.ObjectMeta{Labels: map[string]string{VERSION_HASH_LABEL: TrimLabelValue(hash)}}},
+			},
+			Status: appsv1.DeploymentStatus{
+				ObservedGeneration: 2,
+				Conditions: []appsv1.DeploymentCondition{{
+					Type:    appsv1.DeploymentProgressing,
+					Status:  corev1.ConditionFalse,
+					Reason:  "ProgressDeadlineExceeded",
+					Message: "ReplicaSet has timed out progressing",
+				}},
+			},
+		},
+	)
+	k := &KubernetesCM{
+		Logger:       newTestLogger(),
+		appNamespace: "apps",
+		config:       &types.ServerConfig{},
+		appConfig:    &types.AppConfig{},
+		clientSet:    client,
+	}
+	if _, _, err := k.GetContainerState(ctx, ContainerName("myapp"), hash); err == nil {
+		t.Fatal("expected an error when the rollout has ProgressDeadlineExceeded")
+	}
+
+	// Without an expected hash (steady-state check), the same condition must not
+	// be treated as a fatal error.
+	if _, _, err := k.GetContainerState(ctx, ContainerName("myapp"), ""); err != nil {
+		t.Fatalf("steady-state check should not error on ProgressDeadlineExceeded: %v", err)
+	}
+}
+
+func TestKubernetesCMGetContainerStateIgnoresStaleProgressDeadlineExceeded(t *testing.T) {
+	ctx := context.Background()
+	replicas := int32(1)
+	hash := "expected-hash"
+	client := k8sfake.NewSimpleClientset(
+		&corev1.Service{
+			ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps"},
+			Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}}},
+		},
+		&appsv1.Deployment{
+			ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps", Generation: 3},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Template: corev1.PodTemplateSpec{ObjectMeta: meta.ObjectMeta{Labels: map[string]string{VERSION_HASH_LABEL: TrimLabelValue(hash)}}},
+			},
+			Status: appsv1.DeploymentStatus{
+				ObservedGeneration: 2,
+				Conditions: []appsv1.DeploymentCondition{{
+					Type:    appsv1.DeploymentProgressing,
+					Status:  corev1.ConditionFalse,
+					Reason:  "ProgressDeadlineExceeded",
+					Message: "stale timeout from previous generation",
+				}},
+			},
+		},
+	)
+	k := &KubernetesCM{
+		Logger:       newTestLogger(),
+		appNamespace: "apps",
+		config:       &types.ServerConfig{},
+		appConfig:    &types.AppConfig{},
+		clientSet:    client,
+	}
+	if _, _, err := k.GetContainerState(ctx, ContainerName("myapp"), hash); err != nil {
+		t.Fatalf("stale ProgressDeadlineExceeded should not fail current rollout: %v", err)
+	}
+}
+
+func TestKubernetesCMSnapshotRestore(t *testing.T) {
+	ctx := context.Background()
+	origReplicas := int32(2)
+	dep := &appsv1.Deployment{
+		ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps"},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &origReplicas,
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "myapp", Image: "img:v1"}}}},
+		},
+	}
+	keepSecret := &corev1.Secret{
+		ObjectMeta: meta.ObjectMeta{Name: "myapp-secret-0", Namespace: "apps", Labels: ownershipLabels("myapp")},
+		Data:       map[string][]byte{"k": []byte("v1")},
+	}
+	// An unrelated object that merely shares the common "app" label must not be
+	// touched by snapshot/restore (it is not OpenRun-managed).
+	unrelatedSecret := &corev1.Secret{
+		ObjectMeta: meta.ObjectMeta{Name: "unrelated", Namespace: "apps", Labels: map[string]string{"app": "myapp"}},
+		Data:       map[string][]byte{"k": []byte("keepme")},
+	}
+	client := k8sfake.NewSimpleClientset(dep, keepSecret, unrelatedSecret)
+	k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client}
+
+	snap, err := k.Snapshot(ctx, ContainerName("myapp"))
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	// Simulate a failed update: mutate the deployment, add a new secret, mutate the kept secret.
+	newReplicas := int32(1)
+	dep2 := dep.DeepCopy()
+	dep2.Spec.Replicas = &newReplicas
+	dep2.Spec.Template.Spec.Containers[0].Image = "img:v2-broken"
+	if _, err := client.AppsV1().Deployments("apps").Update(ctx, dep2, meta.UpdateOptions{}); err != nil {
+		t.Fatalf("update deployment: %v", err)
+	}
+	newSecret := &corev1.Secret{ObjectMeta: meta.ObjectMeta{Name: "myapp-secret-1", Namespace: "apps", Labels: ownershipLabels("myapp")}}
+	if _, err := client.CoreV1().Secrets("apps").Create(ctx, newSecret, meta.CreateOptions{}); err != nil {
+		t.Fatalf("create secret: %v", err)
+	}
+	mutated := keepSecret.DeepCopy()
+	mutated.Data["k"] = []byte("v2")
+	if _, err := client.CoreV1().Secrets("apps").Update(ctx, mutated, meta.UpdateOptions{}); err != nil {
+		t.Fatalf("update secret: %v", err)
+	}
+
+	if err := k.Restore(ctx, snap); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	gotDep, err := client.AppsV1().Deployments("apps").Get(ctx, "myapp", meta.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	if gotDep.Spec.Template.Spec.Containers[0].Image != "img:v1" {
+		t.Fatalf("image=%s, want img:v1 (rolled back)", gotDep.Spec.Template.Spec.Containers[0].Image)
+	}
+	if gotDep.Spec.Replicas == nil || *gotDep.Spec.Replicas != 2 {
+		t.Fatalf("replicas=%v, want 2 (rolled back)", gotDep.Spec.Replicas)
+	}
+	if _, err := client.CoreV1().Secrets("apps").Get(ctx, "myapp-secret-1", meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("secret created after snapshot should be deleted, got err=%v", err)
+	}
+	gotSecret, err := client.CoreV1().Secrets("apps").Get(ctx, "myapp-secret-0", meta.GetOptions{})
+	if err != nil {
+		t.Fatalf("get kept secret: %v", err)
+	}
+	if string(gotSecret.Data["k"]) != "v1" {
+		t.Fatalf("secret data=%s, want v1 (restored)", gotSecret.Data["k"])
+	}
+
+	// The unrelated secret sharing only app=myapp must be untouched.
+	gotUnrelated, err := client.CoreV1().Secrets("apps").Get(ctx, "unrelated", meta.GetOptions{})
+	if err != nil {
+		t.Fatalf("unrelated secret should survive restore, got err=%v", err)
+	}
+	if string(gotUnrelated.Data["k"]) != "keepme" {
+		t.Fatalf("unrelated secret data=%s, want keepme (untouched)", gotUnrelated.Data["k"])
+	}
+}
+
+func TestKubernetesCMSnapshotSurfacesListError(t *testing.T) {
+	ctx := context.Background()
+	dep := &appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps"}}
+	client := k8sfake.NewSimpleClientset(dep)
+	// Deny listing secrets (e.g. missing RBAC); Snapshot must surface the error
+	// so the verify path can refuse to do an irreversible in-place update.
+	client.PrependReactor("list", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("forbidden: cannot list secrets")
+	})
+	k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client}
+
+	if _, err := k.Snapshot(ctx, ContainerName("myapp")); err == nil {
+		t.Fatal("Snapshot should return an error when listing secrets fails")
+	}
 }
 
 func addApplyPatchReactor(client *k8sfake.Clientset, resource string, objFn func(name, namespace string) runtime.Object) {

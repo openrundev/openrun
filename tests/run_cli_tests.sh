@@ -45,7 +45,7 @@ error_handler () {
 }
 
 cleanup() {
-  rm -rf metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
+  rm -rf metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp sqlite_tmp verifyapp_tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
   rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp
 
   if [[ -n "$POSTGRES_TEST_CONTAINER_ID" ]]; then
@@ -67,6 +67,10 @@ cleanup() {
     rm -rf ../internal/server/appspecs
     mv ../appspecs_bk ../internal/server/appspecs
   fi 
+
+  if [[ -n "$KUBE_TEST_NAMESPACE_CREATED" && -n "$KUBE_TEST_NAMESPACE" ]]; then
+    kubectl delete namespace "$KUBE_TEST_NAMESPACE" "${KUBE_TEST_NAMESPACE}-apps" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  fi
 
   set +e
   server_pids=$(ps -ax | grep "openrun server start" | grep -v grep | awk '{print $1}')
@@ -490,6 +494,13 @@ done
 
 if [[ $KUBE_REGISTRY_URL != "" ]]; then
   # test kubernetes container manager
+  if [[ -z "$KUBE_TEST_NAMESPACE" ]]; then
+    KUBE_TEST_NAMESPACE="openrun-cli-test-$$"
+    KUBE_TEST_NAMESPACE_CREATED=true
+  fi
+  kubectl create namespace "$KUBE_TEST_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create namespace "${KUBE_TEST_NAMESPACE}-apps" --dry-run=client -o yaml | kubectl apply -f -
+
   cat <<EOF > config_k8s.toml
 [http]
 port = 9100
@@ -499,12 +510,19 @@ port = 9101
 [system]
 container_command="kubernetes"
 [kubernetes]
+namespace = "$KUBE_TEST_NAMESPACE"
 use_node_port = true
 [registry]
 url="$KUBE_REGISTRY_URL"
 insecure = true
-[appconfig]
-container.health_attempts_after_startup = 40
+[app_config]
+container.health_attempts_after_startup = 20
+container.health_timeout_secs = 1
+container.deploy_probe_period_secs = 1
+container.deploy_health_attempts = 30
+container.status_health_attempts = 3
+container.idle_shutdown_secs = 900
+container.status_check_interval_secs = 60
 EOF
 
     rm -rf metadata run/openrun.sock

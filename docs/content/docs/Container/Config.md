@@ -30,7 +30,6 @@ container.show_logs_for_failure = true
 
 # Kubernetes related settings
 kubernetes.default_volume_size = "10Gi"
-kubernetes.strict_version_check = true
 kubernetes.scaling_threshold_cpu = 80
 ```
 

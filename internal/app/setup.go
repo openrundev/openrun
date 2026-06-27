@@ -35,7 +35,7 @@ import (
 	"go.starlark.net/starlarkstruct"
 )
 
-func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, reloadContainer bool) error {
+func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts ReloadOptions) error {
 	a.Info().Str("path", a.Path).Str("domain", a.Domain).Msg("Loading app")
 
 	buf, err := a.sourceFS.ReadFile(a.getStarPath(apptype.APP_FILE_NAME))
@@ -141,13 +141,13 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, reloa
 			if err = a.containerHandler.DevReload(ctx, bool(dryRun)); err != nil {
 				return err
 			}
-		} else if reloadContainer || a.containerHandler.IsImageSpec() {
+		} else if opts.ReloadContainer || a.containerHandler.IsImageSpec() {
 			// In prod mode, reload when initializing an app. Image-spec apps
 			// also need to reload on every admin reload so that the upstream
 			// image digest is resolved and the container is recreated if the
 			// tag has moved; build-spec apps rely on the source-content hash
 			// to detect changes and so only need reload on Initialize.
-			if err := a.containerHandler.ProdReload(ctx, bool(dryRun)); err != nil {
+			if err := a.containerHandler.ProdReload(ctx, bool(dryRun), opts.Verify); err != nil {
 				return err
 			}
 		}

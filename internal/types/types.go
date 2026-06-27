@@ -176,6 +176,8 @@ type Container struct {
 	HealthUrl                  string `toml:"health_url"`
 	HealthAttemptsAfterStartup int    `toml:"health_attempts_after_startup"`
 	HealthTimeoutSecs          int    `toml:"health_timeout_secs"`
+	DeployProbePeriodSecs      int    `toml:"deploy_probe_period_secs"`
+	DeployHealthAttempts       int    `toml:"deploy_health_attempts"`
 
 	LogLinesToShow     int  `toml:"log_lines_to_show"`
 	ShowLogsForFailure bool `toml:"show_logs_for_failure"`
@@ -193,7 +195,6 @@ type Container struct {
 // Kubernetes related settings in the App Config
 type Kubernetes struct {
 	DefaultVolumeSize   string `toml:"default_volume_size"`
-	StrictVersionCheck  bool   `toml:"strict_version_check"`  // If true, only return true if the version hash is the same as the expected hash
 	ScalingThresholdCPU int32  `toml:"scaling_threshold_cpu"` // CPU utilization threshold for HPA scaling
 }
 
