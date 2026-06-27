@@ -17,5 +17,8 @@
   },
   "htmx": {
     "version": "2.0.3"
+  },
+  "container": {
+    "separate_stage_prod_images": false
   }
 }

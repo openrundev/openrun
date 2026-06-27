@@ -4,8 +4,9 @@
 package apptype
 
 type CodeConfig struct {
-	Routing RouteConfig `json:"routing"`
-	Htmx    HtmxConfig  `json:"htmx"`
+	Routing   RouteConfig     `json:"routing"`
+	Htmx      HtmxConfig      `json:"htmx"`
+	Container ContainerConfig `json:"container"`
 }
 
 type RouteConfig struct {
@@ -20,6 +21,10 @@ type RouteConfig struct {
 
 type HtmxConfig struct {
 	Version string `json:"version"`
+}
+
+type ContainerConfig struct {
+	SeparateStageProdImages bool `json:"separate_stage_prod_images"`
 }
 
 // NewCodeConfig creates an CodeConfig with default values. This config is used when lock
@@ -37,6 +42,9 @@ func NewCodeConfig() *CodeConfig {
 		},
 		Htmx: HtmxConfig{
 			Version: "2.0.3",
+		},
+		Container: ContainerConfig{
+			SeparateStageProdImages: false,
 		},
 	}
 }

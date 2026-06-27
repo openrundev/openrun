@@ -6,12 +6,15 @@ package app
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -22,6 +25,9 @@ type healthTestManager struct {
 	supportsInPlace bool
 	currentHash     string
 	currentHashErr  error
+	imageExists     bool
+	deployReq       *container.DeployRequest
+	runSourceDir    string
 }
 
 func (m *healthTestManager) BuildImage(context.Context, container.ImageName, string, string, map[string]string) error {
@@ -29,7 +35,7 @@ func (m *healthTestManager) BuildImage(context.Context, container.ImageName, str
 }
 
 func (m *healthTestManager) ImageExists(context.Context, container.ImageName) (bool, error) {
-	return true, nil
+	return m.imageExists, nil
 }
 
 func (m *healthTestManager) RefreshImage(context.Context, container.ImageName) (string, error) {
@@ -48,14 +54,25 @@ func (m *healthTestManager) StopContainer(context.Context, container.ContainerNa
 	return nil
 }
 
-func (m *healthTestManager) RunContainer(context.Context, *types.AppEntry, string, container.ContainerName,
-	container.ImageName, int32, map[string]string, []*container.VolumeInfo, map[string]string, map[string]string, string, bool,
-	*container.HealthProbe) error {
+func (m *healthTestManager) RunContainer(_ context.Context, _ *types.AppEntry, sourceDir string, _ container.ContainerName,
+	_ container.ImageName, _ int32, _ map[string]string, _ []*container.VolumeInfo, _ map[string]string, _ map[string]string,
+	_ string, _ bool, _ *container.HealthProbe) error {
+	m.runSourceDir = sourceDir
+	if m.hostNamePort == "" {
+		m.hostNamePort = "container:5000"
+	}
+	m.running = true
 	return nil
 }
 
-func (m *healthTestManager) DeployContainer(context.Context, container.DeployRequest) (container.DeployResult, error) {
-	return container.DeployResult{}, nil
+func (m *healthTestManager) DeployContainer(_ context.Context, req container.DeployRequest) (container.DeployResult, error) {
+	reqCopy := req
+	m.deployReq = &reqCopy
+	return container.DeployResult{
+		ContainerName: req.ContainerName,
+		VersionHash:   req.VersionHash,
+		HostNamePort:  m.hostNamePort,
+	}, nil
 }
 
 func (m *healthTestManager) GetContainerLogs(context.Context, container.ContainerName, int) (string, error) {
@@ -79,6 +96,270 @@ func (m *healthTestManager) CurrentVersionHash(context.Context, container.Contai
 		return "", m.currentHashErr
 	}
 	return m.currentHash, nil
+}
+
+type imageNameTestFS struct {
+	hash        string
+	sourceDir   string
+	createCount int
+}
+
+func (f *imageNameTestFS) Open(string) (fs.File, error) {
+	return nil, fs.ErrNotExist
+}
+
+func (f *imageNameTestFS) ReadFile(string) ([]byte, error) {
+	return nil, fs.ErrNotExist
+}
+
+func (f *imageNameTestFS) Glob(string) ([]string, error) {
+	return nil, nil
+}
+
+func (f *imageNameTestFS) Stat(string) (fs.FileInfo, error) {
+	return nil, fs.ErrNotExist
+}
+
+func (f *imageNameTestFS) StatNoSpec(string) (fs.FileInfo, error) {
+	return nil, fs.ErrNotExist
+}
+
+func (f *imageNameTestFS) Reset() {
+}
+
+func (f *imageNameTestFS) StaticFiles() []string {
+	return nil
+}
+
+func (f *imageNameTestFS) FileHash([]string) (string, error) {
+	return f.hash, nil
+}
+
+func (f *imageNameTestFS) CreateTempSourceDir() (string, error) {
+	f.createCount++
+	return f.sourceDir, nil
+}
+
+func newImageNameTestHandler(appID types.AppId, separateImages bool) *ContainerHandler {
+	codeConfig := apptype.NewCodeConfig()
+	codeConfig.Container.SeparateStageProdImages = separateImages
+	return &ContainerHandler{
+		Logger:        types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app:           &App{AppEntry: &types.AppEntry{Id: appID}, codeConfig: codeConfig},
+		sourceFS:      &imageNameTestFS{hash: "source-hash"},
+		cargs:         map[string]string{"PYTHON_VERSION": "3.12"},
+		containerFile: "Dockerfile",
+		buildDir:      ".",
+	}
+}
+
+func TestBuildImageNameSharesStageProdImageByDefault(t *testing.T) {
+	t.Parallel()
+
+	stage := newImageNameTestHandler(types.AppId(types.ID_PREFIX_APP_STAGE+"shared"), false)
+	prod := newImageNameTestHandler(types.AppId(types.ID_PREFIX_APP_PROD+"shared"), false)
+
+	stageImage, err := stage.buildImageName("stage-deploy-hash")
+	if err != nil {
+		t.Fatalf("stage buildImageName returned error: %v", err)
+	}
+	prodImage, err := prod.buildImageName("prod-deploy-hash")
+	if err != nil {
+		t.Fatalf("prod buildImageName returned error: %v", err)
+	}
+
+	if stageImage != prodImage {
+		t.Fatalf("stage image = %q, prod image = %q, want shared image", stageImage, prodImage)
+	}
+	if strings.Contains(string(stageImage), types.ID_PREFIX_APP_STAGE) ||
+		strings.Contains(string(stageImage), types.ID_PREFIX_APP_PROD) {
+		t.Fatalf("shared image %q should strip stage/prod app id prefix", stageImage)
+	}
+}
+
+func TestBuildImageNameKeepsSeparateStageProdImagesWhenConfigured(t *testing.T) {
+	t.Parallel()
+
+	stage := newImageNameTestHandler(types.AppId(types.ID_PREFIX_APP_STAGE+"reflex"), true)
+	prod := newImageNameTestHandler(types.AppId(types.ID_PREFIX_APP_PROD+"reflex"), true)
+
+	stageImage, err := stage.buildImageName("stage-deploy-hash")
+	if err != nil {
+		t.Fatalf("stage buildImageName returned error: %v", err)
+	}
+	prodImage, err := prod.buildImageName("prod-deploy-hash")
+	if err != nil {
+		t.Fatalf("prod buildImageName returned error: %v", err)
+	}
+
+	if stageImage == prodImage {
+		t.Fatalf("stage image = prod image = %q, want separate images", stageImage)
+	}
+	if !strings.Contains(string(stageImage), types.ID_PREFIX_APP_STAGE) {
+		t.Fatalf("stage image %q should keep stage app id prefix", stageImage)
+	}
+	if !strings.Contains(string(prodImage), types.ID_PREFIX_APP_PROD) {
+		t.Fatalf("prod image %q should keep prod app id prefix", prodImage)
+	}
+}
+
+func TestProdReloadKubernetesSkipsSourceDirWhenImageAlreadyExistsWithoutSourceBackedVolumes(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "source")
+	sourceFS := &imageNameTestFS{hash: "source-hash", sourceDir: sourceDir}
+	manager := &healthTestManager{
+		hostNamePort: "kube-svc:5000",
+		running:      true,
+		imageExists:  true,
+	}
+	h := &ContainerHandler{
+		Logger:        types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app:           &App{AppEntry: &types.AppEntry{Id: types.AppId(types.ID_PREFIX_APP_PROD + "kube_no_source_dir")}},
+		manager:       manager,
+		sourceFS:      sourceFS,
+		GenImageName:  container.ImageName("cli-kube-no-source-dir:test"),
+		containerFile: "Dockerfile",
+		volumeInfo: []*container.VolumeInfo{
+			{
+				VolumeName: "named-volume",
+				SourcePath: "data",
+				TargetPath: "/data",
+			},
+		},
+	}
+
+	if err := h.prodReloadKubernetes(context.Background(), "deploy-hash", false); err != nil {
+		t.Fatalf("prodReloadKubernetes returned error: %v", err)
+	}
+	if manager.deployReq == nil {
+		t.Fatal("DeployContainer was not called")
+	}
+	if manager.deployReq.SourceDir != "" {
+		t.Fatalf("SourceDir = %q, want empty", manager.deployReq.SourceDir)
+	}
+	if sourceFS.createCount != 0 {
+		t.Fatalf("CreateTempSourceDir called %d times, want 0", sourceFS.createCount)
+	}
+}
+
+func TestProdReloadKubernetesKeepsSourceDirForSecretVolumeWhenImageAlreadyExists(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "source")
+	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	sourceFS := &imageNameTestFS{hash: "source-hash", sourceDir: sourceDir}
+	manager := &healthTestManager{
+		hostNamePort: "kube-svc:5000",
+		running:      true,
+		imageExists:  true,
+	}
+	h := &ContainerHandler{
+		Logger:        types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app:           &App{AppEntry: &types.AppEntry{Id: types.AppId(types.ID_PREFIX_APP_PROD + "kube_source_dir")}},
+		manager:       manager,
+		sourceFS:      sourceFS,
+		GenImageName:  container.ImageName("cli-kube-source-dir:test"),
+		containerFile: "Dockerfile",
+		volumeInfo: []*container.VolumeInfo{
+			{
+				IsSecret:   true,
+				SourcePath: "secrets.toml.tmpl",
+				TargetPath: "/app/.streamlit/secrets.toml",
+			},
+		},
+	}
+
+	if err := h.prodReloadKubernetes(context.Background(), "deploy-hash", false); err != nil {
+		t.Fatalf("prodReloadKubernetes returned error: %v", err)
+	}
+	if manager.deployReq == nil {
+		t.Fatal("DeployContainer was not called")
+	}
+	if manager.deployReq.SourceDir != sourceDir {
+		t.Fatalf("SourceDir = %q, want %q", manager.deployReq.SourceDir, sourceDir)
+	}
+	if sourceFS.createCount != 1 {
+		t.Fatalf("CreateTempSourceDir called %d times, want 1", sourceFS.createCount)
+	}
+}
+
+func TestProdReloadKubernetesKeepsSourceDirForConfigMapVolumeWhenImageAlreadyExists(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "source")
+	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	sourceFS := &imageNameTestFS{hash: "source-hash", sourceDir: sourceDir}
+	manager := &healthTestManager{
+		hostNamePort: "kube-svc:5000",
+		running:      true,
+		imageExists:  true,
+	}
+	h := &ContainerHandler{
+		Logger:        types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app:           &App{AppEntry: &types.AppEntry{Id: types.AppId(types.ID_PREFIX_APP_PROD + "kube_config_source_dir")}},
+		manager:       manager,
+		sourceFS:      sourceFS,
+		GenImageName:  container.ImageName("cli-kube-config-source-dir:test"),
+		containerFile: "Dockerfile",
+		volumeInfo: []*container.VolumeInfo{
+			{
+				SourcePath: "settings.toml",
+				TargetPath: "/app/settings.toml",
+			},
+		},
+	}
+
+	if err := h.prodReloadKubernetes(context.Background(), "deploy-hash", false); err != nil {
+		t.Fatalf("prodReloadKubernetes returned error: %v", err)
+	}
+	if manager.deployReq == nil {
+		t.Fatal("DeployContainer was not called")
+	}
+	if manager.deployReq.SourceDir != sourceDir {
+		t.Fatalf("SourceDir = %q, want %q", manager.deployReq.SourceDir, sourceDir)
+	}
+	if sourceFS.createCount != 1 {
+		t.Fatalf("CreateTempSourceDir called %d times, want 1", sourceFS.createCount)
+	}
+}
+
+func TestProdReloadCommandKeepsSourceDirForSecretVolumeWhenImageAlreadyExists(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "source")
+	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	sourceFS := &imageNameTestFS{hash: "source-hash", sourceDir: sourceDir}
+	manager := &healthTestManager{imageExists: true}
+	serverConfig := &types.ServerConfig{Http: types.HttpConfig{Port: 8080}}
+	h := &ContainerHandler{
+		Logger:        types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app:           &App{AppEntry: &types.AppEntry{Id: types.AppId(types.ID_PREFIX_APP_PROD + "secret_source_dir")}, serverConfig: serverConfig},
+		serverConfig:  serverConfig,
+		manager:       manager,
+		sourceFS:      sourceFS,
+		containerFile: "Dockerfile",
+		volumeInfo: []*container.VolumeInfo{
+			{
+				IsSecret:   true,
+				SourcePath: "secrets.toml.tmpl",
+				TargetPath: "/app/.streamlit/secrets.toml",
+			},
+		},
+	}
+
+	if err := h.ProdReload(context.Background(), false, false); err != nil {
+		t.Fatalf("ProdReload returned error: %v", err)
+	}
+	if manager.runSourceDir != sourceDir {
+		t.Fatalf("RunContainer sourceDir = %q, want %q", manager.runSourceDir, sourceDir)
+	}
 }
 
 func TestWaitForHealthFailsOnNonOKStatus(t *testing.T) {

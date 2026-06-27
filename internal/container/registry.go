@@ -533,7 +533,11 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs kubernetes.Interfac
 	}
 	logger.Info().Msgf("kaniko job %s pod %s final phase %s", kb.JobName, podName, finalPhase)
 	if finalPhase != corev1.PodSucceeded {
-		return fmt.Errorf("build failed: pod phase: %s", finalPhase)
+		logs, err := tailLogs(ctx, cs, ns, kb.JobName, 1000)
+		if err != nil {
+			return fmt.Errorf("build failed: pod phase: %s", finalPhase)
+		}
+		return fmt.Errorf("build failed: pod phase: %s\nLogs:\n%s", finalPhase, logs)
 	}
 
 	return nil

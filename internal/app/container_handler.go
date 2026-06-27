@@ -465,6 +465,20 @@ func getMapHash(input map[string]string) (string, error) {
 	return hex.EncodeToString(sha.Sum(nil)), nil
 }
 
+func getValuesHash(input ...string) (string, error) {
+	hashBuilder := strings.Builder{}
+	for _, v := range input {
+		hashBuilder.WriteString(v)
+		hashBuilder.WriteByte(0)
+	}
+
+	sha := sha256.New()
+	if _, err := sha.Write([]byte(hashBuilder.String())); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(sha.Sum(nil)), nil
+}
+
 func getSliceHash(input []string) (string, error) {
 	slices.Sort(input) // Sort the keys to ensure consistent hash
 
@@ -898,6 +912,78 @@ func (h *ContainerHandler) getAppHash() (string, error) {
 	return fullHash, nil
 }
 
+func (h *ContainerHandler) getBuildImageHash() (string, error) {
+	if h.app.IsDev {
+		return "", nil
+	}
+
+	sourceHash, err := h.sourceFS.FileHash(h.excludeGlob)
+	if err != nil {
+		return "", fmt.Errorf("error getting file hash: %w", err)
+	}
+	cargHash, err := getMapHash(h.cargs)
+	if err != nil {
+		return "", fmt.Errorf("error getting carg hash: %w", err)
+	}
+
+	fullHash, err := getValuesHash(sourceHash, cargHash, h.containerFile, h.buildDir)
+	if err != nil {
+		return "", err
+	}
+	h.Debug().Msgf("Build image hash source %s args %s container file %s build dir %s full hash %s",
+		sourceHash, cargHash, h.containerFile, h.buildDir, fullHash)
+	return fullHash, nil
+}
+
+func (h *ContainerHandler) sharedStageProdImageAppID() types.AppId {
+	appID := h.app.Id
+	if h.app.IsDev || h.app.codeConfig == nil || h.app.codeConfig.Container.SeparateStageProdImages {
+		return appID
+	}
+
+	id := string(appID)
+	for _, prefix := range []string{types.ID_PREFIX_APP_PROD, types.ID_PREFIX_APP_STAGE} {
+		if strings.HasPrefix(id, prefix) {
+			stripped := strings.TrimPrefix(id, prefix)
+			if stripped != "" {
+				return types.AppId(stripped)
+			}
+			return appID
+		}
+	}
+	return appID
+}
+
+func (h *ContainerHandler) buildImageName(fullHash string) (container.ImageName, error) {
+	appID := h.sharedStageProdImageAppID()
+	if appID != h.app.Id {
+		imageHash, err := h.getBuildImageHash()
+		if err != nil {
+			return "", err
+		}
+		return container.GenImageName(appID, imageHash), nil
+	}
+	return container.GenImageName(appID, fullHash), nil
+}
+
+func (h *ContainerHandler) needsRuntimeSourceDir() bool {
+	for _, volInfo := range h.volumeInfo {
+		if volInfo.IsSecret {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *ContainerHandler) needsKubernetesDeploySourceDir() bool {
+	for _, volInfo := range h.volumeInfo {
+		if volInfo.IsSecret || volInfo.VolumeName == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // IsImageSpec reports whether this container handler was configured with an
 // upstream image reference (i.e. `--spec image` / `container.source = "image:..."`).
 // Such apps need ProdReload to run on every admin reload so that RefreshImage
@@ -964,7 +1050,10 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 
 	h.GenImageName = container.ImageName(h.image)
 	if h.GenImageName == "" {
-		h.GenImageName = container.GenImageName(h.app.Id, fullHash)
+		h.GenImageName, err = h.buildImageName(fullHash)
+		if err != nil {
+			return err
+		}
 	} else if h.imageDigest != "" {
 		// Digest-pin the image reference we pass to RunContainer/the pod
 		// template. Subsequent pod restarts or scale-ups will fetch the
@@ -1017,11 +1106,19 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 			return fmt.Errorf("error getting images: %w", err)
 		}
 
-		if !imageExists {
+		if !imageExists || h.needsRuntimeSourceDir() {
 			sourceDir, err = h.sourceFS.CreateTempSourceDir()
 			if err != nil {
 				return fmt.Errorf("error creating temp source dir: %w", err)
 			}
+			defer func() {
+				if err := os.RemoveAll(sourceDir); err != nil {
+					h.Warn().Err(err).Msgf("error removing temp source dir for app %s", h.app.Id)
+				}
+			}()
+		}
+
+		if !imageExists {
 			buildDir := path.Join(sourceDir, h.buildDir)
 			buildErr := h.manager.BuildImage(ctx, h.GenImageName, buildDir, h.containerFile, h.cargs)
 
@@ -1049,12 +1146,6 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 			h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, fullHash, h.IsImageSpec(),
 			nil); err != nil {
 			return fmt.Errorf("error starting container after update: %w", err)
-		}
-	}
-
-	if sourceDir != "" {
-		if err := os.RemoveAll(sourceDir); err != nil {
-			return fmt.Errorf("error removing temp source dir: %w", err)
 		}
 	}
 
@@ -1096,13 +1187,18 @@ func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash st
 		if err != nil {
 			return fmt.Errorf("error getting images: %w", err)
 		}
-		if !imageExists {
+		if !imageExists || h.needsKubernetesDeploySourceDir() {
 			sourceDir, err = h.sourceFS.CreateTempSourceDir()
 			if err != nil {
 				return fmt.Errorf("error creating temp source dir: %w", err)
 			}
+		}
+		if !imageExists {
 			buildDir := path.Join(sourceDir, h.buildDir)
 			if err := h.manager.BuildImage(ctx, h.GenImageName, buildDir, h.containerFile, h.cargs); err != nil {
+				if rmErr := os.RemoveAll(sourceDir); rmErr != nil {
+					h.Warn().Err(rmErr).Msgf("error removing temp source dir for app %s", h.app.Id)
+				}
 				return fmt.Errorf("error building image: %w", err)
 			}
 		}
