@@ -13,6 +13,8 @@ The default configuration for the OpenRun server is defined in [openrun.default.
 container.health_url = "/"
 container.health_attempts_after_startup = 30
 container.health_timeout_secs = 5
+container.deploy_probe_period_secs = 1
+container.deploy_health_attempts = 75
 
 # Idle Shutdown Config
 container.idle_shutdown_secs = 180
@@ -33,9 +35,11 @@ kubernetes.default_volume_size = "10Gi"
 kubernetes.scaling_threshold_cpu = 80
 ```
 
-A health check is done on the container after the container is started. If the health check fails 30 times, the container is assumed to be down.
+A health check is done on the container after the container is started. If the health check fails `container.health_attempts_after_startup` times, the container is assumed to be down. The health check request timeout is controlled by `container.health_timeout_secs`.
 
-In the running state, a status check is done on the app every five seconds. If three of those checks fail, then the container is assumed to be down.
+In Kubernetes mode, `container.deploy_probe_period_secs` is used as the native startup and readiness probe interval, and `container.deploy_health_attempts` controls how long OpenRun waits for a deployment to become ready. These deployment checks are separate from the background status checks that run after the app is serving traffic.
+
+In the running state, a status check is done on the app every `container.status_check_interval_secs` seconds. If `container.status_health_attempts` of those checks fail, then the container is assumed to be down.
 
 If an app does not receive any REST API request for 180 seconds and the total data transfer from/to the app is below 1500 bytes over 180 seconds, the app is assumed to be idle and the container is stopped. The idle shutdown does not apply for dev apps, only for prod mode apps. For frameworks like Streamlit where WebSockets is used for communication between the UI and app, there will not be any REST API calls. The data transfer is used to determine whether the app is idle.
 

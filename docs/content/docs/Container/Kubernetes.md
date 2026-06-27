@@ -101,8 +101,16 @@ OpenRun service and Kaniko jobs run in the main namespace (default `openrun`). A
 
 ## Architecture
 
-OpenRun is installed as a Kubernetes Deployment, with a Service for routing API calls. For each containerized app installed on OpenRun, a Deployment is created with a Service of type ClusterIP. API calls to the OpenRun API Server are routed to the app specific Service using its cluster IP.
+OpenRun is installed as a Kubernetes Deployment, with a Service for routing API calls. For each containerized app installed on OpenRun, a ClusterIP Service is created for app traffic. API calls to the OpenRun API Server are routed to the app-specific Service using its cluster IP.
 
-All Kubernetes resources are created lazily, on the first API call to the app. If app is running version 1, and a code/config change is done which updates it to version 2, the deployment update will happen on the next API call to the app. The API call is blocked, the container image is rebuild if required and the deployment is updated using Server Side Apply API calls.
+All Kubernetes resources are created lazily, on the first API call to the app. If an app is running version 1, and a code/config change updates it to version 2, the deployment update happens on the next API call to the app. That API call is blocked while the container image is rebuilt if required and the Kubernetes resources are updated using Server Side Apply API calls.
 
 OpenRun waits until Kubernetes reports the expected new version rollout is complete before processing further API calls.
+
+For stateless apps, OpenRun deploys each new version as a separate Deployment and promotes it by switching the app Service selector after the new Deployment is ready. This keeps the previous version serving traffic until the replacement is healthy. After promotion, OpenRun removes inactive Deployments for the app and their owned HPA, Secret, and ConfigMap objects.
+
+Apps with OpenRun-managed persistent volumes use a stable Deployment name with a single replica and a Recreate update strategy, because a ReadWriteOnce PVC cannot be mounted by two running pods at the same time. PVCs are preserved when an app moves from a persistent-volume configuration to a stateless configuration. If the app later adds the same volume again, the existing PVC is reused and its previous data is still present.
+
+For image-spec apps, OpenRun resolves the supplied image reference directly. Public images such as `nginx` are pulled from their normal registry instead of being rewritten to the OpenRun build registry. When the registry returns a digest, OpenRun pins the pod image to that digest. If a later refresh has a transient registry failure, OpenRun keeps using the last known digest; missing images, invalid references, and registry authorization errors fail the deployment instead of falling back to a floating tag.
+
+Secrets and ConfigMaps generated for mounted app config are named from the workload name and a short hash suffix so that Kubernetes object names stay within the 63-character DNS label limit.
