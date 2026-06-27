@@ -76,7 +76,7 @@ tests:
 
   postgres0013: # apply creates the binding and verified container app together
     command: ../openrun apply --approve ./pg_verify.star /pg_verify_app
-    stdout: "1 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
+    stderr: "1 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
 
   postgres0014: # verified prod container created a table through the new binding account
     command: ../openrun binding run-command /apps/bverify "select count(*) as n from verify_startup_items" | jq -r '.rows[0].n'
