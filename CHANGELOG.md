@@ -7,6 +7,14 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added the app code setting `container.separate_stage_prod_images` for specs that need distinct staging and production container images.
+
+### Changed
+
+- Containerized staging and production apps now share the same generated image name by default when the build inputs match, avoiding a second image build during production promotion. Specs can opt out with `settings={"container": {"separate_stage_prod_images": True}}`.
+
 ## [v0.18.2] - 2026-06-28
 
 ### Added

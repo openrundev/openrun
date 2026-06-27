@@ -28,6 +28,17 @@ will create an app at `https://localhost:25223/streamlit_app`. On the first API 
 
 The `container` spec is a generic spec which can be used when there is a `Dockerfile` defined in tha app source code.
 
+By default, staging and production apps generated from the same source share the same generated container image when the build inputs match. App specs should keep app path and domain values out of image builds when possible, and read runtime values such as `CL_APP_PATH` and `CL_APP_URL` from the container environment instead. If a spec must embed staging or production URL information into the image during build, set `container.separate_stage_prod_images` in the spec's `app.star`:
+
+```python {filename="app.star"}
+app = ace.app("My App",
+    settings={
+        "container": {"separate_stage_prod_images": True},
+    },
+    # routes and container config omitted
+)
+```
+
 ## App Specs Listing
 
 The specs defined currently are:

@@ -42,6 +42,25 @@ Set the same `builder_auth_token` value on the main install and on every delegat
 
 For single node installation, OpenRun checks if the required container image is available locally. If not, the source code is checked out and the container manager command CLI is used to build the image.
 
+## Staging and Production Image Reuse
+
+For production apps, OpenRun creates a staging app and a production app. By default, container image names are based on the source files, build args, container file and build directory, and do not include the staging or production app id prefix. This allows the production app to reuse the image that was already built for the staging app when the build inputs are the same.
+
+The runtime app path and domain are still passed to the container at deploy time through environment variables such as `CL_APP_PATH` and `CL_APP_URL`; they are not included in the generated build image name. This avoids rebuilding the same image only because an app is promoted from staging to production.
+
+Some app specs need separate staging and production images because the public app path or domain is embedded into the image during the build. Those specs can opt out by setting `container.separate_stage_prod_images` in `app.star`:
+
+```python {filename="app.star"}
+app = ace.app("My App",
+    settings={
+        "container": {"separate_stage_prod_images": True},
+    },
+    # routes and container config omitted
+)
+```
+
+When `separate_stage_prod_images` is `True`, OpenRun keeps the previous behavior and includes the staging or production app id in the generated image name.
+
 ## Kubernetes Installation
 
 For Kubernetes installation, a container registry is required. OpenRun checks if the required container image is available in the registry. If not, the source code is checked out and shipped to a Kaniko based container which does the image build and pushes the image to the registry.
