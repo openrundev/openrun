@@ -14,6 +14,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Containerized staging and production apps now share the same generated image name by default when the build inputs match, avoiding a second image build during production promotion. Specs can opt out with `settings={"container": {"separate_stage_prod_images": True}}`.
+- Kubernetes deploys now watch Deployment rollout status instead of relying only on repeated polling, reducing API overhead and returning sooner when Kubernetes reports readiness or rollout failure. The watch path uses the same `container.deploy_health_attempts` budget, and the best-effort EndpointSlice convergence check now skips immediately when the Kubernetes API or RBAC policy does not allow listing EndpointSlices.
 
 ## [v0.18.2] - 2026-06-28
 

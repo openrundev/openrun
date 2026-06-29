@@ -37,7 +37,7 @@ kubernetes.scaling_threshold_cpu = 80
 
 A health check is done on the container after the container is started. If the health check fails `container.health_attempts_after_startup` times, the container is assumed to be down. The health check request timeout is controlled by `container.health_timeout_secs`.
 
-In Kubernetes mode, `container.deploy_probe_period_secs` is used as the native startup and readiness probe interval, and `container.deploy_health_attempts` controls how long OpenRun waits for a deployment to become ready. These deployment checks are separate from the background status checks that run after the app is serving traffic.
+In Kubernetes mode, `container.deploy_probe_period_secs` is used as the native startup and readiness probe interval, and `container.deploy_health_attempts` controls how long OpenRun waits for a deployment to become ready. OpenRun watches Kubernetes Deployment status for faster readiness and rollout failure detection, but the watch uses the same configured wait budget. After blue-green promotion, OpenRun also performs a best-effort EndpointSlice convergence check; if the Kubernetes API or RBAC policy does not allow listing EndpointSlices, that check is skipped. These deployment checks are separate from the background status checks that run after the app is serving traffic.
 
 In the running state, a status check is done on the app every `container.status_check_interval_secs` seconds. If `container.status_health_attempts` of those checks fail, then the container is assumed to be down.
 
