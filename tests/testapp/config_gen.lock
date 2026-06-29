@@ -13,7 +13,8 @@
       "*.go.html",
       "*.star",
       "config_gen.lock"
-    ]
+    ],
+    "static_from_disk": false
   },
   "htmx": {
     "version": "2.0.3"

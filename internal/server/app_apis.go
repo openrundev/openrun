@@ -203,6 +203,10 @@ func (s *Server) validateAppAuthnType(authStr string) error {
 
 func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	appEntry *types.AppEntry, approve, dryRun bool, branch, commit, gitAuth string, applyInfo *types.CreateAppRequest, repoCache *RepoCache) (*types.AppCreateResponse, error) {
+	if appEntry.Metadata.Spec == types.StaticDiskSpec && (system.IsGit(appEntry.SourceUrl) || appEntry.SourceUrl == types.NO_SOURCE) {
+		return nil, fmt.Errorf("static_disk spec requires source_url to be a local disk directory")
+	}
+
 	if !system.IsGit(appEntry.SourceUrl) {
 		if appEntry.SourceUrl != types.NO_SOURCE {
 			// Make sure the source path is absolute
@@ -395,7 +399,15 @@ func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx type
 	subLogger := s.With().Str("id", string(appEntry.Id)).Str("path", appEntry.Path).Logger()
 	appLogger := types.Logger{Logger: &subLogger}
 	var sourceFS *appfs.SourceFs
-	if !appEntry.IsDev {
+	if !appEntry.IsDev && appEntry.Metadata.Spec == types.StaticDiskSpec {
+		var err error
+		sourceFS, err = appfs.NewSourceFs(appEntry.SourceUrl,
+			appfs.NewDiskReadFS(&appLogger, appEntry.SourceUrl, *appEntry.Metadata.SpecFiles),
+			false)
+		if err != nil {
+			return nil, err
+		}
+	} else if !appEntry.IsDev {
 		// Prod mode, use DB as source
 		fileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
 		if err != nil {
@@ -1305,8 +1317,26 @@ func (s *Server) loadSourceFromDisk(ctx context.Context, tx types.Transaction, a
 	appEntry.Metadata.VersionMetadata.PreviousVersion = prevVersion
 	appEntry.Metadata.VersionMetadata.Version = highestVersion + 1
 	// Walk the local directory and add all files to the database
-	if err := fileStore.AddAppVersionDisk(ctx, tx, appEntry.Metadata, appEntry.SourceUrl); err != nil {
+	checkoutDir := appEntry.SourceUrl
+	if appEntry.Metadata.Spec == types.StaticDiskSpec {
+		if err := validateStaticDiskSource(appEntry.SourceUrl); err != nil {
+			return err
+		}
+		checkoutDir = types.NO_SOURCE
+	}
+	if err := fileStore.AddAppVersionDisk(ctx, tx, appEntry.Metadata, checkoutDir); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateStaticDiskSource(sourceUrl string) error {
+	fi, err := os.Stat(sourceUrl)
+	if err != nil {
+		return fmt.Errorf("error reading static_disk source %s: %w", sourceUrl, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("static_disk source %s is not a directory", sourceUrl)
 	}
 	return nil
 }

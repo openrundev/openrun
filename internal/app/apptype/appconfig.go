@@ -17,6 +17,7 @@ type RouteConfig struct {
 
 	// glob patterns for files which are excluded from container content change check
 	ContainerExclude []string `json:"container_exclude"`
+	StaticFromDisk   bool     `json:"static_from_disk"`
 }
 
 type HtmxConfig struct {

@@ -491,6 +491,10 @@ const (
 
 type AppSpec string
 
+const (
+	StaticDiskSpec AppSpec = "static_disk"
+)
+
 // VersionMetadata contains the metadata for an app
 type VersionMetadata struct {
 	Version         int    `json:"version"`

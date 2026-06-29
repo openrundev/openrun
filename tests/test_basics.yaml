@@ -262,3 +262,58 @@ tests:
     stdout:
       exactly: "2"
     exit-code: 0
+
+  basic700: # Create local source for static_disk spec
+    command: bash -c 'rm -rf static_disk_src && mkdir -p static_disk_src/nested && printf "disk index v1" > static_disk_src/index.html && printf "disk nested file" > static_disk_src/nested/file.txt'
+    exit-code: 0
+
+  basic710: # Create static_disk app
+    command: ../openrun app create --approve --stage-at path --spec static_disk --param index=index.html ./static_disk_src /static_disk
+    exit-code: 0
+
+  basic720: # static_disk serves index file from disk
+    command: curl -sS -u "admin:abcd" localhost:9154/static_disk
+    stdout:
+      exactly: "disk index v1"
+    exit-code: 0
+
+  basic730: # static_disk serves non-index files when single_file is not set
+    command: curl -sS -u "admin:abcd" localhost:9154/static_disk/nested/file.txt
+    stdout:
+      exactly: "disk nested file"
+    exit-code: 0
+
+  basic740: # static_disk source file changes are served directly from disk
+    command: bash -c 'printf "disk index v2" > static_disk_src/index.html'
+    exit-code: 0
+
+  basic750: # static_disk serves updated disk content without app reload
+    command: curl -sS -u "admin:abcd" localhost:9154/static_disk
+    stdout:
+      exactly: "disk index v2"
+    exit-code: 0
+
+  basic760: # static_disk continues serving non-index files after disk changes
+    command: curl -sS -u "admin:abcd" localhost:9154/static_disk/nested/file.txt
+    stdout:
+      exactly: "disk nested file"
+    exit-code: 0
+
+  basic770: # Create static_disk single_file app
+    command: ../openrun app create --approve --stage-at path --spec static_disk --param index=index.html --param single_file=True ./static_disk_src /static_disk_single
+    exit-code: 0
+
+  basic780: # static_disk single_file serves the index file
+    command: curl -sS -u "admin:abcd" localhost:9154/static_disk_single
+    stdout:
+      exactly: "disk index v2"
+    exit-code: 0
+
+  basic790: # static_disk single_file does not serve other files
+    command: curl -sS -u "admin:abcd" localhost:9154/static_disk_single/nested/file.txt
+    stdout: "404 page not found"
+    exit-code: 0
+
+  basic800: # Clean up static_disk source
+    command: rm -rf static_disk_src
+    exit-code: 0

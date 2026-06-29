@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	appcore "github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/rbac"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	saml2 "github.com/russellhaering/gosaml2"
 )
@@ -209,11 +211,16 @@ func newAppAPIMetadataTestServer(t *testing.T) (*Server, *metadata.Metadata, con
 	if err != nil {
 		t.Fatalf("new metadata: %v", err)
 	}
+	secretManager, err := system.NewSecretManager(ctx, map[string]types.SecretConfig{"env": types.SecretConfig{}}, "env", config)
+	if err != nil {
+		t.Fatalf("new secret manager: %v", err)
+	}
 	server := &Server{
-		Logger:      logger,
-		config:      config,
-		db:          db,
-		notifyClose: make(chan types.AppPathDomain),
+		Logger:         logger,
+		config:         config,
+		db:             db,
+		notifyClose:    make(chan types.AppPathDomain),
+		secretsManager: secretManager,
 		rbacManager: &rbac.RBACManager{
 			Logger:     logger,
 			RbacConfig: &types.RBACConfig{},
@@ -221,6 +228,110 @@ func newAppAPIMetadataTestServer(t *testing.T) (*Server, *metadata.Metadata, con
 	}
 	server.apps = NewAppStore(logger, server)
 	return server, db, ctx
+}
+
+func TestStaticDiskSpecServesFromDiskWithoutPersistingSourceFiles(t *testing.T) {
+	t.Parallel()
+
+	server, db, ctx := newAppAPIMetadataTestServer(t)
+	defer db.Close()
+
+	sourceDir := t.TempDir()
+	indexPath := filepath.Join(sourceDir, "index.html")
+	if err := os.WriteFile(indexPath, []byte("version one"), 0o600); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "other.txt"), []byte("other file"), 0o600); err != nil {
+		t.Fatalf("write other: %v", err)
+	}
+
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	_, err = server.CreateAppTx(ctx, tx, "/diskstatic", true, false, &types.CreateAppRequest{
+		SourceUrl: sourceDir,
+		Spec:      types.StaticDiskSpec,
+		ParamValues: map[string]string{
+			"index": "index.html",
+		},
+		StageAt: "path",
+	}, nil)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("create static disk app: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	prod, err := db.GetAppEntry(ctx, types.AppPathDomain{Path: "/diskstatic"})
+	if err != nil {
+		t.Fatalf("get prod app: %v", err)
+	}
+	stage, err := db.GetAppEntry(ctx, types.AppPathDomain{Path: "/diskstatic" + types.STAGE_SUFFIX})
+	if err != nil {
+		t.Fatalf("get stage app: %v", err)
+	}
+
+	tx, err = db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin query transaction: %v", err)
+	}
+	for _, entry := range []*types.AppEntry{prod, stage} {
+		var fileCount int
+		err = tx.QueryRowContext(ctx, `select count(*) from app_files where appid = ?`, entry.Id).Scan(&fileCount)
+		if err != nil {
+			t.Fatalf("query app files for %s: %v", entry.Id, err)
+		}
+		if fileCount != 0 {
+			t.Fatalf("app_files count for %s = %d, want 0", entry.Id, fileCount)
+		}
+
+		var versionCount int
+		err = tx.QueryRowContext(ctx, `select count(*) from app_versions where appid = ?`, entry.Id).Scan(&versionCount)
+		if err != nil {
+			t.Fatalf("query app versions for %s: %v", entry.Id, err)
+		}
+		if versionCount == 0 {
+			t.Fatalf("app_versions count for %s = 0, want metadata version", entry.Id)
+		}
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback query transaction: %v", err)
+	}
+
+	application, err := server.setupApp(ctx, prod, types.Transaction{})
+	if err != nil {
+		t.Fatalf("setup app: %v", err)
+	}
+	if err := application.Initialize(ctx, types.DryRunFalse); err != nil {
+		t.Fatalf("initialize app: %v", err)
+	}
+	defer application.Close() //nolint:errcheck
+
+	req := httptest.NewRequest(http.MethodGet, "/diskstatic", nil)
+	rec := httptest.NewRecorder()
+	application.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "version one" {
+		t.Fatalf("body = %q, want disk content", got)
+	}
+
+	if err := os.WriteFile(indexPath, []byte("version two"), 0o600); err != nil {
+		t.Fatalf("rewrite index: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/diskstatic", nil)
+	rec = httptest.NewRecorder()
+	application.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status after rewrite = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "version two" {
+		t.Fatalf("body after rewrite = %q, want updated disk content", got)
+	}
 }
 
 func TestCreateAppRejectsStageDomainRouteOverlap(t *testing.T) {
