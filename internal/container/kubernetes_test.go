@@ -8,16 +8,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openrundev/openrun/internal/types"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sapitypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -750,19 +754,25 @@ func TestKubernetesCMCleanupInactiveWorkloads(t *testing.T) {
 	staleVersioned := workloadName(serviceName, "stalehash", false)
 	staleStable := serviceName
 	other := workloadName("otherapp", "stalehash", false)
+	// The active version is the most recently created; stale versions predate it.
+	// The Service selector points cleanupInactiveWorkloads at the active version.
+	now := meta.Now()
+	older := meta.NewTime(now.Add(-time.Hour))
 	client := k8sfake.NewSimpleClientset(
-		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: active, Namespace: "apps", Labels: map[string]string{"app": serviceName}}},
-		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: staleVersioned, Namespace: "apps", Labels: map[string]string{"app": serviceName}}},
+		&corev1.Service{ObjectMeta: meta.ObjectMeta{Name: serviceName, Namespace: "apps"},
+			Spec: corev1.ServiceSpec{Selector: map[string]string{"app": serviceName, VERSION_HASH_LABEL: "activehash"}}},
+		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: active, Namespace: "apps", Labels: map[string]string{"app": serviceName}, CreationTimestamp: now}},
+		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: staleVersioned, Namespace: "apps", Labels: map[string]string{"app": serviceName}, CreationTimestamp: older}},
 		&autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: meta.ObjectMeta{Name: staleVersioned, Namespace: "apps"}},
 		&corev1.Secret{ObjectMeta: meta.ObjectMeta{Name: staleVersioned + "-secret-0", Namespace: "apps", Labels: ownershipLabels(staleVersioned)}},
 		&corev1.ConfigMap{ObjectMeta: meta.ObjectMeta{Name: staleVersioned + "-config-0", Namespace: "apps", Labels: ownershipLabels(staleVersioned)}},
-		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: staleStable, Namespace: "apps", Labels: map[string]string{"app": serviceName}}},
+		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: staleStable, Namespace: "apps", Labels: map[string]string{"app": serviceName}, CreationTimestamp: older}},
 		&corev1.Secret{ObjectMeta: meta.ObjectMeta{Name: staleStable + "-secret-0", Namespace: "apps", Labels: ownershipLabels(staleStable)}},
-		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: other, Namespace: "apps", Labels: map[string]string{"app": "otherapp"}}},
+		&appsv1.Deployment{ObjectMeta: meta.ObjectMeta{Name: other, Namespace: "apps", Labels: map[string]string{"app": "otherapp"}, CreationTimestamp: older}},
 	)
 	k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client}
 
-	if err := k.cleanupInactiveWorkloads(ctx, ContainerName(serviceName), active); err != nil {
+	if err := k.cleanupInactiveWorkloads(ctx, ContainerName(serviceName)); err != nil {
 		t.Fatalf("cleanupInactiveWorkloads: %v", err)
 	}
 	if _, err := client.AppsV1().Deployments("apps").Get(ctx, active, meta.GetOptions{}); err != nil {
@@ -828,6 +838,31 @@ func TestKubernetesCMCreateDeploymentStrategy(t *testing.T) {
 		}
 		if c.StartupProbe == nil || c.StartupProbe.FailureThreshold != 30 {
 			t.Fatalf("startup probe missing or wrong: %+v", c.StartupProbe)
+		}
+	})
+
+	t.Run("configured progress deadline overrides default rollout deadline", func(t *testing.T) {
+		client := k8sfake.NewSimpleClientset()
+		depPatch := captureDeploymentApply(client)
+		serviceApplyReactor(client)
+		k := &KubernetesCM{
+			Logger:       newTestLogger(),
+			appNamespace: "apps",
+			config:       &types.ServerConfig{},
+			appConfig:    &types.AppConfig{Container: types.Container{DeployProgressDeadlineSecs: 30}},
+			clientSet:    client,
+		}
+
+		if _, err := k.createDeployment(ctx, "myapp", "myapp-hash", true, "img:latest", 8080, nil, nil, "", nil, appEntry, "hash", KubernetesOptions{}, false, probe); err != nil {
+			t.Fatalf("createDeployment: %v", err)
+		}
+
+		var dep appsv1.Deployment
+		if err := json.Unmarshal(*depPatch, &dep); err != nil {
+			t.Fatalf("unmarshal deployment patch: %v", err)
+		}
+		if dep.Spec.ProgressDeadlineSeconds == nil || *dep.Spec.ProgressDeadlineSeconds != 30 {
+			t.Fatalf("progressDeadlineSeconds=%v, want 30", dep.Spec.ProgressDeadlineSeconds)
 		}
 	})
 
@@ -1001,6 +1036,163 @@ func TestKubernetesCMGetContainerStateIgnoresStaleProgressDeadlineExceeded(t *te
 	if _, _, err := k.GetContainerState(ctx, ContainerName("myapp"), hash); err != nil {
 		t.Fatalf("stale ProgressDeadlineExceeded should not fail current rollout: %v", err)
 	}
+}
+
+func TestKubernetesCMWaitForDeployReadyVersionedMissPollsInsteadOfWatchingStable(t *testing.T) {
+	ctx := context.Background()
+	replicas := int32(1)
+	hash := "expected-hash"
+	versionedName := workloadName("myapp", hash, false)
+	client := k8sfake.NewSimpleClientset(
+		&corev1.Service{
+			ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps"},
+			Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}}},
+		},
+		&appsv1.Deployment{
+			ObjectMeta: meta.ObjectMeta{Name: versionedName, Namespace: "apps", Generation: 1},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Template: corev1.PodTemplateSpec{ObjectMeta: meta.ObjectMeta{Labels: map[string]string{VERSION_HASH_LABEL: TrimLabelValue(hash)}}},
+			},
+			Status: appsv1.DeploymentStatus{
+				ObservedGeneration:  1,
+				UpdatedReplicas:     1,
+				ReadyReplicas:       1,
+				Replicas:            1,
+				UnavailableReplicas: 0,
+			},
+		},
+		&appsv1.Deployment{
+			ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps", Generation: 1},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Template: corev1.PodTemplateSpec{ObjectMeta: meta.ObjectMeta{Labels: map[string]string{VERSION_HASH_LABEL: "old-hash"}}},
+			},
+		},
+		&corev1.Pod{
+			ObjectMeta: meta.ObjectMeta{Name: "myapp-pod", Namespace: "apps", Labels: map[string]string{"app": "myapp", VERSION_HASH_LABEL: TrimLabelValue(hash)}},
+			Status: corev1.PodStatus{
+				Phase:      corev1.PodRunning,
+				Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			},
+		},
+	)
+
+	versionedGets := 0
+	client.PrependReactor("get", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		get := action.(k8stesting.GetAction)
+		if get.GetName() == versionedName {
+			versionedGets++
+			if versionedGets == 1 {
+				return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "deployments"}, versionedName)
+			}
+		}
+		return false, nil, nil
+	})
+	watchCalls := 0
+	client.PrependWatchReactor("deployments", func(k8stesting.Action) (bool, watch.Interface, error) {
+		watchCalls++
+		return true, nil, errors.New("should not watch stale stable deployment")
+	})
+
+	k := &KubernetesCM{
+		Logger:       newTestLogger(),
+		appNamespace: "apps",
+		config:       &types.ServerConfig{},
+		appConfig:    &types.AppConfig{},
+		clientSet:    client,
+	}
+	hostNamePort, err := k.waitForDeployReady(ctx, ContainerName("myapp"), hash, 1)
+	if err != nil {
+		t.Fatalf("waitForDeployReady returned error: %v", err)
+	}
+	if hostNamePort != "myapp.apps.svc.cluster.local:8080" {
+		t.Fatalf("hostNamePort=%q, want service DNS", hostNamePort)
+	}
+	if watchCalls != 0 {
+		t.Fatalf("watch calls=%d, want 0 when versioned get misses and stable deployment is stale", watchCalls)
+	}
+}
+
+func TestKubernetesCMWaitForServiceVersionEndpointsRetriesListErrors(t *testing.T) {
+	ctx := context.Background()
+	hash := "expected-hash"
+	readyPod := &corev1.Pod{
+		ObjectMeta: meta.ObjectMeta{Name: "myapp-pod", Namespace: "apps", Labels: map[string]string{"app": "myapp", VERSION_HASH_LABEL: TrimLabelValue(hash)}},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	slice := &discoveryv1.EndpointSlice{
+		ObjectMeta: meta.ObjectMeta{Name: "myapp-slice", Namespace: "apps", Labels: map[string]string{discoveryv1.LabelServiceName: "myapp"}},
+		Endpoints: []discoveryv1.Endpoint{{
+			TargetRef: &corev1.ObjectReference{Name: "myapp-pod", Namespace: "apps"},
+		}},
+	}
+
+	t.Run("pod list error", func(t *testing.T) {
+		client := k8sfake.NewSimpleClientset(readyPod.DeepCopy(), slice.DeepCopy())
+		podLists := 0
+		client.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+			podLists++
+			if podLists == 1 {
+				return true, nil, errors.New("temporary pod list failure")
+			}
+			return false, nil, nil
+		})
+		k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client}
+
+		k.waitForServiceVersionEndpoints(ctx, "myapp", hash)
+
+		if podLists < 2 {
+			t.Fatalf("pod list calls=%d, want retry after transient error", podLists)
+		}
+	})
+
+	t.Run("endpointslice list error", func(t *testing.T) {
+		client := k8sfake.NewSimpleClientset(readyPod.DeepCopy(), slice.DeepCopy())
+		sliceLists := 0
+		client.PrependReactor("list", "endpointslices", func(k8stesting.Action) (bool, runtime.Object, error) {
+			sliceLists++
+			if sliceLists == 1 {
+				return true, nil, errors.New("temporary endpointslice list failure")
+			}
+			return false, nil, nil
+		})
+		k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client}
+
+		k.waitForServiceVersionEndpoints(ctx, "myapp", hash)
+
+		if sliceLists < 2 {
+			t.Fatalf("endpointslice list calls=%d, want retry after transient error", sliceLists)
+		}
+	})
+
+	t.Run("permanent endpointslice rbac error bails immediately", func(t *testing.T) {
+		client := k8sfake.NewSimpleClientset(readyPod.DeepCopy(), slice.DeepCopy())
+		sliceLists := 0
+		client.PrependReactor("list", "endpointslices", func(k8stesting.Action) (bool, runtime.Object, error) {
+			sliceLists++
+			return true, nil, apierrors.NewForbidden(
+				schema.GroupResource{Group: "discovery.k8s.io", Resource: "endpointslices"}, "", errors.New("forbidden"))
+		})
+		k := &KubernetesCM{Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{}, appConfig: &types.AppConfig{}, clientSet: client}
+
+		done := make(chan struct{})
+		go func() {
+			k.waitForServiceVersionEndpoints(ctx, "myapp", hash)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("waitForServiceVersionEndpoints did not return promptly on a permanent RBAC error")
+		}
+		if sliceLists != 1 {
+			t.Fatalf("endpointslice list calls=%d, want 1 (no retry on permanent error)", sliceLists)
+		}
+	})
 }
 
 func TestKubernetesCMSnapshotRestore(t *testing.T) {

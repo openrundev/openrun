@@ -91,6 +91,7 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsInt(t, "timeout", 5, c.AppConfig.Container.HealthTimeoutSecs)
 	testutil.AssertEqualsInt(t, "deploy probe period", 1, c.AppConfig.Container.DeployProbePeriodSecs)
 	testutil.AssertEqualsInt(t, "deploy health attempts", 75, c.AppConfig.Container.DeployHealthAttempts)
+	testutil.AssertEqualsInt(t, "deploy progress deadline", 0, c.AppConfig.Container.DeployProgressDeadlineSecs)
 	testutil.AssertEqualsInt(t, "idle", 180, c.AppConfig.Container.IdleShutdownSecs)
 	testutil.AssertEqualsInt(t, "idle bytes high watermark", 1500, c.AppConfig.Container.IdleBytesHighWatermark)
 	testutil.AssertEqualsInt(t, "status interval", 20, c.AppConfig.Container.StatusCheckIntervalSecs)

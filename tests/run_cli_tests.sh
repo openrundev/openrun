@@ -37,6 +37,23 @@ unset SSH_AUTH_SOCK
 
 trap "error_handler" ERR
 
+# wait_for_http polls localhost:PORT until the server accepts HTTP connections
+# or up to 10 seconds, replacing the fixed `sleep 2` guards after server start.
+wait_for_http() {
+  local port="$1"
+  local max_attempts=100
+  local attempt=0
+  while [[ $attempt -lt $max_attempts ]]; do
+    if curl -sS --connect-timeout 0.1 --max-time 0.5 -o /dev/null "http://127.0.0.1:${port}/" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+    attempt=$((attempt + 1))
+  done
+  echo "Timed out waiting for HTTP server on port ${port}" >&2
+  return 1
+}
+
 error_handler () {
     echo "Error occurred, running cleanup"
     cleanup
@@ -247,7 +264,7 @@ default_format = "table"
 EOF
 
 CL_CONFIG_FILE=config_basic_test.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
-sleep 2
+wait_for_http 9154
 
 cat <<EOF > config_basic_client_np.toml
 server_uri = "http://localhost:9154"
@@ -287,7 +304,7 @@ EOF
 
 # Test server prints a password when started without config
 CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start > server.stdout &
-sleep 2
+wait_for_http 9156
 grep "Admin password" server.stdout
 CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
 rm -f run/openrun.sock config_np.toml
@@ -359,7 +376,7 @@ fi
 start_postgres_testcontainer
 start_mysql_testcontainer
 GOCOVERDIR=$GOCOVERDIR ../openrun server start &
-sleep 2
+wait_for_http 25222
 
 if [[ -z $CL_SINGLE_TEST ]]; then
     commander test $CL_TEST_VERBOSE --dir ./commander/
@@ -470,7 +487,7 @@ secrets = [["regex:.*"]]
 EOF
     rm -rf metadata run/openrun.sock
     CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
-    sleep 2
+    wait_for_http $http_port
 
     export HTTP_PORT=$http_port
     echo "********Testing containerized apps with $cmd*********"
@@ -520,6 +537,7 @@ container.health_attempts_after_startup = 20
 container.health_timeout_secs = 1
 container.deploy_probe_period_secs = 1
 container.deploy_health_attempts = 30
+container.deploy_progress_deadline_secs = 30
 container.status_health_attempts = 3
 container.idle_shutdown_secs = 900
 container.status_check_interval_secs = 60
@@ -527,7 +545,7 @@ EOF
 
     rm -rf metadata run/openrun.sock
     CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
-    sleep 2
+    wait_for_http 9100
 
     export HTTP_PORT=9100
     echo "********Testing containerized apps with kubernetes *********"

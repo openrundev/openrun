@@ -178,6 +178,9 @@ type Container struct {
 	HealthTimeoutSecs          int    `toml:"health_timeout_secs"`
 	DeployProbePeriodSecs      int    `toml:"deploy_probe_period_secs"`
 	DeployHealthAttempts       int    `toml:"deploy_health_attempts"`
+	// Overrides Kubernetes progressDeadlineSeconds when >0. Keep 0 unless tests
+	// or operators deliberately want failed rollouts to be declared earlier.
+	DeployProgressDeadlineSecs int `toml:"deploy_progress_deadline_secs"`
 
 	LogLinesToShow     int  `toml:"log_lines_to_show"`
 	ShowLogsForFailure bool `toml:"show_logs_for_failure"`

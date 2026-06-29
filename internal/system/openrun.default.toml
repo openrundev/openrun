@@ -169,6 +169,7 @@ container.health_attempts_after_startup = 30
 container.health_timeout_secs = 5
 container.deploy_probe_period_secs = 1
 container.deploy_health_attempts = 75
+container.deploy_progress_deadline_secs = 0 # 0 lets OpenRun choose a safe Kubernetes rollout deadline; tests may lower this to fail broken rollouts faster
 
 # Idle Shutdown Config
 container.idle_shutdown_secs = 180

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -24,11 +25,13 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	core "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/watch"
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1apply "k8s.io/client-go/applyconfigurations/apps/v1"
@@ -377,11 +380,7 @@ func (k *KubernetesCM) GetContainerState(ctx context.Context, name ContainerName
 		return "", false, fmt.Errorf("service %s/%s has no ports", k.appNamespace, string(name))
 	}
 
-	svcPort := svc.Spec.Ports[0].Port
-	hostNamePort := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, svcPort)
-	if k.config.Kubernetes.UseNodePort {
-		hostNamePort = fmt.Sprintf("127.0.0.1:%d", svc.Spec.Ports[0].NodePort)
-	}
+	hostNamePort := k.serviceHostNamePort(svc)
 
 	if expectHash == "" {
 		// Steady-state check: is any pod the Service routes to Ready?
@@ -419,13 +418,8 @@ func (k *KubernetesCM) GetContainerState(ctx context.Context, name ContainerName
 
 	// Surface a Kubernetes-declared rollout failure immediately so the caller
 	// stops waiting and rolls back, instead of polling until its own timeout.
-	for _, cond := range dep.Status.Conditions {
-		if dep.Status.ObservedGeneration == dep.Generation &&
-			cond.Type == appsv1.DeploymentProgressing &&
-			cond.Status == core.ConditionFalse &&
-			cond.Reason == "ProgressDeadlineExceeded" {
-			return "", false, fmt.Errorf("deployment %s/%s rollout failed: %s", k.appNamespace, depName, cond.Message)
-		}
+	if msg, failed := rolloutFailed(dep); failed {
+		return "", false, fmt.Errorf("deployment %s/%s rollout failed: %s", k.appNamespace, depName, msg)
 	}
 
 	// Require the rollout to have fully completed (all desired pods of this
@@ -983,6 +977,9 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 			progressDeadline = pd
 		}
 	}
+	if k.appConfig.Container.DeployProgressDeadlineSecs > 0 {
+		progressDeadline = int32(k.appConfig.Container.DeployProgressDeadlineSecs)
+	}
 
 	dep := appsv1apply.Deployment(wlName, k.appNamespace).
 		WithLabels(metadata).
@@ -1077,13 +1074,17 @@ func (k *KubernetesCM) applyService(ctx context.Context, serviceName string, sel
 	if len(svc.Spec.Ports) == 0 {
 		return "", fmt.Errorf("service has no ports")
 	}
+	return k.serviceHostNamePort(svc), nil
+}
 
-	servicePort := svc.Spec.Ports[0].Port
-	url := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, servicePort)
+// serviceHostNamePort returns the address callers use to reach the Service: the
+// host NodePort in NodePort mode, otherwise the in-cluster DNS name. The Service
+// must have at least one port.
+func (k *KubernetesCM) serviceHostNamePort(svc *core.Service) string {
 	if k.config.Kubernetes.UseNodePort {
-		url = fmt.Sprintf("127.0.0.1:%d", svc.Spec.Ports[0].NodePort)
+		return fmt.Sprintf("127.0.0.1:%d", svc.Spec.Ports[0].NodePort)
 	}
-	return url, nil
+	return fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, svc.Spec.Ports[0].Port)
 }
 
 var _ VersionReporter = (*KubernetesCM)(nil)
@@ -1141,7 +1142,10 @@ func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest) (
 	}
 	k.cleanupSourceDir(req.SourceDir, appID)
 
-	if err := k.waitForDeployReady(ctx, serviceName, req.VersionHash, req.DeployAttempts); err != nil {
+	// waitForDeployReady resolves the stable Service host:port, which promotion
+	// does not change, so it is reused as the deploy result below.
+	hostNamePort, err := k.waitForDeployReady(ctx, serviceName, req.VersionHash, req.DeployAttempts)
+	if err != nil {
 		if rmErr := k.RemoveVersion(ctx, serviceName, req.VersionHash); rmErr != nil {
 			k.Error().Err(rmErr).Msgf("failed to remove unhealthy new version for app %s", appID)
 		}
@@ -1160,13 +1164,15 @@ func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest) (
 		return DeployResult{}, fmt.Errorf("error promoting new version for app %s: %w", appID, err)
 	}
 
-	hostNamePort, _, err := k.GetContainerState(ctx, serviceName, req.VersionHash)
-	if err != nil {
-		return DeployResult{}, fmt.Errorf("error getting running containers: %w", err)
-	}
+	// The old version's pods are cleaned up asynchronously, so wait for the
+	// Service endpoints to converge to the new version before returning;
+	// otherwise a request proxied right after promotion can still hit an old pod.
+	k.waitForServiceVersionEndpoints(ctx, sanitizeContainerName(string(serviceName)), req.VersionHash)
+	k.waitForNodePortConnectivity(ctx, hostNamePort)
+
 	activeName := workloadName(sanitizeContainerName(string(serviceName)), req.VersionHash, false)
 	onCommit := func(c context.Context) error {
-		return k.cleanupInactiveWorkloads(c, serviceName, activeName)
+		return k.cleanupInactiveWorkloads(c, serviceName)
 	}
 
 	if dt := DeployTxnFromContext(ctx); dt != nil {
@@ -1185,9 +1191,7 @@ func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest) (
 			},
 			onCommit)
 	} else {
-		if err := onCommit(ctx); err != nil {
-			k.Error().Err(err).Msgf("failed to clean up inactive workloads for app %s after promotion", appID)
-		}
+		k.cleanupInactiveWorkloadsAsync(serviceName, appID, "after promotion")
 	}
 
 	return DeployResult{
@@ -1226,29 +1230,20 @@ func (k *KubernetesCM) deployInPlace(ctx context.Context, req DeployRequest) (De
 	}
 	k.cleanupSourceDir(req.SourceDir, appID)
 
-	if err := k.waitForDeployReady(ctx, req.ContainerName, req.VersionHash, req.DeployAttempts); err != nil {
+	// waitForDeployReady returns a non-empty host:port only once the version is
+	// confirmed running, so no separate GetContainerState re-check is needed.
+	hostNamePort, err := k.waitForDeployReady(ctx, req.ContainerName, req.VersionHash, req.DeployAttempts)
+	if err != nil {
 		if req.ShowLogsForFailure {
 			logs, _ := k.GetContainerLogs(ctx, req.ContainerName, req.LogLinesToShow)
 			return DeployResult{}, fail(fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs))
 		}
 		return DeployResult{}, fail(fmt.Errorf("error waiting for health: %w", err))
 	}
+	k.waitForNodePortConnectivity(ctx, hostNamePort)
 
-	hostNamePort, running, err := k.GetContainerState(ctx, req.ContainerName, req.VersionHash)
-	if err != nil {
-		return DeployResult{}, fail(fmt.Errorf("error getting running containers: %w", err))
-	}
-	if hostNamePort == "" || !running {
-		if req.ShowLogsForFailure {
-			logs, _ := k.GetContainerLogs(ctx, req.ContainerName, req.LogLinesToShow)
-			return DeployResult{}, fail(fmt.Errorf("container not running. Logs\n %s", logs))
-		}
-		return DeployResult{}, fail(fmt.Errorf("container not running"))
-	}
-
-	activeName := sanitizeContainerName(string(req.ContainerName))
 	onCommit := func(c context.Context) error {
-		return k.cleanupInactiveWorkloads(c, req.ContainerName, activeName)
+		return k.cleanupInactiveWorkloads(c, req.ContainerName)
 	}
 	if dt := DeployTxnFromContext(ctx); dt != nil {
 		var onRollback func(context.Context) error
@@ -1257,9 +1252,7 @@ func (k *KubernetesCM) deployInPlace(ctx context.Context, req DeployRequest) (De
 		}
 		dt.Register(appID, onRollback, onCommit)
 	} else {
-		if err := onCommit(ctx); err != nil {
-			k.Error().Err(err).Msgf("failed to clean up inactive workloads for app %s after in-place deployment", appID)
-		}
+		k.cleanupInactiveWorkloadsAsync(req.ContainerName, appID, "after in-place deployment")
 	}
 
 	return DeployResult{
@@ -1269,26 +1262,371 @@ func (k *KubernetesCM) deployInPlace(ctx context.Context, req DeployRequest) (De
 	}, nil
 }
 
-func (k *KubernetesCM) waitForDeployReady(ctx context.Context, name ContainerName, expectHash string, attempts int) error {
+// isDeploymentReady reports whether a Deployment has fully rolled out the
+// expected version with all desired replicas Ready.
+func (k *KubernetesCM) isDeploymentReady(dep *appsv1.Deployment, expectHash string) bool {
+	if dep.Spec.Template.Labels[VERSION_HASH_LABEL] != TrimLabelValue(expectHash) {
+		return false
+	}
+	if dep.Spec.Replicas == nil {
+		return false
+	}
+	desired := *dep.Spec.Replicas
+	return dep.Status.ObservedGeneration == dep.Generation &&
+		dep.Status.UpdatedReplicas == desired &&
+		dep.Status.ReadyReplicas == desired &&
+		dep.Status.UnavailableReplicas == 0 &&
+		dep.Status.Replicas == desired
+}
+
+// rolloutFailed reports a Kubernetes-declared rollout failure
+// (ProgressDeadlineExceeded) on the current generation, returning the condition
+// message. It lets callers stop waiting and roll back instead of waiting out
+// their own timeout.
+func rolloutFailed(dep *appsv1.Deployment) (string, bool) {
+	for _, cond := range dep.Status.Conditions {
+		if dep.Status.ObservedGeneration == dep.Generation &&
+			cond.Type == appsv1.DeploymentProgressing &&
+			cond.Status == core.ConditionFalse &&
+			cond.Reason == "ProgressDeadlineExceeded" {
+			return cond.Message, true
+		}
+	}
+	return "", false
+}
+
+// waitForDeployReady blocks until the Deployment for the named container+version
+// reports fully ready, returning the Service host:port to reach it. It returns
+// early with an error on a declared rollout failure, or when the context is
+// cancelled or the budget is exhausted.
+//
+// It uses a Kubernetes Watch so it reacts immediately when the Deployment
+// transitions to Ready, avoiding the polling overhead that would otherwise
+// accumulate across many sequential deploys. Once the Deployment is observed
+// ready, a ticker re-checks the pods/Service as a safety net (they can briefly
+// lag the Deployment status, and the watch only wakes on Deployment events). If
+// the Watch API returns an error it falls back to waitForDeployReadyPolling.
+func (k *KubernetesCM) waitForDeployReady(ctx context.Context, name ContainerName, expectHash string, attempts int) (string, error) {
 	if attempts <= 0 {
 		attempts = 30
 	}
-	sleepMillis := 50
-	for attempt := 1; attempt <= attempts; attempt++ {
-		_, running, err := k.GetContainerState(ctx, name, expectHash)
-		if err != nil {
-			return err
+	probePeriodSecs := k.appConfig.Container.DeployProbePeriodSecs
+	if probePeriodSecs <= 0 {
+		probePeriodSecs = 1
+	}
+	// The watch reacts to readiness/failure events immediately; this timeout is
+	// only the backstop for a rollout that emits no terminal event. Track the
+	// same budget the polling fallback would spend (plus one probe period of
+	// headroom for the post-ready pod re-check) so lowering deploy_health_attempts
+	// to fail fast bounds the watch path too, instead of a fixed extra window.
+	timeout := deployReadyBudget(attempts, probePeriodSecs) + time.Duration(probePeriodSecs)*time.Second
+	watchCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Resolve the deployment name: try the per-version name first (stateless
+	// blue-green apps), fall back to the stable name (PVC-backed apps).
+	svcName := sanitizeContainerName(string(name))
+	depName := workloadName(svcName, expectHash, false)
+	dep, getErr := k.clientSet.AppsV1().Deployments(k.appNamespace).Get(watchCtx, depName, meta.GetOptions{})
+	if apierrors.IsNotFound(getErr) {
+		stableDep, stableErr := k.clientSet.AppsV1().Deployments(k.appNamespace).Get(watchCtx, svcName, meta.GetOptions{})
+		if stableErr != nil {
+			return k.waitForDeployReadyPolling(watchCtx, name, expectHash, attempts, probePeriodSecs)
 		}
-		if running {
-			return nil
+		if stableDep.Spec.Template.Labels[VERSION_HASH_LABEL] != TrimLabelValue(expectHash) {
+			return k.waitForDeployReadyPolling(watchCtx, name, expectHash, attempts, probePeriodSecs)
 		}
-		time.Sleep(time.Duration(sleepMillis) * time.Millisecond)
-		sleepMillis *= 2
-		if sleepMillis > 2000 {
-			sleepMillis = 2000
+		depName = svcName
+		dep = stableDep
+		getErr = nil
+	}
+	if getErr != nil && !apierrors.IsNotFound(getErr) {
+		return k.waitForDeployReadyPolling(watchCtx, name, expectHash, attempts, probePeriodSecs)
+	}
+
+	hostNamePort, done, err := k.watchUntilReady(watchCtx, name, expectHash, depName, dep, probePeriodSecs, timeout)
+	if done {
+		return hostNamePort, err
+	}
+	return k.waitForDeployReadyPolling(watchCtx, name, expectHash, attempts, probePeriodSecs)
+}
+
+// watchUntilReady waits via a Deployment watch until the rollout for expectHash
+// is fully ready, returning (hostNamePort, done=true, err) on a terminal
+// outcome. done=false signals the caller to fall back to polling; the watch and
+// ticker are torn down (by deferred Stop) before returning, so the polling
+// fallback never runs alongside an open watch.
+func (k *KubernetesCM) watchUntilReady(ctx context.Context, name ContainerName, expectHash, depName string, dep *appsv1.Deployment, probePeriodSecs int, timeout time.Duration) (string, bool, error) {
+	// sawReady tracks whether the Deployment has been observed fully rolled out.
+	// Pods/the Service can briefly lag the Deployment's Ready status (API read
+	// consistency), so once the Deployment is ready we re-check on a ticker; we
+	// do not poll before then, leaving the pre-ready wait entirely to the watch.
+	sawReady := false
+
+	// evaluate a freshly observed Deployment: a non-nil error is terminal
+	// (rollout failed or pod check errored); otherwise it reports the Service
+	// host:port and whether a pod of this version is Ready.
+	evaluate := func(d *appsv1.Deployment) (string, bool, error) {
+		if msg, failed := rolloutFailed(d); failed {
+			return "", false, fmt.Errorf("deployment %s/%s rollout failed: %s", k.appNamespace, depName, msg)
+		}
+		if !k.isDeploymentReady(d, expectHash) {
+			return "", false, nil
+		}
+		sawReady = true
+		return k.confirmPodReadiness(ctx, name, expectHash)
+	}
+
+	// Fast path: already ready (or already failed) before we set up the watch.
+	if dep != nil {
+		if hostNamePort, running, err := evaluate(dep); err != nil {
+			return "", true, err
+		} else if running {
+			return hostNamePort, true, nil
 		}
 	}
-	return fmt.Errorf("deployment did not become ready after %d attempts", attempts)
+
+	rv := ""
+	if dep != nil {
+		rv = dep.ResourceVersion
+	}
+	watcher, werr := k.clientSet.AppsV1().Deployments(k.appNamespace).Watch(ctx, meta.ListOptions{
+		FieldSelector:   "metadata.name=" + depName,
+		ResourceVersion: rv,
+	})
+	if werr != nil {
+		k.Debug().Err(werr).Msg("deployment watch unavailable, falling back to polling")
+		return "", false, nil
+	}
+	defer watcher.Stop()
+
+	ticker := time.NewTicker(time.Duration(probePeriodSecs) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case event, ok := <-watcher.ResultChan():
+			if !ok {
+				k.Debug().Msg("deployment watch closed, falling back to polling")
+				return "", false, nil
+			}
+			if event.Type == watch.Error {
+				k.Debug().Msg("deployment watch returned error event, falling back to polling")
+				return "", false, nil
+			}
+			evDep, ok := event.Object.(*appsv1.Deployment)
+			if !ok {
+				continue
+			}
+			if hostNamePort, running, err := evaluate(evDep); err != nil {
+				return "", true, err
+			} else if running {
+				return hostNamePort, true, nil
+			}
+		case <-ticker.C:
+			// Safety net only after the Deployment was observed ready: pods/the
+			// Service may briefly lag its status. Skipped beforehand so the
+			// pre-ready wait stays watch-driven rather than polled.
+			if !sawReady {
+				continue
+			}
+			hostNamePort, running, err := k.confirmPodReadiness(ctx, name, expectHash)
+			if err != nil {
+				return "", true, err
+			}
+			if running {
+				return hostNamePort, true, nil
+			}
+		case <-ctx.Done():
+			return "", true, fmt.Errorf("deployment %s/%s did not become ready within %v", k.appNamespace, depName, timeout)
+		}
+	}
+}
+
+// waitForNodePortConnectivity polls the NodePort TCP address until a connection
+// is accepted, confirming that kube-proxy has propagated the endpoint rules.
+// It is a no-op when not using NodePort mode or when hostNamePort is empty.
+// Best-effort with a bounded budget: a NodePort that never becomes connectable
+// (wrong node, firewall, rule never programmed) must not hang the deploy, so it
+// gives up after 30s rather than blocking on the caller's context alone.
+func (k *KubernetesCM) waitForNodePortConnectivity(ctx context.Context, hostNamePort string) {
+	if !k.config.Kubernetes.UseNodePort || hostNamePort == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for {
+		conn, err := net.DialTimeout("tcp", hostNamePort, 200*time.Millisecond)
+		if err == nil {
+			conn.Close() //nolint:errcheck
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return // best-effort: don't fail the deploy on propagation lag
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// isPermanentAPIError reports whether a Kubernetes API error will not clear by
+// retrying: RBAC denials and an unsupported/absent resource type. Best-effort
+// waits return immediately on these instead of spinning out their full budget.
+func isPermanentAPIError(err error) bool {
+	return apierrors.IsForbidden(err) ||
+		apierrors.IsUnauthorized(err) ||
+		apierrors.IsMethodNotSupported(err) ||
+		apierrors.IsNotFound(err)
+}
+
+// waitForServiceVersionEndpoints blocks until the Service's ready endpoints all
+// resolve to pods of expectHash (and at least one is present). After a
+// blue-green selector flip, the previous version's pods can briefly linger in
+// kube-proxy's rotation until the EndpointSlices are reconciled; cleanup of the
+// old workload runs asynchronously, so those pods are not yet deleted. Without
+// this wait, a request proxied to the Service immediately after promotion can
+// still reach an old pod. Best-effort: returns nil on timeout so a slow
+// reconcile does not fail the deploy.
+func (k *KubernetesCM) waitForServiceVersionEndpoints(ctx context.Context, serviceName, expectHash string) {
+	deadline := time.Now().Add(30 * time.Second)
+	waitRetry := func() bool {
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(100 * time.Millisecond):
+			return true
+		}
+	}
+	for {
+		// Ready pods of the target version, re-listed each iteration so a freshly
+		// added endpoint is matched rather than treated as stale.
+		pods, err := k.clientSet.CoreV1().Pods(k.appNamespace).List(ctx, meta.ListOptions{
+			LabelSelector: labels.Set(versionSelector(serviceName, expectHash)).String(),
+		})
+		if err != nil {
+			if isPermanentAPIError(err) {
+				k.Debug().Err(err).Msgf("skipping service %s endpoint convergence wait: cannot list pods", serviceName)
+				return // retrying a permission/availability error just wastes the budget
+			}
+			k.Debug().Err(err).Msgf("could not list pods while waiting for service %s endpoints", serviceName)
+			if !waitRetry() {
+				return
+			}
+			continue
+		}
+		newPods := make(map[string]bool, len(pods.Items))
+		for i := range pods.Items {
+			if isPodReady(&pods.Items[i]) {
+				newPods[pods.Items[i].Name] = true
+			}
+		}
+
+		slices, err := k.clientSet.DiscoveryV1().EndpointSlices(k.appNamespace).List(ctx, meta.ListOptions{
+			LabelSelector: discoveryv1.LabelServiceName + "=" + serviceName,
+		})
+		if err != nil {
+			if isPermanentAPIError(err) {
+				// E.g. clusters whose RBAC does not grant list on
+				// discovery.k8s.io/endpointslices: retrying for the full budget
+				// would add a fixed latency penalty to every promotion.
+				k.Debug().Err(err).Msgf("skipping service %s endpoint convergence wait: cannot list endpointslices", serviceName)
+				return
+			}
+			k.Debug().Err(err).Msgf("could not list endpointslices while waiting for service %s endpoints", serviceName)
+			if !waitRetry() {
+				return
+			}
+			continue
+		}
+		readyCount, converged := 0, true
+		for si := range slices.Items {
+			for _, ep := range slices.Items[si].Endpoints {
+				// Per discovery/v1, a nil Ready means ready; only an explicit false
+				// is not ready. Treating nil as not-ready would stall the full budget
+				// on controllers that omit the field.
+				if ep.Conditions.Ready != nil && !*ep.Conditions.Ready {
+					continue
+				}
+				readyCount++
+				if ep.TargetRef == nil || !newPods[ep.TargetRef.Name] {
+					converged = false
+				}
+			}
+		}
+		if readyCount > 0 && converged {
+			return
+		}
+		if time.Now().After(deadline) {
+			k.Debug().Msgf("service %s endpoints did not converge to version %s within budget", serviceName, TrimLabelValue(expectHash))
+			return // best-effort
+		}
+		if !waitRetry() {
+			return
+		}
+	}
+}
+
+// confirmPodReadiness fetches the Service and pod list and reports whether at
+// least one pod matching expectHash is Ready, plus the Service host:port. It is
+// used in the Watch path where isDeploymentReady has already confirmed the
+// rollout, so the redundant Deployment re-fetch done by GetContainerState is
+// skipped.
+func (k *KubernetesCM) confirmPodReadiness(ctx context.Context, name ContainerName, expectHash string) (string, bool, error) {
+	svcName := sanitizeContainerName(string(name))
+	svc, err := k.clientSet.CoreV1().Services(k.appNamespace).Get(ctx, svcName, meta.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("get service %s/%s: %w", k.appNamespace, svcName, err)
+	}
+	if len(svc.Spec.Ports) == 0 {
+		return "", false, fmt.Errorf("service %s/%s has no ports", k.appNamespace, svcName)
+	}
+	hostNamePort := k.serviceHostNamePort(svc)
+
+	running, err := k.readyPodsBehindService(ctx, versionSelector(svcName, expectHash))
+	if err != nil {
+		return "", false, err
+	}
+	return hostNamePort, running, nil
+}
+
+// deployReadyBudget is the wall-clock time waitForDeployReadyPolling spends
+// across attempts probes: the probe backoff starts at one probe period (min
+// 200 ms) and doubles up to 2 s. waitForDeployReady uses it to size the watch
+// timeout so both paths honor the same configured budget.
+func deployReadyBudget(attempts, probePeriodSecs int) time.Duration {
+	total := 0
+	ms := max(probePeriodSecs*1000, 200)
+	for range attempts {
+		total += ms
+		ms = min(ms*2, 2000)
+	}
+	return time.Duration(total) * time.Millisecond
+}
+
+// waitForDeployReadyPolling is the polling fallback for waitForDeployReady. It
+// returns the Service host:port once the version is ready. The probe backoff
+// matches deployReadyBudget (start at one probe period, min 200 ms, double up
+// to 2 s) so the two never drift.
+func (k *KubernetesCM) waitForDeployReadyPolling(ctx context.Context, name ContainerName, expectHash string, attempts, probePeriodSecs int) (string, error) {
+	sleepMillis := max(probePeriodSecs*1000, 200)
+	for attempt := 1; attempt <= attempts; attempt++ {
+		hostNamePort, running, err := k.GetContainerState(ctx, name, expectHash)
+		if err != nil {
+			return "", err
+		}
+		if running {
+			return hostNamePort, nil
+		}
+		time.Sleep(time.Duration(sleepMillis) * time.Millisecond)
+		sleepMillis = min(sleepMillis*2, 2000)
+	}
+	return "", fmt.Errorf("deployment did not become ready after %d attempts", attempts)
 }
 
 func (k *KubernetesCM) cleanupSourceDir(sourceDir string, appID types.AppId) {
@@ -1386,8 +1724,44 @@ func (k *KubernetesCM) deleteWorkloadObjects(ctx context.Context, wlName string)
 	return errors.Join(errs...)
 }
 
-func (k *KubernetesCM) cleanupInactiveWorkloads(ctx context.Context, serviceName ContainerName, activeName string) error {
+// cleanupInactiveWorkloads deletes the workloads of an app's superseded
+// versions. The active version is re-resolved from the live Service at call time
+// (rather than captured by the caller), so a cleanup that runs after a delay —
+// e.g. the asynchronous post-promotion cleanup — never deletes a version that
+// became active in the meantime. Only Deployments created strictly before the
+// active one are removed, so a concurrent newer deploy still in flight is also
+// preserved.
+// cleanupInactiveWorkloadsAsync deletes superseded workloads in a detached
+// goroutine. Once the new version is live the old workloads are off-traffic, so
+// the deletion need not block the deploy call. It uses a fresh bounded context
+// (not the request's) so the cleanup is unaffected by the deploy returning;
+// failures are logged and recovered by a later deploy's cleanup pass.
+func (k *KubernetesCM) cleanupInactiveWorkloadsAsync(serviceName ContainerName, appID types.AppId, phase string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := k.cleanupInactiveWorkloads(ctx, serviceName); err != nil {
+			k.Error().Err(err).Msgf("failed to clean up inactive workloads for app %s %s", appID, phase)
+		}
+	}()
+}
+
+func (k *KubernetesCM) cleanupInactiveWorkloads(ctx context.Context, serviceName ContainerName) error {
 	n := sanitizeContainerName(string(serviceName))
+	activeName, err := k.activeDeploymentName(ctx, n)
+	if err != nil {
+		return fmt.Errorf("resolve active deployment for %s: %w", n, err)
+	}
+	active, err := k.clientSet.AppsV1().Deployments(k.appNamespace).Get(ctx, activeName, meta.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		// No clear active workload (e.g. mid-transition); skip rather than risk
+		// deleting a live or in-flight version. The next deploy will clean up.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get active deployment %s/%s: %w", k.appNamespace, activeName, err)
+	}
+
 	deps, err := k.clientSet.AppsV1().Deployments(k.appNamespace).List(ctx, meta.ListOptions{
 		LabelSelector: labels.Set(map[string]string{"app": n}).String(),
 	})
@@ -1397,7 +1771,9 @@ func (k *KubernetesCM) cleanupInactiveWorkloads(ctx context.Context, serviceName
 	var errs []error
 	for i := range deps.Items {
 		dep := deps.Items[i]
-		if dep.Name == activeName {
+		// Preserve the active version and anything created at or after it (a newer
+		// deploy still in flight); only older, superseded versions are removed.
+		if dep.Name == active.Name || !dep.CreationTimestamp.Before(&active.CreationTimestamp) {
 			continue
 		}
 		errs = append(errs, k.deleteWorkloadObjects(ctx, dep.Name))
