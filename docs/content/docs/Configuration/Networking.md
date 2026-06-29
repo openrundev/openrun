@@ -112,6 +112,32 @@ Requests are only routed to the default domain when the request `Host` matches t
 fallback_unknown_domains = false # set true to route unknown hostnames to the default domain
 ```
 
+## Staging Domain
+
+New production apps get a linked staging app. By default, OpenRun creates the staging app on a staging subdomain and keeps the production path unchanged. For example, an app created at `example.com:/reports` gets a staging app at `stage.example.com:/reports`.
+
+The default staging location is controlled by `system.stage_at`:
+
+```toml {filename="openrun.toml"}
+[system]
+stage_at = "domain"            # "domain", "path", or a staging domain
+default_stage_domain = "stage" # prefix used when stage_at is "domain"
+```
+
+The supported values are:
+
+| `stage_at` value | Staging location                                                                                                   |
+| :--------------- | :----------------------------------------------------------------------------------------------------------------- |
+| `domain`         | `default_stage_domain` is prepended to the production domain, for example `stage.example.com:/reports`             |
+| `path`           | The production domain is kept and `_cl_stage` is suffixed to the path, for example `example.com:/reports_cl_stage` |
+| any domain       | The specified domain is used with the production path, for example `staging.example.net:/reports`                  |
+
+If an app is created without an explicit domain, `domain` mode uses `default_domain` as the production domain when deriving the staging domain. A staging domain value ending in `.` is expanded relative to `default_domain`.
+
+For production deployments, make sure DNS and certificates cover the staging hostnames. A wildcard DNS entry such as `*.example.com` is the simplest setup when apps use subdomains. For local development, `*.localhost` names work with the default `localhost` domain.
+
+The server setting only controls the default for new production apps. Override it per app with `openrun app create --stage-at path ...` or `openrun app create --stage-at staging.example.net ...`. In declarative apply files, use `stage_at="path"` or `stage_at="staging.example.net"` in the `app(...)` definition for apps being created.
+
 The built-in `list_apps` app is served at the default domain root level if no app is installed there.
 
 ```toml {filename="openrun.toml"}

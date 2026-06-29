@@ -75,21 +75,21 @@ app_prd_2d6KcZmNwHIB8cSzNCotqBHpeje PROD        5 NONE main:ed7545ae739dfe85140a
 $ openrun app list -i
 Id                                  Type  Version Auth GitInfo                        Domain:Path                                                  SourceUrl
 app_prd_2d3kCRk43FOuIGy979NbBWakRMm PROD        3 NONE main:9ce5e1adfc28983f7894      memory.demo.clace.io:/                                       github.com/openrundev/openrun/examples/memory_usage/
-app_stg_2d3kCRk43FOuIGy979NbBWakRMm STG         3 NONE main:9ce5e1adfc28983f7894      memory.demo.clace.io:/_cl_stage                              github.com/openrundev/openrun/examples/memory_usage/
+app_stg_2d3kCRk43FOuIGy979NbBWakRMm STG         3 NONE main:9ce5e1adfc28983f7894      stage.memory.demo.clace.io:/                                 github.com/openrundev/openrun/examples/memory_usage/
 app_prd_2d3kCZ28w6VIzoXMsT9yldwijxL PROD        3 NONE main:9ce5e1adfc28983f7894      cowbull.co:/                                                 github.com/openrundev/openrun/examples/cowbull
-app_stg_2d3kCZ28w6VIzoXMsT9yldwijxL STG         3 NONE main:9ce5e1adfc28983f7894      cowbull.co:/_cl_stage                                        github.com/openrundev/openrun/examples/cowbull
+app_stg_2d3kCZ28w6VIzoXMsT9yldwijxL STG         3 NONE main:9ce5e1adfc28983f7894      stage.cowbull.co:/                                           github.com/openrundev/openrun/examples/cowbull
 app_prd_2d3kCjmw8ldQ2LaOd0CLmWXDApq PROD        3 NONE main:9ce5e1adfc28983f7894      /                                                            github.com/openrundev/openrun/examples/demo
-app_stg_2d3kCjmw8ldQ2LaOd0CLmWXDApq STG         3 NONE main:9ce5e1adfc28983f7894      /_cl_stage                                                   github.com/openrundev/openrun/examples/demo
+app_stg_2d3kCjmw8ldQ2LaOd0CLmWXDApq STG         3 NONE main:9ce5e1adfc28983f7894      stage.demo.clace.io:/                                        github.com/openrundev/openrun/examples/demo
 app_prd_2d3kKVvSsSgUHqtNGZaD95NuLK3 PROD        3 NONE main:9ce5e1adfc28983f7894      du.demo.clace.io:/                                           github.com/openrundev/openrun/examples/disk_usage/
-app_stg_2d3kKVvSsSgUHqtNGZaD95NuLK3 STG         3 NONE main:9ce5e1adfc28983f7894      du.demo.clace.io:/_cl_stage                                  github.com/openrundev/openrun/examples/disk_usage/
+app_stg_2d3kKVvSsSgUHqtNGZaD95NuLK3 STG         3 NONE main:9ce5e1adfc28983f7894      stage.du.demo.clace.io:/                                     github.com/openrundev/openrun/examples/disk_usage/
 app_prd_2d6KcZmNwHIB8cSzNCotqBHpeje PROD        5 NONE main:ed7545ae739dfe85140a      utils.demo.clace.io:/bookmarks                               github.com/openrundev/apps/utils/bookmarks
-app_stg_2d6KcZmNwHIB8cSzNCotqBHpeje STG         5 NONE main:ed7545ae739dfe85140a      utils.demo.clace.io:/bookmarks_cl_stage                      github.com/openrundev/apps/utils/bookmarks
+app_stg_2d6KcZmNwHIB8cSzNCotqBHpeje STG         5 NONE main:ed7545ae739dfe85140a      stage.utils.demo.clace.io:/bookmarks                         github.com/openrundev/apps/utils/bookmarks
 ```
 
 Use the `version list` command to list versions for particular apps. This command works on prod app or staging app specifically.
 
 ```shell
-$ openrun version list utils.demo.clace.io:/bookmarks_cl_stage
+$ openrun version list stage.utils.demo.clace.io:/bookmarks
 Active  Version Previous CreateTime                     GitCommit            GitMessage
               1        0 2024-03-01 19:59:27 +0000 UTC  86385ff67deab288c362 Updated bookmarks app
 
@@ -112,7 +112,7 @@ Active  Version Previous CreateTime                     GitCommit            Git
 
 The `version switch` command can be used to switch versions, up or down or to particular version. The `version revert` command can be used to revert the last change. `app promote` makes the prod app run the same version as the current staging app.
 
-In the above listing, the staging app has five versions. Three of those (1,2 and 5) were promoted to prod. `version switch previous utils.demo.clace.io:/bookmarks_cl_stage` will change the stage app to version 4. `version switch previous utils.demo.clace.io:/bookmarks` will change the prod app to version 2. After that, `app promote utils.demo.clace.io:/bookmarks` will change prod to also be at version 4, same as stage. The `version switch` command accepts `previous`, `next` and actual version number as version to switch to.
+In the above listing, the staging app has five versions. Three of those (1,2 and 5) were promoted to prod. `version switch previous stage.utils.demo.clace.io:/bookmarks` will change the stage app to version 4. `version switch previous utils.demo.clace.io:/bookmarks` will change the prod app to version 2. After that, `app promote utils.demo.clace.io:/bookmarks` will change prod to also be at version 4, same as stage. The `version switch` command accepts `previous`, `next` and actual version number as version to switch to.
 
 By default, OpenRun keeps the current version plus 5 older versions for each app. Version cleanup runs automatically after operations which create or promote new app versions, so the version list does not grow without bound. The retention count can be changed globally with `app_config.fs.retain_versions` in `openrun.toml`, or per app with `openrun app update conf --promote fs.retain_versions=<count> /myapp`.
 
@@ -210,6 +210,7 @@ The declarative app configuration uses Starlark syntax. An app is defined using 
 | container_opts |   true   |    dict     |         |                  The container options for the app                  |
 | container_args |   true   |    dict     |         |            The container build args options for the app             |
 | container_vols |   true   | list string |         |                  The container volumes for the app                  |
+|    stage_at    |   true   |   string    | system  | Staging location for new prod apps: `domain`, `path`, or a staging domain |
 |     verify     |   true   |    bool     |  false  |                   Verify reload for this app only                   |
 
 For example, a definition like

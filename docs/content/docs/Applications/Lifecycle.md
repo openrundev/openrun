@@ -21,7 +21,7 @@ If not using git, a workflow would be:
 - Create a prod mode app, like `openrun app create --approve ~/myappcode /myapp`
 - As code changes are saved to disk, the changes are immediately live at `https://localhost:25223/myapp_dev`
 - When code is in a stable state, run `openrun app reload /myapp`. This will update the staging app with the most recent code from `~/myappcode` folder.
-- The staging app is available at `https://localhost:25223/myapp_cl_stage` for verification.
+- The staging app is available at `https://stage.localhost:25223/myapp` for verification.
 - To promote the code to prod, run `openrun app promote /myapp`. The staged code is promoted to prod, live at `https://localhost:25223/myapp`.
 
 Having a staging environment helps catch code and config issues before the changes are live on prod. OpenRun implements versioning for prod apps, even when source is not from git.
@@ -35,7 +35,7 @@ If using git, a workflow would be:
 - As code changes are saved to disk, the changes are immediately live at `https://localhost:25223/myapp_dev`
 - When code is in a stable state, check in the dev code to git.
 - Run `openrun app reload /myapp`. This will update the staging app with the most recent code from `main` branch in git.
-- The staging app is live at `https://localhost:25223/myapp_cl_stage`. Verify the functionality of the staging app.
+- The staging app is live at `https://stage.localhost:25223/myapp`. Verify the functionality of the staging app.
 - To promote the code to prod, run `openrun app promote /myapp`. The staged code is promoted to prod, live at `https://localhost:25223/myapp`.
 
 To avoid need to manually reload, setup a [sync]({{< ref "/docs/applications/overview/#automated-sync" >}}) job which will automatically update existing apps and create new apps.
@@ -66,13 +66,15 @@ Staging apps are created for each production app. The purpose of the staging app
 openrun app list --internal
 Id                                  Type Version GitCommit                                GitBranch       Domain:Path                    SourceUrl
 app_prd_2aMvX3fc9fH18n6i2Jew0tNxnky PROD 1                                                                example.com:/                  /home/user/mycode
-app_stg_2aMvX3fc9fH18n6i2Jew0tNxnky STG  1                                                                example.com:/_cl_stage         /home/user/mycode
+app_stg_2aMvX3fc9fH18n6i2Jew0tNxnky STG  1                                                                stage.example.com:/            /home/user/mycode
 
 ```
 
 The second app is the staging app for the first. `app list` shows only the main apps by default, the `--internal` option makes it show the linked apps.
 
-The staging app URL is available by suffixing `_cl_stage` at the end of the app path. So for an app at `https://example.com/`, the staging URL is `https://example.com/cl_stage`. For an app at `https://example.com/utils/app1`, the staging app URL is `https://example.com/utils/app1_cl_stage`.
+By default, the staging app uses a staging subdomain and the same path as the production app. So for an app at `https://example.com/`, the staging URL is `https://stage.example.com/`. For an app at `https://example.com/utils/app1`, the staging app URL is `https://stage.example.com/utils/app1`.
+
+The staging location can be changed when creating the app. Use `openrun app create --stage-at path ...` to use the older path based location, where `_cl_stage` is suffixed to the production path. Use `--stage-at <domain>` to put the staging app on a specific domain. The server default is configured with `system.stage_at`.
 
 ## Promoting Changes
 
@@ -80,7 +82,7 @@ When there are code changes, running `app reload` will update the staging enviro
 
 ```sh
 openrun app reload example.com:/
-Reloaded apps: example.com:/_cl_stage
+Reloaded apps: stage.example.com:/
 1 app(s) reloaded, 0 app(s) approved, 0 app(s) promoted.
 ```
 
@@ -90,10 +92,10 @@ The staging app is version 2 now, prod app is still at version 1.
 openrun app list -i
 Id                                  Type  Version GitCommit                                GitBranch       Domain:Path                    SourceUrl
 app_prd_2aMvX3fc9fH18n6i2Jew0tNxnky PROD* 1                                                                example.com:/                  /home/user/mycode
-app_stg_2aMvX3fc9fH18n6i2Jew0tNxnky STG   2                                                                example.com:/_cl_stage         /home/user/mycode
+app_stg_2aMvX3fc9fH18n6i2Jew0tNxnky STG   2                                                                stage.example.com:/            /home/user/mycode
 ```
 
-At this point, going to the URL `example.com:/_cl_stage` will show the updated code while `example.com:/` has not been updated.
+At this point, going to `https://stage.example.com/` will show the updated code while `https://example.com/` has not been updated.
 
 {{<callout type="info" >}}
 The `*` next to PROD indicates that there are staged changes waiting to be promoted to PROD.
@@ -113,7 +115,7 @@ The prod app is at the same version as the staging app now
 openrun app list -i
 Id                                  Type Version GitCommit                                GitBranch       Domain:Path                    SourceUrl
 app_prd_2aMvX3fc9fH18n6i2Jew0tNxnky PROD 2                                                                example.com:/                  /home/user/mycode
-app_stg_2aMvX3fc9fH18n6i2Jew0tNxnky STG  2                                                                example.com:/_cl_stage         /home/user/mycode
+app_stg_2aMvX3fc9fH18n6i2Jew0tNxnky STG  2                                                                stage.example.com:/            /home/user/mycode
 ```
 
 If the application code change requires new permissions, the reload operation will fail unless `--approve` is added.

@@ -208,7 +208,9 @@ openrun app list --internal all
 
 lists all the apps and internal apps for each app. `openrun app list "example.com:**"` lists the main apps for the example.com domain.
 
-The staging app can be used to verify whether changes are working before the production app is updated. The staging app is accessible by suffixing `_cl_stage` at the end of the prod app path. So for an app at `https://example.com/`, the staging url is `https://example.com/_cl_stage`. For an app at `/utils/app1`, the staging app url is `/utils/app1_cl_stage`.
+The staging app can be used to verify whether changes are working before the production app is updated. By default, the staging app uses a staging subdomain and the same path as the production app. So for an app at `https://example.com/`, the staging URL is `https://stage.example.com/`. For an app at `https://example.com/utils/app1`, the staging app URL is `https://stage.example.com/utils/app1`.
+
+Use `openrun app create --stage-at path ...` to use the older path based staging location, where `_cl_stage` is suffixed to the production path. Use `--stage-at <domain>` to put the staging app on a specific domain.
 
 To promote changes from staging to prod, run:
 
@@ -222,4 +224,4 @@ or `openrun app promote "/disk_usage*"` to promote specific apps. Use the `--dry
 
 Use `openrun app list` to get list of installed app. By default, all apps are listed. Use a glob pattern like `example.com:**` to list specific apps. Pass the `--internal` or `-i` option to `list` to include the internal apps in the app listing. The pattern matches the main apps, and if the internal option is specified, the matched app's linked apps are also listed.
 
-Use `openrun version list` to get list of versions for an app. `openrun version switch` allows switching between versions. The version command can be run separately on the staging app and prod app, like `openrun version list /myapp_cl_stage` and `openrun version list /myapp`. The current version is indicated in the output.
+Use `openrun version list` to get list of versions for an app. `openrun version switch` allows switching between versions. The version command can be run separately on the staging app and prod app, like `openrun version list stage.example.com:/myapp` and `openrun version list example.com:/myapp`. The current version is indicated in the output.

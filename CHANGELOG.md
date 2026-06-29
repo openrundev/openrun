@@ -13,6 +13,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- New production apps now create their linked staging app on a staging subdomain by default, for example `stage.example.com:/app`, instead of suffixing `_cl_stage` to the production path. Use `system.stage_at`, `system.default_stage_domain`, `openrun app create --stage-at`, or declarative `stage_at` to choose path-based staging or a specific staging domain for new apps.
 - Containerized staging and production apps now share the same generated image name by default when the build inputs match, avoiding a second image build during production promotion. Specs can opt out with `settings={"container": {"separate_stage_prod_images": True}}`.
 - Kubernetes deploys now watch Deployment rollout status instead of relying only on repeated polling, reducing API overhead and returning sooner when Kubernetes reports readiness or rollout failure. The watch path uses the same `container.deploy_health_attempts` budget, and the best-effort EndpointSlice convergence check now skips immediately when the Kubernetes API or RBAC policy does not allow listing EndpointSlices.
 
