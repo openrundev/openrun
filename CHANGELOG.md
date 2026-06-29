@@ -10,6 +10,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Added the app code setting `container.separate_stage_prod_images` for specs that need distinct staging and production container images.
+- Added the `static_disk` app spec for serving static files directly from a local source directory without storing the static file contents in the metadata database.
 
 ### Changed
 
