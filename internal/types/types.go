@@ -475,6 +475,7 @@ type Permission struct {
 	Plugin    string   `json:"plugin" toml:"plugin"`
 	Method    string   `json:"method" toml:"method"`
 	Arguments []string `json:"arguments" toml:"arguments"`
+	Permit    []string `json:"permit" toml:"permit"`                       // Custom RBAC permissions, any one of which allows the call.
 	IsRead    *bool    `json:"is_read,omitempty" toml:"is_read,omitempty"` // Whether the call is a Read operation or Write operation.
 	// nil value means go with the default as set in the plugin code
 	Secrets [][]string `json:"secrets" toml:"secrets"` // The secrets that are allowed to be used in the call.

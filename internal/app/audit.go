@@ -142,6 +142,10 @@ func needsApproval(a *types.ApproveResult) bool {
 			return false
 		}
 
+		if !slices.Equal(a.Permit, b.Permit) {
+			return false
+		}
+
 		if !reflect.DeepEqual(a.Secrets, b.Secrets) {
 			return false
 		}
@@ -182,6 +186,7 @@ func needsApprovalWithServerConfig(a *types.ApproveResult, serverPerms []types.P
 		for _, ap := range a.ApprovedPermissions {
 			if ap.Plugin == p.Plugin && ap.Method == p.Method &&
 				slices.Equal(ap.Arguments, p.Arguments) &&
+				slices.Equal(ap.Permit, p.Permit) &&
 				reflect.DeepEqual(ap.Secrets, p.Secrets) {
 				found = true
 				break
@@ -228,6 +233,9 @@ func permissionCoveredByServerConfig(perm types.Permission, serverPerms []types.
 		}
 
 		if len(sp.Arguments) == 0 {
+			if !slices.Equal(sp.Permit, perm.Permit) {
+				continue
+			}
 			return true
 		}
 
@@ -249,6 +257,9 @@ func permissionCoveredByServerConfig(perm types.Permission, serverPerms []types.
 		}
 
 		if argMatch {
+			if !slices.Equal(sp.Permit, perm.Permit) {
+				continue
+			}
 			return true
 		}
 	}
@@ -312,7 +323,7 @@ func (a *App) createApproveResponse(loads []string, globals starlark.StringDict)
 			return nil, fmt.Errorf("permissions entry %d is not a struct", count)
 		}
 		var pluginStr, methodStr string
-		var args []string
+		var args, permit []string
 		var secrets [][]string
 		if pluginStr, err = apptype.GetStringAttr(permStruct, "plugin"); err != nil {
 			return nil, err
@@ -326,11 +337,15 @@ func (a *App) createApproveResponse(loads []string, globals starlark.StringDict)
 		if secrets, err = apptype.GetListListStringAttr(permStruct, "secrets", true); err != nil {
 			return nil, err
 		}
+		if permit, err = apptype.GetListStringAttr(permStruct, "permit", true); err != nil {
+			return nil, err
+		}
 
 		perm := types.Permission{
 			Plugin:    pluginStr,
 			Method:    methodStr,
 			Arguments: args,
+			Permit:    permit,
 			Secrets:   secrets,
 		}
 

@@ -84,6 +84,8 @@ Permissions like `access`, `list`, `update` etc are OpenRun-defined permissions.
 
 For [Action apps]({{< ref "Actions" >}}), custom perms can be used to limit which user can perform what operations. In the action definition, adding `permit=['appread']` means that the action will be available only to users who have any one of the custom permissions specified in the list. The default action should be available to everyone, other actions can be controlled using custom permissions. If no permits are set or if RBAC is not enabled for the app, then all actions are available to authenticated users.
 
+Plugin calls can use the same custom permissions with `ace.permission(..., permit=['appread'])`. When RBAC is enabled for the app, the call is allowed only if the user has at least one listed custom permission. If the permit list is empty or RBAC is not enabled, plugin permissions behave normally.
+
 ## Notes
 
 - The auth provider name has to be prefixed with `rbac:` for the RBAC rules to apply for app `access` permission.

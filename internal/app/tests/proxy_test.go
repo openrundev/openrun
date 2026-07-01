@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/testutil"
@@ -17,11 +18,17 @@ import (
 
 // testRBAC is a minimal RBACAPI implementation for tests
 type testRBAC struct {
-	perms []string
+	perms        []string
+	rbacDisabled bool
 }
 
 func (t *testRBAC) AuthorizeAny(ctx context.Context, permissions []string) (bool, error) {
-	return true, nil
+	for _, permission := range permissions {
+		if slices.Contains(t.perms, permission) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (t *testRBAC) Authorize(ctx context.Context, permission types.RBACPermission, isAppLevelPermission bool) (bool, error) {
@@ -33,7 +40,7 @@ func (t *testRBAC) GetCustomPermissions(ctx context.Context) ([]string, error) {
 }
 
 func (t *testRBAC) IsAppRBACEnabled(ctx context.Context) bool {
-	return true
+	return !t.rbacDisabled
 }
 func TestProxyBasics(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@
 package app_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -93,6 +94,67 @@ def handler(req):
 	testutil.AssertEqualsString(t, "body", "", ret["key6"].(string))
 	testutil.AssertEqualsString(t, "body", "test contents", ret["key7"].(string))
 	testutil.AssertEqualsString(t, "body", `value`, ret["key8"].(map[string]any)["key"].(string))
+}
+
+func TestHttpPluginPermit(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "test contents") //nolint:errcheck
+	}))
+
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+load ("http.in", "http")
+app = ace.app("testApp", routes = [ace.api("/", type=ace.TEXT)],
+    permissions=[
+	ace.permission("http.in", "get", permit=["net:read"]),
+	])
+
+def handler(req):
+	return http.get("` + testServer.URL + `").value.body()
+`,
+	}
+
+	perms := []types.Permission{
+		{Plugin: "http.in", Method: "get", Permit: []string{"net:read"}},
+	}
+
+	a, _, err := CreateTestAppAuthorizer(logger, fileData, []string{"http.in"}, perms, nil, &testRBAC{perms: []string{"net:read"}})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test", nil)
+	ctx := context.WithValue(request.Context(), types.USER_ID, "reader@example.com")
+	request = request.WithContext(ctx)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertEqualsString(t, "body", "test contents", response.Body.String())
+
+	a, _, err = CreateTestAppAuthorizer(logger, fileData, []string{"http.in"}, perms, nil, &testRBAC{})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request = httptest.NewRequest("GET", "/test", nil)
+	ctx = context.WithValue(request.Context(), types.USER_ID, "blocked@example.com")
+	request = request.WithContext(ctx)
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code", 500, response.Code)
+	testutil.AssertStringContains(t, response.Body.String(), "user blocked@example.com does not have any required permission [net:read]")
+
+	a, _, err = CreateTestAppAuthorizer(logger, fileData, []string{"http.in"}, perms, nil, &testRBAC{rbacDisabled: true})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request = httptest.NewRequest("GET", "/test", nil)
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertEqualsString(t, "body", "test contents", response.Body.String())
 }
 
 func TestSecretsConfig(t *testing.T) {

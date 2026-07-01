@@ -16,6 +16,7 @@ import (
 
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
 	"go.opentelemetry.io/otel/attribute"
@@ -299,7 +300,7 @@ func (a *App) pluginHook(appPath, modulePath, accountName, functionName string, 
 			approved = true
 			secrets = [][]string{{"regex:.*"}} // All secrets are allowed
 		} else {
-			lastError, secrets, approved, err = checkPermissions(a, modulePath, functionName, args, pluginInfo, permsList)
+			lastError, secrets, approved, err = checkPermissions(GetContext(thread), a, modulePath, functionName, args, pluginInfo, permsList)
 			if err != nil {
 				return nil, err
 			}
@@ -450,7 +451,7 @@ func (a *App) pluginHook(appPath, modulePath, accountName, functionName string, 
 	return starlark.NewBuiltin(functionName, hook)
 }
 
-func checkPermissions(a *App, modulePath string, functionName string, args starlark.Tuple, pluginInfo *plugin.PluginInfo, permsList []types.Permission) (error, [][]string, bool, error) {
+func checkPermissions(ctx context.Context, a *App, modulePath string, functionName string, args starlark.Tuple, pluginInfo *plugin.PluginInfo, permsList []types.Permission) (error, [][]string, bool, error) {
 	var lastError error
 	secrets := [][]string{}
 	approved := false
@@ -503,6 +504,18 @@ func checkPermissions(a *App, modulePath string, functionName string, args starl
 					if strings.HasPrefix(string(a.Id), types.ID_PREFIX_APP_PREVIEW) && !a.Settings.PreviewWriteAccess {
 						return nil, nil, false, fmt.Errorf("preview app %s is not permitted to call %s.%s args %v. Preview app does not have access to write operations", a.Path, modulePath, functionName, p.Arguments)
 					}
+				}
+			}
+
+			if a.rbacApi != nil && ctx != nil && len(p.Permit) > 0 && a.rbacApi.IsAppRBACEnabled(ctx) {
+				authorized, err := a.rbacApi.AuthorizeAny(ctx, p.Permit)
+				if err != nil {
+					return nil, nil, false, err
+				}
+				if !authorized {
+					userId := system.GetContextUserId(ctx)
+					lastError = fmt.Errorf("app %s is not permitted to call %s.%s: user %s does not have any required permission %v", a.Path, modulePath, functionName, userId, p.Permit)
+					return lastError, secrets, false, nil
 				}
 			}
 
