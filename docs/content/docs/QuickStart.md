@@ -210,7 +210,7 @@ lists all the apps and internal apps for each app. `openrun app list "example.co
 
 The staging app can be used to verify whether changes are working before the production app is updated. By default, the staging app uses a staging subdomain and the same path as the production app. So for an app at `https://example.com/`, the staging URL is `https://stage.example.com/`. For an app at `https://example.com/utils/app1`, the staging app URL is `https://stage.example.com/utils/app1`.
 
-Use `openrun app create --stage-at path ...` to use the older path based staging location, where `_cl_stage` is suffixed to the production path. Use `--stage-at <domain>` to put the staging app on a specific domain.
+Use `openrun app create --stage-at path ...` to use the path based staging location, where `_cl_stage` is suffixed to the production path. Use `--stage-at <domain>` to put the staging app on a specific domain.
 
 To promote changes from staging to prod, run:
 

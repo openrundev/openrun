@@ -179,20 +179,20 @@ With the default server config, `proxy.config(container.URL, ...)` and `containe
 
 For plugin calls made by the app, the plugin permissions normally have to be specified in the app permissions and approved in the app metadata. Server config can also define globally allowed calls under `permissions.allow`, in which case no explicit app approval is required for those calls. The `ace.permission` struct definition is
 
-| Property  | Optional |          Type          |  Default  |                  Notes                   |
-| :-------: | :------: | :--------------------: | :-------: | :--------------------------------------: |
-|  plugin   |  False   |         string         |           |             The plugin name              |
-|  method   |  False   |         string         |           |             The method name              |
-| arguments |   True   |      list string       |           |    The arguments allowed for the call    |
-|   type    |   True   |         string         | ace.WRITE | The call type, `ace.READ` or `ace.WRITE` |
-|  secrets  |   True   | list of list of string |           |  The secrets the plugin call can access  |
+| Property  | Optional |          Type          |  Default  |                                                  Notes                                                  |
+| :-------: | :------: | :--------------------: | :-------: | :-----------------------------------------------------------------------------------------------------: |
+|  plugin   |  False   |         string         |           |                                             The plugin name                                             |
+|  method   |  False   |         string         |           |                                             The method name                                             |
+| arguments |   True   |      list string       |           |                                   The arguments allowed for the call                                    |
+|   type    |   True   |         string         | ace.WRITE |                                The call type, `ace.READ` or `ace.WRITE`                                 |
+|  secrets  |   True   | list of list of string |           |                                 The secrets the plugin call can access                                  |
 |  permit   |   True   |      list string       |    []     | Custom RBAC permissions, any one of which is required to make the call when RBAC is enabled for the app |
 
 For example `ace.permission("proxy.in", "config", [container.URL])` is a plugin call to `config` method in `proxy.in` plugin. The first argument has to be `container.URL`. Additional arguments are allowed. If no arguments are specified in the permission, then there is no restriction on arguments passed at runtime. If the value specified starts with `regex:`, then the value passed is checked against the specified regex at runtime.
 
 The default server config already allows `proxy.config(container.URL, ...)` and `container.config(...)`, so these two calls do not need an explicit permission entry unless the app wants to narrow the default access or allow specific secrets for `container.config(...)`.
 
-If `permit` is set, the plugin call is available only to users who have at least one of those custom RBAC permissions when RBAC is enabled for the app. If RBAC is not enabled or `permit` is empty, plugin calls behave as before.
+If `permit` is set, the plugin call is available only to users who have at least one of those custom RBAC permissions when RBAC is enabled for the app. If RBAC is not enabled or `permit` is empty, plugin calls is allowed.
 
 See [secrets]({{< ref "/docs/configuration/secrets/#plugin-access-to-secrets" >}}) for details on specifying the secrets which can be accessed by the plugin call.
 
