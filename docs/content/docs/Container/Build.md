@@ -14,9 +14,13 @@ The configuration for the container builder is
 [builder]
 mode = "auto"                        # "auto" or "kaniko" or "command" or "delegate:<url>" or "delegate_server"
 kaniko_image = "ghcr.io/kaniko-build/dist/chainguard-dev-kaniko/executor:v1.25.3-slim"
+kaniko_cache = true                  # cache build layers in the registry, reused across builds
+kaniko_cache_repo = ""               # defaults to <registry_url>[/<project>]/kaniko-cache
 ```
 
 By default, `auto` mode is used, which implies local build for single node and kaniko build for Kubernetes.
+
+Kaniko layer caching is enabled by default: intermediate build layers are pushed to a cache repository in the registry and reused by later builds, so rebuilding an app after a source change skips unchanged steps such as dependency installs. The cache repository defaults to `kaniko-cache` under the configured registry (and project, if set); set `kaniko_cache_repo` to override it or `kaniko_cache = false` to disable caching.
 
 A shared container registry is required for Kubernetes install and delegated builds. The registry config is empty by default. The possible settings are
 

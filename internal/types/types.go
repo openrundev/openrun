@@ -353,8 +353,10 @@ type KubernetesConfig struct {
 }
 
 type BuilderConfig struct {
-	Mode        string `toml:"mode"` // "auto", "kaniko", "command", "delegate:<url>", "delegate_server"
-	KanikoImage string `toml:"kaniko_image"`
+	Mode            string `toml:"mode"` // "auto", "kaniko", "command", "delegate:<url>", "delegate_server"
+	KanikoImage     string `toml:"kaniko_image"`
+	KanikoCache     bool   `toml:"kaniko_cache"`      // enable kaniko layer caching in the registry
+	KanikoCacheRepo string `toml:"kaniko_cache_repo"` // cache repo, defaults to <registry_url>[/<project>]/kaniko-cache
 }
 
 // GitAuth is a github auth config entry

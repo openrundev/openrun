@@ -268,6 +268,15 @@ func (k *KubernetesCM) SupportsInPlaceUpdate() bool {
 	return true
 }
 
+// registryRef returns the full registry path for an image or repo name,
+// including the optional project component.
+func (k *KubernetesCM) registryRef(name string) string {
+	if k.config.Registry.Project != "" {
+		return k.config.Registry.URL + "/" + k.config.Registry.Project + "/" + name
+	}
+	return k.config.Registry.URL + "/" + name
+}
+
 func (k *KubernetesCM) ImageExists(ctx context.Context, name ImageName) (bool, error) {
 	if k.config.Registry.URL == "" {
 		return false, fmt.Errorf("registry url is required for kubernetes container manager")
@@ -283,22 +292,11 @@ func (k *KubernetesCM) RefreshImage(ctx context.Context, name ImageName) (string
 		}
 		return result.Digest, nil
 	}
-	errMsg := err.Error()
-	if strings.Contains(errMsg, "parse ref") || strings.Contains(errMsg, "not found") || isImageRefreshFatal(errMsg) {
+	if isPermanentRegistryError(err) {
 		return "", err
 	}
 	k.Warn().Err(err).Msgf("could not resolve digest for image %s", name)
 	return "", nil
-}
-
-func isImageRefreshFatal(errMsg string) bool {
-	errMsg = strings.ToLower(errMsg)
-	return strings.Contains(errMsg, "unauthorized") ||
-		strings.Contains(errMsg, "forbidden") ||
-		strings.Contains(errMsg, "authentication") ||
-		strings.Contains(errMsg, "authorization") ||
-		strings.Contains(errMsg, "401") ||
-		strings.Contains(errMsg, "403")
 }
 
 func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
@@ -338,17 +336,24 @@ func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, source
 		return fmt.Errorf("invalid builder mode for kubernetes container manager: %s", k.config.Builder.Mode)
 	}
 
-	var destination string
-	if k.config.Registry.Project != "" {
-		destination = k.config.Registry.URL + "/" + k.config.Registry.Project + "/" + string(imgName)
-	} else {
-		destination = k.config.Registry.URL + "/" + string(imgName)
-	}
+	destination := k.registryRef(string(imgName))
 
 	// Generate Docker config JSON only for Kaniko (which needs it as a Kubernetes secret)
 	dockerCfgJSON, err := GenerateDockerConfigJSON(&k.config.Registry)
 	if err != nil {
 		return fmt.Errorf("error generating docker config json: %w", err)
+	}
+
+	extraArgs := []string{"--verbosity=debug"}
+	if k.config.Builder.KanikoCache {
+		// Cache build layers in the registry so a rebuild (e.g. app reload after
+		// a source change) skips unchanged steps like dependency installs. The
+		// cache repo is shared across apps, so identical layers are reused.
+		cacheRepo := k.config.Builder.KanikoCacheRepo
+		if cacheRepo == "" {
+			cacheRepo = k.registryRef("kaniko-cache")
+		}
+		extraArgs = append(extraArgs, "--cache=true", "--cache-repo="+cacheRepo)
 	}
 
 	appId, _, _ := strings.Cut(string(imgName), ":")
@@ -360,7 +365,7 @@ func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, source
 		Dockerfile:    containerFile,
 		Destination:   destination,
 		ContainerArgs: containerArgs,
-		ExtraArgs:     []string{"--verbosity=debug"},
+		ExtraArgs:     extraArgs,
 	}
 	return KanikoJob(ctx, k.Logger, k.clientSet, k.restConfig, &k.config.Registry, dockerCfgJSON, kanikoBuild)
 }
@@ -424,15 +429,7 @@ func (k *KubernetesCM) GetContainerState(ctx context.Context, name ContainerName
 
 	// Require the rollout to have fully completed (all desired pods of this
 	// version Ready), so a single Ready pod mid-rollout is not reported as done.
-	updateCompleted := false
-	if dep.Spec.Replicas != nil {
-		desired := *dep.Spec.Replicas
-		updateCompleted = dep.Status.ObservedGeneration == dep.Generation &&
-			dep.Status.UpdatedReplicas == desired &&
-			dep.Status.ReadyReplicas == desired &&
-			dep.Status.UnavailableReplicas == 0 &&
-			dep.Status.Replicas == desired
-	}
+	updateCompleted := k.isDeploymentReady(dep, expectHash)
 
 	pods, err := k.clientSet.CoreV1().Pods(k.appNamespace).List(ctx, meta.ListOptions{
 		LabelSelector: labels.Set(versionSelector(string(name), expectHash)).String(),
@@ -502,11 +499,7 @@ func (k *KubernetesCM) RunContainer(ctx context.Context, appEntry *types.AppEntr
 	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool,
 	healthProbe *HealthProbe) error {
 	if strings.HasPrefix(string(imageName), IMAGE_NAME_PREFIX) {
-		if k.config.Registry.Project != "" {
-			imageName = ImageName(k.config.Registry.URL + "/" + k.config.Registry.Project + "/" + string(imageName))
-		} else {
-			imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
-		}
+		imageName = ImageName(k.registryRef(string(imageName)))
 	}
 	kubernetesOptions, err := parseKubernetesOptions(containerOptions)
 	if err != nil {

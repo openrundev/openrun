@@ -335,6 +335,25 @@ func CheckImageReferenceExists(ctx context.Context, logger *types.Logger, imageR
 	return ExistsResult{Exists: true, Digest: desc.Digest.String()}, nil
 }
 
+// isPermanentRegistryError reports whether a registry lookup error cannot be
+// fixed by retrying: a malformed image reference, or the registry rejecting
+// the request (auth failure, missing repo). Transient errors (network,
+// registry unavailable) return false so callers can treat them as best-effort.
+func isPermanentRegistryError(err error) bool {
+	var badName *name.ErrBadName
+	if errors.As(err, &badName) {
+		return true
+	}
+	var terr *transport.Error
+	if errors.As(err, &terr) {
+		switch terr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+			return true
+		}
+	}
+	return false
+}
+
 func sanitizeName(name string) string {
 	name = strings.ReplaceAll(name, "_", "-")
 	name = strings.ReplaceAll(name, ":", "-")
@@ -400,7 +419,7 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs kubernetes.Interfac
 		}
 		fn := fmt.Sprintf("%s-ca.crt", strings.ReplaceAll(host, ":", "_"))
 		certData[fn] = b
-		registryArgs = append(registryArgs, fmt.Sprintf("--registry-certificate %s=/certs/%s", host, fn))
+		registryArgs = append(registryArgs, fmt.Sprintf("--registry-certificate=%s=/certs/%s", host, fn))
 	}
 	if r.ClientCertFile != "" && r.ClientKeyFile != "" {
 		certB, err := os.ReadFile(r.ClientCertFile)
@@ -415,10 +434,12 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs kubernetes.Interfac
 		kfn := fmt.Sprintf("%s-client.key", strings.ReplaceAll(host, ":", "_"))
 		certData[cfn] = certB
 		certData[kfn] = keyB
-		registryArgs = append(registryArgs, fmt.Sprintf("--registry-client-cert %s=/certs/%s,/certs/%s", host, cfn, kfn))
+		registryArgs = append(registryArgs, fmt.Sprintf("--registry-client-cert=%s=/certs/%s,/certs/%s", host, cfn, kfn))
 	}
 	if r.Insecure {
-		registryArgs = append(registryArgs, "--insecure-registry")
+		// The flag requires the registry host as its value; a bare
+		// "--insecure-registry" would consume the next argument instead.
+		registryArgs = append(registryArgs, "--insecure-registry="+host)
 	}
 
 	vols := []corev1.Volume{
@@ -500,7 +521,7 @@ func KanikoJob(ctx context.Context, logger *types.Logger, cs kubernetes.Interfac
 	}
 
 	// Wait for pod to be created and reach a terminal or running state
-	err = waitForJobContainerStartOrExit(ctx, logger, cs, ns, kb.JobName, "executor", 3*time.Minute)
+	err = waitForJobContainerStartOrExit(ctx, cs, ns, kb.JobName, "executor", 3*time.Minute)
 	if err != nil {
 		return fmt.Errorf("error waiting for terminal phase: %w", err)
 	}
@@ -603,7 +624,6 @@ func tailLogs(ctx context.Context, cs kubernetes.Interface, ns, jobName string, 
 
 func waitForJobContainerStartOrExit(
 	ctx context.Context,
-	logger *types.Logger,
 	cs kubernetes.Interface,
 	ns, jobName, containerName string,
 	timeout time.Duration,
@@ -716,7 +736,8 @@ func waitForJobContainerStartOrExit(
 }
 
 func waitForTerminalPhase(ctx context.Context, cs kubernetes.Interface, ns, name string) (corev1.PodPhase, error) {
-	t := time.NewTicker(100 * time.Millisecond)
+	// Builds run for tens of seconds to minutes; 1s polling keeps API churn low.
+	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
 		select {

@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/openrundev/openrun/internal/types"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
@@ -201,18 +205,30 @@ func TestKubernetesCMRefreshImageRejectsInvalidReference(t *testing.T) {
 	}
 }
 
-func TestImageRefreshFatalClassification(t *testing.T) {
-	for _, msg := range []string{
-		"manifest head: GET https://example/v2/: 401 Unauthorized",
-		"manifest head: GET https://example/v2/: 403 Forbidden",
-		"authentication required",
-	} {
-		if !isImageRefreshFatal(msg) {
-			t.Fatalf("isImageRefreshFatal(%q) = false, want true", msg)
+func TestPermanentRegistryErrorClassification(t *testing.T) {
+	_, badNameErr := name.ParseReference("not a valid image ref")
+	if badNameErr == nil {
+		t.Fatal("expected parse error for invalid reference")
+	}
+	permanent := []error{
+		fmt.Errorf("parse ref: %w", badNameErr),
+		fmt.Errorf("manifest head: %w", &transport.Error{StatusCode: http.StatusUnauthorized}),
+		fmt.Errorf("manifest head: %w", &transport.Error{StatusCode: http.StatusForbidden}),
+		fmt.Errorf("manifest head: %w", &transport.Error{StatusCode: http.StatusNotFound}),
+	}
+	for _, err := range permanent {
+		if !isPermanentRegistryError(err) {
+			t.Fatalf("isPermanentRegistryError(%v) = false, want true", err)
 		}
 	}
-	if isImageRefreshFatal("manifest head: dial tcp: i/o timeout") {
-		t.Fatal("timeout should not be classified as fatal")
+	transient := []error{
+		errors.New("manifest head: dial tcp: i/o timeout"),
+		fmt.Errorf("manifest head: %w", &transport.Error{StatusCode: http.StatusServiceUnavailable}),
+	}
+	for _, err := range transient {
+		if isPermanentRegistryError(err) {
+			t.Fatalf("isPermanentRegistryError(%v) = true, want false", err)
+		}
 	}
 }
 

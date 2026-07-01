@@ -121,6 +121,8 @@ use_node_port = false
 [builder]
 mode = "auto" # "auto" or "kaniko" or "command" or "delegate:<url>" or "delegate_server"
 kaniko_image = "ghcr.io/kaniko-build/dist/chainguard-dev-kaniko/executor:v1.25.3-slim"
+kaniko_cache = true    # cache build layers in the registry, reused across builds
+kaniko_cache_repo = "" # defaults to <registry_url>[/<project>]/kaniko-cache
 
 [plugin."store.in"]
 db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_app_store.db"

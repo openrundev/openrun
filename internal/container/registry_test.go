@@ -480,7 +480,7 @@ func TestWaitForJobContainerStartOrExit(t *testing.T) {
 			})
 		}()
 
-		err := waitForJobContainerStartOrExit(context.Background(), nil, cs, "test-ns", "build-job", "executor", time.Second)
+		err := waitForJobContainerStartOrExit(context.Background(), cs, "test-ns", "build-job", "executor", time.Second)
 		if err != nil {
 			t.Fatalf("waitForJobContainerStartOrExit returned error: %v", err)
 		}
@@ -506,7 +506,7 @@ func TestWaitForJobContainerStartOrExit(t *testing.T) {
 			})
 		}()
 
-		err := waitForJobContainerStartOrExit(context.Background(), nil, cs, "test-ns", "build-job", "executor", time.Second)
+		err := waitForJobContainerStartOrExit(context.Background(), cs, "test-ns", "build-job", "executor", time.Second)
 		if err == nil {
 			t.Fatal("expected waitForJobContainerStartOrExit to return error")
 		}
@@ -517,7 +517,7 @@ func TestWaitForJobContainerStartOrExit(t *testing.T) {
 
 	t.Run("times out when no decisive event arrives", func(t *testing.T) {
 		cs, _ := newClient()
-		err := waitForJobContainerStartOrExit(context.Background(), nil, cs, "test-ns", "build-job", "executor", 40*time.Millisecond)
+		err := waitForJobContainerStartOrExit(context.Background(), cs, "test-ns", "build-job", "executor", 40*time.Millisecond)
 		if err == nil {
 			t.Fatal("expected timeout error")
 		}
@@ -544,7 +544,7 @@ func TestWaitForJobContainerStartOrExit(t *testing.T) {
 				},
 			})
 		}()
-		err := waitForJobContainerStartOrExit(context.Background(), nil, cs, "test-ns", "build-job", "executor", time.Second)
+		err := waitForJobContainerStartOrExit(context.Background(), cs, "test-ns", "build-job", "executor", time.Second)
 		if err == nil || !strings.Contains(err.Error(), "unschedulable") {
 			t.Fatalf("error = %v, want unschedulable message", err)
 		}
@@ -556,7 +556,7 @@ func TestWaitForJobContainerStartOrExit(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 			fw.Error(&meta.Status{Message: "watch failed"})
 		}()
-		err := waitForJobContainerStartOrExit(context.Background(), nil, cs, "test-ns", "build-job", "executor", time.Second)
+		err := waitForJobContainerStartOrExit(context.Background(), cs, "test-ns", "build-job", "executor", time.Second)
 		if err == nil || !strings.Contains(err.Error(), "watch failed") {
 			t.Fatalf("error = %v, want watch failed message", err)
 		}
