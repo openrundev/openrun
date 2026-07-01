@@ -82,6 +82,7 @@ file_cache_connection = "sqlite:$OPENRUN_HOME/metadata/file_cache.db"
 
 [system]
 tailwindcss_command = "tailwindcss"
+tailwind_version = 4 # 3 uses legacy Tailwind 3/daisyUI 4 config, 4 uses Tailwind 4/daisyUI 5 CSS config
 file_watcher_debounce_millis = 300
 watch_ignore_patterns = ["**/.vscode/**", "**/.idea/**", "**/.git/**", "**/.DS_Store/**", "**/.*sw*"] # patterns to ignore for file watcher
 node_path = ""                      # node module lookup paths https://esbuild.github.io/api/#node-paths

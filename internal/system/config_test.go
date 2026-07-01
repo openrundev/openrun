@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/openrundev/openrun/internal/testutil"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestServerConfig(t *testing.T) {
@@ -52,6 +53,7 @@ func TestServerConfig(t *testing.T) {
 
 	// System settings
 	testutil.AssertEqualsString(t, "tailwind command", "tailwindcss", c.System.TailwindCSSCommand)
+	testutil.AssertEqualsInt(t, "tailwind version", types.TailwindVersionDefault, c.System.TailwindVersion)
 	testutil.AssertEqualsInt(t, "file debounce", 300, c.System.FileWatcherDebounceMillis)
 	testutil.AssertEqualsString(t, "node path", "", c.System.NodePath)
 	testutil.AssertEqualsString(t, "default domain", "localhost", c.System.DefaultDomain)
@@ -121,4 +123,23 @@ func TestClientConfig(t *testing.T) {
 	testutil.AssertEqualsString(t, "server uri", "$OPENRUN_HOME/run/openrun.sock", c.ServerUri)
 	testutil.AssertEqualsString(t, "admin user", "admin", c.AdminUser)
 	testutil.AssertEqualsString(t, "default format", "basic", c.Client.DefaultFormat)
+}
+
+func TestServerConfigTailwindVersionValidation(t *testing.T) {
+	var config types.ServerConfig
+	err := LoadServerConfig(`
+[system]
+tailwind_version = 2
+`, &config)
+	testutil.AssertErrorContains(t, err, "tailwind_version must be >= 3")
+}
+
+func TestServerConfigTailwindVersionDefault(t *testing.T) {
+	var config types.ServerConfig
+	err := LoadServerConfig(`
+[system]
+tailwindcss_command = "tailwindcss"
+`, &config)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "tailwind version", types.TailwindVersionDefault, config.System.TailwindVersion)
 }

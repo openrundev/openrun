@@ -26,6 +26,12 @@ func CreateDevModeTestApp(logger *types.Logger, fileData map[string]string) (*ap
 	return CreateTestAppInt(logger, "/test", "", fileData, true, nil, nil, nil, "app_dev_testapp", types.AppSettings{}, nil, nil, nil)
 }
 
+func CreateDevModeTestAppTailwindVersion(logger *types.Logger, fileData map[string]string, tailwindVersion int) (*app.App, *appfs.WorkFs, error) {
+	systemConfig := testSystemConfig()
+	systemConfig.TailwindVersion = tailwindVersion
+	return CreateTestAppIntSystemConfig(logger, "/test", "", fileData, true, nil, nil, nil, "app_dev_testapp", types.AppSettings{}, nil, nil, nil, systemConfig)
+}
+
 func CreateTestApp(logger *types.Logger, fileData map[string]string) (*app.App, *appfs.WorkFs, error) {
 	return CreateTestAppInt(logger, "/test", "", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
 }
@@ -81,7 +87,18 @@ func CreateTestAppInt(logger *types.Logger, path, domain string, fileData map[st
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings,
 	id string, settings types.AppSettings, params map[string]string, appConfig *types.AppConfig,
 	rbacApi rbac.RBACAPI) (*app.App, *appfs.WorkFs, error) {
-	systemConfig := types.SystemConfig{TailwindCSSCommand: "", AllowedEnv: []string{"HOME"}}
+	return CreateTestAppIntSystemConfig(logger, path, domain, fileData, isDev, plugins, permissions, pluginConfig,
+		id, settings, params, appConfig, rbacApi, testSystemConfig())
+}
+
+func testSystemConfig() types.SystemConfig {
+	return types.SystemConfig{TailwindCSSCommand: "", TailwindVersion: types.TailwindVersionDefault, AllowedEnv: []string{"HOME"}}
+}
+
+func CreateTestAppIntSystemConfig(logger *types.Logger, path, domain string, fileData map[string]string, isDev bool,
+	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings,
+	id string, settings types.AppSettings, params map[string]string, appConfig *types.AppConfig,
+	rbacApi rbac.RBACAPI, systemConfig types.SystemConfig) (*app.App, *appfs.WorkFs, error) {
 	var fs appfs.ReadableFS
 	if isDev {
 		fs = &TestWriteFS{TestReadFS: &TestReadFS{fileData: fileData}}

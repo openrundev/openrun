@@ -132,7 +132,7 @@ func (s *AppStyle) Setup(dev *AppDev) error {
 		fallthrough
 	case DaisyUI:
 		// Generate the tailwind/daisyui config files
-		return s.setupTailwindConfig(dev.Config.Routing.TemplateLocations, dev.sourceFS, dev.workFS)
+		return s.setupTailwindConfig(dev.Config.Routing.TemplateLocations, dev.sourceFS, dev.workFS, tailwindVersion(dev.systemConfig))
 	case Other:
 		// Download style.css from url
 		return dev.downloadFile(s.libraryUrl, dev.sourceFS, STYLE_FILE_PATH)
@@ -157,33 +157,29 @@ const (
 		%s
 	}`
 
-	TAILWIND_INPUT_CONTENTS = `
+	TAILWIND_INPUT_LEGACY_CONTENTS = `
 	@tailwind base;
 	@tailwind components;
 	@tailwind utilities;
 	`
+
+	TAILWIND_INPUT_CONTENTS = `
+	@import "tailwindcss" source(none);
+	%s
+	%s
+	`
 )
 
-func (s *AppStyle) setupTailwindConfig(templateLocations []string, sourceFS *appfs.WritableSourceFs, workFS *appfs.WorkFs) error {
+func tailwindVersion(systemConfig *types.SystemConfig) int {
+	if systemConfig == nil || systemConfig.TailwindVersion == 0 {
+		return types.TailwindVersionDefault
+	}
+	return systemConfig.TailwindVersion
+}
+
+func (s *AppStyle) setupTailwindConfig(templateLocations []string, sourceFS *appfs.WritableSourceFs, workFS *appfs.WorkFs, twVersion int) error {
 	configPath := fmt.Sprintf("style/%s", TAILWIND_CONFIG_FILE)
 	inputPath := fmt.Sprintf("style/%s", "input.css")
-
-	daisyPlugin := ""
-	daisyThemes := ""
-	if s.library == DaisyUI {
-		daisyPlugin = `require("daisyui")`
-		if len(s.themes) > 0 {
-			quotedThemes := strings.Builder{}
-			for i, theme := range s.themes {
-				if i > 0 {
-					quotedThemes.WriteString(", ")
-				}
-				quotedThemes.WriteString(fmt.Sprintf("\"%s\"", theme))
-			}
-
-			daisyThemes = fmt.Sprintf("  daisyui: { themes: [%s], },", quotedThemes.String())
-		}
-	}
 
 	// Add the action templates to the input list
 	var buf strings.Builder
@@ -214,15 +210,81 @@ func (s *AppStyle) setupTailwindConfig(templateLocations []string, sourceFS *app
 	buf.WriteString(", ")
 	buf.WriteString(fmt.Sprintf("'%s'", path.Join(sourceFS.Root, "static", "*.js")))
 
-	configContents := fmt.Sprintf(TAILWIND_CONFIG_CONTENTS, buf.String(), daisyPlugin, daisyThemes)
-	if err := workFS.Write(configPath, []byte(configContents)); err != nil {
-		return fmt.Errorf("error writing tailwind config file : %s", err)
+	var inputContents string
+	if twVersion == types.TailwindVersionLegacy {
+		daisyPlugin := ""
+		daisyThemes := ""
+		if s.library == DaisyUI {
+			daisyPlugin = `require("daisyui")`
+			daisyThemes = s.legacyDaisyThemes()
+		}
+
+		configContents := fmt.Sprintf(TAILWIND_CONFIG_CONTENTS, buf.String(), daisyPlugin, daisyThemes)
+		if err := workFS.Write(configPath, []byte(configContents)); err != nil {
+			return fmt.Errorf("error writing tailwind config file : %s", err)
+		}
+		inputContents = TAILWIND_INPUT_LEGACY_CONTENTS
+	} else {
+		inputContents = fmt.Sprintf(TAILWIND_INPUT_CONTENTS, sourceDirectives(buf.String()), s.daisyUIPlugin())
 	}
-	if err := workFS.Write(inputPath, []byte(TAILWIND_INPUT_CONTENTS)); err != nil {
+
+	if err := workFS.Write(inputPath, []byte(inputContents)); err != nil {
 		return fmt.Errorf("error writing tailwind input file : %s", err)
 	}
 
 	return nil
+}
+
+func (s *AppStyle) legacyDaisyThemes() string {
+	if len(s.themes) == 0 {
+		return ""
+	}
+
+	quotedThemes := strings.Builder{}
+	for i, theme := range s.themes {
+		if i > 0 {
+			quotedThemes.WriteString(", ")
+		}
+		quotedThemes.WriteString(fmt.Sprintf("\"%s\"", theme))
+	}
+
+	return fmt.Sprintf("  daisyui: { themes: [%s], },", quotedThemes.String())
+}
+
+func (s *AppStyle) daisyUIPlugin() string {
+	if s.library != DaisyUI {
+		return ""
+	}
+
+	if len(s.themes) == 0 {
+		return `@plugin "daisyui";`
+	}
+
+	themes := make([]string, 0, len(s.themes))
+	for _, theme := range s.themes {
+		themeConfig := theme
+		if theme == s.Light {
+			themeConfig += " --default"
+		}
+		if theme == s.Dark {
+			themeConfig += " --prefersdark"
+		}
+		themes = append(themes, themeConfig)
+	}
+
+	return fmt.Sprintf(`@plugin "daisyui" {
+	  themes: %s;
+	}`, strings.Join(themes, ", "))
+}
+
+func sourceDirectives(contentList string) string {
+	sources := strings.Split(contentList, ", ")
+	var buf strings.Builder
+	for _, source := range sources {
+		source = strings.Trim(source, "'")
+		buf.WriteString(fmt.Sprintf("@source \"%s\";\n", source))
+	}
+	return strings.TrimSpace(buf.String())
 }
 
 // StartWatcher starts the watcher process for the app. This is called when the app is reloaded.
@@ -277,7 +339,9 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 		return err
 	}
 	args = append(args, "--watch")
-	args = append(args, "-c", path.Join(workFS.Root, "style", TAILWIND_CONFIG_FILE))
+	if tailwindVersion(systemConfig) == types.TailwindVersionLegacy {
+		args = append(args, "-c", path.Join(workFS.Root, "style", TAILWIND_CONFIG_FILE))
+	}
 	args = append(args, "-i", path.Join(workFS.Root, "style", "input.css"))
 	args = append(args, "-o", targetFile)
 	fmt.Printf("Running command %s args %#v\n", split[0], args) // TODO: log

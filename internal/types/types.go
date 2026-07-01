@@ -289,9 +289,17 @@ type TelemetryConfig struct {
 	PluginSpans bool `toml:"plugin_spans"`
 }
 
+const (
+	TailwindVersionLegacy  = 3
+	TailwindVersionCurrent = 4
+	TailwindVersionDefault = TailwindVersionCurrent
+	TailwindVersionMin     = TailwindVersionLegacy
+)
+
 // SystemConfig is the system level configuration
 type SystemConfig struct {
 	TailwindCSSCommand                  string   `toml:"tailwindcss_command"`
+	TailwindVersion                     int      `toml:"tailwind_version"`
 	FileWatcherDebounceMillis           int      `toml:"file_watcher_debounce_millis"`
 	WatchIgnorePatterns                 []string `toml:"watch_ignore_patterns"`
 	NodePath                            string   `toml:"node_path"`

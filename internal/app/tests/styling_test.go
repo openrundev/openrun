@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/openrundev/openrun/internal/testutil"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestStyleNone(t *testing.T) {
@@ -77,11 +78,13 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 
 	data, err := workFS.ReadFile("style/input.css")
 	testutil.AssertNoError(t, err)
-	testutil.AssertStringMatch(t, "input.css", "@tailwind base; @tailwind components; @tailwind utilities;", string(data))
-
-	data, err = workFS.ReadFile("style/tailwind.config.js")
-	testutil.AssertNoError(t, err)
-	testutil.AssertStringMatch(t, "tailwind.config.js", `module.exports = { content: ['action/*.go.html', '*.go.html', 'base_templates/*.go.html', 'static/*.js'], theme: { extend: {}, }, plugins: [ ], }`, string(data))
+	testutil.AssertStringMatch(t, "input.css", `
+		@import "tailwindcss" source(none);
+		@source "action/*.go.html";
+		@source "*.go.html";
+		@source "base_templates/*.go.html";
+		@source "static/*.js";
+	`, string(data))
 }
 
 func TestStyleDaisyUI(t *testing.T) {
@@ -99,11 +102,16 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 
 	data, err := workFS.ReadFile("style/input.css")
 	testutil.AssertNoError(t, err)
-	testutil.AssertStringMatch(t, "input.css", "@tailwind base; @tailwind components; @tailwind utilities;", string(data))
-
-	data, err = workFS.ReadFile("style/tailwind.config.js")
-	testutil.AssertNoError(t, err)
-	testutil.AssertStringMatch(t, "tailwind.config.js", `module.exports = { content: ['action/*.go.html', '*.go.html', 'base_templates/*.go.html', 'static/*.js'], theme: { extend: {}, }, plugins: [ require("daisyui") ], daisyui: { themes: ["emerald", "night"], }, }`, string(data))
+	testutil.AssertStringMatch(t, "input.css", `
+		@import "tailwindcss" source(none);
+		@source "action/*.go.html";
+		@source "*.go.html";
+		@source "base_templates/*.go.html";
+		@source "static/*.js";
+		@plugin "daisyui" {
+		  themes: emerald --default, night --prefersdark;
+		}
+	`, string(data))
 }
 
 func TestStyleDaisyUIThemes(t *testing.T) {
@@ -121,11 +129,16 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 
 	data, err := workFS.ReadFile("style/input.css")
 	testutil.AssertNoError(t, err)
-	testutil.AssertStringMatch(t, "input.css", "@tailwind base; @tailwind components; @tailwind utilities;", string(data))
-
-	data, err = workFS.ReadFile("style/tailwind.config.js")
-	testutil.AssertNoError(t, err)
-	testutil.AssertStringMatch(t, "tailwind.config.js", `module.exports = { content: ['action/*.go.html', '*.go.html', 'base_templates/*.go.html', 'static/*.js'], theme: { extend: {}, }, plugins: [ require("daisyui") ], daisyui: { themes: ["cupcake", "dark", "emerald", "night"], }, }`, string(data))
+	testutil.AssertStringMatch(t, "input.css", `
+		@import "tailwindcss" source(none);
+		@source "action/*.go.html";
+		@source "*.go.html";
+		@source "base_templates/*.go.html";
+		@source "static/*.js";
+		@plugin "daisyui" {
+		  themes: cupcake, dark, emerald --default, night --prefersdark;
+		}
+	`, string(data))
 }
 
 func TestStyleDaisyUILight(t *testing.T) {
@@ -143,11 +156,38 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 
 	data, err := workFS.ReadFile("style/input.css")
 	testutil.AssertNoError(t, err)
+	testutil.AssertStringMatch(t, "input.css", `
+		@import "tailwindcss" source(none);
+		@source "action/*.go.html";
+		@source "*.go.html";
+		@source "base_templates/*.go.html";
+		@source "static/*.js";
+		@plugin "daisyui" {
+		  themes: abc --default, cupcake, xyz --prefersdark;
+		}
+	`, string(data))
+}
+
+func TestStyleDaisyUILegacyTailwindVersion(t *testing.T) {
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
+				style=ace.style(library="daisyui", themes=["dark", "cupcake"]))`,
+	}
+
+	_, workFS, err := CreateDevModeTestAppTailwindVersion(logger, fileData, types.TailwindVersionLegacy)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	data, err := workFS.ReadFile("style/input.css")
+	testutil.AssertNoError(t, err)
 	testutil.AssertStringMatch(t, "input.css", "@tailwind base; @tailwind components; @tailwind utilities;", string(data))
 
 	data, err = workFS.ReadFile("style/tailwind.config.js")
 	testutil.AssertNoError(t, err)
-	testutil.AssertStringMatch(t, "tailwind.config.js", `module.exports = { content: ['action/*.go.html', '*.go.html', 'base_templates/*.go.html', 'static/*.js'], theme: { extend: {}, }, plugins: [ require("daisyui") ], daisyui: { themes: ["abc", "cupcake", "xyz"], }, }`, string(data))
+	testutil.AssertStringMatch(t, "tailwind.config.js", `module.exports = { content: ['action/*.go.html', '*.go.html', 'base_templates/*.go.html', 'static/*.js'], theme: { extend: {}, }, plugins: [ require("daisyui") ], daisyui: { themes: ["cupcake", "dark", "emerald", "night"], }, }`, string(data))
 }
 
 func TestStyleCustom(t *testing.T) {

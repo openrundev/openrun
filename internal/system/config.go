@@ -6,6 +6,7 @@ package system
 import (
 	"bytes"
 	"embed"
+	"fmt"
 
 	"github.com/BurntSushi/toml"
 	"github.com/openrundev/openrun/internal/types"
@@ -46,8 +47,10 @@ func NewServerConfigEmbedded() (*types.ServerConfig, error) {
 
 // LoadServerConfig loads a ServerConfig from the given contents
 func LoadServerConfig(contents string, config *types.ServerConfig) error {
-	_, err := toml.Decode(contents, &config)
-	return err
+	if _, err := toml.Decode(contents, config); err != nil {
+		return err
+	}
+	return normalizeServerConfig(config)
 }
 
 // NewClientConfigEmbedded reads the embedded toml file and creates a ClientConfig
@@ -92,6 +95,19 @@ func GetDefaultConfigs() (*types.GlobalConfig, *types.ClientConfig, *types.Serve
 	if _, err := toml.Decode(contents, &serverConfig); err != nil {
 		return nil, nil, nil, err
 	}
+	if err := normalizeServerConfig(&serverConfig); err != nil {
+		return nil, nil, nil, err
+	}
 
 	return &globalConfig, &clientConfig, &serverConfig, nil
+}
+
+func normalizeServerConfig(config *types.ServerConfig) error {
+	if config.System.TailwindVersion == 0 {
+		config.System.TailwindVersion = types.TailwindVersionDefault
+	}
+	if config.System.TailwindVersion < types.TailwindVersionMin {
+		return fmt.Errorf("tailwind_version must be >= %d, got %d", types.TailwindVersionMin, config.System.TailwindVersion)
+	}
+	return nil
 }

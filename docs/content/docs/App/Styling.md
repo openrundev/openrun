@@ -42,13 +42,14 @@ To use TailwindCSS, in app settings, add
 
 Tailwind CSS works by scanning the HTML files for class names, generating the corresponding styles and then writing them to a static CSS file. A watcher process is started when an app using Tailwind is loaded in dev mode. The output of the watcher is written to `static/gen/css/style.css` file. This file is automatically included as part of the `openrun_gen_import` template.
 
-To ensure that the tailwind watcher is started, the tailwind CLI needs to be installed manually. The [standalone CLI](https://tailwindcss.com/blog/standalone-cli) can be used. If using DaisyUI, use this [custom build](https://github.com/dobicinaitis/tailwind-cli-extra) of the standalone CLI with DaisyUI included.
+To ensure that the tailwind watcher is started, the tailwind CLI needs to be installed manually. With the default Tailwind 4/daisyUI 5 config, install the Tailwind CLI and daisyUI npm packages, for example `npm install -D tailwindcss @tailwindcss/cli daisyui`. The [standalone CLI](https://tailwindcss.com/blog/standalone-cli) can also be used when it includes the required plugins.
 
 The OpenRun server config file has the following entries:
 
 ```toml {filename="openrun.toml"}
 [system]
 tailwindcss_command = "npx tailwindcss"
+tailwind_version = 4
 file_watcher_debounce_millis = 300
 ```
 
@@ -58,6 +59,8 @@ file_watcher_debounce_millis = 300
 [system]
 tailwindcss_command = "/path/to/tailwindcss"
 ```
+
+`tailwind_version` controls the generated config format. The default is `4`, which generates Tailwind 4/daisyUI 5 CSS-first config in `style/input.css`. Set it to `3` to use the legacy Tailwind 3/daisyUI 4 `tailwind.config.js` config format. Values below `3` are rejected.
 
 `file_watcher_debounce_millis` is used to prevent repeated reloads of the application files during dev mode. On slower machine, this value might have to be increased, but setting it too high will cause the reload to be slower.
 
@@ -69,6 +72,6 @@ To use [DaisyUI](https://daisyui.com/), in app settings, add
     style=ace.style("daisyui", themes=["dark"])
 ```
 
-Change to the preferred [theme](https://daisyui.com/docs/themes/). DaisyUI is a good option to use to get great default styling for components, with the full flexibility of Tailwind. To use DaisyUI, use the npm version of Tailwind or use this [custom version](https://github.com/dobicinaitis/tailwind-cli-extra) of the standalone CLI with DaisyUI included. OpenRun takes care of creating the config files. Using the CDN version of DaisyUI or Tailwind is not recommended since that will cause the style files to be large.
+Change to the preferred [theme](https://daisyui.com/docs/themes/). DaisyUI is a good option to use to get great default styling for components, with the full flexibility of Tailwind. OpenRun takes care of creating the config files. With `tailwind_version = 4`, OpenRun writes the daisyUI plugin and theme list into `style/input.css` using the daisyUI 5 `@plugin "daisyui"` syntax. Using the CDN version of DaisyUI or Tailwind is not recommended since that will cause the style files to be large.
 
 If using [Actions]({{< ref "/docs/actions/" >}}), DaisyUI styles are automatically included. The themes can be customized using the `light` and `dark` property.
