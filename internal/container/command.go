@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base32"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -351,6 +352,28 @@ func (c *CommandCM) StopContainer(ctx context.Context, name ContainerName) error
 	}
 
 	return nil
+}
+
+// StopAppContainersExcept stops all running containers of the given app other
+// than keep. Containers are content-hash named, so after a committed update
+// the previous version keeps running under its own name; this stops those
+// superseded versions at operation commit instead of leaving them for the
+// periodic stale container sweeper.
+func (c *CommandCM) StopAppContainersExcept(ctx context.Context, appId types.AppId, keep ContainerName) error {
+	containers, err := c.listContainers(ctx, []string{fmt.Sprintf("label=%sapp.id=%s", LABEL_PREFIX, appId)}, false)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, cont := range containers {
+		name := ContainerName(cont.Names)
+		if name == "" || name == keep {
+			continue
+		}
+		c.Info().Msgf("Stopping superseded container %s for app %s", name, appId)
+		errs = append(errs, c.StopContainer(ctx, name))
+	}
+	return errors.Join(errs...)
 }
 
 func (c *CommandCM) StartContainer(ctx context.Context, name ContainerName) error {

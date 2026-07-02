@@ -211,6 +211,27 @@ func (a *App) Close() error {
 	return nil
 }
 
+// PrepareContainerBuild computes the build plan for the app's container image:
+// image name, whether a build is needed, and (when it is) a temp source dir
+// extracted from the app's source FS. All DB reads happen here, so the caller
+// can close the transaction backing the source FS before ExecuteContainerBuild.
+// Returns nil for apps with no image to build (no container, image-spec, dev).
+func (a *App) PrepareContainerBuild(ctx context.Context) (*BuildPlan, error) {
+	if a.containerHandler == nil {
+		return nil, nil
+	}
+	return a.containerHandler.PrepareBuild(ctx)
+}
+
+// ExecuteContainerBuild builds the image described by the plan returned from
+// PrepareContainerBuild. It touches no DB state, so no transaction is needed.
+func (a *App) ExecuteContainerBuild(ctx context.Context, plan *BuildPlan) error {
+	if a.containerHandler == nil || plan == nil {
+		return nil
+	}
+	return a.containerHandler.ExecuteBuild(ctx, plan)
+}
+
 // ActiveContainerName returns the container from the last successful app reload.
 func (a *App) ActiveContainerName() (container.ContainerName, bool) {
 	a.initMutex.Lock()
@@ -246,6 +267,11 @@ type ReloadOptions struct {
 	// rollback snapshot a fatal error rather than proceeding with an
 	// irreversible in-place update.
 	Verify bool
+	// SkipContainer skips the prod container reload entirely, including for
+	// image-spec apps (which ReloadContainer=false alone does not skip). Used
+	// by the image pre-build pass, which needs the app fully configured but
+	// must not touch containers.
+	SkipContainer bool
 }
 
 func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.DryRun, opts ReloadOptions) (bool, error) {

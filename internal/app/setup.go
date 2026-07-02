@@ -141,7 +141,7 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 			if err = a.containerHandler.DevReload(ctx, bool(dryRun)); err != nil {
 				return err
 			}
-		} else if opts.ReloadContainer || a.containerHandler.IsImageSpec() {
+		} else if !opts.SkipContainer && (opts.ReloadContainer || a.containerHandler.IsImageSpec()) {
 			// In prod mode, reload when initializing an app. Image-spec apps
 			// also need to reload on every admin reload so that the upstream
 			// image digest is resolved and the container is recreated if the

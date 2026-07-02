@@ -496,9 +496,19 @@ func (s *Server) GetAppEntry(ctx context.Context, tx types.Transaction, pathDoma
 }
 
 func (s *Server) GetApp(ctx context.Context, pathDomain types.AppPathDomain, init bool) (*app.App, error) {
-	application, err := s.apps.GetApp(pathDomain)
-	if err != nil {
-		// App not found in cache, get from DB
+	var application *app.App
+	for attempt := 0; ; attempt++ {
+		var err error
+		application, err = s.apps.GetApp(pathDomain)
+		if err == nil {
+			break
+		}
+
+		// App not found in cache, get from DB. The store generation is read
+		// before the DB read: if the store is cleared in between (say a reload
+		// committing), the insert below is rejected and the app is rebuilt
+		// from the now-current DB state, so a stale App is never cached.
+		generation := s.apps.Generation()
 		appEntry, err := s.db.GetAppEntry(ctx, pathDomain)
 		if err != nil {
 			return nil, err
@@ -508,7 +518,13 @@ func (s *Server) GetApp(ctx context.Context, pathDomain types.AppPathDomain, ini
 		if err != nil {
 			return nil, err
 		}
-		s.apps.AddApp(application)
+		if s.apps.AddAppIfUnchanged(application, generation) {
+			break
+		}
+		application.Close() //nolint:errcheck
+		if attempt >= 2 {
+			return nil, fmt.Errorf("app %s is being updated concurrently, retry the request", pathDomain)
+		}
 	}
 
 	if !init {

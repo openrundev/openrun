@@ -24,6 +24,10 @@ type Repo struct {
 	branch string
 	commit string
 	auth   string
+	// isDev distinguishes dev checkouts (long-lived, under $OPENRUN_HOME/app_src)
+	// from prod checkouts (temp dirs removed on Cleanup), so a dev app never
+	// gets handed a temp checkout that is about to be deleted.
+	isDev bool
 }
 
 type CacheDir struct {
@@ -66,7 +70,7 @@ func (r *RepoCache) GetSha(sourceUrl, branch, gitAuth string) (string, error) {
 	}
 
 	// Check if we have the commit in cache
-	if sha, ok := r.shaCache[Repo{repo, branch, "", gitAuth}]; ok {
+	if sha, ok := r.shaCache[Repo{url: repo, branch: branch, auth: gitAuth}]; ok {
 		return sha, nil
 	}
 
@@ -83,7 +87,7 @@ func (r *RepoCache) GetSha(sourceUrl, branch, gitAuth string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	r.shaCache[Repo{repo, branch, "", gitAuth}] = sha
+	r.shaCache[Repo{url: repo, branch: branch, auth: gitAuth}] = sha
 	return sha, nil
 }
 
@@ -142,7 +146,7 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 		return "", "", "", "", err
 	}
 
-	repoKey := Repo{repo, branch, commit, gitAuth}
+	repoKey := Repo{url: repo, branch: branch, commit: commit, auth: gitAuth, isDev: isDev}
 	dir, ok := r.cache[repoKey]
 	if ok {
 		r.server.Debug().Str("repo", repo).Str("branch", branch).
@@ -241,7 +245,7 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 	}
 
 	// Save the repo in cache
-	r.cache[Repo{repo, branch, commit, gitAuth}] = CacheDir{
+	r.cache[repoKey] = CacheDir{
 		dir:           targetPath,
 		commitMessage: newCommit.Message,
 		hash:          newCommit.Hash.String(),

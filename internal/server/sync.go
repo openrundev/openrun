@@ -85,7 +85,9 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 	// The metadata transaction has committed, keep the binding accounts created
 	// on the services.
 	applyEffects.commit()
-	dscope.commit(ctx)
+	if err := dscope.commit(ctx); err != nil {
+		return nil, err
+	}
 
 	return &ret, nil
 }
@@ -122,7 +124,9 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.
 	// The metadata transaction has committed, keep the binding accounts created
 	// on the services.
 	applyEffects.commit()
-	dscope.commit(ctx)
+	if err := dscope.commit(ctx); err != nil {
+		return nil, err
+	}
 	return syncStatus, nil
 }
 
@@ -349,7 +353,9 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 			// The apply was skipped, so our rollback stack is empty here. Hand
 			// off to the recursive full apply using origCtx so it owns a fresh
 			// stack; mark this scope committed so its (empty) rollback is a no-op.
-			dscope.commit(ctx)
+			if err := dscope.commit(ctx); err != nil {
+				return nil, nil, applyEffects, err
+			}
 			return s.runSyncJob(origCtx, inputTx, entry, dryRun, false, repoCache)
 		} else {
 			var reloadErr error
@@ -413,7 +419,9 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		// The metadata transaction has committed, keep the binding accounts created
 		// on the services.
 		applyEffects.commit()
-		dscope.commit(ctx)
+		if err := dscope.commit(ctx); err != nil {
+			return nil, nil, nil, err
+		}
 		return &status, updatedApps, nil, nil
 	}
 	if inputTx.Tx == nil {

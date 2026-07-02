@@ -158,6 +158,12 @@ type Server struct {
 	staleContainerCleanupTicker *time.Ticker
 	staleContainerCleanupStop   chan struct{}
 
+	// deployTxnMu guards activeDeployTxns: the deploy transactions of
+	// operations currently in flight, whose containers must not be treated as
+	// stale by the container sweeper.
+	deployTxnMu      sync.Mutex
+	activeDeployTxns map[*container.DeployTxn]bool
+
 	stopRequested   chan struct{}
 	stopRequestOnce sync.Once
 	stopOnce        sync.Once

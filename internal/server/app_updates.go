@@ -140,6 +140,25 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
+	// The repo cache is shared between the image pre-build pass and the main
+	// reload loop, so each git repo is checked out only once.
+	repoCache, err := NewRepoCache(s)
+	if err != nil {
+		return nil, err
+	}
+	defer repoCache.Cleanup()
+
+	if verify && s.config.System.UseImagePreBuildStep {
+		// Build container images before the metadata transaction is opened.
+		// Image names are content-hashed, so the main loop's ImageExists check
+		// finds them and skips the (slow) in-transaction build. If anything
+		// diverges, the main loop builds in-transaction as before; this pass
+		// only warms the image cache and cannot change the deployed result.
+		if err := s.preBuildReloadImages(ctx, filteredApps, approve, branch, commit, gitAuth, repoCache, forceReload); err != nil {
+			return nil, err
+		}
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -151,12 +170,6 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	// changes back too, so the cluster matches the rolled-back DB transaction.
 	ctx, dscope := s.beginDeployScope(ctx, true)
 	defer func() { retErr = dscope.finish(ctx, retErr) }()
-
-	repoCache, err := NewRepoCache(s)
-	if err != nil {
-		return nil, err
-	}
-	defer repoCache.Cleanup()
 
 	reloadResults := make([]types.AppPathDomain, 0, len(filteredApps))
 	approveResults := make([]types.ApproveResult, 0, len(filteredApps))
@@ -196,7 +209,9 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "reload"); err != nil {
 		return nil, err
 	}
-	dscope.commit(ctx)
+	if err := dscope.commit(ctx); err != nil {
+		return nil, err
+	}
 
 	ret := &types.AppReloadResponse{
 		DryRun:         dryRun,
@@ -207,6 +222,99 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	}
 
 	return ret, nil
+}
+
+// preBuildReloadImages builds the container image for each app to be reloaded,
+// before the main reload transaction starts. Each app's new source is loaded
+// under a throwaway transaction that is rolled back once the build inputs have
+// been extracted to disk, so no DB locks are held while the (potentially slow)
+// image builds run.
+func (s *Server) preBuildReloadImages(ctx context.Context, filteredApps []types.AppInfo, approve bool,
+	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool) error {
+	for _, appInfo := range filteredApps {
+		if appInfo.IsDev {
+			// Dev apps build through DevReload from local disk, not pre-built
+			continue
+		}
+		application, plan, err := s.prepareAppImage(ctx, appInfo.AppPathDomain, approve, branch, commit, gitAuth, repoCache, forceReload)
+		if err != nil {
+			return err
+		}
+		if application == nil {
+			continue
+		}
+		// The throwaway transaction is closed at this point; the build reads
+		// only from the temp source dir captured in the plan
+		buildErr := application.ExecuteContainerBuild(ctx, plan)
+		application.Close() //nolint:errcheck // throwaway app object, stop its background tickers
+		if buildErr != nil {
+			return buildErr
+		}
+	}
+	return nil
+}
+
+// prepareAppImage loads the new app source for one app under a throwaway
+// transaction and returns the app along with its container build plan (with
+// the build inputs already extracted to a temp dir). The transaction is always
+// rolled back; the main reload pass redoes the metadata work under the real
+// transaction. Returns a nil app when there is nothing to reload.
+func (s *Server) prepareAppImage(ctx context.Context, appPathDomain types.AppPathDomain, approve bool,
+	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool) (*apppkg.App, *apppkg.BuildPlan, error) {
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	appEntry, err := s.GetAppEntry(ctx, tx, appPathDomain)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !appEntry.IsDev {
+		appEntry, err = s.getStageApp(ctx, tx, appEntry)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	reloaded, err := s.loadAppCode(ctx, tx, appEntry, branch, commit, gitAuth, repoCache, forceReload)
+	if err != nil || !reloaded {
+		return nil, nil, err
+	}
+
+	application, err := s.setupApp(ctx, appEntry, tx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error setting up app %s: %w", appEntry, err)
+	}
+	fail := func(err error) (*apppkg.App, *apppkg.BuildPlan, error) {
+		application.Close() //nolint:errcheck // throwaway app object, stop its background tickers
+		return nil, nil, err
+	}
+
+	// Mirror the audit/approval sequence of ReloadApp so the app loads with the
+	// same (in-memory) approvals it will have in the main pass, and so apps
+	// needing approval fail here, before any state has been mutated
+	auditResult, err := application.Audit()
+	if err != nil {
+		return fail(fmt.Errorf("error auditing app %s: %w", appEntry, err))
+	}
+	if auditResult.NeedsApproval && !approve {
+		return fail(fmt.Errorf("app %s needs approval", appEntry))
+	}
+	if approve {
+		s.approveAuditResult(application, auditResult)
+	}
+
+	if _, err := application.Reload(ctx, true, true, types.DryRunFalse, apppkg.ReloadOptions{SkipContainer: true}); err != nil {
+		return fail(fmt.Errorf("error reloading app %s: %w", appEntry, err))
+	}
+
+	plan, err := application.PrepareContainerBuild(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	return application, plan, nil
 }
 
 func (s *Server) loadAppCode(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool) (bool, error) {

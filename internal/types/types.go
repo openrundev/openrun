@@ -316,6 +316,7 @@ type SystemConfig struct {
 	MaxSyncFailureCount                 int      `toml:"max_sync_failure_count"`                  // Max failure count for sync jobs
 	MaxConcurrentBuilds                 int      `toml:"max_concurrent_builds"`                   // Max concurrent container builds
 	MaxBuildWaitSecs                    int      `toml:"max_build_wait_secs"`                     // Max wait time for a build lock
+	UseImagePreBuildStep                bool     `toml:"use_image_pre_build_step"`                // Pre-build container images for verified reloads before the metadata transaction starts
 	EarlyHints                          bool     `toml:"early_hints"`                             // enable early hints for HTML responses
 	LeaderElectionLeaseSecs             int      `toml:"leader_election_lease_secs"`              // The lease time for the leader election
 	LeaderElectionHeartbeatIntervalSecs int      `toml:"leader_election_heartbeat_interval_secs"` // The interval for the leader election heartbeat

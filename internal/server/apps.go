@@ -26,6 +26,12 @@ type AppStore struct {
 
 	mu     sync.RWMutex
 	appMap map[types.AppPathDomain]*app.App
+	// generation increments whenever apps are removed from the store (an
+	// update committed, an app was deleted, ...). GetApp reads it before
+	// loading an app entry from the DB and re-checks it when inserting the
+	// built App, so an App built from a read that a concurrent clear made
+	// stale is never cached.
+	generation uint64
 }
 
 func NewAppStore(logger *types.Logger, server *Server) *AppStore {
@@ -178,12 +184,29 @@ func (a *AppStore) ActiveContainerNames() map[container.ContainerName]bool {
 	return names
 }
 
-func (a *AppStore) AddApp(app *app.App) {
+// Generation returns the current store generation. Read it before loading app
+// state from the DB and pass it to AddAppIfUnchanged.
+func (a *AppStore) Generation() uint64 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.generation
+}
+
+// AddAppIfUnchanged adds the app to the store only if no apps have been
+// removed from the store since the given generation was read. It returns false
+// without adding when the store changed: the DB state the app was built from
+// may have been superseded (e.g. a reload committed in between), so the caller
+// must discard the app and rebuild from a fresh read.
+func (a *AppStore) AddAppIfUnchanged(app *app.App, generation uint64) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if a.generation != generation {
+		return false
+	}
 	a.appMap[types.CreateAppPathDomain(app.Path, app.Domain)] = app
 	a.resetAllAppCache()
+	return true
 }
 
 func (a *AppStore) ClearLinkedApps(pathDomain types.AppPathDomain) error {
@@ -212,6 +235,10 @@ func (a *AppStore) ClearLinkedApps(pathDomain types.AppPathDomain) error {
 }
 
 func (a *AppStore) clearApp(pathDomain types.AppPathDomain) {
+	// Invalidate in-progress GetApp loads even when this path is not cached:
+	// the app being cleared may be exactly the one a concurrent GetApp is
+	// building from a now-stale DB read.
+	a.generation++
 	app, ok := a.appMap[pathDomain]
 	if ok {
 		app.Close() //nolint:errcheck

@@ -1004,6 +1004,104 @@ func (h *ContainerHandler) ActiveContainerName() (container.ContainerName, bool)
 	return h.activeContainerName, true
 }
 
+// BuildPlan captures the state needed to build an app image after the DB
+// transaction backing the app's source FS has been closed. PrepareBuild does
+// all source reads (image identity hash and temp source dir extraction);
+// ExecuteBuild only runs the container build and touches no DB state.
+type BuildPlan struct {
+	ImageName  container.ImageName
+	SourceDir  string // temp source dir, already extracted; set only when NeedsBuild
+	NeedsBuild bool
+}
+
+// PrepareBuild mirrors the image-build portion of ProdReload without any
+// container side effects. The image name is content-hashed, so a later
+// ProdReload for the same source finds the built image via its ImageExists
+// check and skips the build. Returns nil for apps with no image to build
+// (dev apps build through DevReload, image-spec apps pull rather than build).
+func (h *ContainerHandler) PrepareBuild(ctx context.Context) (*BuildPlan, error) {
+	if h.app.IsDev || h.image != "" {
+		return nil, nil
+	}
+
+	var err error
+	h.envMap, h.envMapHash, err = h.getEnvMapAndHash()
+	if err != nil {
+		return nil, fmt.Errorf("error getting env map hash: %w", err)
+	}
+
+	fullHash, err := h.getAppHash()
+	if err != nil {
+		return nil, err
+	}
+	imageName, err := h.buildImageName(fullHash)
+	if err != nil {
+		return nil, err
+	}
+
+	imageExists, err := h.manager.ImageExists(ctx, imageName)
+	if err != nil {
+		return nil, fmt.Errorf("error getting images: %w", err)
+	}
+	if imageExists {
+		return &BuildPlan{ImageName: imageName}, nil
+	}
+
+	sourceDir, err := h.sourceFS.CreateTempSourceDir()
+	if err != nil {
+		return nil, fmt.Errorf("error creating temp source dir: %w", err)
+	}
+	return &BuildPlan{ImageName: imageName, SourceDir: sourceDir, NeedsBuild: true}, nil
+}
+
+// ExecuteBuild builds the image described by a plan from PrepareBuild. It
+// reads only from the plan's temp source dir, never the DB, so callers can
+// (and should) close their DB transaction before invoking it.
+func (h *ContainerHandler) ExecuteBuild(ctx context.Context, plan *BuildPlan) error {
+	if plan == nil || !plan.NeedsBuild {
+		return nil
+	}
+	defer func() {
+		if err := os.RemoveAll(plan.SourceDir); err != nil {
+			h.Warn().Err(err).Msgf("error removing temp source dir for app %s", h.app.Id)
+		}
+	}()
+
+	buildDir := path.Join(plan.SourceDir, h.buildDir)
+	if err := h.manager.BuildImage(ctx, plan.ImageName, buildDir, h.containerFile, h.cargs); err != nil {
+		return fmt.Errorf("error building image: %w", err)
+	}
+	return nil
+}
+
+// registerDeployTxn registers this (command-managed) deploy on the
+// operation-level deploy transaction, when one is active. On rollback the
+// newly started container is stopped again — traffic never switched to it,
+// since the app store is only refreshed after the DB transaction commits. On
+// commit the app's superseded version containers are stopped immediately
+// instead of lingering until the periodic stale container sweeper. Registering
+// also shields the container from the sweeper while the operation is in
+// flight. No-op outside an operation (e.g. lazy app initialization).
+func (h *ContainerHandler) registerDeployTxn(ctx context.Context, containerName container.ContainerName, stopOnRollback bool) {
+	dt := container.DeployTxnFromContext(ctx)
+	if dt == nil {
+		return
+	}
+	var onRollback func(context.Context) error
+	if stopOnRollback {
+		onRollback = func(c context.Context) error {
+			return h.manager.StopContainer(c, containerName)
+		}
+	}
+	var onCommit func(context.Context) error
+	if stopper, ok := container.AsAppContainerStopper(h.manager); ok {
+		onCommit = func(c context.Context) error {
+			return stopper.StopAppContainersExcept(c, h.app.Id, containerName)
+		}
+	}
+	dt.Register(h.app.Id, containerName, onRollback, onCommit)
+}
+
 // ProdReload reloads the prod container. verify indicates the caller wants the
 // update to be verified and rollback-capable; for in-place managers this makes
 // a snapshot failure fatal (we refuse to mutate the live Deployment when we
@@ -1088,6 +1186,9 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 			h.hostNamePort = hostNamePort
 			h.stateLock.Unlock()
 			h.Debug().Msgf("app %s already on version %s, reusing", h.app.Id, fullHash)
+			// Nothing was started, so nothing to roll back; still register so
+			// superseded version containers are stopped at operation commit
+			h.registerDeployTxn(ctx, containerName, false)
 			return nil
 		}
 		if hostNamePort != "" && !running {
@@ -1095,6 +1196,9 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 				return fmt.Errorf("error starting stopped container: %w", err)
 			}
 			startedExisting = true
+			// Register before the health wait below, so a later failure in
+			// this operation stops the container again on rollback
+			h.registerDeployTxn(ctx, containerName, true)
 		}
 	}
 
@@ -1147,6 +1251,9 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 			nil); err != nil {
 			return fmt.Errorf("error starting container after update: %w", err)
 		}
+		// Register before the health wait, so a health failure (or a later
+		// app's failure in the same operation) stops this container on rollback
+		h.registerDeployTxn(ctx, containerName, true)
 	}
 
 	if h.health != "" {

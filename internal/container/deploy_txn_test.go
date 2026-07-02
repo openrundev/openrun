@@ -16,9 +16,9 @@ func TestDeployTxnRollbackAllReverseOrder(t *testing.T) {
 	d := NewDeployTxn()
 
 	var order []string
-	d.Register(types.AppId("app1"), func(context.Context) error { order = append(order, "app1"); return nil }, nil)
-	d.Register(types.AppId("app2"), func(context.Context) error { order = append(order, "app2"); return nil }, nil)
-	d.Register(types.AppId("app3"), func(context.Context) error { order = append(order, "app3"); return nil }, nil)
+	d.Register(types.AppId("app1"), ContainerName("clc-app1"), func(context.Context) error { order = append(order, "app1"); return nil }, nil)
+	d.Register(types.AppId("app2"), ContainerName("clc-app2"), func(context.Context) error { order = append(order, "app2"); return nil }, nil)
+	d.Register(types.AppId("app3"), ContainerName("clc-app3"), func(context.Context) error { order = append(order, "app3"); return nil }, nil)
 
 	if err := d.RollbackAll(ctx); err != nil {
 		t.Fatalf("RollbackAll error: %v", err)
@@ -47,8 +47,8 @@ func TestDeployTxnRollbackAllJoinsErrors(t *testing.T) {
 	d := NewDeployTxn()
 	errA := errors.New("boom-a")
 	errB := errors.New("boom-b")
-	d.Register(types.AppId("app1"), func(context.Context) error { return errA }, nil)
-	d.Register(types.AppId("app2"), func(context.Context) error { return errB }, nil)
+	d.Register(types.AppId("app1"), ContainerName("clc-app1"), func(context.Context) error { return errA }, nil)
+	d.Register(types.AppId("app2"), ContainerName("clc-app2"), func(context.Context) error { return errB }, nil)
 
 	err := d.RollbackAll(ctx)
 	if err == nil {
@@ -65,10 +65,10 @@ func TestDeployTxnCommitRunsCommitActions(t *testing.T) {
 
 	var committed []string
 	rolledBack := false
-	d.Register(types.AppId("app1"),
+	d.Register(types.AppId("app1"), ContainerName("clc-app1"),
 		func(context.Context) error { rolledBack = true; return nil },
 		func(context.Context) error { committed = append(committed, "app1"); return nil })
-	d.Register(types.AppId("app2"), nil,
+	d.Register(types.AppId("app2"), ContainerName("clc-app2"), nil,
 		func(context.Context) error { committed = append(committed, "app2"); return nil })
 
 	if err := d.CommitAll(ctx); err != nil {
@@ -85,6 +85,32 @@ func TestDeployTxnCommitRunsCommitActions(t *testing.T) {
 	}
 	if rolledBack {
 		t.Fatal("rollback ran after the stack was drained by commit")
+	}
+}
+
+// Container names must survive CommitAll/RollbackAll draining the entries:
+// they protect in-flight containers (e.g. from the stale sweeper) until the
+// owning scope unregisters the whole transaction.
+func TestDeployTxnContainerNamesSurviveDrain(t *testing.T) {
+	ctx := context.Background()
+	d := NewDeployTxn()
+	d.Register(types.AppId("app1"), ContainerName("clc-app1"), nil, nil)
+	d.Register(types.AppId("app2"), "", nil, nil) // no container name (e.g. command lifetime)
+
+	if got := d.Len(); got != 2 {
+		t.Fatalf("Len=%d, want 2", got)
+	}
+	names := d.ContainerNames()
+	if len(names) != 1 || names[0] != "clc-app1" {
+		t.Fatalf("names=%v, want [clc-app1]", names)
+	}
+
+	if err := d.CommitAll(ctx); err != nil {
+		t.Fatalf("CommitAll error: %v", err)
+	}
+	names = d.ContainerNames()
+	if len(names) != 1 || names[0] != "clc-app1" {
+		t.Fatalf("names after drain=%v, want [clc-app1]", names)
 	}
 }
 

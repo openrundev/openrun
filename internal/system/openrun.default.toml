@@ -104,6 +104,7 @@ allowed_env = ["HOME", "OPENRUN_HOME", "PATH"] # env values allowed for use in n
 
 max_concurrent_builds = 1 # max number of concurrent container builds
 max_build_wait_secs = 120 # max wait time for a build lock
+use_image_pre_build_step = true # for verified reloads, build container images before the metadata transaction starts
 file_workers = 4 # number of parallel workers for file compression during app version creation
 
 leader_election_lease_secs = 30 # duration of the leader election lease

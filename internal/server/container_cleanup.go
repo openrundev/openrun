@@ -52,7 +52,14 @@ func (s *Server) staleContainerCleanupRunner() {
 
 func (s *Server) cleanupStaleContainers(ctx context.Context) error {
 	manager := container.NewCommandCM(s.Logger, s.config, "", "")
-	return cleanupStaleContainers(ctx, s.Logger, manager, s.apps.ActiveContainerNames())
+	active := s.apps.ActiveContainerNames()
+	// Containers started by operations still in flight (reload/apply/sync
+	// before their DB transaction commits) are not yet referenced by the app
+	// store; treat them as active so they are not stopped mid-deploy.
+	for name := range s.inFlightContainerNames() {
+		active[name] = true
+	}
+	return cleanupStaleContainers(ctx, s.Logger, manager, active)
 }
 
 func cleanupStaleContainers(ctx context.Context, logger *types.Logger, manager staleContainerManager, active map[container.ContainerName]bool) error {

@@ -534,9 +534,11 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		releaseBindingAccounts = true
 	}
 	// Apply succeeded and (if we own it) the DB transaction has committed; keep
-	// the in-place cluster changes. When the caller owns the transaction, this
-	// is a no-op and the caller's scope decides.
-	dscope.commit(ctx)
+	// the cluster changes and run deferred traffic switches. When the caller
+	// owns the transaction, this is a no-op and the caller's scope decides.
+	if err := dscope.commit(ctx); err != nil {
+		return nil, nil, nil, err
+	}
 
 	ret := &types.AppApplyResponse{
 		DryRun:                dryRun,

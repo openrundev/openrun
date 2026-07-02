@@ -1149,8 +1149,41 @@ func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest) (
 		return DeployResult{}, fmt.Errorf("new version did not become healthy: %w", err)
 	}
 
-	_, prevSelector, err := k.PromoteVersion(ctx, serviceName, req.VersionHash)
-	if err != nil {
+	activeName := workloadName(sanitizeContainerName(string(serviceName)), req.VersionHash, false)
+	if dt := DeployTxnFromContext(ctx); dt != nil {
+		// Operation-level deploy: defer the traffic switch to commit time. The
+		// new version is deployed and verified Ready above, but the stable
+		// Service selector is only flipped after the operation's DB transaction
+		// commits, so concurrent requests keep hitting the old (committed)
+		// version until then. A later app failing verification never exposes
+		// this app's uncommitted version; rollback just deletes the still-dark
+		// new workload, with no selector to restore.
+		dt.Register(appID, serviceName,
+			func(c context.Context) error {
+				return k.deleteWorkloadObjects(c, activeName)
+			},
+			func(c context.Context) error {
+				if _, _, err := k.PromoteVersion(c, serviceName, req.VersionHash); err != nil {
+					return fmt.Errorf("switching traffic to the new version: %w", err)
+				}
+				// The old version's pods are cleaned up asynchronously, so wait
+				// for the Service endpoints to converge to the new version;
+				// otherwise a request proxied right after promotion can still
+				// hit an old pod.
+				k.waitForServiceVersionEndpoints(c, sanitizeContainerName(string(serviceName)), req.VersionHash)
+				k.waitForNodePortConnectivity(c, hostNamePort)
+				return k.cleanupInactiveWorkloads(c, serviceName)
+			})
+		return DeployResult{
+			ContainerName: serviceName,
+			VersionHash:   req.VersionHash,
+			HostNamePort:  hostNamePort,
+		}, nil
+	}
+
+	// Standalone deploy (no operation-level txn, e.g. lazy app initialization
+	// on the first request after a commit): flip the selector immediately.
+	if _, _, err := k.PromoteVersion(ctx, serviceName, req.VersionHash); err != nil {
 		if rmErr := k.RemoveVersion(ctx, serviceName, req.VersionHash); rmErr != nil {
 			k.Error().Err(rmErr).Msgf("failed to remove new version for app %s after promote error", appID)
 		}
@@ -1162,30 +1195,7 @@ func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest) (
 	// otherwise a request proxied right after promotion can still hit an old pod.
 	k.waitForServiceVersionEndpoints(ctx, sanitizeContainerName(string(serviceName)), req.VersionHash)
 	k.waitForNodePortConnectivity(ctx, hostNamePort)
-
-	activeName := workloadName(sanitizeContainerName(string(serviceName)), req.VersionHash, false)
-	onCommit := func(c context.Context) error {
-		return k.cleanupInactiveWorkloads(c, serviceName)
-	}
-
-	if dt := DeployTxnFromContext(ctx); dt != nil {
-		dt.Register(appID,
-			func(c context.Context) error {
-				var errs []error
-				if len(prevSelector) > 0 {
-					if e := k.restoreServiceSelector(c, serviceName, prevSelector); e != nil {
-						errs = append(errs, e)
-					}
-				}
-				if e := k.deleteWorkloadObjects(c, activeName); e != nil {
-					errs = append(errs, e)
-				}
-				return errors.Join(errs...)
-			},
-			onCommit)
-	} else {
-		k.cleanupInactiveWorkloadsAsync(serviceName, appID, "after promotion")
-	}
+	k.cleanupInactiveWorkloadsAsync(serviceName, appID, "after promotion")
 
 	return DeployResult{
 		ContainerName: serviceName,
@@ -1243,7 +1253,7 @@ func (k *KubernetesCM) deployInPlace(ctx context.Context, req DeployRequest) (De
 		if rollbackSnap != nil {
 			onRollback = func(c context.Context) error { return k.Restore(c, rollbackSnap) }
 		}
-		dt.Register(appID, onRollback, onCommit)
+		dt.Register(appID, req.ContainerName, onRollback, onCommit)
 	} else {
 		k.cleanupInactiveWorkloadsAsync(req.ContainerName, appID, "after in-place deployment")
 	}
@@ -1772,23 +1782,6 @@ func (k *KubernetesCM) cleanupInactiveWorkloads(ctx context.Context, serviceName
 		errs = append(errs, k.deleteWorkloadObjects(ctx, dep.Name))
 	}
 	return errors.Join(errs...)
-}
-
-func (k *KubernetesCM) restoreServiceSelector(ctx context.Context, serviceName ContainerName, selector map[string]string) error {
-	n := sanitizeContainerName(string(serviceName))
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		svc, err := k.clientSet.CoreV1().Services(k.appNamespace).Get(ctx, n, meta.GetOptions{})
-		if err != nil {
-			return err
-		}
-		svc.Spec.Selector = maps.Clone(selector)
-		_, err = k.clientSet.CoreV1().Services(k.appNamespace).Update(ctx, svc, meta.UpdateOptions{})
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("restore service %s selector: %w", n, err)
-	}
-	return nil
 }
 
 // activeDeploymentName resolves the Deployment currently behind the Service:

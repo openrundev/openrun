@@ -117,6 +117,31 @@ func AsVersionReporter(cm ContainerManager) (VersionReporter, bool) {
 	return nil, false
 }
 
+// AppContainerStopper is an optional manager capability: stopping all of an
+// app's version containers except the active one. Implemented by the
+// command-based (Docker/Podman) manager, where superseded versions linger as
+// separately named containers; Kubernetes cleans up through its own
+// workload-cleanup path instead.
+type AppContainerStopper interface {
+	StopAppContainersExcept(ctx context.Context, appId types.AppId, keep ContainerName) error
+}
+
+// AsAppContainerStopper unwraps any decorating container managers and returns
+// the underlying AppContainerStopper if one is present.
+func AsAppContainerStopper(cm ContainerManager) (AppContainerStopper, bool) {
+	for cm != nil {
+		if s, ok := cm.(AppContainerStopper); ok {
+			return s, true
+		}
+		u, ok := cm.(interface{ Unwrap() ContainerManager })
+		if !ok {
+			break
+		}
+		cm = u.Unwrap()
+	}
+	return nil, false
+}
+
 // DevContainerManager is the interface for managing containers in dev mode
 type DevContainerManager interface {
 	ContainerManager

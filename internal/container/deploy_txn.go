@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/openrundev/openrun/internal/types"
@@ -21,6 +22,7 @@ import (
 type DeployTxn struct {
 	mu      sync.Mutex
 	entries []deployEntry
+	names   []ContainerName
 }
 
 type deployEntry struct {
@@ -33,10 +35,32 @@ func NewDeployTxn() *DeployTxn {
 	return &DeployTxn{}
 }
 
-func (d *DeployTxn) Register(appId types.AppId, onRollback, onCommit func(ctx context.Context) error) {
+func (d *DeployTxn) Register(appId types.AppId, containerName ContainerName, onRollback, onCommit func(ctx context.Context) error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.entries = append(d.entries, deployEntry{appId: appId, onRollback: onRollback, onCommit: onCommit})
+	if containerName != "" {
+		d.names = append(d.names, containerName)
+	}
+}
+
+// Len returns the number of registered deploy entries. Callers use it to scale
+// commit/rollback time budgets with the operation size; it must be read before
+// CommitAll/RollbackAll drain the entries.
+func (d *DeployTxn) Len() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.entries)
+}
+
+// ContainerNames returns the containers touched by this operation. Unlike the
+// entries, names are not drained by CommitAll/RollbackAll: they must keep
+// protecting the operation's containers (e.g. from the stale container
+// sweeper) until the owning scope unregisters the whole transaction.
+func (d *DeployTxn) ContainerNames() []ContainerName {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.names)
 }
 
 func (d *DeployTxn) drain() []deployEntry {
