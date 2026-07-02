@@ -256,6 +256,9 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) },
 	}
 
+	// Status starts as Failed and is set to Success only after the action
+	// handler runs without error, so that request parse errors and panics
+	// are not recorded as a success
 	event := types.AuditEvent{
 		RequestId:  system.GetContextRequestId(r.Context()),
 		CreateTime: time.Now(),
@@ -264,7 +267,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		EventType:  types.EventTypeAction,
 		Operation:  op,
 		Target:     a.name,
-		Status:     string(types.EventStatusSuccess),
+		Status:     string(types.EventStatusFailure),
 	}
 
 	customEvent := types.AuditEvent{
@@ -273,7 +276,6 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		UserId:     system.GetContextUserId(r.Context()),
 		AppId:      system.GetContextAppId(r.Context()),
 		EventType:  types.EventTypeCustom,
-		Status:     string(types.EventStatusSuccess),
 	}
 
 	if a.auditInsert != nil {
@@ -282,6 +284,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 				a.Error().Err(err).Msg("error inserting audit event")
 			}
 
+			customEvent.Status = event.Status
 			customEvent.Operation = system.GetThreadLocalKey(thread, types.TL_AUDIT_OPERATION)
 			customEvent.Target = system.GetThreadLocalKey(thread, types.TL_AUDIT_TARGET)
 			customEvent.Detail = system.GetThreadLocalKey(thread, types.TL_AUDIT_DETAIL)
@@ -433,8 +436,11 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		}
 	}
 
+	if err == nil {
+		event.Status = string(types.EventStatusSuccess)
+	}
+
 	if err != nil {
-		event.Status = string(types.EventStatusFailure)
 		a.Error().Err(err).Msg("error calling action run handler")
 
 		firstFrame := ""

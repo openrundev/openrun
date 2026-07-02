@@ -150,13 +150,18 @@ type Server struct {
 	auditFlush     chan chan struct{}
 	auditStop      chan struct{}
 	auditDone      chan struct{}
-	accessLogger   *zerolog.Logger
-	syncTimer      *time.Ticker
-	configMu       sync.RWMutex
-	dynamicConfig  *types.DynamicConfig
-	rbacManager    *rbac.RBACManager
-	csrfMiddleware *http.CrossOriginProtection
-	telemetry      *telemetry.Providers
+
+	// authFailureTimes tracks the last audit event time per unique auth
+	// failure, to rate limit the events inserted for repeated failures
+	authFailureMu    sync.Mutex
+	authFailureTimes map[string]time.Time
+	accessLogger     *zerolog.Logger
+	syncTimer        *time.Ticker
+	configMu         sync.RWMutex
+	dynamicConfig    *types.DynamicConfig
+	rbacManager      *rbac.RBACManager
+	csrfMiddleware   *http.CrossOriginProtection
+	telemetry        *telemetry.Providers
 
 	forwardAuthHTTPClient *http.Client
 

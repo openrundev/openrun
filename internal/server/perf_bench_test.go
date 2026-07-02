@@ -219,7 +219,7 @@ func BenchmarkHandleStatus(b *testing.B) {
 	server := newBenchAuditServer(b)
 	b.Cleanup(server.stopAuditWriter)
 	server.apps = newBenchAppStore(server, 1, 1)
-	handler := server.handleStatus(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := server.handleStatus(types.ADMIN_USER)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 

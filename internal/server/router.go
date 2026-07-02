@@ -4,6 +4,7 @@
 package server
 
 import (
+	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -95,7 +96,7 @@ func (h *Handler) panicRecovery(next http.Handler) http.Handler {
 // NewUDSHandler creates a new handler for admin APIs over the unix domain socket
 func NewUDSHandler(logger *types.Logger, config *types.ServerConfig, server *Server) *Handler {
 	router := chi.NewRouter()
-	router.Use(server.handleStatus)
+	router.Use(server.handleStatus(types.ADMIN_USER))
 
 	handler := &Handler{
 		Logger: logger,
@@ -129,7 +130,7 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	if config.Http.RedirectToHttps {
 		router.Use(handler.httpsRedirectMiddleware)
 	}
-	router.Use(server.handleStatus)
+	router.Use(server.handleStatus("")) // no default user, TCP requests authenticate the user
 	router.Use(handler.panicRecovery)
 	router.Use(server.accessLogMiddleware)
 	router.Use(middleware.CleanPath)
@@ -357,6 +358,7 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 			// Builder auth is required for delegated builds
 			err := h.builderAuth(r)
 			if err != nil {
+				h.server.insertAuthFailureEvent(r, operation, err.Error())
 				w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s"`, REALM))
 				http.Error(w, err.Error(), http.StatusUnauthorized)
 				return
@@ -365,6 +367,7 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 			// Admin auth is required for other APIs
 			authStatus := h.server.authHandler.authenticate(r.Header.Get("Authorization"))
 			if !authStatus {
+				h.server.insertAuthFailureEvent(r, operation, "admin API authentication failed")
 				w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, REALM))
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
@@ -375,11 +378,13 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 	event := types.AuditEvent{
 		RequestId:  system.GetContextRequestId(r.Context()),
 		CreateTime: time.Now(),
-		UserId:     system.GetContextUserId(r.Context()),
-		AppId:      system.GetContextAppId(r.Context()),
-		EventType:  types.EventTypeSystem,
-		Operation:  operation,
-		Status:     string(types.EventStatusSuccess),
+		// Admin APIs run as the admin user; over TCP the context has no user id
+		UserId:    cmp.Or(system.GetContextUserId(r.Context()), types.ADMIN_USER),
+		AppId:     system.GetContextAppId(r.Context()),
+		EventType: types.EventTypeSystem,
+		Operation: operation,
+		// Status starts as Failed so a panic in apiFunc is not recorded as a success
+		Status: string(types.EventStatusFailure),
 	}
 
 	defer func() {
@@ -389,6 +394,9 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 	}()
 
 	resp, err := apiFunc(r)
+	if err == nil {
+		event.Status = string(types.EventStatusSuccess)
+	}
 
 	contextShared := r.Context().Value(types.SHARED)
 	if contextShared != nil {
@@ -406,7 +414,6 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 
 	h.Trace().Str("method", r.Method).Str("url", r.URL.String()).Err(err).Msg("API Received request")
 	if err != nil {
-		event.Status = string(types.EventStatusFailure)
 		if reqError, ok := err.(types.RequestError); ok {
 			w.Header().Add("Content-Type", "application/json")
 			errStr, _ := json.Marshal(reqError)
@@ -478,22 +485,28 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 		return
 	}
 
+	operation := fmt.Sprintf("webhook_%s", webhookType)
+	authFailure := func(msg string) {
+		h.server.insertAuthFailureEvent(r, operation, msg)
+		http.Error(w, msg, http.StatusUnauthorized)
+	}
+
 	// Authenticate the request
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
 		// Using Authentication header, bearer token — validate before reading body
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			http.Error(w, "Authorization header with bearer token is required", http.StatusUnauthorized)
+			authFailure("Authorization header with bearer token is required")
 			return
 		}
 		token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 		if token == "" {
-			http.Error(w, "Bearer token is required", http.StatusUnauthorized)
+			authFailure("Bearer token is required")
 			return
 		}
 
 		if subtle.ConstantTimeCompare([]byte(appToken), []byte(token)) != 1 {
-			http.Error(w, "Invalid bearer token", http.StatusUnauthorized)
+			authFailure("Invalid bearer token")
 			return
 		}
 	}
@@ -511,16 +524,35 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 		// https://docs.github.com/en/webhooks/webhook-events-and-payloads#delivery-headers
 		signature := r.Header.Get("X-Hub-Signature-256")
 		if signature == "" {
-			http.Error(w, "No auth header and no signature found", http.StatusUnauthorized)
+			authFailure("No auth header and no signature found")
 			return
 		}
 
 		err = validateSignature(appToken, signature, body)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+			authFailure(err.Error())
 			return
 		}
 	}
+
+	// Authenticated, all failures from here on are audited. Status starts as
+	// Failed so early returns and panics are not recorded as a success
+	event := types.AuditEvent{
+		RequestId:  system.GetContextRequestId(r.Context()),
+		CreateTime: time.Now(),
+		UserId:     system.GetContextUserId(r.Context()),
+		AppId:      app.Id,
+		EventType:  types.EventTypeSystem,
+		Operation:  operation,
+		Target:     appPathDomain.String(),
+		Status:     string(types.EventStatusFailure),
+	}
+
+	defer func() {
+		if err := h.server.InsertAuditEvent(&event); err != nil {
+			h.Error().Err(err).Msg("error inserting audit event")
+		}
+	}()
 
 	h.Trace().Str("method", r.Method).Str("url", r.URL.String()).Msg("API Received request")
 
@@ -566,25 +598,11 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 	h.Info().Msgf("Webhook call for %s, appPath: %s, promote: %t, reload: %t, response %+v err %s",
 		webhookType, appPath, promote, reload, resp, err)
 
-	event := types.AuditEvent{
-		RequestId:  system.GetContextRequestId(r.Context()),
-		CreateTime: time.Now(),
-		UserId:     system.GetContextUserId(r.Context()),
-		AppId:      system.GetContextAppId(r.Context()),
-		EventType:  types.EventTypeSystem,
-		Operation:  fmt.Sprintf("webhook_%s", webhookType),
-		Target:     appPathDomain.String(),
-		Status:     "Success",
+	if err == nil {
+		event.Status = string(types.EventStatusSuccess)
 	}
 
-	defer func() {
-		if err := h.server.InsertAuditEvent(&event); err != nil {
-			h.Error().Err(err).Msg("error inserting audit event")
-		}
-	}()
-
 	if err != nil {
-		event.Status = string(types.EventStatusFailure)
 		if reqError, ok := err.(types.RequestError); ok {
 			w.Header().Add("Content-Type", "application/json")
 			errStr, _ := json.Marshal(reqError)

@@ -234,7 +234,9 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				return nil
 			}
 
-			eventStatus := types.EventStatusSuccess
+			// eventStatus starts as Failed and is set to Success only after the
+			// handler runs without error, so that a panic is not recorded as a success
+			eventStatus := types.EventStatusFailure
 
 			if a.auditInsert != nil {
 				defer func() {
@@ -242,7 +244,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 					if op != "" {
 						// Audit event was set, insert it
 						event := types.AuditEvent{
-							RequestId:  system.GetContextUserId(r.Context()),
+							RequestId:  system.GetContextRequestId(r.Context()),
 							CreateTime: time.Now(),
 							UserId:     system.GetContextUserId(r.Context()),
 							AppId:      system.GetContextAppId(r.Context()),
@@ -280,8 +282,11 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				}
 			}
 
+			if err == nil {
+				eventStatus = types.EventStatusSuccess
+			}
+
 			if err != nil {
-				eventStatus = types.EventStatusFailure
 				a.Error().Err(err).Msg("error calling handler")
 
 				firstFrame := ""

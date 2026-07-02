@@ -323,6 +323,7 @@ func (a *AppStore) ClearAppsAudit(ctx context.Context, pathDomains []types.AppPa
 	for _, pd := range pathDomains {
 		appInfo, ok := appMap[pd.String()]
 		if !ok {
+			a.Warn().Msgf("audit event skipped for %s, app info not found", pd)
 			continue
 		}
 

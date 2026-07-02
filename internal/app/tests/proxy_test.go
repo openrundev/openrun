@@ -1144,7 +1144,7 @@ func TestProxyWebsocketUpgrade(t *testing.T) {
 			t.Errorf("backend hijack: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer conn.Close()                                                                                         //nolint:errcheck
 		bufrw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n") //nolint:errcheck
 		bufrw.Flush()                                                                                              //nolint:errcheck
 		line, err := bufrw.ReadString('\n')
@@ -1184,7 +1184,7 @@ permissions=[
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck
 
 	fmt.Fprintf(conn, "GET /test/ws HTTP/1.1\r\nHost: localhost:25222\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n") //nolint:errcheck
 	reader := bufio.NewReader(conn)

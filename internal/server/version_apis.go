@@ -196,7 +196,7 @@ func (s *Server) VersionSwitch(ctx context.Context, mainAppPath string, dryRun b
 		return nil, err
 	}
 
-	err = s.apps.ClearAppsAudit(ctx, []types.AppPathDomain{appPathDomain}, "version-switch")
+	err = s.apps.ClearAppsAudit(ctx, []types.AppPathDomain{appPathDomain}, "version_switch")
 	if err != nil {
 		return nil, err
 	}

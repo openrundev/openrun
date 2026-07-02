@@ -4,11 +4,9 @@
 package server
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -134,11 +132,19 @@ func (s *Server) InsertAuditEvent(event *types.AuditEvent) error {
 	eventCopy := *event
 	select {
 	case s.auditEvents <- &eventCopy:
-		return nil
 	case <-s.auditDone:
 		// Writer has stopped (server shutdown), fall back to a synchronous write
 		return s.insertAuditEventDB(event)
 	}
+
+	// The writer may have stopped between the check above and the send, which
+	// would leave the event stranded in the queue; drain the queue here if so
+	select {
+	case <-s.auditDone:
+		s.writeAllQueuedAuditEvents(nil)
+	default:
+	}
+	return nil
 }
 
 func (s *Server) insertAuditEventDB(event *types.AuditEvent) error {
@@ -172,6 +178,8 @@ func (s *Server) stopAuditWriter() {
 	}
 	close(s.auditStop)
 	<-s.auditDone
+	// Drain events enqueued by writers that raced with the shutdown
+	s.writeAllQueuedAuditEvents(nil)
 }
 
 func (s *Server) auditWriterLoop() {
@@ -250,47 +258,56 @@ func (s *Server) writeAuditBatch(batch []*types.AuditEvent) {
 		return tx.Commit()
 	}()
 	if err != nil {
-		s.Error().Err(err).Int("events", len(batch)).Msg("error inserting audit event batch")
+		s.Error().Err(err).Int("events", len(batch)).Msg("error inserting audit event batch, retrying individually")
+		// Retry events one at a time so one bad event does not drop the batch
+		for _, event := range batch {
+			if err := s.insertAuditEventDB(event); err != nil {
+				s.Error().Err(err).Msg("error inserting audit event")
+			}
+		}
 	}
 }
 
 func (s *Server) cleanupEvents() error {
-	httpCleanupTime := time.Now().Add(-time.Duration(s.config.System.HttpEventRetentionDays) * 24 * time.Hour).UnixNano()
-	nonHttpCleanupTime := time.Now().Add(-time.Duration(s.config.System.NonHttpEventRetentionDays) * 24 * time.Hour).UnixNano()
+	// A retention setting of zero or less disables cleanup for that event class
+	var httpDeleted, nonHttpDeleted int64
+	if days := s.config.System.HttpEventRetentionDays; days > 0 {
+		cleanupTime := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
+		result, err := s.auditDB.Exec(system.RebindQuery(s.auditDbType, `delete from audit where event_type = 'http' and create_time < ?`), cleanupTime)
+		if err != nil {
+			return err
+		}
+		if httpDeleted, err = result.RowsAffected(); err != nil {
+			return err
+		}
+	}
 
-	httpResult, err := s.auditDB.Exec(system.RebindQuery(s.auditDbType, `delete from audit where event_type = 'http' and create_time < ?`), httpCleanupTime)
-	if err != nil {
-		return err
-	}
-	nonHttpResult, err := s.auditDB.Exec(system.RebindQuery(s.auditDbType, `delete from audit where event_type != 'http' and create_time < ?`), nonHttpCleanupTime)
-	if err != nil {
-		return err
+	if days := s.config.System.NonHttpEventRetentionDays; days > 0 {
+		cleanupTime := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
+		result, err := s.auditDB.Exec(system.RebindQuery(s.auditDbType, `delete from audit where event_type != 'http' and create_time < ?`), cleanupTime)
+		if err != nil {
+			return err
+		}
+		if nonHttpDeleted, err = result.RowsAffected(); err != nil {
+			return err
+		}
 	}
 
-	httpDeleted, err1 := httpResult.RowsAffected()
-	nonHttpDeleted, err2 := nonHttpResult.RowsAffected()
-	if cmp.Or(err1, err2) != nil {
-		return cmp.Or(err1, err2)
-	}
 	s.Info().Msgf("audit cleanup: http deleted %d, non-http deleted %d", httpDeleted, nonHttpDeleted)
 	return nil
 }
 
 func (s *Server) auditCleanupLoop(cleanupTicker *time.Ticker) {
-	err := s.cleanupEvents()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error cleaning up audit entries %s", err)
-		return
+	// Errors are logged and cleanup is retried on the next tick
+	if err := s.cleanupEvents(); err != nil {
+		s.Error().Err(err).Msg("error cleaning up audit entries")
 	}
 
 	for range cleanupTicker.C {
-		err := s.cleanupEvents()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error cleaning up audit entries %s", err)
-			break
+		if err := s.cleanupEvents(); err != nil {
+			s.Error().Err(err).Msg("error cleaning up audit entries")
 		}
 	}
-	fmt.Fprintf(os.Stderr, "background audit cleanup stopped")
 }
 
 type ContextShared struct {
@@ -322,71 +339,128 @@ func updateOperationInContext(r *http.Request, operation string) {
 
 var requestCounter uint64
 
-func (server *Server) handleStatus(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Add a request id to the context
-		rid := ridPrefix + strconv.FormatUint(atomic.AddUint64(&requestCounter, 1), 10)
-		contextShared := ContextShared{
-			UserId: types.ADMIN_USER,
-		}
-
-		ctx := r.Context()
-		ctx = context.WithValue(ctx, types.REQUEST_ID, rid)
-		ctx = context.WithValue(ctx, types.USER_ID, types.ADMIN_USER)
-		ctx = context.WithValue(ctx, types.SHARED, &contextShared)
-		r = r.WithContext(ctx)
-
-		// Wrap the ResponseWriter
-		wrapper := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
-
-		startTime := time.Now()
-		// Call the next handler
-		next.ServeHTTP(wrapper, r)
-		duration := time.Since(startTime)
-
-		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
-			// Don't create audit events for get requests
-			return
-		}
-
-		redactUrl := false
-		if contextShared.AppId != "" {
-			appInfo, ok := server.apps.GetAppInfo(types.AppId(contextShared.AppId))
-			if !ok {
-				return
+// handleStatus returns a middleware which adds the request id and user id to the
+// context and inserts an http audit event for non-GET requests. defaultUser is the
+// user recorded when the request does not authenticate a user: the admin user for
+// UDS (where the unix file permissions provide auth), empty for TCP.
+func (server *Server) handleStatus(defaultUser string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Add a request id to the context
+			rid := ridPrefix + strconv.FormatUint(atomic.AddUint64(&requestCounter, 1), 10)
+			contextShared := ContextShared{
+				UserId: defaultUser,
 			}
-			app, err := server.apps.GetApp(appInfo.AppPathDomain)
-			if err != nil {
+
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, types.REQUEST_ID, rid)
+			ctx = context.WithValue(ctx, types.USER_ID, defaultUser)
+			ctx = context.WithValue(ctx, types.SHARED, &contextShared)
+			r = r.WithContext(ctx)
+
+			// Wrap the ResponseWriter
+			wrapper := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+			startTime := time.Now()
+			// Call the next handler
+			next.ServeHTTP(wrapper, r)
+			duration := time.Since(startTime)
+
+			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+				// Don't create audit events for get requests
 				return
 			}
 
-			if app.AppConfig.Audit.SkipHttpEvents {
-				// http event auditing is disabled for this app
-				return
+			redactUrl := false
+			if contextShared.AppId != "" {
+				// Use the app audit config if available; if the app lookup fails
+				// (app deleted or failed to load), still log the event with defaults
+				if appInfo, ok := server.apps.GetAppInfo(types.AppId(contextShared.AppId)); ok {
+					if app, err := server.apps.GetApp(appInfo.AppPathDomain); err == nil {
+						if app.AppConfig.Audit.SkipHttpEvents {
+							// http event auditing is disabled for this app
+							return
+						}
+						redactUrl = app.AppConfig.Audit.RedactUrl
+					}
+				}
 			}
-			redactUrl = app.AppConfig.Audit.RedactUrl
-		}
 
-		path := r.URL.Path
-		if redactUrl {
-			path = "<REDACTED>"
-		}
-		statusCode := wrapper.Status()
+			path := r.URL.Path
+			if redactUrl {
+				path = "<REDACTED>"
+			}
+			statusCode := wrapper.Status()
 
-		event := types.AuditEvent{
-			RequestId:  rid,
-			CreateTime: time.Now(),
-			UserId:     contextShared.UserId,
-			AppId:      types.AppId(contextShared.AppId),
-			EventType:  types.EventTypeHTTP,
-			Operation:  r.Method,
-			Target:     r.Host + ":" + path,
-			Status:     fmt.Sprintf("%d", statusCode),
-			Detail:     fmt.Sprintf("%s %s %s %d %d", r.Method, r.Host, path, statusCode, duration.Milliseconds()),
-		}
+			event := types.AuditEvent{
+				RequestId:  rid,
+				CreateTime: time.Now(),
+				UserId:     contextShared.UserId,
+				AppId:      types.AppId(contextShared.AppId),
+				EventType:  types.EventTypeHTTP,
+				Operation:  r.Method,
+				Target:     r.Host + ":" + path,
+				Status:     fmt.Sprintf("%d", statusCode),
+				Detail:     fmt.Sprintf("%s %s %s %d %d", r.Method, r.Host, path, statusCode, duration.Milliseconds()),
+			}
 
-		if err := server.InsertAuditEvent(&event); err != nil {
-			server.Error().Err(err).Msg("error inserting audit event")
+			if err := server.InsertAuditEvent(&event); err != nil {
+				server.Error().Err(err).Msg("error inserting audit event")
+			}
+		})
+	}
+}
+
+// AUTH_FAILURE_EVENT_INTERVAL is the minimum interval between audit events for
+// the same failed-auth operation/target/user combination
+const AUTH_FAILURE_EVENT_INTERVAL = time.Minute
+
+// insertAuthFailureEvent inserts an audit event for a request which failed
+// authentication. Repeated failures are deduped: max one event per
+// AUTH_FAILURE_EVENT_INTERVAL for each unique operation/target/user combination,
+// so that repeated attempts cannot flood the audit DB.
+func (s *Server) insertAuthFailureEvent(r *http.Request, operation, detail string) {
+	if s.auditDB == nil {
+		// Audit DB is not initialized (Server built directly in tests)
+		return
+	}
+	target := r.Host + ":" + r.URL.Path
+	userId := system.GetContextUserId(r.Context())
+	now := time.Now()
+
+	key := operation + "|" + target + "|" + userId
+	s.authFailureMu.Lock()
+	last, seen := s.authFailureTimes[key]
+	if seen && now.Sub(last) < AUTH_FAILURE_EVENT_INTERVAL {
+		s.authFailureMu.Unlock()
+		return
+	}
+	if s.authFailureTimes == nil {
+		s.authFailureTimes = map[string]time.Time{}
+	}
+	if len(s.authFailureTimes) > 1000 {
+		// Bound the dedup map size by dropping expired entries
+		for k, t := range s.authFailureTimes {
+			if now.Sub(t) >= AUTH_FAILURE_EVENT_INTERVAL {
+				delete(s.authFailureTimes, k)
+			}
 		}
-	})
+	}
+	s.authFailureTimes[key] = now
+	s.authFailureMu.Unlock()
+
+	event := types.AuditEvent{
+		RequestId:  system.GetContextRequestId(r.Context()),
+		CreateTime: now,
+		UserId:     userId,
+		AppId:      system.GetContextAppId(r.Context()),
+		EventType:  types.EventTypeSystem,
+		Operation:  operation,
+		Target:     target,
+		Status:     string(types.EventStatusFailure),
+		Detail:     fmt.Sprintf("%s (remote %s)", detail, r.RemoteAddr),
+	}
+	if err := s.InsertAuditEvent(&event); err != nil {
+		s.Error().Err(err).Msg("error inserting auth failure audit event")
+	}
 }
