@@ -103,7 +103,7 @@ OpenRun service and Kaniko jobs run in the main namespace (default `openrun`). A
 
 OpenRun is installed as a Kubernetes Deployment, with a Service for routing API calls. For each containerized app installed on OpenRun, a ClusterIP Service is created for app traffic. API calls to the OpenRun API Server are routed to the app-specific Service using its cluster IP.
 
-All Kubernetes resources are created lazily, on the first API call to the app. If an app is running version 1, and a code/config change updates it to version 2, the deployment update happens on the next API call to the app. That API call is blocked while the container image is rebuilt if required and the Kubernetes resources are updated using Server Side Apply API calls.
+All Kubernetes resources are created lazily, on the first API call to the app (or when create/reload is done with the verify option). If an app is running version 1, and a code/config change updates it to version 2, the deployment update happens on the next API call to the app. That API call is blocked while the container image is rebuilt if required and the Kubernetes resources are updated using Server Side Apply API calls.
 
 OpenRun waits until Kubernetes reports the expected new version rollout is complete before processing further API calls. It watches Deployment rollout status so readiness and Kubernetes-declared rollout failures are detected without waiting for the next polling interval, while still honoring the `container.deploy_health_attempts` deployment wait budget.
 
