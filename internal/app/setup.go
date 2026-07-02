@@ -48,7 +48,7 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) }, // TODO use logger
 		Load:  a.loader,
 	}
-	thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.AppPathDomain(), a.serverConfig))
+	thread.SetLocal(types.TL_APP_URL, a.appUrl)
 
 	builtin, err := a.createBuiltin()
 	if err != nil {
@@ -818,6 +818,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(urlParsed)
+	proxy.BufferPool = proxyBufPool
 
 	customTransport := http.DefaultTransport.(*http.Transport).Clone()
 	maxIdleConnCount := a.AppConfig.Proxy.MaxIdleConns

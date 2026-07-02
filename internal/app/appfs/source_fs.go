@@ -351,11 +351,12 @@ var unixEpochTime = time.Unix(0, 0)
 // the need to decompress and then recompress. If the client accepts brotli compressed data and there are no
 // range headers, then this optimization can be used.
 func (h *fsHandler) serveCompressed(w http.ResponseWriter, r *http.Request, filename string, modtime time.Time, content io.ReadSeeker) (bool, error) {
-	if !h.canServeCompressed(r) {
-		return false, nil
-	}
 	compressedReader, ok := content.(CompressedReader)
 	if !ok {
+		// Disk backed files are not stored compressed, skip the header checks
+		return false, nil
+	}
+	if !h.canServeCompressed(r) {
 		return false, nil
 	}
 

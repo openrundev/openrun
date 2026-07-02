@@ -102,6 +102,10 @@ type App struct {
 	telemetryAttrs         []attribute.KeyValue
 	telemetryIdentityAttrs []attribute.KeyValue
 
+	// appUrl caches the app url (constant per app) so the request hot path
+	// does not format it on every call.
+	appUrl string
+
 	activeContainerName container.ContainerName
 	bindings            []*types.Binding
 }
@@ -135,6 +139,7 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 		serverConfig:   serverConfig,
 		rbacApi:        rbacApi,
 		bindings:       bindings,
+		appUrl:         types.GetAppUrl(appEntry.AppPathDomain(), serverConfig),
 	}
 	newApp.plugins = NewAppPlugins(newApp, plugins, appEntry.Metadata.Accounts)
 	newApp.AppConfig = appConfig

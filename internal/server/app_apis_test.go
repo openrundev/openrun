@@ -651,10 +651,12 @@ func TestMatchAppRejectsUnknownHostWhenFallbackDisabled(t *testing.T) {
 	t.Parallel()
 
 	server := newAuthRedirectTestServer("example.com", false)
+	apps := []types.AppInfo{{AppPathDomain: types.AppPathDomain{Path: "/myapp"}}}
 	server.apps = &AppStore{
-		Logger:  server.Logger,
-		server:  server,
-		allApps: []types.AppInfo{{AppPathDomain: types.AppPathDomain{Path: "/myapp"}}},
+		Logger:     server.Logger,
+		server:     server,
+		allApps:    apps,
+		domainApps: buildDomainApps(apps, "example.com"),
 		allDomains: map[string]bool{
 			"example.com": true,
 		},
@@ -669,14 +671,16 @@ func TestMatchAppRootDoesNotShadowInternalApps(t *testing.T) {
 	t.Parallel()
 
 	server := newAuthRedirectTestServer("example.com", false)
+	apps := []types.AppInfo{
+		{AppPathDomain: types.AppPathDomain{Path: "/"}},
+		{AppPathDomain: types.AppPathDomain{Path: "/" + types.STAGE_SUFFIX}},
+		{AppPathDomain: types.AppPathDomain{Path: "/" + types.PREVIEW_SUFFIX + "_abc123"}},
+	}
 	server.apps = &AppStore{
-		Logger: server.Logger,
-		server: server,
-		allApps: []types.AppInfo{
-			{AppPathDomain: types.AppPathDomain{Path: "/"}},
-			{AppPathDomain: types.AppPathDomain{Path: "/" + types.STAGE_SUFFIX}},
-			{AppPathDomain: types.AppPathDomain{Path: "/" + types.PREVIEW_SUFFIX + "_abc123"}},
-		},
+		Logger:     server.Logger,
+		server:     server,
+		allApps:    apps,
+		domainApps: buildDomainApps(apps, "example.com"),
 		allDomains: map[string]bool{
 			"example.com": true,
 		},
@@ -919,10 +923,12 @@ func TestMatchAppFallsBackToDefaultDomainWhenEnabled(t *testing.T) {
 	t.Parallel()
 
 	server := newAuthRedirectTestServer("example.com", true)
+	apps := []types.AppInfo{{AppPathDomain: types.AppPathDomain{Path: "/myapp"}}}
 	server.apps = &AppStore{
-		Logger:  server.Logger,
-		server:  server,
-		allApps: []types.AppInfo{{AppPathDomain: types.AppPathDomain{Path: "/myapp"}}},
+		Logger:     server.Logger,
+		server:     server,
+		allApps:    apps,
+		domainApps: buildDomainApps(apps, "example.com"),
 		allDomains: map[string]bool{
 			"example.com": true,
 		},

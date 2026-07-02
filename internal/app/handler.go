@@ -157,7 +157,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			thread.SetLocal(types.TL_CONTAINER_HANDLER, a.containerHandler)
 			thread.SetLocal(types.TL_CONTAINER_URL, a.containerHandler.GetProxyUrl())
 		}
-		thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.AppPathDomain(), a.serverConfig))
+		thread.SetLocal(types.TL_APP_URL, a.appUrl)
 
 		header := r.Header
 		requestHeaders := header.Clone()

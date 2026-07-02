@@ -935,8 +935,10 @@ func (s *Server) verifyClientCerts(r *http.Request, authName string) error {
 }
 
 func (s *Server) MatchApp(hostHeader, matchPath string) (types.AppInfo, error) {
-	s.Trace().Msgf("MatchApp %s %s", hostHeader, matchPath)
-	apps, domainMap, err := s.apps.GetAppsFullInfo()
+	// Str fields instead of Msgf: format args are boxed at the call site even
+	// when the level is disabled, and this runs for every app request
+	s.Trace().Str("host", hostHeader).Str("path", matchPath).Msg("MatchApp")
+	domainApps, domainMap, err := s.apps.GetAppsFullInfo()
 	if err != nil {
 		return types.AppInfo{}, err
 	}
@@ -950,19 +952,17 @@ func (s *Server) MatchApp(hostHeader, matchPath string) (types.AppInfo, error) {
 		hostHeader = s.config.System.DefaultDomain
 	}
 
-	for _, appInfo := range apps {
-		appDomain := cmp.Or(appInfo.Domain, s.config.System.DefaultDomain)
-		if hostHeader != appDomain {
-			// Host header does not match
-			continue
-		}
-
+	// Apps are indexed by effective domain, only the request domain's apps
+	// are scanned (in the same newest-first order as the full app list)
+	for _, appInfo := range domainApps[hostHeader] {
 		if strings.HasPrefix(matchPath, appInfo.Path) {
 			if len(appInfo.Path) == 1 || len(appInfo.Path) == len(matchPath) || matchPath[len(appInfo.Path)] == '/' {
 				if appInfo.Path == "/" && isInternalAppPath(matchPath) {
 					continue
 				}
-				s.Debug().Msgf("Matched app %s for path %s", appInfo, matchPath)
+				if s.Debug().Enabled() {
+					s.Debug().Msgf("Matched app %s for path %s", appInfo, matchPath)
+				}
 				return appInfo, nil
 			}
 		}

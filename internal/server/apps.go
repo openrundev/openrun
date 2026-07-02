@@ -4,6 +4,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"sync"
@@ -23,6 +24,10 @@ type AppStore struct {
 	allApps    []types.AppInfo
 	idToInfo   map[types.AppId]types.AppInfo
 	allDomains map[string]bool
+	// domainApps indexes allApps by effective domain (app domain or the
+	// default domain) so request matching scans only the apps installed on
+	// the request's domain. Entries preserve allApps order (newest first).
+	domainApps map[string][]types.AppInfo
 
 	mu     sync.RWMutex
 	appMap map[types.AppPathDomain]*app.App
@@ -42,11 +47,13 @@ func NewAppStore(logger *types.Logger, server *Server) *AppStore {
 	}
 }
 
-func (a *AppStore) GetAppsFullInfo() ([]types.AppInfo, map[string]bool, error) {
+// GetAppsFullInfo returns the apps indexed by effective domain and the set of
+// all configured domains, for request matching.
+func (a *AppStore) GetAppsFullInfo() (map[string][]types.AppInfo, map[string]bool, error) {
 	a.mu.RLock()
 	if a.allApps != nil {
 		a.mu.RUnlock()
-		return a.allApps, a.allDomains, nil
+		return a.domainApps, a.allDomains, nil
 	}
 	a.mu.RUnlock()
 
@@ -58,7 +65,7 @@ func (a *AppStore) GetAppsFullInfo() ([]types.AppInfo, map[string]bool, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return a.allApps, a.allDomains, nil
+	return a.domainApps, a.allDomains, nil
 }
 
 func (a *AppStore) GetAllAppsInfo() ([]types.AppInfo, error) {
@@ -139,7 +146,18 @@ func (a *AppStore) reloadAppInfo() error {
 			a.allDomains[appInfo.Domain] = true
 		}
 	}
+	a.domainApps = buildDomainApps(a.allApps, a.server.config.System.DefaultDomain)
 	return nil
+}
+
+// buildDomainApps indexes apps by their effective domain, preserving input order.
+func buildDomainApps(apps []types.AppInfo, defaultDomain string) map[string][]types.AppInfo {
+	domainApps := make(map[string][]types.AppInfo)
+	for _, appInfo := range apps {
+		domain := cmp.Or(appInfo.Domain, defaultDomain)
+		domainApps[domain] = append(domainApps[domain], appInfo)
+	}
+	return domainApps
 }
 
 func (a *AppStore) ResetAllAppCache() {
@@ -152,6 +170,7 @@ func (a *AppStore) resetAllAppCache() {
 	a.allApps = nil
 	a.allDomains = nil
 	a.idToInfo = nil
+	a.domainApps = nil
 }
 
 func (a *AppStore) GetApp(pathDomain types.AppPathDomain) (*app.App, error) {

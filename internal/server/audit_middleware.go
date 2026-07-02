@@ -40,6 +40,12 @@ func (s *Server) initAuditDB(connectString string) error {
 		return err
 	}
 
+	s.auditEvents = make(chan *types.AuditEvent, AUDIT_QUEUE_SIZE)
+	s.auditFlush = make(chan chan struct{})
+	s.auditStop = make(chan struct{})
+	s.auditDone = make(chan struct{})
+	go s.auditWriterLoop()
+
 	cleanupTicker := time.NewTicker(1 * time.Hour)
 	go s.auditCleanupLoop(cleanupTicker)
 	return nil
@@ -99,11 +105,153 @@ func (s *Server) versionUpgradeAuditDB() error {
 	return nil
 }
 
+const (
+	// AUDIT_QUEUE_SIZE is the audit event queue length; when full, enqueue
+	// blocks and applies backpressure to the request path
+	AUDIT_QUEUE_SIZE = 1000
+	// AUDIT_MAX_BATCH_SIZE caps how many events are written per transaction
+	AUDIT_MAX_BATCH_SIZE = 200
+)
+
+// InsertAuditEvent queues the event for the background audit writer. The write
+// happens asynchronously (batched into one transaction per burst) so the
+// request path does not block on a database write per event. A copy of the
+// event is queued, callers can reuse the struct. Call FlushAuditEvents before
+// reading the audit table to see previously queued events.
 func (s *Server) InsertAuditEvent(event *types.AuditEvent) error {
+	if s.auditEvents == nil {
+		// Audit writer is not running (Server built directly in tests), write synchronously
+		return s.insertAuditEventDB(event)
+	}
+
+	select {
+	case <-s.auditDone:
+		// Writer has stopped (server shutdown), fall back to a synchronous write
+		return s.insertAuditEventDB(event)
+	default:
+	}
+
+	eventCopy := *event
+	select {
+	case s.auditEvents <- &eventCopy:
+		return nil
+	case <-s.auditDone:
+		// Writer has stopped (server shutdown), fall back to a synchronous write
+		return s.insertAuditEventDB(event)
+	}
+}
+
+func (s *Server) insertAuditEventDB(event *types.AuditEvent) error {
 	_, err := s.auditDB.Exec(system.RebindQuery(s.auditDbType, `insert into audit (rid, app_id, create_time, user_id, event_type, operation, target, status, detail) `+
 		`values (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		event.RequestId, event.AppId, event.CreateTime.UnixNano(), event.UserId, event.EventType, event.Operation, event.Target, event.Status, event.Detail)
 	return err
+}
+
+// FlushAuditEvents blocks until all audit events queued before the call have
+// been written to the audit DB. Used before audit queries (read-after-write
+// consistency) and during shutdown.
+func (s *Server) FlushAuditEvents() {
+	if s.auditFlush == nil {
+		return
+	}
+	ack := make(chan struct{})
+	select {
+	case s.auditFlush <- ack:
+		<-ack
+	case <-s.auditDone:
+		// Writer stopped; the stop path drains the queue before exiting
+	}
+}
+
+// stopAuditWriter stops the background audit writer after draining any queued
+// events. Later InsertAuditEvent calls fall back to synchronous writes.
+func (s *Server) stopAuditWriter() {
+	if s.auditStop == nil {
+		return
+	}
+	close(s.auditStop)
+	<-s.auditDone
+}
+
+func (s *Server) auditWriterLoop() {
+	defer close(s.auditDone)
+	batch := make([]*types.AuditEvent, 0, AUDIT_MAX_BATCH_SIZE)
+	for {
+		select {
+		case event := <-s.auditEvents:
+			batch = s.drainAuditEvents(append(batch[:0], event))
+			s.writeAuditBatch(batch)
+		case ack := <-s.auditFlush:
+			s.writeAllQueuedAuditEvents(batch)
+			close(ack)
+		case <-s.auditStop:
+			s.writeAllQueuedAuditEvents(batch)
+			return
+		}
+	}
+}
+
+// writeAllQueuedAuditEvents writes everything currently queued, in batches of
+// up to AUDIT_MAX_BATCH_SIZE (a single drain pass is capped at the batch size)
+func (s *Server) writeAllQueuedAuditEvents(batch []*types.AuditEvent) {
+	for {
+		batch = s.drainAuditEvents(batch[:0])
+		if len(batch) == 0 {
+			return
+		}
+		s.writeAuditBatch(batch)
+	}
+}
+
+func (s *Server) drainAuditEvents(batch []*types.AuditEvent) []*types.AuditEvent {
+	for len(batch) < AUDIT_MAX_BATCH_SIZE {
+		select {
+		case event := <-s.auditEvents:
+			batch = append(batch, event)
+		default:
+			return batch
+		}
+	}
+	return batch
+}
+
+func (s *Server) writeAuditBatch(batch []*types.AuditEvent) {
+	if len(batch) == 0 {
+		return
+	}
+	if len(batch) == 1 {
+		if err := s.insertAuditEventDB(batch[0]); err != nil {
+			s.Error().Err(err).Msg("error inserting audit event")
+		}
+		return
+	}
+
+	err := func() error {
+		tx, err := s.auditDB.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback() //nolint:errcheck
+
+		stmt, err := tx.Prepare(system.RebindQuery(s.auditDbType, `insert into audit (rid, app_id, create_time, user_id, event_type, operation, target, status, detail) `+
+			`values (?, ?, ?, ?, ?, ?, ?, ?, ?)`))
+		if err != nil {
+			return err
+		}
+		defer stmt.Close() //nolint:errcheck
+
+		for _, event := range batch {
+			if _, err := stmt.Exec(event.RequestId, event.AppId, event.CreateTime.UnixNano(), event.UserId,
+				event.EventType, event.Operation, event.Target, event.Status, event.Detail); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	}()
+	if err != nil {
+		s.Error().Err(err).Int("events", len(batch)).Msg("error inserting audit event batch")
+	}
 }
 
 func (s *Server) cleanupEvents() error {

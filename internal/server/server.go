@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/metadata"
@@ -35,6 +34,7 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
+	"github.com/rs/zerolog"
 	"github.com/segmentio/ksuid"
 	"golang.org/x/crypto/bcrypt"
 
@@ -146,6 +146,11 @@ type Server struct {
 	mu             sync.RWMutex
 	auditDB        *sql.DB
 	auditDbType    system.DBType
+	auditEvents    chan *types.AuditEvent
+	auditFlush     chan chan struct{}
+	auditStop      chan struct{}
+	auditDone      chan struct{}
+	accessLogger   *zerolog.Logger
 	syncTimer      *time.Ticker
 	configMu       sync.RWMutex
 	dynamicConfig  *types.DynamicConfig
@@ -262,16 +267,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("error initializing audit db: %w", err)
 	}
 
-	if config.Log.AccessLogging {
-		accessLogger := types.RollingFileLogger(&config.Log, "access.log")
-		customLogger := log.New(accessLogger, "", log.LstdFlags)
-		middleware.DefaultLogger = middleware.RequestLogger(
-			&middleware.DefaultLogFormatter{Logger: customLogger, NoColor: true})
-	} else {
-		middleware.DefaultLogger = func(next http.Handler) http.Handler {
-			return next // no-op, logging is disabled
-		}
-	}
+	server.initAccessLogger(config)
 
 	if config.System.ContainerCommand == "auto" {
 		config.System.ContainerCommand = container.LookupContainerCommand(true)
@@ -881,6 +877,9 @@ func (s *Server) Stop(ctx context.Context) error {
 		if s.udsServer != nil {
 			err3 = s.udsServer.Shutdown(ctx)
 		}
+		// Stop the audit writer after the HTTP servers have drained so queued
+		// audit events from in-flight requests are written out
+		s.stopAuditWriter()
 		err4 := s.telemetry.Shutdown(ctx)
 
 		s.stopErr = cmp.Or(err1, err2, err3, err4)

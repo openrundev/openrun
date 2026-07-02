@@ -13,9 +13,11 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
+var openrunHeaderPrefixLower = strings.ToLower(types.OPENRUN_HEADER_PREFIX)
+
 func deleteOpenRunHeaders(header http.Header) {
 	for key := range header {
-		if strings.HasPrefix(strings.ToLower(key), strings.ToLower(types.OPENRUN_HEADER_PREFIX)) {
+		if strings.HasPrefix(strings.ToLower(key), openrunHeaderPrefixLower) {
 			header.Del(key)
 		}
 	}

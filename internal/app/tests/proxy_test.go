@@ -4,12 +4,15 @@
 package app_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/testutil"
@@ -1125,4 +1128,88 @@ permissions=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "body", "test contents", response.Body.String())
 	testutil.AssertEqualsString(t, "forwarded host", "2001:db8::1", forwardedHost)
+}
+
+// TestProxyWebsocketUpgrade exercises the proxy upgrade path: the response is
+// hijacked and the tunneled connection (countingConn) must carry bytes in both
+// directions and shut down cleanly.
+func TestProxyWebsocketUpgrade(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Upgrade") != "websocket" {
+			http.Error(w, "expected upgrade", http.StatusBadRequest)
+			return
+		}
+		conn, bufrw, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("backend hijack: %v", err)
+			return
+		}
+		defer conn.Close()
+		bufrw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n") //nolint:errcheck
+		bufrw.Flush()                                                                                              //nolint:errcheck
+		line, err := bufrw.ReadString('\n')
+		if err != nil {
+			t.Errorf("backend read: %v", err)
+			return
+		}
+		bufrw.WriteString("echo:" + line) //nolint:errcheck
+		bufrw.Flush()                     //nolint:errcheck
+	}))
+	defer backend.Close()
+
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": fmt.Sprintf(`
+load("proxy.in", "proxy")
+
+app = ace.app("testApp", routes = [ace.proxy("/", proxy.config("%s"))],
+permissions=[
+	ace.permission("proxy.in", "config"),
+]
+)`, backend.URL),
+	}
+
+	a, _, err := CreateTestAppPlugin(logger, fileData, []string{"proxy.in"},
+		[]types.Permission{
+			{Plugin: "proxy.in", Method: "config"},
+		}, map[string]types.PluginSettings{})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	appServer := httptest.NewServer(a)
+	defer appServer.Close()
+
+	conn, err := net.Dial("tcp", appServer.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	fmt.Fprintf(conn, "GET /test/ws HTTP/1.1\r\nHost: localhost:25222\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n") //nolint:errcheck
+	reader := bufio.NewReader(conn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	if !strings.Contains(statusLine, "101") {
+		t.Fatalf("expected 101 response, got %q", statusLine)
+	}
+	// Skip response headers
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read headers: %v", err)
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+
+	fmt.Fprintf(conn, "hello\n") //nolint:errcheck
+	echoed, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+	testutil.AssertEqualsString(t, "echo", "echo:hello\n", echoed)
 }

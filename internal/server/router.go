@@ -104,7 +104,7 @@ func NewUDSHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 		router: router,
 	}
 	router.Use(handler.panicRecovery)
-	router.Use(middleware.Logger)
+	router.Use(server.accessLogMiddleware)
 	router.Use(middleware.CleanPath)
 
 	router.Mount(types.INTERNAL_URL_PREFIX, handler.serveInternal(false))
@@ -131,7 +131,7 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	}
 	router.Use(server.handleStatus)
 	router.Use(handler.panicRecovery)
-	router.Use(middleware.Logger)
+	router.Use(server.accessLogMiddleware)
 	router.Use(middleware.CleanPath)
 
 	if config.System.EnableCompression {

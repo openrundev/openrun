@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/openrundev/openrun/internal/telemetry"
@@ -73,16 +74,50 @@ func (bw *ByteWindow) Totals() (sent, recv uint64) {
 	return
 }
 
+// dirCounter accumulates byte counts for one transfer direction and flushes
+// them to the ByteWindow when the wall-clock second changes (and on stream
+// end). This bounds the ByteWindow mutex and telemetry record cost to about
+// once per second per direction instead of once per 32KB copied chunk, while
+// keeping the per-second window buckets (used for idle detection) accurate.
+type dirCounter struct {
+	bw      *ByteWindow
+	sent    bool // true counts proxy->client bytes, false counts client->proxy
+	pending atomic.Uint64
+	lastSec atomic.Int64
+}
+
+func (c *dirCounter) count(ctx context.Context, n int) {
+	c.pending.Add(uint64(n))
+	now := time.Now()
+	sec := now.Unix()
+	last := c.lastSec.Load()
+	if sec != last && c.lastSec.CompareAndSwap(last, sec) {
+		c.flush(ctx, now)
+	}
+}
+
+func (c *dirCounter) flush(ctx context.Context, now time.Time) {
+	n := c.pending.Swap(0)
+	if n == 0 {
+		return
+	}
+	if c.sent {
+		c.bw.add(ctx, now, n, 0)
+	} else {
+		c.bw.add(ctx, now, 0, n)
+	}
+}
+
 type countingReadCloser struct {
 	rc  io.ReadCloser
-	bw  *ByteWindow
+	c   *dirCounter
 	ctx context.Context
 }
 
 func (c *countingReadCloser) Read(p []byte) (int, error) {
 	n, err := c.rc.Read(p)
 	if n > 0 {
-		c.bw.add(c.ctx, time.Now(), 0, uint64(n))
+		c.c.count(c.ctx, n)
 	}
 	return n, err
 }
@@ -90,14 +125,14 @@ func (c *countingReadCloser) Close() error { return c.rc.Close() }
 
 type countingResponseWriter struct {
 	http.ResponseWriter
-	bw  *ByteWindow
+	c   *dirCounter
 	ctx context.Context
 }
 
 func (w *countingResponseWriter) Write(p []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(p)
 	if n > 0 {
-		w.bw.add(w.ctx, time.Now(), uint64(n), 0)
+		w.c.count(w.ctx, n)
 	}
 	return n, err
 }
@@ -124,28 +159,65 @@ func (w *countingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return &countingConn{Conn: c, bw: w.bw, ctx: w.ctx}, rw, nil
+	return &countingConn{
+		Conn: c,
+		ctx:  w.ctx,
+		recv: &dirCounter{bw: w.c.bw},
+		sent: &dirCounter{bw: w.c.bw, sent: true},
+	}, rw, nil
 }
 
 type countingConn struct {
 	net.Conn
-	bw  *ByteWindow
-	ctx context.Context
+	ctx  context.Context
+	recv *dirCounter // client -> proxy
+	sent *dirCounter // proxy -> client
 }
 
 func (c *countingConn) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
 	if n > 0 {
-		c.bw.add(c.ctx, time.Now(), 0, uint64(n)) // client -> proxy
+		c.recv.count(c.ctx, n)
 	}
 	return n, err
 }
 func (c *countingConn) Write(b []byte) (int, error) {
 	n, err := c.Conn.Write(b)
 	if n > 0 {
-		c.bw.add(c.ctx, time.Now(), uint64(n), 0) // proxy -> client
+		c.sent.count(c.ctx, n)
 	}
 	return n, err
+}
+
+func (c *countingConn) Close() error {
+	err := c.Conn.Close()
+	now := time.Now()
+	c.recv.flush(c.ctx, now)
+	c.sent.flush(c.ctx, now)
+	return err
+}
+
+// proxyBufPool provides the copy buffers for all reverse proxies. Without it
+// httputil.ReverseProxy allocates a fresh 32KB buffer per proxied response.
+var proxyBufPool httputil.BufferPool = &proxyBufferPool{
+	pool: sync.Pool{
+		New: func() any {
+			buf := make([]byte, 32*1024)
+			return &buf
+		},
+	},
+}
+
+type proxyBufferPool struct {
+	pool sync.Pool
+}
+
+func (p *proxyBufferPool) Get() []byte {
+	return *p.pool.Get().(*[]byte)
+}
+
+func (p *proxyBufferPool) Put(buf []byte) {
+	p.pool.Put(&buf)
 }
 
 // Tracker is a reverse proxy with byte count tracking
@@ -162,12 +234,24 @@ func NewTracker(proxy *httputil.ReverseProxy, windowSeconds int, attrs ...attrib
 }
 
 func (t *Tracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	// Count request bytes (body) for non-upgraded requests.
+	var recvCounter *dirCounter
 	if r.Body != nil {
-		r.Body = &countingReadCloser{rc: r.Body, bw: t.bw, ctx: r.Context()}
+		recvCounter = &dirCounter{bw: t.bw}
+		r.Body = &countingReadCloser{rc: r.Body, c: recvCounter, ctx: ctx}
 	}
-	crw := &countingResponseWriter{ResponseWriter: w, bw: t.bw, ctx: r.Context()}
+	sentCounter := &dirCounter{bw: t.bw, sent: true}
+	crw := &countingResponseWriter{ResponseWriter: w, c: sentCounter, ctx: ctx}
 	t.proxy.ServeHTTP(crw, r)
+
+	// Flush counts accumulated since the last second rollover. For upgraded
+	// (websocket) connections the countingConn flushes on close instead.
+	now := time.Now()
+	sentCounter.flush(ctx, now)
+	if recvCounter != nil {
+		recvCounter.flush(ctx, now)
+	}
 }
 
 // Accessor to read the rolling totals.

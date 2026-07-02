@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -21,6 +22,9 @@ type DiskReadFS struct {
 	*types.Logger
 	root      string
 	specFiles types.SpecFiles
+
+	rootMu   sync.Mutex
+	openRoot *os.Root // cached root dir handle, safe for concurrent use
 }
 
 var _ ReadableFS = (*DiskReadFS)(nil)
@@ -38,6 +42,24 @@ func NewDiskReadFS(logger *types.Logger, root string, specFiles types.SpecFiles)
 	}
 }
 
+// getRoot returns the cached os.Root handle for the source directory, opening
+// it on first use. Opening the root on every file operation costs an extra
+// openat/close syscall pair per request, which dominates the static file
+// serving path.
+func (d *DiskReadFS) getRoot() (*os.Root, error) {
+	d.rootMu.Lock()
+	defer d.rootMu.Unlock()
+	if d.openRoot != nil {
+		return d.openRoot, nil
+	}
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		return nil, err
+	}
+	d.openRoot = root
+	return root, nil
+}
+
 type DiskWriteFS struct {
 	*DiskReadFS
 }
@@ -48,11 +70,10 @@ func (d *DiskReadFS) Open(name string) (fs.File, error) {
 		return nil, err
 	}
 
-	root, err := os.OpenRoot(d.root)
+	root, err := d.getRoot()
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close() //nolint:errcheck
 
 	f, err := root.Open(localName)
 	if err != nil && errors.Is(err, fs.ErrNotExist) {
@@ -75,11 +96,10 @@ func (d *DiskReadFS) ReadFile(name string) ([]byte, error) {
 		return nil, err
 	}
 
-	root, err := os.OpenRoot(d.root)
+	root, err := d.getRoot()
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close() //nolint:errcheck
 
 	bytes, err := root.ReadFile(localName)
 	if err != nil && errors.Is(err, fs.ErrNotExist) {
@@ -97,11 +117,10 @@ func (d *DiskReadFS) Stat(name string) (fs.FileInfo, error) {
 		return nil, err
 	}
 
-	root, err := os.OpenRoot(d.root)
+	root, err := d.getRoot()
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close() //nolint:errcheck
 
 	fi, err := root.Stat(localName)
 	if err != nil && errors.Is(err, fs.ErrNotExist) {
@@ -124,11 +143,10 @@ func (d *DiskReadFS) StatNoSpec(name string) (fs.FileInfo, error) {
 		return nil, err
 	}
 
-	root, err := os.OpenRoot(d.root)
+	root, err := d.getRoot()
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close() //nolint:errcheck
 
 	return root.Stat(localName)
 }
@@ -140,22 +158,20 @@ func (d *DiskReadFS) Glob(pattern string) (matches []string, err error) {
 		return nil, err
 	}
 
-	root, err := os.OpenRoot(d.root)
+	root, err := d.getRoot()
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close() //nolint:errcheck
 
 	return fs.Glob(root.FS(), cleanPattern)
 }
 
 func (d *DiskReadFS) StaticFiles() []string {
-	root, err := os.OpenRoot(d.root)
+	root, err := d.getRoot()
 	if err != nil {
 		d.Logger.Err(err).Msg("error opening root for static files")
 		return nil
 	}
-	defer root.Close() //nolint:errcheck
 
 	rootFS := root.FS()
 	staticFiles, err := doublestar.Glob(rootFS, "static/**/*")
@@ -196,11 +212,10 @@ func (d *DiskWriteFS) Write(name string, bytes []byte) error {
 		return fmt.Errorf("error creating root directory %s : %s", d.root, err)
 	}
 
-	root, err := os.OpenRoot(d.root)
+	root, err := d.getRoot()
 	if err != nil {
 		return err
 	}
-	defer root.Close() //nolint:errcheck
 
 	dirName := filepath.Dir(localName)
 	if dirName != "." {
@@ -217,11 +232,10 @@ func (d *DiskWriteFS) Remove(name string) error {
 		return err
 	}
 
-	root, err := os.OpenRoot(d.root)
+	root, err := d.getRoot()
 	if err != nil {
 		return err
 	}
-	defer root.Close() //nolint:errcheck
 
 	return root.Remove(localName)
 }

@@ -332,6 +332,8 @@ func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starla
 	query.WriteString(" limit ?")
 	queryParams = append(queryParams, limitVal)
 
+	// Ensure previously queued audit events are visible to the query
+	c.server.FlushAuditEvents()
 	rows, err := c.server.auditDB.Query(system.RebindQuery(c.server.auditDbType, query.String()), queryParams...)
 	if err != nil {
 		return nil, err
@@ -393,6 +395,8 @@ func (c *openrunPlugin) ListOperations(thread *starlark.Thread, builtin *starlar
 		return nil, err
 	}
 
+	// Ensure previously queued audit events are visible to the query
+	c.server.FlushAuditEvents()
 	rows, err := c.server.auditDB.Query("select distinct operation from audit where event_type = 'custom'")
 	if err != nil {
 		return nil, err
