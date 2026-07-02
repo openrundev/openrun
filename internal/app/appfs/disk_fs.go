@@ -60,6 +60,21 @@ func (d *DiskReadFS) getRoot() (*os.Root, error) {
 	return root, nil
 }
 
+// Close releases the cached root directory handle. The FS stays usable; a
+// later file operation reopens the root. Called when the owning app or apply
+// operation is torn down, so short-lived disk sources do not leak an open
+// directory descriptor per use.
+func (d *DiskReadFS) Close() error {
+	d.rootMu.Lock()
+	defer d.rootMu.Unlock()
+	if d.openRoot == nil {
+		return nil
+	}
+	err := d.openRoot.Close()
+	d.openRoot = nil
+	return err
+}
+
 type DiskWriteFS struct {
 	*DiskReadFS
 }

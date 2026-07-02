@@ -281,6 +281,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	defer sourceFS.Close() //nolint:errcheck
 
 	applyConfig := map[types.AppPathDomain]*types.CreateAppRequest{}
 	bindingConfig := map[string]*types.CreateBindingRequest{}

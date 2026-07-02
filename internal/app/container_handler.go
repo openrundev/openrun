@@ -815,6 +815,19 @@ func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.C
 			h.hostNamePort = ""
 		}
 
+		if !running {
+			// Command managed containers run without a restart policy; once
+			// exited they never become healthy, so retrying just burns the
+			// remaining attempt budget (up to minutes for deploy waits)
+			if checker, ok := container.AsContainerExitChecker(h.manager); ok {
+				exited, status, exitErr := checker.ContainerExited(context.Background(), containerName)
+				if exitErr == nil && exited {
+					h.Error().Msgf("Health check aborted for app %s: container %s exited (%s)", h.app.Id, containerName, status)
+					return fmt.Errorf("container %s exited (%s)", containerName, status)
+				}
+			}
+		}
+
 		var proxyUrl *url.URL
 		proxyUrl, err = url.Parse(h.GetProxyUrl())
 		if err != nil || !running || proxyUrl.Host == "" {

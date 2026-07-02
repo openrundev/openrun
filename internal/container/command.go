@@ -219,6 +219,24 @@ func (c *CommandCM) GetContainerState(ctx context.Context, name ContainerName, e
 	return "127.0.0.1:" + strconv.Itoa(containers[0].Port), containers[0].State == "running", nil
 }
 
+// ContainerExited reports whether the named container is in a terminal state.
+// Containers are run without a restart policy, so an exited container never
+// recovers on its own and callers waiting on health can fail fast.
+func (c *CommandCM) ContainerExited(ctx context.Context, name ContainerName) (bool, string, error) {
+	containers, err := c.getContainers(ctx, name, true)
+	if err != nil {
+		return false, "", fmt.Errorf("error getting containers: %w", err)
+	}
+	if len(containers) == 0 {
+		return false, "", nil
+	}
+	switch containers[0].State {
+	case "exited", "dead", "stopped":
+		return true, containers[0].Status, nil
+	}
+	return false, "", nil
+}
+
 func (c *CommandCM) getContainers(ctx context.Context, name ContainerName, getAll bool) ([]Container, error) {
 	c.Debug().Msgf("Getting containers with name %s, getAll %t", name, getAll)
 	var filters []string

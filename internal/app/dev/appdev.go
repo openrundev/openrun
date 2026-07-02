@@ -205,5 +205,10 @@ func (a *AppDev) Close() error {
 	if err := a.AppStyle.StopWatcher(); err != nil {
 		a.Warn().Err(err).Msg("Error stopping watcher")
 	}
+	if a.workFS != nil {
+		if err := a.workFS.Close(); err != nil {
+			a.Warn().Err(err).Msg("Error closing work fs")
+		}
+	}
 	return nil
 }

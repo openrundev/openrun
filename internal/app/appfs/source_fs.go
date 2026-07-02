@@ -62,6 +62,15 @@ type SourceFs struct {
 
 var _ ReadableFS = (*SourceFs)(nil)
 
+// Close releases any resources held by the underlying file system, such as
+// the cached root directory handle of a DiskReadFS.
+func (f *SourceFs) Close() error {
+	if closer, ok := f.ReadableFS.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
 type WritableSourceFs struct {
 	*SourceFs
 }

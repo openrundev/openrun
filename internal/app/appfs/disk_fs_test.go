@@ -63,6 +63,42 @@ func TestDiskFSRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestDiskFSCloseReleasesCachedRoot(t *testing.T) {
+	rootDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rootDir, "file.txt"), []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	readFS := NewDiskReadFS(testutil.TestLogger(), rootDir, nil)
+
+	// Close with no cached root is a no-op
+	if err := readFS.Close(); err != nil {
+		t.Fatalf("Close on unopened FS returned error: %v", err)
+	}
+
+	if _, err := readFS.ReadFile("file.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if readFS.openRoot == nil {
+		t.Fatal("root was not cached after read")
+	}
+
+	if err := readFS.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	if readFS.openRoot != nil {
+		t.Fatal("cached root was not released by Close")
+	}
+
+	// FS stays usable, a later operation reopens the root
+	if _, err := readFS.ReadFile("file.txt"); err != nil {
+		t.Fatalf("ReadFile after Close returned error: %v", err)
+	}
+	if err := readFS.Close(); err != nil {
+		t.Fatalf("second Close returned error: %v", err)
+	}
+}
+
 func TestDiskFSGlobRejectsTraversalPattern(t *testing.T) {
 	rootDir := t.TempDir()
 	logger := testutil.TestLogger()

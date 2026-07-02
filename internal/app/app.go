@@ -213,6 +213,12 @@ func (a *App) Close() error {
 		}
 	}
 
+	if a.sourceFS != nil {
+		if err := a.sourceFS.Close(); err != nil {
+			a.Warn().Err(err).Msg("Error closing source fs")
+		}
+	}
+
 	return nil
 }
 

@@ -400,6 +400,80 @@ func TestWaitForHealthFailsOnNonOKStatus(t *testing.T) {
 	}
 }
 
+type exitCheckTestManager struct {
+	healthTestManager
+	exited     bool
+	exitChecks int
+}
+
+func (m *exitCheckTestManager) ContainerExited(context.Context, container.ContainerName) (bool, string, error) {
+	m.exitChecks++
+	return m.exited, "Exited (1) 2 seconds ago", nil
+}
+
+func TestWaitForHealthFailsFastOnExitedContainer(t *testing.T) {
+	t.Parallel()
+
+	manager := &exitCheckTestManager{exited: true}
+	h := &ContainerHandler{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app: &App{
+			AppEntry: &types.AppEntry{
+				Id:   types.AppId(types.ID_PREFIX_APP_PROD + "exited_test"),
+				Path: "/exited",
+			},
+		},
+		manager:      manager,
+		scheme:       "http",
+		health:       "health",
+		stripAppPath: true,
+		containerConfig: types.Container{
+			HealthTimeoutSecs: 1,
+		},
+	}
+
+	err := h.WaitForHealth(75, container.ContainerName("exited-test"), "")
+	if err == nil {
+		t.Fatal("WaitForHealth returned nil for exited container")
+	}
+	if !strings.Contains(err.Error(), "exited") {
+		t.Fatalf("WaitForHealth error = %q, want container exited", err.Error())
+	}
+	if manager.exitChecks != 1 {
+		t.Fatalf("exit checks = %d, want 1 (fail fast on first attempt)", manager.exitChecks)
+	}
+}
+
+func TestWaitForHealthRetriesWhenContainerNotExited(t *testing.T) {
+	t.Parallel()
+
+	manager := &exitCheckTestManager{exited: false}
+	h := &ContainerHandler{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app: &App{
+			AppEntry: &types.AppEntry{
+				Id:   types.AppId(types.ID_PREFIX_APP_PROD + "not_exited_test"),
+				Path: "/not-exited",
+			},
+		},
+		manager:      manager,
+		scheme:       "http",
+		health:       "health",
+		stripAppPath: true,
+		containerConfig: types.Container{
+			HealthTimeoutSecs: 1,
+		},
+	}
+
+	err := h.WaitForHealth(2, container.ContainerName("not-exited-test"), "")
+	if err == nil {
+		t.Fatal("WaitForHealth returned nil for container that never started")
+	}
+	if manager.exitChecks != 2 {
+		t.Fatalf("exit checks = %d, want 2 (all attempts used)", manager.exitChecks)
+	}
+}
+
 func TestWaitForHealthUsesProxyPathAfterContainerReady(t *testing.T) {
 	t.Parallel()
 

@@ -117,6 +117,35 @@ func AsVersionReporter(cm ContainerManager) (VersionReporter, bool) {
 	return nil, false
 }
 
+// ContainerExitChecker is an optional manager capability: reporting whether a
+// container is in a terminal state and cannot become healthy without outside
+// intervention. Implemented by the command-based (Docker/Podman) manager,
+// which runs containers without a restart policy, so an exited container
+// never comes back on its own and health waits can fail fast. Kubernetes
+// restarts crashed pods, so it does not implement this.
+type ContainerExitChecker interface {
+	// ContainerExited returns whether the named container has terminally
+	// exited, along with its status text (e.g. "Exited (1) 5 seconds ago")
+	// for error reporting. A missing container is not treated as exited.
+	ContainerExited(ctx context.Context, name ContainerName) (exited bool, status string, err error)
+}
+
+// AsContainerExitChecker unwraps any decorating container managers and returns
+// the underlying ContainerExitChecker if one is present.
+func AsContainerExitChecker(cm ContainerManager) (ContainerExitChecker, bool) {
+	for cm != nil {
+		if c, ok := cm.(ContainerExitChecker); ok {
+			return c, true
+		}
+		u, ok := cm.(interface{ Unwrap() ContainerManager })
+		if !ok {
+			break
+		}
+		cm = u.Unwrap()
+	}
+	return nil, false
+}
+
 // AppContainerStopper is an optional manager capability: stopping all of an
 // app's version containers except the active one. Implemented by the
 // command-based (Docker/Podman) manager, where superseded versions linger as

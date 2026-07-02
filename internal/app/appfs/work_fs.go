@@ -3,6 +3,8 @@
 
 package appfs
 
+import "io"
+
 // WorkFs is the implementation of work file system
 type WorkFs struct {
 	WritableFS
@@ -17,4 +19,13 @@ func NewWorkFs(dir string, fs WritableFS) *WorkFs {
 		Root:       dir,
 		WritableFS: fs,
 	}
+}
+
+// Close releases any resources held by the underlying file system, such as
+// the cached root directory handle of a DiskReadFS.
+func (w *WorkFs) Close() error {
+	if closer, ok := w.WritableFS.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
