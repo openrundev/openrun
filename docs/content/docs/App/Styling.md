@@ -42,7 +42,7 @@ To use TailwindCSS, in app settings, add
 
 Tailwind CSS works by scanning the HTML files for class names, generating the corresponding styles and then writing them to a static CSS file. A watcher process is started when an app using Tailwind is loaded in dev mode. The output of the watcher is written to `static/gen/css/style.css` file. This file is automatically included as part of the `openrun_gen_import` template.
 
-To ensure that the tailwind watcher is started, the tailwind CLI needs to be installed manually. With the default Tailwind 4/daisyUI 5 config, install the Tailwind CLI and daisyUI npm packages, for example `npm install -D tailwindcss @tailwindcss/cli daisyui`. The [standalone CLI](https://tailwindcss.com/blog/standalone-cli) can also be used when it includes the required plugins.
+To ensure that the tailwind watcher is started, the tailwind CLI needs to be installed manually. The [standalone CLI](https://tailwindcss.com/blog/standalone-cli) is the easiest option: no npm or node_modules setup is required. The npm packages (`npm install -D tailwindcss @tailwindcss/cli daisyui`, with `npx tailwindcss` as the command) also work.
 
 The OpenRun server config file has the following entries:
 
@@ -72,6 +72,40 @@ To use [DaisyUI](https://daisyui.com/), in app settings, add
     style=ace.style("daisyui", themes=["dark"])
 ```
 
-Change to the preferred [theme](https://daisyui.com/docs/themes/). DaisyUI is a good option to use to get great default styling for components, with the full flexibility of Tailwind. OpenRun takes care of creating the config files. With `tailwind_version = 4`, OpenRun writes the daisyUI plugin and theme list into `style/input.css` using the daisyUI 5 `@plugin "daisyui"` syntax. Using the CDN version of DaisyUI or Tailwind is not recommended since that will cause the style files to be large.
+Change to the preferred [theme](https://daisyui.com/docs/themes/). DaisyUI is a good option to use to get great default styling for components, with the full flexibility of Tailwind. OpenRun takes care of creating the config files. With `tailwind_version = 4`, OpenRun writes the daisyUI plugin and theme list into `style/input.css` using the daisyUI 5 `@plugin` syntax. Using the CDN version of DaisyUI or Tailwind is not recommended since that will cause the style files to be large.
+
+The standalone tailwind CLI does not bundle daisyUI. Since a `tailwindcss_command` is configured, OpenRun automatically downloads the prebundled daisyUI plugin (a single `daisyui.js` file, no node_modules required) into the app's work directory and references it from the generated `style/input.css`. The download happens once and is cached across server restarts. The download location can be overridden (for example to an internal mirror) with:
+
+```toml {filename="openrun.toml"}
+[system]
+daisyui_url = "https://internal.example.com/daisyui.js"
+```
+
+If the download fails (for example, no network access), OpenRun falls back to the `@plugin "daisyui"` node_modules based reference, which requires `npm install daisyui` such that daisyui is resolvable from the app work directory.
 
 If using [Actions]({{< ref "/docs/actions/" >}}), DaisyUI styles are automatically included. The themes can be customized using the `light` and `dark` property.
+
+### Custom Themes
+
+With `tailwind_version = 4`, fully custom [daisyUI themes](https://daisyui.com/docs/themes/#how-to-add-a-new-custom-theme) can be defined with the `custom_themes` property: a dict of theme name to the theme's CSS properties. Setting `light`/`dark` to a custom theme name makes it the default for that color scheme:
+
+```python {filename="app.star"}
+    style=ace.style("daisyui",
+                    light="mybrand-light",
+                    dark="mybrand-dark",
+                    custom_themes={
+                        "mybrand-light": {
+                            "color-scheme": "light",
+                            "--color-base-100": "#ffffff",
+                            "--color-primary": "#007700",
+                            # ... other daisyUI theme variables
+                        },
+                        "mybrand-dark": {
+                            "color-scheme": "dark",
+                            "--color-base-100": "#17221a",
+                            "--color-primary": "#00c200",
+                        },
+                    })
+```
+
+OpenRun generates a daisyUI theme plugin block per custom theme in `style/input.css` (using the prebundled daisyUI theme plugin, downloaded automatically like the main plugin; `daisyui_theme_url` overrides the download location). Custom themes can be mixed with the bundled theme names in `themes`. When only custom themes are used, the bundled themes are disabled, keeping the generated CSS small.

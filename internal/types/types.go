@@ -300,6 +300,8 @@ const (
 type SystemConfig struct {
 	TailwindCSSCommand                  string   `toml:"tailwindcss_command"`
 	TailwindVersion                     int      `toml:"tailwind_version"`
+	DaisyUIURL                          string   `toml:"daisyui_url"`       // url for the prebundled daisyui plugin, used with tailwind_version 4
+	DaisyUIThemeURL                     string   `toml:"daisyui_theme_url"` // url for the prebundled daisyui theme plugin, used for custom themes
 	FileWatcherDebounceMillis           int      `toml:"file_watcher_debounce_millis"`
 	WatchIgnorePatterns                 []string `toml:"watch_ignore_patterns"`
 	NodePath                            string   `toml:"node_path"`

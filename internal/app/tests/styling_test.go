@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/openrundev/openrun/internal/app/dev"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -164,6 +165,194 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 		@source "static/*.js";
 		@plugin "daisyui" {
 		  themes: abc --default, cupcake, xyz --prefersdark;
+		}
+	`, string(data))
+}
+
+func TestStyleDaisyUICustomThemes(t *testing.T) {
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
+				style=ace.style(library="daisyui", light="mylight", dark="mydark",
+					custom_themes={
+						"mylight": {
+							"color-scheme": "light",
+							"--color-base-100": "#ffffff",
+							"--color-primary": "#007700",
+						},
+						"mydark": {
+							"color-scheme": "dark",
+							"--color-base-100": "#17221a",
+							"--color-primary": "#00c200",
+						},
+					}))`,
+	}
+
+	_, workFS, err := CreateDevModeTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	data, err := workFS.ReadFile("style/input.css")
+	testutil.AssertNoError(t, err)
+	testutil.AssertStringMatch(t, "input.css", `
+		@import "tailwindcss" source(none);
+		@source "action/*.go.html";
+		@source "*.go.html";
+		@source "base_templates/*.go.html";
+		@source "static/*.js";
+		@plugin "daisyui" {
+		  themes: false;
+		}
+		@plugin "daisyui/theme" {
+		  name: "mylight";
+		  default: true;
+		  prefersdark: false;
+		  color-scheme: light;
+		  --color-base-100: #ffffff;
+		  --color-primary: #007700;
+		}
+		@plugin "daisyui/theme" {
+		  name: "mydark";
+		  default: false;
+		  prefersdark: true;
+		  color-scheme: dark;
+		  --color-base-100: #17221a;
+		  --color-primary: #00c200;
+		}
+	`, string(data))
+}
+
+func TestStyleDaisyUICustomThemesWithBuiltin(t *testing.T) {
+	// Custom themes can be mixed with bundled themes; the custom names are
+	// left out of the bundled themes list
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
+				style=ace.style(library="daisyui", themes=["cupcake"], dark="mydark",
+					custom_themes={
+						"mydark": {
+							"color-scheme": "dark",
+							"--color-primary": "#00c200",
+						},
+					}))`,
+	}
+
+	_, workFS, err := CreateDevModeTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	data, err := workFS.ReadFile("style/input.css")
+	testutil.AssertNoError(t, err)
+	testutil.AssertStringMatch(t, "input.css", `
+		@import "tailwindcss" source(none);
+		@source "action/*.go.html";
+		@source "*.go.html";
+		@source "base_templates/*.go.html";
+		@source "static/*.js";
+		@plugin "daisyui" {
+		  themes: cupcake, emerald --default;
+		}
+		@plugin "daisyui/theme" {
+		  name: "mydark";
+		  default: false;
+		  prefersdark: true;
+		  color-scheme: dark;
+		  --color-primary: #00c200;
+		}
+	`, string(data))
+}
+
+func TestStyleDaisyUICustomThemesLegacyError(t *testing.T) {
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
+				style=ace.style(library="daisyui", custom_themes={"mytheme": {"color-scheme": "light"}}))`,
+	}
+
+	_, _, err := CreateDevModeTestAppTailwindVersion(logger, fileData, types.TailwindVersionLegacy)
+	testutil.AssertErrorContains(t, err, "custom_themes require tailwind_version 4")
+}
+
+func TestStyleDaisyUIStandalonePlugin(t *testing.T) {
+	// When a tailwind CLI is configured, the prebundled daisyui plugin is
+	// downloaded next to input.css so no node_modules setup is required
+	logger := testutil.TestLogger()
+	pluginData := "// daisyui prebundled plugin"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, pluginData) //nolint:errcheck
+	}))
+	defer ts.Close()
+
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
+				style=ace.style(library="daisyui", disable_watcher=True))`,
+	}
+
+	systemConfig := testSystemConfig()
+	systemConfig.TailwindCSSCommand = "tailwindcss"
+	systemConfig.DaisyUIURL = ts.URL
+	_, workFS, err := CreateDevModeTestAppSystemConfig(logger, fileData, systemConfig)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	data, err := workFS.ReadFile("style/" + dev.DaisyUIPluginFile(ts.URL))
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "daisyui plugin", pluginData, string(data))
+
+	data, err = workFS.ReadFile("style/input.css")
+	testutil.AssertNoError(t, err)
+	testutil.AssertStringMatch(t, "input.css", fmt.Sprintf(`
+		@import "tailwindcss" source(none);
+		@source "action/*.go.html";
+		@source "*.go.html";
+		@source "base_templates/*.go.html";
+		@source "static/*.js";
+		@plugin "./%s" {
+		  themes: emerald --default, night --prefersdark;
+		}
+	`, dev.DaisyUIPluginFile(ts.URL)), string(data))
+}
+
+func TestStyleDaisyUIStandalonePluginDownloadFail(t *testing.T) {
+	// If the daisyui plugin download fails, fall back to the node_modules
+	// based plugin reference
+	logger := testutil.TestLogger()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
+				style=ace.style(library="daisyui", disable_watcher=True))`,
+	}
+
+	systemConfig := testSystemConfig()
+	systemConfig.TailwindCSSCommand = "tailwindcss"
+	systemConfig.DaisyUIURL = ts.URL
+	_, workFS, err := CreateDevModeTestAppSystemConfig(logger, fileData, systemConfig)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	data, err := workFS.ReadFile("style/input.css")
+	testutil.AssertNoError(t, err)
+	testutil.AssertStringMatch(t, "input.css", `
+		@import "tailwindcss" source(none);
+		@source "action/*.go.html";
+		@source "*.go.html";
+		@source "base_templates/*.go.html";
+		@source "static/*.js";
+		@plugin "daisyui" {
+		  themes: emerald --default, night --prefersdark;
 		}
 	`, string(data))
 }

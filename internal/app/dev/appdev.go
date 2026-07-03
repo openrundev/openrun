@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -94,6 +95,36 @@ func (a *AppDev) downloadFile(url string, appFS *appfs.WritableSourceFs, path st
 	}
 	alreadyDone = append(alreadyDone, path)
 	a.filesDownloaded[url] = alreadyDone
+	return nil
+}
+
+// downloadWorkFile downloads the url into the app work directory, unless it was
+// already downloaded for this app in the current server session.
+func (a *AppDev) downloadWorkFile(url string, path string) error {
+	if alreadyDone, ok := a.filesDownloaded[url]; ok && slices.Contains(alreadyDone, path) {
+		a.Trace().Msgf("File %s:%s already downloaded", url, path)
+		return nil
+	}
+
+	a.Info().Msgf("Downloading %s into %s", url, path)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("error downloading %s : status %d", url, resp.StatusCode)
+	}
+
+	var buf bytes.Buffer
+	if _, err = io.Copy(&buf, resp.Body); err != nil {
+		return err
+	}
+	if err = a.workFS.Write(path, buf.Bytes()); err != nil {
+		return err
+	}
+	a.filesDownloaded[url] = append(a.filesDownloaded[url], path)
 	return nil
 }
 

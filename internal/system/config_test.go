@@ -54,6 +54,8 @@ func TestServerConfig(t *testing.T) {
 	// System settings
 	testutil.AssertEqualsString(t, "tailwind command", "tailwindcss", c.System.TailwindCSSCommand)
 	testutil.AssertEqualsInt(t, "tailwind version", types.TailwindVersionDefault, c.System.TailwindVersion)
+	testutil.AssertEqualsString(t, "daisyui url", "https://github.com/saadeghi/daisyui/releases/download/v5.6.10/daisyui.js", c.System.DaisyUIURL)
+	testutil.AssertEqualsString(t, "daisyui theme url", "https://github.com/saadeghi/daisyui/releases/download/v5.6.10/daisyui-theme.js", c.System.DaisyUIThemeURL)
 	testutil.AssertEqualsInt(t, "file debounce", 300, c.System.FileWatcherDebounceMillis)
 	testutil.AssertEqualsString(t, "node path", "", c.System.NodePath)
 	testutil.AssertEqualsString(t, "default domain", "localhost", c.System.DefaultDomain)

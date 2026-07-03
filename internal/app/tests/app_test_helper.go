@@ -32,6 +32,10 @@ func CreateDevModeTestAppTailwindVersion(logger *types.Logger, fileData map[stri
 	return CreateTestAppIntSystemConfig(logger, "/test", "", fileData, true, nil, nil, nil, "app_dev_testapp", types.AppSettings{}, nil, nil, nil, systemConfig)
 }
 
+func CreateDevModeTestAppSystemConfig(logger *types.Logger, fileData map[string]string, systemConfig types.SystemConfig) (*app.App, *appfs.WorkFs, error) {
+	return CreateTestAppIntSystemConfig(logger, "/test", "", fileData, true, nil, nil, nil, "app_dev_testapp", types.AppSettings{}, nil, nil, nil, systemConfig)
+}
+
 func CreateTestApp(logger *types.Logger, fileData map[string]string) (*app.App, *appfs.WorkFs, error) {
 	return CreateTestAppInt(logger, "/test", "", fileData, false, nil, nil, nil, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
 }
