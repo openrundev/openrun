@@ -71,6 +71,22 @@ func newAppID(isDev bool) (types.AppId, error) {
 func (s *Server) CreateApp(ctx context.Context, appPath string,
 	approve, dryRun bool, appRequest *types.CreateAppRequest) (*types.AppCreateResponse, error) {
 
+	if s.rbacManager.APIEnforced(ctx) {
+		// The app does not exist yet: match grant targets against the requested path
+		appPathDomain, err := parseAppPath(appPath)
+		if err != nil {
+			return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+		}
+		if err := s.enforceAppPerm(ctx, types.PermissionCreate, appPathDomain, ""); err != nil {
+			return nil, err
+		}
+		if approve {
+			if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPathDomain, ""); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -488,6 +504,10 @@ func (s *Server) GetAppApi(ctx context.Context, appPath string) (*types.AppGetRe
 		return nil, error
 	}
 
+	if err := s.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
+		return nil, err
+	}
+
 	return &types.AppGetResponse{
 		AppEntry: *appEntry,
 	}, nil
@@ -545,6 +565,10 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 	filteredApps, err := s.FilterApps(appPathGlob, false)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+
+	if err := s.enforceAppPermInfos(ctx, types.PermissionDelete, filteredApps); err != nil {
+		return nil, err
 	}
 
 	tx, err := s.db.BeginTransaction(ctx)
@@ -1416,7 +1440,7 @@ func (s *Server) GetApps(ctx context.Context, appPathGlob string, internal bool)
 	groups := system.GetContextGroups(ctx)
 	ret := make([]types.AppResponse, 0, len(filteredApps))
 	for _, app := range filteredApps {
-		authorized, err := s.AuthorizeList(userId, &app, groups)
+		authorized, err := s.AuthorizeList(ctx, userId, &app, groups)
 		if err != nil {
 			return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
 		}
@@ -1465,6 +1489,15 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	mainAppEntry, err := s.db.GetAppEntryTx(ctx, tx, mainAppPathDomain)
 	if err != nil {
 		return nil, err
+	}
+
+	if err := s.enforceAppPermEntry(ctx, types.PermissionPreview, mainAppEntry); err != nil {
+		return nil, err
+	}
+	if approve {
+		if err := s.enforceAppPermEntry(ctx, types.PermissionApprove, mainAppEntry); err != nil {
+			return nil, err
+		}
 	}
 
 	if !system.IsGit(mainAppEntry.SourceUrl) {

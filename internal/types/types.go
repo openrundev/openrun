@@ -449,6 +449,7 @@ type AppInfo struct {
 	UpdateTime     time.Time
 	RetainVersions int
 	AppliedSyncId  string
+	UserID         string // user who created the app, used for RBAC owner checks
 }
 
 func CreateAppPathDomain(path, domain string) AppPathDomain {
@@ -461,7 +462,7 @@ func CreateAppPathDomain(path, domain string) AppPathDomain {
 func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppId, linkedAppPath string,
 	auth AppAuthnType, sourceUrl string, spec AppSpec,
 	version int, gitSha, gitMessage, branch, starBase string, updatedAt time.Time, retainVersions int,
-	appliedSyncId string) AppInfo {
+	appliedSyncId string, userId string) AppInfo {
 	return AppInfo{
 		AppPathDomain: AppPathDomain{
 			Path:   path,
@@ -483,6 +484,7 @@ func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppI
 		UpdateTime:     updatedAt,
 		RetainVersions: retainVersions,
 		AppliedSyncId:  appliedSyncId,
+		UserID:         userId,
 	}
 }
 
@@ -876,6 +878,12 @@ type RBACConfig struct {
 	Groups  map[string][]string         `json:"groups"`  // groups names to user ids. These groups are appended to the groups info from SAML
 	Roles   map[string][]RBACPermission `json:"roles"`   // role names to permissions.
 	Grants  []RBACGrant                 `json:"grants"`  // grants are used to grant permissions to users/groups for specific apps
+
+	// OwnerPermissions overrides the default permissions granted to the creator of an
+	// asset. Keys are resource names (app, sync); values are the permissions the owner
+	// gets on assets they created. Missing key means the built-in default; an empty
+	// list disables the owner rule for that resource. app:approve is not allowed.
+	OwnerPermissions map[string][]RBACPermission `json:"owner_permissions,omitempty"`
 }
 
 type RBACGrant struct {
@@ -887,9 +895,44 @@ type RBACGrant struct {
 
 type RBACPermission string
 
+// Permissions are resource:verb strings. app:read gates both listing and reading app
+// details (there is no separate list permission). app:approve is special: it is never
+// implied by app:admin, owner permissions or permission globs; it has to be granted
+// by its literal name (or via the built-in admin role).
 const (
-	PermissionList   RBACPermission = "list"   // list apps
-	PermissionAccess RBACPermission = "access" // access apps
+	PermissionAccess      RBACPermission = "app:access"       // access the served app (rbac: auth prefix apps)
+	PermissionRead        RBACPermission = "app:read"         // list apps, get app details, list versions/files
+	PermissionCreate      RBACPermission = "app:create"       // create app
+	PermissionUpdate      RBACPermission = "app:update"       // settings/metadata/links/params/version switch
+	PermissionReload      RBACPermission = "app:reload"       // reload apps
+	PermissionApply       RBACPermission = "app:apply"        // declarative apply
+	PermissionDelete      RBACPermission = "app:delete"       // delete apps
+	PermissionApprove     RBACPermission = "app:approve"      // approve plugin permissions (operator-only)
+	PermissionPromote     RBACPermission = "app:promote"      // promote staging to prod
+	PermissionPreview     RBACPermission = "app:preview"      // create preview apps
+	PermissionTokenRead   RBACPermission = "app:token_read"   // list webhook tokens
+	PermissionTokenManage RBACPermission = "app:token_manage" // create/delete webhook tokens
+	PermissionAppAdmin    RBACPermission = "app:admin"        // all app permissions except app:approve
+
+	PermissionSyncCreate RBACPermission = "sync:create"
+	PermissionSyncRun    RBACPermission = "sync:run"
+	PermissionSyncDelete RBACPermission = "sync:delete"
+	PermissionSyncRead   RBACPermission = "sync:read"
+
+	PermissionServiceCreate RBACPermission = "service:create"
+	PermissionServiceUpdate RBACPermission = "service:update"
+	PermissionServiceDelete RBACPermission = "service:delete"
+	PermissionServiceRead   RBACPermission = "service:read"
+
+	PermissionBindingCreate     RBACPermission = "binding:create"
+	PermissionBindingUpdate     RBACPermission = "binding:update"
+	PermissionBindingDelete     RBACPermission = "binding:delete"
+	PermissionBindingRead       RBACPermission = "binding:read"
+	PermissionBindingRunCommand RBACPermission = "binding:run_command"
+
+	PermissionConfigRead   RBACPermission = "config:read"
+	PermissionConfigUpdate RBACPermission = "config:update"
+	PermissionServerStop   RBACPermission = "server:stop"
 )
 
 type AuthorizerFunc func(ctx context.Context, permissions []string) (bool, error)

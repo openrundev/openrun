@@ -147,6 +147,21 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
+	if err := s.enforceAppPermInfos(ctx, types.PermissionReload, filteredApps); err != nil {
+		return nil, err
+	}
+	if approve {
+		if err := s.enforceAppPermInfos(ctx, types.PermissionApprove, filteredApps); err != nil {
+			return nil, err
+		}
+	}
+	if promote {
+		// A reload with promote pushes staging to prod, which needs app:promote
+		if err := s.enforceAppPermInfos(ctx, types.PermissionPromote, filteredApps); err != nil {
+			return nil, err
+		}
+	}
+
 	// The repo cache is shared between the image pre-build pass and the main
 	// reload loop, so each git repo is checked out only once.
 	repoCache, err := NewRepoCache(s)
@@ -362,6 +377,26 @@ func (s *Server) loadAppCode(ctx context.Context, tx types.Transaction, appEntry
 }
 
 func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, promote bool, handler stagedUpdateHandler, args map[string]any, op string) (*types.AppStagedUpdateResponse, error) {
+	if s.rbacManager.APIEnforced(ctx) {
+		perm, ok := stagedUpdatePerms[op]
+		if !ok {
+			return nil, fmt.Errorf("no rbac permission mapped for staged update operation %s", op)
+		}
+		filteredApps, err := s.FilterApps(appPathGlob, false)
+		if err != nil {
+			return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+		}
+		if err := s.enforceAppPermInfos(ctx, perm, filteredApps); err != nil {
+			return nil, err
+		}
+		if promote {
+			// A staged update with promote pushes staging to prod, which needs app:promote
+			if err := s.enforceAppPermInfos(ctx, types.PermissionPromote, filteredApps); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -505,6 +540,10 @@ func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun boo
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
+	if err := s.enforceAppPermInfos(ctx, types.PermissionPromote, filteredApps); err != nil {
+		return nil, err
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -589,6 +628,10 @@ func (s *Server) UpdateAppSettings(ctx context.Context, appPathGlob string, dryR
 	filteredApps, err := s.FilterApps(appPathGlob, false)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+
+	if err := s.enforceAppPermInfos(ctx, types.PermissionUpdate, filteredApps); err != nil {
+		return nil, err
 	}
 
 	tx, err := s.db.BeginTransaction(ctx)

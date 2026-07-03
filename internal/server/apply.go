@@ -375,6 +375,31 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		allAppsMap[appInfo.AppPathDomain] = appInfo
 	}
 
+	// app:apply gates the whole declarative apply, for every affected app path,
+	// including apps the plan would create. approve additionally needs app:approve
+	// and promote additionally needs app:promote
+	if s.rbacManager.APIEnforced(ctx) {
+		for _, appPath := range filteredApps {
+			owner := ""
+			if appInfo, ok := allAppsMap[appPath]; ok {
+				owner = appInfo.UserID
+			}
+			if err := s.enforceAppPerm(ctx, types.PermissionApply, appPath, owner); err != nil {
+				return nil, nil, nil, err
+			}
+			if approve {
+				if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPath, owner); err != nil {
+					return nil, nil, nil, err
+				}
+			}
+			if promote {
+				if err := s.enforceAppPerm(ctx, types.PermissionPromote, appPath, owner); err != nil {
+					return nil, nil, nil, err
+				}
+			}
+		}
+	}
+
 	newApps := make([]types.AppPathDomain, 0, len(filteredApps))
 	updatedApps := make([]types.AppPathDomain, 0, len(filteredApps))
 

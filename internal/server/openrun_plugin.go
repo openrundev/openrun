@@ -33,6 +33,10 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ListBindings, app.READ, "list_bindings"),
 		app.CreatePluginApiName(c.GetApp, app.READ, "get_app"),
 		app.CreatePluginApiName(c.ListSpecs, app.READ, "list_specs"),
+		app.CreatePluginApiName(c.ListVersions, app.READ, "list_versions"),
+		app.CreatePluginApiName(c.ListVersionFiles, app.READ, "list_version_files"),
+		app.CreatePluginApiName(c.AuditApp, app.READ, "audit_app"),
+		app.CreatePluginApiName(c.GetPermissions, app.READ, "get_permissions"),
 	}
 
 	newOpenRunPlugin := func(pluginContext *types.PluginContext) (any, error) {
@@ -87,6 +91,12 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 
 	userId := system.GetRequestUserId(thread)
 	groups := system.GetRequestGroups(thread)
+	ctx := system.GetRequestContext(thread)
+	if c.server.rbacManager.APIEnforced(ctx) {
+		// Under RBAC enforcement, list_all_apps also filters by app:read; otherwise
+		// it would be a filtering bypass
+		permCheck = true
+	}
 	ret := starlark.List{}
 	//nolint:errcheck
 	for _, app := range apps {
@@ -120,7 +130,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		}
 
 		if permCheck {
-			hasAccess, err := c.server.AuthorizeList(userId, &app, groups)
+			hasAccess, err := c.server.AuthorizeList(ctx, userId, &app, groups)
 			if err != nil {
 				return nil, err
 			}
@@ -521,18 +531,69 @@ func (c *openrunPlugin) GetApp(thread *starlark.Thread, builtin *starlark.Builti
 	}
 
 	v := starlark.Dict{}
-	v.SetKey(starlark.String("path"), starlark.String(entry.AppPathDomain().String()))           //nolint:errcheck
-	v.SetKey(starlark.String("source_url"), starlark.String(entry.SourceUrl))                    //nolint:errcheck
-	v.SetKey(starlark.String("is_dev"), starlark.Bool(entry.IsDev))                              //nolint:errcheck
-	v.SetKey(starlark.String("auth"), starlark.String(entry.Metadata.AuthnType))                 //nolint:errcheck
-	v.SetKey(starlark.String("spec"), starlark.String(entry.Metadata.Spec))                      //nolint:errcheck
+	v.SetKey(starlark.String("path"), starlark.String(entry.AppPathDomain().String()))                 //nolint:errcheck
+	v.SetKey(starlark.String("name"), starlark.String(entry.Metadata.Name))                            //nolint:errcheck
+	v.SetKey(starlark.String("id"), starlark.String(entry.Id))                                         //nolint:errcheck
+	v.SetKey(starlark.String("url"), starlark.String(types.GetAppUrl(entry.AppPathDomain(), c.server.config))) //nolint:errcheck
+	v.SetKey(starlark.String("source_url"), starlark.String(entry.SourceUrl))                          //nolint:errcheck
+	v.SetKey(starlark.String("is_dev"), starlark.Bool(entry.IsDev))                                    //nolint:errcheck
+	v.SetKey(starlark.String("auth"), starlark.String(entry.Metadata.AuthnType))                       //nolint:errcheck
+	v.SetKey(starlark.String("spec"), starlark.String(entry.Metadata.Spec))                            //nolint:errcheck
 	v.SetKey(starlark.String("git_branch"), starlark.String(entry.Metadata.VersionMetadata.GitBranch)) //nolint:errcheck
-	v.SetKey(starlark.String("git_auth"), starlark.String(entry.Metadata.GitAuthName))           //nolint:errcheck
-	v.SetKey(starlark.String("version"), starlark.MakeInt(entry.Metadata.VersionMetadata.Version)) //nolint:errcheck
-	v.SetKey(starlark.String("applied_sync_id"), starlark.String(entry.Metadata.AppliedSyncId))  //nolint:errcheck
-	v.SetKey(starlark.String("params"), &params)                                                 //nolint:errcheck
-	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))            //nolint:errcheck
+	v.SetKey(starlark.String("git_commit"), starlark.String(entry.Metadata.VersionMetadata.GitCommit)) //nolint:errcheck
+	v.SetKey(starlark.String("git_message"), starlark.String(entry.Metadata.VersionMetadata.GitMessage)) //nolint:errcheck
+	v.SetKey(starlark.String("git_auth"), starlark.String(entry.Metadata.GitAuthName))                 //nolint:errcheck
+	v.SetKey(starlark.String("version"), starlark.MakeInt(entry.Metadata.VersionMetadata.Version))     //nolint:errcheck
+	v.SetKey(starlark.String("applied_sync_id"), starlark.String(entry.Metadata.AppliedSyncId))        //nolint:errcheck
+	v.SetKey(starlark.String("params"), &params)                                                       //nolint:errcheck
+	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))                  //nolint:errcheck
+	if entry.UpdateTime != nil {
+		v.SetKey(starlark.String("update_time"), starlark.String(entry.UpdateTime.Format(time.RFC3339))) //nolint:errcheck
+	} else {
+		v.SetKey(starlark.String("update_time"), starlark.String("")) //nolint:errcheck
+	}
+
+	stagePath := ""
+	if !entry.IsDev {
+		// The path of the linked staging app, for version/file lookups
+		stagePathDomain, err := parseLinkedAppPathDomain(entry.LinkedAppPath)
+		if err != nil {
+			stagePathDomain = pathBasedStageApp(&entry.AppEntry)
+		}
+		stagePath = stagePathDomain.String()
+	}
+	v.SetKey(starlark.String("stage_path"), starlark.String(stagePath)) //nolint:errcheck
 	return &v, nil
+}
+
+// ListVersions returns the versions for the app at the given path. Use the
+// _cl_stage path suffix for the staging app's versions
+func (c *openrunPlugin) ListVersions(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var path starlark.String
+	if err := starlark.UnpackArgs("list_versions", args, kwargs, "path", &path); err != nil {
+		return nil, err
+	}
+
+	result, err := c.server.VersionList(system.GetRequestContext(thread), path.GoString())
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(result)
+}
+
+// ListVersionFiles returns the files in a version of the app at the given
+// path. version defaults to the active version
+func (c *openrunPlugin) ListVersionFiles(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var path, version starlark.String
+	if err := starlark.UnpackArgs("list_version_files", args, kwargs, "path", &path, "version?", &version); err != nil {
+		return nil, err
+	}
+
+	result, err := c.server.VersionFiles(system.GetRequestContext(thread), path.GoString(), version.GoString())
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(result)
 }
 
 // ListSpecs returns the available app spec names
@@ -563,6 +624,94 @@ func (c *openrunPlugin) ListSpecs(thread *starlark.Thread, builtin *starlark.Bui
 	return &ret, nil
 }
 
+// AuditApp audits the app's code and returns the requested plugin loads and
+// permissions with the approval status. For prod apps the staging app is
+// audited, since approvals apply to staging first. Nothing is persisted
+func (c *openrunPlugin) AuditApp(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var path starlark.String
+	if err := starlark.UnpackArgs("audit_app", args, kwargs, "path", &path); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	appPathDomain, err := parseAppPath(path.GoString())
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := c.server.db.BeginTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	appEntry, err := c.server.db.GetAppEntryTx(ctx, tx, appPathDomain)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.server.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
+		return nil, err
+	}
+	if !appEntry.IsDev {
+		appEntry, err = c.server.getStageApp(ctx, tx, appEntry)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	auditApp, err := c.server.setupApp(ctx, appEntry, tx)
+	if err != nil {
+		return nil, err
+	}
+	result, err := auditApp.Audit()
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(result)
+}
+
+// GetPermissions returns the management API permissions the current user holds.
+// With a path argument, app permissions are evaluated against that app (with the
+// owner rule); global permissions are always included. When RBAC enforcement is
+// not active for the calling app, all permissions are returned
+func (c *openrunPlugin) GetPermissions(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var path starlark.String
+	if err := starlark.UnpackArgs("get_permissions", args, kwargs, "path?", &path); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	var target types.AppPathDomain
+	owner := ""
+	if path != "" {
+		pathDomain, err := parseAppPath(path.GoString())
+		if err != nil {
+			return nil, err
+		}
+		apps, err := c.server.apps.GetAllAppsInfo()
+		if err != nil {
+			return nil, err
+		}
+		target = pathDomain
+		for _, appInfo := range apps {
+			if mainAppPathDomain(appInfo.AppPathDomain, appInfo.MainApp, appInfo.LinkedAppPath) == pathDomain {
+				owner = appInfo.UserID
+				break
+			}
+		}
+	}
+
+	perms, err := c.server.rbacManager.GetAPIPermissions(ctx, target, owner)
+	if err != nil {
+		return nil, err
+	}
+
+	ret := starlark.List{}
+	for _, perm := range perms {
+		ret.Append(starlark.String(perm)) //nolint:errcheck
+	}
+	return &ret, nil
+}
 
 func (c *openrunPlugin) ListBindings(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var source starlark.String
@@ -571,6 +720,11 @@ func (c *openrunPlugin) ListBindings(thread *starlark.Thread, builtin *starlark.
 	}
 
 	ctx := system.GetRequestContext(thread)
+	// The ListBindings server method is not gated (apply uses it internally), so
+	// the plugin entry point enforces binding:read
+	if err := c.server.enforceGlobalPerm(ctx, types.PermissionBindingRead, ""); err != nil {
+		return nil, err
+	}
 	bindings, err := c.server.ListBindings(ctx, source.GoString())
 	if err != nil {
 		return nil, err

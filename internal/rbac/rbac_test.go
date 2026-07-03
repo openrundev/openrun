@@ -28,7 +28,7 @@ func TestNewRBACHandler(t *testing.T) {
 					"admins":     {"group:developers", "user3"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read":  {types.PermissionList},
+					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess, "role:read"},
 				},
 				Grants: []types.RBACGrant{
@@ -207,7 +207,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -224,7 +224,7 @@ func TestAuthorizeAccess(t *testing.T) {
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
 			appAuthSetting: "rbac:test",
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -234,7 +234,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -251,7 +251,7 @@ func TestAuthorizeAccess(t *testing.T) {
 			user:           "user2",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
 			appAuthSetting: "rbac:test",
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
 		},
@@ -263,7 +263,7 @@ func TestAuthorizeAccess(t *testing.T) {
 					"developers": {"user1", "user2"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -280,7 +280,7 @@ func TestAuthorizeAccess(t *testing.T) {
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
 			appAuthSetting: "rbac:test",
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -290,7 +290,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read":  {types.PermissionList},
+					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess, "role:read"},
 				},
 				Grants: []types.RBACGrant{
@@ -308,7 +308,7 @@ func TestAuthorizeAccess(t *testing.T) {
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
 			appAuthSetting: "rbac:test",
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -318,7 +318,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -335,7 +335,7 @@ func TestAuthorizeAccess(t *testing.T) {
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test/app1", Domain: ""},
 			appAuthSetting: "rbac:test",
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -345,7 +345,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -362,7 +362,7 @@ func TestAuthorizeAccess(t *testing.T) {
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/other/app1", Domain: ""},
 			appAuthSetting: "rbac:test",
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
 		},
@@ -372,7 +372,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -389,7 +389,7 @@ func TestAuthorizeAccess(t *testing.T) {
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: "example.com"},
 			appAuthSetting: "rbac:test",
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -399,7 +399,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -416,7 +416,7 @@ func TestAuthorizeAccess(t *testing.T) {
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: "other.com"},
 			appAuthSetting: "rbac:test",
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
 		},
@@ -426,7 +426,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read":  {types.PermissionList},
+					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess},
 				},
 				Grants: []types.RBACGrant{
@@ -450,7 +450,7 @@ func TestAuthorizeAccess(t *testing.T) {
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
 			appAuthSetting: "rbac:test",
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -460,7 +460,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -477,7 +477,7 @@ func TestAuthorizeAccess(t *testing.T) {
 			user:           "",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
 			appAuthSetting: "rbac:test",
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
 		},
@@ -535,7 +535,7 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 					"leads":      {"group:seniors"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -548,7 +548,7 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 		},
 		{
@@ -561,7 +561,7 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 					"leads":      {"group:seniors"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -574,7 +574,7 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 			},
 			user:           "user3",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: false,
 		},
 	}
@@ -623,22 +623,22 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read":  {types.PermissionList},
+					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess, "role:read"},
-					"admin": {"role:write"},
+					"lead":  {"role:write"},
 				},
 				Grants: []types.RBACGrant{
 					{
 						Description: "test grant",
 						Users:       []string{"user1"},
-						Roles:       []string{"admin"},
+						Roles:       []string{"lead"},
 						Targets:     []string{"/test"},
 					},
 				},
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 		},
 		{
@@ -647,15 +647,15 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read":  {types.PermissionList},
+					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess, "role:read"},
-					"admin": {"role:write"},
+					"lead":  {"role:write"},
 				},
 				Grants: []types.RBACGrant{
 					{
 						Description: "test grant",
 						Users:       []string{"user1"},
-						Roles:       []string{"admin"},
+						Roles:       []string{"lead"},
 						Targets:     []string{"/test"},
 					},
 				},
@@ -671,7 +671,7 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -723,7 +723,7 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 		Enabled: true,
 		Groups:  map[string][]string{},
 		Roles: map[string][]types.RBACPermission{
-			"read": {types.PermissionList},
+			"read": {types.PermissionRead},
 		},
 		Grants: []types.RBACGrant{
 			{
@@ -748,7 +748,7 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 	t.Run("denied when no dynamic groups passed", func(t *testing.T) {
 		t.Parallel()
 		// user is not part of any configured group, and no dynamic groups provided
-		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -761,7 +761,7 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 		t.Parallel()
 		// user is considered part of sso_devs via dynamic groups argument
 		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
-			types.PermissionList, []string{"sso_devs"}, false)
+			types.PermissionRead, []string{"sso_devs"}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -780,7 +780,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 			"devs": {"user2"},
 		},
 		Roles: map[string][]types.RBACPermission{
-			"read": {types.PermissionList},
+			"read": {types.PermissionRead},
 		},
 		Grants: []types.RBACGrant{
 			{
@@ -803,7 +803,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user1 not in configured groups; denied without dynamic groups
-	allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -812,7 +812,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user1 allowed when dynamic group provided
-	allowed, err = rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_devs"}, false)
+	allowed, err = rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{"sso_devs"}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -821,7 +821,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user2 is in configured group; allowed even without dynamic groups
-	allowed, err = rbacManager.AuthorizeInt("user2", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	allowed, err = rbacManager.AuthorizeInt("user2", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -847,7 +847,7 @@ func TestUpdateRBACConfig(t *testing.T) {
 					"developers": {"user1"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{},
 			},
@@ -858,7 +858,7 @@ func TestUpdateRBACConfig(t *testing.T) {
 					"admins":     {"user3"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read":  {types.PermissionList},
+					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess},
 				},
 				Grants: []types.RBACGrant{
@@ -898,7 +898,7 @@ func TestUpdateRBACConfig(t *testing.T) {
 					"developers": {"user1"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{},
 			},
@@ -940,7 +940,7 @@ func TestUpdateRBACConfig(t *testing.T) {
 			}
 
 			// Test that the update worked by checking authorization
-			result, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+			result, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error during authorization test: %v", err)
 				return
@@ -963,7 +963,7 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 			"developers": {"user1", "user2"},
 		},
 		Roles: map[string][]types.RBACPermission{
-			"read": {types.PermissionList},
+			"read": {types.PermissionRead},
 		},
 		Grants: []types.RBACGrant{
 			{
@@ -991,7 +991,7 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 		go func(user string) {
 			defer func() { done <- true }()
 
-			result, err := rbacManager.AuthorizeInt(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -1045,7 +1045,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 			Enabled: true,
 			Groups:  map[string][]string{},
 			Roles: map[string][]types.RBACPermission{
-				"read": {types.PermissionList},
+				"read": {types.PermissionRead},
 			},
 			Grants: []types.RBACGrant{
 				{
@@ -1125,7 +1125,7 @@ func TestValidateGrants(t *testing.T) {
 					"admins":     {"user3"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read":  {types.PermissionList},
+					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess},
 				},
 				Grants: []types.RBACGrant{
@@ -1154,7 +1154,7 @@ func TestValidateGrants(t *testing.T) {
 					"admins":     {"user3"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read":  {types.PermissionList},
+					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess},
 				},
 				Grants: []types.RBACGrant{
@@ -1176,7 +1176,7 @@ func TestValidateGrants(t *testing.T) {
 					"developers": {"user1", "user2"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1197,7 +1197,7 @@ func TestValidateGrants(t *testing.T) {
 					"developers": {"user1", "user2"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1218,7 +1218,7 @@ func TestValidateGrants(t *testing.T) {
 					"developers": {"user1", "user2"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1240,7 +1240,7 @@ func TestValidateGrants(t *testing.T) {
 					"developers": {"user1", "user2"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1261,7 +1261,7 @@ func TestValidateGrants(t *testing.T) {
 					"developers": {"user1", "user2"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1283,7 +1283,7 @@ func TestValidateGrants(t *testing.T) {
 					"developers": {"user1", "user2"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1310,7 +1310,7 @@ func TestValidateGrants(t *testing.T) {
 					"developers": {"user1", "user2"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{},
 			},
@@ -1324,7 +1324,7 @@ func TestValidateGrants(t *testing.T) {
 					"developers": {"user1", "user2"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1408,7 +1408,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1421,7 +1421,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "dev_john",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1431,7 +1431,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1444,7 +1444,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "admin_john",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
 		},
@@ -1454,7 +1454,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1467,7 +1467,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "john@example.com",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1477,7 +1477,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1490,7 +1490,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "john@other.com",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
 		},
@@ -1500,7 +1500,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1513,7 +1513,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "dev_jane",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1523,7 +1523,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1536,7 +1536,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "admin_jane",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1546,7 +1546,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1559,7 +1559,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "dev_bob",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1571,7 +1571,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 					"developers": {"user1", "user2"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1584,7 +1584,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "admin_steve",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1594,7 +1594,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1607,7 +1607,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "john.doe@example.com",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1617,7 +1617,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1630,7 +1630,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "dev_john",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
 		},
@@ -1640,7 +1640,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1653,7 +1653,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 			},
 			user:           "DEV_john",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1713,7 +1713,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 					"developers": {"regex:^dev_.*", "user1"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1726,7 +1726,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 			},
 			user:           "dev_alice",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1739,7 +1739,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 					"seniors": {"regex:^sr_.*", "group:juniors"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1752,7 +1752,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 			},
 			user:           "jr_bob",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1765,7 +1765,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 					"seniors": {"regex:^sr_.*", "group:juniors"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1778,7 +1778,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 			},
 			user:           "sr_alice",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1790,7 +1790,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 					"developers": {"regex:^dev_.*"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1803,7 +1803,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 			},
 			user:           "admin_alice",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
 		},
@@ -1815,7 +1815,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 					"staff": {"regex:^dev_.*", "regex:^qa_.*", "regex:^pm_.*"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1828,7 +1828,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 			},
 			user:           "qa_charlie",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			permission:     types.PermissionList,
+			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
 		},
@@ -1883,7 +1883,7 @@ func TestRegexValidation(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1903,7 +1903,7 @@ func TestRegexValidation(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1925,7 +1925,7 @@ func TestRegexValidation(t *testing.T) {
 					"developers": {"regex:^dev_[.*"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{},
 			},
@@ -1938,7 +1938,7 @@ func TestRegexValidation(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1959,7 +1959,7 @@ func TestRegexValidation(t *testing.T) {
 					"emails": {"regex:^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
 				},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{},
 			},
@@ -1971,7 +1971,7 @@ func TestRegexValidation(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -1990,7 +1990,7 @@ func TestRegexValidation(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{
 					{
@@ -2050,7 +2050,7 @@ func TestRegexCaching(t *testing.T) {
 			"developers": {"regex:^dev_.*"},
 		},
 		Roles: map[string][]types.RBACPermission{
-			"read": {types.PermissionList},
+			"read": {types.PermissionRead},
 		},
 		Grants: []types.RBACGrant{
 			{
@@ -2085,7 +2085,7 @@ func TestRegexCaching(t *testing.T) {
 
 	// Test that the same regex is reused (multiple authorize calls should work)
 	for i := 0; i < 10; i++ {
-		_, err := rbacManager.AuthorizeInt("dev_user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		_, err := rbacManager.AuthorizeInt("dev_user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 		if err != nil {
 			t.Errorf("unexpected error on iteration %d: %v", i, err)
 		}
@@ -2099,7 +2099,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 		Enabled: true,
 		Groups:  map[string][]string{},
 		Roles: map[string][]types.RBACPermission{
-			"read": {types.PermissionList},
+			"read": {types.PermissionRead},
 		},
 		Grants: []types.RBACGrant{
 			{
@@ -2123,7 +2123,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 
 	t.Run("regex matches user", func(t *testing.T) {
 		t.Parallel()
-		allowed, err := rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		allowed, err := rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2134,7 +2134,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 
 	t.Run("dynamic group matches", func(t *testing.T) {
 		t.Parallel()
-		allowed, err := rbacManager.AuthorizeInt("bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{"sso_admins"}, false)
+		allowed, err := rbacManager.AuthorizeInt("bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{"sso_admins"}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2145,7 +2145,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 
 	t.Run("neither regex nor dynamic group matches", func(t *testing.T) {
 		t.Parallel()
-		allowed, err := rbacManager.AuthorizeInt("charlie", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+		allowed, err := rbacManager.AuthorizeInt("charlie", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2164,7 +2164,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 			"developers": {"regex:^dev_.*"},
 		},
 		Roles: map[string][]types.RBACPermission{
-			"read": {types.PermissionList},
+			"read": {types.PermissionRead},
 		},
 		Grants: []types.RBACGrant{
 			{
@@ -2187,7 +2187,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 	}
 
 	// Verify initial config works
-	allowed, err := rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	allowed, err := rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2202,7 +2202,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 			"developers": {"regex:^admin_.*"},
 		},
 		Roles: map[string][]types.RBACPermission{
-			"read": {types.PermissionList},
+			"read": {types.PermissionRead},
 		},
 		Grants: []types.RBACGrant{
 			{
@@ -2220,7 +2220,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 	}
 
 	// Verify old regex no longer matches
-	allowed, err = rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	allowed, err = rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2229,7 +2229,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 	}
 
 	// Verify new regex matches
-	allowed, err = rbacManager.AuthorizeInt("admin_bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionList, []string{}, false)
+	allowed, err = rbacManager.AuthorizeInt("admin_bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2257,7 +2257,7 @@ func TestGetCustomPermissions(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"read": {types.PermissionList},
+					"read": {types.PermissionRead},
 				},
 				Grants: []types.RBACGrant{},
 			},
@@ -2510,7 +2510,7 @@ func TestGetCustomPermissions(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"reader": {types.PermissionList, types.PermissionAccess},
+					"reader": {types.PermissionRead, types.PermissionAccess},
 					"actor":  {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
 				},
 				Grants: []types.RBACGrant{
@@ -2669,13 +2669,13 @@ func TestGetCustomPermissionsWithRoleHierarchy(t *testing.T) {
 		Roles: map[string][]types.RBACPermission{
 			"runner": {types.RBACPermission("custom:action_run")},
 			"editor": {types.RBACPermission("custom:action_edit"), "role:runner"},
-			"admin":  {types.RBACPermission("custom:action_delete"), "role:editor"},
+			"lead":   {types.RBACPermission("custom:action_delete"), "role:editor"},
 		},
 		Grants: []types.RBACGrant{
 			{
 				Description: "grant admin role",
 				Users:       []string{"user1"},
-				Roles:       []string{"admin"},
+				Roles:       []string{"lead"},
 				Targets:     []string{"/test"},
 			},
 		},
@@ -2792,7 +2792,7 @@ func TestGetCustomPermissionsEmpty(t *testing.T) {
 				Enabled: true,
 				Groups:  map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
-					"reader": {types.PermissionList, types.PermissionAccess},
+					"reader": {types.PermissionRead, types.PermissionAccess},
 				},
 				Grants: []types.RBACGrant{
 					{

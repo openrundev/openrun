@@ -18,6 +18,18 @@ import (
 )
 
 func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dryRun bool, sync *types.SyncMetadata) (_ *types.SyncCreateResponse, retErr error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionSyncCreate, ""); err != nil {
+		return nil, err
+	}
+	if sync.Approve {
+		// A sync entry with approve set approves plugin permissions on every run, in
+		// system context, for any app its glob matches (including future apps). This
+		// needs app:approve granted on all apps
+		if err := s.enforceGlobalApprove(ctx); err != nil {
+			return nil, err
+		}
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -108,6 +120,11 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.
 		return nil, err
 	}
 
+	// sync:run globally, or ownership of the entry, allows a manual run
+	if err := s.enforceGlobalPerm(ctx, types.PermissionSyncRun, syncEntry.UserID); err != nil {
+		return nil, err
+	}
+
 	syncStatus, updatedApps, applyEffects, err := s.runSyncJob(ctx, tx, syncEntry, dryRun, true, nil)
 	defer applyEffects.rollbackAndClose(ctx)
 	if err != nil {
@@ -136,6 +153,17 @@ func (s *Server) DeleteSyncEntry(ctx context.Context, id string, dryRun bool) (*
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	if s.rbacManager.APIEnforced(ctx) {
+		// sync:delete globally, or ownership of the entry, allows the delete
+		syncEntry, err := s.db.GetSyncEntry(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.enforceGlobalPerm(ctx, types.PermissionSyncDelete, syncEntry.UserID); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := s.db.DeleteSync(ctx, tx, id); err != nil {
 		return nil, err
@@ -166,6 +194,21 @@ func (s *Server) ListSyncEntries(ctx context.Context) (*types.SyncListResponse, 
 	entries, err := s.db.GetSyncEntries(ctx, tx)
 	if err != nil {
 		return nil, err
+	}
+
+	if s.rbacManager.APIEnforced(ctx) {
+		// Filter to entries the user can see: sync:read globally or entries they own
+		visible := make([]*types.SyncEntry, 0, len(entries))
+		for _, e := range entries {
+			authorized, err := s.rbacManager.AuthorizeGlobalAPI(ctx, types.PermissionSyncRead, e.UserID)
+			if err != nil {
+				return nil, err
+			}
+			if authorized {
+				visible = append(visible, e)
+			}
+		}
+		entries = visible
 	}
 
 	for _, e := range entries {

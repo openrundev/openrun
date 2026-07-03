@@ -369,6 +369,11 @@ func (s *Server) updateDynamicConfigCache(ctx context.Context, newConfig *types.
 }
 
 func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.DynamicConfig, force bool) (*types.DynamicConfig, error) {
+	// config:update is admin equivalent: the dynamic config includes the RBAC config
+	if err := s.enforceGlobalPerm(ctx, types.PermissionConfigUpdate, ""); err != nil {
+		return nil, err
+	}
+
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 
@@ -981,20 +986,22 @@ func (s *Server) ParseGlob(appGlob string) ([]types.AppInfo, error) {
 	return matched, nil
 }
 
-// AuthorizeList checks if the user has access to perform list operation on the specified app
-// For RBAC mode, uses RBAC permissions. For non-RBAC mode, look at whether app is using
-// same authentication types as used by the caller
-func (s *Server) AuthorizeList(userId string, app *types.AppInfo, groups []string) (bool, error) {
+// AuthorizeList checks if the user has access to list the specified app.
+// When RBAC enforcement is active for the calling app (RBAC config enabled and the
+// caller has rbac: auth), the app:read permission gates listing (with the owner
+// rule). Otherwise, list visibility falls back to whether the app uses the same
+// authentication type as used by the caller
+func (s *Server) AuthorizeList(ctx context.Context, userId string, app *types.AppInfo, groups []string) (bool, error) {
+	if s.rbacManager.APIEnforced(ctx) {
+		// Grant checks for stage/preview apps are done against the main app path
+		grantPathDomain := mainAppPathDomain(app.AppPathDomain, app.MainApp, app.LinkedAppPath)
+		return s.rbacManager.AuthorizeAPI(ctx, types.PermissionRead, grantPathDomain, app.UserID)
+	}
+
 	appAuthStr := string(app.Auth)
 	appAuthStr, _, err := s.checkAuthModifiers(appAuthStr)
 	if err != nil {
 		return false, err
-	}
-	if s.rbacManager.RbacConfig.Enabled {
-		// RBAC auth is enabled, verify access. Grant checks for stage/preview apps are
-		// done against the main app path.
-		grantPathDomain := mainAppPathDomain(app.AppPathDomain, app.MainApp, app.LinkedAppPath)
-		return s.rbacManager.AuthorizeInt(userId, grantPathDomain, appAuthStr, types.PermissionList, groups, false)
 	}
 
 	if userId != "" && userId == types.ADMIN_USER {

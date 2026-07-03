@@ -21,6 +21,8 @@ func initAdminPlugin(server *Server) {
 		app.CreatePluginApiName(c.DeleteApps, app.WRITE, "delete_apps"),
 		app.CreatePluginApiName(c.ReloadApps, app.WRITE, "reload_apps"),
 		app.CreatePluginApiName(c.ApproveApps, app.WRITE, "approve_apps"),
+		app.CreatePluginApiName(c.SwitchVersion, app.WRITE, "switch_version"),
+		app.CreatePluginApiName(c.PromoteApps, app.WRITE, "promote_apps"),
 		app.CreatePluginApiName(c.UpdateParams, app.WRITE, "update_params"),
 		app.CreatePluginApiName(c.UpdateAuth, app.WRITE, "update_auth"),
 		app.CreatePluginApiName(c.CreateSync, app.WRITE, "create_sync"),
@@ -145,6 +147,38 @@ func (c *openrunAdminPlugin) UpdateParams(thread *starlark.Thread, builtin *star
 	}
 
 	result, err := c.server.ReplaceAppParams(system.GetRequestContext(thread), pathGlob.GoString(), bool(dryRun), bool(promote), paramValues)
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(result)
+}
+
+// SwitchVersion switches the app at path (use the staging app's path for
+// staging) to the given version. version can be a number, "previous", "next"
+// or "revert"
+func (c *openrunAdminPlugin) SwitchVersion(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var path, version starlark.String
+	var dryRun starlark.Bool
+	if err := starlark.UnpackArgs("switch_version", args, kwargs, "path", &path, "version", &version, "dry_run?", &dryRun); err != nil {
+		return nil, err
+	}
+
+	result, err := c.server.VersionSwitch(system.GetRequestContext(thread), path.GoString(), bool(dryRun), version.GoString())
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(result)
+}
+
+// PromoteApps promotes staged changes to prod for apps matching the glob
+func (c *openrunAdminPlugin) PromoteApps(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var pathGlob starlark.String
+	var dryRun starlark.Bool
+	if err := starlark.UnpackArgs("promote_apps", args, kwargs, "path_glob", &pathGlob, "dry_run?", &dryRun); err != nil {
+		return nil, err
+	}
+
+	result, err := c.server.PromoteApps(system.GetRequestContext(thread), pathGlob.GoString(), bool(dryRun))
 	if err != nil {
 		return nil, err
 	}

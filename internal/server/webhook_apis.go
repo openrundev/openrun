@@ -42,6 +42,9 @@ func (s *Server) TokenList(ctx context.Context, appPath string) (*types.TokenLis
 	if err != nil {
 		return nil, err
 	}
+	if err := s.enforceAppPermEntry(ctx, types.PermissionTokenRead, appEntry); err != nil {
+		return nil, err
+	}
 
 	if appEntry.IsDev {
 		return nil, fmt.Errorf("token commands not supported for dev app")
@@ -91,6 +94,9 @@ func (s *Server) TokenCreate(ctx context.Context, appPath string, webhookType ty
 
 	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.enforceAppPermEntry(ctx, types.PermissionTokenManage, appEntry); err != nil {
 		return nil, err
 	}
 
@@ -151,6 +157,9 @@ func (s *Server) TokenDelete(ctx context.Context, appPath string, webhookType ty
 
 	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.enforceAppPermEntry(ctx, types.PermissionTokenManage, appEntry); err != nil {
 		return nil, err
 	}
 

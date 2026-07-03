@@ -42,6 +42,10 @@ func (s *Server) validateStagingService(ctx context.Context, tx types.Transactio
 }
 
 func (s *Server) CreateService(ctx context.Context, service *types.Service, dryRun bool) error {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionServiceCreate, ""); err != nil {
+		return err
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return err
@@ -93,6 +97,10 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 }
 
 func (s *Server) UpdateService(ctx context.Context, service *types.Service, dryRun bool) error {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionServiceUpdate, ""); err != nil {
+		return err
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return err
@@ -121,6 +129,10 @@ func (s *Server) UpdateService(ctx context.Context, service *types.Service, dryR
 }
 
 func (s *Server) DeleteService(ctx context.Context, name, serviceType string, dryRun bool) error {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionServiceDelete, ""); err != nil {
+		return err
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return err
@@ -141,6 +153,10 @@ func (s *Server) DeleteService(ctx context.Context, name, serviceType string, dr
 }
 
 func (s *Server) ListServices(ctx context.Context, serviceType, name string) ([]*types.Service, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionServiceRead, ""); err != nil {
+		return nil, err
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -151,6 +167,10 @@ func (s *Server) ListServices(ctx context.Context, serviceType, name string) ([]
 }
 
 func (s *Server) CreateBinding(ctx context.Context, createRequest *types.CreateBindingRequest, dryRun bool) (*types.Binding, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingCreate, ""); err != nil {
+		return nil, err
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -523,6 +543,10 @@ func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBi
 		return nil, fmt.Errorf("expected at least one grant update, promote, or reapply-all")
 	}
 
+	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingUpdate, ""); err != nil {
+		return nil, err
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -584,6 +608,10 @@ func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBi
 }
 
 func (s *Server) DeleteBinding(ctx context.Context, path string, dryRun bool) error {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingDelete, ""); err != nil {
+		return err
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return err
@@ -601,6 +629,10 @@ func (s *Server) DeleteBinding(ctx context.Context, path string, dryRun bool) er
 }
 
 func (s *Server) GetBinding(ctx context.Context, path string) (*types.Binding, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingRead, ""); err != nil {
+		return nil, err
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -656,6 +688,10 @@ func redactBindingAccount(binding *types.Binding) *types.Binding {
 }
 
 func (s *Server) GetBindingAccount(ctx context.Context, path string, useStaging bool) (map[string]string, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingRead, ""); err != nil {
+		return nil, err
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -673,6 +709,10 @@ func (s *Server) GetBindingAccount(ctx context.Context, path string, useStaging 
 }
 
 func (s *Server) RunBindingCommand(ctx context.Context, bindingName string, useStaging bool, command string) (map[string]any, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingRunCommand, ""); err != nil {
+		return nil, err
+	}
+
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return nil, fmt.Errorf("sql is required")

@@ -25,10 +25,11 @@ type RBACManager struct {
 	serverConfig *types.ServerConfig
 	mu           sync.RWMutex
 
-	groups      map[string][]string               // group name to user ids (with group hierarchy resolved)
-	roles       map[string][]types.RBACPermission // role name to permissions (with role: hierarchy resolved)
-	regexCache  map[string]*regexp.Regexp         // cache of compiled regex patterns
-	customPerms []string                          // custom permissions are permissions defined by the user. This list does not have the custom: prefix
+	groups      map[string][]string                      // group name to user ids (with group hierarchy resolved)
+	roles       map[string]*resolvedRole                 // role name to resolved permissions (hierarchy and implications resolved)
+	regexCache  map[string]*regexp.Regexp                // cache of compiled regex patterns
+	customPerms []string                                 // custom permissions are permissions defined by the user. This list does not have the custom: prefix
+	ownerPerms  map[string]map[types.RBACPermission]bool // resource name to permissions granted to the asset owner
 }
 
 func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverConfig *types.ServerConfig) (*RBACManager, error) {
@@ -186,7 +187,7 @@ func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPat
 	}
 	roleMatched := false
 	for _, role := range grant.Roles {
-		if slices.Contains(h.roles[role], inputPermission) {
+		if resolved, ok := h.roles[role]; ok && resolved.matches(inputPermission) {
 			roleMatched = true
 			break
 		}
@@ -197,7 +198,17 @@ func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPat
 	}
 
 	targetMatched := false
+	isGlobal := globalPermissions[inputPermission]
 	for _, target := range grant.Targets {
+		if isGlobal {
+			// Global permissions have no app path target; the grant confers them
+			// only when it targets all apps
+			if isGlobalTarget(target) {
+				targetMatched = true
+				break
+			}
+			continue
+		}
 		match, err := MatchGlob(target, appPathDomain)
 		if err != nil {
 			return false, err
@@ -276,12 +287,14 @@ func (h *RBACManager) initGroupInfo(rbacConfig *types.RBACConfig) (map[string][]
 	return groupMembers, nil
 }
 
-func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string][]types.RBACPermission, error) {
-	roles := make(map[string][]types.RBACPermission)
-
-	// Initialize all roles
-	for role := range rbacConfig.Roles {
-		roles[role] = make([]types.RBACPermission, 0)
+func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*resolvedRole, error) {
+	// Permission name validation only applies when RBAC is enabled, so that a
+	// disabled config never blocks server startup
+	validate := rbacConfig.Enabled
+	if validate {
+		if _, exists := rbacConfig.Roles[AdminRoleName]; exists {
+			return nil, fmt.Errorf("role name %q is reserved for the built-in admin role and cannot be defined", AdminRoleName)
+		}
 	}
 
 	// Helper function to recursively resolve role permissions
@@ -309,6 +322,12 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string][]t
 				}
 				permissions = append(permissions, refPermissions...)
 			} else {
+				perm = normalizePermission(perm)
+				if validate {
+					if err := validatePermission(perm); err != nil {
+						return nil, fmt.Errorf("role %s: %w", roleName, err)
+					}
+				}
 				permissions = append(permissions, perm)
 			}
 		}
@@ -316,33 +335,86 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string][]t
 		return permissions, nil
 	}
 
-	// Resolve all roles
+	// Resolve all roles into fast lookup structures. Implications (app:update
+	// implying reload/apply/read, app:admin implying all app permissions except
+	// approve) are expanded here so grant checks stay a map lookup
+	roles := make(map[string]*resolvedRole, len(rbacConfig.Roles)+1)
+	customPermsMap := make(map[string]bool)
 	for role := range rbacConfig.Roles {
 		visited := make(map[string]bool)
 		permissions, err := resolveRole(role, visited)
 		if err != nil {
 			return nil, err
 		}
-		roles[role] = permissions
-	}
+		roles[role] = newResolvedRole(permissions)
 
-	// Keep track of all custom perms (deduplicated)
-	customPermsMap := make(map[string]bool)
-	for _, role := range roles {
-		for _, permission := range role {
-			if strings.HasPrefix(string(permission), RBAC_CUSTOM_PREFIX) {
-				perm := string(permission)[len(RBAC_CUSTOM_PREFIX):]
-				customPermsMap[perm] = true
+		// Keep track of all custom perms (deduplicated)
+		for _, permission := range permissions {
+			if strings.HasPrefix(string(permission), RBAC_CUSTOM_PREFIX) && !hasGlobMeta(string(permission)) {
+				customPermsMap[string(permission)[len(RBAC_CUSTOM_PREFIX):]] = true
 			}
 		}
 	}
 
-	// Convert map to slice
+	// The built-in admin role matches every permission, including app:approve
+	// and custom permissions
+	roles[AdminRoleName] = &resolvedRole{matchAll: true}
+
 	for perm := range customPermsMap {
 		h.customPerms = append(h.customPerms, perm)
 	}
 
 	return roles, nil
+}
+
+// initOwnerPerms resolves the owner permission sets: built-in defaults overridden by
+// the owner_permissions config, with implications expanded
+func (h *RBACManager) initOwnerPerms(rbacConfig *types.RBACConfig) (map[string]map[types.RBACPermission]bool, error) {
+	validate := rbacConfig.Enabled
+	ownerPerms := make(map[string]map[types.RBACPermission]bool, len(defaultOwnerPermissions))
+	for resource, perms := range defaultOwnerPermissions {
+		if configured, ok := rbacConfig.OwnerPermissions[resource]; ok {
+			perms = configured
+		}
+		normalized := make([]types.RBACPermission, 0, len(perms))
+		for _, perm := range perms {
+			normalized = append(normalized, normalizePermission(perm))
+		}
+		perms = normalized
+		for _, perm := range perms {
+			if !validate {
+				break
+			}
+			if hasGlobMeta(string(perm)) {
+				return nil, fmt.Errorf("owner_permissions.%s: glob patterns are not allowed, got %q", resource, perm)
+			}
+			if err := validatePermission(perm); err != nil {
+				return nil, fmt.Errorf("owner_permissions.%s: %w", resource, err)
+			}
+			if perm == types.PermissionApprove {
+				return nil, fmt.Errorf("owner_permissions.%s: %s cannot be granted to owners, it requires an explicit grant", resource, types.PermissionApprove)
+			}
+			if PermissionResource(perm) != resource {
+				return nil, fmt.Errorf("owner_permissions.%s: permission %q does not belong to resource %s", resource, perm, resource)
+			}
+		}
+		expanded := expandImplications(perms)
+		permSet := make(map[types.RBACPermission]bool, len(expanded))
+		for _, perm := range expanded {
+			permSet[perm] = true
+		}
+		ownerPerms[resource] = permSet
+	}
+
+	if validate {
+		for resource := range rbacConfig.OwnerPermissions {
+			if _, ok := defaultOwnerPermissions[resource]; !ok {
+				return nil, fmt.Errorf("owner_permissions: unknown resource %q, valid resources are app, sync", resource)
+			}
+		}
+	}
+
+	return ownerPerms, nil
 }
 func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig) error {
 	// Skip validation if RBAC is disabled
@@ -364,8 +436,36 @@ func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig) error {
 			}
 		}
 		for _, role := range grant.Roles {
+			if role == AdminRoleName {
+				continue // built-in role, always defined
+			}
 			if _, exists := rbacConfig.Roles[role]; !exists {
 				return fmt.Errorf("grant %d ('%s'): Roles references undefined role '%s'", i, grant.Description, role)
+			}
+		}
+
+		// Grants whose roles resolve to global permissions confer them only when the
+		// grant targets all apps; warn about grants which can never take effect
+		hasGlobalTarget := false
+		for _, target := range grant.Targets {
+			if isGlobalTarget(target) {
+				hasGlobalTarget = true
+				break
+			}
+		}
+		if !hasGlobalTarget {
+			for _, role := range grant.Roles {
+				resolved, ok := h.roles[role]
+				if !ok {
+					continue
+				}
+				for perm := range globalPermissions {
+					if resolved.matches(perm) {
+						h.Warn().Msgf("grant %d ('%s') includes global permission %s but does not target 'all'; "+
+							"the global permission will not be granted", i, grant.Description, perm)
+						break
+					}
+				}
 			}
 		}
 	}
@@ -389,6 +489,11 @@ func (h *RBACManager) UpdateRBACConfig(rbacConfig *types.RBACConfig) error {
 	h.roles, err = h.initRoleInfo(rbacConfig)
 	if err != nil {
 		return fmt.Errorf("error initializing rbac role info: %w", err)
+	}
+
+	h.ownerPerms, err = h.initOwnerPerms(rbacConfig)
+	if err != nil {
+		return fmt.Errorf("error initializing rbac owner permissions: %w", err)
 	}
 
 	err = h.validateGrants(rbacConfig)

@@ -30,6 +30,9 @@ func (s *Server) VersionList(ctx context.Context, mainAppPath string) (*types.Ap
 	if err != nil {
 		return nil, err
 	}
+	if err := s.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
+		return nil, err
+	}
 	if appEntry.IsDev {
 		return nil, fmt.Errorf("version commands not supported for dev app")
 	}
@@ -66,6 +69,9 @@ func (s *Server) VersionFiles(ctx context.Context, mainAppPath, version string) 
 
 	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
 		return nil, err
 	}
 
@@ -109,6 +115,9 @@ func (s *Server) VersionSwitch(ctx context.Context, mainAppPath string, dryRun b
 
 	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.enforceAppPermEntry(ctx, types.PermissionUpdate, appEntry); err != nil {
 		return nil, err
 	}
 

@@ -589,7 +589,7 @@ func (m *Metadata) GetAppsForDomain(domain string) ([]string, error) {
 }
 
 func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
-	sqlStr := `select domain, path, is_dev, id, main_app, linked_app_path, settings, metadata, source_url, update_time from apps`
+	sqlStr := `select domain, path, is_dev, id, main_app, linked_app_path, settings, metadata, source_url, update_time, user_id from apps`
 	if !includeInternal {
 		sqlStr += ` where main_app = ''`
 	}
@@ -610,9 +610,9 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 	for rows.Next() {
 		var path, domain, id, mainApp, sourceUrl string
 		var isDev bool
-		var linkedAppPath, settingsStr, metadataStr sql.NullString
+		var linkedAppPath, settingsStr, metadataStr, userId sql.NullString
 		var updateTime *time.Time
-		err = rows.Scan(&domain, &path, &isDev, &id, &mainApp, &linkedAppPath, &settingsStr, &metadataStr, &sourceUrl, &updateTime)
+		err = rows.Scan(&domain, &path, &isDev, &id, &mainApp, &linkedAppPath, &settingsStr, &metadataStr, &sourceUrl, &updateTime, &userId)
 		if err != nil {
 			return nil, fmt.Errorf("error querying next app: %w", err)
 		}
@@ -649,7 +649,7 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 			types.AppId(mainApp), linkedPath, metadata.AuthnType, sourceUrl, metadata.Spec,
 			metadata.VersionMetadata.Version, metadata.VersionMetadata.GitCommit, metadata.VersionMetadata.GitMessage,
 			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"]), *updateTime, retainVersions,
-			metadata.AppliedSyncId))
+			metadata.AppliedSyncId, userId.String))
 	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)

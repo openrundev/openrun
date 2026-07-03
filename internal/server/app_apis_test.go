@@ -588,7 +588,7 @@ func TestAuthorizeListStripsForwardModifier(t *testing.T) {
 				AppPathDomain: types.AppPathDomain{Path: "/myapp"},
 				Auth:          authType,
 			}
-			authorized, err := server.AuthorizeList("github:user-123", appInfo, nil)
+			authorized, err := server.AuthorizeList(context.Background(), "github:user-123", appInfo, nil)
 			if err != nil {
 				t.Fatalf("authorize list: %v", err)
 			}
