@@ -5,6 +5,10 @@ package server
 
 import (
 	"fmt"
+	"maps"
+	"os"
+	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +30,9 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ListAuditEvents, app.READ, "list_audit_events"),
 		app.CreatePluginApiName(c.ListOperations, app.READ, "list_operations"),
 		app.CreatePluginApiName(c.ListSync, app.READ, "list_sync"),
+		app.CreatePluginApiName(c.ListBindings, app.READ, "list_bindings"),
+		app.CreatePluginApiName(c.GetApp, app.READ, "get_app"),
+		app.CreatePluginApiName(c.ListSpecs, app.READ, "list_specs"),
 	}
 
 	newOpenRunPlugin := func(pluginContext *types.PluginContext) (any, error) {
@@ -183,6 +190,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		}
 		v.SetKey(starlark.String("source"), starlark.String(app.SourceUrl))
 		v.SetKey(starlark.String("source_url"), starlark.String(getSourceUrl(app.SourceUrl, app.Branch)))
+		v.SetKey(starlark.String("applied_sync_id"), starlark.String(app.AppliedSyncId))
 		v.SetKey(starlark.String("star_base"), starlark.String(app.StarBase))
 		v.SetKey(starlark.String("spec"), starlark.String(app.Spec))
 		v.SetKey(starlark.String("version"), starlark.MakeInt(app.Version))
@@ -480,6 +488,101 @@ func (c *openrunPlugin) ListSync(thread *starlark.Thread, builtin *starlark.Buil
 	ret := starlark.List{}
 	for _, entry := range sync.Entries {
 		entryMap, err := starlark_type.ConvertToStarlark(entry)
+		if err != nil {
+			return nil, err
+		}
+		ret.Append(entryMap) //nolint:errcheck
+	}
+
+	return &ret, nil
+}
+
+// GetApp returns the app entry for an exact app path, with the fields needed
+// for displaying/updating the app. Settings (webhook tokens) are not included.
+func (c *openrunPlugin) GetApp(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var path starlark.String
+	if err := starlark.UnpackArgs("get_app", args, kwargs, "path", &path); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	apps, err := c.server.GetApps(ctx, path.GoString(), false)
+	if err != nil {
+		return nil, err
+	}
+	if len(apps) != 1 {
+		return nil, fmt.Errorf("app %s not found", path.GoString())
+	}
+
+	entry := apps[0]
+	params := starlark.Dict{}
+	for k, val := range entry.Metadata.ParamValues {
+		params.SetKey(starlark.String(k), starlark.String(val)) //nolint:errcheck
+	}
+
+	v := starlark.Dict{}
+	v.SetKey(starlark.String("path"), starlark.String(entry.AppPathDomain().String()))           //nolint:errcheck
+	v.SetKey(starlark.String("source_url"), starlark.String(entry.SourceUrl))                    //nolint:errcheck
+	v.SetKey(starlark.String("is_dev"), starlark.Bool(entry.IsDev))                              //nolint:errcheck
+	v.SetKey(starlark.String("auth"), starlark.String(entry.Metadata.AuthnType))                 //nolint:errcheck
+	v.SetKey(starlark.String("spec"), starlark.String(entry.Metadata.Spec))                      //nolint:errcheck
+	v.SetKey(starlark.String("git_branch"), starlark.String(entry.Metadata.VersionMetadata.GitBranch)) //nolint:errcheck
+	v.SetKey(starlark.String("git_auth"), starlark.String(entry.Metadata.GitAuthName))           //nolint:errcheck
+	v.SetKey(starlark.String("version"), starlark.MakeInt(entry.Metadata.VersionMetadata.Version)) //nolint:errcheck
+	v.SetKey(starlark.String("applied_sync_id"), starlark.String(entry.Metadata.AppliedSyncId))  //nolint:errcheck
+	v.SetKey(starlark.String("params"), &params)                                                 //nolint:errcheck
+	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))            //nolint:errcheck
+	return &v, nil
+}
+
+// ListSpecs returns the available app spec names
+func (c *openrunPlugin) ListSpecs(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("list_specs", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	names := make(map[string]bool)
+	for name := range appTypes {
+		names[name] = true
+	}
+	customSpecsDir := path.Clean(path.Join(os.ExpandEnv("$OPENRUN_HOME/config"), APPSPECS))
+	if entries, err := os.ReadDir(customSpecsDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				names[entry.Name()] = true
+			}
+		}
+	}
+
+	sorted := slices.Collect(maps.Keys(names))
+	slices.Sort(sorted)
+	ret := starlark.List{}
+	for _, name := range sorted {
+		ret.Append(starlark.String(name)) //nolint:errcheck
+	}
+	return &ret, nil
+}
+
+
+func (c *openrunPlugin) ListBindings(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var source starlark.String
+	if err := starlark.UnpackArgs("list_bindings", args, kwargs, "source?", &source); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	bindings, err := c.server.ListBindings(ctx, source.GoString())
+	if err != nil {
+		return nil, err
+	}
+
+	ret := starlark.List{}
+	for _, binding := range bindings {
+		// Account info (credentials) is redacted, the raw apply info is dropped
+		redacted := redactBindingAccount(binding)
+		redacted.Metadata.ApplyInfo = nil
+		redacted.StagedMetadata.ApplyInfo = nil
+		entryMap, err := starlark_type.ConvertToStarlark(redacted)
 		if err != nil {
 			return nil, err
 		}

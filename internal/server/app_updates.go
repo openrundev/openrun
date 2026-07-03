@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -46,6 +47,12 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 			SkippedResults: []types.AppPathDomain{appEntry.AppPathDomain()},
 		}
 		return ret, nil
+	}
+
+	// Track which sync entry last applied to this app. Imperative commands do
+	// not reset the sync id. The prod app picks this up on promote.
+	if syncId := system.GetContextValue(ctx, types.SYNC_ID); syncId != "" {
+		appEntry.Metadata.AppliedSyncId = syncId
 	}
 
 	// Persist the metadata so that any git info is saved
@@ -457,6 +464,39 @@ func (s *Server) auditHandler(ctx context.Context, tx types.Transaction, appEntr
 	}
 
 	return result, appPathDomain, nil
+}
+
+// ApproveApps approves the plugin and permission usage for apps matching the
+// glob. With dryRun, the pending permissions are returned without approving
+func (s *Server) ApproveApps(ctx context.Context, appPathGlob string, dryRun, promote bool) (*types.AppStagedUpdateResponse, error) {
+	return s.StagedUpdate(ctx, appPathGlob, dryRun, promote, s.auditHandler, map[string]any{}, "approve")
+}
+
+// UpdateAppParams updates a single param value for apps matching the glob.
+// A value of "-" deletes the param. The change applies to staging and is
+// promoted to prod when promote is set
+func (s *Server) UpdateAppParams(ctx context.Context, appPathGlob string, dryRun, promote bool, paramName, paramValue string) (*types.AppStagedUpdateResponse, error) {
+	args := map[string]any{
+		"paramName":  paramName,
+		"paramValue": paramValue,
+	}
+	return s.StagedUpdate(ctx, appPathGlob, dryRun, promote, s.updateParamHandler, args, "update-param")
+}
+
+// ReplaceAppParams replaces all the param values for apps matching the glob.
+// The change applies to staging and is promoted to prod when promote is set
+func (s *Server) ReplaceAppParams(ctx context.Context, appPathGlob string, dryRun, promote bool, params map[string]string) (*types.AppStagedUpdateResponse, error) {
+	args := map[string]any{
+		"params": params,
+	}
+	return s.StagedUpdate(ctx, appPathGlob, dryRun, promote, s.replaceParamsHandler, args, "update-param")
+}
+
+func (s *Server) replaceParamsHandler(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, args map[string]any) (any, types.AppPathDomain, error) {
+	params := args["params"].(map[string]string)
+	appEntry.Metadata.ParamValues = maps.Clone(params)
+	appPathDomain := appEntry.AppPathDomain()
+	return appPathDomain, appPathDomain, nil
 }
 
 func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun bool) (*types.AppPromoteResponse, error) {

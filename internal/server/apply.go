@@ -769,7 +769,12 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		ret.Skipped = reloadResult.SkippedResults
 		promoteApp = len(reloadResult.PromoteResults) > 0
 	} else if updated {
-		// No reload, increment version and promote (if enabled)
+		// No reload, increment version and promote (if enabled). The sync id
+		// is updated only when applied through a sync, imperative apply does
+		// not reset it
+		if syncId := system.GetContextValue(ctx, types.SYNC_ID); syncId != "" {
+			liveApp.Metadata.AppliedSyncId = syncId
+		}
 		stagingFileStore, err := metadata.NewFileStore(liveApp.Id, liveApp.Metadata.VersionMetadata.Version, s.db, tx)
 		if err != nil {
 			return nil, fmt.Errorf("error initializing staging file store: %w", err)

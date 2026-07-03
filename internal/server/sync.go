@@ -266,6 +266,10 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		// No rollback here if transaction is passed in
 	}
 
+	// Apps created/reloaded by this job are stamped with the sync id in their
+	// metadata (AppliedSyncId)
+	ctx = context.WithValue(ctx, types.SYNC_ID, entry.Id)
+
 	// origCtx is the context before the rollback stack is attached; it is used
 	// for the recursive full-apply call so that nested call owns a fresh stack.
 	origCtx := ctx

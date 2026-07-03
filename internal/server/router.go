@@ -765,7 +765,7 @@ func (h *Handler) approveApps(r *http.Request) (any, error) {
 	}
 	updateOperationInContext(r, genOperationName("approve_apps", promote, false))
 
-	approveResult, err := h.server.StagedUpdate(r.Context(), appPathGlob, dryRun, promote, h.server.auditHandler, map[string]any{}, "approve")
+	approveResult, err := h.server.ApproveApps(r.Context(), appPathGlob, dryRun, promote)
 	return approveResult, err
 }
 
@@ -812,12 +812,8 @@ func (h *Handler) updateParam(r *http.Request) (any, error) {
 		return nil, types.CreateRequestError("appPathGlob is required", http.StatusBadRequest)
 	}
 
-	args := map[string]any{
-		"paramName":  r.URL.Query().Get("paramName"),
-		"paramValue": r.URL.Query().Get("paramValue"),
-	}
-
-	updateResult, err := h.server.StagedUpdate(r.Context(), appPathGlob, dryRun, promote, h.server.updateParamHandler, args, "update-param")
+	updateResult, err := h.server.UpdateAppParams(r.Context(), appPathGlob, dryRun, promote,
+		r.URL.Query().Get("paramName"), r.URL.Query().Get("paramValue"))
 	return updateResult, err
 }
 

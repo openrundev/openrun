@@ -64,6 +64,7 @@ const (
 	GROUPS          ContextKey = "groups"
 	RBAC_ENABLED    ContextKey = "rbac_enabled"
 	CUSTOM_PERMS    ContextKey = "custom_perms"
+	SYNC_ID         ContextKey = "sync_id" // id of the sync entry driving the current apply
 )
 
 const (
@@ -447,6 +448,7 @@ type AppInfo struct {
 	StarBase       string
 	UpdateTime     time.Time
 	RetainVersions int
+	AppliedSyncId  string
 }
 
 func CreateAppPathDomain(path, domain string) AppPathDomain {
@@ -458,7 +460,8 @@ func CreateAppPathDomain(path, domain string) AppPathDomain {
 
 func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppId, linkedAppPath string,
 	auth AppAuthnType, sourceUrl string, spec AppSpec,
-	version int, gitSha, gitMessage, branch, starBase string, updatedAt time.Time, retainVersions int) AppInfo {
+	version int, gitSha, gitMessage, branch, starBase string, updatedAt time.Time, retainVersions int,
+	appliedSyncId string) AppInfo {
 	return AppInfo{
 		AppPathDomain: AppPathDomain{
 			Path:   path,
@@ -479,6 +482,7 @@ func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppI
 		StarBase:       starBase,
 		UpdateTime:     updatedAt,
 		RetainVersions: retainVersions,
+		AppliedSyncId:  appliedSyncId,
 	}
 }
 
@@ -517,6 +521,7 @@ type VersionMetadata struct {
 	GitCommit       string `json:"git_commit"`
 	GitMessage      string `json:"git_message"`
 	ApplyInfo       []byte `json:"apply_info"`
+	AppliedSyncId   string `json:"applied_sync_id"`
 }
 
 // AppEntry is the application configuration in the DB
@@ -571,6 +576,7 @@ type AppMetadata struct {
 	AuthnType                  AppAuthnType      `json:"authn_type"`
 	GitAuthName                string            `json:"git_auth_name"`
 	Bindings                   []string          `json:"bindings"`
+	AppliedSyncId              string            `json:"applied_sync_id"` // id of the sync entry which last applied to this app, empty for imperative changes
 }
 
 // AppSettings contains the settings for an app. Settings are not version controlled.
