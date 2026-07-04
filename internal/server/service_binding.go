@@ -11,6 +11,7 @@ import (
 
 	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/container"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/segmentio/ksuid"
 )
@@ -201,8 +202,9 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 	accounts *bindingAccountManager, allowAutoPath bool) (*types.Binding, error) {
 	var err error
 	binding := types.Binding{
-		Path:   createRequest.Path,
-		Source: createRequest.Source,
+		Path:      createRequest.Path,
+		Source:    createRequest.Source,
+		CreatedBy: system.GetContextUserId(ctx),
 		StagedMetadata: types.BindingMetadata{
 			Grants:    normalizeGrantList(createRequest.Grants),
 			Config:    createRequest.Config,

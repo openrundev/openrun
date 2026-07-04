@@ -5,6 +5,7 @@ package server
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
@@ -28,6 +29,10 @@ func initAdminPlugin(server *Server) {
 		app.CreatePluginApiName(c.CreateSync, app.WRITE, "create_sync"),
 		app.CreatePluginApiName(c.RunSync, app.WRITE, "run_sync"),
 		app.CreatePluginApiName(c.DeleteSync, app.WRITE, "delete_sync"),
+		app.CreatePluginApiName(c.CreateService, app.WRITE, "create_service"),
+		app.CreatePluginApiName(c.DeleteService, app.WRITE, "delete_service"),
+		app.CreatePluginApiName(c.StartContainer, app.WRITE, "start_container"),
+		app.CreatePluginApiName(c.StopContainer, app.WRITE, "stop_container"),
 		app.CreatePluginApiName(c.CreateBinding, app.WRITE, "create_binding"),
 		app.CreatePluginApiName(c.UpdateBinding, app.WRITE, "update_binding"),
 		app.CreatePluginApiName(c.DeleteBinding, app.WRITE, "delete_binding"),
@@ -201,6 +206,95 @@ func (c *openrunAdminPlugin) UpdateAuth(thread *starlark.Thread, builtin *starla
 		return nil, err
 	}
 	return starlark_type.ConvertToStarlark(result)
+}
+
+func parseServiceId(id string) (serviceType, name string, err error) {
+	parts := strings.Split(id, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("invalid service id %q: expected <service_type>/<service_name>", id)
+	}
+	return parts[0], parts[1], nil
+}
+
+// CreateService creates a new service entry. id is <service_type>/<name>
+func (c *openrunAdminPlugin) CreateService(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id, staging starlark.String
+	var config *starlark.Dict
+	var isDefault, dryRun starlark.Bool
+	if err := starlark.UnpackArgs("create_service", args, kwargs, "id", &id,
+		"config?", &config, "is_default?", &isDefault, "staging?", &staging, "dry_run?", &dryRun); err != nil {
+		return nil, err
+	}
+
+	serviceType, name, err := parseServiceId(id.GoString())
+	if err != nil {
+		return nil, err
+	}
+	configMap, err := dictToStringMap(config, "config")
+	if err != nil {
+		return nil, err
+	}
+
+	service := types.Service{
+		Name:        name,
+		ServiceType: serviceType,
+		IsDefault:   bool(isDefault),
+		Staging:     staging.GoString(),
+		Config:      configMap,
+	}
+	if err := c.server.CreateService(system.GetRequestContext(thread), &service, bool(dryRun)); err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(map[string]any{"id": service.Id, "dry_run": bool(dryRun)})
+}
+
+// DeleteService deletes a service entry. id is <service_type>/<name>
+func (c *openrunAdminPlugin) DeleteService(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id starlark.String
+	var dryRun starlark.Bool
+	if err := starlark.UnpackArgs("delete_service", args, kwargs, "id", &id, "dry_run?", &dryRun); err != nil {
+		return nil, err
+	}
+
+	serviceType, name, err := parseServiceId(id.GoString())
+	if err != nil {
+		return nil, err
+	}
+	if err := c.server.DeleteService(system.GetRequestContext(thread), name, serviceType, bool(dryRun)); err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(map[string]any{"id": id.GoString(), "dry_run": bool(dryRun)})
+}
+
+// StartContainer starts a stopped OpenRun managed container
+func (c *openrunAdminPlugin) StartContainer(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return c.containerLifecycle(thread, args, kwargs, "start_container")
+}
+
+// StopContainer stops a running OpenRun managed container
+func (c *openrunAdminPlugin) StopContainer(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return c.containerLifecycle(thread, args, kwargs, "stop_container")
+}
+
+func (c *openrunAdminPlugin) containerLifecycle(thread *starlark.Thread, args starlark.Tuple, kwargs []starlark.Tuple, op string) (starlark.Value, error) {
+	var id starlark.String
+	if err := starlark.UnpackArgs(op, args, kwargs, "id", &id); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	var err error
+	if op == "start_container" {
+		err = c.server.StartManagedContainer(ctx, id.GoString())
+	} else {
+		err = c.server.StopManagedContainer(ctx, id.GoString())
+	}
+	if err != nil {
+		return nil, err
+	}
+	ret := starlark.Dict{}
+	ret.SetKey(starlark.String("id"), id) //nolint:errcheck
+	return &ret, nil
 }
 
 // CreateBinding creates a new binding. source is a service id

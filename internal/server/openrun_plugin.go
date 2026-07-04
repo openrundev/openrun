@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sort"
 	"time"
 
 	"github.com/openrundev/openrun/internal/app"
@@ -36,6 +37,10 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ListVersions, app.READ, "list_versions"),
 		app.CreatePluginApiName(c.ListVersionFiles, app.READ, "list_version_files"),
 		app.CreatePluginApiName(c.AuditApp, app.READ, "audit_app"),
+		app.CreatePluginApiName(c.ListServices, app.READ, "list_services"),
+		app.CreatePluginApiName(c.ListContainers, app.READ, "list_containers"),
+		app.CreatePluginApiName(c.GetContainer, app.READ, "get_container"),
+		app.CreatePluginApiName(c.GetContainerLogs, app.READ, "container_logs"),
 		app.CreatePluginApiName(c.GetPermissions, app.READ, "get_permissions"),
 	}
 
@@ -113,7 +118,8 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 			queryStr := strings.ToLower(query.GoString())
 			if !strings.Contains(strings.ToLower(app.Name), queryStr) &&
 				!strings.Contains(strings.ToLower(app.String()), queryStr) &&
-				!strings.Contains(strings.ToLower(app.SourceUrl), queryStr) {
+				!strings.Contains(strings.ToLower(app.SourceUrl), queryStr) &&
+				!strings.Contains(strings.ToLower(app.UserID), queryStr) {
 				continue
 			}
 		}
@@ -191,6 +197,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		v.SetKey(starlark.String("is_dev"), starlark.Bool(app.IsDev))
 		v.SetKey(starlark.String("is_stage"), starlark.Bool(strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_STAGE)))
 		v.SetKey(starlark.String("main_app"), starlark.String(app.MainApp))
+		v.SetKey(starlark.String("created_by"), starlark.String(app.UserID))
 		if app.Auth == types.AppAuthnDefault {
 			v.SetKey(starlark.String("auth"), starlark.String(c.server.config.Security.AppDefaultAuthType))
 			v.SetKey(starlark.String("auth_uses_default"), starlark.Bool(true))
@@ -381,13 +388,32 @@ func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starla
 		v := starlark.Dict{}
 		v.SetKey(starlark.String("rid"), starlark.String(rid))
 		v.SetKey(starlark.String("app_id"), starlark.String(appId))
+		appEnv := ""
+		switch {
+		case strings.HasPrefix(appId, types.ID_PREFIX_APP_PROD):
+			appEnv = "prod"
+		case strings.HasPrefix(appId, types.ID_PREFIX_APP_STAGE):
+			appEnv = "stage"
+		case strings.HasPrefix(appId, types.ID_PREFIX_APP_PREVIEW):
+			appEnv = "preview"
+		case strings.HasPrefix(appId, types.ID_PREFIX_APP_DEV):
+			appEnv = "dev"
+		}
 		if appInfo, ok := appIdMap[types.AppId(appId)]; ok {
+			// Staging events resolve to the main app, so links go to the
+			// prod app's detail page
+			if appEnv == "stage" && appInfo.MainApp != "" {
+				if mainInfo, ok := appIdMap[appInfo.MainApp]; ok {
+					appInfo = mainInfo
+				}
+			}
 			v.SetKey(starlark.String("app_name"), starlark.String(appInfo.Name))
 			v.SetKey(starlark.String("app_path"), starlark.String(appInfo.String()))
 		} else {
 			v.SetKey(starlark.String("app_name"), starlark.String(appId))
 			v.SetKey(starlark.String("app_path"), starlark.String(""))
 		}
+		v.SetKey(starlark.String("app_env"), starlark.String(appEnv))
 		v.SetKey(starlark.String("create_time_epoch"), starlark.String(strconv.FormatInt(createTime, 10)))
 		v.SetKey(starlark.String("create_time"), starlark.String(utcTime.Format("2006-01-02T15:04:05.999Z")))
 		v.SetKey(starlark.String("user_id"), starlark.String(userId))
@@ -668,6 +694,98 @@ func (c *openrunPlugin) AuditApp(thread *starlark.Thread, builtin *starlark.Buil
 		return nil, err
 	}
 	return starlark_type.ConvertToStarlark(result)
+}
+
+// ListServices lists the service entries. Config values are redacted, only
+// the config keys are returned
+func (c *openrunPlugin) ListServices(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("list_services", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	services, err := c.server.ListServices(system.GetRequestContext(thread), "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	ret := starlark.List{}
+	for _, service := range services {
+		configKeys := make([]string, 0, len(service.Config))
+		for key := range service.Config {
+			configKeys = append(configKeys, key)
+		}
+		sort.Strings(configKeys)
+
+		entry, err := starlark_type.ConvertToStarlark(map[string]any{
+			"id":           service.Id,
+			"name":         service.Name,
+			"service_type": service.ServiceType,
+			"is_default":   service.IsDefault,
+			"staging":      service.Staging,
+			"config_keys":  configKeys,
+			"create_time":  service.CreateTime.Format(time.RFC3339),
+			"update_time":  service.UpdateTime.Format(time.RFC3339),
+		})
+		if err != nil {
+			return nil, err
+		}
+		ret.Append(entry) //nolint:errcheck
+	}
+	return &ret, nil
+}
+
+// ListContainers lists the containers (or Kubernetes pods) managed by OpenRun
+func (c *openrunPlugin) ListContainers(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("list_containers", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	containers, err := c.server.ListManagedContainers(system.GetRequestContext(thread))
+	if err != nil {
+		return nil, err
+	}
+
+	ret := starlark.List{}
+	for _, info := range containers {
+		entry, err := starlark_type.ConvertToStarlark(info)
+		if err != nil {
+			return nil, err
+		}
+		ret.Append(entry) //nolint:errcheck
+	}
+	return &ret, nil
+}
+
+// GetContainer returns the details of one OpenRun managed container,
+// including mounts, disk usage and live resource stats
+func (c *openrunPlugin) GetContainer(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id starlark.String
+	stats := starlark.Bool(true)
+	if err := starlark.UnpackArgs("get_container", args, kwargs, "id", &id, "stats?", &stats); err != nil {
+		return nil, err
+	}
+
+	detail, err := c.server.GetManagedContainer(system.GetRequestContext(thread), id.GoString(), bool(stats))
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(detail)
+}
+
+// GetContainerLogs returns the last tail lines of a container's logs
+func (c *openrunPlugin) GetContainerLogs(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id starlark.String
+	tail := starlark.MakeInt(100)
+	if err := starlark.UnpackArgs("container_logs", args, kwargs, "id", &id, "tail?", &tail); err != nil {
+		return nil, err
+	}
+
+	tailInt, _ := tail.Int64()
+	logs, err := c.server.GetManagedContainerLogs(system.GetRequestContext(thread), id.GoString(), int(tailInt))
+	if err != nil {
+		return nil, err
+	}
+	return starlark.String(logs), nil
 }
 
 // GetPermissions returns the management API permissions the current user holds.

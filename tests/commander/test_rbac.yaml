@@ -1,0 +1,194 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+tests:
+  rbac0010: # create an admin owned app, no grants for anonymous on this
+    command: ../openrun app create --auth=none ./rbac_child_app /protected
+    stdout: "App: /protected"
+    exit-code: 0
+  rbac0020: # create the rbac test app, rbac:none auth means anonymous user with RBAC checks
+    command: ../openrun app create --auth=rbac:none --approve ./rbac_app /rbacapp
+    stdout: "App: /rbacapp"
+    exit-code: 0
+  rbac0030: # RBAC disabled - no filtering, all apps visible through list_apps
+    command: curl -s localhost:25222/rbacapp/list
+    stdout:
+      contains:
+        - "/protected"
+        - "/rbacapp"
+    exit-code: 0
+  rbac0040: # RBAC disabled - get_permissions returns all permissions
+    command: curl -s localhost:25222/rbacapp/perms
+    stdout:
+      contains:
+        - "app:approve"
+        - "server:stop"
+    exit-code: 0
+  rbac0050: # write the RBAC enabled dynamic config: anonymous can view /rbacapp and create/approve /anonapp*
+    command: |
+      cat > rbac_config1.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "enabled": true,
+          "groups": {},
+          "roles": {
+            "viewer": ["app:access", "app:read"],
+            "creator": ["app:create"],
+            "reloader": ["app:reload"]
+          },
+          "grants": [
+            {
+              "description": "anonymous views rbacapp",
+              "users": ["anonymous"],
+              "roles": ["viewer"],
+              "targets": ["/rbacapp"]
+            },
+            {
+              "description": "anonymous creates anon apps",
+              "users": ["anonymous"],
+              "roles": ["creator"],
+              "targets": ["/anonapp*"]
+            },
+            {
+              "description": "anonymous reloads protected, no promote",
+              "users": ["anonymous"],
+              "roles": ["reloader"],
+              "targets": ["/protected"]
+            }
+          ]
+        }
+      }
+      EOF
+    exit-code: 0
+  rbac0060: # enable RBAC
+    command: ../openrun server update-config --force rbac_config1.json
+    exit-code: 0
+  rbac0070: # app access still works, anonymous has app:access on /rbacapp
+    command: curl -s localhost:25222/rbacapp/
+    stdout: "rbacapp ok"
+    exit-code: 0
+  rbac0080: # list is now filtered, /protected is not visible
+    command: curl -s localhost:25222/rbacapp/list
+    stdout:
+      contains:
+        - "/rbacapp"
+      not-contains:
+        - "/protected"
+    exit-code: 0
+  rbac0090: # get_permissions on /rbacapp shows granted perms only
+    command: curl -s localhost:25222/rbacapp/perms
+    stdout:
+      contains:
+        - "app:access"
+        - "app:read"
+      not-contains:
+        - "app:approve"
+        - "app:delete"
+        - "server:stop"
+    exit-code: 0
+  rbac0100: # create works, anonymous has app:create on /anonapp*
+    command: curl -s localhost:25222/rbacapp/create
+    stdout: "CREATED"
+    exit-code: 0
+  rbac0105: # the approve flag needs app:approve, app:create alone is denied
+    command: curl -s localhost:25222/rbacapp/create_approve
+    stdout:
+      contains:
+        - "ERROR"
+        - "app:approve"
+    exit-code: 0
+  rbac0110: # created app is visible through the owner rule, without any explicit grant
+    command: curl -s localhost:25222/rbacapp/list
+    stdout:
+      contains:
+        - "/anonapp1"
+      not-contains:
+        - "/protected"
+    exit-code: 0
+  rbac0120: # owner holds app:admin equivalent on own app, but never app:approve
+    command: curl -s localhost:25222/rbacapp/perms_child
+    stdout:
+      contains:
+        - "app:delete"
+        - "app:update"
+        - "app:reload"
+      not-contains:
+        - "app:approve"
+    exit-code: 0
+  rbac0130: # create outside the granted target glob is denied
+    command: curl -s localhost:25222/rbacapp/create_bad
+    stdout:
+      contains:
+        - "ERROR"
+        - "app:create"
+    exit-code: 0
+  rbac0140: # deleting an admin owned app is denied
+    command: curl -s localhost:25222/rbacapp/delete_other
+    stdout:
+      contains:
+        - "ERROR"
+        - "app:delete"
+    exit-code: 0
+  rbac0150: # protected app still exists after the denied delete
+    command: ../openrun app list /protected
+    stdout: "/protected"
+    exit-code: 0
+  rbac0152: # reload without promote works, anonymous has app:reload on /protected
+    command: curl -s localhost:25222/rbacapp/reload_ok
+    stdout: "RELOADED"
+    exit-code: 0
+  rbac0154: # reload with promote also needs app:promote, denied
+    command: curl -s localhost:25222/rbacapp/reload_promote
+    stdout:
+      contains:
+        - "ERROR"
+        - "app:promote"
+    exit-code: 0
+  rbac0160: # approve is operator only, denied without a literal app:approve grant
+    command: curl -s localhost:25222/rbacapp/approve_other
+    stdout:
+      contains:
+        - "ERROR"
+        - "app:approve"
+    exit-code: 0
+  rbac0170: # owner can delete their own app
+    command: curl -s localhost:25222/rbacapp/delete
+    stdout: "DELETED"
+    exit-code: 0
+  rbac0180: # admin CLI is never subject to RBAC enforcement
+    command: ../openrun app list all
+    stdout:
+      contains:
+        - "/protected"
+        - "/rbacapp"
+    exit-code: 0
+  rbac0190: # disable RBAC again
+    command: |
+      cat > rbac_config1.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "enabled": false,
+          "groups": {},
+          "roles": {},
+          "grants": []
+        }
+      }
+      EOF
+      ../openrun server update-config --force rbac_config1.json
+    exit-code: 0
+  rbac0200: # with RBAC disabled, filtering is off again
+    command: curl -s localhost:25222/rbacapp/list
+    stdout:
+      contains:
+        - "/protected"
+        - "/rbacapp"
+    exit-code: 0
+  rbac0210: # cleanup apps and config file
+    command: |
+      ../openrun app delete /rbacapp
+      ../openrun app delete /protected
+      rm -f rbac_config1.json
+    exit-code: 0

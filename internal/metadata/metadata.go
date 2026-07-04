@@ -24,7 +24,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 12
+const CURRENT_DB_VERSION = 13
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -357,6 +357,17 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `update version set version=12, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 13 {
+		m.Info().Msg("Upgrading to version 13")
+		if _, err := tx.ExecContext(ctx, `alter table bindings add column created_by text not null default ''`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=13, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}
@@ -1344,8 +1355,8 @@ func (m *Metadata) CreateBinding(ctx context.Context, tx types.Transaction, bind
 	}
 
 	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into bindings(id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time) values(?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		binding.Id, binding.Path, binding.Source, binding.ServiceType, binding.ServiceName, binding.DerivedFrom, string(metadataJson), string(stagedMetadataJson))
+		`INSERT into bindings(id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, created_by, create_time, update_time) values(?, ?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		binding.Id, binding.Path, binding.Source, binding.ServiceType, binding.ServiceName, binding.DerivedFrom, string(metadataJson), string(stagedMetadataJson), binding.CreatedBy)
 	if err != nil {
 		return fmt.Errorf("error inserting binding: %w", err)
 	}
@@ -1396,11 +1407,11 @@ func (m *Metadata) DeleteBinding(ctx context.Context, tx types.Transaction, path
 
 func (m *Metadata) GetBinding(ctx context.Context, tx types.Transaction, path string) (*types.Binding, error) {
 	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time from bindings where path = ?`), path)
+		`select id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, created_by, create_time, update_time from bindings where path = ?`), path)
 
 	var binding types.Binding
 	var metadataStr, stagedMetadataStr sql.NullString
-	err := row.Scan(&binding.Id, &binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.DerivedFrom, &metadataStr, &stagedMetadataStr, &binding.CreateTime, &binding.UpdateTime)
+	err := row.Scan(&binding.Id, &binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.DerivedFrom, &metadataStr, &stagedMetadataStr, &binding.CreatedBy, &binding.CreateTime, &binding.UpdateTime)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("binding not found with path: %s", path)
@@ -1423,7 +1434,7 @@ func (m *Metadata) GetBinding(ctx context.Context, tx types.Transaction, path st
 
 // ListBindings returns bindings filtered by the optional source. Empty string means no filter.
 func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, source string) ([]*types.Binding, error) {
-	query := `select id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time from bindings`
+	query := `select id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, created_by, create_time, update_time from bindings`
 	args := make([]any, 0, 1)
 	if source != "" {
 		query += ` where source = ?`
@@ -1447,7 +1458,7 @@ func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, sourc
 	for rows.Next() {
 		var binding types.Binding
 		var metadataStr, stagedMetadataStr sql.NullString
-		err = rows.Scan(&binding.Id, &binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.DerivedFrom, &metadataStr, &stagedMetadataStr, &binding.CreateTime, &binding.UpdateTime)
+		err = rows.Scan(&binding.Id, &binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.DerivedFrom, &metadataStr, &stagedMetadataStr, &binding.CreatedBy, &binding.CreateTime, &binding.UpdateTime)
 		if err != nil {
 			return nil, fmt.Errorf("error scanning binding: %w", err)
 		}
