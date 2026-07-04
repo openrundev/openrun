@@ -10,12 +10,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/openrundev/openrun/internal/app"
@@ -217,6 +219,36 @@ func (s *Server) validateAppAuthnType(authStr string) error {
 		return fmt.Errorf("invalid authentication type %s", authStr)
 	}
 	return nil
+}
+
+// ListAppAuths returns the auth types an app can be configured with: the
+// built-in types followed by the oauth, saml (saml_ prefixed) and client cert
+// auth entries configured on this server. The rbac: prefix and +forward_
+// modifiers are not expanded here
+func (s *Server) ListAppAuths() []string {
+	auths := []string{string(types.AppAuthnDefault), string(types.AppAuthnSystem), string(types.AppAuthnNone)}
+
+	oauth := slices.Collect(maps.Keys(s.config.Auth))
+	slices.Sort(oauth)
+	auths = append(auths, oauth...)
+
+	saml := make([]string, 0, len(s.config.SAML))
+	for name := range s.config.SAML {
+		saml = append(saml, SAML_AUTH_PREFIX+name)
+	}
+	slices.Sort(saml)
+	auths = append(auths, saml...)
+
+	// Client cert entries usable as app auth are named cert or cert_*, same
+	// rule as validateAppAuthnType
+	certs := make([]string, 0, len(s.config.ClientAuth))
+	for name := range s.config.ClientAuth {
+		if name == "cert" || strings.HasPrefix(name, "cert_") {
+			certs = append(certs, name)
+		}
+	}
+	slices.Sort(certs)
+	return append(auths, certs...)
 }
 
 func (s *Server) createApp(ctx context.Context, tx types.Transaction,

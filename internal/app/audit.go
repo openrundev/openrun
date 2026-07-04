@@ -21,8 +21,22 @@ func (a *App) Audit() (*types.ApproveResult, error) {
 		return nil, fmt.Errorf("error reading %s file: %w", a.getStarPath(apptype.APP_FILE_NAME), err)
 	}
 
+	// Plugin loads are collected across all starlark files: statically from
+	// app.star and via the audit loader for files loaded with .star loads.
+	// Loads of app starlark files are not plugin loads and are not recorded
+	loads := []string{}
+	addLoad := func(module string) {
+		if strings.HasSuffix(module, apptype.STARLARK_FILE_SUFFIX) {
+			return
+		}
+		if !slices.Contains(loads, module) {
+			loads = append(loads, module)
+		}
+	}
+
 	starlarkCache := map[string]*starlarkCacheEntry{}
 	auditLoader := func(thread *starlark.Thread, moduleFullPath string) (starlark.StringDict, error) {
+		addLoad(moduleFullPath)
 
 		if strings.HasSuffix(moduleFullPath, apptype.STARLARK_FILE_SUFFIX) {
 			// Load the starlark file rather than the plugin
@@ -86,12 +100,9 @@ func (a *App) Audit() (*types.ApproveResult, error) {
 		return nil, fmt.Errorf("parsing source failed %v", err)
 	}
 
-	loads := []string{}
 	for i := 0; i < prog.NumLoads(); i++ {
 		p, _ := prog.Load(i)
-		if !slices.Contains(loads, p) {
-			loads = append(loads, p)
-		}
+		addLoad(p)
 	}
 
 	// This runs the starlark script, with dummy plugin methods

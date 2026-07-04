@@ -10,6 +10,7 @@
 .DS_Store
 /run/
 /tests/run/
+/ui/
 /app_src/
 /config/
 /internal/server/appspecs/

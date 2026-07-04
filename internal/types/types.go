@@ -263,6 +263,10 @@ type MetadataConfig struct {
 	AuditDBConnection   string `toml:"audit_db_connection"`
 	IgnoreHigherVersion bool   `toml:"ignore_higher_version"` // If true, ignore higher version of the metadata schema
 	FileCacheConnection string `toml:"file_cache_connection"` // The connection string for the file cache database
+
+	// ConfigHistoryVersions is the number of dynamic config snapshots retained
+	// in the config_history table. Every config change appends a snapshot
+	ConfigHistoryVersions int `toml:"config_history_versions"`
 }
 
 // LogConfig is the configuration for the Logger
@@ -873,6 +877,26 @@ type DynamicConfig struct {
 	RBAC      RBACConfig `json:"rbac"`
 }
 
+// ConfigDraft is the staged dynamic config edit, stored separately from the
+// versioned config so draft edits do not pollute the config history.
+// Enforcement always reads the live config; the draft goes live on publish
+type ConfigDraft struct {
+	RBAC         RBACConfig `json:"rbac"`          // the draft RBAC section
+	BaseVersion  string     `json:"base_version"`  // live config version the draft was forked from
+	DraftVersion string     `json:"draft_version"` // bumped on every draft edit, CAS for edits/discard
+	CreatedBy    string     `json:"created_by"`
+	CreateTime   time.Time  `json:"create_time"`
+	UpdatedBy    string     `json:"updated_by"`
+	UpdateTime   time.Time  `json:"update_time"`
+}
+
+// ConfigHistoryEntry describes one snapshot in the dynamic config history
+type ConfigHistoryEntry struct {
+	VersionId  string    `json:"version_id"`
+	UserId     string    `json:"user_id"`
+	UpdateTime time.Time `json:"update_time"`
+}
+
 type RBACConfig struct {
 	Enabled bool                        `json:"enabled"` // whether rbac is enabled
 	Groups  map[string][]string         `json:"groups"`  // groups names to user ids. These groups are appended to the groups info from SAML
@@ -934,6 +958,34 @@ const (
 	PermissionConfigUpdate RBACPermission = "config:update"
 	PermissionServerStop   RBACPermission = "server:stop"
 )
+
+// RBACPermissionGroup lists the permissions for one resource type, in display order
+type RBACPermissionGroup struct {
+	Resource    string           `json:"resource"`
+	Permissions []RBACPermission `json:"permissions"`
+}
+
+// RBACPermissionGroups is the canonical list of all RBAC permissions, grouped by
+// resource type. UIs read this through the list_rbac_permissions plugin API;
+// keep it in sync with the permission constants above
+var RBACPermissionGroups = []RBACPermissionGroup{
+	{Resource: "app", Permissions: []RBACPermission{
+		PermissionAccess, PermissionRead, PermissionCreate, PermissionUpdate,
+		PermissionReload, PermissionApply, PermissionDelete, PermissionApprove,
+		PermissionPromote, PermissionPreview, PermissionTokenRead,
+		PermissionTokenManage, PermissionAppAdmin}},
+	{Resource: "sync", Permissions: []RBACPermission{
+		PermissionSyncCreate, PermissionSyncRun, PermissionSyncDelete, PermissionSyncRead}},
+	{Resource: "service", Permissions: []RBACPermission{
+		PermissionServiceCreate, PermissionServiceUpdate, PermissionServiceDelete,
+		PermissionServiceRead}},
+	{Resource: "binding", Permissions: []RBACPermission{
+		PermissionBindingCreate, PermissionBindingUpdate, PermissionBindingDelete,
+		PermissionBindingRead, PermissionBindingRunCommand}},
+	{Resource: "config", Permissions: []RBACPermission{
+		PermissionConfigRead, PermissionConfigUpdate}},
+	{Resource: "server", Permissions: []RBACPermission{PermissionServerStop}},
+}
 
 type AuthorizerFunc func(ctx context.Context, permissions []string) (bool, error)
 type CustomPermsFunc func(ctx context.Context) ([]string, error)

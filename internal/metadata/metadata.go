@@ -24,7 +24,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 13
+const CURRENT_DB_VERSION = 15
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -368,6 +368,29 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=13, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 14 {
+		m.Info().Msg("Upgrading to version 14")
+		if _, err := tx.ExecContext(ctx, `create table config_history (version_id text not null, user_id text, `+
+			`update_time `+system.MapDataType(m.dbType, "datetime")+`, config json, PRIMARY KEY(version_id))`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=14, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 15 {
+		m.Info().Msg("Upgrading to version 15")
+		if _, err := tx.ExecContext(ctx, `create table config_draft (id int primary key check(id=1), draft json)`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=15, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}
@@ -961,6 +984,114 @@ func (m *Metadata) UpdateConfig(ctx context.Context, user string, oldVersionId s
 	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("no config entry found with version id for update: %s", oldVersionId)
+	}
+
+	return m.snapshotConfig(ctx, user, dynamicConfig, string(configJson))
+}
+
+// snapshotConfig appends the config to the history table and prunes old
+// entries beyond the configured retention
+func (m *Metadata) snapshotConfig(ctx context.Context, user string, dynamicConfig *types.DynamicConfig, configJson string) error {
+	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`insert into config_history (version_id, user_id, update_time, config) values (?, ?, `+system.FuncNow(m.dbType)+`, ?)`),
+		dynamicConfig.VersionId, user, configJson)
+	if err != nil {
+		return fmt.Errorf("error inserting config history: %w", err)
+	}
+
+	retain := m.config.Metadata.ConfigHistoryVersions
+	if retain <= 0 {
+		retain = 20
+	}
+	_, err = m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`delete from config_history where version_id not in `+
+			`(select version_id from config_history order by update_time desc, version_id desc limit `+strconv.Itoa(retain)+`)`))
+	if err != nil {
+		return fmt.Errorf("error pruning config history: %w", err)
+	}
+	return nil
+}
+
+// ListConfigHistory returns the config history entries, newest first
+func (m *Metadata) ListConfigHistory(ctx context.Context) ([]types.ConfigHistoryEntry, error) {
+	rows, err := m.db.QueryContext(ctx,
+		`select version_id, user_id, update_time from config_history order by update_time desc, version_id desc`)
+	if err != nil {
+		return nil, fmt.Errorf("error querying config history: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	entries := make([]types.ConfigHistoryEntry, 0)
+	for rows.Next() {
+		var entry types.ConfigHistoryEntry
+		var userId sql.NullString
+		if err := rows.Scan(&entry.VersionId, &userId, &entry.UpdateTime); err != nil {
+			return nil, fmt.Errorf("error scanning config history: %w", err)
+		}
+		entry.UserId = userId.String
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
+}
+
+// GetConfigVersion returns the full dynamic config snapshot for a history version
+func (m *Metadata) GetConfigVersion(ctx context.Context, versionId string) (*types.DynamicConfig, error) {
+	var configStr sql.NullString
+	row := m.db.QueryRowContext(ctx, system.RebindQuery(m.dbType,
+		`select config from config_history where version_id = ?`), versionId)
+	if err := row.Scan(&configStr); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("config version %s not found in history", versionId)
+		}
+		return nil, fmt.Errorf("error querying config history: %w", err)
+	}
+
+	var config types.DynamicConfig
+	if err := json.Unmarshal([]byte(configStr.String), &config); err != nil {
+		return nil, fmt.Errorf("error unmarshalling config history entry: %w", err)
+	}
+	return &config, nil
+}
+
+var ErrNoConfigDraft = errors.New("no staged config draft")
+
+// GetConfigDraft returns the staged config draft, ErrNoConfigDraft if none
+func (m *Metadata) GetConfigDraft(ctx context.Context) (*types.ConfigDraft, error) {
+	var draftStr sql.NullString
+	row := m.db.QueryRowContext(ctx, `select draft from config_draft where id = 1`)
+	if err := row.Scan(&draftStr); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrNoConfigDraft
+		}
+		return nil, fmt.Errorf("error querying config draft: %w", err)
+	}
+
+	var draft types.ConfigDraft
+	if err := json.Unmarshal([]byte(draftStr.String), &draft); err != nil {
+		return nil, fmt.Errorf("error unmarshalling config draft: %w", err)
+	}
+	return &draft, nil
+}
+
+// SetConfigDraft creates or replaces the staged config draft
+func (m *Metadata) SetConfigDraft(ctx context.Context, draft *types.ConfigDraft) error {
+	draftJson, err := json.Marshal(draft)
+	if err != nil {
+		return fmt.Errorf("error marshalling config draft: %w", err)
+	}
+	_, err = m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`insert into config_draft (id, draft) values (1, ?) on conflict(id) do update set draft = excluded.draft`),
+		string(draftJson))
+	if err != nil {
+		return fmt.Errorf("error saving config draft: %w", err)
+	}
+	return nil
+}
+
+// DeleteConfigDraft drops the staged config draft
+func (m *Metadata) DeleteConfigDraft(ctx context.Context) error {
+	if _, err := m.db.ExecContext(ctx, `delete from config_draft where id = 1`); err != nil {
+		return fmt.Errorf("error deleting config draft: %w", err)
 	}
 	return nil
 }

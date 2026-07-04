@@ -38,10 +38,16 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ListVersionFiles, app.READ, "list_version_files"),
 		app.CreatePluginApiName(c.AuditApp, app.READ, "audit_app"),
 		app.CreatePluginApiName(c.ListServices, app.READ, "list_services"),
+		app.CreatePluginApiName(c.GetRBACConfig, app.READ, "get_rbac_config"),
+		app.CreatePluginApiName(c.ListConfigHistory, app.READ, "list_config_history"),
+		app.CreatePluginApiName(c.GetConfigVersion, app.READ, "get_config_version"),
 		app.CreatePluginApiName(c.ListContainers, app.READ, "list_containers"),
 		app.CreatePluginApiName(c.GetContainer, app.READ, "get_container"),
 		app.CreatePluginApiName(c.GetContainerLogs, app.READ, "container_logs"),
 		app.CreatePluginApiName(c.GetPermissions, app.READ, "get_permissions"),
+		app.CreatePluginApiName(c.ListRBACPermissions, app.READ, "list_rbac_permissions"),
+		app.CreatePluginApiName(c.ListAuths, app.READ, "list_auths"),
+		app.CreatePluginApiName(c.ListGitAuths, app.READ, "list_git_auths"),
 	}
 
 	newOpenRunPlugin := func(pluginContext *types.PluginContext) (any, error) {
@@ -827,6 +833,37 @@ func (c *openrunPlugin) GetPermissions(thread *starlark.Thread, builtin *starlar
 	ret := starlark.List{}
 	for _, perm := range perms {
 		ret.Append(starlark.String(perm)) //nolint:errcheck
+	}
+	return &ret, nil
+}
+
+// ListAuths returns the auth types an app can be configured with: the
+// built-ins (default/system/none) plus the oauth, saml and client cert auth
+// entries configured on this server
+func (c *openrunPlugin) ListAuths(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("list_auths", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	ret := starlark.List{}
+	for _, auth := range c.server.ListAppAuths() {
+		ret.Append(starlark.String(auth)) //nolint:errcheck
+	}
+	return &ret, nil
+}
+
+// ListGitAuths returns the git_auth entry names configured on this server,
+// usable for private repo access in app create and sync setup
+func (c *openrunPlugin) ListGitAuths(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("list_git_auths", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	names := slices.Collect(maps.Keys(c.server.config.GitAuth))
+	slices.Sort(names)
+	ret := starlark.List{}
+	for _, name := range names {
+		ret.Append(starlark.String(name)) //nolint:errcheck
 	}
 	return &ret, nil
 }

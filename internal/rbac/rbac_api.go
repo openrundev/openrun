@@ -170,3 +170,38 @@ type RBACAPI interface {
 }
 
 var _ RBACAPI = (*RBACManager)(nil)
+
+// RequestHasRBACAuth reports whether the calling app's auth uses the rbac:
+// prefix. Enforcement is two-level: the config enabled flag AND the app auth.
+// Used for lockout checks: publishing an enabled config only affects callers
+// whose app auth opts into rbac
+func RequestHasRBACAuth(ctx context.Context) bool {
+	authVal := ctx.Value(types.APP_AUTH)
+	if authVal == nil {
+		return false
+	}
+	appAuth, ok := authVal.(types.AppAuthnType)
+	if !ok {
+		return false
+	}
+	return strings.HasPrefix(string(appAuth), RBAC_AUTH_PREFIX)
+}
+
+// AuthorizeUserPerm evaluates a global permission for the given user and groups
+// directly against this manager's config, without request context. Used for
+// lockout checks when publishing a candidate config
+func (h *RBACManager) AuthorizeUserPerm(user string, groups []string, perm types.RBACPermission) (bool, error) {
+	return h.authorizeAPIInt(user, groups, perm, types.AppPathDomain{}, "")
+}
+
+// ValidatePermissionName checks that a permission entry is a valid resource:verb
+// permission or permission glob. Used for local validation of draft edits
+func ValidatePermissionName(perm types.RBACPermission) error {
+	if strings.HasPrefix(string(perm), RBAC_ROLE_PREFIX) {
+		return nil
+	}
+	if strings.ContainsAny(string(perm), "*?[") {
+		return nil // permission glob, validated on apply
+	}
+	return validatePermission(perm)
+}
