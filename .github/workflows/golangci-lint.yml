@@ -5,9 +5,11 @@ on:
       - main
     paths-ignore:
       - "docs/**"
+      - "ui/**"
   pull_request:
     paths-ignore:
       - "docs/**"
+      - "ui/**"
   workflow_call:
 
 permissions:
@@ -28,7 +30,15 @@ jobs:
           # go-version: "1.26.3"
           go-version-file: 'go.mod'
 
+      - name: List Go packages
+        id: packages
+        run: |
+          module="$(go list -m)"
+          packages="$(go list ./... | grep -v '/ui/' | awk -v module="$module" '{ sub("^" module, "."); print }' | tr '\n' ' ')"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9
         with:
           version: v2.9.0 # or latest
+          args: ${{ steps.packages.outputs.packages }}

@@ -10,6 +10,9 @@ MAKEFLAGS += --no-builtin-rules
 OPENRUN_HOME := `pwd`
 INPUT := $(word 2,$(MAKECMDGOALS))
 INPUT2 := $(word 3,$(MAKECMDGOALS))
+GO_PACKAGES = $$(go list ./... | grep -v '/ui/')
+GO_COVER_PACKAGES = $$(go list ./... | grep -v '/ui/' | paste -sd, -)
+GO_LINT_PACKAGES = $$(module=$$(go list -m); go list ./... | grep -v '/ui/' | awk -v module="$$module" '{ sub("^" module, "."); print }')
 
 ARCH        := $(shell uname -m)
 TARGET_DIR  := dist/linux/$(ARCH)
@@ -44,14 +47,18 @@ covtest: covunit covint ## Run all tests with coverage
 > go tool cover -func coverage/profile
 
 unit: ## Run unit tests
-> go test ./...
+> packages="$(GO_PACKAGES)"
+> go test $$packages
 
 lint: ## Run lint
-> golangci-lint run
+> packages="$(GO_LINT_PACKAGES)"
+> golangci-lint run $$packages
 
 covunit: ## Run unit tests with coverage
 > rm -rf $(OPENRUN_HOME)/coverage/unit && mkdir -p $(OPENRUN_HOME)/coverage/unit
-> go test -coverpkg ./... ./... -args -test.gocoverdir="$(OPENRUN_HOME)/coverage/unit"
+> packages="$(GO_PACKAGES)"
+> cover_packages="$(GO_COVER_PACKAGES)"
+> go test -coverpkg "$$cover_packages" $$packages -args -test.gocoverdir="$(OPENRUN_HOME)/coverage/unit"
 > go tool covdata percent -i=$(OPENRUN_HOME)/coverage/unit
 > go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/unit -o $(OPENRUN_HOME)/coverage/profile
 > go tool cover -func coverage/profile

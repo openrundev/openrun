@@ -96,7 +96,7 @@ func (s *Server) resolveContainerApps(infos []ContainerInfo) {
 					target = mainInfo
 				}
 			}
-			appPaths[string(id)] = target.AppPathDomain.String()
+			appPaths[string(id)] = target.String()
 		}
 	}
 
