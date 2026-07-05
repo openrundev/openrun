@@ -5,12 +5,5 @@
 
 package system
 
-func NotifyServiceReady() {}
-
-func NotifyServiceStopping() {}
-
-func NotifyServiceStopped() {}
-
-func ServiceStopNotify() <-chan struct{} {
-	return nil
-}
+// MaybeRunAsService is a no-op on platforms without OS service integration
+func MaybeRunAsService() {}

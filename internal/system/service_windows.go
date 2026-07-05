@@ -8,52 +8,39 @@ package system
 import (
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sys/windows/svc"
 )
 
-const (
-	serviceStartWaitHintMillis uint32 = 120000
-	serviceStopWaitHintMillis  uint32 = 60000
+// windowsServiceName is the name used in the service table entry. The
+// service control manager ignores it for SERVICE_WIN32_OWN_PROCESS
+// services, so it does not have to match the registered service name.
+const windowsServiceName = "openrun"
 
-	serviceStartCheckpointInterval = 10 * time.Second
-	serviceStatusRegistrationWait  = 30 * time.Second
-)
-
-var (
-	serviceMode           bool
-	serviceStatus         chan<- svc.Status
-	serviceStatusMu       sync.RWMutex
-	serviceStatusReady    = make(chan struct{})
-	serviceDispatcherDone = make(chan struct{})
-	serviceStarted        = make(chan struct{})
-	serviceStop           = make(chan struct{})
-	serviceDone           = make(chan struct{})
-	serviceStatusReadyMu  sync.Once
-	serviceStartedMu      sync.Once
-	serviceStopMu         sync.Once
-	serviceDoneMu         sync.Once
-)
-
-func init() {
+// MaybeRunAsService detects whether the process was started by the Windows
+// service control manager and, if so, starts the control handler that
+// reports service status. Must be called early in main, before the server
+// starts. No-op when the process was started interactively.
+func MaybeRunAsService() {
 	isService, err := svc.IsWindowsService()
 	if err != nil || !isService {
 		return
 	}
-	serviceMode = true
 
 	// Windows services start in System32. Use the executable directory so
 	// relative paths behave like they do when openrun is run interactively.
 	if execPath, err := os.Executable(); err == nil {
-		_ = os.Chdir(filepath.Dir(execPath))
+		if err := os.Chdir(filepath.Dir(execPath)); err != nil {
+			log.Warn().Err(err).Msg("unable to change to executable directory")
+		}
 	}
 
+	serviceMgr = newServiceManager()
 	go func() {
-		defer close(serviceDispatcherDone)
-		if err := svc.Run("", serviceRunner{}); err != nil {
+		defer close(serviceMgr.runnerDone)
+		if err := svc.Run(windowsServiceName, serviceRunner{}); err != nil {
 			log.Error().Err(err).Msg("windows service control handler failed")
 		}
 	}()
@@ -62,156 +49,54 @@ func init() {
 type serviceRunner struct{}
 
 func (serviceRunner) Execute(_ []string, requests <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
-	setServiceStatus(status)
-	status <- startPendingStatus(1)
-	go serviceStartPendingHeartbeat(status)
+	runDone := make(chan uint32, 1)
+	go func() {
+		runDone <- serviceMgr.run(func(update serviceUpdate) {
+			if update.state == svcStopped {
+				// Reported by svc.Run from Execute's return values, which
+				// also carry the exit code
+				return
+			}
+			status <- toSvcStatus(update)
+		})
+	}()
 
-	for req := range requests {
-		switch req.Cmd {
-		case svc.Interrogate:
-			status <- req.CurrentStatus
-		case svc.Stop, svc.Shutdown:
-			status <- svc.Status{State: svc.StopPending, WaitHint: serviceStopWaitHintMillis}
-			serviceStopMu.Do(func() {
-				close(serviceStop)
-			})
-			<-serviceDone
-			return false, 0
-		default:
-			log.Warn().Str("control", serviceCmdString(req.Cmd)).Msg("unsupported windows service control request")
-		}
-	}
-
-	return false, 0
-}
-
-func NotifyServiceReady() {
-	status := waitForServiceStatus()
-	if status == nil {
-		return
-	}
-	status <- svc.Status{
-		State:   svc.Running,
-		Accepts: svc.AcceptStop | svc.AcceptShutdown,
-	}
-	serviceStartedMu.Do(func() {
-		close(serviceStarted)
-	})
-}
-
-func NotifyServiceStopping() {
-	status := waitForServiceStatus()
-	if status == nil {
-		return
-	}
-	status <- svc.Status{State: svc.StopPending, WaitHint: serviceStopWaitHintMillis}
-}
-
-func NotifyServiceStopped() {
-	status := waitForServiceStatus()
-	if status == nil {
-		return
-	}
-	status <- svc.Status{State: svc.Stopped}
-	serviceDoneMu.Do(func() {
-		close(serviceDone)
-	})
-}
-
-func ServiceStopNotify() <-chan struct{} {
-	return serviceStop
-}
-
-func setServiceStatus(status chan<- svc.Status) {
-	serviceStatusMu.Lock()
-	defer serviceStatusMu.Unlock()
-	serviceStatus = status
-	serviceStatusReadyMu.Do(func() {
-		close(serviceStatusReady)
-	})
-}
-
-func getServiceStatus() chan<- svc.Status {
-	serviceStatusMu.RLock()
-	defer serviceStatusMu.RUnlock()
-	return serviceStatus
-}
-
-func waitForServiceStatus() chan<- svc.Status {
-	if !serviceMode {
-		return nil
-	}
-
-	select {
-	case <-serviceStatusReady:
-	case <-serviceDispatcherDone:
-		return nil
-	case <-time.After(serviceStatusRegistrationWait):
-		log.Warn().Dur("timeout", serviceStatusRegistrationWait).Msg("timed out waiting for windows service status channel")
-		return nil
-	}
-	return getServiceStatus()
-}
-
-func serviceStartPendingHeartbeat(status chan<- svc.Status) {
-	ticker := time.NewTicker(serviceStartCheckpointInterval)
-	defer ticker.Stop()
-
-	checkpoint := uint32(2)
 	for {
 		select {
-		case <-serviceStarted:
-			return
-		case <-serviceStop:
-			return
-		case <-ticker.C:
-			status <- startPendingStatus(checkpoint)
-			checkpoint++
+		case req, ok := <-requests:
+			if !ok {
+				requests = nil // block; wait for the run loop to report Stopped
+				continue
+			}
+			switch req.Cmd {
+			case svc.Interrogate:
+				serviceMgr.post(eventInterrogate, 0)
+			case svc.Stop, svc.Shutdown, svc.PreShutdown:
+				serviceMgr.post(eventStopRequest, 0)
+			default:
+				log.Warn().Int("control", int(req.Cmd)).Msg("unsupported windows service control request")
+			}
+		case exitCode := <-runDone:
+			return exitCode != 0, exitCode
 		}
 	}
 }
 
-func startPendingStatus(checkpoint uint32) svc.Status {
-	return svc.Status{
-		State:      svc.StartPending,
-		CheckPoint: checkpoint,
-		WaitHint:   serviceStartWaitHintMillis,
+func toSvcStatus(update serviceUpdate) svc.Status {
+	result := svc.Status{
+		CheckPoint: update.checkpoint,
+		WaitHint:   uint32(update.waitHint / time.Millisecond),
 	}
-}
-
-func serviceCmdString(c svc.Cmd) string {
-	switch c {
-	case svc.Stop:
-		return "stop"
-	case svc.Pause:
-		return "pause"
-	case svc.Continue:
-		return "continue"
-	case svc.Interrogate:
-		return "interrogate"
-	case svc.Shutdown:
-		return "shutdown"
-	case svc.ParamChange:
-		return "param_change"
-	case svc.NetBindAdd:
-		return "net_bind_add"
-	case svc.NetBindRemove:
-		return "net_bind_remove"
-	case svc.NetBindEnable:
-		return "net_bind_enable"
-	case svc.NetBindDisable:
-		return "net_bind_disable"
-	case svc.DeviceEvent:
-		return "device_event"
-	case svc.HardwareProfileChange:
-		return "hardware_profile_change"
-	case svc.PowerEvent:
-		return "power_event"
-	case svc.SessionChange:
-		return "session_change"
-	case svc.PreShutdown:
-		return "pre_shutdown"
-	default:
-		return "unknown"
+	switch update.state {
+	case svcStartPending:
+		result.State = svc.StartPending
+	case svcRunning:
+		result.State = svc.Running
+		result.Accepts = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown
+	case svcStopPending:
+		result.State = svc.StopPending
+	case svcStopped:
+		result.State = svc.Stopped
 	}
+	return result
 }

@@ -97,11 +97,15 @@ To run OpenRun as a Windows service, register `openrun server start` with the Wi
 ```powershell
 $OpenRunExe = Join-Path $env:OPENRUN_HOME 'bin\openrun.exe'
 $OpenRunConfig = Join-Path $env:OPENRUN_HOME 'openrun.toml'
-sc.exe create openrun start= auto binPath= "`"$OpenRunExe`" --config-file `"$OpenRunConfig`" server start"
+sc.exe create openrun start= auto DisplayName= "OpenRun" binPath= "`"$OpenRunExe`" --config-file `"$OpenRunConfig`" server start"
+sc.exe description openrun "OpenRun application server https://openrun.dev/"
+sc.exe failure openrun reset= 86400 actions= restart/5000/restart/30000//
 sc.exe start openrun
 ```
 
-When started this way, OpenRun reports service status to Windows and handles service stop/shutdown requests as graceful server shutdowns.
+The paths from `$env:OPENRUN_HOME` are expanded when the service is created; re-create the service if the install location changes. The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`.
+
+When started this way, OpenRun reports service status to Windows and handles service stop, shutdown and pre-shutdown requests as graceful server shutdowns.
 
 Open https://localhost:25223 to access the app listing UI.
 

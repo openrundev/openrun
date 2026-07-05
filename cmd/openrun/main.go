@@ -167,6 +167,11 @@ func parseConfig(cCtx *cli.Context, globalConfig *types.GlobalConfig, clientConf
 }
 
 func main() {
+	// Start the OS service control handler if launched by the Windows
+	// service control manager. Must run before any long initialization so
+	// the service reports StartPending promptly.
+	system.MaybeRunAsService()
+
 	globalConfig, clientConfig, serverConfig, err := system.GetDefaultConfigs()
 	if err != nil {
 		log.Fatal(err)
@@ -200,6 +205,7 @@ func main() {
 		ExitErrHandler: func(c *cli.Context, err error) {
 			if err != nil {
 				fmt.Fprintf(cli.ErrWriter, RED+"error: %s\n"+RESET, err) //nolint:errcheck
+				system.NotifyServiceFailed(1)
 				os.Exit(1)
 			}
 		},
@@ -217,6 +223,7 @@ func main() {
 
 	if err := app.Run(normalizeInterspersedFlags(app, os.Args)); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s", err) //nolint:errcheck
+		system.NotifyServiceFailed(1)
 		os.Exit(1)
 	}
 }

@@ -8,6 +8,7 @@ package system
 import (
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 )
 
@@ -18,6 +19,12 @@ func SetProcessGroup(cmd *exec.Cmd) {
 	}
 }
 
+// KillGroup kills the process and its descendants. Process.Kill only
+// terminates the direct child on Windows, so use taskkill to kill the tree.
 func KillGroup(process *os.Process) error {
-	return process.Kill()
+	err := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(process.Pid)).Run()
+	if err != nil {
+		return process.Kill()
+	}
+	return nil
 }

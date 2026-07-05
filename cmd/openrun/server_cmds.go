@@ -75,11 +75,13 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 	server, err := api.NewServer(&apiConfig)
 	if err != nil {
 		fmt.Printf("Error initializing server: %s\n", err)
+		system.NotifyServiceFailed(1)
 		os.Exit(1)
 	}
 	err = server.Start()
 	if err != nil {
 		fmt.Printf("Error starting server: %s\n", err)
+		system.NotifyServiceFailed(1)
 		os.Exit(1)
 	}
 
@@ -115,6 +117,7 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 		// no profiling
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown profile mode: %s. Supported modes cpu,memory,allocs,heap,mutex,block,goroutine,clock\n", serverConfig.ProfileMode)
+		system.NotifyServiceFailed(1)
 		os.Exit(1)
 	}
 	if serverConfig.ProfileMode != "" {
