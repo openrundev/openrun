@@ -64,7 +64,8 @@ func fileCleanup(ctx context.Context) error {
 	for _, file := range expired {
 		if strings.HasPrefix(file.FilePath, "file://") {
 			err := os.Remove(strings.TrimPrefix(file.FilePath, "file://"))
-			if err != nil {
+			if err != nil && !os.IsNotExist(err) {
+				// A file already deleted from disk should not block the row cleanup
 				return fmt.Errorf("error deleting file %s: %w", file.FilePath, err)
 			}
 		}
@@ -77,20 +78,16 @@ func fileCleanup(ctx context.Context) error {
 }
 
 func backgroundCleanup(ctx context.Context, cleanupTicker *time.Ticker) {
-	err := fileCleanup(ctx)
-	if err != nil {
+	// Errors are logged and cleanup is retried on the next tick
+	if err := fileCleanup(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "error cleaning up expired files %s", err)
-		return
 	}
 
 	for range cleanupTicker.C {
-		err := fileCleanup(ctx)
-		if err != nil {
+		if err := fileCleanup(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "error cleaning up expired files %s", err)
-			break
 		}
 	}
-	fmt.Fprintf(os.Stderr, "background file cleanup stopped")
 }
 
 func (f *fsPlugin) ServeTmpFile(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -203,6 +200,7 @@ func GetUserFile(ctx context.Context, id string) (*types.UserFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
+	defer stmt.Close() //nolint:errcheck
 	row := stmt.QueryRow(id)
 	var file types.UserFile
 	var metadata sql.NullString
@@ -230,6 +228,7 @@ func DeleteUserFile(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("error preparing statement: %w", err)
 	}
+	defer stmt.Close() //nolint:errcheck
 	_, err = stmt.Exec(id)
 	if err != nil {
 		return fmt.Errorf("error deleting file: %w", err)

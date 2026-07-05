@@ -79,10 +79,16 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 	m.leaderElection.StartLoop(context.Background())
 
 	if m.dbType == system.DB_TYPE_POSTGRES {
+		// Use the same env expanded connect string as the main connection pool
+		_, listenConnStr, err := system.CheckConnectString(config.Metadata.DBConnection, "metadata", system.DB_SQLITE_POSTGRES)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing db connection string: %w", err)
+		}
+
 		// Setup listener for app update notifications
 		m.pgListener = &pgxlisten.Listener{
 			Connect: func(ctx context.Context) (*pgx.Conn, error) {
-				return pgx.Connect(ctx, m.config.Metadata.DBConnection)
+				return pgx.Connect(ctx, listenConnStr)
 			},
 			LogError: func(innerCtx context.Context, err error) {
 				m.Err(err).Msg("error in postgres listener")
@@ -888,7 +894,14 @@ func (m *Metadata) GetSyncEntries(ctx context.Context, tx types.Transaction) ([]
 }
 
 func (m *Metadata) GetSyncEntry(ctx context.Context, tx types.Transaction, id string) (*types.SyncEntry, error) {
-	row := m.db.QueryRow(system.RebindQuery(m.dbType, `select id, path, is_scheduled, user_id, create_time, metadata, status from sync where id = ?`), id)
+	query := system.RebindQuery(m.dbType, `select id, path, is_scheduled, user_id, create_time, metadata, status from sync where id = ?`)
+	var row *sql.Row
+	if tx.IsInitialized() {
+		// Use the caller's transaction so uncommitted changes are visible
+		row = tx.QueryRowContext(ctx, query, id)
+	} else {
+		row = m.db.QueryRowContext(ctx, query, id)
+	}
 	var sync types.SyncEntry
 	var metadata, status sql.NullString
 	err := row.Scan(&sync.Id, &sync.Path, &sync.IsScheduled, &sync.UserID, &sync.CreateTime, &metadata, &status)
@@ -972,7 +985,15 @@ func (m *Metadata) UpdateConfig(ctx context.Context, user string, oldVersionId s
 		return fmt.Errorf("error marshalling dynamic config: %w", err)
 	}
 
-	result, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+	// Update the config row and append the history snapshot in one transaction
+	// so the config and its history cannot diverge on a failure in between
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error beginning transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
 		`update config set version_id = ?, config = ?, update_time = `+system.FuncNow(m.dbType)+", user_id = ? where version_id = ?"),
 		dynamicConfig.VersionId, string(configJson), user, oldVersionId)
 	if err != nil {
@@ -986,13 +1007,19 @@ func (m *Metadata) UpdateConfig(ctx context.Context, user string, oldVersionId s
 		return fmt.Errorf("no config entry found with version id for update: %s", oldVersionId)
 	}
 
-	return m.snapshotConfig(ctx, user, dynamicConfig, string(configJson))
+	if err := m.snapshotConfig(ctx, tx, user, dynamicConfig, string(configJson)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("error committing transaction: %w", err)
+	}
+	return nil
 }
 
 // snapshotConfig appends the config to the history table and prunes old
 // entries beyond the configured retention
-func (m *Metadata) snapshotConfig(ctx context.Context, user string, dynamicConfig *types.DynamicConfig, configJson string) error {
-	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+func (m *Metadata) snapshotConfig(ctx context.Context, tx *sql.Tx, user string, dynamicConfig *types.DynamicConfig, configJson string) error {
+	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
 		`insert into config_history (version_id, user_id, update_time, config) values (?, ?, `+system.FuncNow(m.dbType)+`, ?)`),
 		dynamicConfig.VersionId, user, configJson)
 	if err != nil {
@@ -1003,7 +1030,7 @@ func (m *Metadata) snapshotConfig(ctx context.Context, user string, dynamicConfi
 	if retain <= 0 {
 		retain = 20
 	}
-	_, err = m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
 		`delete from config_history where version_id not in `+
 			`(select version_id from config_history order by update_time desc, version_id desc limit `+strconv.Itoa(retain)+`)`))
 	if err != nil {

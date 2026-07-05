@@ -20,18 +20,41 @@ const (
 	DB_CONNECTION_CONFIG = "db_connection"
 )
 
-func SQLItePragmas(db *sql.DB) error {
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return err
-	}
-	if _, err := db.Exec("PRAGMA synchronous=NORMAL"); err != nil {
-		return err
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout=10000"); err != nil {
-		return err
-	}
+// defaultSQLitePragmas are the pragmas applied to every sqlite connection.
+// busy_timeout and synchronous are per-connection settings, so they are passed
+// as _pragma DSN query parameters which the sqlite driver applies to each new
+// pooled connection (a plain "PRAGMA ..." exec would apply to one connection
+// only). journal_mode=WAL is not included here: it is persisted in the database
+// file and is set once at init, since a journal mode change does not use the
+// busy handler and racing conversions on new connections fail with SQLITE_BUSY.
+var defaultSQLitePragmas = [][2]string{
+	{"busy_timeout", "10000"},
+	{"synchronous", "NORMAL"},
+}
 
-	return nil
+// AddSQLitePragmas appends the default _pragma query parameters to a sqlite
+// connect string (the file path part, after the sqlite: prefix is stripped).
+// Pragmas already present in the connect string are not overridden.
+func AddSQLitePragmas(connectString string) string {
+	var b strings.Builder
+	b.WriteString(connectString)
+	sep := "?"
+	if strings.Contains(connectString, "?") {
+		sep = "&"
+	}
+	for _, pragma := range defaultSQLitePragmas {
+		if strings.Contains(connectString, "_pragma="+pragma[0]) {
+			continue // user-specified pragma wins
+		}
+		b.WriteString(sep)
+		b.WriteString("_pragma=")
+		b.WriteString(pragma[0])
+		b.WriteString("(")
+		b.WriteString(pragma[1])
+		b.WriteString(")")
+		sep = "&"
+	}
+	return b.String()
 }
 
 func CheckConnectString(connStr string, invoker string, supportedDBs []DBType) (DBType, string, error) {
@@ -78,6 +101,9 @@ func InitDBConnection(connectString string, invoker string, supportedDBs []DBTyp
 	if driver == "" {
 		return nil, "", fmt.Errorf("unknown database type: %s", dbType)
 	}
+	if dbType == DB_TYPE_SQLITE {
+		connectString = AddSQLitePragmas(connectString)
+	}
 	if telemetry.MetricsEnabled() {
 		wrapped, err := telemetry.SQLDriverName(driver, telemetryDBSystem(dbType), invoker)
 		if err != nil {
@@ -92,12 +118,22 @@ func InitDBConnection(connectString string, invoker string, supportedDBs []DBTyp
 	}
 
 	if dbType == DB_TYPE_SQLITE { //nolint:staticcheck
-		if err := SQLItePragmas(db); err != nil {
-			return nil, "", err
+		// journal_mode is persistent in the database file, set it once here.
+		// The per-connection pragmas are applied through the DSN (see AddSQLitePragmas)
+		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+			db.Close() //nolint:errcheck
+			return nil, "", fmt.Errorf("error setting journal mode: %w", err)
 		}
+		// Keep more idle connections around than the database/sql default of two;
+		// sqlite connections are file opens plus pragma execs, and connection churn
+		// under concurrent reads costs more than the idle handles
+		db.SetMaxIdleConns(10)
 	} else if dbType == DB_TYPE_POSTGRES {
-		// Configure connection pool settings for Postgres
-		db.SetMaxOpenConns(200)                 // Maximum number of open connections
+		// Configure connection pool settings for Postgres. The server opens
+		// multiple pools (metadata, audit, file store, per-app stores), so the
+		// per-pool cap is kept well below the postgres default max_connections
+		// of 100 to avoid exhausting the server connection limit
+		db.SetMaxOpenConns(50)                  // Maximum number of open connections
 		db.SetMaxIdleConns(10)                  // Maximum number of idle connections
 		db.SetConnMaxIdleTime(5 * time.Minute)  // Maximum time a connection can be idle
 		db.SetConnMaxLifetime(15 * time.Minute) // Maximum lifetime of a connection

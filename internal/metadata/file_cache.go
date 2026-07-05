@@ -46,16 +46,16 @@ func (f *FileCache) VersionUpgrade(config *types.ServerConfig) error {
 	var dt time.Time
 	row.Scan(&version, &dt) //nolint:errcheck // ignore error if no version is found
 
-	if version < CURRENT_DB_VERSION && !config.Metadata.AutoUpgrade {
-		return fmt.Errorf("DB autoupgrade is disabled, exiting. Server %d, DB %d", CURRENT_DB_VERSION, version)
+	if version < CURRENT_FILE_CACHE_VERSION && !config.Metadata.AutoUpgrade {
+		return fmt.Errorf("DB autoupgrade is disabled, exiting. Server %d, DB %d", CURRENT_FILE_CACHE_VERSION, version)
 	}
 
-	if !config.Metadata.IgnoreHigherVersion && version > CURRENT_DB_VERSION {
-		return fmt.Errorf("DB version is newer than server version, upgrade OpenRun server version. Server %d, DB %d", CURRENT_DB_VERSION, version)
+	if !config.Metadata.IgnoreHigherVersion && version > CURRENT_FILE_CACHE_VERSION {
+		return fmt.Errorf("file cache DB version is newer than server version, upgrade OpenRun server version. Server %d, DB %d", CURRENT_FILE_CACHE_VERSION, version)
 	}
 
-	if version == CURRENT_DB_VERSION {
-		f.Info().Msg("DB version is current")
+	if version == CURRENT_FILE_CACHE_VERSION {
+		f.Info().Msg("File cache DB version is current")
 		return nil
 	}
 
@@ -104,7 +104,7 @@ func (f *FileCache) GetCachedFile(ctx context.Context, sha string) ([]byte, stri
 }
 
 func (f *FileCache) AddCache(ctx context.Context, sha string, compressionType string, content []byte) error {
-	stmt, err := f.db.PrepareContext(ctx, `insert or replace into files (sha, compression_type, content) values (?, ?, ?)`)
+	stmt, err := f.db.PrepareContext(ctx, `insert or replace into files (sha, compression_type, content, create_time, last_accessed) values (?, ?, ?, datetime('now'), datetime('now'))`)
 	if err != nil {
 		return fmt.Errorf("error preparing statement: %w", err)
 	}

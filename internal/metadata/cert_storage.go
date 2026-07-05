@@ -55,25 +55,27 @@ func (c *CertStorage) Lock(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.queryTimeout)
 	defer cancel()
 
-	tx, err := c.metadata.BeginTransaction(ctx)
+	// Acquire the lock with a single conditional upsert so that two servers
+	// racing for the lock cannot both acquire it (a separate locked-check
+	// followed by an upsert is not atomic under read committed isolation).
+	// The insert takes the lock; on conflict an existing lock is taken over
+	// only if it has expired.
+	now := time.Now()
+	expires := now.Add(c.lockTimeout).UnixNano()
+	result, err := c.metadata.db.ExecContext(ctx, system.RebindQuery(c.metadata.dbType,
+		`insert into cert_locks (id, expires) values (?, ?) on conflict (id) do update set expires = excluded.expires where cert_locks.expires <= ?`),
+		id, expires, now.UnixNano())
 	if err != nil {
-		return err
-	}
-
-	isLocked, err := c.isLocked(ctx, tx, id)
-	if err != nil {
-		return err
-	}
-	if isLocked {
-		return fmt.Errorf("id is locked: %s", id)
-	}
-
-	expires := time.Now().Add(c.lockTimeout).UnixNano()
-	if _, err := tx.ExecContext(ctx, system.RebindQuery(c.metadata.dbType, `insert into cert_locks (id, expires) values (?, ?) on conflict (id) do update set expires = ?`), id, expires, expires); err != nil {
 		return fmt.Errorf("failed to set lock on id: %s: %w", id, err)
 	}
-
-	return tx.Commit()
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for lock on id: %s: %w", id, err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("id is locked: %s", id)
+	}
+	return nil
 }
 
 // Unlock unlocks the certificate with the given id.
@@ -82,19 +84,6 @@ func (c *CertStorage) Unlock(ctx context.Context, id string) error {
 	defer cancel()
 	_, err := c.metadata.db.ExecContext(ctx, system.RebindQuery(c.metadata.dbType, `delete from cert_locks where id = ?`), id)
 	return err
-}
-
-// isLocked checks if the certificate with the given id is locked.
-func (c *CertStorage) isLocked(ctx context.Context, tx types.Transaction, key string) (bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.queryTimeout)
-	defer cancel()
-	now := time.Now().UnixNano()
-	row := tx.QueryRowContext(ctx, system.RebindQuery(c.metadata.dbType, `select exists(select 1 from cert_locks where id = ? and expires > ?)`), key, now)
-	var isLocked bool
-	if err := row.Scan(&isLocked); err != nil {
-		return false, err
-	}
-	return isLocked, nil
 }
 
 // Store stores the certificate with the given id and value.

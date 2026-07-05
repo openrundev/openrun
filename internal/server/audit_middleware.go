@@ -49,7 +49,7 @@ func (s *Server) initAuditDB(connectString string) error {
 	return nil
 }
 
-const CURRENT_AUDIT_DB_VERSION = 1
+const CURRENT_AUDIT_DB_VERSION = 2
 
 func (s *Server) versionUpgradeAuditDB() error {
 	version := 0
@@ -92,6 +92,18 @@ func (s *Server) versionUpgradeAuditDB() error {
 
 		}
 		if _, err := tx.Exec(`create index IF NOT EXISTS idx_misc_audit ON audit (app_id, event_type, operation, target, create_time DESC)`); err != nil {
+			return err
+		}
+	}
+
+	if version < 2 {
+		s.Info().Msg("Upgrading audit DB to version 2")
+		// Index for the retention cleanup deletes and the create_time ordered
+		// list queries; the existing indexes lead with rid/app_id and do not help
+		if _, err := tx.Exec(`create index IF NOT EXISTS idx_create_time_audit ON audit (create_time DESC)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `update audit_version set version=2, last_upgraded=`+system.FuncNow(s.auditDbType)); err != nil {
 			return err
 		}
 	}

@@ -422,12 +422,11 @@ func (s *SqlStore) Select(ctx context.Context, tx *sql.Tx, thread *starlark.Thre
 	} else {
 		rows, err = s.db.QueryContext(ctx, query, params...)
 	}
-
-	app.DeferCleanup(thread, fmt.Sprintf("rows_cursor_%s_%p", table, rows), rows.Close, true)
-
 	if err != nil {
 		return nil, err
 	}
+
+	app.DeferCleanup(thread, fmt.Sprintf("rows_cursor_%s_%p", table, rows), rows.Close, true)
 
 	return NewStoreEntryIterabe(thread, s.Logger, table, rows), nil
 }

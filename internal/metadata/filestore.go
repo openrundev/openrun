@@ -309,8 +309,9 @@ func (f *FileStore) GetFileByShaTx(ctx context.Context, tx types.Transaction, sh
 			f.metadata.Trace().Msgf("Got file from cache: %s", sha)
 			return content, compressionType, nil
 		}
-		if err != nil && err != sql.ErrNoRows {
-			return nil, "", fmt.Errorf("error getting cached file: %w", err)
+		if err != sql.ErrNoRows {
+			// The cache is an optimization; fall back to the metadata db on cache errors
+			f.metadata.Warn().Err(err).Msgf("error reading file cache for %s, falling back to metadata db", sha)
 		}
 	}
 
@@ -329,9 +330,9 @@ func (f *FileStore) GetFileByShaTx(ctx context.Context, tx types.Transaction, sh
 
 	if f.fileCache != nil {
 		f.metadata.Trace().Msgf("Adding file to cache: %s", sha)
-		err = f.fileCache.AddCache(ctx, sha, compressionType, content)
-		if err != nil {
-			return nil, "", fmt.Errorf("error adding file to cache: %w", err)
+		if err := f.fileCache.AddCache(ctx, sha, compressionType, content); err != nil {
+			// A cache write failure should not fail the read, the file was fetched
+			f.metadata.Warn().Err(err).Msgf("error adding file %s to cache", sha)
 		}
 	}
 
@@ -384,10 +385,11 @@ func (f *FileStore) getFileInfoTx(ctx context.Context, tx types.Transaction) (ma
 }
 
 func (f *FileStore) GetHighestVersion(ctx context.Context, tx types.Transaction, appId types.AppId) (int, error) {
+	// coalesce handles the no-versions case (max returns null); other errors are real
 	var maxId int
-	row := tx.QueryRowContext(ctx, system.RebindQuery(f.metadata.dbType, `select max(version) from app_versions where appid = ?`), appId)
+	row := tx.QueryRowContext(ctx, system.RebindQuery(f.metadata.dbType, `select coalesce(max(version), 0) from app_versions where appid = ?`), appId)
 	if err := row.Scan(&maxId); err != nil {
-		return 0, nil // No versions found
+		return 0, fmt.Errorf("error querying highest version: %w", err)
 	}
 	return maxId, nil
 }
