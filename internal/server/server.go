@@ -157,6 +157,8 @@ type Server struct {
 	authFailureTimes map[string]time.Time
 	accessLogger     *zerolog.Logger
 	syncTimer        *time.Ticker
+	syncStop         chan struct{}
+	tlsErrorLogger   *RateLimitedErrorLogger
 	configMu         sync.RWMutex
 	dynamicConfig    *types.DynamicConfig
 	rbacManager      *rbac.RBACManager
@@ -325,6 +327,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 
 	// Start the idle shutdown check
 	server.syncTimer = time.NewTicker(time.Minute) // run sync every minute
+	server.syncStop = make(chan struct{})
 	go server.syncRunner()
 	server.startStaleContainerCleanup()
 	telemetryCleanup = false
@@ -572,7 +575,10 @@ func (s *Server) Start() error {
 		socket, listenErr := net.Listen("unix", serverUri)
 		if listenErr != nil {
 			s.Debug().Err(listenErr).Msgf("Error creating socket file, trying to dial socket file %s", serverUri)
-			_, errDial := net.Dial("unix", serverUri)
+			probeConn, errDial := net.Dial("unix", serverUri)
+			if errDial == nil {
+				probeConn.Close() //nolint:errcheck
+			}
 			if errDial != nil {
 				s.Debug().Err(errDial).Msg("Error dialling UDS, trying to remove socket file")
 				// Cannot dial also, so it's safe to delete the socket file
@@ -830,6 +836,7 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 
 	// Create a rate-limited error logger for TLS handshake errors
 	rateLimitedWriter := NewRateLimitedErrorLogger(os.Stderr)
+	s.tlsErrorLogger = rateLimitedWriter // retained so Stop can end its cleanup goroutine
 	errorLog := log.New(rateLimitedWriter, "", log.LstdFlags)
 
 	server := &http.Server{
@@ -875,7 +882,10 @@ func (s *Server) Stop(ctx context.Context) error {
 			close(s.staleContainerCleanupStop)
 			s.staleContainerCleanupStop = nil
 		}
-		s.db.Close()
+		if s.syncStop != nil {
+			s.syncTimer.Stop()
+			close(s.syncStop)
+		}
 
 		var err1, err2, err3 error
 		if s.httpServer != nil {
@@ -890,7 +900,17 @@ func (s *Server) Stop(ctx context.Context) error {
 		// Stop the audit writer after the HTTP servers have drained so queued
 		// audit events from in-flight requests are written out
 		s.stopAuditWriter()
+		if s.auditDB != nil {
+			s.auditDB.Close() //nolint:errcheck
+		}
+		if s.tlsErrorLogger != nil {
+			s.tlsErrorLogger.Stop()
+		}
 		err4 := s.telemetry.Shutdown(ctx)
+
+		// Close the metadata DB last, after the HTTP servers have drained, so
+		// in-flight requests do not fail against a closed database
+		s.db.Close()
 
 		s.stopErr = cmp.Or(err1, err2, err3, err4)
 	})

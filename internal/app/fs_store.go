@@ -27,7 +27,7 @@ var (
 	fsDBType system.DBType
 )
 
-func InitFileStore(ctx context.Context, connectString string) error {
+func InitFileStore(connectString string) error {
 	mu.RLock()
 	if fsDB != nil {
 		mu.RUnlock()
@@ -49,8 +49,11 @@ func InitFileStore(ctx context.Context, connectString string) error {
 		return err
 	}
 
+	// The file store is a process-lifetime singleton, so the cleanup loop runs
+	// with a background context; a request-scoped context would cancel the
+	// cleanup queries once the request that initialized the store completes
 	cleanupTicker := time.NewTicker(5 * time.Minute)
-	go backgroundCleanup(ctx, cleanupTicker)
+	go backgroundCleanup(context.Background(), cleanupTicker)
 
 	return nil
 }
@@ -120,7 +123,7 @@ func (f *fsPlugin) ServeTmpFile(thread *starlark.Thread, builtin *starlark.Built
 		return nil, err
 	}
 
-	err = InitFileStore(GetContext(thread), connectString)
+	err = InitFileStore(connectString)
 	if err != nil {
 		return nil, err
 	}

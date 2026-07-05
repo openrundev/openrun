@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/caddyserver/certmagic"
@@ -38,8 +39,16 @@ type Metadata struct {
 	db               *sql.DB
 	dbType           system.DBType
 	pgListener       *pgxlisten.Listener
+	pgListenerCancel context.CancelFunc
 	AppNotifyFunc    func(types.AppUpdatePayload)
 	ConfigNotifyFunc func(types.ConfigUpdatePayload)
+
+	// fileCache is the shared file cache, created lazily on first use. A single
+	// instance is shared by all FileStores since each cache instance holds its
+	// own sqlite connection pool.
+	fileCacheOnce sync.Once
+	fileCache     *FileCache
+	fileCacheErr  error
 }
 
 const pg_listen_channel = "openrun_events"
@@ -133,9 +142,11 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 		}
 
 		m.pgListener.Handle(pg_listen_channel, handler)
+		listenCtx, listenCancel := context.WithCancel(context.Background())
+		m.pgListenerCancel = listenCancel
 		go func() {
-			err := m.pgListener.Listen(context.Background())
-			if err != nil {
+			err := m.pgListener.Listen(listenCtx)
+			if err != nil && !errors.Is(err, context.Canceled) {
 				m.Error().Err(err).Msg("error listening for postgres messages")
 				return
 			}
@@ -150,9 +161,25 @@ func (m *Metadata) IsLeader() bool {
 	return m.leaderElection.IsLeader()
 }
 
-// Close stops background goroutines owned by Metadata (e.g. leader election).
+// Close stops background goroutines owned by Metadata (leader election and
+// the postgres listener) and closes the database connection pools.
 func (m *Metadata) Close() {
 	m.leaderElection.Stop()
+	if m.pgListenerCancel != nil {
+		m.pgListenerCancel()
+	}
+	if m.fileCache != nil {
+		m.fileCache.Close() //nolint:errcheck
+	}
+	m.db.Close() //nolint:errcheck
+}
+
+// getFileCache returns the shared file cache, creating it on first use.
+func (m *Metadata) getFileCache() (*FileCache, error) {
+	m.fileCacheOnce.Do(func() {
+		m.fileCache, m.fileCacheErr = InitFileCache(m.Logger, m.config)
+	})
+	return m.fileCache, m.fileCacheErr
 }
 
 // GetCertStorage returns the cert storage implementation which persists the cert info to the database.

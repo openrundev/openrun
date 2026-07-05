@@ -1180,7 +1180,7 @@ func (a *App) userFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := InitFileStore(r.Context(), csStr)
+	err := InitFileStore(csStr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

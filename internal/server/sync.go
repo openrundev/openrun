@@ -223,7 +223,14 @@ func (s *Server) ListSyncEntries(ctx context.Context) (*types.SyncListResponse, 
 
 func (s *Server) syncRunner() {
 	s.Info().Msg("Starting sync runner loop")
-	for range s.syncTimer.C {
+	for {
+		select {
+		case <-s.syncStop:
+			s.Info().Msg("Sync runner stopped")
+			return
+		case <-s.syncTimer.C:
+		}
+
 		if !s.db.IsLeader() {
 			s.Trace().Msg("Not leader, skipping sync")
 			continue
@@ -239,7 +246,6 @@ func (s *Server) syncRunner() {
 			continue
 		}
 	}
-	s.Warn().Msg("Sync runner stopped")
 }
 
 func (s *Server) runSyncJobs() error {

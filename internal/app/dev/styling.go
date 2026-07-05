@@ -539,6 +539,10 @@ func (s *AppStyle) StopWatcher() error {
 		}
 		s.watcher = nil
 	}
+	if s.watcherStdout != nil {
+		_ = s.watcherStdout.Close()
+		s.watcherStdout = nil
+	}
 	return nil
 }
 

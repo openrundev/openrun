@@ -310,12 +310,20 @@ func (s *Server) cleanupEvents() error {
 }
 
 func (s *Server) auditCleanupLoop(cleanupTicker *time.Ticker) {
+	defer cleanupTicker.Stop()
+
 	// Errors are logged and cleanup is retried on the next tick
 	if err := s.cleanupEvents(); err != nil {
 		s.Error().Err(err).Msg("error cleaning up audit entries")
 	}
 
-	for range cleanupTicker.C {
+	for {
+		select {
+		case <-s.auditStop:
+			// Server shutdown; stopAuditWriter closes auditStop
+			return
+		case <-cleanupTicker.C:
+		}
 		if err := s.cleanupEvents(); err != nil {
 			s.Error().Err(err).Msg("error cleaning up audit entries")
 		}

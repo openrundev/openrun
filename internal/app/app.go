@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -881,8 +882,16 @@ func (a *App) notifyClients() {
 		event: "openrun_reload",
 		data:  "App reloaded after file updates",
 	}
-	for _, ch := range a.sseListeners {
-		ch <- reloadMessage
+	a.initMutex.Lock()
+	listeners := slices.Clone(a.sseListeners)
+	a.initMutex.Unlock()
+	for _, ch := range listeners {
+		// Non-blocking send: the channel is buffered, so a skipped send means a
+		// reload ping is already queued or the client is disconnecting
+		select {
+		case ch <- reloadMessage:
+		default:
+		}
 	}
 }
 
@@ -898,16 +907,16 @@ func (a *App) sseHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	messageChan := make(chan SSEMessage)
+	// Buffered so notifyClients can use a non-blocking send; a queued reload
+	// ping makes further pings redundant
+	messageChan := make(chan SSEMessage, 1)
 	a.addSSEClient(messageChan)
 
 	//keeping the connection alive with keep-alive protocol
 	keepAliveTickler := time.NewTicker(15 * time.Second)
 	notify := r.Context().Done()
 
-	//listen to signal to close and unregister
-	go func() {
-		<-notify
+	defer func() {
 		a.Trace().Msg("Closing SSE connection")
 		a.removeSSEClient(messageChan)
 		keepAliveTickler.Stop()
@@ -923,6 +932,9 @@ func (a *App) sseHandler(w http.ResponseWriter, r *http.Request) {
 			a.Trace().Msg("Sending keepalive")
 			fmt.Fprintf(w, "event:keepalive\n\n") //nolint:errcheck
 			flusher.Flush()
+		case <-notify:
+			// Client disconnected, exit the handler
+			return
 		}
 	}
 }

@@ -95,6 +95,8 @@ func sendDelegateBuild(url string, data DelegateRequest, sourcePath string, buil
 	// Create the request with the pipe reader as body
 	req, err := http.NewRequest("POST", url, pr)
 	if err != nil {
+		// Unblock the streaming goroutine, which is writing to the pipe
+		_ = pr.CloseWithError(err)
 		return err
 	}
 	req.Header.Set("Content-Type", contentType)
@@ -178,12 +180,21 @@ func DelegateHandler(r *http.Request, config *types.ServerConfig, logger *types.
 			if _, err := io.Copy(dst, part); err != nil {
 				_ = dst.Close()
 				_ = part.Close()
+				_ = os.Remove(dst.Name())
 				return nil, fmt.Errorf("error saving file: %v", err)
 			}
 			_ = dst.Close()
 
 			savedFile = dst.Name()
 			gotFile = true
+			// Registered as soon as the file is saved so the uploaded tarball
+			// is removed on every return path, including request validation
+			// failures below
+			defer func(name string) {
+				if err := os.Remove(name); err != nil {
+					logger.Error().Err(err).Msg("error removing file")
+				}
+			}(savedFile)
 
 		default:
 			// Ignore any extra fields; just drain them
@@ -193,7 +204,7 @@ func DelegateHandler(r *http.Request, config *types.ServerConfig, logger *types.
 		_ = part.Close()
 	}
 
-	if data.RegistryConfig.URL == "" {
+	if data.RegistryConfig == nil || data.RegistryConfig.URL == "" {
 		return nil, fmt.Errorf("registry url needs to be set on the sender for delegated builds")
 	}
 
@@ -201,12 +212,6 @@ func DelegateHandler(r *http.Request, config *types.ServerConfig, logger *types.
 		return nil, fmt.Errorf("missing meta or file part")
 	}
 	logger.Debug().Msgf("DelegateHandler called for build %s", data.ImageTag)
-	defer func() {
-		if err := os.Remove(savedFile); err != nil {
-			logger.Error().Err(err).Msg("error removing file")
-			return
-		}
-	}()
 
 	err = delegateBuild(r.Context(), logger, config, data, savedFile)
 	if err != nil {

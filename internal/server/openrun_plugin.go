@@ -369,6 +369,7 @@ func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starla
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close() //nolint:errcheck
 
 	apps, err := c.server.apps.GetAllAppsInfo()
 	if err != nil {
@@ -451,6 +452,7 @@ func (c *openrunPlugin) ListOperations(thread *starlark.Thread, builtin *starlar
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close() //nolint:errcheck
 
 	ret := starlark.List{}
 	for rows.Next() {

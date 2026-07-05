@@ -35,9 +35,15 @@ func InitFileCache(logger *types.Logger, config *types.ServerConfig) (*FileCache
 
 	err = fc.VersionUpgrade(config)
 	if err != nil {
+		db.Close() //nolint:errcheck
 		return nil, err
 	}
 	return &fc, nil
+}
+
+// Close closes the file cache database connection pool.
+func (f *FileCache) Close() error {
+	return f.db.Close()
 }
 
 func (f *FileCache) VersionUpgrade(config *types.ServerConfig) error {

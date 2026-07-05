@@ -47,7 +47,8 @@ func NewFileStore(appId types.AppId, version int, metadata *Metadata, tx types.T
 	var fileCache *FileCache
 	var err error
 	if metadata.dbType != system.DB_TYPE_SQLITE {
-		fileCache, err = InitFileCache(metadata.Logger, metadata.config)
+		// The cache is shared across FileStores (and owned by Metadata)
+		fileCache, err = metadata.getFileCache()
 		if err != nil {
 			return nil, fmt.Errorf("error initializing file cache: %w", err)
 		}

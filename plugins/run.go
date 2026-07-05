@@ -58,6 +58,16 @@ func execCommand(containerHandler *app.ContainerHandler, thread *starlark.Thread
 		envList = append(envList, string(value))
 	}
 
+	// Validate output format options before starting the process so no error
+	// path after Start has to clean up a running command
+	parseStr := string(parse)
+	if parseStr != "" && parseStr != "json" && parseStr != "jsonlines" {
+		return nil, fmt.Errorf("unsupported format: %s", parseStr)
+	}
+	if parseStr == "json" && bool(stream) {
+		return nil, errors.New("stream response is not supported for JSON output")
+	}
+
 	ctx := app.GetContext(thread)
 	var cmd *exec.Cmd
 	var err error
@@ -89,18 +99,28 @@ func execCommand(containerHandler *app.ContainerHandler, thread *starlark.Thread
 		return nil, err
 	}
 
+	// reap kills the process and waits for it, for error paths that return
+	// before the normal cmd.Wait; without the wait the child stays a zombie
+	reap := func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}
+
 	var buf bytes.Buffer
 	var tempFile *os.File
 
 	if stdoutToFileBool {
 		tempFile, err = os.CreateTemp("", "openrun-exec-stdout-*")
 		if err != nil {
+			reap()
 			return nil, fmt.Errorf("error creating temporary file: %w", err)
 		}
 		defer tempFile.Close() //nolint:errcheck
 		_, err = io.Copy(tempFile, stdout)
 
 		if err != nil && err != io.EOF {
+			reap()
+			os.Remove(tempFile.Name()) //nolint:errcheck
 			return nil, err
 		}
 	}
@@ -110,7 +130,13 @@ func execCommand(containerHandler *app.ContainerHandler, thread *starlark.Thread
 		if !stdoutToFileBool {
 			_, err = io.CopyN(&buf, stdout, MAX_BYTES_STDOUT)
 			if err != nil && err != io.EOF {
+				reap()
 				return nil, err
+			}
+			if err == nil {
+				// Output reached the size cap; drain the rest so cmd.Wait does
+				// not deadlock on the child blocked writing to a full pipe
+				_, _ = io.Copy(io.Discard, stdout)
 			}
 		}
 		runErr = cmd.Wait()
@@ -135,12 +161,6 @@ func execCommand(containerHandler *app.ContainerHandler, thread *starlark.Thread
 			return app.NewResponse([]map[string]any{result}), nil
 		}
 	}
-	if parse == "json" && bool(stream) {
-		return app.NewResponse(starlark.None), errors.New("stream response is not supported for JSON output")
-	}
-	if parse != "" && parse != "jsonlines" {
-		return nil, fmt.Errorf("unsupported format: %s", parse)
-	}
 
 	count := 0
 	lines := starlark.NewList([]starlark.Value{})
@@ -149,6 +169,14 @@ func execCommand(containerHandler *app.ContainerHandler, thread *starlark.Thread
 		scanner := bufio.NewScanner(stdout)
 		// Stream the output to the client using RangeFunc
 		rangeFunc := func(yield func(any, error) bool) {
+			// The process is reaped even when the consumer stops iterating
+			// early or a scan/parse error aborts the stream
+			waited := false
+			defer func() {
+				if !waited {
+					reap()
+				}
+			}()
 			for scanner.Scan() {
 				line := scanner.Bytes()
 				count++
@@ -179,6 +207,7 @@ func execCommand(containerHandler *app.ContainerHandler, thread *starlark.Thread
 				return
 			}
 
+			waited = true
 			runErr = cmd.Wait()
 			if runErr != nil {
 				yield(nil, fmt.Errorf("cmd failed: %w", runErr))

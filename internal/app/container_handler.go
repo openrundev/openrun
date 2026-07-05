@@ -61,6 +61,12 @@ type ContainerHandler struct {
 	containerConfig types.Container
 	excludeGlob     []string
 
+	// closeCh unblocks the idle shutdown and health check goroutines on
+	// Close; stopping the tickers alone would leave them blocked forever
+	// since a stopped ticker's channel is never closed
+	closeCh   chan struct{}
+	closeOnce sync.Once
+
 	// Idle shutdown related fields
 	idleShutdownTicker  *time.Ticker
 	stateLock           sync.RWMutex
@@ -199,6 +205,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		isKubernetes:    isKubernetes,
 		paramMap:        paramMap,
 		containerConfig: containerConfig,
+		closeCh:         make(chan struct{}),
 		stateLock:       sync.RWMutex{},
 		currentState:    ContainerStateUnknown,
 		stripAppPath:    stripAppPath,
@@ -276,7 +283,14 @@ func dedupVolumes(volumes []string) []string {
 }
 
 func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
-	for range h.idleShutdownTicker.C {
+	defer h.Debug().Msgf("Idle checker stopped for app %s", h.app.Id)
+	for {
+		select {
+		case <-h.closeCh:
+			return
+		case <-h.idleShutdownTicker.C:
+		}
+
 		h.stateLock.RLock()
 		currentState := h.currentState
 		versionHash := h.activeVersionHash
@@ -308,11 +322,11 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 		fullHash, err := h.getAppHash()
 		if err != nil {
 			h.Error().Err(err).Msgf("Error getting app hash for %s", h.app.Id)
-			break
+			return
 		}
 		containerName := container.GenContainerName(h.app.Id, fullHash, h.manager.SupportsInPlaceUpdate())
 		if h.staleInPlaceHandler(ctx, containerName, versionHash) {
-			break
+			return
 		}
 
 		if h.app.notifyClose != nil {
@@ -328,10 +342,8 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 			h.Error().Err(err).Msgf("Error stopping idle app %s", h.app.Id)
 		}
 		h.stateLock.Unlock()
-		break
+		return
 	}
-
-	h.Debug().Msgf("Idle checker stopped for app %s", h.app.Id)
 }
 
 func (h *ContainerHandler) healthChecker(ctx context.Context) {
@@ -341,9 +353,21 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 		}
 	}()
 
-	time.Sleep(60 * time.Second) // wait for 1 minute to let the app start up
+	defer h.Debug().Msgf("Health checker stopped for app %s", h.app.Id)
+	// wait for 1 minute to let the app start up
+	select {
+	case <-h.closeCh:
+		return
+	case <-time.After(60 * time.Second):
+	}
 	h.Debug().Msgf("Health checker started for app %s", h.app.Id)
-	for range h.healthCheckTicker.C {
+	for {
+		select {
+		case <-h.closeCh:
+			return
+		case <-h.healthCheckTicker.C:
+		}
+
 		h.stateLock.RLock()
 		containerName := h.activeContainerName
 		versionHash := h.activeVersionHash
@@ -383,10 +407,8 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 			h.Error().Err(err).Msgf("Error stopping app %s after health failure", h.app.Id)
 		}
 		h.stateLock.Unlock()
-		break
+		return
 	}
-
-	h.Debug().Msgf("Health checker stopped for app %s", h.app.Id)
 }
 
 func (h *ContainerHandler) staleInPlaceHandler(ctx context.Context, containerName container.ContainerName, versionHash string) bool {
@@ -1423,6 +1445,9 @@ func (h *ContainerHandler) buildHealthProbe() *container.HealthProbe {
 
 func (h *ContainerHandler) Close() error {
 	h.Debug().Msgf("Closing container handler for app %s", h.app.Id)
+	h.closeOnce.Do(func() {
+		close(h.closeCh)
+	})
 	if h.idleShutdownTicker != nil {
 		h.idleShutdownTicker.Stop()
 	}

@@ -581,6 +581,9 @@ func (c *CommandCM) ExecTailN(ctx context.Context, command string, args []string
 	}
 
 	if err := scanner.Err(); err != nil {
+		// Reap the process before returning so it does not linger as a zombie
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 		return nil, fmt.Errorf("error scanning output: %s", err)
 	}
 
