@@ -660,28 +660,44 @@ func (s *Server) checkAuthModifiers(authTypeFull string) (string, *types.Forward
 func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request, app *app.App) {
 	var err error
 	appAuth := app.Metadata.AuthnType
-	if appAuth == "" || appAuth == types.AppAuthnDefault {
-		appAuth = types.AppAuthnType(s.config.Security.AppDefaultAuthType)
+
+	// The auth string has the form [rbac:]<type>[+forward_<name>]. Strip the
+	// rbac: prefix (remembered) and resolve the "default" type to the configured
+	// app_default_auth_type BEFORE extracting the +forward_ modifier, because the
+	// configured default may itself carry an rbac: prefix and/or a modifier.
+	rbacPrefix := ""
+	coreAuth := string(appAuth)
+	if strings.HasPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX) {
+		rbacPrefix = rbac.RBAC_AUTH_PREFIX
+		coreAuth = strings.TrimPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX)
+	}
+	baseType, _, _ := strings.Cut(coreAuth, types.AUTH_MODIFIER_DELIMITER)
+	if baseType == "" || baseType == string(types.AppAuthnDefault) {
+		coreAuth = s.config.Security.AppDefaultAuthType
+		if strings.HasPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX) {
+			rbacPrefix = rbac.RBAC_AUTH_PREFIX
+			coreAuth = strings.TrimPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX)
+		}
+	}
+	if coreAuth == "" { // no default auth type set, default to system admin user auth
+		coreAuth = string(types.AppAuthnSystem)
 	}
 
-	if appAuth == "" { // no default auth type set, default to system admin user auth
-		appAuth = types.AppAuthnSystem
-	}
-
-	// Check for auth modifiers which are used to implement forward_auth
-	appAuthStr, forwardConfig, err := s.checkAuthModifiers(string(appAuth))
+	// Now extract the +forward_ modifier from the resolved auth type.
+	appAuthStr, forwardConfig, err := s.checkAuthModifiers(coreAuth)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	appAuth = types.AppAuthnType(appAuthStr)
+	coreAuth = appAuthStr
+	appAuth = types.AppAuthnType(rbacPrefix + coreAuth)
 
 	userId := ""
 	userSubject := ""
 	userEmail := ""
 
-	// Remove the RBAC_AUTH_PREFIX rbac: prefix
-	strippedAuthStr := strings.TrimPrefix(string(appAuth), rbac.RBAC_AUTH_PREFIX)
+	// strippedAuthStr is the auth type without the rbac: prefix, used for dispatch
+	strippedAuthStr := coreAuth
 	strippedAuth := types.AppAuthnType(strippedAuthStr)
 	groups := make([]string, 0)
 

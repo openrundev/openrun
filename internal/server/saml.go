@@ -18,8 +18,10 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/beevik/etree"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/sessions"
 	"github.com/openrundev/openrun/internal/passwd"
@@ -80,15 +82,33 @@ func genSAMLCookieName(provider string) string {
 func (s *SAMLManager) Setup(ctx context.Context) error {
 	s.providerConfigs = make(map[string]*types.SAMLConfig)
 	s.providers = make(map[string]*saml2.SAMLServiceProvider)
+
+	// A missing callback URL is a global misconfiguration that no provider can
+	// work around, so fail fast (unlike per-provider metadata errors below).
+	if len(s.config.SAML) > 0 && s.config.Security.CallbackUrl == "" {
+		return fmt.Errorf("security.callback_url must be set for enabling SAML")
+	}
+
+	// Fetch IdP metadata for each provider concurrently. A single unreachable or
+	// misconfigured IdP must not block or abort server startup (which would take
+	// down unrelated apps), so build failures disable that provider instead.
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	for name, config := range s.config.SAML {
 		name = SAML_AUTH_PREFIX + name
 		s.providerConfigs[name] = &config
-		provider, err := s.buildSAMLProvider(ctx, name, config)
-		if err != nil {
-			return fmt.Errorf("error building SAML provider for %s: %w", name, err)
-		}
-		s.providers[name] = provider
+		wg.Go(func() {
+			provider, err := s.buildSAMLProvider(ctx, name, config)
+			if err != nil {
+				s.Error().Err(err).Msgf("error building SAML provider for %s, provider disabled until reload", name)
+				return
+			}
+			mu.Lock()
+			s.providers[name] = provider
+			mu.Unlock()
+		})
 	}
+	wg.Wait()
 
 	return nil
 }
@@ -182,6 +202,16 @@ func (s *SAMLManager) buildSAMLProvider(ctx context.Context, providerName string
 	if config.UsePost {
 		idpSSOURL = idp.SSO_POST
 		idpSSOBinding = saml2.BindingHttpPost
+	}
+	if idpSSOURL == "" {
+		// The IdP metadata does not advertise an SSO endpoint for the selected
+		// binding. Failing here avoids emitting an AuthnRequest with an empty
+		// destination (which loops the login back to the app) at request time.
+		binding := "HTTP-Redirect"
+		if config.UsePost {
+			binding = "HTTP-POST"
+		}
+		return nil, fmt.Errorf("IdP metadata has no SSO endpoint for %s binding (set use_post appropriately)", binding)
 	}
 
 	// Choose SLO URL (optional)
@@ -415,11 +445,33 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 		return
 	}
 	sessionId = types.SAML_SESSION_KV_PREFIX + sessionId
+
+	// Build the AuthnRequest up front so its ID can be persisted in the state
+	// map and later enforced against the assertion's InResponseTo (anti-replay,
+	// rejects unsolicited/IdP-injected assertions).
+	usePost := sp.IdentityProviderSSOBinding == saml2.BindingHttpPost
+	var authDoc *etree.Document
+	if sp.SignAuthnRequests {
+		authDoc, err = sp.BuildAuthRequestDocument()
+	} else {
+		authDoc, err = sp.BuildAuthRequestDocumentNoSig()
+	}
+	if err != nil {
+		http.Error(w, "auth request err: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	requestID := authDoc.Root().SelectAttrValue("ID", "")
+	if requestID == "" {
+		http.Error(w, "auth request missing ID", http.StatusInternalServerError)
+		return
+	}
+
 	stateMap := make(map[string]any)
 	stateMap[AUTH_KEY] = false
 	stateMap[PROVIDER_NAME_KEY] = providerName
 	stateMap[REDIRECT_URL] = redirectUrl
 	stateMap[NONCE_KEY] = nonce
+	stateMap[REQUEST_ID_KEY] = requestID
 
 	// Store the state map in the database with the session id as the key
 	expireAt := time.Now().Add(5 * time.Minute)
@@ -445,6 +497,7 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 	session.Values[PROVIDER_NAME_KEY] = providerName
 	session.Values[NONCE_KEY] = nonce
 	session.Values[REDIRECT_URL] = redirectUrl
+	session.Options.MaxAge = preAuthSessionMaxAge // short-lived until login completes
 	if err := session.Save(r, w); err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -452,8 +505,8 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 
 	// The relay state is the session id, encoded in base64
 	relayState := base64.URLEncoding.EncodeToString([]byte(sessionId))
-	if sp.IdentityProviderSSOBinding == saml2.BindingHttpPost {
-		body, err := sp.BuildAuthBodyPost(relayState)
+	if usePost {
+		body, err := sp.BuildAuthBodyPostFromDocument(relayState, authDoc)
 		if err != nil {
 			http.Error(w, "auth body err: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -466,7 +519,7 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 		}
 		return
 	}
-	url, err := sp.BuildAuthURL(relayState)
+	url, err := sp.BuildAuthURLFromDocument(relayState, authDoc)
 	if err != nil {
 		http.Error(w, "auth url err: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -513,6 +566,20 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ai.WarningInfo.OneTimeUse {
+		// IdP explicitly marked the assertion for one-time use; we do not keep a
+		// consumed-assertion cache, so reject rather than risk a replay.
+		http.Error(w, "assertion marked one-time-use", http.StatusUnauthorized)
+		return
+	}
+
+	if ai.NameID == "" {
+		// An empty NameID would produce an authenticated-but-unusable session
+		// that returns an error on every subsequent request.
+		http.Error(w, "assertion has empty NameID", http.StatusUnauthorized)
+		return
+	}
+
 	config := s.providerConfigs[providerName]
 	if config == nil {
 		http.Error(w, fmt.Sprintf("provider config %s not found", providerName), http.StatusNotFound)
@@ -553,6 +620,25 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error matching session state, expected auth to be false", http.StatusInternalServerError)
 		return
 	}
+
+	// Enforce that the assertion is a response to the AuthnRequest we issued for
+	// this login. Without this, a signed but replayed or unsolicited (IdP-injected)
+	// assertion could be bound to an attacker-initiated session.
+	expectedRequestID, ok := stateValueString(stateMap, REQUEST_ID_KEY)
+	if !ok || expectedRequestID == "" {
+		http.Error(w, "error matching session state", http.StatusInternalServerError)
+		return
+	}
+	response, err := sp.ValidateEncodedResponse(b64Response)
+	if err != nil {
+		http.Error(w, "response invalid: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if response.InResponseTo != expectedRequestID {
+		http.Error(w, "assertion InResponseTo mismatch", http.StatusUnauthorized)
+		return
+	}
+
 	redirectUrl, ok := stateValueString(stateMap, REDIRECT_URL)
 	if !ok {
 		http.Error(w, "error matching session state", http.StatusBadRequest)
@@ -623,12 +709,6 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.db.DeleteKV(r.Context(), sessionId)
-	if err != nil {
-		http.Error(w, "error deleting state: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	auth, ok := stateMap[AUTH_KEY].(bool)
 	if !ok {
 		http.Error(w, "error matching session, auth not found", http.StatusInternalServerError)
@@ -670,8 +750,15 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Consume the single-use state entry only after the caller has proven (via the
+	// nonce cookie) that it owns this login, so a leaked relay token alone cannot
+	// delete another user's in-flight login state.
+	if err = s.db.DeleteKV(r.Context(), sessionId); err != nil {
+		http.Error(w, "error deleting state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Update the session cookie to authenticated, with the new values
-	success = true
 	userID, ok := stateValueString(stateMap, USER_KEY)
 	if !ok {
 		http.Error(w, "error matching session state", http.StatusBadRequest)
@@ -687,25 +774,65 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error matching session state", http.StatusBadRequest)
 		return
 	}
+	// Rotate the session id on the unauthenticated->authenticated transition to
+	// prevent session fixation (a fixated pre-auth cookie must not remain valid).
+	session.ID = ""
 	session.Values[AUTH_KEY] = true
 	session.Values[USER_KEY] = userID
 	session.Values[GROUPS_KEY] = groups
 	session.Values[SESSION_INDEX_KEY] = sessionIndex
 	delete(session.Values, REDIRECT_URL)
-	err = session.Save(r, w)
-	if err != nil {
+	if err = session.Save(r, w); err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	success = true
 
 	http.Redirect(w, r, redirectUrl, http.StatusFound)
 }
 
+// logout serves the SP SLO endpoint. It handles three cases: an IdP-initiated
+// LogoutRequest (validated by signature, answered with a LogoutResponse), the
+// IdP's LogoutResponse to an SP-initiated logout, and an app-initiated logout
+// (same-origin only) that clears the session and optionally notifies the IdP.
 func (s *SAMLManager) logout(w http.ResponseWriter, r *http.Request) {
 	providerName := chi.URLParam(r, "provider")
 	sp := s.providers[providerName]
 	if sp == nil {
 		http.Error(w, fmt.Sprintf("provider %s not found", providerName), http.StatusNotFound)
+		return
+	}
+
+	const maxSLOBody = 10 << 20 // 10 MiB
+	r.Body = http.MaxBytesReader(w, r.Body, maxSLOBody)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "parse form: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// IdP-initiated Single Logout: validate the signed LogoutRequest before
+	// acting, then reply with a LogoutResponse (not a fresh LogoutRequest).
+	if samlRequest := r.PostFormValue("SAMLRequest"); samlRequest != "" {
+		s.handleIdpLogoutRequest(w, r, sp, providerName, samlRequest)
+		return
+	}
+
+	// IdP's response to an SP-initiated LogoutRequest: validate and finish.
+	if samlResponse := r.PostFormValue("SAMLResponse"); samlResponse != "" {
+		if _, err := sp.ValidateEncodedLogoutResponsePOST(samlResponse); err != nil {
+			http.Error(w, "logout response invalid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.clearSAMLSession(w, r, providerName)
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	// App-initiated logout. This is a state-changing same-origin action, so
+	// reject cross-site requests (logout CSRF defense); the IdP-driven cases
+	// above authenticate via a signed message instead.
+	if !isSameOriginRequest(r) {
+		http.Error(w, "cross origin logout rejected", http.StatusForbidden)
 		return
 	}
 
@@ -728,7 +855,10 @@ func (s *SAMLManager) logout(w http.ResponseWriter, r *http.Request) {
 		delete(session.Values, k)
 	}
 	session.Options.MaxAge = -1
-	_ = session.Save(r, w)
+	if err := session.Save(r, w); err != nil {
+		http.Error(w, "error clearing session: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	// optional IdP SLO (front-channel)
 	if sp.IdentityProviderSLOURL != "" && nameID != "" && sessionIndex != "" {
@@ -748,6 +878,74 @@ func (s *SAMLManager) logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// handleIdpLogoutRequest validates an IdP-initiated LogoutRequest and answers
+// with a LogoutResponse addressed to the IdP's SLO endpoint.
+func (s *SAMLManager) handleIdpLogoutRequest(w http.ResponseWriter, r *http.Request, sp *saml2.SAMLServiceProvider, providerName, encodedRequest string) {
+	req, err := sp.ValidateEncodedLogoutRequestPOST(encodedRequest)
+	if err != nil {
+		http.Error(w, "logout request invalid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Clear the local session (best effort; requires the browser cookie).
+	s.clearSAMLSession(w, r, providerName)
+
+	var doc *etree.Document
+	if sp.SPKeyStore != nil {
+		doc, err = sp.BuildLogoutResponseDocument(saml2.StatusCodeSuccess, req.ID)
+	} else {
+		doc, err = sp.BuildLogoutResponseDocumentNoSig(saml2.StatusCodeSuccess, req.ID)
+	}
+	if err != nil {
+		http.Error(w, "error building logout response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if sp.IdentityProviderSLOURL != "" {
+		if body, err := sp.BuildLogoutResponseBodyPostFromDocument("", doc); err == nil {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write(body) //nolint:errcheck
+			return
+		}
+	}
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// clearSAMLSession removes the local SAML session cookie and its server-side row.
+func (s *SAMLManager) clearSAMLSession(w http.ResponseWriter, r *http.Request, providerName string) {
+	session, err := s.cookieStore.Get(r, genSAMLCookieName(providerName))
+	if err != nil {
+		return
+	}
+	for k := range session.Values {
+		delete(session.Values, k)
+	}
+	session.Options.MaxAge = -1
+	_ = session.Save(r, w)
+}
+
+// isSameOriginRequest reports whether a state-changing request originated from
+// the same site, using Sec-Fetch-Site when present and falling back to an
+// Origin/Host comparison. Requests with no cross-origin signal are allowed,
+// matching net/http's CrossOriginProtection default for non-browser clients.
+func isSameOriginRequest(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "same-origin", "same-site", "none":
+		return true
+	case "cross-site":
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 func firstNonEmpty(slices ...[]string) []string {

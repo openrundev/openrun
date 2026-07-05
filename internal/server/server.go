@@ -1012,7 +1012,11 @@ func (s *Server) AuthorizeList(ctx context.Context, userId string, app *types.Ap
 	appAuthStr = strings.TrimPrefix(appAuthStr, rbac.RBAC_AUTH_PREFIX)
 	appAuth := types.AppAuthnType(appAuthStr)
 	if appAuth == types.AppAuthnDefault {
-		appAuth = types.AppAuthnType(s.config.Security.AppDefaultAuthType)
+		// Strip the rbac: prefix from the resolved default too, so the provider
+		// comparison below matches the userId's provider (e.g. "okta"), matching
+		// how authenticateAndServeApp resolves the auth type.
+		resolved := strings.TrimPrefix(s.config.Security.AppDefaultAuthType, rbac.RBAC_AUTH_PREFIX)
+		appAuth = types.AppAuthnType(resolved)
 	}
 	appAuthStr, _, err = s.checkAuthModifiers(string(appAuth))
 	if err != nil {

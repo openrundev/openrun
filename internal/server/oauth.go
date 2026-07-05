@@ -71,7 +71,13 @@ const (
 	SESSION_INDEX_KEY       = "session_index"
 	NONCE_KEY               = "nonce"
 	REDIRECT_URL            = "redirect"
+	REQUEST_ID_KEY          = "request_id" // SAML AuthnRequest ID, used to enforce InResponseTo
 )
+
+// preAuthSessionMaxAge bounds the pre-auth handshake cookie/session to the same
+// window as the state map (5 minutes), so abandoned logins do not leave rows in
+// the keystore for the full session lifetime.
+const preAuthSessionMaxAge = 300
 
 // OAuthManager manages the OAuth providers and their configurations (also OIDC)
 type OAuthManager struct {
@@ -212,7 +218,12 @@ func (s *OAuthManager) RegisterRoutes(csrfMiddleware *http.CrossOriginProtection
 		// Set user as unauthenticated in session
 		session.Values[AUTH_KEY] = false
 		session.Options.MaxAge = -1
-		_ = session.Save(r, w)
+		if err := session.Save(r, w); err != nil {
+			// Save deletes the server-side row before clearing the cookie; if it
+			// fails the session is still valid, so do not report a clean logout.
+			http.Error(w, "error clearing session: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 	})))
 }
@@ -346,6 +357,7 @@ func (s *OAuthManager) beginLogin(w http.ResponseWriter, r *http.Request, provid
 	session.Values[PROVIDER_NAME_KEY] = providerName
 	session.Values[NONCE_KEY] = nonce
 	session.Values[REDIRECT_URL] = redirectUrl
+	session.Options.MaxAge = preAuthSessionMaxAge // short-lived until login completes
 	if err := session.Save(r, w); err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -400,13 +412,16 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	providerType := strings.SplitN(providerName, PROVIDER_NAME_DELIMITER, 2)[0]
-	switch providerType {
-	case "google":
+	// Enforce the hosted-domain restriction whenever it is configured, not only
+	// for the google provider. Providers that emit the "hd" claim (Google, or
+	// OIDC in front of Google Workspace) are checked against it; for any other
+	// provider the claim is absent, so a configured hosted_domain fails closed
+	// instead of being silently ignored.
+	if providerConfig.HostedDomain != "" {
 		hostedDomain, _ := user.RawData["hd"].(string)
-		if providerConfig.HostedDomain != "" && hostedDomain != providerConfig.HostedDomain {
-			http.Error(w, fmt.Sprintf("user does not belong to the required hosted domain. Found %s, expected %s",
-				hostedDomain, providerConfig.HostedDomain), http.StatusInternalServerError)
+		if hostedDomain != providerConfig.HostedDomain {
+			http.Error(w, fmt.Sprintf("user does not belong to the required hosted domain. Found %q, expected %q",
+				hostedDomain, providerConfig.HostedDomain), http.StatusForbidden)
 			return
 		}
 	}
@@ -418,8 +433,13 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stateMap[USER_ID_KEY] = user.UserID
-	stateMap[USER_EMAIL_KEY] = user.Email
 	stateMap[USER_NICKNAME_KEY] = user.NickName
+	// Only trust the email as an identity when the IdP has not explicitly marked
+	// it unverified. Otherwise a user on a permissive IdP could assert an
+	// arbitrary address (e.g. someone else's) and match RBAC grants for it.
+	if emailVerifiedClaim(user.RawData) {
+		stateMap[USER_EMAIL_KEY] = user.Email
+	}
 
 	lookupKeys := []string{USER_EMAIL_KEY, USER_ID_KEY, USER_NICKNAME_KEY}
 	if strings.HasPrefix(providerName, "git") {
@@ -480,6 +500,25 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectAppDomain, http.StatusFound)
 }
 
+// emailVerifiedClaim reports whether the IdP's email claim can be trusted as an
+// identity. The claim is absent for providers that do not emit it (e.g. GitHub,
+// whose API emails are already verified), in which case we keep the prior
+// behavior of trusting the email; it is only dropped when explicitly false.
+func emailVerifiedClaim(raw map[string]any) bool {
+	v, ok := raw["email_verified"]
+	if !ok {
+		return true
+	}
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		return strings.EqualFold(t, "true")
+	default:
+		return false
+	}
+}
+
 func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	if state == "" {
@@ -519,12 +558,6 @@ func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 	stateMap, err := s.db.FetchKV(r.Context(), sessionId)
 	if err != nil {
 		http.Error(w, "error fetching state: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	err = s.db.DeleteKV(r.Context(), sessionId)
-	if err != nil {
-		http.Error(w, "error deleting state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -569,8 +602,15 @@ func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Consume the single-use state entry only after the caller has proven (via the
+	// nonce cookie) that it owns this login, so a leaked state token alone cannot
+	// delete another user's in-flight login state.
+	if err = s.db.DeleteKV(r.Context(), sessionId); err != nil {
+		http.Error(w, "error deleting state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Update the session cookie to authenticated, with the new values
-	success = true
 	userID, ok := stateValueString(stateMap, USER_KEY)
 	if !ok {
 		http.Error(w, "error matching session state", http.StatusBadRequest)
@@ -581,6 +621,9 @@ func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error matching session state", http.StatusBadRequest)
 		return
 	}
+	// Rotate the session id on the unauthenticated->authenticated transition to
+	// prevent session fixation (a fixated pre-auth cookie must not remain valid).
+	session.ID = ""
 	session.Values[AUTH_KEY] = true
 	session.Values[USER_KEY] = userID
 	session.Values[PROVIDER_NAME_KEY] = providerName
@@ -596,11 +639,11 @@ func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 		delete(session.Values, USER_EMAIL_KEY)
 	}
 	delete(session.Values, REDIRECT_URL)
-	err = session.Save(r, w)
-	if err != nil {
+	if err = session.Save(r, w); err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	success = true
 
 	http.Redirect(w, r, redirectUrl, http.StatusFound)
 }

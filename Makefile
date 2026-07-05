@@ -26,7 +26,7 @@ endif
 .RECIPEPREFIX = >
 TAG := 
 
-.PHONY: help test unit int covtest covunit covint release int_single lint verify build-linux image tags
+.PHONY: help test unit int testui covtest covunit covint release int_single lint verify build-linux image tags
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -65,6 +65,9 @@ covunit: ## Run unit tests with coverage
 
 int: ## Run integration tests
 > OPENRUN_HOME=$(OPENRUN_HOME) ./tests/run_cli_tests.sh
+
+testui: ## Run the console app integration tests (ui/console_tests/api, own module)
+> cd ui/console_tests/api && go test -count=1 ./...
 
 int_single: ## Run one integration test
 > CL_SINGLE_TEST=${INPUT} OPENRUN_HOME=$(OPENRUN_HOME) ./tests/run_cli_tests.sh

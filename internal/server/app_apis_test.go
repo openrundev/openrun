@@ -599,6 +599,45 @@ func TestAuthorizeListStripsForwardModifier(t *testing.T) {
 	}
 }
 
+func TestResolvesDefaultAuthWithForwardModifier(t *testing.T) {
+	t.Parallel()
+
+	server := newAuthRedirectTestServer("example.com", false)
+	server.config.Security.AppDefaultAuthType = "github+forward_authz"
+	server.config.Forward = map[string]types.ForwardConfig{
+		"authz": {AuthUrl: "http://auth.example.com/check"},
+	}
+
+	// github is intentionally left unregistered, so dispatch reaches the
+	// "unsupported provider" branch whose message reveals which provider name the
+	// auth resolution produced. When an app uses default auth and the configured
+	// default carries a +forward_ modifier, the modifier (and any rbac: prefix)
+	// must be resolved away, leaving "github" - not "github+forward_authz", which
+	// is the regression this guards against.
+	tests := map[string]types.AppAuthnType{
+		"default keyword": types.AppAuthnDefault,
+		"empty auth":      "",
+		"rbac default":    types.AppAuthnType(rbac.RBAC_AUTH_PREFIX + string(types.AppAuthnDefault)),
+	}
+
+	for name, authType := range tests {
+		t.Run(name, func(t *testing.T) {
+			app := newAuthRedirectTestApp(authType)
+			req := httptest.NewRequest(http.MethodGet, "http://example.com/myapp", nil)
+			rec := httptest.NewRecorder()
+
+			server.authenticateAndServeApp(rec, req, app)
+
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status: want %d got %d (body %q)", http.StatusInternalServerError, rec.Code, rec.Body.String())
+			}
+			if got, want := strings.TrimSpace(rec.Body.String()), "Unsupported authentication provider: github"; got != want {
+				t.Fatalf("resolved provider: want %q got %q", want, got)
+			}
+		})
+	}
+}
+
 func TestAuthenticateAndServeAppRedirectsFallbackOAuthToCanonicalHost(t *testing.T) {
 	t.Parallel()
 
