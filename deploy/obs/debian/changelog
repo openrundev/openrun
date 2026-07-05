@@ -1,0 +1,5 @@
+openrun (0.18.3-1) unstable; urgency=medium
+
+  * Initial packaging for the Open Build Service.
+
+ -- Ajay Kidave <contact@openrun.dev>  Sat, 05 Jul 2026 09:00:00 +0000

@@ -1,0 +1,16 @@
+Source: openrun
+Section: web
+Priority: optional
+Maintainer: Ajay Kidave <contact@openrun.dev>
+Build-Depends: debhelper-compat (= 13), golang-go (>= 2:1.26~)
+Standards-Version: 4.6.2
+Homepage: https://openrun.dev/
+
+Package: openrun
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, adduser
+Description: Declarative web app deployment platform
+ OpenRun is an open source alternative to Google Cloud Run and AWS App
+ Runner. It provides declarative, GitOps based deployment of web apps
+ and containerized services with built-in TLS, OAuth/OIDC based access
+ controls and app lifecycle management.

@@ -34,6 +34,50 @@ Open https://localhost:25223 to access the app listing UI.
 
 See [start the service]({{< ref "#start-the-service" >}}) for details.
 
+## Install On Linux (Native Packages)
+
+Native packages (rpm/deb) are published for openSUSE Tumbleweed, Fedora and Debian through the [Open Build Service](https://build.opensuse.org/package/show/home:ajayvk:openrun/openrun). The package installs the `openrun` binary, creates an `openrun` service account with home directory `/var/lib/openrun`, generates the initial config with a random `admin` password (printed during install, note it down) and sets up the systemd service.
+
+### openSUSE Tumbleweed
+
+```shell
+sudo zypper addrepo https://download.opensuse.org/repositories/home:/ajayvk:/openrun/openSUSE_Tumbleweed/home:ajayvk:openrun.repo
+sudo zypper --gpg-auto-import-keys refresh
+sudo zypper install openrun
+```
+
+### Fedora
+
+```shell
+sudo dnf config-manager addrepo --from-repofile=https://download.opensuse.org/repositories/home:/ajayvk:/openrun/Fedora_Rawhide/home:ajayvk:openrun.repo
+sudo dnf install openrun
+```
+
+For dnf 4, use `sudo dnf config-manager --add-repo <repo url>` instead.
+
+### Debian
+
+```shell
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.opensuse.org/repositories/home:/ajayvk:/openrun/Debian_Unstable/Release.key | gpg --dearmor | sudo tee /etc/apt/keyrings/openrun.gpg > /dev/null
+echo 'deb [signed-by=/etc/apt/keyrings/openrun.gpg] https://download.opensuse.org/repositories/home:/ajayvk:/openrun/Debian_Unstable/ /' | sudo tee /etc/apt/sources.list.d/openrun.list
+sudo apt update && sudo apt install openrun
+```
+
+### Start the systemd service
+
+```shell
+sudo systemctl enable --now openrun
+```
+
+The server runs as the `openrun` user, using the config file at `/var/lib/openrun/openrun.toml`. Logs go to the journal (`journalctl -u openrun`) and `/var/lib/openrun/logs`. Open https://localhost:25223 to access the app listing UI, using `admin` and the password printed during package installation.
+
+On systemd-based distros without a native package, the same setup (openrun user, `/var/lib/openrun` home, systemd service) can be done with the setup script:
+
+```shell
+curl -sSL https://raw.githubusercontent.com/openrundev/openrun/refs/heads/main/deploy/setup_systemd.sh | sudo sh
+```
+
 ## Install On Windows
 
 To install the OpenRun application on Windows, run:

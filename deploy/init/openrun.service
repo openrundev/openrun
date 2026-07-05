@@ -14,6 +14,7 @@ Requires=network-online.target
 [Service]
 User=openrun
 Group=openrun
+Environment=OPENRUN_HOME=/var/lib/openrun
 ExecStart=/usr/bin/openrun server start
 TimeoutStopSec=5s
 LimitNOFILE=1048576

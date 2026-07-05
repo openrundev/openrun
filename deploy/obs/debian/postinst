@@ -1,0 +1,29 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        if ! getent group openrun >/dev/null; then
+            addgroup --system openrun
+        fi
+        if ! getent passwd openrun >/dev/null; then
+            # match deploy/setup_systemd.sh: home /var/lib/openrun, bash shell
+            adduser --system --ingroup openrun --home /var/lib/openrun \
+                --no-create-home --shell /bin/bash --gecos "OpenRun service" openrun
+        fi
+        mkdir -p /var/lib/openrun
+        chown openrun:openrun /var/lib/openrun
+        chmod 0750 /var/lib/openrun
+        if [ ! -f /var/lib/openrun/openrun.toml ]; then
+            echo "********** Initializing OpenRun 'admin' user password **********"
+            runuser -u openrun -- /usr/bin/openrun password > /var/lib/openrun/openrun.toml || true
+            chown openrun:openrun /var/lib/openrun/openrun.toml || true
+            chmod 0600 /var/lib/openrun/openrun.toml || true
+            echo "********** Save the password shown above ************************"
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

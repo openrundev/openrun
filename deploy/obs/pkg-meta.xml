@@ -1,0 +1,5 @@
+<package name="openrun" project="@HOME_PROJECT@:openrun">
+  <title>OpenRun</title>
+  <description>Declarative web app deployment platform. Open source alternative to Google Cloud Run and AWS App Runner.</description>
+  <url>https://openrun.dev/</url>
+</package>

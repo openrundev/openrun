@@ -26,13 +26,19 @@ To get OpenRun running, the initial setup involves:
 
 ## Installation
 
-Assuming a systemd based Linux system, to install OpenRun and start the service, run
+On openSUSE Tumbleweed, Fedora and Debian, install the [native package]({{< ref "docs/installation#install-on-linux-native-packages" >}}) and start the service:
+
+```sh
+sudo systemctl enable --now openrun
+```
+
+On other systemd based Linux systems, to install OpenRun and start the service, run
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/openrundev/openrun/refs/heads/main/deploy/setup_systemd.sh | sudo sh
 ```
 
-This will create a user `openrun` and install the service under `/var/lib/openrun`.
+Both approaches create a user `openrun` and install the service under `/var/lib/openrun`.
 
 To run [containerized apps]({{< ref "docs/container/overview/" >}}), ensure that Docker or Podman is installed and running on the machine. For Docker, the `openrun` user should be added to the docker group. As `openrun` user, run `docker ps` or `podman ps` to verify that the container manager is functional.
 

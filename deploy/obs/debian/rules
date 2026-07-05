@@ -1,0 +1,26 @@
+#!/usr/bin/make -f
+
+export CGO_ENABLED=0
+export GOTOOLCHAIN=local
+export GOCACHE=$(CURDIR)/.gocache
+GIT_COMMIT := 910b57f
+VERSION := 0.18.3
+LDFLAGS := -w -X github.com/openrundev/openrun/internal/types.gitCommit=$(GIT_COMMIT) -X github.com/openrundev/openrun/internal/types.gitVersion=$(VERSION)
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	go build -mod=vendor -trimpath -ldflags "$(LDFLAGS)" -o openrun ./cmd/openrun
+
+override_dh_auto_install:
+	install -D -m0755 openrun debian/openrun/usr/bin/openrun
+	# systemd unit comes from the source tree so packaging cannot drift from
+	# deploy/init/openrun.service (also used by deploy/setup_systemd.sh)
+	install -D -m0644 deploy/init/openrun.service debian/openrun/usr/lib/systemd/system/openrun.service
+
+override_dh_auto_test:
+
+override_dh_dwz:
+
+override_dh_strip:

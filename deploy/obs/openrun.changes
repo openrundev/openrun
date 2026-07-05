@@ -1,0 +1,7 @@
+-------------------------------------------------------------------
+Sat Jul  5 09:00:00 UTC 2026 - Ajay Kidave <contact@openrun.dev>
+
+- Initial packaging of OpenRun 0.18.3 for the Open Build Service
+- Vendored Go module sources included in the source tarball
+- Installs systemd unit, creates openrun system user, generates
+  initial admin password config on first install

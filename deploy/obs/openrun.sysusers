@@ -1,0 +1,4 @@
+# Match deploy/setup_systemd.sh: openrun user/group, home /var/lib/openrun,
+# bash shell (admins use `su -l openrun` for maintenance)
+# Type Name ID GECOS Home Shell
+u openrun - "OpenRun service" /var/lib/openrun /bin/bash

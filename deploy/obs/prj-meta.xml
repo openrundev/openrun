@@ -1,0 +1,19 @@
+<project name="@HOME_PROJECT@:openrun">
+  <title>OpenRun</title>
+  <description>OpenRun is an open source alternative to Google Cloud Run and AWS App Runner. Declarative, GitOps based deployment of web apps and containerized services. https://openrun.dev/</description>
+  <person userid="@OBS_USER@" role="maintainer"/>
+  <repository name="openSUSE_Tumbleweed">
+    <path project="openSUSE:Factory" repository="snapshot"/>
+    <arch>x86_64</arch>
+    <arch>aarch64</arch>
+  </repository>
+  <repository name="Fedora_Rawhide">
+    <path project="Fedora:Rawhide" repository="standard"/>
+    <arch>x86_64</arch>
+    <arch>aarch64</arch>
+  </repository>
+  <repository name="Debian_Unstable">
+    <path project="Debian:Next" repository="standard"/>
+    <arch>x86_64</arch>
+  </repository>
+</project>
