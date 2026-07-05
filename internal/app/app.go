@@ -54,10 +54,12 @@ type App struct {
 
 	codeConfig       *apptype.CodeConfig
 	sourceFS         *appfs.SourceFs
-	initMutex        sync.Mutex
-	initialized      bool
-	reloadError      error
-	reloadStartTime  time.Time
+	initMutex   sync.Mutex
+	initialized bool
+	// reloadError is written by the file-watcher reload goroutine and read on
+	// the request path, so it needs atomic access
+	reloadError     atomic.Pointer[error]
+	reloadStartTime time.Time
 	appDev           *dev.AppDev
 	appStyle         *dev.AppStyle
 	systemConfig     *types.SystemConfig
@@ -83,7 +85,10 @@ type App struct {
 	jsLibs           []types.JSLibrary             // JS libraries used by the app
 
 	watcher       *fsnotify.Watcher
-	sseListeners  []chan SSEMessage
+	// sseListeners has its own lock (not initMutex) since notifyClients runs
+	// from code paths that already hold initMutex
+	sseMu        sync.Mutex
+	sseListeners []chan SSEMessage
 	funcMap       template.FuncMap
 	starlarkCache map[string]*starlarkCacheEntry
 
@@ -695,9 +700,10 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		telemetry.RecordAppResponse(r.Context(), status, a.telemetryIdentityAttrs...)
 	}()
-	if a.reloadError != nil {
-		a.Warn().Err(a.reloadError).Msg("Last reload had failed")
-		http.Error(wrapper, a.reloadError.Error(), http.StatusInternalServerError)
+	if errPtr := a.reloadError.Load(); errPtr != nil && *errPtr != nil {
+		reloadErr := *errPtr
+		a.Warn().Err(reloadErr).Msg("Last reload had failed")
+		http.Error(wrapper, reloadErr.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -817,6 +823,10 @@ func (a *App) startWatcher() error {
 
 				a.Trace().Str("event", fmt.Sprint(event)).Msg("Received event")
 
+				if !inReload.CompareAndSwap(false, true) {
+					// A reload started after the check above, ignore the event
+					continue
+				}
 				go func() {
 					defer func() {
 						if r := recover(); r != nil {
@@ -824,10 +834,9 @@ func (a *App) startWatcher() error {
 						}
 					}()
 
-					inReload.Store(true)
 					defer inReload.Store(false)
 					_, err := a.Reload(context.Background(), true, false, types.DryRun(false), ReloadOptions{ReloadContainer: true, Verify: false})
-					a.reloadError = err
+					a.reloadError.Store(&err)
 					if err != nil {
 						a.Error().Err(err).Msg("Error reloading app")
 						if a.IsDev {
@@ -860,14 +869,14 @@ func (a *App) startWatcher() error {
 }
 
 func (a *App) addSSEClient(newChan chan SSEMessage) {
-	a.initMutex.Lock()
-	defer a.initMutex.Unlock()
+	a.sseMu.Lock()
+	defer a.sseMu.Unlock()
 	a.sseListeners = append(a.sseListeners, newChan)
 }
 
 func (a *App) removeSSEClient(chanRemove chan SSEMessage) {
-	a.initMutex.Lock()
-	defer a.initMutex.Unlock()
+	a.sseMu.Lock()
+	defer a.sseMu.Unlock()
 	for i, ch := range a.sseListeners {
 		if ch == chanRemove {
 			a.sseListeners = append(a.sseListeners[:i], a.sseListeners[i+1:]...)
@@ -882,9 +891,9 @@ func (a *App) notifyClients() {
 		event: "openrun_reload",
 		data:  "App reloaded after file updates",
 	}
-	a.initMutex.Lock()
+	a.sseMu.Lock()
 	listeners := slices.Clone(a.sseListeners)
-	a.initMutex.Unlock()
+	a.sseMu.Unlock()
 	for _, ch := range listeners {
 		// Non-blocking send: the channel is buffered, so a skipped send means a
 		// reload ping is already queued or the client is disconnecting

@@ -37,17 +37,23 @@ func InitFileStore(connectString string) error {
 
 	mu.Lock()
 	defer mu.Unlock()
-	var err error
-	fsDB, fsDBType, err = system.InitDBConnection(connectString, "fs_store", system.DB_SQLITE_POSTGRES)
+	if fsDB != nil {
+		// Another caller initialized the store while this one waited on the lock
+		return nil
+	}
+
+	db, dbType, err := system.InitDBConnection(connectString, "fs_store", system.DB_SQLITE_POSTGRES)
 	if err != nil {
 		return err
 	}
 
-	if _, err := fsDB.Exec(`create table IF NOT EXISTS user_files (id text, appid text, file_path text, file_name text, ` +
-		`mime_type text, create_time ` + system.MapDataType(fsDBType, "datetime") + `, expire_at ` + system.MapDataType(fsDBType,
+	if _, err := db.Exec(`create table IF NOT EXISTS user_files (id text, appid text, file_path text, file_name text, ` +
+		`mime_type text, create_time ` + system.MapDataType(dbType, "datetime") + `, expire_at ` + system.MapDataType(dbType,
 		"datetime") + `, created_by text, single_access bool, visibility text, metadata json, PRIMARY KEY(id))`); err != nil {
+		db.Close() //nolint:errcheck
 		return err
 	}
+	fsDB, fsDBType = db, dbType
 
 	// The file store is a process-lifetime singleton, so the cleanup loop runs
 	// with a background context; a request-scoped context would cancel the

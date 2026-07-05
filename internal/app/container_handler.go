@@ -331,7 +331,11 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 
 		if h.app.notifyClose != nil {
 			// Notify the server to close the app so that it gets reinitialized on next API call
-			h.app.notifyClose <- h.app.AppPathDomain()
+			select {
+			case h.app.notifyClose <- h.app.AppPathDomain():
+			case <-h.closeCh:
+				// Handler closed while waiting for the server to receive, give up
+			}
 		}
 
 		h.stateLock.Lock()
@@ -396,7 +400,11 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 
 		if h.app.notifyClose != nil {
 			// Notify the server to close the app so that it gets reinitialized on next API call
-			h.app.notifyClose <- h.app.AppPathDomain()
+			select {
+			case h.app.notifyClose <- h.app.AppPathDomain():
+			case <-h.closeCh:
+				// Handler closed while waiting for the server to receive, give up
+			}
 		}
 
 		h.stateLock.Lock()

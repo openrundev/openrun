@@ -513,17 +513,19 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 	}
 
 	// Start watcher process, wait async for it to complete
-	s.watcher = exec.Command(split[0], args...)
-	system.SetProcessGroup(s.watcher) // // ensure process group
+	watcher := exec.Command(split[0], args...)
+	system.SetProcessGroup(watcher) // // ensure process group
 
-	s.watcher.Stdin = os.Stdin // this seems to be required for the process to start
-	s.watcher.Stdout = s.watcherStdout
-	s.watcher.Stderr = s.watcherStdout
-	if err := s.watcher.Start(); err != nil {
+	watcher.Stdin = os.Stdin // this seems to be required for the process to start
+	watcher.Stdout = s.watcherStdout
+	watcher.Stderr = s.watcherStdout
+	if err := watcher.Start(); err != nil {
 		return fmt.Errorf("error starting tailwind watcher : %s", err)
 	}
+	s.watcher = watcher
+	// Wait on the local variable, not s.watcher, which StopWatcher can reset
 	go func() {
-		if err := s.watcher.Wait(); err != nil {
+		if err := watcher.Wait(); err != nil {
 			fmt.Printf("error waiting for tailwind watcher : %s\n", err) // TODO: log
 		}
 	}()

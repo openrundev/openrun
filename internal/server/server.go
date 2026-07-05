@@ -502,11 +502,16 @@ func updateConfigSecrets(config *types.ServerConfig, evalSecret func(string) (st
 
 // handleAppClose listens for app close notifications and removes the app from the store
 func (s *Server) handleAppClose() {
-	for appPathDomain := range s.notifyClose {
-		s.apps.ClearApps([]types.AppPathDomain{appPathDomain})
-		s.Debug().Str("app", appPathDomain.String()).Msg("App closed")
+	for {
+		select {
+		case appPathDomain := <-s.notifyClose:
+			s.apps.ClearApps([]types.AppPathDomain{appPathDomain})
+			s.Debug().Str("app", appPathDomain.String()).Msg("App closed")
+		case <-s.stopRequested:
+			s.Debug().Msg("App close handler stopped")
+			return
+		}
 	}
-	s.Debug().Msg("App close handler stopped")
 }
 
 // setupAdminAccount sets up the basic auth password for admin account. If admin user is unset,
@@ -878,6 +883,9 @@ func loadRootCAs(rootCertFile string) (*x509.CertPool, error) {
 func (s *Server) Stop(ctx context.Context) error {
 	s.stopOnce.Do(func() {
 		s.Info().Msg("Stopping service")
+		// Signal stopRequested so goroutines selecting on it (handleAppClose,
+		// StopNotify waiters) exit even when Stop is called directly
+		s.RequestStop()
 		if s.staleContainerCleanupStop != nil {
 			close(s.staleContainerCleanupStop)
 			s.staleContainerCleanupStop = nil
@@ -937,6 +945,10 @@ func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.listAppsApp != nil {
+		// Another caller initialized the app while this one waited on the lock
+		return s.listAppsApp, nil
+	}
 
 	var err error
 	embedReadFS := appfs.NewEmbedReadFS(s.Logger, list_apps.EmbedListApps)

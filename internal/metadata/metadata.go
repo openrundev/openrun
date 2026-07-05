@@ -125,7 +125,9 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 					m.Error().Err(err).Msg("error unmarshalling app update message")
 					return err
 				}
-				go m.AppNotifyFunc(updateMsg.Payload)
+				// Called synchronously (pgxlisten serializes handler calls) so
+				// updates for the same app are applied in order
+				m.AppNotifyFunc(updateMsg.Payload)
 			case types.MessageTypeConfigUpdate:
 				updateMsg := types.ConfigUpdateMessage{}
 				err := json.Unmarshal([]byte(notification.Payload), &updateMsg)
@@ -133,7 +135,7 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 					m.Error().Err(err).Msg("error unmarshalling config update message")
 					return err
 				}
-				go m.ConfigNotifyFunc(updateMsg.Payload)
+				m.ConfigNotifyFunc(updateMsg.Payload)
 			default:
 				m.Error().Msgf("unknown message type: %s", msg.MessageType)
 			}
