@@ -4,13 +4,18 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/types"
@@ -65,6 +70,24 @@ type ContainerDetail struct {
 	Stats        *ContainerStats  `json:"stats"`
 }
 
+// containerCmdTimeout bounds the one-shot container CLI calls (ps, inspect,
+// logs, stats, start/stop). Without it a hung daemon (docker desktop VM not
+// running) hangs the console request forever. The follow log stream is
+// exempt: it is long-lived by design and ends on client disconnect
+const containerCmdTimeout = 30 * time.Second
+
+// runContainerCmd runs a one-shot container CLI command with a bounded
+// timeout, returning the combined output
+func runContainerCmd(ctx context.Context, runtime string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, containerCmdTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, runtime, args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("container command timed out, is the container daemon running?")
+	}
+	return out, err
+}
+
 const containerAppIdLabel = container.LABEL_PREFIX + "app.id"
 const containerAppPathLabel = container.LABEL_PREFIX + "app.path"
 const containerAppVersionLabel = container.LABEL_PREFIX + "app.version"
@@ -76,7 +99,6 @@ func (s *Server) containerRuntime() string {
 	}
 	return command
 }
-
 
 // resolveContainerApps fills in the app path (with domain) and environment
 // for containers based on their app id label. The app.path label loses the
@@ -133,8 +155,8 @@ func (s *Server) ListManagedContainers(ctx context.Context) ([]ContainerInfo, er
 		return infos, err
 	}
 
-	out, err := exec.CommandContext(ctx, runtime, "ps", "--all",
-		"--filter", "label="+containerAppIdLabel, "--format", "json").CombinedOutput()
+	out, err := runContainerCmd(ctx, runtime, "ps", "--all",
+		"--filter", "label="+containerAppIdLabel, "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("error listing containers: %s : %s", out, err)
 	}
@@ -198,7 +220,7 @@ func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats b
 		// Computing the writable layer size can be slow for large containers
 		inspectArgs = []string{"inspect", "--size", "--type", "container", id}
 	}
-	out, err := exec.CommandContext(ctx, runtime, inspectArgs...).CombinedOutput()
+	out, err := runContainerCmd(ctx, runtime, inspectArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("error inspecting container: %s : %s", out, err)
 	}
@@ -327,11 +349,127 @@ func (s *Server) GetManagedContainerLogs(ctx context.Context, id string, tail in
 	if _, err := s.GetManagedContainer(ctx, id, false); err != nil {
 		return "", err
 	}
-	out, err := exec.CommandContext(ctx, runtime, "logs", "--tail", fmt.Sprintf("%d", tail), id).CombinedOutput()
+	out, err := runContainerCmd(ctx, runtime, "logs", "--tail", fmt.Sprintf("%d", tail), id)
 	if err != nil {
 		return "", fmt.Errorf("error getting container logs: %s : %s", out, err)
 	}
 	return string(out), nil
+}
+
+// maxLogChunkBytes bounds the partial-line buffer of a log stream; a line
+// longer than this is force-broken so memory stays bounded
+const maxLogChunkBytes = 1024 * 1024
+
+// GetManagedContainerLogsStream returns the last tail lines of the container
+// logs as a stream of line chunks. With follow, the stream keeps delivering
+// new output until ctx is canceled (client disconnect) or the container
+// stops. Each yielded value is a plain string of one or more complete lines
+// without the trailing newline (the stream writer adds one per value)
+func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, tail int, follow bool) (func(yield func(any, error) bool), error) {
+	runtime := s.containerRuntime()
+	if runtime == "" {
+		return nil, fmt.Errorf("no container command is configured on the server")
+	}
+	if tail <= 0 {
+		tail = 500
+	}
+	if runtime == types.CONTAINER_KUBERNETES {
+		stream, err := container.GetWorkloadPodLogsStream(ctx, s.config, id, tail, follow)
+		if err != nil {
+			return nil, err
+		}
+		return streamLogLines(stream, nil), nil
+	}
+
+	// Verify the container is OpenRun managed before exposing logs
+	if _, err := s.GetManagedContainer(ctx, id, false); err != nil {
+		return nil, err
+	}
+
+	args := []string{"logs", "--tail", fmt.Sprintf("%d", tail)}
+	if follow {
+		args = append(args, "--follow")
+	}
+	args = append(args, id)
+	cmd := exec.CommandContext(ctx, runtime, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	// The runtime CLI emits the container's stderr stream on its own stderr;
+	// share the stdout pipe so both are streamed
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	reap := func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}
+	return streamLogLines(stdout, reap), nil
+}
+
+// streamLogLines converts a log reader into a range func yielding chunks of
+// complete lines as plain Go strings (not starlark values, so the stream
+// writer sends them verbatim without quoting). One yield per read keeps the
+// per-line overhead minimal for large tails while still flushing each line
+// promptly in follow mode. cleanup runs when the stream ends or the consumer
+// stops iterating
+func streamLogLines(reader io.ReadCloser, cleanup func()) func(yield func(any, error) bool) {
+	return func(yield func(any, error) bool) {
+		defer func() {
+			_ = reader.Close()
+			if cleanup != nil {
+				cleanup()
+			}
+		}()
+
+		buf := make([]byte, 64*1024)
+		partial := make([]byte, 0, 4096)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				data := buf[:n]
+				if nl := bytes.LastIndexByte(data, '\n'); nl == -1 {
+					partial = append(partial, data...)
+					if len(partial) >= maxLogChunkBytes {
+						// Force a break on newline-less output so the partial
+						// buffer stays bounded
+						if !yield(string(partial), nil) {
+							return
+						}
+						partial = partial[:0]
+					}
+				} else {
+					var out string
+					if len(partial) > 0 {
+						out = string(partial) + string(data[:nl])
+						partial = partial[:0]
+					} else {
+						out = string(data[:nl])
+					}
+					partial = append(partial, data[nl+1:]...)
+					if !yield(out, nil) {
+						return
+					}
+				}
+			}
+			if err != nil {
+				if len(partial) > 0 {
+					if !yield(string(partial), nil) {
+						return
+					}
+				}
+				// Normal endings: EOF, the client went away (ctx cancel kills
+				// the log command and closes the pipe). Anything else is
+				// reported as a final line
+				if err != io.EOF && !errors.Is(err, context.Canceled) && !errors.Is(err, os.ErrClosed) {
+					yield(fmt.Sprintf("error reading logs: %s", err), nil)
+				}
+				return
+			}
+		}
+	}
 }
 
 // StartManagedContainer starts a stopped OpenRun managed container
@@ -356,14 +494,14 @@ func (s *Server) containerLifecycle(ctx context.Context, id, op string) error {
 	if _, err := s.GetManagedContainer(ctx, id, false); err != nil {
 		return err
 	}
-	if out, err := exec.CommandContext(ctx, runtime, op, id).CombinedOutput(); err != nil {
+	if out, err := runContainerCmd(ctx, runtime, op, id); err != nil {
 		return fmt.Errorf("error running container %s: %s : %s", op, out, err)
 	}
 	return nil
 }
 
 func (s *Server) containerStats(ctx context.Context, runtime, id string) *ContainerStats {
-	out, err := exec.CommandContext(ctx, runtime, "stats", "--no-stream", "--format", "json", id).CombinedOutput()
+	out, err := runContainerCmd(ctx, runtime, "stats", "--no-stream", "--format", "json", id)
 	if err != nil {
 		s.Warn().Msgf("error getting container stats: %s : %s", out, err)
 		return nil

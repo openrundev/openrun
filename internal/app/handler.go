@@ -644,9 +644,10 @@ func (a *App) handleStreamResponse(w http.ResponseWriter, r *http.Request, rtype
 		if rtype == apptype.TEXT || (rtype == apptype.HTML_TYPE && (fragment == "" || fragment == "-")) {
 			vStr, ok := v.(string)
 			if !ok {
-				vStr = fmt.Sprintf("%v", v)
+				// Starlark strings format quoted; plain Go strings (used by
+				// plugins streaming raw output) pass through verbatim
+				vStr = types.StripQuotes(fmt.Sprintf("%v", v))
 			}
-			vStr = types.StripQuotes(vStr)
 			_, err := fmt.Fprint(w, vStr)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)

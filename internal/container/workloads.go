@@ -6,6 +6,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/openrundev/openrun/internal/types"
@@ -141,4 +142,24 @@ func GetWorkloadPodLogs(ctx context.Context, config *types.ServerConfig, name st
 		return "", fmt.Errorf("error getting pod logs: %w", err)
 	}
 	return string(data), nil
+}
+
+// GetWorkloadPodLogsStream returns the logs of an OpenRun managed pod as a
+// stream, optionally following new output. The caller closes the stream;
+// canceling ctx also terminates it
+func GetWorkloadPodLogsStream(ctx context.Context, config *types.ServerConfig, name string, tail int, follow bool) (io.ReadCloser, error) {
+	if _, err := GetWorkloadPod(ctx, config, name); err != nil {
+		return nil, err
+	}
+	client, namespace, err := newWorkloadClient(config)
+	if err != nil {
+		return nil, err
+	}
+	tailLines := int64(tail)
+	stream, err := client.CoreV1().Pods(namespace).
+		GetLogs(name, &core.PodLogOptions{TailLines: &tailLines, Follow: follow}).Stream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error streaming pod logs: %w", err)
+	}
+	return stream, nil
 }

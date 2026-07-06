@@ -726,6 +726,34 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 	return apps, nil
 }
 
+// GetVersionUsers returns the user who created each app version, keyed by
+// app id and version. Used to annotate app listings with who performed the
+// last (active version) update, in one query instead of per app
+func (m *Metadata) GetVersionUsers() (map[types.AppId]map[int]string, error) {
+	rows, err := m.db.Query(`select appid, version, user_id from app_versions`)
+	if err != nil {
+		return nil, fmt.Errorf("error querying version users: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	users := map[types.AppId]map[int]string{}
+	for rows.Next() {
+		var appId string
+		var version int
+		var userId sql.NullString
+		if err := rows.Scan(&appId, &version, &userId); err != nil {
+			return nil, fmt.Errorf("error scanning version user: %w", err)
+		}
+		byVersion, ok := users[types.AppId(appId)]
+		if !ok {
+			byVersion = map[int]string{}
+			users[types.AppId(appId)] = byVersion
+		}
+		byVersion[version] = userId.String
+	}
+	return users, rows.Err()
+}
+
 // GetLinkedApps gets all the apps linked to the given main app (staging and preview apps)
 func (m *Metadata) GetLinkedApps(ctx context.Context, tx types.Transaction, mainAppId types.AppId) ([]*types.AppEntry, error) {
 	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select id, path, domain, main_app, linked_app_path, source_url, is_dev, user_id, create_time, update_time, settings, metadata from apps where main_app = ?`))

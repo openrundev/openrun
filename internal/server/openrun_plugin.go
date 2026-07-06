@@ -9,9 +9,9 @@ import (
 	"os"
 	"path"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
-	"sort"
 	"time"
 
 	"github.com/openrundev/openrun/internal/app"
@@ -44,6 +44,7 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ListContainers, app.READ, "list_containers"),
 		app.CreatePluginApiName(c.GetContainer, app.READ, "get_container"),
 		app.CreatePluginApiName(c.GetContainerLogs, app.READ, "container_logs"),
+		app.CreatePluginApiName(c.GetContainerLogsStream, app.READ, "container_logs_stream"),
 		app.CreatePluginApiName(c.GetPermissions, app.READ, "get_permissions"),
 		app.CreatePluginApiName(c.ListRBACPermissions, app.READ, "list_rbac_permissions"),
 		app.CreatePluginApiName(c.ListAuths, app.READ, "list_auths"),
@@ -70,9 +71,10 @@ func (c *openrunPlugin) ListApps(thread *starlark.Thread, builtin *starlark.Buil
 }
 
 func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple, permCheck bool, apiName string) (starlark.Value, error) {
-	var query, path starlark.String
+	var query, path, syncId starlark.String
 	var include_internal starlark.Bool
-	if err := starlark.UnpackArgs(apiName, args, kwargs, "query?", &query, "path?", &path, "include_internal?", &include_internal); err != nil {
+	if err := starlark.UnpackArgs(apiName, args, kwargs, "query?", &query, "path?", &path,
+		"include_internal?", &include_internal, "sync_id?", &syncId); err != nil {
 		return nil, err
 	}
 
@@ -100,6 +102,33 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		}
 	}
 
+	// sync_id filters to the apps last applied by that sync entry. The
+	// staging app carries the most recent sync state (prod picks it up on
+	// promote); a match on either selects the main app and its linked apps
+	syncIdStr := strings.TrimSpace(syncId.GoString())
+	var syncApps map[types.AppId]bool
+	if syncIdStr != "" {
+		syncApps = map[types.AppId]bool{}
+		for _, app := range apps {
+			if app.AppliedSyncId != syncIdStr {
+				continue
+			}
+			if app.MainApp == "" {
+				syncApps[app.Id] = true
+			} else if strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_STAGE) {
+				syncApps[app.MainApp] = true
+			}
+		}
+	}
+
+	// The user of each app's active version, for update attribution
+	var versionUsers map[types.AppId]map[int]string
+	if c.server.db != nil {
+		if versionUsers, err = c.server.db.GetVersionUsers(); err != nil {
+			return nil, err
+		}
+	}
+
 	userId := system.GetRequestUserId(thread)
 	groups := system.GetRequestGroups(thread)
 	ctx := system.GetRequestContext(thread)
@@ -114,6 +143,16 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		// Filter out internal apps
 		if app.MainApp != "" && !bool(include_internal) {
 			continue
+		}
+
+		if syncApps != nil {
+			mainId := app.Id
+			if app.MainApp != "" {
+				mainId = app.MainApp
+			}
+			if !syncApps[mainId] {
+				continue
+			}
 		}
 
 		// For stage/preview apps, glob matching is done against the main app path
@@ -222,7 +261,14 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		v.SetKey(starlark.String("git_message"), starlark.String(app.GitMessage))
 		v.SetKey(starlark.String("git_branch"), starlark.String(app.Branch))
 		v.SetKey(starlark.String("update_age"), starlark.String(system.HumanDuration(time.Since(app.UpdateTime))))
-		v.SetKey(starlark.String("update_time"), starlark.String(app.UpdateTime.Format(time.RFC3339)))
+		v.SetKey(starlark.String("update_time"), starlark.String(app.UpdateTime.UTC().Format(time.RFC3339)))
+		// Who performed the last update: the active version's creator, with
+		// the app creator as the fallback (dev apps have no versions)
+		updateUser := versionUsers[app.Id][app.Version]
+		if updateUser == "" {
+			updateUser = app.UserID
+		}
+		v.SetKey(starlark.String("update_user"), starlark.String(updateUser))
 
 		ret.Append(&v)
 	}
@@ -565,22 +611,22 @@ func (c *openrunPlugin) GetApp(thread *starlark.Thread, builtin *starlark.Builti
 	}
 
 	v := starlark.Dict{}
-	v.SetKey(starlark.String("path"), starlark.String(entry.AppPathDomain().String()))                 //nolint:errcheck
-	v.SetKey(starlark.String("name"), starlark.String(entry.Metadata.Name))                            //nolint:errcheck
-	v.SetKey(starlark.String("id"), starlark.String(entry.Id))                                         //nolint:errcheck
+	v.SetKey(starlark.String("path"), starlark.String(entry.AppPathDomain().String()))                         //nolint:errcheck
+	v.SetKey(starlark.String("name"), starlark.String(entry.Metadata.Name))                                    //nolint:errcheck
+	v.SetKey(starlark.String("id"), starlark.String(entry.Id))                                                 //nolint:errcheck
 	v.SetKey(starlark.String("url"), starlark.String(types.GetAppUrl(entry.AppPathDomain(), c.server.config))) //nolint:errcheck
-	v.SetKey(starlark.String("source_url"), starlark.String(entry.SourceUrl))                          //nolint:errcheck
-	v.SetKey(starlark.String("is_dev"), starlark.Bool(entry.IsDev))                                    //nolint:errcheck
-	v.SetKey(starlark.String("auth"), starlark.String(entry.Metadata.AuthnType))                       //nolint:errcheck
-	v.SetKey(starlark.String("spec"), starlark.String(entry.Metadata.Spec))                            //nolint:errcheck
-	v.SetKey(starlark.String("git_branch"), starlark.String(entry.Metadata.VersionMetadata.GitBranch)) //nolint:errcheck
-	v.SetKey(starlark.String("git_commit"), starlark.String(entry.Metadata.VersionMetadata.GitCommit)) //nolint:errcheck
-	v.SetKey(starlark.String("git_message"), starlark.String(entry.Metadata.VersionMetadata.GitMessage)) //nolint:errcheck
-	v.SetKey(starlark.String("git_auth"), starlark.String(entry.Metadata.GitAuthName))                 //nolint:errcheck
-	v.SetKey(starlark.String("version"), starlark.MakeInt(entry.Metadata.VersionMetadata.Version))     //nolint:errcheck
-	v.SetKey(starlark.String("applied_sync_id"), starlark.String(entry.Metadata.AppliedSyncId))        //nolint:errcheck
-	v.SetKey(starlark.String("params"), &params)                                                       //nolint:errcheck
-	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))                  //nolint:errcheck
+	v.SetKey(starlark.String("source_url"), starlark.String(entry.SourceUrl))                                  //nolint:errcheck
+	v.SetKey(starlark.String("is_dev"), starlark.Bool(entry.IsDev))                                            //nolint:errcheck
+	v.SetKey(starlark.String("auth"), starlark.String(entry.Metadata.AuthnType))                               //nolint:errcheck
+	v.SetKey(starlark.String("spec"), starlark.String(entry.Metadata.Spec))                                    //nolint:errcheck
+	v.SetKey(starlark.String("git_branch"), starlark.String(entry.Metadata.VersionMetadata.GitBranch))         //nolint:errcheck
+	v.SetKey(starlark.String("git_commit"), starlark.String(entry.Metadata.VersionMetadata.GitCommit))         //nolint:errcheck
+	v.SetKey(starlark.String("git_message"), starlark.String(entry.Metadata.VersionMetadata.GitMessage))       //nolint:errcheck
+	v.SetKey(starlark.String("git_auth"), starlark.String(entry.Metadata.GitAuthName))                         //nolint:errcheck
+	v.SetKey(starlark.String("version"), starlark.MakeInt(entry.Metadata.VersionMetadata.Version))             //nolint:errcheck
+	v.SetKey(starlark.String("applied_sync_id"), starlark.String(entry.Metadata.AppliedSyncId))                //nolint:errcheck
+	v.SetKey(starlark.String("params"), &params)                                                               //nolint:errcheck
+	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))                          //nolint:errcheck
 	if entry.UpdateTime != nil {
 		v.SetKey(starlark.String("update_time"), starlark.String(entry.UpdateTime.Format(time.RFC3339))) //nolint:errcheck
 	} else {
@@ -794,6 +840,27 @@ func (c *openrunPlugin) GetContainerLogs(thread *starlark.Thread, builtin *starl
 		return nil, err
 	}
 	return starlark.String(logs), nil
+}
+
+// GetContainerLogsStream returns a container's logs as a streaming response:
+// the last tail lines, optionally following new output until the client
+// disconnects. The handler must return the response object as is (the value
+// is not accessible in Starlark)
+func (c *openrunPlugin) GetContainerLogsStream(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id starlark.String
+	var follow starlark.Bool
+	tail := starlark.MakeInt(500)
+	if err := starlark.UnpackArgs("container_logs_stream", args, kwargs, "id", &id, "tail?", &tail, "follow?", &follow); err != nil {
+		return nil, err
+	}
+
+	tailInt, _ := tail.Int64()
+	stream, err := c.server.GetManagedContainerLogsStream(system.GetRequestContext(thread),
+		id.GoString(), int(tailInt), bool(follow))
+	if err != nil {
+		return nil, err
+	}
+	return app.NewStreamResponse(stream), nil
 }
 
 // GetPermissions returns the management API permissions the current user holds.
