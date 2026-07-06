@@ -190,8 +190,8 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	// Operation-level cluster rollback: if any app fails after earlier apps
 	// already mutated their Kubernetes deployments in-place, roll those earlier
 	// changes back too, so the cluster matches the rolled-back DB transaction.
-	ctx, dscope := s.beginDeployScope(ctx, true)
-	defer func() { retErr = dscope.finish(ctx, retErr) }()
+	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	reloadResults := make([]types.AppPathDomain, 0, len(filteredApps))
 	approveResults := make([]types.ApproveResult, 0, len(filteredApps))
@@ -231,7 +231,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "reload"); err != nil {
 		return nil, err
 	}
-	if err := dscope.commit(ctx); err != nil {
+	if err := deployScope.commit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -376,7 +376,7 @@ func (s *Server) loadAppCode(ctx context.Context, tx types.Transaction, appEntry
 	return true, nil
 }
 
-func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, promote bool, handler stagedUpdateHandler, args map[string]any, op string) (*types.AppStagedUpdateResponse, error) {
+func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, promote bool, handler stagedUpdateHandler, args map[string]any, op string) (_ *types.AppStagedUpdateResponse, retErr error) {
 	if s.rbacManager.APIEnforced(ctx) {
 		perm, ok := stagedUpdatePerms[op]
 		if !ok {
@@ -403,6 +403,12 @@ func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, p
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	// Handlers that touch bindings (update-metadata with bindings) create binding
+	// accounts through the scope's account manager (carried in ctx), so the
+	// accounts are removed from the service if this transaction rolls back.
+	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+
 	result, entries, promoteResults, err := s.StagedUpdateAppsTx(ctx, tx, appPathGlob, promote, handler, args)
 	if err != nil {
 		return nil, err
@@ -415,6 +421,9 @@ func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, p
 	}
 
 	if err := s.CompleteTransaction(ctx, tx, entries, dryRun, op); err != nil {
+		return nil, err
+	}
+	if err := deployScope.commit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -797,7 +806,11 @@ func (s *Server) updateMetadataHandler(ctx context.Context, tx types.Transaction
 	}
 
 	if updateMetadata.ConfigType != "" && updateMetadata.ConfigType != types.AppMetadataConfigType(types.StringValueUndefined) {
-		err := s.updateAppMetadataConfig(ctx, tx, appEntry, updateMetadata.ConfigType, updateMetadata.ConfigEntries, dryRun)
+		accounts := bindingEffectsFromContext(ctx)
+		if accounts == nil {
+			return nil, appEntry.AppPathDomain(), fmt.Errorf("internal error: no operation scope for metadata update")
+		}
+		err := s.updateAppMetadataConfig(ctx, tx, appEntry, updateMetadata.ConfigType, updateMetadata.ConfigEntries, dryRun, accounts)
 		if err != nil {
 			return nil, appEntry.AppPathDomain(), err
 		}
@@ -808,7 +821,8 @@ func (s *Server) updateMetadataHandler(ctx context.Context, tx types.Transaction
 }
 
 // updateAppMetadataConfig updates the app metadata config.
-func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, configType types.AppMetadataConfigType, configEntries []string, dryRun bool) error {
+func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, configType types.AppMetadataConfigType,
+	configEntries []string, dryRun bool, accounts *bindingAccountManager) error {
 	if len(configEntries) == 0 {
 		return nil
 	}
@@ -824,7 +838,7 @@ func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transacti
 		appEntry.Metadata.ContainerVolumes = configEntries
 		return nil
 	case types.AppMetadataBindings:
-		resolvedBindings, err := s.resolveAppBindings(ctx, tx, autoBindingAppID(appEntry), configEntries, dryRun)
+		resolvedBindings, err := s.resolveAppBindings(ctx, tx, autoBindingAppID(appEntry), configEntries, dryRun, accounts)
 		if err != nil {
 			return err
 		}

@@ -54,6 +54,25 @@ wait_for_http() {
   return 1
 }
 
+# wait_for_socket polls the server's unix socket until it accepts connections.
+# The CLI connects over run/openrun.sock when the client config has no
+# server_uri; the socket listener can come up slightly after the TCP listener
+# that wait_for_http checks, and on a loaded machine the first CLI call of a
+# test suite can land in that gap and fail with connection refused.
+wait_for_socket() {
+  local max_attempts=100
+  local attempt=0
+  while [[ $attempt -lt $max_attempts ]]; do
+    if curl -sS --connect-timeout 0.1 --max-time 0.5 --unix-socket run/openrun.sock -o /dev/null "http://openrun/" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+    attempt=$((attempt + 1))
+  done
+  echo "Timed out waiting for unix socket run/openrun.sock" >&2
+  return 1
+}
+
 error_handler () {
     echo "Error occurred, running cleanup"
     cleanup
@@ -173,7 +192,11 @@ start_postgres_testcontainer() {
 
   local ready=""
   for _ in {1..300}; do
-    if $POSTGRES_TEST_CONTAINER_COMMAND exec "$POSTGRES_TEST_CONTAINER_ID" pg_isready -U postgres -d openrun_cli >/dev/null 2>&1; then
+    # Check over TCP (-h 127.0.0.1), not the default unix socket: the postgres
+    # image's init phase runs a temporary server that only listens on the
+    # socket, so a socket-based pg_isready passes before the final server is
+    # accepting connections on the published port.
+    if $POSTGRES_TEST_CONTAINER_COMMAND exec "$POSTGRES_TEST_CONTAINER_ID" pg_isready -h 127.0.0.1 -U postgres -d openrun_cli >/dev/null 2>&1; then
       ready="true"
       break
     fi
@@ -377,6 +400,7 @@ start_postgres_testcontainer
 start_mysql_testcontainer
 GOCOVERDIR=$GOCOVERDIR ../openrun server start &
 wait_for_http 25222
+wait_for_socket
 
 if [[ -z $CL_SINGLE_TEST ]]; then
     commander test $CL_TEST_VERBOSE --dir ./commander/
@@ -488,6 +512,7 @@ EOF
     rm -rf metadata run/openrun.sock
     CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
     wait_for_http $http_port
+    wait_for_socket
 
     export HTTP_PORT=$http_port
     echo "********Testing containerized apps with $cmd*********"
@@ -546,6 +571,7 @@ EOF
     rm -rf metadata run/openrun.sock
     CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
     wait_for_http 9100
+    wait_for_socket
 
     export HTTP_PORT=9100
     echo "********Testing containerized apps with kubernetes *********"

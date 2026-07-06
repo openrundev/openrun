@@ -224,78 +224,101 @@ func (b *PostgresServiceBinding) DeleteArtifact(ctx context.Context, artifact Ar
 }
 
 func (b *PostgresServiceBinding) ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata types.BindingMetadata,
-	derivedFromMetadata types.BindingMetadata, reapplyAll bool) ([]types.BindingGrant, error) {
+	derivedFromMetadata types.BindingMetadata, reapplyAll bool) (GrantApplyResult, error) {
 	if err := verifyKeys(slices.Collect(maps.Keys(bindingMetadata.Config)), []string{}, []string{"inherit_default"}); err != nil {
-		return nil, err
+		return GrantApplyResult{}, err
 	}
 
 	// The grant statements run in a single transaction (also needed for the savepoint
 	// handling of missing tables) and are committed before returning.
 	tx, err := b.adminConn.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("error starting transaction: %w", err)
+		return GrantApplyResult{}, fmt.Errorf("error starting transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	grantsProcessed, err := b.processGrants(ctx, tx, account["role"], account["schema"], derivedFromMetadata.Account["role"], bindingMetadata, reapplyAll)
+	result, err := b.processGrants(ctx, tx, account["role"], account["schema"], derivedFromMetadata.Account["role"], bindingMetadata, reapplyAll)
 	if err != nil {
-		return nil, fmt.Errorf("error processing grants: %w", err)
+		return GrantApplyResult{}, fmt.Errorf("error processing grants: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("error committing transaction: %w", err)
+		return GrantApplyResult{}, fmt.Errorf("error committing transaction: %w", err)
 	}
-	return grantsProcessed, nil
+	return result, nil
+}
+
+func (b *PostgresServiceBinding) RevokeGrants(ctx context.Context, account map[string]string,
+	derivedFromMetadata types.BindingMetadata, revokes, regrants []types.BindingGrant) error {
+	if len(revokes) == 0 {
+		return nil
+	}
+
+	tx, err := b.adminConn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	schema := account["schema"]
+	quotedSchema := pgx.Identifier{schema}.Sanitize()
+	quotedRole := pgx.Identifier{account["role"]}.Sanitize()
+	quotedBaseRole := pgx.Identifier{derivedFromMetadata.Account["role"]}.Sanitize()
+
+	if _, err := b.applyPerms(ctx, tx, "revoke", revokes, quotedSchema, quotedRole, schema, quotedBaseRole); err != nil {
+		return fmt.Errorf("error revoking grants: %w", err)
+	}
+
+	// Re-apply the grants that must remain: an overlapping revoke removes privileges
+	// the remaining grants still need (e.g. revoking read:t1 while read:* remains).
+	// Running the revokes and regrants in one transaction means concurrent sessions
+	// never observe the intermediate revoked state.
+	if _, err := b.applyPerms(ctx, tx, "grant", regrants, quotedSchema, quotedRole, schema, quotedBaseRole); err != nil {
+		return fmt.Errorf("error re-applying remaining grants: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("error committing transaction: %w", err)
+	}
+	return nil
 }
 
 func (b *PostgresServiceBinding) processGrants(ctx context.Context, tx *sql.Tx, role, schema string,
-	baseRoleName string, bindingMetadata types.BindingMetadata, reapplyAll bool) ([]types.BindingGrant, error) {
+	baseRoleName string, bindingMetadata types.BindingMetadata, reapplyAll bool) (GrantApplyResult, error) {
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	quotedRole := pgx.Identifier{role}.Sanitize()
 	quotedBaseRole := pgx.Identifier{baseRoleName}.Sanitize()
 
 	bindingGrants, err := parseGrants(bindingMetadata.Grants, []types.GrantType{types.GrantTypeRead, types.GrantTypeCreate, types.GrantTypeFull})
 	if err != nil {
-		return nil, fmt.Errorf("error parsing grants: %w", err)
+		return GrantApplyResult{}, fmt.Errorf("error parsing grants: %w", err)
 	}
 
+	// Grants no longer desired are only computed here; the caller revokes them
+	// after its metadata transaction commits.
 	revokedGrants, applyGrants := diffGrants(bindingMetadata.GrantsApplied, bindingGrants)
-	_, err = b.applyPerms(ctx, tx, "revoke", revokedGrants, quotedSchema, quotedRole, schema, quotedBaseRole)
-	if err != nil {
-		return nil, fmt.Errorf("error revoking grants: %w", err)
-	}
-
 	if reapplyAll {
 		applyGrants = bindingGrants // Apply all grants, can help when new tables are present which need to be granted to the role
 	}
 
 	grantsProcessed, err := b.applyPerms(ctx, tx, "grant", applyGrants, quotedSchema, quotedRole, schema, quotedBaseRole)
 	if err != nil {
-		return nil, fmt.Errorf("error applying new grants: %w", err)
+		return GrantApplyResult{}, fmt.Errorf("error applying new grants: %w", err)
 	}
 	b.Debug().Msgf("processed grants %v", grantsProcessed)
 
+	grantsApplied := unionGrants(bindingMetadata.GrantsApplied, grantsProcessed)
 	if reapplyAll {
-		// Return list of grants that were applied
-		return grantsProcessed, nil
-	} else {
-		grantsApplied := []types.BindingGrant{}
-		grantsApplied = append(grantsApplied, bindingMetadata.GrantsApplied...)
-		for _, grant := range grantsProcessed {
-			if !slices.Contains(grantsApplied, grant) {
-				grantsApplied = append(grantsApplied, grant)
-			}
-		}
-
-		for _, grant := range revokedGrants {
-			index := slices.Index(grantsApplied, grant)
-			if index != -1 {
-				// Remove the grant from the list of applied grants
-				grantsApplied = slices.Delete(grantsApplied, index, index+1)
-			}
-		}
-		return grantsApplied, nil
+		// Drop applied entries whose grant could not be re-executed (e.g. the
+		// table was dropped), so they are retried once the target exists again.
+		// The pending revokes stay listed until the caller executes them.
+		grantsApplied = unionGrants(grantsProcessed, revokedGrants)
 	}
+	return GrantApplyResult{
+		GrantsApplied:  grantsApplied,
+		Granted:        subtractGrants(grantsProcessed, bindingMetadata.GrantsApplied),
+		PendingRevokes: revokedGrants,
+	}, nil
 }
 
 // applyPerms runs GRANT or REVOKE statements for binding grants.

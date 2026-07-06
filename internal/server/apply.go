@@ -217,14 +217,14 @@ func (s *Server) setupSource(applyPath, branch, commit, gitAuth string, repoCach
 
 func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath string, appPathGlob string, approve, dryRun, promote bool,
 	reload types.AppReloadOption, branch, commit, gitAuth string, clobber,
-	forceReload, verify bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (_ *types.AppApplyResponse, _ []types.AppPathDomain, _ *bindingAccountManager, retErr error) {
+	forceReload, verify bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (_ *types.AppApplyResponse, _ []types.AppPathDomain, retErr error) {
 	var tx types.Transaction
 	var err error
 	verify = verify && !dryRun
 	if inputTx.Tx == nil {
 		tx, err = s.db.BeginTransaction(ctx)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		defer tx.Rollback() //nolint:errcheck
 	} else {
@@ -232,14 +232,16 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		// No rollback here if transaction is passed in
 	}
 
-	// Operation-level cluster rollback: if any app fails after earlier apps
-	// already mutated their Kubernetes deployments in-place, roll those earlier
-	// changes back so the cluster matches the rolled-back DB transaction. We own
-	// the rollback only when we own the DB transaction; when a transaction is
+	// Operation-level rollback scope: apps that mutate their Kubernetes
+	// deployments in-place register on its stack and binding changes record the
+	// accounts and grants they create, so a failure anywhere reverts both the
+	// cluster and the external services along with the DB transaction. We own
+	// the scope only when we own the DB transaction; when a transaction is
 	// passed in, the caller owns the commit (and therefore the rollback) and we
-	// just register into its stack.
-	ctx, dscope := s.beginDeployScope(ctx, inputTx.Tx == nil)
-	defer func() { retErr = dscope.finish(ctx, retErr) }()
+	// just register into its scope.
+	ctx, deployScope := s.beginDeployScope(ctx, inputTx.Tx == nil, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+	bindingAccounts := deployScope.accounts
 
 	if reload == "" {
 		reload = types.AppReloadOptionUpdated
@@ -248,7 +250,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	if repoCache == nil {
 		repoCache, err = NewRepoCache(s)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		defer repoCache.Cleanup()
 	}
@@ -258,7 +260,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		branch = cmp.Or(branch, "main")
 		newSha, err = repoCache.GetSha(applyPath, branch, gitAuth)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
+			return nil, nil, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
 		}
 		if !forceReload && (reload != types.AppReloadOptionMatched) &&
 			lastRunCommitId != "" && newSha == lastRunCommitId && (commit == "" || commit == lastRunCommitId) {
@@ -269,17 +271,17 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 				DryRun:       dryRun,
 				SkippedApply: true,
 				CommitId:     newSha,
-			}, nil, nil, nil
+			}, nil, nil
 		}
 	}
 
 	dir, file, err := s.setupSource(applyPath, branch, commit, gitAuth, repoCache, isDev)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	sourceFS, err := appfs.NewSourceFs(dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	defer sourceFS.Close() //nolint:errcheck
 
@@ -287,7 +289,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	bindingConfig := map[string]*types.CreateBindingRequest{}
 	globFiles, err := sourceFS.Glob(file)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	if !system.IsGit(applyPath) {
@@ -295,35 +297,35 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	}
 
 	if len(globFiles) == 0 {
-		return nil, nil, nil, fmt.Errorf("no matching files found in %s", applyPath)
+		return nil, nil, fmt.Errorf("no matching files found in %s", applyPath)
 	}
 	bindingList := make([]string, 0)
 	for _, f := range globFiles {
 		s.Trace().Msgf("Applying file %s", f)
 		fileBytes, err := sourceFS.ReadFile(f)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("error reading file %s: %w", f, err)
+			return nil, nil, fmt.Errorf("error reading file %s: %w", f, err)
 		}
 
 		appDefs, bindingDefs, err := s.loadApplyInfo(f, fileBytes, branch, isDev)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 
 		for _, appDef := range appDefs {
 			appPathDomain, err := parseAppPath(appDef.Path)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 			if appPathDomain.Domain != "" && appPathDomain.Domain[len(appPathDomain.Domain)-1] == '.' {
 				// If domain ends with a dot, append the default domain
 				if s.config.System.DefaultDomain == "" {
-					return nil, nil, nil, types.CreateRequestError("Domain cannot end with a dot since default_domain is not configured", http.StatusBadRequest)
+					return nil, nil, types.CreateRequestError("Domain cannot end with a dot since default_domain is not configured", http.StatusBadRequest)
 				}
 				appPathDomain.Domain += s.config.System.DefaultDomain
 			}
 			if _, ok := applyConfig[appPathDomain]; ok {
-				return nil, nil, nil, fmt.Errorf("duplicate app %s defined in file %s", appPathDomain, f)
+				return nil, nil, fmt.Errorf("duplicate app %s defined in file %s", appPathDomain, f)
 			}
 			applyConfig[appPathDomain] = appDef
 		}
@@ -331,14 +333,14 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		for _, bindingDef := range bindingDefs {
 			bindingPathDomain, err := parseAppPath(bindingDef.Path)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 			if bindingPathDomain.Domain != "" {
-				return nil, nil, nil, fmt.Errorf("binding %s cannot include a domain", bindingDef.Path)
+				return nil, nil, fmt.Errorf("binding %s cannot include a domain", bindingDef.Path)
 			}
 			bindingDef.Path = bindingPathDomain.Path
 			if _, ok := bindingConfig[bindingDef.Path]; ok {
-				return nil, nil, nil, fmt.Errorf("duplicate binding %s defined in file %s", bindingDef.Path, f)
+				return nil, nil, fmt.Errorf("duplicate binding %s defined in file %s", bindingDef.Path, f)
 			}
 			bindingConfig[bindingDef.Path] = bindingDef
 			bindingList = append(bindingList, bindingDef.Path)
@@ -351,7 +353,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	for appPathDomain := range applyConfig {
 		match, err := rbac.MatchGlob(appPathGlob, appPathDomain)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		if !match {
 			continue
@@ -368,7 +370,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 
 	allApps, err := s.apps.GetAllAppsInfo()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	allAppsMap := make(map[types.AppPathDomain]types.AppInfo)
 	for _, appInfo := range allApps {
@@ -385,16 +387,16 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 				owner = appInfo.UserID
 			}
 			if err := s.enforceAppPerm(ctx, types.PermissionApply, appPath, owner); err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 			if approve {
 				if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPath, owner); err != nil {
-					return nil, nil, nil, err
+					return nil, nil, err
 				}
 			}
 			if promote {
 				if err := s.enforceAppPerm(ctx, types.PermissionPromote, appPath, owner); err != nil {
-					return nil, nil, nil, err
+					return nil, nil, err
 				}
 			}
 		}
@@ -411,10 +413,10 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		} else {
 			applyInfo := applyConfig[appPath]
 			if appInfo.SourceUrl != applyInfo.SourceUrl {
-				return nil, nil, nil, fmt.Errorf("app %s already exists with different source url: %s", appPath, appInfo.SourceUrl)
+				return nil, nil, fmt.Errorf("app %s already exists with different source url: %s", appPath, appInfo.SourceUrl)
 			}
 			if appInfo.IsDev != applyInfo.IsDev {
-				return nil, nil, nil, fmt.Errorf("app %s already exists with different dev status: %t", appPath, appInfo.IsDev)
+				return nil, nil, fmt.Errorf("app %s already exists with different dev status: %t", appPath, appInfo.IsDev)
 			}
 
 			updatedApps = append(updatedApps, appPath)
@@ -424,7 +426,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	// Get list of all bindings in the database
 	allBindings, err := s.ListBindings(ctx, "")
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	allBindingsMap := make(map[string]*types.Binding)
 	for _, binding := range allBindings {
@@ -439,28 +441,21 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 			newBindings = append(newBindings, bindingPath)
 		} else {
 			if bindingInfo.Source != bindingDef.Source {
-				return nil, nil, nil, fmt.Errorf("binding %s already exists with different source: %s", bindingPath, bindingInfo.Source)
+				return nil, nil, fmt.Errorf("binding %s already exists with different source: %s", bindingPath, bindingInfo.Source)
 			}
 			updatedBindings = append(updatedBindings, bindingPath)
 		}
 	}
 
 	createBindingResults := make([]string, 0, len(newBindings))
-	bindingAccounts := s.newBindingAccountManager(dryRun)
-	releaseBindingAccounts := false
-	defer func() {
-		if !releaseBindingAccounts {
-			bindingAccounts.rollbackAndClose(ctx)
-		}
-	}()
 	for _, newBinding := range newBindings {
 		s.Trace().Msgf("Applying create binding %s", newBinding)
 		applyInfo := bindingConfig[newBinding]
 		if err := prepareBindingApplyInfo(applyInfo); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		if _, err := s.createBindingTx(ctx, tx, applyInfo, bindingAccounts, false); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		createBindingResults = append(createBindingResults, newBinding)
 	}
@@ -472,7 +467,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		applyInfo := bindingConfig[updateBinding]
 		updated, promoted, err := s.applyBindingUpdate(ctx, tx, bindingAccounts, applyInfo, promote, clobber, forceReload)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		if updated {
 			updateBindingResults = append(updateBindingResults, updateBinding)
@@ -490,13 +485,13 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 			applyInfo.IsDev = isDev // Override the dev status from the apply command cli
 		}
 		appVerify := verify || applyInfo.Verify
-		res, err := s.CreateAppTx(ctx, tx, newApp.String(), approve, dryRun, applyInfo, repoCache)
+		res, err := s.CreateAppTx(ctx, tx, newApp.String(), approve, dryRun, applyInfo, repoCache, bindingAccounts)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		if appVerify && !dryRun {
 			if err := s.verifyCreatedApp(ctx, tx, newApp); err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 		}
 
@@ -508,9 +503,9 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		applyInfo := applyConfig[updateApp]
 		appVerify := verify || applyInfo.Verify
 		applyResult, err := s.applyAppUpdate(ctx, tx, updateApp, applyInfo, approve, dryRun,
-			promote, reload, clobber, repoCache, forceReload, appVerify)
+			promote, reload, clobber, repoCache, forceReload, appVerify, bindingAccounts)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 
 		updateResults = append(updateResults, applyResult.Updated...)
@@ -526,7 +521,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 
 	if verifyRequested && !dryRun {
 		if err := s.reapplyPendingBindingGrants(ctx, tx, bindingAccounts, bindingList); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -549,21 +544,15 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 
 	if inputTx.Tx == nil {
 		if err := s.CompleteTransaction(ctx, tx, allUpdatedApps, dryRun, "apply"); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
-		// The metadata transaction has committed, keep the binding accounts created
-		// on the services.
-		bindingAccounts.commit()
-	} else {
-		// The caller owns the transaction and is responsible for calling commit or
-		// rollbackAndClose on the returned binding account manager.
-		releaseBindingAccounts = true
 	}
-	// Apply succeeded and (if we own it) the DB transaction has committed; keep
-	// the cluster changes and run deferred traffic switches. When the caller
-	// owns the transaction, this is a no-op and the caller's scope decides.
-	if err := dscope.commit(ctx); err != nil {
-		return nil, nil, nil, err
+	// Apply succeeded and (if we own it) the DB transaction has committed: keep
+	// the binding accounts and grants created on the services, run the deferred
+	// traffic switches, and execute the deferred grant revokes last. When the
+	// caller owns the transaction, this is a no-op and the caller's scope decides.
+	if err := deployScope.commit(ctx); err != nil {
+		return nil, nil, err
 	}
 
 	ret := &types.AppApplyResponse{
@@ -582,7 +571,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		PromoteBindingResults: promoteBindingResults,
 	}
 
-	return ret, allUpdatedApps, bindingAccounts, nil
+	return ret, allUpdatedApps, nil
 }
 
 func convertToMapString(input map[string]any, convertToml bool) (map[string]string, error) {
@@ -624,7 +613,8 @@ func convertToStringMap(input map[string]any) (map[string]string, error) {
 }
 
 func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPathDomain types.AppPathDomain, newInfo *types.CreateAppRequest,
-	approve, dryRun, promote bool, reload types.AppReloadOption, clobber bool, repoCache *RepoCache, forceReload, verify bool) (*types.AppApplyResult, error) {
+	approve, dryRun, promote bool, reload types.AppReloadOption, clobber bool, repoCache *RepoCache, forceReload, verify bool,
+	bindingAccounts *bindingAccountManager) (*types.AppApplyResult, error) {
 	verify = verify && !dryRun
 	liveApp, err := s.GetAppEntry(ctx, tx, appPathDomain)
 	if err != nil {
@@ -649,7 +639,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		oldInfo.AppAuthn = cmp.Or(oldInfo.AppAuthn, types.AppAuthnDefault)
 	}
 	newInfo.AppAuthn = cmp.Or(newInfo.AppAuthn, types.AppAuthnDefault)
-	newInfo.Bindings, err = s.resolveAppBindings(ctx, tx, autoBindingAppID(liveApp), newInfo.Bindings, dryRun)
+	newInfo.Bindings, err = s.resolveAppBindings(ctx, tx, autoBindingAppID(liveApp), newInfo.Bindings, dryRun, bindingAccounts)
 	if err != nil {
 		return nil, err
 	}

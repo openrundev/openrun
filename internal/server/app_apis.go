@@ -71,7 +71,7 @@ func newAppID(isDev bool) (types.AppId, error) {
 }
 
 func (s *Server) CreateApp(ctx context.Context, appPath string,
-	approve, dryRun bool, appRequest *types.CreateAppRequest) (*types.AppCreateResponse, error) {
+	approve, dryRun bool, appRequest *types.CreateAppRequest) (_ *types.AppCreateResponse, retErr error) {
 
 	if s.rbacManager.APIEnforced(ctx) {
 		// The app does not exist yet: match grant targets against the requested path
@@ -101,7 +101,12 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 	}
 	defer repoCache.Cleanup()
 
-	result, err := s.CreateAppTx(ctx, tx, appPath, approve, dryRun, appRequest, repoCache)
+	// The scope's account manager tracks auto binding accounts created for the
+	// app, so they are removed from the service if this transaction rolls back
+	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+
+	result, err := s.CreateAppTx(ctx, tx, appPath, approve, dryRun, appRequest, repoCache, deployScope.accounts)
 	if err != nil {
 		return nil, err
 	}
@@ -113,13 +118,17 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	if err := deployScope.commit(ctx); err != nil {
+		return nil, err
+	}
 
 	s.apps.ResetAllAppCache()
 	return result, nil
 }
 
 func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, appPath string,
-	approve, dryRun bool, appRequest *types.CreateAppRequest, repoCache *RepoCache) (*types.AppCreateResponse, error) {
+	approve, dryRun bool, appRequest *types.CreateAppRequest, repoCache *RepoCache,
+	bindingAccounts *bindingAccountManager) (*types.AppCreateResponse, error) {
 	appPathDomain, err := parseAppPath(appPath)
 	if err != nil {
 		return nil, err
@@ -190,7 +199,7 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 		return nil, err
 	}
 
-	appEntry.Metadata.Bindings, err = s.resolveAppBindings(ctx, currentTx, appEntry.Id, appRequest.Bindings, dryRun)
+	appEntry.Metadata.Bindings, err = s.resolveAppBindings(ctx, currentTx, appEntry.Id, appRequest.Bindings, dryRun, bindingAccounts)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}

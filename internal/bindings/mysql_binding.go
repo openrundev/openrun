@@ -250,62 +250,72 @@ func (b *MysqlServiceBinding) DeleteArtifact(ctx context.Context, artifact Artif
 }
 
 func (b *MysqlServiceBinding) ApplyGrants(ctx context.Context, account map[string]string, bindingMetadata types.BindingMetadata,
-	derivedFromMetadata types.BindingMetadata, reapplyAll bool) ([]types.BindingGrant, error) {
+	derivedFromMetadata types.BindingMetadata, reapplyAll bool) (GrantApplyResult, error) {
 	if err := verifyKeys(slices.Collect(maps.Keys(bindingMetadata.Config)), []string{}, []string{}); err != nil {
-		return nil, err
+		return GrantApplyResult{}, err
 	}
 
-	grantsProcessed, err := b.processGrants(ctx, account["user"], account["host"], account["database"], bindingMetadata, reapplyAll)
+	result, err := b.processGrants(ctx, account["user"], account["host"], account["database"], bindingMetadata, reapplyAll)
 	if err != nil {
-		return nil, fmt.Errorf("error processing grants: %w", err)
+		return GrantApplyResult{}, fmt.Errorf("error processing grants: %w", err)
 	}
-	return grantsProcessed, nil
+	return result, nil
+}
+
+func (b *MysqlServiceBinding) RevokeGrants(ctx context.Context, account map[string]string,
+	_ types.BindingMetadata, revokes, regrants []types.BindingGrant) error {
+	if len(revokes) == 0 {
+		return nil
+	}
+	userRef := mysqlUserRef(account["user"], account["host"])
+	quotedDB := quoteMysqlIdent(account["database"])
+	if _, err := b.applyPerms(ctx, "revoke", revokes, quotedDB, account["database"], userRef); err != nil {
+		return fmt.Errorf("error revoking grants: %w", err)
+	}
+	// Re-apply the grants that must remain: a revoke at the same scope removes
+	// privileges the remaining grants still need (e.g. revoking full:t1 while
+	// read:t1 remains clears the shared table-level SELECT bit).
+	if _, err := b.applyPerms(ctx, "grant", regrants, quotedDB, account["database"], userRef); err != nil {
+		return fmt.Errorf("error re-applying remaining grants: %w", err)
+	}
+	return nil
 }
 
 func (b *MysqlServiceBinding) processGrants(ctx context.Context, user, host, database string,
-	bindingMetadata types.BindingMetadata, reapplyAll bool) ([]types.BindingGrant, error) {
+	bindingMetadata types.BindingMetadata, reapplyAll bool) (GrantApplyResult, error) {
 	userRef := mysqlUserRef(user, host)
 	quotedDB := quoteMysqlIdent(database)
 
 	bindingGrants, err := parseGrants(bindingMetadata.Grants, []types.GrantType{types.GrantTypeRead, types.GrantTypeCreate, types.GrantTypeFull})
 	if err != nil {
-		return nil, fmt.Errorf("error parsing grants: %w", err)
+		return GrantApplyResult{}, fmt.Errorf("error parsing grants: %w", err)
 	}
 
+	// Grants no longer desired are only computed here; the caller revokes them
+	// after its metadata transaction commits.
 	revokedGrants, applyGrants := diffGrants(bindingMetadata.GrantsApplied, bindingGrants)
-	_, err = b.applyPerms(ctx, "revoke", revokedGrants, quotedDB, database, userRef)
-	if err != nil {
-		return nil, fmt.Errorf("error revoking grants: %w", err)
-	}
-
 	if reapplyAll {
 		applyGrants = bindingGrants // Apply all grants, can help when new tables are present which need to be granted to the role
 	}
 
 	grantsProcessed, err := b.applyPerms(ctx, "grant", applyGrants, quotedDB, database, userRef)
 	if err != nil {
-		return nil, fmt.Errorf("error applying new grants: %w", err)
+		return GrantApplyResult{}, fmt.Errorf("error applying new grants: %w", err)
 	}
 	b.Debug().Msgf("processed grants %v", grantsProcessed)
 
+	grantsApplied := unionGrants(bindingMetadata.GrantsApplied, grantsProcessed)
 	if reapplyAll {
-		return grantsProcessed, nil
+		// Drop applied entries whose grant could not be re-executed (e.g. the
+		// table was dropped), so they are retried once the target exists again.
+		// The pending revokes stay listed until the caller executes them.
+		grantsApplied = unionGrants(grantsProcessed, revokedGrants)
 	}
-
-	grantsApplied := []types.BindingGrant{}
-	grantsApplied = append(grantsApplied, bindingMetadata.GrantsApplied...)
-	for _, grant := range grantsProcessed {
-		if !slices.Contains(grantsApplied, grant) {
-			grantsApplied = append(grantsApplied, grant)
-		}
-	}
-	for _, grant := range revokedGrants {
-		index := slices.Index(grantsApplied, grant)
-		if index != -1 {
-			grantsApplied = slices.Delete(grantsApplied, index, index+1)
-		}
-	}
-	return grantsApplied, nil
+	return GrantApplyResult{
+		GrantsApplied:  grantsApplied,
+		Granted:        subtractGrants(grantsProcessed, bindingMetadata.GrantsApplied),
+		PendingRevokes: revokedGrants,
+	}, nil
 }
 
 // applyPerms runs GRANT or REVOKE statements for binding grants on the MySQL

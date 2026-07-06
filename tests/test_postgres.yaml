@@ -418,5 +418,117 @@ tests:
     stderr: "permission denied for schema"
     exit-code: 1
 
+  postgres0100: # setup binding with two read grants for the concurrent revoke tests
+    command: |
+      ../openrun binding run-command /apps/b1 "create table t1conc (id integer primary key)" >/dev/null
+      ../openrun binding run-command /apps/b1 "insert into t1conc (id) values (1)" >/dev/null
+      ../openrun binding run-command /apps/b1 "create table t2conc (id integer primary key)" >/dev/null
+      ../openrun binding run-command /apps/b1 "insert into t2conc (id) values (1)" >/dev/null
+      cat > ./pg_conc.star <<'EOF'
+      binding("/apps/bconc", "/apps/b1", grants=["read:t1conc", "read:t2conc"])
+      EOF
+      ../openrun apply --promote ./pg_conc.star
+    stdout: "1 binding(s) created, 0 binding(s) updated, 0 binding(s) promoted."
+
+  postgres0101:
+    command: ../openrun binding run-command /apps/bconc "select count(*) as a from t1conc, t2conc" | jq -r '.rows[0].a'
+    stdout: "1"
+
+  postgres0102: # a failed apply must not disturb reads through the binding, even for the grant it tried to revoke
+    command: |
+      cat > ./pg_conc_fail.star <<'EOF'
+      binding("/apps/bconc", "/apps/b1", grants=["read:t1conc"])
+      app("/pg_conc_bad_app", "./pg_conc_missing_dir")
+      EOF
+      rm -f ./conc_stop ./conc_errors ./conc_count
+      (
+        count=0
+        while [ ! -f ./conc_stop ]; do
+          out=$(../openrun binding run-command /apps/bconc "select count(*) as n from t2conc" 2>&1) || echo "read failed: $out" >> ./conc_errors
+          count=$((count+1))
+        done
+        echo $count > ./conc_count
+      ) &
+      reader_pid=$!
+      sleep 1
+      ../openrun apply --promote ./pg_conc_fail.star && echo "apply unexpectedly succeeded"
+      sleep 1
+      touch ./conc_stop
+      wait $reader_pid
+      if [ -s ./conc_errors ]; then echo "reads failed during rolled back apply:"; cat ./conc_errors; fi
+      [ "$(cat ./conc_count)" -ge 3 ] && [ ! -s ./conc_errors ] && echo "no_transient_failures"
+    stdout: "no_transient_failures"
+
+  postgres0103: # a revoke applied with promote runs only after commit; concurrent reads on the kept grant never fail
+    command: |
+      cat > ./pg_conc_v2.star <<'EOF'
+      binding("/apps/bconc", "/apps/b1", grants=["read:t1conc"])
+      EOF
+      rm -f ./conc_stop ./conc_errors ./conc_count
+      (
+        count=0
+        while [ ! -f ./conc_stop ]; do
+          out=$(../openrun binding run-command /apps/bconc "select count(*) as n from t1conc" 2>&1) || echo "read failed: $out" >> ./conc_errors
+          count=$((count+1))
+        done
+        echo $count > ./conc_count
+      ) &
+      reader_pid=$!
+      sleep 1
+      ../openrun apply --promote ./pg_conc_v2.star
+      sleep 1
+      touch ./conc_stop
+      wait $reader_pid
+      if [ -s ./conc_errors ]; then echo "reads failed during revoke apply:"; cat ./conc_errors; fi
+      [ "$(cat ./conc_count)" -ge 3 ] && [ ! -s ./conc_errors ] && echo "kept_grant_stable"
+    stdout: "kept_grant_stable"
+
+  postgres0104: # the revoked grant was removed once the apply committed
+    command: ../openrun binding run-command /apps/bconc "select count(*) as n from t2conc"
+    stderr: "permission denied for table t2conc"
+    exit-code: 1
+
+  postgres0105: # the kept grant still works after the revoke was finalized
+    command: ../openrun binding run-command /apps/bconc "select count(*) as n from t1conc" | jq -r '.rows[0].n'
+    stdout: "1"
+
+  postgres0106: # widen to read:*; the overlapping revoke of read:t1conc must not drop access
+    command: |
+      cat > ./pg_conc_v3.star <<'EOF'
+      binding("/apps/bconc", "/apps/b1", grants=["read:*"])
+      EOF
+      ../openrun apply --promote ./pg_conc_v3.star >/dev/null
+      ../openrun binding run-command /apps/bconc "select count(*) as a from t1conc, t2conc" | jq -r '.rows[0].a'
+    stdout: "1"
+
+  postgres0107: # narrow read:* back to read:t1conc; reads of t1conc never fail while the overlapping revoke lands
+    command: |
+      cat > ./pg_conc_v4.star <<'EOF'
+      binding("/apps/bconc", "/apps/b1", grants=["read:t1conc"])
+      EOF
+      rm -f ./conc_stop ./conc_errors ./conc_count
+      (
+        count=0
+        while [ ! -f ./conc_stop ]; do
+          out=$(../openrun binding run-command /apps/bconc "select count(*) as n from t1conc" 2>&1) || echo "read failed: $out" >> ./conc_errors
+          count=$((count+1))
+        done
+        echo $count > ./conc_count
+      ) &
+      reader_pid=$!
+      sleep 1
+      ../openrun apply --promote ./pg_conc_v4.star
+      sleep 1
+      touch ./conc_stop
+      wait $reader_pid
+      if [ -s ./conc_errors ]; then echo "reads failed during overlapping revoke:"; cat ./conc_errors; fi
+      [ "$(cat ./conc_count)" -ge 3 ] && [ ! -s ./conc_errors ] && echo "overlap_grant_stable"
+    stdout: "overlap_grant_stable"
+
+  postgres0108: # after the narrow, only the table-specific grant remains
+    command: ../openrun binding run-command /apps/bconc "select count(*) as n from t2conc"
+    stderr: "permission denied for table t2conc"
+    exit-code: 1
+
   postgres9999:
-    command: (../openrun app delete /pg_verify_app; ../openrun binding delete /apps/bverify; ../openrun binding delete /apps/b1multi; ../openrun binding delete /apps/b1fulltest1; ../openrun binding delete /apps/b1full; ../openrun binding delete /apps/b1stage; ../openrun binding delete /apps/b1create; ../openrun binding delete /apps/b1read; ../openrun binding delete /apps/b1partialread; ../openrun binding delete /apps/b1; ../openrun service delete postgres/pg1; rm -rf ./pg_verifyapp ./pg_verify.star ./pg_failapp ./pg_failverify.star) || true
+    command: (../openrun app delete /pg_verify_app; ../openrun binding delete /apps/bverify; ../openrun binding delete /apps/bconc; ../openrun binding delete /apps/b1multi; ../openrun binding delete /apps/b1fulltest1; ../openrun binding delete /apps/b1full; ../openrun binding delete /apps/b1stage; ../openrun binding delete /apps/b1create; ../openrun binding delete /apps/b1read; ../openrun binding delete /apps/b1partialread; ../openrun binding delete /apps/b1; ../openrun service delete postgres/pg1; rm -rf ./pg_verifyapp ./pg_verify.star ./pg_failapp ./pg_failverify.star ./pg_conc.star ./pg_conc_fail.star ./pg_conc_v2.star ./pg_conc_v3.star ./pg_conc_v4.star ./conc_stop ./conc_errors ./conc_count) || true

@@ -256,7 +256,7 @@ func TestStaticDiskSpecServesFromDiskWithoutPersistingSourceFiles(t *testing.T) 
 			"index": "index.html",
 		},
 		StageAt: "path",
-	}, nil)
+	}, nil, server.newBindingAccountManager(false))
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("create static disk app: %v", err)
@@ -360,7 +360,7 @@ func TestCreateAppRejectsStageDomainRouteOverlap(t *testing.T) {
 
 	_, err = server.CreateAppTx(ctx, types.Transaction{}, "example.com:/foo", false, false, &types.CreateAppRequest{
 		SourceUrl: t.TempDir(),
-	}, nil)
+	}, nil, server.newBindingAccountManager(false))
 	if err == nil {
 		t.Fatal("expected stage route overlap error")
 	}
@@ -443,12 +443,12 @@ func TestUpdateAppMetadataConfigValidatesForwardModifier(t *testing.T) {
 	server.oAuthManager.providerConfigs["github"] = &types.AuthConfig{}
 	appEntry := &types.AppEntry{}
 
-	err := server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_missing"}, false)
+	err := server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_missing"}, false, nil)
 	if err == nil {
 		t.Fatal("expected missing forward config error")
 	}
 
-	err = server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_authz"}, false)
+	err = server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_authz"}, false, nil)
 	if err != nil {
 		t.Fatalf("update auth metadata: %v", err)
 	}
@@ -463,7 +463,7 @@ func TestUpdateAppMetadataConfigBindingPerms(t *testing.T) {
 	server := newAuthRedirectTestServer("example.com", false)
 	appEntry := &types.AppEntry{}
 
-	err := server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataBindingPerms, []string{"postgres/custom", "mysql"}, false)
+	err := server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataBindingPerms, []string{"postgres/custom", "mysql"}, false, nil)
 	if err != nil {
 		t.Fatalf("update binding perms metadata: %v", err)
 	}

@@ -45,11 +45,8 @@ func TestReloadAppsImagePreBuildStep(t *testing.T) {
 				t.Fatalf("write apply file: %v", err)
 			}
 
-			_, _, bindingAccounts, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
+			_, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
 				types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
-			if bindingAccounts != nil {
-				defer bindingAccounts.rollbackAndClose(ctx)
-			}
 			if err != nil {
 				t.Fatalf("apply: %v", err)
 			}

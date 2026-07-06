@@ -36,11 +36,12 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	// Own the operation-level cluster rollback for apps reloaded by the sync job
-	// below, so that if the job or this transaction's commit fails, in-place
-	// Kubernetes changes are reverted along with the DB transaction.
-	ctx, dscope := s.beginDeployScope(ctx, true)
-	defer func() { retErr = dscope.finish(ctx, retErr) }()
+	// Own the operation-level rollback scope for the sync job below: if the job
+	// or this transaction's commit fails, in-place Kubernetes changes and the
+	// binding accounts/grants created on external services are reverted along
+	// with the DB transaction.
+	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	genId, err := ksuid.NewRandom()
 	if err != nil {
@@ -72,8 +73,7 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 		return nil, err
 	}
 
-	syncStatus, updatedApps, applyEffects, err := s.runSyncJob(ctx, tx, &syncEntry, dryRun, true, nil)
-	defer applyEffects.rollbackAndClose(ctx)
+	syncStatus, updatedApps, err := s.runSyncJob(ctx, tx, &syncEntry, dryRun, true, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -94,10 +94,7 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "create_sync"); err != nil {
 		return nil, err
 	}
-	// The metadata transaction has committed, keep the binding accounts created
-	// on the services.
-	applyEffects.commit()
-	if err := dscope.commit(ctx); err != nil {
+	if err := deployScope.commit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -111,9 +108,9 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	// Own the operation-level cluster rollback for the sync job below.
-	ctx, dscope := s.beginDeployScope(ctx, true)
-	defer func() { retErr = dscope.finish(ctx, retErr) }()
+	// Own the operation-level rollback scope for the sync job below.
+	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	syncEntry, err := s.db.GetSyncEntry(ctx, tx, id)
 	if err != nil {
@@ -125,8 +122,7 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.
 		return nil, err
 	}
 
-	syncStatus, updatedApps, applyEffects, err := s.runSyncJob(ctx, tx, syncEntry, dryRun, true, nil)
-	defer applyEffects.rollbackAndClose(ctx)
+	syncStatus, updatedApps, err := s.runSyncJob(ctx, tx, syncEntry, dryRun, true, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -138,10 +134,7 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.
 	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "sync_run"); err != nil {
 		return nil, err
 	}
-	// The metadata transaction has committed, keep the binding accounts created
-	// on the services.
-	applyEffects.commit()
-	if err := dscope.commit(ctx); err != nil {
+	if err := deployScope.commit(ctx); err != nil {
 		return nil, err
 	}
 	return syncStatus, nil
@@ -283,7 +276,7 @@ func (s *Server) runSyncJobs() error {
 			continue
 		}
 
-		_, updatedApps, _, err := s.runSyncJob(ctx, types.Transaction{}, entry, false, true, repoCache) // each sync runs in its own transaction
+		_, updatedApps, err := s.runSyncJob(ctx, types.Transaction{}, entry, false, true, repoCache) // each sync runs in its own transaction
 		if err != nil {
 			s.Error().Err(err).Msgf("Error running sync job %s", entry.Id)
 			// One failure does not stop the rest
@@ -301,13 +294,13 @@ func (s *Server) runSyncJobs() error {
 }
 
 func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entry *types.SyncEntry,
-	dryRun, checkCommitHash bool, repoCache *RepoCache) (_ *types.SyncJobStatus, _ []types.AppPathDomain, _ *bindingAccountManager, retErr error) {
+	dryRun, checkCommitHash bool, repoCache *RepoCache) (_ *types.SyncJobStatus, _ []types.AppPathDomain, retErr error) {
 	var tx types.Transaction
 	var err error
 	if inputTx.Tx == nil {
 		tx, err = s.db.BeginTransaction(ctx)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		defer tx.Rollback() //nolint:errcheck
 	} else {
@@ -319,21 +312,21 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	// metadata (AppliedSyncId)
 	ctx = context.WithValue(ctx, types.SYNC_ID, entry.Id)
 
-	// origCtx is the context before the rollback stack is attached; it is used
-	// for the recursive full-apply call so that nested call owns a fresh stack.
+	// origCtx is the context before the rollback scope is attached; it is used
+	// for the recursive full-apply call so that nested call owns a fresh scope.
 	origCtx := ctx
-	// Own the cluster rollback only when we own the DB transaction (the
+	// Own the rollback scope only when we own the DB transaction (the
 	// runSyncJobs path passes an empty transaction). When a transaction is
 	// passed in, the caller (CreateSyncEntry/RunSync) owns it.
-	ctx, dscope := s.beginDeployScope(ctx, inputTx.Tx == nil)
-	defer func() { retErr = dscope.finish(ctx, retErr) }()
+	ctx, deployScope := s.beginDeployScope(ctx, inputTx.Tx == nil, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	s.Debug().Msgf("Running sync job %s", entry.Id)
 	if repoCache == nil {
 		// Create a new repo cache if not passed in
 		repoCache, err = NewRepoCache(s)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		defer repoCache.Cleanup()
 	}
@@ -345,11 +338,8 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	}
 
 	verify := entry.Metadata.Verify && !dryRun
-	applyInfo, updatedApps, applyEffects, applyErr := s.Apply(ctx, tx, entry.Path, "all", entry.Metadata.Approve, dryRun, entry.Metadata.Promote, types.AppReloadOption(entry.Metadata.Reload),
+	applyInfo, updatedApps, applyErr := s.Apply(ctx, tx, entry.Path, "all", entry.Metadata.Approve, dryRun, entry.Metadata.Promote, types.AppReloadOption(entry.Metadata.Reload),
 		entry.Metadata.GitBranch, "", entry.Metadata.GitAuth, entry.Metadata.Clobber, entry.Metadata.ForceReload, verify, lastRunCommitId, repoCache, false)
-	if inputTx.Tx == nil {
-		defer applyEffects.rollbackAndClose(ctx)
-	}
 
 	status := types.SyncJobStatus{
 		LastExecutionTime: time.Now(),
@@ -401,13 +391,13 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		if appMissing {
 			// App has been deleted, run the full apply with the latest commit even if it was already applied
 			if !checkCommitHash {
-				return nil, nil, applyEffects, fmt.Errorf("unexpected error, sync rerun with no commit hash")
+				return nil, nil, fmt.Errorf("unexpected error, sync rerun with no commit hash")
 			}
-			// The apply was skipped, so our rollback stack is empty here. Hand
+			// The apply was skipped, so our rollback scope is empty here. Hand
 			// off to the recursive full apply using origCtx so it owns a fresh
-			// stack; mark this scope committed so its (empty) rollback is a no-op.
-			if err := dscope.commit(ctx); err != nil {
-				return nil, nil, applyEffects, err
+			// scope; mark this scope committed so its (empty) rollback is a no-op.
+			if err := deployScope.commit(ctx); err != nil {
+				return nil, nil, err
 			}
 			return s.runSyncJob(origCtx, inputTx, entry, dryRun, false, repoCache)
 		} else {
@@ -453,7 +443,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		// Use a new transaction to update the sync status
 		tx, err = s.db.BeginTransaction(ctx)
 		if err != nil {
-			return nil, nil, applyEffects, err
+			return nil, nil, err
 		}
 		defer tx.Rollback() //nolint:errcheck
 		updatedApps = nil
@@ -462,24 +452,30 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	status.ApplyResponse = *applyInfo
 	err = s.db.UpdateSyncStatus(ctx, tx, entry.Id, &status)
 	if err != nil {
-		return nil, nil, applyEffects, err
+		return nil, nil, err
 	}
 
-	if status.Error == "" && inputTx.Tx == nil {
-		if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "sync"); err != nil {
-			return nil, nil, nil, err
+	if status.Error != "" {
+		// Persist the failure status: LastExecutionTime, FailureCount and State
+		// drive the retry backoff and the MaxSyncFailureCount disable. The sync
+		// changes themselves were rolled back above; only the status is committed.
+		// The deferred scope finish reverts the cluster and binding side effects.
+		if !dryRun {
+			if err := tx.Commit(); err != nil {
+				return nil, nil, err
+			}
 		}
-		// The metadata transaction has committed, keep the binding accounts created
-		// on the services.
-		applyEffects.commit()
-		if err := dscope.commit(ctx); err != nil {
-			return nil, nil, nil, err
-		}
-		return &status, updatedApps, nil, nil
+		return &status, updatedApps, nil
 	}
+
 	if inputTx.Tx == nil {
-		return &status, updatedApps, nil, nil
+		if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "sync"); err != nil {
+			return nil, nil, err
+		}
+		if err := deployScope.commit(ctx); err != nil {
+			return nil, nil, err
+		}
 	}
 
-	return &status, updatedApps, applyEffects, nil
+	return &status, updatedApps, nil
 }

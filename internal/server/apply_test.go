@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/metadata"
@@ -51,14 +52,22 @@ func (b *applyTestServiceBinding) GenerateAccount(_ context.Context, bindingId, 
 }
 
 func (b *applyTestServiceBinding) ApplyGrants(_ context.Context, _ map[string]string, bindingMetadata, derivedFromMetadata types.BindingMetadata,
-	_ bool) ([]types.BindingGrant, error) {
+	_ bool) (bindings.GrantApplyResult, error) {
 	if derivedFromMetadata.Account["role"] == "" {
-		return nil, fmt.Errorf("derived binding account not visible")
+		return bindings.GrantApplyResult{}, fmt.Errorf("derived binding account not visible")
 	}
 	if len(bindingMetadata.Grants) == 0 {
-		return nil, nil
+		return bindings.GrantApplyResult{}, nil
 	}
-	return []types.BindingGrant{{GrantType: types.GrantTypeRead, GrantTarget: "*"}}, nil
+	grant := types.BindingGrant{GrantType: types.GrantTypeRead, GrantTarget: "*"}
+	return bindings.GrantApplyResult{
+		GrantsApplied: []types.BindingGrant{grant},
+		Granted:       []types.BindingGrant{grant},
+	}, nil
+}
+
+func (b *applyTestServiceBinding) RevokeGrants(context.Context, map[string]string, types.BindingMetadata, []types.BindingGrant, []types.BindingGrant) error {
+	return nil
 }
 
 func TestLoadApplyInfoStageAt(t *testing.T) {
@@ -132,8 +141,12 @@ func (b *applyAccountTrackingServiceBinding) DeleteArtifact(_ context.Context, a
 }
 
 func (b *applyAccountTrackingServiceBinding) ApplyGrants(context.Context, map[string]string, types.BindingMetadata,
-	types.BindingMetadata, bool) ([]types.BindingGrant, error) {
-	return nil, nil
+	types.BindingMetadata, bool) (bindings.GrantApplyResult, error) {
+	return bindings.GrantApplyResult{}, nil
+}
+
+func (b *applyAccountTrackingServiceBinding) RevokeGrants(context.Context, map[string]string, types.BindingMetadata, []types.BindingGrant, []types.BindingGrant) error {
+	return nil
 }
 
 func (b *applyAccountTrackingServiceBinding) RunCommand(context.Context, types.BindingMetadata, string) (map[string]any, error) {
@@ -166,23 +179,29 @@ func (b *applyPendingGrantServiceBinding) GenerateAccount(_ context.Context, bin
 }
 
 func (b *applyPendingGrantServiceBinding) ApplyGrants(_ context.Context, _ map[string]string, bindingMetadata, _ types.BindingMetadata,
-	reapplyAll bool) ([]types.BindingGrant, error) {
+	reapplyAll bool) (bindings.GrantApplyResult, error) {
 	if reapplyAll {
 		*b.reapplyAllCalls = *b.reapplyAllCalls + 1
 	}
 	if !*b.grantAvailable || len(bindingMetadata.Grants) == 0 {
-		return append([]types.BindingGrant{}, bindingMetadata.GrantsApplied...), nil
+		return bindings.GrantApplyResult{GrantsApplied: append([]types.BindingGrant{}, bindingMetadata.GrantsApplied...)}, nil
 	}
 	grant := types.BindingGrant{GrantType: types.GrantTypeRead, GrantTarget: "late_table"}
 	if !reapplyAll && slices.Contains(bindingMetadata.GrantsApplied, grant) {
-		return append([]types.BindingGrant{}, bindingMetadata.GrantsApplied...), nil
+		return bindings.GrantApplyResult{GrantsApplied: append([]types.BindingGrant{}, bindingMetadata.GrantsApplied...)}, nil
 	}
 	*b.pendingApplyCalls = *b.pendingApplyCalls + 1
 	grantsApplied := append([]types.BindingGrant{}, bindingMetadata.GrantsApplied...)
+	granted := []types.BindingGrant{}
 	if !slices.Contains(grantsApplied, grant) {
 		grantsApplied = append(grantsApplied, grant)
+		granted = append(granted, grant)
 	}
-	return grantsApplied, nil
+	return bindings.GrantApplyResult{GrantsApplied: grantsApplied, Granted: granted}, nil
+}
+
+func (b *applyPendingGrantServiceBinding) RevokeGrants(context.Context, map[string]string, types.BindingMetadata, []types.BindingGrant, []types.BindingGrant) error {
+	return nil
 }
 
 func (b *applyPendingGrantServiceBinding) RunCommand(context.Context, types.BindingMetadata, string) (map[string]any, error) {
@@ -275,11 +294,8 @@ app("/apps/uses-derived", %q, bindings=["/apps/derived"])
 		t.Fatalf("write apply file: %v", err)
 	}
 
-	response, _, bindingAccounts, err := server.Apply(ctx, types.Transaction{}, applyPath, "/apps/**", false, false, false,
+	response, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "/apps/**", false, false, false,
 		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
-	if bindingAccounts != nil {
-		defer bindingAccounts.rollbackAndClose(ctx)
-	}
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -366,11 +382,8 @@ func TestApplyVerifiesCreatedAppWithoutCountingInternalReload(t *testing.T) {
 		t.Fatalf("write apply file: %v", err)
 	}
 
-	response, _, bindingAccounts, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
+	response, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
 		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
-	if bindingAccounts != nil {
-		defer bindingAccounts.rollbackAndClose(ctx)
-	}
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -714,5 +727,649 @@ func TestReapplyPendingBindingGrantsAppliesOnlyCurrentPendingGrants(t *testing.T
 	}
 	if reapplyAllCalls != 0 {
 		t.Fatalf("reapply-all calls after second retry = %d, want 0", reapplyAllCalls)
+	}
+}
+
+// grantLifecycleServiceBinding tracks grant and revoke executions with realistic
+// diff behavior: ApplyGrants executes only the additive diff and reports the
+// no-longer-desired grants as pending revokes, like the real service bindings.
+type grantLifecycleServiceBinding struct {
+	grantCalls   *[]string
+	revokeCalls  *[]string
+	regrantCalls *[]string
+	revokeHook   *func(context.Context)
+}
+
+func grantCallMode(role string) string {
+	if strings.HasSuffix(role, "_stage") {
+		return "stage"
+	}
+	return "prod"
+}
+
+func (b *grantLifecycleServiceBinding) InitializeService(context.Context, *types.Logger, map[string]string, bindings.ServiceBindingRuntime) error {
+	return nil
+}
+
+func (b *grantLifecycleServiceBinding) CloseService(context.Context) error {
+	return nil
+}
+
+func (b *grantLifecycleServiceBinding) DeleteArtifact(context.Context, bindings.Artifact) error {
+	return nil
+}
+
+func (b *grantLifecycleServiceBinding) GenerateAccount(_ context.Context, bindingId, bindingPath string, _ types.BindingMetadata,
+	derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, []bindings.Artifact, error) {
+	mode := "prod"
+	if isStaging {
+		mode = "stage"
+	}
+	schema := strings.ReplaceAll(strings.TrimPrefix(bindingPath, "/"), "/", "_") + "_" + mode
+	if derivedFromMetadata != nil {
+		schema = derivedFromMetadata.Account["schema"]
+	}
+	role := bindingId + "_" + mode
+	return map[string]string{
+		"role":   role,
+		"schema": schema,
+	}, []bindings.Artifact{{Type: bindings.ArtifactRole, Name: role}}, nil
+}
+
+func (b *grantLifecycleServiceBinding) ApplyGrants(_ context.Context, account map[string]string, bindingMetadata, _ types.BindingMetadata,
+	_ bool) (bindings.GrantApplyResult, error) {
+	desired := make([]types.BindingGrant, 0, len(bindingMetadata.Grants))
+	for _, grantStr := range bindingMetadata.Grants {
+		grant, err := types.ParseGrant(grantStr, []types.GrantType{types.GrantTypeRead, types.GrantTypeCreate, types.GrantTypeFull})
+		if err != nil {
+			return bindings.GrantApplyResult{}, err
+		}
+		desired = append(desired, grant)
+	}
+	granted := []types.BindingGrant{}
+	for _, grant := range desired {
+		if !slices.Contains(bindingMetadata.GrantsApplied, grant) {
+			granted = append(granted, grant)
+			*b.grantCalls = append(*b.grantCalls, grantCallMode(account["role"])+"|"+grant.String())
+		}
+	}
+	pendingRevokes := []types.BindingGrant{}
+	for _, grant := range bindingMetadata.GrantsApplied {
+		if !slices.Contains(desired, grant) {
+			pendingRevokes = append(pendingRevokes, grant)
+		}
+	}
+	return bindings.GrantApplyResult{
+		GrantsApplied:  append(append([]types.BindingGrant{}, bindingMetadata.GrantsApplied...), granted...),
+		Granted:        granted,
+		PendingRevokes: pendingRevokes,
+	}, nil
+}
+
+func (b *grantLifecycleServiceBinding) RevokeGrants(ctx context.Context, account map[string]string, _ types.BindingMetadata,
+	revokes, regrants []types.BindingGrant) error {
+	if b.revokeHook != nil && *b.revokeHook != nil {
+		(*b.revokeHook)(ctx)
+	}
+	for _, grant := range revokes {
+		*b.revokeCalls = append(*b.revokeCalls, grantCallMode(account["role"])+"|"+grant.String())
+	}
+	for _, grant := range regrants {
+		*b.regrantCalls = append(*b.regrantCalls, grantCallMode(account["role"])+"|"+grant.String())
+	}
+	return nil
+}
+
+func (b *grantLifecycleServiceBinding) RunCommand(context.Context, types.BindingMetadata, string) (map[string]any, error) {
+	return nil, nil
+}
+
+// registerGrantLifecycleBinding registers the fake under the given service type and
+// creates a default service plus a base and derived binding pair for it.
+func registerGrantLifecycleBinding(t *testing.T, server *Server, db *metadata.Metadata, ctx context.Context,
+	serviceType string, grants []string, grantCalls, revokeCalls, regrantCalls *[]string, revokeHook *func(context.Context)) {
+	t.Helper()
+	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings[serviceType]
+	bindings.ServiceBindings[serviceType] = func() bindings.ServiceBinding {
+		return &grantLifecycleServiceBinding{grantCalls: grantCalls, revokeCalls: revokeCalls, regrantCalls: regrantCalls, revokeHook: revokeHook}
+	}
+	t.Cleanup(func() {
+		if hadPreviousBuilder {
+			bindings.ServiceBindings[serviceType] = previousBuilder
+		} else {
+			delete(bindings.ServiceBindings, serviceType)
+		}
+	})
+
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	service := &types.Service{
+		Id:          types.ID_PREFIX_SERVICE + serviceType,
+		Name:        "primary",
+		ServiceType: serviceType,
+		IsDefault:   true,
+		Config:      map[string]string{},
+	}
+	if err := db.CreateService(ctx, tx, service); err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit service: %v", err)
+	}
+
+	if _, err := server.CreateBinding(ctx, &types.CreateBindingRequest{
+		Path:   "/apps/base",
+		Source: serviceType + "/primary",
+		Config: map[string]string{},
+	}, false); err != nil {
+		t.Fatalf("create base binding: %v", err)
+	}
+	if _, err := server.CreateBinding(ctx, &types.CreateBindingRequest{
+		Path:   "/apps/derived",
+		Source: "/apps/base",
+		Grants: grants,
+		Config: map[string]string{},
+	}, false); err != nil {
+		t.Fatalf("create derived binding: %v", err)
+	}
+}
+
+func getBindingForTest(t *testing.T, db *metadata.Metadata, ctx context.Context, path string) *types.Binding {
+	t.Helper()
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin read transaction: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	binding, err := db.GetBinding(ctx, tx, path)
+	if err != nil {
+		t.Fatalf("get binding %s: %v", path, err)
+	}
+	return binding
+}
+
+func TestApplyRollbackCompensatesAppliedGrants(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	grantCalls := []string{}
+	revokeCalls := []string{}
+	regrantCalls := []string{}
+	registerGrantLifecycleBinding(t, server, db, ctx, "grantroll", []string{"read:t1"}, &grantCalls, &revokeCalls, &regrantCalls, nil)
+
+	grantCalls = nil
+	revokeCalls = nil
+	regrantCalls = nil
+	applyPath := filepath.Join(t.TempDir(), "grants.ace")
+	applyData := fmt.Sprintf(`binding("/apps/derived", "/apps/base", grants=["read:t1", "read:t2"])
+app("/apps/bad", %q)
+`, filepath.Join(t.TempDir(), "does-not-exist"))
+	if err := os.WriteFile(applyPath, []byte(applyData), 0600); err != nil {
+		t.Fatalf("write apply file: %v", err)
+	}
+
+	_, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
+		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+	if err == nil {
+		t.Fatal("apply with missing app source did not fail")
+	}
+
+	// The staging grant applied before the failure is revoked during rollback
+	if !slices.Equal(grantCalls, []string{"stage|READ:t2"}) {
+		t.Fatalf("grant calls = %v, want staging read:t2 only", grantCalls)
+	}
+	if !slices.Equal(revokeCalls, []string{"stage|READ:t2"}) {
+		t.Fatalf("revoke calls = %v, want rollback compensation for read:t2", revokeCalls)
+	}
+	if !slices.Equal(regrantCalls, []string{"stage|READ:t1"}) {
+		t.Fatalf("regrant calls = %v, want pre-operation grants restored", regrantCalls)
+	}
+
+	derived := getBindingForTest(t, db, ctx, "/apps/derived")
+	if !slices.Equal(derived.StagedMetadata.Grants, []string{"read:t1"}) {
+		t.Fatalf("staged grants = %v, want unchanged [read:t1]", derived.StagedMetadata.Grants)
+	}
+	wantApplied := []types.BindingGrant{{GrantType: types.GrantTypeRead, GrantTarget: "t1"}}
+	if !slices.Equal(derived.StagedMetadata.GrantsApplied, wantApplied) {
+		t.Fatalf("staged grants applied = %v, want unchanged %v", derived.StagedMetadata.GrantsApplied, wantApplied)
+	}
+}
+
+func TestApplyDefersGrantRevokesUntilAfterCommit(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	grantCalls := []string{}
+	revokeCalls := []string{}
+	regrantCalls := []string{}
+	var revokeHook func(context.Context)
+	registerGrantLifecycleBinding(t, server, db, ctx, "grantdefer", []string{"read:t1"}, &grantCalls, &revokeCalls, &regrantCalls, &revokeHook)
+
+	grantCalls = nil
+	revokeCalls = nil
+	applyPath := filepath.Join(t.TempDir(), "grants.ace")
+	if err := os.WriteFile(applyPath, []byte(`binding("/apps/derived", "/apps/base", grants=["read:t2"])
+`), 0600); err != nil {
+		t.Fatalf("write apply file: %v", err)
+	}
+
+	// The revokes must only run after the metadata transaction has committed: when
+	// the first revoke executes, the committed binding row already has the new grants
+	hookCalls := 0
+	revokeHook = func(context.Context) {
+		hookCalls++
+		committed := getBindingForTest(t, db, ctx, "/apps/derived")
+		if !slices.Equal(committed.StagedMetadata.Grants, []string{"read:t2"}) {
+			t.Errorf("staged grants at revoke time = %v, want committed [read:t2]", committed.StagedMetadata.Grants)
+		}
+	}
+
+	response, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, true,
+		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !slices.Equal(response.UpdateBindingResults, []string{"/apps/derived"}) {
+		t.Fatalf("update binding results = %v, want [/apps/derived]", response.UpdateBindingResults)
+	}
+	if !slices.Equal(response.PromoteBindingResults, []string{"/apps/derived"}) {
+		t.Fatalf("promote binding results = %v, want [/apps/derived]", response.PromoteBindingResults)
+	}
+
+	if !slices.Equal(grantCalls, []string{"stage|READ:t2", "prod|READ:t2"}) {
+		t.Fatalf("grant calls = %v, want staging and prod read:t2", grantCalls)
+	}
+	if !slices.Equal(revokeCalls, []string{"stage|READ:t1", "prod|READ:t1"}) {
+		t.Fatalf("revoke calls = %v, want deferred staging and prod revokes of read:t1", revokeCalls)
+	}
+	if !slices.Equal(regrantCalls, []string{"stage|READ:t2", "prod|READ:t2"}) {
+		t.Fatalf("regrant calls = %v, want remaining grants re-applied with the revokes", regrantCalls)
+	}
+	if hookCalls != 2 {
+		t.Fatalf("revoke hook calls = %d, want 2", hookCalls)
+	}
+
+	// The finalized revokes are removed from the recorded applied grants
+	derived := getBindingForTest(t, db, ctx, "/apps/derived")
+	wantApplied := []types.BindingGrant{{GrantType: types.GrantTypeRead, GrantTarget: "t2"}}
+	if !slices.Equal(derived.StagedMetadata.GrantsApplied, wantApplied) {
+		t.Fatalf("staged grants applied = %v, want %v", derived.StagedMetadata.GrantsApplied, wantApplied)
+	}
+	if !slices.Equal(derived.Metadata.GrantsApplied, wantApplied) {
+		t.Fatalf("prod grants applied = %v, want %v", derived.Metadata.GrantsApplied, wantApplied)
+	}
+	if !slices.Equal(derived.Metadata.Grants, []string{"read:t2"}) {
+		t.Fatalf("prod grants = %v, want [read:t2]", derived.Metadata.Grants)
+	}
+
+	// Re-running the same apply is a no-op: no new grants, revokes or updates
+	grantCalls = nil
+	revokeCalls = nil
+	regrantCalls = nil
+	response, _, err = server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, true,
+		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+	if err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	if len(response.UpdateBindingResults) != 0 || len(response.PromoteBindingResults) != 0 {
+		t.Fatalf("second apply results = %v %v, want no binding updates", response.UpdateBindingResults, response.PromoteBindingResults)
+	}
+	if len(grantCalls) != 0 || len(revokeCalls) != 0 || len(regrantCalls) != 0 {
+		t.Fatalf("second apply grant calls = %v revoke calls = %v regrant calls = %v, want none", grantCalls, revokeCalls, regrantCalls)
+	}
+}
+
+func TestUpdateBindingDefersRevokesUntilAfterCommit(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	grantCalls := []string{}
+	revokeCalls := []string{}
+	regrantCalls := []string{}
+	registerGrantLifecycleBinding(t, server, db, ctx, "grantupd", []string{"read:t1", "read:t2"}, &grantCalls, &revokeCalls, &regrantCalls, nil)
+
+	grantCalls = nil
+	revokeCalls = nil
+	updated, err := server.UpdateBinding(ctx, types.UpdateBindingRequest{
+		Path:         "/apps/derived",
+		DeleteGrants: []string{"read:t1"},
+	}, false, true, false)
+	if err != nil {
+		t.Fatalf("update binding: %v", err)
+	}
+	if !slices.Equal(updated.StagedMetadata.Grants, []string{"read:t2"}) {
+		t.Fatalf("staged grants = %v, want [read:t2]", updated.StagedMetadata.Grants)
+	}
+
+	if len(grantCalls) != 0 {
+		t.Fatalf("grant calls = %v, want none for a delete-only update", grantCalls)
+	}
+	if !slices.Equal(revokeCalls, []string{"stage|READ:t1", "prod|READ:t1"}) {
+		t.Fatalf("revoke calls = %v, want deferred staging and prod revokes", revokeCalls)
+	}
+
+	derived := getBindingForTest(t, db, ctx, "/apps/derived")
+	wantApplied := []types.BindingGrant{{GrantType: types.GrantTypeRead, GrantTarget: "t2"}}
+	if !slices.Equal(derived.StagedMetadata.GrantsApplied, wantApplied) {
+		t.Fatalf("staged grants applied = %v, want %v", derived.StagedMetadata.GrantsApplied, wantApplied)
+	}
+	if !slices.Equal(derived.Metadata.GrantsApplied, wantApplied) {
+		t.Fatalf("prod grants applied = %v, want %v", derived.Metadata.GrantsApplied, wantApplied)
+	}
+}
+
+func TestCreateAppRollbackRemovesAutoBindingAccount(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	generateCalls := 0
+	failAfterCreate := false
+	deletedArtifacts := []bindings.Artifact{}
+	closed := 0
+	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["autoacct"]
+	bindings.ServiceBindings["autoacct"] = func() bindings.ServiceBinding {
+		return &applyAccountTrackingServiceBinding{
+			generateCalls:    &generateCalls,
+			failAfterCreate:  &failAfterCreate,
+			deletedArtifacts: &deletedArtifacts,
+			closed:           &closed,
+		}
+	}
+	defer func() {
+		if hadPreviousBuilder {
+			bindings.ServiceBindings["autoacct"] = previousBuilder
+		} else {
+			delete(bindings.ServiceBindings, "autoacct")
+		}
+	}()
+
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	service := &types.Service{
+		Id:          types.ID_PREFIX_SERVICE + "autoacct",
+		Name:        "primary",
+		ServiceType: "autoacct",
+		IsDefault:   true,
+		Config:      map[string]string{},
+	}
+	if err := db.CreateService(ctx, tx, service); err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit service: %v", err)
+	}
+
+	// App create fails after the auto binding and its account were created; the
+	// account artifacts must be deleted along with the transaction rollback
+	appTx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin app transaction: %v", err)
+	}
+	accounts := server.newBindingAccountManager(false)
+	_, err = server.CreateAppTx(ctx, appTx, "/apps/auto-rollback", false, false, &types.CreateAppRequest{
+		SourceUrl: filepath.Join(t.TempDir(), "does-not-exist"),
+		Bindings:  []string{"autoacct"},
+	}, nil, accounts)
+	if err == nil {
+		t.Fatal("create app with missing source did not fail")
+	}
+	if err := appTx.Rollback(); err != nil {
+		t.Fatalf("rollback app transaction: %v", err)
+	}
+	accounts.rollbackAndClose(ctx)
+
+	if generateCalls != 2 {
+		t.Fatalf("generate calls = %d, want staging and prod account generation", generateCalls)
+	}
+	if len(deletedArtifacts) != 4 {
+		t.Fatalf("deleted artifacts = %v, want the 4 auto binding artifacts removed on rollback", deletedArtifacts)
+	}
+
+	readTx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin read transaction: %v", err)
+	}
+	defer readTx.Rollback() //nolint:errcheck
+	if _, err := db.GetBinding(ctx, readTx, autoBindingPathPrefix+"/"+string(types.AppId("."))); err == nil {
+		t.Fatal("unexpected auto binding found")
+	}
+}
+
+func TestRunSyncJobPersistsFailureStatus(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+	server.config.System.MaxSyncFailureCount = 3
+
+	applyPath := filepath.Join(t.TempDir(), "sync.ace")
+	appSourceDir := filepath.Join(t.TempDir(), "app")
+	if err := os.Mkdir(appSourceDir, 0700); err != nil {
+		t.Fatalf("create app source dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(appSourceDir, "app.star"), []byte("app = ace.app(\"syncApp\")\n"), 0600); err != nil {
+		t.Fatalf("write app.star: %v", err)
+	}
+	if err := os.WriteFile(applyPath, []byte(fmt.Sprintf("app(\"/apps/sync-status\", %q)\n", appSourceDir)), 0600); err != nil {
+		t.Fatalf("write apply file: %v", err)
+	}
+
+	response, err := server.CreateSyncEntry(ctx, applyPath, true, false, &types.SyncMetadata{})
+	if err != nil {
+		t.Fatalf("create sync entry: %v", err)
+	}
+
+	// Break the apply file so the next sync run fails
+	if err := os.WriteFile(applyPath, []byte(fmt.Sprintf("app(\"/apps/sync-status\", %q)\napp(\"/apps/bad\", %q)\n",
+		appSourceDir, filepath.Join(t.TempDir(), "does-not-exist"))), 0600); err != nil {
+		t.Fatalf("rewrite apply file: %v", err)
+	}
+
+	readTx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin read transaction: %v", err)
+	}
+	entry, err := db.GetSyncEntry(ctx, readTx, response.Id)
+	if err != nil {
+		t.Fatalf("get sync entry: %v", err)
+	}
+	if err := readTx.Rollback(); err != nil {
+		t.Fatalf("rollback read transaction: %v", err)
+	}
+
+	status, _, err := server.runSyncJob(ctx, types.Transaction{}, entry, false, true, nil)
+	if err != nil {
+		t.Fatalf("run sync job: %v", err)
+	}
+	if status.Error == "" {
+		t.Fatal("sync job with bad app source did not report an error")
+	}
+
+	// The failure status must be persisted even though the sync changes were rolled back
+	verifyTx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin verify transaction: %v", err)
+	}
+	defer verifyTx.Rollback() //nolint:errcheck
+	persisted, err := db.GetSyncEntry(ctx, verifyTx, response.Id)
+	if err != nil {
+		t.Fatalf("get sync entry after failure: %v", err)
+	}
+	if persisted.Status.FailureCount != 1 {
+		t.Fatalf("failure count = %d, want 1", persisted.Status.FailureCount)
+	}
+	if persisted.Status.Error == "" {
+		t.Fatal("persisted sync status has no error")
+	}
+	if persisted.Status.State != "Failing" {
+		t.Fatalf("sync state = %q, want Failing", persisted.Status.State)
+	}
+	if persisted.Status.LastExecutionTime.IsZero() {
+		t.Fatal("last execution time was not persisted")
+	}
+}
+
+// updateBindingForTest commits a change to a binding row, simulating a concurrent
+// operation modifying the binding outside the operation under test.
+func updateBindingForTest(t *testing.T, db *metadata.Metadata, ctx context.Context, path string, mutate func(*types.Binding)) {
+	t.Helper()
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin update transaction: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	binding, err := db.GetBinding(ctx, tx, path)
+	if err != nil {
+		t.Fatalf("get binding %s: %v", path, err)
+	}
+	mutate(binding)
+	if err := db.UpdateBinding(ctx, tx, binding); err != nil {
+		t.Fatalf("update binding %s: %v", path, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit binding update: %v", err)
+	}
+}
+
+func TestFinalizeRevokesSkipsConcurrentlyReAddedGrants(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	grantCalls := []string{}
+	revokeCalls := []string{}
+	regrantCalls := []string{}
+	var revokeHook func(context.Context)
+	registerGrantLifecycleBinding(t, server, db, ctx, "grantrace", []string{"read:t1"}, &grantCalls, &revokeCalls, &regrantCalls, &revokeHook)
+
+	grantCalls = nil
+	revokeCalls = nil
+	applyPath := filepath.Join(t.TempDir(), "grants.ace")
+	if err := os.WriteFile(applyPath, []byte(`binding("/apps/derived", "/apps/base", grants=["read:t2"])
+`), 0600); err != nil {
+		t.Fatalf("write apply file: %v", err)
+	}
+
+	// While the staging revoke executes (after the apply committed), a concurrent
+	// update re-adds read:t1 to the prod desired grants; the prod revoke must be
+	// skipped since the committed state owns that grant again
+	hookCalls := 0
+	revokeHook = func(hctx context.Context) {
+		hookCalls++
+		if hookCalls != 1 {
+			return
+		}
+		updateBindingForTest(t, db, hctx, "/apps/derived", func(binding *types.Binding) {
+			binding.Metadata.Grants = append(binding.Metadata.Grants, "read:t1")
+		})
+	}
+
+	_, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, true,
+		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if !slices.Equal(revokeCalls, []string{"stage|READ:t1"}) {
+		t.Fatalf("revoke calls = %v, want only the staging revoke", revokeCalls)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("revoke executions = %d, want 1 (prod revoke skipped)", hookCalls)
+	}
+
+	derived := getBindingForTest(t, db, ctx, "/apps/derived")
+	wantStaged := []types.BindingGrant{{GrantType: types.GrantTypeRead, GrantTarget: "t2"}}
+	if !slices.Equal(derived.StagedMetadata.GrantsApplied, wantStaged) {
+		t.Fatalf("staged grants applied = %v, want %v", derived.StagedMetadata.GrantsApplied, wantStaged)
+	}
+	// The prod revoke was skipped and its grant stays recorded as applied for the
+	// concurrently re-added desired grant
+	wantKept := types.BindingGrant{GrantType: types.GrantTypeRead, GrantTarget: "t1"}
+	if !slices.Contains(derived.Metadata.GrantsApplied, wantKept) {
+		t.Fatalf("prod grants applied = %v, want read:t1 kept", derived.Metadata.GrantsApplied)
+	}
+}
+
+func TestRollbackCompensationSkipsConcurrentlyCommittedGrants(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	grantCalls := []string{}
+	revokeCalls := []string{}
+	regrantCalls := []string{}
+	var revokeHook func(context.Context)
+	registerGrantLifecycleBinding(t, server, db, ctx, "grantcomp", []string{"read:t1"}, &grantCalls, &revokeCalls, &regrantCalls, &revokeHook)
+
+	readTx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin read transaction: %v", err)
+	}
+	binding, err := db.GetBinding(ctx, readTx, "/apps/derived")
+	if err != nil {
+		t.Fatalf("get derived binding: %v", err)
+	}
+	derivedFrom, err := db.GetBinding(ctx, readTx, "/apps/base")
+	if err != nil {
+		t.Fatalf("get base binding: %v", err)
+	}
+	service, err := db.GetService(ctx, readTx, "grantcomp", "primary")
+	if err != nil {
+		t.Fatalf("get service: %v", err)
+	}
+	if err := readTx.Rollback(); err != nil {
+		t.Fatalf("rollback read transaction: %v", err)
+	}
+
+	// Apply a new grant, as a failing operation would before its rollback
+	grantCalls = nil
+	revokeCalls = nil
+	accounts := server.newBindingAccountManager(false)
+	binding.StagedMetadata.Grants = []string{"read:t1", "read:t2"}
+	if _, err := accounts.applyGrants(ctx, service, binding, derivedFrom, true, false); err != nil {
+		t.Fatalf("apply grants: %v", err)
+	}
+	if !slices.Equal(grantCalls, []string{"stage|READ:t2"}) {
+		t.Fatalf("grant calls = %v, want staging read:t2", grantCalls)
+	}
+
+	// A concurrent operation commits the same grant as applied before the rollback
+	// runs; the compensation must not revoke it
+	updateBindingForTest(t, db, ctx, "/apps/derived", func(b *types.Binding) {
+		b.StagedMetadata.Grants = []string{"read:t1", "read:t2"}
+		b.StagedMetadata.GrantsApplied = append(b.StagedMetadata.GrantsApplied, types.BindingGrant{GrantType: types.GrantTypeRead, GrantTarget: "t2"})
+	})
+
+	tctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	accounts.rollbackAndClose(tctx)
+	if len(revokeCalls) != 0 {
+		t.Fatalf("revoke calls = %v, want compensation skipped for the concurrently committed grant", revokeCalls)
+	}
+
+	// Without a concurrent commit the compensation revokes as usual, and the
+	// rollback context deadline reaches the service call (the operation timeout
+	// must not be stripped before the cluster rollback runs)
+	updateBindingForTest(t, db, ctx, "/apps/derived", func(b *types.Binding) {
+		b.StagedMetadata.Grants = []string{"read:t1"}
+		b.StagedMetadata.GrantsApplied = []types.BindingGrant{{GrantType: types.GrantTypeRead, GrantTarget: "t1"}}
+	})
+	binding2 := getBindingForTest(t, db, ctx, "/apps/derived")
+	binding2.StagedMetadata.Grants = []string{"read:t1", "read:t2"}
+	grantCalls = nil
+	accounts2 := server.newBindingAccountManager(false)
+	if _, err := accounts2.applyGrants(ctx, service, binding2, derivedFrom, true, false); err != nil {
+		t.Fatalf("apply grants again: %v", err)
+	}
+	deadlineSeen := false
+	revokeHook = func(hctx context.Context) {
+		_, deadlineSeen = hctx.Deadline()
+	}
+	accounts2.rollbackAndClose(tctx)
+	if !slices.Equal(revokeCalls, []string{"stage|READ:t2"}) {
+		t.Fatalf("revoke calls = %v, want compensation for read:t2", revokeCalls)
+	}
+	if !deadlineSeen {
+		t.Fatal("rollback revoke did not receive the operation deadline")
 	}
 }

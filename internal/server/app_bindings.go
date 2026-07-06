@@ -38,8 +38,10 @@ func useStagedBindingMetadata(binding *types.Binding, useStaging bool) bool {
 // resolveAppBindings resolves the binding references on an app. A reference that
 // starts with "/" is an existing binding path. Any other reference is a service
 // source (serviceType or serviceType/name) for which an auto binding is created.
+// Auto binding accounts are tracked on the operation's account manager, so they
+// are removed from the service if the operation's transaction is rolled back.
 func (s *Server) resolveAppBindings(ctx context.Context, tx types.Transaction, appID types.AppId,
-	bindingRefs []string, dryRun bool) ([]string, error) {
+	bindingRefs []string, dryRun bool, accounts *bindingAccountManager) ([]string, error) {
 	resolved := make([]string, 0, len(bindingRefs))
 	seen := make(map[string]bool, len(bindingRefs))
 	addResolved := func(path string) {
@@ -66,7 +68,7 @@ func (s *Server) resolveAppBindings(ctx context.Context, tx types.Transaction, a
 			return nil, err
 		}
 		autoPath := autoBindingPathForAppID(appID, service.ServiceType)
-		if err := s.ensureAutoBinding(ctx, tx, autoPath, bindingRef, service, dryRun); err != nil {
+		if err := s.ensureAutoBinding(ctx, tx, autoPath, bindingRef, service, accounts); err != nil {
 			return nil, err
 		}
 		addResolved(autoPath)
@@ -74,7 +76,8 @@ func (s *Server) resolveAppBindings(ctx context.Context, tx types.Transaction, a
 	return resolved, nil
 }
 
-func (s *Server) ensureAutoBinding(ctx context.Context, tx types.Transaction, bindingPath, source string, service *types.Service, dryRun bool) error {
+func (s *Server) ensureAutoBinding(ctx context.Context, tx types.Transaction, bindingPath, source string, service *types.Service,
+	accounts *bindingAccountManager) error {
 	binding, err := s.db.GetBinding(ctx, tx, bindingPath)
 	if err == nil {
 		if binding.ServiceType != service.ServiceType || binding.ServiceName != service.Name {
@@ -90,14 +93,12 @@ func (s *Server) ensureAutoBinding(ctx context.Context, tx types.Transaction, bi
 		Path:   bindingPath,
 		Source: source,
 	}
-	accounts := s.newBindingAccountManager(dryRun)
-	defer accounts.rollbackAndClose(ctx)
+	// The auto binding row and its service account share the operation's fate: the
+	// row is written on the operation's transaction and the account is tracked on
+	// the operation's account manager, which deletes it if the operation rolls back.
 	if _, err := s.createBindingTx(ctx, tx, createRequest, accounts, true); err != nil {
 		return fmt.Errorf("error creating auto binding %s for service %s: %w", bindingPath, source, err)
 	}
-	// The auto binding account is kept once created; it is not removed if the
-	// caller's metadata transaction is rolled back.
-	accounts.commit()
 	return nil
 }
 

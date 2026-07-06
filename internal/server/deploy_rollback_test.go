@@ -21,7 +21,7 @@ func testServer() *Server {
 // stack if the operation did not commit.
 func TestDeployScopeOwnerRollsBack(t *testing.T) {
 	s := testServer()
-	ctx, scope := s.beginDeployScope(context.Background(), true)
+	ctx, scope := s.beginDeployScope(context.Background(), true, false)
 
 	rolled := false
 	container.DeployTxnFromContext(ctx).Register("app1", "clc-app1", func(context.Context) error { rolled = true; return nil }, nil)
@@ -39,7 +39,7 @@ func TestDeployScopeOwnerRollsBack(t *testing.T) {
 // A committed owner does not roll back.
 func TestDeployScopeCommittedDoesNotRollBack(t *testing.T) {
 	s := testServer()
-	ctx, scope := s.beginDeployScope(context.Background(), true)
+	ctx, scope := s.beginDeployScope(context.Background(), true, false)
 	rolled := false
 	container.DeployTxnFromContext(ctx).Register("app1", "clc-app1", func(context.Context) error { rolled = true; return nil }, nil)
 
@@ -60,9 +60,9 @@ func TestDeployScopeCommittedDoesNotRollBack(t *testing.T) {
 func TestDeployScopeNonOwnerDefersToOwner(t *testing.T) {
 	s := testServer()
 	// Owner creates the stack.
-	ctx, owner := s.beginDeployScope(context.Background(), true)
+	ctx, owner := s.beginDeployScope(context.Background(), true, false)
 	// Inner call is handed the same context but does not own the DB tx.
-	ctx2, inner := s.beginDeployScope(ctx, false)
+	ctx2, inner := s.beginDeployScope(ctx, false, false)
 
 	rolled := 0
 	container.DeployTxnFromContext(ctx2).Register("app1", "clc-app1", func(context.Context) error { rolled++; return nil }, nil)
@@ -86,7 +86,7 @@ func TestDeployScopeNonOwnerDefersToOwner(t *testing.T) {
 // A rollback failure is surfaced in the returned error, not just logged.
 func TestDeployScopeRollbackErrorSurfaced(t *testing.T) {
 	s := testServer()
-	ctx, scope := s.beginDeployScope(context.Background(), true)
+	ctx, scope := s.beginDeployScope(context.Background(), true, false)
 	container.DeployTxnFromContext(ctx).Register("app1", "clc-app1", func(context.Context) error { return errors.New("restore boom") }, nil)
 
 	origErr := errors.New("verify failed")
@@ -99,7 +99,7 @@ func TestDeployScopeRollbackErrorSurfaced(t *testing.T) {
 	}
 
 	// With no original error, a rollback failure still becomes the result.
-	ctx2, scope2 := s.beginDeployScope(context.Background(), true)
+	ctx2, scope2 := s.beginDeployScope(context.Background(), true, false)
 	container.DeployTxnFromContext(ctx2).Register("app1", "clc-app1", func(context.Context) error { return errors.New("restore boom2") }, nil)
 	got2 := scope2.finish(ctx2, nil)
 	if got2 == nil || !strings.Contains(got2.Error(), "restore boom2") {
@@ -111,7 +111,7 @@ func TestDeployScopeRollbackErrorSurfaced(t *testing.T) {
 // stop being reported once the owning scope commits or finishes.
 func TestDeployScopeInFlightContainerNames(t *testing.T) {
 	s := testServer()
-	ctx, scope := s.beginDeployScope(context.Background(), true)
+	ctx, scope := s.beginDeployScope(context.Background(), true, false)
 	container.DeployTxnFromContext(ctx).Register("app1", "clc-app1", nil, nil)
 
 	if names := s.inFlightContainerNames(); !names["clc-app1"] {
@@ -125,7 +125,7 @@ func TestDeployScopeInFlightContainerNames(t *testing.T) {
 	}
 
 	// The failure path unregisters through finish
-	ctx2, scope2 := s.beginDeployScope(context.Background(), true)
+	ctx2, scope2 := s.beginDeployScope(context.Background(), true, false)
 	container.DeployTxnFromContext(ctx2).Register("app2", "clc-app2", nil, nil)
 	if names := s.inFlightContainerNames(); !names["clc-app2"] {
 		t.Fatalf("in-flight names=%v, want clc-app2 while operation is running", names)
@@ -141,7 +141,7 @@ func TestDeployScopeInFlightContainerNames(t *testing.T) {
 // the previous version.
 func TestDeployScopeCommitErrorSurfaced(t *testing.T) {
 	s := testServer()
-	ctx, scope := s.beginDeployScope(context.Background(), true)
+	ctx, scope := s.beginDeployScope(context.Background(), true, false)
 	container.DeployTxnFromContext(ctx).Register("app1", "clc-app1", nil,
 		func(context.Context) error { return errors.New("flip boom") })
 
@@ -159,7 +159,7 @@ func TestDeployScopeCommitErrorSurfaced(t *testing.T) {
 func TestDeployScopeRollbackUsesDetachedContext(t *testing.T) {
 	s := testServer()
 	ctx, cancel := context.WithCancel(context.Background())
-	ctx, scope := s.beginDeployScope(ctx, true)
+	ctx, scope := s.beginDeployScope(ctx, true, false)
 
 	rolled := false
 	container.DeployTxnFromContext(ctx).Register("app1", "clc-app1", func(c context.Context) error {
