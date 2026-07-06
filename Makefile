@@ -66,8 +66,8 @@ covunit: ## Run unit tests with coverage
 int: ## Run integration tests
 > OPENRUN_HOME=$(OPENRUN_HOME) ./tests/run_cli_tests.sh
 
-testui: ## Run the console app integration tests (ui/console_tests/api, own module)
-> cd ui/console_tests/api && go test -count=1 ./...
+testui: ## Run the console app integration tests (ui/console_tests, own module)
+> cd ui/console_tests && go test -count=1 ./...
 
 int_single: ## Run one integration test
 > CL_SINGLE_TEST=${INPUT} OPENRUN_HOME=$(OPENRUN_HOME) ./tests/run_cli_tests.sh
