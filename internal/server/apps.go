@@ -140,13 +140,13 @@ func (a *AppStore) reloadAppInfo() error {
 	}
 
 	a.allDomains = make(map[string]bool)
-	a.allDomains[a.server.config.System.DefaultDomain] = true
+	a.allDomains[a.server.Config().System.DefaultDomain] = true
 	for _, appInfo := range a.allApps {
 		if appInfo.Domain != "" {
 			a.allDomains[appInfo.Domain] = true
 		}
 	}
-	a.domainApps = buildDomainApps(a.allApps, a.server.config.System.DefaultDomain)
+	a.domainApps = buildDomainApps(a.allApps, a.server.Config().System.DefaultDomain)
 	return nil
 }
 

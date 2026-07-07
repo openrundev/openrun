@@ -14,12 +14,12 @@ import (
 )
 
 func (s *Server) getServerUri() string {
-	uri := s.config.Security.CallbackUrl
+	uri := s.Config().Security.CallbackUrl
 	if uri == "" {
-		if s.config.Https.Port != -1 {
-			uri = fmt.Sprintf("https://localhost:%d", s.config.Https.Port)
+		if s.Config().Https.Port != -1 {
+			uri = fmt.Sprintf("https://localhost:%d", s.Config().Https.Port)
 		} else {
-			uri = fmt.Sprintf("http://localhost:%d", s.config.Http.Port)
+			uri = fmt.Sprintf("http://localhost:%d", s.Config().Http.Port)
 		}
 	}
 

@@ -74,8 +74,8 @@ func TestLoadApplyInfoStageAt(t *testing.T) {
 	t.Parallel()
 
 	server := &Server{
-		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
-		config: &types.ServerConfig{},
+		Logger:       types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		staticConfig: &types.ServerConfig{},
 	}
 	apps, _, err := server.loadApplyInfo("stage_at.ace", []byte(`app("/apps/stage-at", "/tmp/app", stage_at="stage.example.com")`), "", false)
 	if err != nil {
@@ -232,7 +232,7 @@ func newApplyTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Cont
 	}
 	server := &Server{
 		Logger:         logger,
-		config:         config,
+		staticConfig:   config,
 		db:             db,
 		secretsManager: secretsManager,
 		notifyClose:    make(chan types.AppPathDomain),
@@ -1142,7 +1142,7 @@ func TestCreateAppRollbackRemovesAutoBindingAccount(t *testing.T) {
 func TestRunSyncJobPersistsFailureStatus(t *testing.T) {
 	server, db, ctx := newApplyTestServer(t)
 	defer db.Close()
-	server.config.System.MaxSyncFailureCount = 3
+	server.staticConfig.System.MaxSyncFailureCount = 3
 
 	applyPath := filepath.Join(t.TempDir(), "sync.ace")
 	appSourceDir := filepath.Join(t.TempDir(), "app")

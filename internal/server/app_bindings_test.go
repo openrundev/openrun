@@ -80,7 +80,7 @@ func TestUseStagedBindingMetadata(t *testing.T) {
 }
 
 func TestLoadApplyInfoParsesAppBindingsAndBindingPerms(t *testing.T) {
-	server := &Server{config: &types.ServerConfig{}}
+	server := &Server{staticConfig: &types.ServerConfig{}}
 
 	apps, bindings, err := server.loadApplyInfo("test.ace", []byte(`app("/p1", "-", bindings=["postgres", "/existing"], bind_perm=["postgres/private"])`), "", false)
 	if err != nil {

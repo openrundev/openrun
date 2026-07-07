@@ -31,9 +31,9 @@ func newAuthRedirectTestServer(defaultDomain string, fallbackUnknownDomains bool
 		},
 	}
 	return &Server{
-		Logger:      logger,
-		config:      config,
-		authHandler: NewAdminBasicAuth(logger, config),
+		Logger:       logger,
+		staticConfig: config,
+		authHandler:  NewAdminBasicAuth(logger, config),
 		oAuthManager: &OAuthManager{
 			Logger:          logger,
 			config:          config,
@@ -122,7 +122,7 @@ func TestStageAppPathDomain(t *testing.T) {
 	t.Parallel()
 
 	server := &Server{
-		config: &types.ServerConfig{
+		staticConfig: &types.ServerConfig{
 			System: types.SystemConfig{
 				DefaultDomain: "apps.example.com",
 			},
@@ -217,7 +217,7 @@ func newAppAPIMetadataTestServer(t *testing.T) (*Server, *metadata.Metadata, con
 	}
 	server := &Server{
 		Logger:         logger,
-		config:         config,
+		staticConfig:   config,
 		db:             db,
 		notifyClose:    make(chan types.AppPathDomain),
 		secretsManager: secretManager,
@@ -414,7 +414,7 @@ func TestValidateAppAuthnTypeChecksForwardModifier(t *testing.T) {
 	t.Parallel()
 
 	server := newAuthRedirectTestServer("example.com", false)
-	server.config.Forward = map[string]types.ForwardConfig{
+	server.staticConfig.Forward = map[string]types.ForwardConfig{
 		"authz": {AuthUrl: "http://auth.example.com/check"},
 	}
 	server.oAuthManager.providerConfigs["github"] = &types.AuthConfig{}
@@ -437,7 +437,7 @@ func TestUpdateAppMetadataConfigValidatesForwardModifier(t *testing.T) {
 	t.Parallel()
 
 	server := newAuthRedirectTestServer("example.com", false)
-	server.config.Forward = map[string]types.ForwardConfig{
+	server.staticConfig.Forward = map[string]types.ForwardConfig{
 		"authz": {AuthUrl: "http://auth.example.com/check"},
 	}
 	server.oAuthManager.providerConfigs["github"] = &types.AuthConfig{}
@@ -492,9 +492,9 @@ func TestGetAppsDoesNotResolveBindingServices(t *testing.T) {
 	defer db.Close()
 
 	server := &Server{
-		Logger: logger,
-		config: config,
-		db:     db,
+		Logger:       logger,
+		staticConfig: config,
+		db:           db,
 		rbacManager: &rbac.RBACManager{
 			Logger:     logger,
 			RbacConfig: &types.RBACConfig{},
@@ -572,8 +572,8 @@ func TestAuthorizeListStripsForwardModifier(t *testing.T) {
 	t.Parallel()
 
 	server := newAuthRedirectTestServer("example.com", false)
-	server.config.Security.AppDefaultAuthType = "github+forward_authz"
-	server.config.Forward = map[string]types.ForwardConfig{
+	server.staticConfig.Security.AppDefaultAuthType = "github+forward_authz"
+	server.staticConfig.Forward = map[string]types.ForwardConfig{
 		"authz": {AuthUrl: "http://auth.example.com/check"},
 	}
 
@@ -603,8 +603,8 @@ func TestResolvesDefaultAuthWithForwardModifier(t *testing.T) {
 	t.Parallel()
 
 	server := newAuthRedirectTestServer("example.com", false)
-	server.config.Security.AppDefaultAuthType = "github+forward_authz"
-	server.config.Forward = map[string]types.ForwardConfig{
+	server.staticConfig.Security.AppDefaultAuthType = "github+forward_authz"
+	server.staticConfig.Forward = map[string]types.ForwardConfig{
 		"authz": {AuthUrl: "http://auth.example.com/check"},
 	}
 

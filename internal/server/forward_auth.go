@@ -50,7 +50,7 @@ func (s *Server) forwardAuthMiddleware(next http.Handler, forwardConfig *types.F
 		}
 
 		copyForwardAuthRequestHeaders(authReq, r, forwardConfig.ForwardHeaders)
-		setForwardAuthHeaders(authReq.Header, r, s.config)
+		setForwardAuthHeaders(authReq.Header, r, s.Config())
 		setForwardAuthOpenRunHeaders(authReq.Header, r)
 
 		authResp, err := s.forwardAuthHTTPClient.Do(authReq)

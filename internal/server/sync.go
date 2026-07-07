@@ -57,7 +57,7 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 		}
 		sync.WebhookSecret = fmt.Sprintf("cl_tkn_%s", base64.StdEncoding.EncodeToString([]byte(secret)))
 	} else if sync.ScheduleFrequency <= 0 {
-		sync.ScheduleFrequency = s.config.System.DefaultScheduleMins
+		sync.ScheduleFrequency = s.Config().System.DefaultScheduleMins
 	}
 
 	syncEntry := types.SyncEntry{
@@ -271,7 +271,7 @@ func (s *Server) runSyncJobs() error {
 			continue
 		}
 
-		if entry.Status.FailureCount >= s.config.System.MaxSyncFailureCount {
+		if entry.Status.FailureCount >= s.Config().System.MaxSyncFailureCount {
 			s.Trace().Msgf("Sync job %s has failed too many times, skipping", entry.Id)
 			continue
 		}
@@ -353,7 +353,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		applyInfo.DryRun = dryRun
 		applyInfo.FilteredApps = lastRunApps
 		status.FailureCount = entry.Status.FailureCount + 1
-		if status.FailureCount >= s.config.System.MaxSyncFailureCount {
+		if status.FailureCount >= s.Config().System.MaxSyncFailureCount {
 			status.State = "Disabled"
 		} else {
 			status.State = "Failing"
@@ -414,7 +414,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 					s.Error().Err(reloadErr).Msgf("Error reloading app %s sync job %s", appPath, entry.Id)
 					status.Error = reloadErr.Error()
 					status.FailureCount = entry.Status.FailureCount + 1
-					if status.FailureCount >= s.config.System.MaxSyncFailureCount {
+					if status.FailureCount >= s.Config().System.MaxSyncFailureCount {
 						status.State = "Disabled"
 					} else {
 						status.State = "Failing"

@@ -875,6 +875,20 @@ type JSLibrary struct {
 type DynamicConfig struct {
 	VersionId string     `json:"version_id"`
 	RBAC      RBACConfig `json:"rbac"`
+
+	// Entries holds the dynamically configured named entries: section name ->
+	// entry name -> field values, mirroring the named-entry map sections of
+	// openrun.toml ([git_auth.x], [auth.y], [saml.z], ...). Dynamic entries
+	// take precedence over static entries with the same name. Unlike RBAC,
+	// entry updates are not staged and take effect immediately
+	Entries map[string]map[string]map[string]any `json:"entries,omitempty"`
+
+	// Settings holds dynamically configured fields of the struct sections of
+	// openrun.toml: section name -> dotted field key -> value (for example
+	// security -> default_git_auth, app_config -> cors.allow_origin). A set
+	// field takes precedence over the static config value. Like Entries,
+	// settings updates are not staged and take effect immediately
+	Settings map[string]map[string]any `json:"settings,omitempty"`
 }
 
 // ConfigDraft is the staged dynamic config edit, stored separately from the

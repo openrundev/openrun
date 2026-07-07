@@ -57,7 +57,7 @@ func NewRepoCache(server *Server) (*RepoCache, error) {
 }
 
 func (r *RepoCache) GetSha(sourceUrl, branch, gitAuth string) (string, error) {
-	gitAuth = cmp.Or(gitAuth, r.server.config.Security.DefaultGitAuth)
+	gitAuth = cmp.Or(gitAuth, r.server.Config().Security.DefaultGitAuth)
 	authEntry, err := r.server.loadGitKey(gitAuth)
 	if err != nil {
 		return "", err
@@ -134,7 +134,7 @@ func latestCommitSHA(repoURL, branch string, auth transport.AuthMethod) (string,
 }
 
 func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDev bool) (string, string, string, string, error) {
-	gitAuth = cmp.Or(gitAuth, r.server.config.Security.DefaultGitAuth)
+	gitAuth = cmp.Or(gitAuth, r.server.Config().Security.DefaultGitAuth)
 	authEntry, err := r.server.loadGitKey(gitAuth)
 	if err != nil {
 		return "", "", "", "", err

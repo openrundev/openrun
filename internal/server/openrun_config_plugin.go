@@ -50,7 +50,8 @@ func (c *openrunPlugin) GetRBACConfig(thread *starlark.Thread, builtin *starlark
 	return starlark_type.ConvertToStarlark(ret)
 }
 
-// GetConfigVersion returns one config history snapshot as formatted JSON
+// GetConfigVersion returns one config history snapshot as formatted JSON.
+// Secret values in dynamic config entries are redacted
 func (c *openrunPlugin) GetConfigVersion(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var versionId starlark.String
 	if err := starlark.UnpackArgs("get_config_version", args, kwargs, "version_id", &versionId); err != nil {
@@ -60,6 +61,21 @@ func (c *openrunPlugin) GetConfigVersion(thread *starlark.Thread, builtin *starl
 	snapshot, err := c.server.GetConfigVersion(system.GetRequestContext(thread), versionId.GoString())
 	if err != nil {
 		return nil, err
+	}
+	if len(snapshot.Entries) > 0 || len(snapshot.Settings) > 0 {
+		redacted, err := copyDynamicConfig(snapshot)
+		if err != nil {
+			return nil, err
+		}
+		for section, sectionEntries := range redacted.Entries {
+			for name, values := range sectionEntries {
+				redacted.Entries[section][name] = redactEntryValues(values)
+			}
+		}
+		for section, values := range redacted.Settings {
+			redacted.Settings[section] = redactEntryValues(values)
+		}
+		snapshot = redacted
 	}
 	formatted, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
@@ -95,6 +111,143 @@ func (c *openrunPlugin) ListRBACPermissions(thread *starlark.Thread, builtin *st
 		ret.Append(value) //nolint:errcheck
 	}
 	return &ret, nil
+}
+
+// GetConfigEntries returns the static and dynamic entries for the requested
+// config sections (all dynamically settable sections when the list is
+// empty), values redacted. Sections are the named-entry map sections of
+// openrun.toml: git_auth, auth, saml, ...
+func (c *openrunPlugin) GetConfigEntries(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var sections *starlark.List
+	if err := starlark.UnpackArgs("get_config_entries", args, kwargs, "sections?", &sections); err != nil {
+		return nil, err
+	}
+	sectionNames, err := listToStringSlice(sections, "sections")
+	if err != nil {
+		return nil, err
+	}
+
+	entries, err := c.server.GetConfigEntries(system.GetRequestContext(thread), sectionNames)
+	if err != nil {
+		return nil, err
+	}
+
+	config := c.server.GetDynamicConfig()
+	ret := map[string]any{"version_id": config.VersionId, "sections": map[string]any{}}
+	retSections := ret["sections"].(map[string]any)
+	for section, sectionEntries := range entries {
+		list := make([]any, 0, len(sectionEntries))
+		for _, entry := range sectionEntries {
+			list = append(list, map[string]any{
+				"name":       entry.Name,
+				"values":     entry.Values,
+				"source":     entry.Source,
+				"overridden": entry.Overridden,
+			})
+		}
+		retSections[section] = list
+	}
+	return starlark_type.ConvertToStarlark(ret)
+}
+
+// GetConfigValues returns the static and dynamic field values for the
+// requested struct config sections (security, system, logging, ...), values
+// redacted. Static values are flattened to dotted keys
+func (c *openrunPlugin) GetConfigValues(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var sections *starlark.List
+	if err := starlark.UnpackArgs("get_config_values", args, kwargs, "sections?", &sections); err != nil {
+		return nil, err
+	}
+	sectionNames, err := listToStringSlice(sections, "sections")
+	if err != nil {
+		return nil, err
+	}
+
+	values, err := c.server.GetConfigValues(system.GetRequestContext(thread), sectionNames)
+	if err != nil {
+		return nil, err
+	}
+
+	config := c.server.GetDynamicConfig()
+	ret := map[string]any{"version_id": config.VersionId, "sections": map[string]any{}}
+	retSections := ret["sections"].(map[string]any)
+	for section, sectionValues := range values {
+		retSections[section] = map[string]any{
+			"static":  sectionValues.Static,
+			"dynamic": sectionValues.Dynamic,
+		}
+	}
+	return starlark_type.ConvertToStarlark(ret)
+}
+
+// SetConfigValue sets one dynamic config field (section + dotted key). The
+// change is validated against the config schema and takes effect immediately
+// (settings updates are not staged, unlike RBAC). version_id is the CAS token
+func (c *openrunAdminPlugin) SetConfigValue(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var section, key, versionId starlark.String
+	var value starlark.Value
+	if err := starlark.UnpackArgs("set_config_value", args, kwargs, "section", &section,
+		"key", &key, "value", &value, "version_id?", &versionId); err != nil {
+		return nil, err
+	}
+
+	goValue, err := starlark_type.UnmarshalStarlark(value)
+	if err != nil {
+		return nil, err
+	}
+
+	return configVersionResult(c.server.SetConfigValue(system.GetRequestContext(thread),
+		section.GoString(), key.GoString(), goValue, versionId.GoString()))
+}
+
+// DeleteConfigValue removes one dynamic config field, immediately reverting
+// to the static openrun.toml value
+func (c *openrunAdminPlugin) DeleteConfigValue(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var section, key, versionId starlark.String
+	if err := starlark.UnpackArgs("delete_config_value", args, kwargs, "section", &section,
+		"key", &key, "version_id?", &versionId); err != nil {
+		return nil, err
+	}
+
+	return configVersionResult(c.server.DeleteConfigValue(system.GetRequestContext(thread),
+		section.GoString(), key.GoString(), versionId.GoString()))
+}
+
+// SetConfigEntry creates or replaces one dynamic config entry. The change is
+// validated against the config schema and takes effect immediately (entry
+// updates are not staged, unlike RBAC). version_id is the CAS token
+func (c *openrunAdminPlugin) SetConfigEntry(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var section, name, versionId starlark.String
+	var values *starlark.Dict
+	if err := starlark.UnpackArgs("set_config_entry", args, kwargs, "section", &section,
+		"name", &name, "values", &values, "version_id?", &versionId); err != nil {
+		return nil, err
+	}
+
+	goValues, err := starlark_type.UnmarshalStarlark(values)
+	if err != nil {
+		return nil, err
+	}
+	valuesMap, ok := goValues.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("values must be a dict with string keys")
+	}
+
+	return configVersionResult(c.server.SetConfigEntry(system.GetRequestContext(thread),
+		section.GoString(), name.GoString(), valuesMap, versionId.GoString()))
+}
+
+// DeleteConfigEntry removes one dynamic config entry, immediately reverting
+// to the static entry of the same name if one exists
+func (c *openrunAdminPlugin) DeleteConfigEntry(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var section, name, versionId starlark.String
+	if err := starlark.UnpackArgs("delete_config_entry", args, kwargs, "section", &section,
+		"name", &name, "version_id?", &versionId); err != nil {
+		return nil, err
+	}
+
+	return configVersionResult(c.server.DeleteConfigEntry(system.GetRequestContext(thread),
+		section.GoString(), name.GoString(), versionId.GoString()))
 }
 
 // ListConfigHistory lists the dynamic config snapshots, newest first

@@ -22,7 +22,7 @@ func newForwardAuthTestServer(config *types.ServerConfig) *Server {
 	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
 	return &Server{
 		Logger:                logger,
-		config:                config,
+		staticConfig:          config,
 		forwardAuthHTTPClient: newForwardAuthHTTPClient(config),
 	}
 }
@@ -296,7 +296,7 @@ func TestSetForwardAuthHeadersHonorsTrustedProxy(t *testing.T) {
 	header.Set("X-Forwarded-Proto", "http")
 	header.Set("X-Real-IP", "198.51.100.11")
 
-	setForwardAuthHeaders(header, req, s.config)
+	setForwardAuthHeaders(header, req, s.staticConfig)
 
 	assertHeader(t, header, "Forwarded", "")
 	assertHeader(t, header, "X-Forwarded-For", "203.0.113.5")

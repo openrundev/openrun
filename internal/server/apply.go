@@ -42,7 +42,7 @@ func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, appl
 	builtins := starlark.StringDict{
 		APP:            applyBuiltins.createAppBuiltin,
 		BINDING:        applyBuiltins.createBindingBuiltin,
-		apptype.CONFIG: starlark.NewBuiltin(apptype.CONFIG, apptype.CreateConfigBuiltin(s.config.NodeConfig, s.config.System.AllowedEnv)),
+		apptype.CONFIG: starlark.NewBuiltin(apptype.CONFIG, apptype.CreateConfigBuiltin(s.Config().NodeConfig, s.Config().System.AllowedEnv)),
 	}
 
 	thread := &starlark.Thread{
@@ -319,10 +319,10 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 			}
 			if appPathDomain.Domain != "" && appPathDomain.Domain[len(appPathDomain.Domain)-1] == '.' {
 				// If domain ends with a dot, append the default domain
-				if s.config.System.DefaultDomain == "" {
+				if s.Config().System.DefaultDomain == "" {
 					return nil, nil, types.CreateRequestError("Domain cannot end with a dot since default_domain is not configured", http.StatusBadRequest)
 				}
-				appPathDomain.Domain += s.config.System.DefaultDomain
+				appPathDomain.Domain += s.Config().System.DefaultDomain
 			}
 			if _, ok := applyConfig[appPathDomain]; ok {
 				return nil, nil, fmt.Errorf("duplicate app %s defined in file %s", appPathDomain, f)

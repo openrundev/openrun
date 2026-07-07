@@ -331,8 +331,8 @@ func (s *Server) getServiceBinding(ctx context.Context, service *types.Service, 
 
 func (s *Server) serviceBindingRuntime() bindings.ServiceBindingRuntime {
 	containerCommand := ""
-	if s.config != nil {
-		containerCommand = s.config.System.ContainerCommand
+	if s.Config() != nil {
+		containerCommand = s.Config().System.ContainerCommand
 	}
 	return bindings.ServiceBindingRuntime{
 		LocalhostBindingHostname: container.LocalhostBindingHostname(containerCommand),

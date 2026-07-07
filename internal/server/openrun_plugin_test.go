@@ -87,7 +87,7 @@ func TestListAllAppsBreadcrumbGlobsCoverDisplayedBreadcrumbs(t *testing.T) {
 	}
 	server := &Server{
 		apps: &AppStore{allApps: apps},
-		config: &types.ServerConfig{
+		staticConfig: &types.ServerConfig{
 			System: types.SystemConfig{DefaultDomain: "utils.demo.clace.io"},
 			Http:   types.HttpConfig{Port: 80},
 		},

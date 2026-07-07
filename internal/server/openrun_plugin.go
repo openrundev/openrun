@@ -39,10 +39,14 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.AuditApp, app.READ, "audit_app"),
 		app.CreatePluginApiName(c.ListServices, app.READ, "list_services"),
 		app.CreatePluginApiName(c.GetRBACConfig, app.READ, "get_rbac_config"),
+		app.CreatePluginApiName(c.GetConfigEntries, app.READ, "get_config_entries"),
+		app.CreatePluginApiName(c.GetConfigValues, app.READ, "get_config_values"),
 		app.CreatePluginApiName(c.ListConfigHistory, app.READ, "list_config_history"),
 		app.CreatePluginApiName(c.GetConfigVersion, app.READ, "get_config_version"),
 		app.CreatePluginApiName(c.ListContainers, app.READ, "list_containers"),
 		app.CreatePluginApiName(c.GetContainer, app.READ, "get_container"),
+		app.CreatePluginApiName(c.KubernetesStats, app.READ, "kubernetes_stats"),
+		app.CreatePluginApiName(c.ContainerKubernetesStatus, app.READ, "container_kubernetes_status"),
 		app.CreatePluginApiName(c.GetContainerLogs, app.READ, "container_logs"),
 		app.CreatePluginApiName(c.GetContainerLogsStream, app.READ, "container_logs_stream"),
 		app.CreatePluginApiName(c.GetPermissions, app.READ, "get_permissions"),
@@ -192,7 +196,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 
 		v := starlark.Dict{}
 		v.SetKey(starlark.String("name"), starlark.String(app.Name))
-		v.SetKey(starlark.String("url"), starlark.String(types.GetAppUrl(app.AppPathDomain, c.server.config)))
+		v.SetKey(starlark.String("url"), starlark.String(types.GetAppUrl(app.AppPathDomain, c.server.Config())))
 		v.SetKey(starlark.String("path"), starlark.String(app.String()))
 		pathSplit := starlark.List{}
 		pathSplitGlob := starlark.List{}
@@ -244,7 +248,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		v.SetKey(starlark.String("main_app"), starlark.String(app.MainApp))
 		v.SetKey(starlark.String("created_by"), starlark.String(app.UserID))
 		if app.Auth == types.AppAuthnDefault {
-			v.SetKey(starlark.String("auth"), starlark.String(c.server.config.Security.AppDefaultAuthType))
+			v.SetKey(starlark.String("auth"), starlark.String(c.server.Config().Security.AppDefaultAuthType))
 			v.SetKey(starlark.String("auth_uses_default"), starlark.Bool(true))
 		} else {
 			v.SetKey(starlark.String("auth"), starlark.String(app.Auth))
@@ -611,22 +615,22 @@ func (c *openrunPlugin) GetApp(thread *starlark.Thread, builtin *starlark.Builti
 	}
 
 	v := starlark.Dict{}
-	v.SetKey(starlark.String("path"), starlark.String(entry.AppPathDomain().String()))                         //nolint:errcheck
-	v.SetKey(starlark.String("name"), starlark.String(entry.Metadata.Name))                                    //nolint:errcheck
-	v.SetKey(starlark.String("id"), starlark.String(entry.Id))                                                 //nolint:errcheck
-	v.SetKey(starlark.String("url"), starlark.String(types.GetAppUrl(entry.AppPathDomain(), c.server.config))) //nolint:errcheck
-	v.SetKey(starlark.String("source_url"), starlark.String(entry.SourceUrl))                                  //nolint:errcheck
-	v.SetKey(starlark.String("is_dev"), starlark.Bool(entry.IsDev))                                            //nolint:errcheck
-	v.SetKey(starlark.String("auth"), starlark.String(entry.Metadata.AuthnType))                               //nolint:errcheck
-	v.SetKey(starlark.String("spec"), starlark.String(entry.Metadata.Spec))                                    //nolint:errcheck
-	v.SetKey(starlark.String("git_branch"), starlark.String(entry.Metadata.VersionMetadata.GitBranch))         //nolint:errcheck
-	v.SetKey(starlark.String("git_commit"), starlark.String(entry.Metadata.VersionMetadata.GitCommit))         //nolint:errcheck
-	v.SetKey(starlark.String("git_message"), starlark.String(entry.Metadata.VersionMetadata.GitMessage))       //nolint:errcheck
-	v.SetKey(starlark.String("git_auth"), starlark.String(entry.Metadata.GitAuthName))                         //nolint:errcheck
-	v.SetKey(starlark.String("version"), starlark.MakeInt(entry.Metadata.VersionMetadata.Version))             //nolint:errcheck
-	v.SetKey(starlark.String("applied_sync_id"), starlark.String(entry.Metadata.AppliedSyncId))                //nolint:errcheck
-	v.SetKey(starlark.String("params"), &params)                                                               //nolint:errcheck
-	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))                          //nolint:errcheck
+	v.SetKey(starlark.String("path"), starlark.String(entry.AppPathDomain().String()))                           //nolint:errcheck
+	v.SetKey(starlark.String("name"), starlark.String(entry.Metadata.Name))                                      //nolint:errcheck
+	v.SetKey(starlark.String("id"), starlark.String(entry.Id))                                                   //nolint:errcheck
+	v.SetKey(starlark.String("url"), starlark.String(types.GetAppUrl(entry.AppPathDomain(), c.server.Config()))) //nolint:errcheck
+	v.SetKey(starlark.String("source_url"), starlark.String(entry.SourceUrl))                                    //nolint:errcheck
+	v.SetKey(starlark.String("is_dev"), starlark.Bool(entry.IsDev))                                              //nolint:errcheck
+	v.SetKey(starlark.String("auth"), starlark.String(entry.Metadata.AuthnType))                                 //nolint:errcheck
+	v.SetKey(starlark.String("spec"), starlark.String(entry.Metadata.Spec))                                      //nolint:errcheck
+	v.SetKey(starlark.String("git_branch"), starlark.String(entry.Metadata.VersionMetadata.GitBranch))           //nolint:errcheck
+	v.SetKey(starlark.String("git_commit"), starlark.String(entry.Metadata.VersionMetadata.GitCommit))           //nolint:errcheck
+	v.SetKey(starlark.String("git_message"), starlark.String(entry.Metadata.VersionMetadata.GitMessage))         //nolint:errcheck
+	v.SetKey(starlark.String("git_auth"), starlark.String(entry.Metadata.GitAuthName))                           //nolint:errcheck
+	v.SetKey(starlark.String("version"), starlark.MakeInt(entry.Metadata.VersionMetadata.Version))               //nolint:errcheck
+	v.SetKey(starlark.String("applied_sync_id"), starlark.String(entry.Metadata.AppliedSyncId))                  //nolint:errcheck
+	v.SetKey(starlark.String("params"), &params)                                                                 //nolint:errcheck
+	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))                            //nolint:errcheck
 	if entry.UpdateTime != nil {
 		v.SetKey(starlark.String("update_time"), starlark.String(entry.UpdateTime.Format(time.RFC3339))) //nolint:errcheck
 	} else {
@@ -826,6 +830,35 @@ func (c *openrunPlugin) GetContainer(thread *starlark.Thread, builtin *starlark.
 	return starlark_type.ConvertToStarlark(detail)
 }
 
+// KubernetesStats returns pod stats for the OpenRun kubernetes namespaces
+// (system and apps); enabled is false when the runtime is not kubernetes
+func (c *openrunPlugin) KubernetesStats(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("kubernetes_stats", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	stats, err := c.server.GetKubernetesStats(system.GetRequestContext(thread))
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(stats)
+}
+
+// ContainerKubernetesStatus returns the kubernetes specific status of one
+// managed pod: conditions, container states and recent events
+func (c *openrunPlugin) ContainerKubernetesStatus(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id starlark.String
+	if err := starlark.UnpackArgs("container_kubernetes_status", args, kwargs, "id", &id); err != nil {
+		return nil, err
+	}
+
+	status, err := c.server.GetKubernetesPodStatus(system.GetRequestContext(thread), id.GoString())
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(status)
+}
+
 // GetContainerLogs returns the last tail lines of a container's logs
 func (c *openrunPlugin) GetContainerLogs(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var id starlark.String
@@ -928,7 +961,7 @@ func (c *openrunPlugin) ListGitAuths(thread *starlark.Thread, builtin *starlark.
 		return nil, err
 	}
 
-	names := slices.Collect(maps.Keys(c.server.config.GitAuth))
+	names := slices.Collect(maps.Keys(c.server.Config().GitAuth))
 	slices.Sort(names)
 	ret := starlark.List{}
 	for _, name := range names {

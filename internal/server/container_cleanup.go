@@ -18,14 +18,14 @@ type staleContainerManager interface {
 }
 
 func (s *Server) startStaleContainerCleanup() {
-	if s.config.System.ContainerCommand == "" || s.config.System.ContainerCommand == types.CONTAINER_KUBERNETES {
+	if s.Config().System.ContainerCommand == "" || s.Config().System.ContainerCommand == types.CONTAINER_KUBERNETES {
 		return
 	}
-	if s.config.System.StaleContainerCleanupIntervalMins <= 0 {
+	if s.Config().System.StaleContainerCleanupIntervalMins <= 0 {
 		return
 	}
 
-	interval := time.Duration(s.config.System.StaleContainerCleanupIntervalMins) * time.Minute
+	interval := time.Duration(s.Config().System.StaleContainerCleanupIntervalMins) * time.Minute
 	s.staleContainerCleanupTicker = time.NewTicker(interval)
 	s.staleContainerCleanupStop = make(chan struct{})
 	go s.staleContainerCleanupRunner()
@@ -51,7 +51,7 @@ func (s *Server) staleContainerCleanupRunner() {
 }
 
 func (s *Server) cleanupStaleContainers(ctx context.Context) error {
-	manager := container.NewCommandCM(s.Logger, s.config, "", "")
+	manager := container.NewCommandCM(s.Logger, s.Config(), "", "")
 	active := s.apps.ActiveContainerNames()
 	// Containers started by operations still in flight (reload/apply/sync
 	// before their DB transaction commits) are not yet referenced by the app

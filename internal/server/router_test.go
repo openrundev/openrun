@@ -33,7 +33,7 @@ func newRouterTestServer(adminOverTCP, redirectToHTTPS bool) (*types.ServerConfi
 	})
 	server := &Server{
 		Logger:         logger,
-		config:         config,
+		staticConfig:   config,
 		authHandler:    NewAdminBasicAuth(logger, config),
 		oAuthManager:   &OAuthManager{Logger: logger, config: config},
 		samlManager:    &SAMLManager{Logger: logger, config: config},
@@ -132,10 +132,9 @@ func TestRouterNewUDSHandler_NoAppRoutes(t *testing.T) {
 }
 
 func TestRouterHTTPSRedirectMiddleware(t *testing.T) {
-	config, server, logger := newRouterTestServer(false, false)
+	_, server, logger := newRouterTestServer(false, false)
 	handler := &Handler{
 		Logger: logger,
-		config: config,
 		server: server,
 	}
 
@@ -168,10 +167,9 @@ func TestRouterHTTPSRedirectMiddleware(t *testing.T) {
 }
 
 func TestRouterHTTPSRedirectMiddlewareFallsBackToConfiguredDomain(t *testing.T) {
-	config, server, logger := newRouterTestServer(false, false)
+	_, server, logger := newRouterTestServer(false, false)
 	handler := &Handler{
 		Logger: logger,
-		config: config,
 		server: server,
 	}
 
@@ -190,11 +188,10 @@ func TestRouterHTTPSRedirectMiddlewareFallsBackToConfiguredDomain(t *testing.T) 
 }
 
 func TestRouterHTTPSRedirectMiddlewarePreservesConfiguredCustomDomain(t *testing.T) {
-	config, server, logger := newRouterTestServer(false, false)
+	_, server, logger := newRouterTestServer(false, false)
 	server.apps.allDomains["app.example.com"] = true
 	handler := &Handler{
 		Logger: logger,
-		config: config,
 		server: server,
 	}
 
@@ -213,10 +210,9 @@ func TestRouterHTTPSRedirectMiddlewarePreservesConfiguredCustomDomain(t *testing
 }
 
 func TestRouterPanicRecovery(t *testing.T) {
-	config, server, logger := newRouterTestServer(false, false)
+	_, server, logger := newRouterTestServer(false, false)
 	handler := &Handler{
 		Logger: logger,
-		config: config,
 		server: server,
 	}
 

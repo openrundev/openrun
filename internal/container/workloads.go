@@ -7,6 +7,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/openrundev/openrun/internal/types"
@@ -107,6 +110,231 @@ func ListWorkloadPods(ctx context.Context, config *types.ServerConfig) ([]Worklo
 		workloads = append(workloads, podToWorkload(&pods.Items[i]))
 	}
 	return workloads, nil
+}
+
+// NamespaceStats summarizes the pods of one OpenRun kubernetes namespace
+type NamespaceStats struct {
+	Namespace string `json:"namespace"`
+	Kind      string `json:"kind"` // system / apps
+	Pods      int    `json:"pods"`
+	Running   int    `json:"running"`
+	Pending   int    `json:"pending"`
+	Failed    int    `json:"failed"`
+	Succeeded int    `json:"succeeded"`
+	Ready     int    `json:"ready"`
+}
+
+// GetNamespaceStats returns pod stats for the OpenRun system namespace and
+// the apps namespace
+func GetNamespaceStats(ctx context.Context, config *types.ServerConfig) ([]NamespaceStats, error) {
+	client, appsNamespace, err := newWorkloadClient(config)
+	if err != nil {
+		return nil, err
+	}
+	systemNamespace := strings.TrimSuffix(appsNamespace, "-apps")
+
+	stats := make([]NamespaceStats, 0, 2)
+	for _, entry := range []NamespaceStats{
+		{Namespace: systemNamespace, Kind: "system"},
+		{Namespace: appsNamespace, Kind: "apps"},
+	} {
+		pods, err := client.CoreV1().Pods(entry.Namespace).List(ctx, meta.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("error listing pods in %s: %w", entry.Namespace, err)
+		}
+		for i := range pods.Items {
+			pod := &pods.Items[i]
+			entry.Pods++
+			switch pod.Status.Phase {
+			case core.PodRunning:
+				entry.Running++
+			case core.PodPending:
+				entry.Pending++
+			case core.PodFailed:
+				entry.Failed++
+			case core.PodSucceeded:
+				entry.Succeeded++
+			}
+			if isPodReady(pod) {
+				entry.Ready++
+			}
+		}
+		stats = append(stats, entry)
+	}
+	return stats, nil
+}
+
+// ClusterStats summarizes the cluster as visible to a regular in-cluster
+// service account: the server version (open to any authenticated principal)
+// and node counts/capacity (cluster scoped, best-effort since RBAC may deny)
+type ClusterStats struct {
+	Version    string `json:"version"`
+	Platform   string `json:"platform"`
+	Nodes      int    `json:"nodes"`
+	ReadyNodes int    `json:"ready_nodes"`
+	CPU        string `json:"cpu"`         // total allocatable cpu cores
+	Memory     string `json:"memory"`      // total allocatable memory
+	NodesError string `json:"nodes_error"` // set when node access is denied
+}
+
+// GetClusterStats returns the cluster version and node summary
+func GetClusterStats(ctx context.Context, config *types.ServerConfig) (*ClusterStats, error) {
+	client, _, err := newWorkloadClient(config)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := &ClusterStats{}
+	if version, err := client.Discovery().ServerVersion(); err == nil {
+		stats.Version = version.GitVersion
+		stats.Platform = version.Platform
+	}
+
+	nodes, err := client.CoreV1().Nodes().List(ctx, meta.ListOptions{})
+	if err != nil {
+		stats.NodesError = err.Error()
+		return stats, nil
+	}
+	var cpuMilli, memoryBytes int64
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		stats.Nodes++
+		for _, cond := range node.Status.Conditions {
+			if cond.Type == core.NodeReady && cond.Status == core.ConditionTrue {
+				stats.ReadyNodes++
+				break
+			}
+		}
+		if cpu, ok := node.Status.Allocatable[core.ResourceCPU]; ok {
+			cpuMilli += cpu.MilliValue()
+		}
+		if memory, ok := node.Status.Allocatable[core.ResourceMemory]; ok {
+			memoryBytes += memory.Value()
+		}
+	}
+	stats.CPU = strconv.FormatFloat(float64(cpuMilli)/1000, 'f', -1, 64)
+	stats.Memory = fmt.Sprintf("%.1f GiB", float64(memoryBytes)/(1024*1024*1024))
+	return stats, nil
+}
+
+// WorkloadPodStatus is the kubernetes specific status of one managed pod:
+// pod conditions, per-container states and recent events (the information
+// kubectl describe surfaces)
+type WorkloadPodStatus struct {
+	Phase       string               `json:"phase"`
+	Reason      string               `json:"reason"`
+	Message     string               `json:"message"`
+	Node        string               `json:"node"`
+	Conditions  []PodCondition       `json:"conditions"`
+	Containers  []PodContainerStatus `json:"containers"`
+	Events      []PodEvent           `json:"events"`
+	EventsError string               `json:"events_error"` // events are best-effort, RBAC may deny them
+}
+
+// PodCondition is one kubernetes pod condition
+type PodCondition struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+}
+
+// PodContainerStatus is the state of one container of a pod
+type PodContainerStatus struct {
+	Name     string `json:"name"`
+	State    string `json:"state"` // running / waiting / terminated
+	Reason   string `json:"reason"`
+	Message  string `json:"message"`
+	Restarts int    `json:"restarts"`
+	Ready    bool   `json:"ready"`
+}
+
+// PodEvent is one kubernetes event of a pod, newest first
+type PodEvent struct {
+	Type     string `json:"type"` // Normal / Warning
+	Reason   string `json:"reason"`
+	Message  string `json:"message"`
+	Count    int    `json:"count"`
+	LastSeen string `json:"last_seen"`
+}
+
+// GetWorkloadPodStatus returns the kubernetes specific status of one OpenRun
+// managed pod
+func GetWorkloadPodStatus(ctx context.Context, config *types.ServerConfig, name string) (*WorkloadPodStatus, error) {
+	client, namespace, err := newWorkloadClient(config)
+	if err != nil {
+		return nil, err
+	}
+	pod, err := client.CoreV1().Pods(namespace).Get(ctx, name, meta.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("error getting pod %s: %w", name, err)
+	}
+	if pod.Labels[LABEL_PREFIX+"app.id"] == "" {
+		return nil, fmt.Errorf("pod %s is not managed by OpenRun", name)
+	}
+
+	status := &WorkloadPodStatus{
+		Phase:   string(pod.Status.Phase),
+		Reason:  pod.Status.Reason,
+		Message: pod.Status.Message,
+		Node:    pod.Spec.NodeName,
+	}
+	for _, cond := range pod.Status.Conditions {
+		status.Conditions = append(status.Conditions, PodCondition{
+			Type:    string(cond.Type),
+			Status:  string(cond.Status),
+			Reason:  cond.Reason,
+			Message: cond.Message,
+		})
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		entry := PodContainerStatus{
+			Name:     cs.Name,
+			Restarts: int(cs.RestartCount),
+			Ready:    cs.Ready,
+		}
+		switch {
+		case cs.State.Running != nil:
+			entry.State = "running"
+		case cs.State.Waiting != nil:
+			entry.State = "waiting"
+			entry.Reason = cs.State.Waiting.Reason
+			entry.Message = cs.State.Waiting.Message
+		case cs.State.Terminated != nil:
+			entry.State = "terminated"
+			entry.Reason = cs.State.Terminated.Reason
+			entry.Message = cs.State.Terminated.Message
+		}
+		status.Containers = append(status.Containers, entry)
+	}
+
+	// Events need list access on the namespace, which the service account may
+	// not have; the rest of the status is still useful without them
+	events, err := client.CoreV1().Events(namespace).List(ctx, meta.ListOptions{
+		FieldSelector: "involvedObject.name=" + name + ",involvedObject.kind=Pod",
+	})
+	if err != nil {
+		status.EventsError = err.Error()
+		return status, nil
+	}
+	sort.Slice(events.Items, func(i, j int) bool {
+		return events.Items[i].LastTimestamp.After(events.Items[j].LastTimestamp.Time)
+	})
+	const maxEvents = 15
+	for i := range events.Items {
+		if i >= maxEvents {
+			break
+		}
+		event := &events.Items[i]
+		status.Events = append(status.Events, PodEvent{
+			Type:     event.Type,
+			Reason:   event.Reason,
+			Message:  event.Message,
+			Count:    int(event.Count),
+			LastSeen: event.LastTimestamp.Format(time.RFC3339),
+		})
+	}
+	return status, nil
 }
 
 // GetWorkloadPod returns the status of one OpenRun managed pod

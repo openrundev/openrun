@@ -33,6 +33,9 @@ type ContainerInfo struct {
 	Ports   string `json:"ports"`
 	Env     string `json:"env"`     // prod / stage / dev / preview
 	Runtime string `json:"runtime"` // docker / podman / kubernetes
+	// CreatedAt is the container/pod creation time, date-first formatted so
+	// it sorts lexicographically (used by the console for recency ordering)
+	CreatedAt string `json:"created_at"`
 }
 
 // ContainerMount is a mount point of a container
@@ -93,7 +96,7 @@ const containerAppPathLabel = container.LABEL_PREFIX + "app.path"
 const containerAppVersionLabel = container.LABEL_PREFIX + "app.version"
 
 func (s *Server) containerRuntime() string {
-	command := strings.TrimSpace(s.config.System.ContainerCommand)
+	command := strings.TrimSpace(s.Config().System.ContainerCommand)
 	if command == "" || command == "auto" {
 		command = container.LookupContainerCommand(true)
 	}
@@ -176,15 +179,16 @@ func (s *Server) ListManagedContainers(ctx context.Context) ([]ContainerInfo, er
 		}
 		labels := entryLabels(entry)
 		infos = append(infos, ContainerInfo{
-			Id:      entryString(entry, "ID", "Id"),
-			Name:    name,
-			AppId:   labels[containerAppIdLabel],
-			AppPath: labels[containerAppPathLabel],
-			Image:   entryString(entry, "Image"),
-			State:   entryString(entry, "State"),
-			Status:  entryString(entry, "Status"),
-			Ports:   entryPorts(entry),
-			Runtime: filepath.Base(runtime),
+			Id:        entryString(entry, "ID", "Id"),
+			Name:      name,
+			AppId:     labels[containerAppIdLabel],
+			AppPath:   labels[containerAppPathLabel],
+			Image:     entryString(entry, "Image"),
+			State:     entryString(entry, "State"),
+			Status:    entryString(entry, "Status"),
+			Ports:     entryPorts(entry),
+			Runtime:   filepath.Base(runtime),
+			CreatedAt: entryCreatedAt(entry),
 		})
 	}
 	s.resolveContainerApps(infos)
@@ -195,6 +199,45 @@ func (s *Server) ListManagedContainers(ctx context.Context) ([]ContainerInfo, er
 		return infos[i].Name < infos[j].Name
 	})
 	return infos, nil
+}
+
+// KubernetesStats is the cluster and namespace summary shown on the
+// container list when the kubernetes runtime is active. Enabled is false for
+// other runtimes
+type KubernetesStats struct {
+	Enabled    bool                       `json:"enabled"`
+	Cluster    *container.ClusterStats    `json:"cluster"`
+	Namespaces []container.NamespaceStats `json:"namespaces"`
+}
+
+// GetKubernetesStats returns the cluster summary and pod stats for the
+// OpenRun system and apps namespaces. For non-kubernetes runtimes it returns
+// Enabled false
+func (s *Server) GetKubernetesStats(ctx context.Context) (*KubernetesStats, error) {
+	if s.containerRuntime() != types.CONTAINER_KUBERNETES {
+		return &KubernetesStats{}, nil
+	}
+	namespaces, err := container.GetNamespaceStats(ctx, s.Config())
+	if err != nil {
+		return nil, err
+	}
+	// Cluster stats are best-effort: node access is cluster scoped and the
+	// namespace stats are still useful without it
+	cluster, err := container.GetClusterStats(ctx, s.Config())
+	if err != nil {
+		s.Warn().Err(err).Msg("error getting kubernetes cluster stats")
+		cluster = nil
+	}
+	return &KubernetesStats{Enabled: true, Cluster: cluster, Namespaces: namespaces}, nil
+}
+
+// GetKubernetesPodStatus returns the kubernetes specific status of one
+// managed pod (conditions, container states, events)
+func (s *Server) GetKubernetesPodStatus(ctx context.Context, id string) (*container.WorkloadPodStatus, error) {
+	if s.containerRuntime() != types.CONTAINER_KUBERNETES {
+		return nil, fmt.Errorf("the kubernetes runtime is not configured on this server")
+	}
+	return container.GetWorkloadPodStatus(ctx, s.Config(), id)
 }
 
 // GetManagedContainer returns the details of one OpenRun managed container.
@@ -374,7 +417,7 @@ func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, t
 		tail = 500
 	}
 	if runtime == types.CONTAINER_KUBERNETES {
-		stream, err := container.GetWorkloadPodLogsStream(ctx, s.config, id, tail, follow)
+		stream, err := container.GetWorkloadPodLogsStream(ctx, s.Config(), id, tail, follow)
 		if err != nil {
 			return nil, err
 		}
@@ -522,7 +565,7 @@ func (s *Server) containerStats(ctx context.Context, runtime, id string) *Contai
 }
 
 func (s *Server) listKubernetesContainers(ctx context.Context) ([]ContainerInfo, error) {
-	pods, err := container.ListWorkloadPods(ctx, s.config)
+	pods, err := container.ListWorkloadPods(ctx, s.Config())
 	if err != nil {
 		return nil, err
 	}
@@ -550,20 +593,21 @@ func kubernetesPodInfo(pod *container.WorkloadPod) ContainerInfo {
 		}
 	}
 	return ContainerInfo{
-		Id:      pod.Name,
-		Name:    pod.Name,
-		AppId:   pod.AppId,
-		AppPath: pod.AppPath,
-		Image:   pod.Image,
-		State:   state,
-		Status:  status,
-		Ports:   pod.PodIP,
-		Runtime: types.CONTAINER_KUBERNETES,
+		Id:        pod.Name,
+		Name:      pod.Name,
+		AppId:     pod.AppId,
+		AppPath:   pod.AppPath,
+		Image:     pod.Image,
+		State:     state,
+		Status:    status,
+		Ports:     pod.PodIP,
+		Runtime:   types.CONTAINER_KUBERNETES,
+		CreatedAt: pod.CreatedAt,
 	}
 }
 
 func (s *Server) getKubernetesContainer(ctx context.Context, id string) (*ContainerDetail, error) {
-	pod, err := container.GetWorkloadPod(ctx, s.config, id)
+	pod, err := container.GetWorkloadPod(ctx, s.Config(), id)
 	if err != nil {
 		return nil, err
 	}
@@ -589,7 +633,7 @@ func (s *Server) getKubernetesContainer(ctx context.Context, id string) (*Contai
 }
 
 func (s *Server) getKubernetesContainerLogs(ctx context.Context, id string, tail int) (string, error) {
-	return container.GetWorkloadPodLogs(ctx, s.config, id, tail)
+	return container.GetWorkloadPodLogs(ctx, s.Config(), id, tail)
 }
 
 // parseJSONObjects handles both docker (newline separated JSON objects) and
@@ -628,6 +672,19 @@ func entryString(entry map[string]any, keys ...string) string {
 				return vs
 			}
 		}
+	}
+	return ""
+}
+
+// entryCreatedAt returns the container creation time from a ps entry:
+// docker and podman emit a date-first formatted "CreatedAt" string, older
+// podman versions a "Created" unix epoch
+func entryCreatedAt(entry map[string]any) string {
+	if created := entryString(entry, "CreatedAt"); created != "" {
+		return created
+	}
+	if epoch := entryFloat(entry, "Created"); epoch > 0 {
+		return time.Unix(int64(epoch), 0).UTC().Format(time.RFC3339)
 	}
 	return ""
 }

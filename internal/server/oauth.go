@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -82,10 +83,14 @@ const preAuthSessionMaxAge = 300
 // OAuthManager manages the OAuth providers and their configurations (also OIDC)
 type OAuthManager struct {
 	*types.Logger
-	config          *types.ServerConfig
-	cookieStore     sessions.Store
+	config      *types.ServerConfig
+	cookieStore sessions.Store
+	db          KVStore
+
+	// providerMu guards providerConfigs, which is replaced when dynamic
+	// config entries add/change/remove auth providers at runtime
+	providerMu      sync.RWMutex
 	providerConfigs map[string]*types.AuthConfig
-	db              KVStore
 }
 
 type OAuthAuthInfo struct {
@@ -126,73 +131,114 @@ func (s *OAuthManager) Setup(sessionKey []byte, sessionBlockKey []byte) error {
 
 	gothic.Store = s.cookieStore // Set the store for gothic
 	gothic.GetProviderName = getProviderName
-	s.providerConfigs = make(map[string]*types.AuthConfig)
 
-	providers := make([]goth.Provider, 0)
-	for providerName, auth := range s.config.Auth {
-		auth := auth
-		key := auth.Key
-		secret := auth.Secret
-		scopes := auth.Scopes
+	// Static config errors fail server startup
+	return s.registerProviders(s.config.Auth, true)
+}
 
-		if providerName == "" || key == "" || secret == "" {
-			return fmt.Errorf("provider, key, and secret must be set for each auth provider")
+// buildProvider creates the goth provider for one auth config entry
+func (s *OAuthManager) buildProvider(providerName string, auth types.AuthConfig) (goth.Provider, error) {
+	key := auth.Key
+	secret := auth.Secret
+	scopes := auth.Scopes
+
+	if providerName == "" || key == "" || secret == "" {
+		return nil, fmt.Errorf("provider, key, and secret must be set for each auth provider")
+	}
+
+	callbackUrl := s.config.Security.CallbackUrl + types.INTERNAL_URL_PREFIX + "/auth/" + providerName + "/callback"
+	providerSplit := strings.SplitN(providerName, PROVIDER_NAME_DELIMITER, 2)
+	providerType := providerSplit[0]
+
+	var provider goth.Provider
+	switch providerType {
+	case "github":
+		provider = github.New(key, secret, callbackUrl, scopes...)
+	case "google": // google supports hosted domain option
+		gp := google.New(key, secret, callbackUrl, scopes...)
+		if auth.HostedDomain != "" {
+			gp.SetHostedDomain(auth.HostedDomain)
 		}
-
-		callbackUrl := s.config.Security.CallbackUrl + types.INTERNAL_URL_PREFIX + "/auth/" + providerName + "/callback"
-		providerSplit := strings.SplitN(providerName, PROVIDER_NAME_DELIMITER, 2)
-		providerType := providerSplit[0]
-
-		var provider goth.Provider
-		switch providerType {
-		case "github":
-			provider = github.New(key, secret, callbackUrl, scopes...)
-		case "google": // google supports hosted domain option
-			gp := google.New(key, secret, callbackUrl, scopes...)
-			if auth.HostedDomain != "" {
-				gp.SetHostedDomain(auth.HostedDomain)
-			}
-			provider = gp
-		case "digitalocean":
-			provider = digitalocean.New(key, secret, callbackUrl, scopes...)
-		case "bitbucket":
-			provider = bitbucket.New(key, secret, callbackUrl, scopes...)
-		case "amazon":
-			provider = amazon.New(key, secret, callbackUrl, scopes...)
-		case "azuread": // azuread requires a resources array, setting nil for now
-			provider = azuread.New(key, secret, callbackUrl, nil, scopes...)
-		case "microsoftonline":
-			provider = microsoftonline.New(key, secret, callbackUrl, scopes...)
-		case "gitlab":
-			provider = gitlab.New(key, secret, callbackUrl, scopes...)
-		case "auth0": // auth0 requires a domain
-			provider = auth0.New(key, secret, callbackUrl, auth.Domain, scopes...)
-		case "okta": // okta requires an org url
-			provider = okta.New(key, secret, auth.OrgUrl, callbackUrl, scopes...)
-		case "oidc": // openidConnect requires a discovery url
-			if auth.DiscoveryUrl == "" {
-				return fmt.Errorf("discovery_url is required for OIDC provider")
-			}
-			op, err := openidConnect.New(key, secret, callbackUrl, auth.DiscoveryUrl, scopes...)
-			if err != nil {
-				return fmt.Errorf("failed to create OIDC provider: %w", err)
-			}
-			provider = op
-		default:
-			return fmt.Errorf("unsupported auth provider: %s", providerName)
+		provider = gp
+	case "digitalocean":
+		provider = digitalocean.New(key, secret, callbackUrl, scopes...)
+	case "bitbucket":
+		provider = bitbucket.New(key, secret, callbackUrl, scopes...)
+	case "amazon":
+		provider = amazon.New(key, secret, callbackUrl, scopes...)
+	case "azuread": // azuread requires a resources array, setting nil for now
+		provider = azuread.New(key, secret, callbackUrl, nil, scopes...)
+	case "microsoftonline":
+		provider = microsoftonline.New(key, secret, callbackUrl, scopes...)
+	case "gitlab":
+		provider = gitlab.New(key, secret, callbackUrl, scopes...)
+	case "auth0": // auth0 requires a domain
+		provider = auth0.New(key, secret, callbackUrl, auth.Domain, scopes...)
+	case "okta": // okta requires an org url
+		provider = okta.New(key, secret, auth.OrgUrl, callbackUrl, scopes...)
+	case "oidc": // openidConnect requires a discovery url
+		if auth.DiscoveryUrl == "" {
+			return nil, fmt.Errorf("discovery_url is required for OIDC provider")
 		}
+		op, err := openidConnect.New(key, secret, callbackUrl, auth.DiscoveryUrl, scopes...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create OIDC provider: %w", err)
+		}
+		provider = op
+	default:
+		return nil, fmt.Errorf("unsupported auth provider: %s", providerName)
+	}
 
-		provider.SetName(providerName)
+	provider.SetName(providerName)
+	return provider, nil
+}
+
+// registerProviders builds the goth providers for an auth config map and
+// swaps them in as the full provider set. With failFast (startup, static
+// config) any bad entry is an error; otherwise (dynamic config updates) a bad
+// entry is logged and skipped so it cannot take down the other providers
+func (s *OAuthManager) registerProviders(auth map[string]types.AuthConfig, failFast bool) error {
+	providerConfigs := make(map[string]*types.AuthConfig, len(auth))
+	providers := make([]goth.Provider, 0, len(auth))
+	for providerName, authConfig := range auth {
+		provider, err := s.buildProvider(providerName, authConfig)
+		if err != nil {
+			if failFast {
+				return err
+			}
+			s.Error().Err(err).Msgf("error building oauth provider %s, provider disabled", providerName)
+			continue
+		}
 		providers = append(providers, provider)
-		s.providerConfigs[providerName] = &auth
+		providerConfigs[providerName] = &authConfig
 	}
 
 	if len(providers) != 0 && s.config.Security.CallbackUrl == "" {
 		return fmt.Errorf("security.callback_url must be set for enabling OAuth")
 	}
 
+	s.providerMu.Lock()
+	s.providerConfigs = providerConfigs
+	s.providerMu.Unlock()
+
+	goth.ClearProviders()
 	goth.UseProviders(providers...) // Register the providers with goth
 	return nil
+}
+
+// UpdateProviders re-registers the OAuth providers from the merged (static +
+// dynamic) auth config. Called when dynamic config entries change the auth
+// section
+func (s *OAuthManager) UpdateProviders(auth map[string]types.AuthConfig) error {
+	return s.registerProviders(auth, false)
+}
+
+// getProviderConfig returns the config for one registered provider, nil if
+// the provider is not configured
+func (s *OAuthManager) getProviderConfig(provider string) *types.AuthConfig {
+	s.providerMu.RLock()
+	defer s.providerMu.RUnlock()
+	return s.providerConfigs[provider]
 }
 
 func (s *OAuthManager) RegisterRoutes(csrfMiddleware *http.CrossOriginProtection, mux *chi.Mux) {
@@ -229,7 +275,7 @@ func (s *OAuthManager) RegisterRoutes(csrfMiddleware *http.CrossOriginProtection
 }
 
 func (s *OAuthManager) ValidateProviderName(provider string) bool {
-	return s.providerConfigs[provider] != nil
+	return s.getProviderConfig(provider) != nil
 }
 
 func (s *OAuthManager) ValidateAuthType(authType string) bool {
@@ -406,7 +452,7 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	providerConfig := s.providerConfigs[providerName]
+	providerConfig := s.getProviderConfig(providerName)
 	if providerConfig == nil {
 		http.Error(w, fmt.Sprintf("provider %s not configured", providerName), http.StatusInternalServerError)
 		return

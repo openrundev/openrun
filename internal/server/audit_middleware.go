@@ -57,7 +57,7 @@ func (s *Server) versionUpgradeAuditDB() error {
 	var dt time.Time
 	row.Scan(&version, &dt) //nolint:errcheck // ignore error if no version is found
 
-	if !s.config.Metadata.IgnoreHigherVersion && version > CURRENT_AUDIT_DB_VERSION {
+	if !s.Config().Metadata.IgnoreHigherVersion && version > CURRENT_AUDIT_DB_VERSION {
 		return fmt.Errorf("audit DB version is newer than server version, exiting. Server %d, DB %d", CURRENT_AUDIT_DB_VERSION, version)
 	}
 
@@ -283,7 +283,7 @@ func (s *Server) writeAuditBatch(batch []*types.AuditEvent) {
 func (s *Server) cleanupEvents() error {
 	// A retention setting of zero or less disables cleanup for that event class
 	var httpDeleted, nonHttpDeleted int64
-	if days := s.config.System.HttpEventRetentionDays; days > 0 {
+	if days := s.Config().System.HttpEventRetentionDays; days > 0 {
 		cleanupTime := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
 		result, err := s.auditDB.Exec(system.RebindQuery(s.auditDbType, `delete from audit where event_type = 'http' and create_time < ?`), cleanupTime)
 		if err != nil {
@@ -294,7 +294,7 @@ func (s *Server) cleanupEvents() error {
 		}
 	}
 
-	if days := s.config.System.NonHttpEventRetentionDays; days > 0 {
+	if days := s.Config().System.NonHttpEventRetentionDays; days > 0 {
 		cleanupTime := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
 		result, err := s.auditDB.Exec(system.RebindQuery(s.auditDbType, `delete from audit where event_type != 'http' and create_time < ?`), cleanupTime)
 		if err != nil {

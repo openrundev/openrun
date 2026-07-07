@@ -170,7 +170,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	}
 	defer repoCache.Cleanup()
 
-	if verify && s.config.System.UseImagePreBuildStep {
+	if verify && s.Config().System.UseImagePreBuildStep {
 		// Build container images before the metadata transaction is opened.
 		// Image names are content-hashed, so the main loop's ImageExists check
 		// finds them and skips the (slow) in-transaction build. If anything

@@ -177,8 +177,8 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 		appEntry.Metadata.AuthnType = types.AppAuthnDefault
 	}
 	// Set the default for write access by staging and preview apps
-	appEntry.Settings.StageWriteAccess = s.config.Security.StageEnableWriteAccess
-	appEntry.Settings.PreviewWriteAccess = s.config.Security.PreviewEnableWriteAccess
+	appEntry.Settings.StageWriteAccess = s.Config().Security.StageEnableWriteAccess
+	appEntry.Settings.PreviewWriteAccess = s.Config().Security.PreviewEnableWriteAccess
 
 	appEntry.Metadata.VersionMetadata = types.VersionMetadata{
 		Version: 0,
@@ -237,12 +237,13 @@ func (s *Server) validateAppAuthnType(authStr string) error {
 func (s *Server) ListAppAuths() []string {
 	auths := []string{string(types.AppAuthnDefault), string(types.AppAuthnSystem), string(types.AppAuthnNone)}
 
-	oauth := slices.Collect(maps.Keys(s.config.Auth))
+	mergedConfig := s.Config()
+	oauth := slices.Collect(maps.Keys(mergedConfig.Auth))
 	slices.Sort(oauth)
 	auths = append(auths, oauth...)
 
-	saml := make([]string, 0, len(s.config.SAML))
-	for name := range s.config.SAML {
+	saml := make([]string, 0, len(mergedConfig.SAML))
+	for name := range mergedConfig.SAML {
 		saml = append(saml, SAML_AUTH_PREFIX+name)
 	}
 	slices.Sort(saml)
@@ -250,8 +251,8 @@ func (s *Server) ListAppAuths() []string {
 
 	// Client cert entries usable as app auth are named cert or cert_*, same
 	// rule as validateAppAuthnType
-	certs := make([]string, 0, len(s.config.ClientAuth))
-	for name := range s.config.ClientAuth {
+	certs := make([]string, 0, len(s.Config().ClientAuth))
+	for name := range s.Config().ClientAuth {
 		if name == "cert" || strings.HasPrefix(name, "cert_") {
 			certs = append(certs, name)
 		}
@@ -438,20 +439,20 @@ func (s *Server) prepareStageAppEntry(appEntry *types.AppEntry, applyInfo *types
 
 // getAppHttpUrl returns the HTTP URL for accessing the app
 func (s *Server) getAppHttpUrl(appEntry *types.AppEntry) string {
-	if s.config.Http.Port <= 0 {
+	if s.Config().Http.Port <= 0 {
 		return ""
 	}
-	domain := cmp.Or(appEntry.Domain, s.config.System.DefaultDomain)
-	return fmt.Sprintf("%s://%s:%d%s", "http", domain, s.config.Http.Port, appEntry.Path)
+	domain := cmp.Or(appEntry.Domain, s.Config().System.DefaultDomain)
+	return fmt.Sprintf("%s://%s:%d%s", "http", domain, s.Config().Http.Port, appEntry.Path)
 }
 
 // getAppHttpsUrl returns the HTTPS URL for accessing the app
 func (s *Server) getAppHttpsUrl(appEntry *types.AppEntry) string {
-	if s.config.Https.Port <= 0 {
+	if s.Config().Https.Port <= 0 {
 		return ""
 	}
-	domain := cmp.Or(appEntry.Domain, s.config.System.DefaultDomain)
-	return fmt.Sprintf("%s://%s:%d%s", "https", domain, s.config.Https.Port, appEntry.Path)
+	domain := cmp.Or(appEntry.Domain, s.Config().System.DefaultDomain)
+	return fmt.Sprintf("%s://%s:%d%s", "https", domain, s.Config().Https.Port, appEntry.Path)
 }
 
 func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx types.Transaction) (*app.App, error) {
@@ -501,9 +502,10 @@ func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx type
 	if err != nil {
 		return nil, err
 	}
-	return app.NewApp(sourceFS, workFS, &appLogger, appEntry, &s.config.System,
-		s.config.Plugins, s.config.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
-		s.InsertAuditEvent, s.config, s.rbacManager, bindings)
+	merged := s.Config()
+	return app.NewApp(sourceFS, workFS, &appLogger, appEntry, &merged.System,
+		merged.Plugins, merged.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
+		s.InsertAuditEvent, merged, s.rbacManager, bindings)
 }
 
 func (s *Server) getAppBindings(ctx context.Context, inpTx types.Transaction, appEntry *types.AppEntry) ([]*types.Binding, error) {
@@ -656,7 +658,7 @@ func (s *Server) checkAuthModifiers(authTypeFull string) (string, *types.Forward
 	var forwardConfig types.ForwardConfig
 	forwardConfigName, ok := strings.CutPrefix(modifier, "forward_")
 	if ok {
-		forwardConfig, ok = s.config.Forward[forwardConfigName]
+		forwardConfig, ok = s.Config().Forward[forwardConfigName]
 		if !ok {
 			return "", nil, fmt.Errorf("forward config %s not found for forward modifier: %s", forwardConfigName, modifier)
 		}
@@ -682,7 +684,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 	baseType, _, _ := strings.Cut(coreAuth, types.AUTH_MODIFIER_DELIMITER)
 	if baseType == "" || baseType == string(types.AppAuthnDefault) {
-		coreAuth = s.config.Security.AppDefaultAuthType
+		coreAuth = s.Config().Security.AppDefaultAuthType
 		if strings.HasPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX) {
 			rbacPrefix = rbac.RBAC_AUTH_PREFIX
 			coreAuth = strings.TrimPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX)
@@ -710,7 +712,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	strippedAuth := types.AppAuthnType(strippedAuthStr)
 	groups := make([]string, 0)
 
-	if s.config.System.FallbackUnknownDomains && usesSessionCookieAuth(strippedAuthStr) {
+	if s.Config().System.FallbackUnknownDomains && usesSessionCookieAuth(strippedAuthStr) {
 		// Cookie-based auth must start on the app's configured host. Otherwise a
 		// fallback-matched unknown host would receive the auth nonce/session cookie.
 		if canonicalURL, redirectNeeded := s.canonicalAuthRedirectURL(r, app.AppPathDomain()); redirectNeeded {
@@ -724,7 +726,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 
 	if strippedAuth == types.AppAuthnNone {
-		if s.config.Security.AuthRequired {
+		if s.Config().Security.AuthRequired {
 			http.Error(w, "Authentication required", http.StatusUnauthorized)
 			return
 		}
@@ -741,7 +743,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 		userId = types.ADMIN_USER // not using the actual user id, just a admin placeholder
 	} else if strippedAuthStr == "cert" || strings.HasPrefix(strippedAuthStr, "cert_") {
 		// Use client certificate authentication
-		if s.config.Https.DisableClientCerts {
+		if s.Config().Https.DisableClientCerts {
 			http.Error(w, "Client certificates are disabled in openrun.config, update https.disable_client_certs", http.StatusInternalServerError)
 			return
 		}
@@ -870,13 +872,13 @@ func sameAppRequestDomain(requestDomain, appDomain string) bool {
 
 func (s *Server) canonicalAuthRedirectURL(r *http.Request, appPathDomain types.AppPathDomain) (string, bool) {
 	requestDomain := system.GetHostname(r.Host)
-	canonicalDomain := cmp.Or(appPathDomain.Domain, s.config.System.DefaultDomain)
+	canonicalDomain := cmp.Or(appPathDomain.Domain, s.Config().System.DefaultDomain)
 	if requestDomain == "" || canonicalDomain == "" || sameAppRequestDomain(requestDomain, canonicalDomain) {
 		return "", false
 	}
 
 	requestURL := *r.URL
-	requestURL.Scheme = system.GetRequestScheme(r, s.config.Security.TrustedProxies)
+	requestURL.Scheme = system.GetRequestScheme(r, s.Config().Security.TrustedProxies)
 
 	if _, port, err := net.SplitHostPort(r.Host); err == nil {
 		requestURL.Host = net.JoinHostPort(canonicalDomain, port)
@@ -996,7 +998,7 @@ func (s *Server) verifyClientCerts(r *http.Request, authName string) error {
 	}
 
 	requestCert := r.TLS.PeerCertificates[0]
-	clientConfig, ok := s.config.ClientAuth[authName]
+	clientConfig, ok := s.Config().ClientAuth[authName]
 	if !ok {
 		return fmt.Errorf("client auth config not found for %s", authName)
 	}
@@ -1030,9 +1032,9 @@ func (s *Server) MatchApp(hostHeader, matchPath string) (types.AppInfo, error) {
 		hostHeader = "localhost"
 	}
 
-	if s.config.System.FallbackUnknownDomains && !domainMap[hostHeader] {
+	if s.Config().System.FallbackUnknownDomains && !domainMap[hostHeader] {
 		// Request to unknown domain, match against default domain
-		hostHeader = s.config.System.DefaultDomain
+		hostHeader = s.Config().System.DefaultDomain
 	}
 
 	// Apps are indexed by effective domain, only the request domain's apps
@@ -1154,16 +1156,16 @@ func pathBasedStageApp(appEntry *types.AppEntry) types.AppPathDomain {
 }
 
 func (s *Server) stageAppPathDomain(prodApp types.AppPathDomain, stageAt string) (types.AppPathDomain, error) {
-	stageAt = cmp.Or(strings.TrimSpace(stageAt), strings.TrimSpace(s.config.System.StageAt), "domain")
+	stageAt = cmp.Or(strings.TrimSpace(stageAt), strings.TrimSpace(s.Config().System.StageAt), "domain")
 	switch strings.ToLower(stageAt) {
 	case "path":
 		return types.AppPathDomain{Domain: prodApp.Domain, Path: prodApp.Path + types.STAGE_SUFFIX}, nil
 	case "domain":
-		domain := cmp.Or(prodApp.Domain, s.config.System.DefaultDomain)
+		domain := cmp.Or(prodApp.Domain, s.Config().System.DefaultDomain)
 		if domain == "" {
 			return types.AppPathDomain{}, fmt.Errorf("stage app domain could not be derived because app domain and default_domain are empty")
 		}
-		return types.AppPathDomain{Domain: stageDomain(domain, s.config.System.DefaultStageDomain), Path: prodApp.Path}, nil
+		return types.AppPathDomain{Domain: stageDomain(domain, s.Config().System.DefaultStageDomain), Path: prodApp.Path}, nil
 	default:
 		domain, err := s.normalizeStageDomain(stageAt)
 		if err != nil {
@@ -1186,10 +1188,10 @@ func (s *Server) normalizeStageDomain(domain string) (string, error) {
 
 func (s *Server) normalizeRelativeDomain(domain, label string) (string, error) {
 	if strings.HasSuffix(domain, ".") {
-		if s.config.System.DefaultDomain == "" {
+		if s.Config().System.DefaultDomain == "" {
 			return "", fmt.Errorf("%s cannot end with '.' since default_domain is not configured", label)
 		}
-		domain += s.config.System.DefaultDomain
+		domain += s.Config().System.DefaultDomain
 	}
 	return domain, nil
 }
@@ -1306,7 +1308,7 @@ func (s *Server) loadGitKey(gitAuth string) (*gitAuthEntry, error) {
 			usingSSH: false, // default to non-SSH git url if no auth is specified
 		}, nil
 	}
-	authEntry, ok := s.config.GitAuth[gitAuth]
+	authEntry, ok := s.Config().GitAuth[gitAuth]
 	if !ok {
 		return nil, fmt.Errorf("git auth entry %s not found in server config", gitAuth)
 	}

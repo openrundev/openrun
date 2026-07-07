@@ -31,9 +31,9 @@ func newBenchServer(defaultDomain string) *Server {
 		},
 	}
 	return &Server{
-		Logger:      logger,
-		config:      config,
-		authHandler: NewAdminBasicAuth(logger, config),
+		Logger:       logger,
+		staticConfig: config,
+		authHandler:  NewAdminBasicAuth(logger, config),
 		rbacManager: &rbac.RBACManager{
 			Logger:     logger,
 			RbacConfig: &types.RBACConfig{},

@@ -19,9 +19,11 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/caddyserver/certmagic"
@@ -130,7 +132,11 @@ func (s *Server) GetAppSpec(name types.AppSpec) types.SpecFiles {
 // Server is the instance of the OpenRun Server
 type Server struct {
 	*types.Logger
-	config         *types.ServerConfig
+	// staticConfig is the openrun.toml config as loaded at startup. It is
+	// immutable after NewServer and must only be referenced by startup paths
+	// and the dynamic config merge; everything else reads s.Config(), which
+	// includes the dynamic overrides
+	staticConfig   *types.ServerConfig
 	db             *metadata.Metadata
 	httpServer     *http.Server
 	httpsServer    *http.Server
@@ -161,6 +167,7 @@ type Server struct {
 	tlsErrorLogger   *RateLimitedErrorLogger
 	configMu         sync.RWMutex
 	dynamicConfig    *types.DynamicConfig
+	effectiveConfig  atomic.Pointer[types.ServerConfig]
 	rbacManager      *rbac.RBACManager
 	csrfMiddleware   *http.CrossOriginProtection
 	telemetry        *telemetry.Providers
@@ -226,7 +233,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 
 	server := &Server{
 		Logger:         l,
-		config:         config,
+		staticConfig:   config,
 		db:             db,
 		secretsManager: secretsManager,
 		telemetry:      telemetryProviders,
@@ -320,6 +327,14 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("error saving dynamic config: %w", err)
 	}
 
+	// Merge the dynamic config entries over the static config and register any
+	// dynamically configured oauth/saml providers. Bad persisted entries must
+	// not prevent server startup, so errors are logged and the server continues
+	// with the static config
+	if err = server.applyDynamicConfig(context.Background(), server.dynamicConfig); err != nil {
+		l.Error().Err(err).Msg("error applying dynamic config entries, continuing with static config")
+	}
+
 	server.rbacManager, err = rbac.NewRBACHandler(l, &server.dynamicConfig.RBAC, config)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing rbac manager: %w", err)
@@ -338,6 +353,75 @@ func (s *Server) GetDynamicConfig() types.DynamicConfig {
 	s.configMu.RLock()
 	defer s.configMu.RUnlock()
 	return *s.dynamicConfig // return a copy of the dynamic config
+}
+
+// Config returns the effective server config: the static openrun.toml config
+// with the dynamic config entries and settings merged in, dynamic taking
+// precedence. This is the canonical config accessor; the returned config is
+// a published snapshot and must never be modified. Startup paths which run
+// before the dynamic config is loaded see the static config
+func (s *Server) Config() *types.ServerConfig {
+	if effective := s.effectiveConfig.Load(); effective != nil {
+		return effective
+	}
+	return s.staticConfig
+}
+
+// applyDynamicConfig recomputes the effective config from the static config
+// and the dynamic entries/settings, then applies the runtime side effects of
+// changed sections: OAuth/SAML provider re-registration and list-apps app
+// invalidation. Called at startup and on every dynamic config change (API
+// update, restore, cross-instance notification)
+func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicConfig) error {
+	// The merge always starts from the static config, so deleted dynamic
+	// values revert to their static state
+	effective, err := mergeDynamicConfig(s.Logger, s.staticConfig, config, s.secretsManager.EvalTemplate)
+	if err != nil {
+		return err
+	}
+
+	previous := s.Config()
+
+	// The secret providers are initialized with their config, so a change
+	// rebuilds the manager. Building it validates the provider names and
+	// settings, so it runs first: a bad entry fails the whole update before
+	// any other side effect (the schema validation cannot catch these, secret
+	// provider properties are free form)
+	var secretsManager *system.SecretManager
+	if !reflect.DeepEqual(previous.Secret, effective.Secret) ||
+		previous.AppConfig.Security.DefaultSecretsProvider != effective.AppConfig.Security.DefaultSecretsProvider {
+		secretsManager, err = system.NewSecretManager(ctx, effective.Secret,
+			effective.AppConfig.Security.DefaultSecretsProvider, effective)
+		if err != nil {
+			return fmt.Errorf("error initializing secret providers: %w", err)
+		}
+	}
+
+	s.effectiveConfig.Store(effective)
+	if secretsManager != nil {
+		s.secretsManager = secretsManager
+	}
+
+	if !reflect.DeepEqual(previous.Auth, effective.Auth) {
+		if err := s.oAuthManager.UpdateProviders(effective.Auth); err != nil {
+			return fmt.Errorf("error updating oauth providers: %w", err)
+		}
+	}
+	if !reflect.DeepEqual(previous.SAML, effective.SAML) {
+		s.samlManager.UpdateProviders(ctx, effective.SAML)
+	}
+
+	if !reflect.DeepEqual(previous.System, effective.System) ||
+		previous.Security.AppDefaultAuthType != effective.Security.AppDefaultAuthType ||
+		!reflect.DeepEqual(previous.AppConfig, effective.AppConfig) ||
+		!reflect.DeepEqual(previous.NodeConfig, effective.NodeConfig) {
+		// The list-apps app bakes in the title/domain/auth settings at build
+		// time; drop it so the next request rebuilds it with the new values
+		s.mu.Lock()
+		s.listAppsApp = nil
+		s.mu.Unlock()
+	}
+	return nil
 }
 
 func (s *Server) SaveDynamicConfig(ctx context.Context) error {
@@ -362,6 +446,9 @@ func (s *Server) updateDynamicConfigCache(ctx context.Context, newConfig *types.
 	err := s.rbacManager.UpdateRBACConfig(&newConfig.RBAC) // update the rbac config so that it updates its caches
 	if err != nil {
 		return fmt.Errorf("error updating rbac config: %w", err)
+	}
+	if err := s.applyDynamicConfig(ctx, newConfig); err != nil {
+		return fmt.Errorf("error applying dynamic config entries: %w", err)
 	}
 	s.dynamicConfig = newConfig
 	err = s.SaveDynamicConfig(ctx)
@@ -519,12 +606,12 @@ func (s *Server) handleAppClose() {
 // the password hash for the admin account. If AdminPasswordBcrypt is not set, a random password
 // will be generated for that server startup. The generated password will be printed to stdout.
 func (s *Server) setupAdminAccount() (string, error) {
-	if s.config.AdminUser == "" {
+	if s.Config().AdminUser == "" {
 		s.Warn().Msg("No admin username specified, skipping admin account setup")
 		return "", nil
 	}
 
-	if s.config.Security.AdminPasswordBcrypt != "" {
+	if s.Config().Security.AdminPasswordBcrypt != "" {
 		s.Info().Msgf("Using admin password bcrypt hash from configuration")
 		return "", nil
 	}
@@ -541,14 +628,14 @@ func (s *Server) setupAdminAccount() (string, error) {
 		return "", err
 	}
 
-	s.config.Security.AdminPasswordBcrypt = string(bcryptHash)
+	s.Config().Security.AdminPasswordBcrypt = string(bcryptHash)
 	return password, nil
 }
 
 // Start starts the OpenRun Server
 func (s *Server) Start() error {
-	s.handler = NewTCPHandler(s.Logger, s.config, s)
-	serverUri := strings.TrimSpace(os.ExpandEnv(s.config.ServerUri))
+	s.handler = NewTCPHandler(s.Logger, s.Config(), s)
+	serverUri := strings.TrimSpace(os.ExpandEnv(s.Config().ServerUri))
 	if serverUri == "" {
 		return errors.New("server_uri is not set")
 	}
@@ -576,7 +663,7 @@ func (s *Server) Start() error {
 			return fmt.Errorf("error creating directory %s : %s", socketDir, err)
 		}
 
-		udsHandler := NewUDSHandler(s.Logger, s.config, s)
+		udsHandler := NewUDSHandler(s.Logger, s.Config(), s)
 		socket, listenErr := net.Listen("unix", serverUri)
 		if listenErr != nil {
 			s.Debug().Err(listenErr).Msgf("Error creating socket file, trying to dial socket file %s", serverUri)
@@ -628,7 +715,7 @@ func (s *Server) Start() error {
 	}
 
 	// Start HTTP and HTTPS servers
-	if s.config.Http.Port >= 0 {
+	if s.Config().Http.Port >= 0 {
 		s.httpServer = &http.Server{
 			WriteTimeout: 180 * time.Second,
 			ReadTimeout:  180 * time.Second,
@@ -646,7 +733,7 @@ func (s *Server) Start() error {
 		}
 	}
 
-	if s.config.Https.Port >= 0 {
+	if s.Config().Https.Port >= 0 {
 		var err error
 		s.httpsServer, err = s.setupHTTPSServer()
 		if err != nil {
@@ -660,18 +747,18 @@ func (s *Server) Start() error {
 		return err
 	}
 	if generatedPass != "" {
-		fmt.Printf("Admin user    : %s\n", s.config.AdminUser)
+		fmt.Printf("Admin user    : %s\n", s.Config().AdminUser)
 		fmt.Printf("Admin password: %s\n", generatedPass)
 	}
 
 	if s.httpServer != nil {
-		addr := fmt.Sprintf("%s:%d", system.MapServerHost(s.config.Http.Host), s.config.Http.Port)
+		addr := fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Http.Host), s.Config().Http.Port)
 		listener, err := net.Listen("tcp", addr)
 		if err != nil {
 			return err
 		}
-		s.config.Http.Port = listener.Addr().(*net.TCPAddr).Port
-		addr = fmt.Sprintf("%s:%d", system.MapServerHost(s.config.Http.Host), s.config.Http.Port)
+		s.Config().Http.Port = listener.Addr().(*net.TCPAddr).Port
+		addr = fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Http.Host), s.Config().Http.Port)
 		s.Info().Str("address", addr).Msg("Starting HTTP server")
 
 		go func() {
@@ -689,13 +776,13 @@ func (s *Server) Start() error {
 	}
 
 	if s.httpsServer != nil {
-		addr := fmt.Sprintf("%s:%d", system.MapServerHost(s.config.Https.Host), s.config.Https.Port)
+		addr := fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Https.Host), s.Config().Https.Port)
 		listener, err := tls.Listen("tcp", addr, s.httpsServer.TLSConfig)
 		if err != nil {
 			return err
 		}
-		s.config.Https.Port = listener.Addr().(*net.TCPAddr).Port
-		addr = fmt.Sprintf("%s:%d", system.MapServerHost(s.config.Https.Host), s.config.Https.Port)
+		s.Config().Https.Port = listener.Addr().(*net.TCPAddr).Port
+		addr = fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Https.Host), s.Config().Https.Port)
 		s.Info().Str("address", addr).Msg("Starting HTTPS server")
 		go func() {
 			if err := s.httpsServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -716,11 +803,11 @@ func (s *Server) Start() error {
 func (s *Server) setupHTTPSServer() (*http.Server, error) {
 	var tlsConfig *tls.Config
 	var mkcertPath string
-	if s.config.Https.MkcertPath != "disable" {
-		if s.config.Https.MkcertPath == "" {
+	if s.Config().Https.MkcertPath != "disable" {
+		if s.Config().Https.MkcertPath == "" {
 			mkcertPath = system.FindExec("mkcert")
 		} else {
-			mkcertPath = s.config.Https.MkcertPath
+			mkcertPath = s.Config().Https.MkcertPath
 		}
 	}
 
@@ -728,26 +815,26 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 		s.Info().Msgf("mkcert path %s", mkcertPath)
 	}
 	var mkcertsLock sync.Mutex
-	if err := os.MkdirAll(os.ExpandEnv(s.config.Https.CertLocation), 0700); err != nil {
+	if err := os.MkdirAll(os.ExpandEnv(s.Config().Https.CertLocation), 0700); err != nil {
 		return nil, fmt.Errorf("error creating cert directory %s : %s",
-			os.ExpandEnv(s.config.Https.CertLocation), err)
+			os.ExpandEnv(s.Config().Https.CertLocation), err)
 	}
 
-	if s.config.Https.ServiceEmail != "" {
+	if s.Config().Https.ServiceEmail != "" {
 		// Certmagic is enabled
-		if s.config.Https.UseStaging {
+		if s.Config().Https.UseStaging {
 			// Use Let's Encrypt staging server
 			certmagic.DefaultACME.CA = certmagic.LetsEncryptStagingCA
 		}
 		certmagic.DefaultACME.Agreed = true
-		certmagic.DefaultACME.Email = s.config.Https.ServiceEmail
+		certmagic.DefaultACME.Email = s.Config().Https.ServiceEmail
 		certmagic.DefaultACME.DisableHTTPChallenge = true
 		certmagic.Default.Storage = s.db.GetCertStorage() // Use the database backed storage
 
 		magicConfig := certmagic.NewDefault()
 		magicConfig.OnDemand = &certmagic.OnDemandConfig{
 			DecisionFunc: func(ctx context.Context, name string) error {
-				if name == s.config.System.DefaultDomain || name == "localhost" || name == "127.0.0.1" {
+				if name == s.Config().System.DefaultDomain || name == "localhost" || name == "127.0.0.1" {
 					return nil
 				}
 
@@ -773,9 +860,9 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				domain := hello.ServerName
 
-				if domain != "" && s.config.Https.EnableCertLookup {
-					certFilePath := path.Join(os.ExpandEnv(s.config.Https.CertLocation), domain+".crt")
-					certKeyPath := path.Join(os.ExpandEnv(s.config.Https.CertLocation), domain+".key")
+				if domain != "" && s.Config().Https.EnableCertLookup {
+					certFilePath := path.Join(os.ExpandEnv(s.Config().Https.CertLocation), domain+".crt")
+					certKeyPath := path.Join(os.ExpandEnv(s.Config().Https.CertLocation), domain+".key")
 					// Check if certificate and key files exist on disk for the domain
 					_, certErr := os.Stat(certFilePath)
 					_, keyErr := os.Stat(certKeyPath)
@@ -805,8 +892,8 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 					}
 				}
 
-				certFilePath := path.Join(os.ExpandEnv(s.config.Https.CertLocation), DEFAULT_CERT_FILE)
-				certKeyPath := path.Join(os.ExpandEnv(s.config.Https.CertLocation), DEFAULT_KEY_FILE)
+				certFilePath := path.Join(os.ExpandEnv(s.Config().Https.CertLocation), DEFAULT_CERT_FILE)
+				certKeyPath := path.Join(os.ExpandEnv(s.Config().Https.CertLocation), DEFAULT_KEY_FILE)
 
 				_, certErr := os.Stat(certFilePath)
 				_, keyErr := os.Stat(certKeyPath)
@@ -824,15 +911,15 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 		}
 	}
 
-	if !s.config.Https.DisableClientCerts {
+	if !s.Config().Https.DisableClientCerts {
 		// Request client certificates, verification is done in the handler
 		tlsConfig.ClientAuth = tls.RequestClientCert
-		for name, clientCertConfig := range s.config.ClientAuth {
+		for name, clientCertConfig := range s.Config().ClientAuth {
 			rootCAs, err := loadRootCAs(clientCertConfig.CACertFile)
 			if err != nil {
 				return nil, fmt.Errorf("error loading root CAs pem file %s for %s: %w", clientCertConfig.CACertFile, name, err)
 			}
-			s.config.ClientAuth[name] = types.ClientCertConfig{
+			s.Config().ClientAuth[name] = types.ClientCertConfig{
 				CACertFile: clientCertConfig.CACertFile,
 				RootCAs:    rootCAs,
 			}
@@ -962,14 +1049,15 @@ func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 		return nil, err
 	}
 
-	authnType := types.AppAuthnType(s.config.Security.AppDefaultAuthType)
+	merged := s.Config()
+	authnType := types.AppAuthnType(merged.Security.AppDefaultAuthType)
 	if authnType == "" {
 		authnType = types.AppAuthnSystem
 	}
 	appEntry := types.AppEntry{
 		Id:        types.AppId("app_prd_app_list"),
 		Path:      "/",
-		Domain:    s.config.System.DefaultDomain,
+		Domain:    merged.System.DefaultDomain,
 		SourceUrl: "-",
 		UserID:    "admin",
 		Settings:  types.AppSettings{},
@@ -981,17 +1069,17 @@ func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 				{Plugin: "openrun.in", Method: "list_apps"},
 			},
 			ParamValues: map[string]string{
-				"title":            s.config.System.ListAppsTitle,
-				"show_hosted_with": strconv.FormatBool(s.config.System.ShowHostedWith),
+				"title":            merged.System.ListAppsTitle,
+				"show_hosted_with": strconv.FormatBool(merged.System.ShowHostedWith),
 			},
 		},
 	}
 
 	subLogger := s.Logger.With().Str("id", string(appEntry.Id)).Logger()
 	appLogger := types.Logger{Logger: &subLogger}
-	s.listAppsApp, err = app.NewApp(sourceFS, nil, &appLogger, &appEntry, &s.config.System,
-		s.config.Plugins, s.config.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
-		s.InsertAuditEvent, s.config, s.rbacManager, []*types.Binding{})
+	s.listAppsApp, err = app.NewApp(sourceFS, nil, &appLogger, &appEntry, &merged.System,
+		merged.Plugins, merged.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
+		s.InsertAuditEvent, merged, s.rbacManager, []*types.Binding{})
 	if err != nil {
 		return nil, err
 	}
@@ -1047,7 +1135,7 @@ func (s *Server) AuthorizeList(ctx context.Context, userId string, app *types.Ap
 		// Strip the rbac: prefix from the resolved default too, so the provider
 		// comparison below matches the userId's provider (e.g. "okta"), matching
 		// how authenticateAndServeApp resolves the auth type.
-		resolved := strings.TrimPrefix(s.config.Security.AppDefaultAuthType, rbac.RBAC_AUTH_PREFIX)
+		resolved := strings.TrimPrefix(s.Config().Security.AppDefaultAuthType, rbac.RBAC_AUTH_PREFIX)
 		appAuth = types.AppAuthnType(resolved)
 	}
 	appAuthStr, _, err = s.checkAuthModifiers(string(appAuth))

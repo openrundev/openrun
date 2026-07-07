@@ -72,7 +72,6 @@ const (
 
 type Handler struct {
 	*types.Logger
-	config *types.ServerConfig
 	server *Server
 	router *chi.Mux
 }
@@ -100,7 +99,6 @@ func NewUDSHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 
 	handler := &Handler{
 		Logger: logger,
-		config: config,
 		server: server,
 		router: router,
 	}
@@ -122,7 +120,6 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 
 	handler := &Handler{
 		Logger: logger,
-		config: config,
 		server: server,
 		router: router,
 	}
@@ -199,13 +196,13 @@ func (h *Handler) httpsRedirectMiddleware(next http.Handler) http.Handler {
 func (h *Handler) httpsRedirectHost(requestHost string) string {
 	redirectDomain := h.httpsRedirectDomain(system.GetHostname(requestHost))
 	if _, _, err := net.SplitHostPort(requestHost); err == nil {
-		return net.JoinHostPort(redirectDomain, strconv.Itoa(h.server.config.Https.Port))
+		return net.JoinHostPort(redirectDomain, strconv.Itoa(h.server.Config().Https.Port))
 	}
 	return formatRedirectHost(redirectDomain)
 }
 
 func (h *Handler) httpsRedirectDomain(requestDomain string) string {
-	config := h.server.config
+	config := h.server.Config()
 	if requestDomain == "" {
 		return config.System.DefaultDomain
 	}
@@ -226,7 +223,7 @@ func (h *Handler) httpsRedirectDomain(requestDomain string) string {
 }
 
 func (h *Handler) isConfiguredRedirectDomain(requestDomain string) bool {
-	config := h.server.config
+	config := h.server.Config()
 	if requestDomain == config.System.DefaultDomain {
 		return true
 	}
@@ -267,7 +264,7 @@ func (h *Handler) callApp(w http.ResponseWriter, r *http.Request) {
 	var serveListApps = false
 	matchedApp, matchErr := h.server.MatchApp(requestDomain, r.URL.Path)
 	if matchErr != nil {
-		systemConfig := h.server.config.System
+		systemConfig := h.server.Config().System
 		if systemConfig.RootServeListApps != "disable" {
 			// No app is installed at root, use the list_apps app
 			var serveAtDomain string
@@ -331,7 +328,7 @@ func validatePathForCreate(inp string) error {
 }
 
 func (h *Handler) builderAuth(r *http.Request) error {
-	if h.server.config.System.BuilderAuthToken == "" {
+	if h.server.Config().System.BuilderAuthToken == "" {
 		return fmt.Errorf("builder auth token is not configured")
 	}
 	token := r.Header.Get("Authorization")
@@ -346,7 +343,7 @@ func (h *Handler) builderAuth(r *http.Request) error {
 	if token == "" {
 		return fmt.Errorf("bearer token is required")
 	}
-	if subtle.ConstantTimeCompare([]byte(h.server.config.System.BuilderAuthToken), []byte(token)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(h.server.Config().System.BuilderAuthToken), []byte(token)) != 1 {
 		return fmt.Errorf("invalid bearer token")
 	}
 	return nil
@@ -1687,7 +1684,7 @@ func (h *Handler) serveDelegatedBuild() http.Handler {
 	r.Post("/delegate_build", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, MAX_DELEGATE_UPLOAD_SIZE)
 		h.apiHandler(w, r, true, DELEGATE_BUILD_OP, func(r *http.Request) (any, error) {
-			return container.DelegateHandler(r, h.config, h.Logger)
+			return container.DelegateHandler(r, h.server.Config(), h.Logger)
 		}, false)
 	}))
 

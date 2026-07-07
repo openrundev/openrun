@@ -22,7 +22,7 @@ func TestReloadAppsImagePreBuildStep(t *testing.T) {
 		t.Run(fmt.Sprintf("useImagePreBuildStep=%v", preBuild), func(t *testing.T) {
 			server, db, ctx := newApplyTestServer(t)
 			defer db.Close()
-			server.config.System.UseImagePreBuildStep = preBuild
+			server.staticConfig.System.UseImagePreBuildStep = preBuild
 			if err := server.initAuditDB("sqlite:" + filepath.Join(t.TempDir(), "audit.db")); err != nil {
 				t.Fatalf("init audit db: %v", err)
 			}

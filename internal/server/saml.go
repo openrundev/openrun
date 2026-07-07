@@ -59,11 +59,15 @@ const SAML_AUTH_PREFIX = "saml_"
 // SAMLManager manages the SAML providers and their configurations
 type SAMLManager struct {
 	*types.Logger
-	config          *types.ServerConfig
+	config      *types.ServerConfig
+	cookieStore sessions.Store
+	db          KVStore
+
+	// providerMu guards the provider maps, which are replaced when dynamic
+	// config entries add/change/remove saml providers at runtime
+	providerMu      sync.RWMutex
 	providerConfigs map[string]*types.SAMLConfig
 	providers       map[string]*saml2.SAMLServiceProvider
-	cookieStore     sessions.Store
-	db              KVStore
 }
 
 func NewSAMLManager(logger *types.Logger, config *types.ServerConfig, cookieStore sessions.Store, db KVStore) *SAMLManager {
@@ -80,12 +84,19 @@ func genSAMLCookieName(provider string) string {
 }
 
 func (s *SAMLManager) Setup(ctx context.Context) error {
-	s.providerConfigs = make(map[string]*types.SAMLConfig)
-	s.providers = make(map[string]*saml2.SAMLServiceProvider)
+	return s.registerProviders(ctx, s.config.SAML)
+}
+
+// registerProviders builds the SAML providers for a config map and swaps them
+// in as the full provider set. Used at startup with the static config and by
+// UpdateProviders when dynamic config entries change the saml section
+func (s *SAMLManager) registerProviders(ctx context.Context, samlConfigs map[string]types.SAMLConfig) error {
+	providerConfigs := make(map[string]*types.SAMLConfig)
+	providers := make(map[string]*saml2.SAMLServiceProvider)
 
 	// A missing callback URL is a global misconfiguration that no provider can
 	// work around, so fail fast (unlike per-provider metadata errors below).
-	if len(s.config.SAML) > 0 && s.config.Security.CallbackUrl == "" {
+	if len(samlConfigs) > 0 && s.config.Security.CallbackUrl == "" {
 		return fmt.Errorf("security.callback_url must be set for enabling SAML")
 	}
 
@@ -94,9 +105,9 @@ func (s *SAMLManager) Setup(ctx context.Context) error {
 	// down unrelated apps), so build failures disable that provider instead.
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	for name, config := range s.config.SAML {
+	for name, config := range samlConfigs {
 		name = SAML_AUTH_PREFIX + name
-		s.providerConfigs[name] = &config
+		providerConfigs[name] = &config
 		wg.Go(func() {
 			provider, err := s.buildSAMLProvider(ctx, name, config)
 			if err != nil {
@@ -104,18 +115,47 @@ func (s *SAMLManager) Setup(ctx context.Context) error {
 				return
 			}
 			mu.Lock()
-			s.providers[name] = provider
+			providers[name] = provider
 			mu.Unlock()
 		})
 	}
 	wg.Wait()
 
+	s.providerMu.Lock()
+	s.providerConfigs = providerConfigs
+	s.providers = providers
+	s.providerMu.Unlock()
+
 	return nil
+}
+
+// UpdateProviders re-registers the SAML providers from the merged (static +
+// dynamic) saml config. Provider build failures are logged and disable that
+// provider, matching the startup behavior
+func (s *SAMLManager) UpdateProviders(ctx context.Context, samlConfigs map[string]types.SAMLConfig) {
+	if err := s.registerProviders(ctx, samlConfigs); err != nil {
+		s.Error().Err(err).Msg("error updating SAML providers")
+	}
+}
+
+// getProvider returns one registered SAML provider, nil if not configured or
+// disabled by a build failure
+func (s *SAMLManager) getProvider(providerName string) *saml2.SAMLServiceProvider {
+	s.providerMu.RLock()
+	defer s.providerMu.RUnlock()
+	return s.providers[providerName]
+}
+
+// getProviderConfig returns the config for one registered SAML provider
+func (s *SAMLManager) getProviderConfig(providerName string) *types.SAMLConfig {
+	s.providerMu.RLock()
+	defer s.providerMu.RUnlock()
+	return s.providerConfigs[providerName]
 }
 
 func (s *SAMLManager) ValidateSAMLProvider(authType string) bool {
 	providerName := strings.TrimPrefix(authType, rbac.RBAC_AUTH_PREFIX)
-	return s.providers[providerName] != nil
+	return s.getProvider(providerName) != nil
 }
 
 func (s *SAMLManager) CheckSAMLAuth(w http.ResponseWriter, r *http.Request, appProvider string) (string, []string, error) {
@@ -406,7 +446,7 @@ func (s *SAMLManager) RegisterRoutes(mux *chi.Mux) {
 
 func (s *SAMLManager) metadata(w http.ResponseWriter, r *http.Request) {
 	providerName := chi.URLParam(r, "provider")
-	sp := s.providers[providerName]
+	sp := s.getProvider(providerName)
 	if sp == nil {
 		http.Error(w, fmt.Sprintf("provider %s not found", providerName), http.StatusNotFound)
 		return
@@ -433,7 +473,7 @@ func (s *SAMLManager) metadata(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
-	sp := s.providers[providerName]
+	sp := s.getProvider(providerName)
 	if sp == nil {
 		http.Error(w, fmt.Sprintf("provider %s not found", providerName), http.StatusNotFound)
 		return
@@ -533,7 +573,7 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 
 func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 	providerName := chi.URLParam(r, "provider")
-	sp := s.providers[providerName]
+	sp := s.getProvider(providerName)
 	if sp == nil {
 		http.Error(w, fmt.Sprintf("provider %s not found", providerName), http.StatusNotFound)
 		return
@@ -580,7 +620,7 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config := s.providerConfigs[providerName]
+	config := s.getProviderConfig(providerName)
 	if config == nil {
 		http.Error(w, fmt.Sprintf("provider config %s not found", providerName), http.StatusNotFound)
 		return
@@ -797,7 +837,7 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 // (same-origin only) that clears the session and optionally notifies the IdP.
 func (s *SAMLManager) logout(w http.ResponseWriter, r *http.Request) {
 	providerName := chi.URLParam(r, "provider")
-	sp := s.providers[providerName]
+	sp := s.getProvider(providerName)
 	if sp == nil {
 		http.Error(w, fmt.Sprintf("provider %s not found", providerName), http.StatusNotFound)
 		return
