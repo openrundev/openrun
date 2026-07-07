@@ -687,6 +687,47 @@ func (a *App) loadParamsInfo(sourceFS *appfs.SourceFs) error {
 	return nil
 }
 
+// applySecurityHeaders sets security related HTTP response headers based on the configured
+// headers level (see AppConfig.Security.HeadersLevel). The levels are cumulative: a higher
+// level includes every header of the lower levels, sometimes with a stricter value. Only
+// levels 0, 2, 5 and 10 are implemented; any other value is rounded down to the nearest
+// implemented level (values below 0 add nothing, values above 10 are treated as 10). Headers
+// are only set when absent so an app can override any of them by setting its own value.
+func applySecurityHeaders(h http.Header, level int) {
+	if level < 2 {
+		return
+	}
+
+	setIfAbsent := func(key, value string) {
+		if h.Get(key) == "" {
+			h.Set(key, value)
+		}
+	}
+
+	// Level 2: baseline headers with minimal risk of breaking apps.
+	setIfAbsent("X-Content-Type-Options", "nosniff")
+	setIfAbsent("X-Frame-Options", "SAMEORIGIN")
+	setIfAbsent("Referrer-Policy", "strict-origin-when-cross-origin")
+
+	if level >= 5 {
+		// Level 5: stricter framing, HSTS and cross-origin isolation of the window.
+		h.Set("X-Frame-Options", "DENY")
+		setIfAbsent("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		setIfAbsent("Cross-Origin-Opener-Policy", "same-origin")
+		setIfAbsent("X-Permitted-Cross-Domain-Policies", "none")
+	}
+
+	if level >= 10 {
+		// Level 10: full strict set, including a restrictive CSP that can break apps
+		// relying on external or inline resources, so it is opt-in only.
+		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+		setIfAbsent("Content-Security-Policy", "default-src 'self'")
+		setIfAbsent("Cross-Origin-Embedder-Policy", "require-corp")
+		setIfAbsent("Cross-Origin-Resource-Policy", "same-origin")
+		setIfAbsent("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+	}
+}
+
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.Info().Enabled() {
 		a.Info().Str("method", r.Method).Str("url", r.URL.String()).Msg("App Received request")
@@ -700,6 +741,9 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		telemetry.RecordAppResponse(r.Context(), status, a.telemetryIdentityAttrs...)
 	}()
+
+	applySecurityHeaders(wrapper.Header(), a.AppConfig.Security.HeadersLevel)
+
 	if errPtr := a.reloadError.Load(); errPtr != nil && *errPtr != nil {
 		reloadErr := *errPtr
 		a.Warn().Err(reloadErr).Msg("Last reload had failed")

@@ -874,8 +874,10 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 				r.Host = canonicalProxyHost(r.Host, canonicalProxyDomain)
 			}
 
-			// If write API, check if preview/stage app is allowed access
-			isWriteRequest := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete
+			// If write API, check if preview/stage app is allowed access.
+			// Treat all methods other than known read-only ones as writes so
+			// that PATCH and custom verbs fail closed.
+			isWriteRequest := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
 			if isWriteRequest {
 				if strings.HasPrefix(string(a.Id), types.ID_PREFIX_APP_PREVIEW) && !a.Settings.PreviewWriteAccess {
 					http.Error(w, "Preview app does not have access to proxy write APIs", http.StatusInternalServerError)

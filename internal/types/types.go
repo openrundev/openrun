@@ -152,6 +152,11 @@ type ActionConfig struct {
 type Security struct {
 	DefaultSecretsProvider string `toml:"default_secrets_provider"`
 	DisableCSRFProtection  bool   `toml:"disable_csrf_protection"`
+	// HeadersLevel controls the set of security related HTTP response headers added to
+	// app responses. Valid values are 0 to 10: 0 adds no extra headers and 10 adds the
+	// strictest full set. Levels 0, 2, 5 and 10 are currently implemented; any other
+	// value is rounded down to the nearest implemented level. Default is 2.
+	HeadersLevel int `toml:"headers_level"`
 }
 
 type CORS struct {

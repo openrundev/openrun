@@ -213,3 +213,8 @@ audit.skip_http_events = false
 
 security.default_secrets_provider = "env" # default secret provider, env if it is enabled
 security.disable_csrf_protection = false # disable CSRF protection for apps
+# Level of security related HTTP response headers added to app responses. Value from 0 to 10:
+# 0 = no extra headers, 2 = baseline safe headers, 5 = stricter headers incl. HSTS,
+# 10 = full strict set incl. Content-Security-Policy. Only 0, 2, 5 and 10 are implemented;
+# other values round down to the nearest implemented level.
+security.headers_level = 2
