@@ -23,7 +23,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
-          go-version: "1.26.4"
+          go-version: "1.26.5"
       # osslsigncode is used to Authenticode-sign windows binaries
       - name: Install osslsigncode
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends osslsigncode
@@ -69,7 +69,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
-          go-version: "1.26.4"
+          go-version: "1.26.5"
       - name: Install osc
         run: pipx install osc
       - name: Configure osc credentials
