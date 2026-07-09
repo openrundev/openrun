@@ -146,8 +146,11 @@ type Server struct {
 	authHandler    *AdminBasicAuth
 	oAuthManager   *OAuthManager
 	samlManager    *SAMLManager
-	notifyClose    chan types.AppPathDomain
-	secretsManager *system.SecretManager
+	notifyClose chan types.AppPathDomain
+	// secretsManager is swapped when a dynamic config change modifies the
+	// [secret] config; read it through secretsMgr(), never capture the
+	// manager (or one of its method values) in a long-lived object
+	secretsManager atomic.Pointer[system.SecretManager]
 	listAppsApp    *app.App
 	mu             sync.RWMutex
 	auditDB        *sql.DB
@@ -231,14 +234,19 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
+	// Bind the db secret provider to the metadata database. Done after the
+	// metadata init since the db connection config can itself use secrets.
+	// Nonfatal at startup: a key mismatch must not crash loop the server
+	bindDBSecretStore(context.Background(), l, secretsManager, db) //nolint:errcheck
+
 	server := &Server{
-		Logger:         l,
-		staticConfig:   config,
-		db:             db,
-		secretsManager: secretsManager,
-		telemetry:      telemetryProviders,
-		stopRequested:  make(chan struct{}),
+		Logger:        l,
+		staticConfig:  config,
+		db:            db,
+		telemetry:     telemetryProviders,
+		stopRequested: make(chan struct{}),
 	}
+	server.secretsManager.Store(secretsManager)
 	server.forwardAuthHTTPClient = newForwardAuthHTTPClient(config)
 	db.AppNotifyFunc = server.appNotifyHandler
 	db.ConfigNotifyFunc = server.configNotifyHandler
@@ -331,7 +339,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	// dynamically configured oauth/saml providers. Bad persisted entries must
 	// not prevent server startup, so errors are logged and the server continues
 	// with the static config
-	if err = server.applyDynamicConfig(context.Background(), server.dynamicConfig); err != nil {
+	if err = server.applyDynamicConfig(context.Background(), server.dynamicConfig, false); err != nil {
 		l.Error().Err(err).Msg("error applying dynamic config entries, continuing with static config")
 	}
 
@@ -367,15 +375,34 @@ func (s *Server) Config() *types.ServerConfig {
 	return s.staticConfig
 }
 
+// secretsMgr returns the current secrets manager. The manager is replaced
+// when a dynamic config change modifies the [secret] config, so callers must
+// not hold on to the returned value
+func (s *Server) secretsMgr() *system.SecretManager {
+	return s.secretsManager.Load()
+}
+
+// AppEvalTemplate resolves {{secret}} references for apps through the current
+// secrets manager. Apps hold this server method instead of a manager-bound
+// method value, so a dynamic secret provider change (key rotation, new
+// provider) takes effect for already cached apps without a reload
+func (s *Server) AppEvalTemplate(appSecrets [][]string, defaultProvider, input string) (string, error) {
+	return s.secretsMgr().AppEvalTemplate(appSecrets, defaultProvider, input)
+}
+
 // applyDynamicConfig recomputes the effective config from the static config
 // and the dynamic entries/settings, then applies the runtime side effects of
 // changed sections: OAuth/SAML provider re-registration and list-apps app
 // invalidation. Called at startup and on every dynamic config change (API
-// update, restore, cross-instance notification)
-func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicConfig) error {
+// update, restore, cross-instance notification). With failOnBindError, a db
+// secret provider bind failure rejects the whole update (used for runtime
+// updates: a bad key reference must not silently swap in a disabled
+// provider); at startup the bind failure is nonfatal, same as NewServer's
+// own bind
+func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicConfig, failOnBindError bool) error {
 	// The merge always starts from the static config, so deleted dynamic
 	// values revert to their static state
-	effective, err := mergeDynamicConfig(s.Logger, s.staticConfig, config, s.secretsManager.EvalTemplate)
+	effective, err := mergeDynamicConfig(s.Logger, s.staticConfig, config, s.secretsMgr().EvalTemplate)
 	if err != nil {
 		return err
 	}
@@ -395,11 +422,17 @@ func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicCo
 		if err != nil {
 			return fmt.Errorf("error initializing secret providers: %w", err)
 		}
+		// Re-bind the db provider of the rebuilt manager to the metadata
+		// database, same as at startup: without this, stored-secret
+		// operations fail after any dynamic [secret] config change
+		if err := bindDBSecretStore(ctx, s.Logger, secretsManager, s.db); err != nil && failOnBindError {
+			return fmt.Errorf("error initializing embedded secrets store (db provider), rejecting config update: %w", err)
+		}
 	}
 
 	s.effectiveConfig.Store(effective)
 	if secretsManager != nil {
-		s.secretsManager = secretsManager
+		s.secretsManager.Store(secretsManager)
 	}
 
 	if !reflect.DeepEqual(previous.Auth, effective.Auth) {
@@ -443,16 +476,27 @@ func (s *Server) SaveDynamicConfig(ctx context.Context) error {
 }
 
 func (s *Server) updateDynamicConfigCache(ctx context.Context, newConfig *types.DynamicConfig) error {
-	err := s.rbacManager.UpdateRBACConfig(&newConfig.RBAC) // update the rbac config so that it updates its caches
-	if err != nil {
+	// The RBAC manager is updated first so its caches rebuild, but a rejected
+	// update must not leave the rejected request's RBAC rules live: if a
+	// later step fails (for example the db secret provider bind validation),
+	// the previous RBAC config is restored. The restore also clears the
+	// partial state UpdateRBACConfig leaves behind when it fails midway
+	prevRBAC := &s.dynamicConfig.RBAC
+	restoreRBAC := func() {
+		if restoreErr := s.rbacManager.UpdateRBACConfig(prevRBAC); restoreErr != nil {
+			s.Error().Err(restoreErr).Msg("error restoring previous rbac config after rejected config update")
+		}
+	}
+	if err := s.rbacManager.UpdateRBACConfig(&newConfig.RBAC); err != nil {
+		restoreRBAC()
 		return fmt.Errorf("error updating rbac config: %w", err)
 	}
-	if err := s.applyDynamicConfig(ctx, newConfig); err != nil {
+	if err := s.applyDynamicConfig(ctx, newConfig, true); err != nil {
+		restoreRBAC()
 		return fmt.Errorf("error applying dynamic config entries: %w", err)
 	}
 	s.dynamicConfig = newConfig
-	err = s.SaveDynamicConfig(ctx)
-	if err != nil {
+	if err := s.SaveDynamicConfig(ctx); err != nil {
 		return fmt.Errorf("error saving dynamic config: %w", err)
 	}
 	return nil
@@ -522,6 +566,22 @@ func (s *Server) configNotifyHandler(updatePayload types.ConfigUpdatePayload) {
 	}
 }
 
+// bindDBSecretStore connects the db secret provider of manager to the
+// metadata database. A newly built SecretManager cannot serve stored secrets
+// until this runs, so every path that builds a manager after the metadata
+// database is up (startup, dynamic config rebuild) must call this. A failure
+// (for example a master key which does not match the stored secrets) leaves
+// the db provider disabled (operations on it return the bind error, other
+// providers keep working); the error is logged here and also returned so
+// runtime config updates can reject the change
+func bindDBSecretStore(ctx context.Context, logger *types.Logger, manager *system.SecretManager, db *metadata.Metadata) error {
+	err := manager.BindDBStores(ctx, db)
+	if err != nil {
+		logger.Error().Err(err).Msg("embedded secrets store (db provider) initialization failed; db secrets will be unavailable")
+	}
+	return err
+}
+
 // updateConfigSecrets updates the secrets in the server config using the evalSecret function
 func updateConfigSecrets(config *types.ServerConfig, evalSecret func(string) (string, error)) error {
 	var err error
@@ -546,12 +606,9 @@ func updateConfigSecrets(config *types.ServerConfig, evalSecret func(string) (st
 		config.Auth[name] = auth
 	}
 
-	for name, gitAuth := range config.GitAuth {
-		if gitAuth.Password, err = evalSecret(gitAuth.Password); err != nil {
-			return err
-		}
-		config.GitAuth[name] = gitAuth
-	}
+	// git_auth entries are not resolved here: they can reference the db
+	// secret provider, which is bound only after the metadata database is
+	// initialized. loadGitKey resolves them at use time instead
 
 	for name, pluginConfig := range config.Plugins {
 		for key, value := range pluginConfig {
@@ -1078,7 +1135,7 @@ func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 	subLogger := s.Logger.With().Str("id", string(appEntry.Id)).Logger()
 	appLogger := types.Logger{Logger: &subLogger}
 	s.listAppsApp, err = app.NewApp(sourceFS, nil, &appLogger, &appEntry, &merged.System,
-		merged.Plugins, merged.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
+		merged.Plugins, merged.AppConfig, s.notifyClose, s.AppEvalTemplate,
 		s.InsertAuditEvent, merged, s.rbacManager, []*types.Binding{})
 	if err != nil {
 		return nil, err

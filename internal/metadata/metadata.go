@@ -25,7 +25,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 15
+const CURRENT_DB_VERSION = 16
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -426,6 +426,20 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=15, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 16 {
+		m.Info().Msg("Upgrading to version 16")
+		if _, err := tx.ExecContext(ctx, `create table secrets (name text not null, value `+system.MapDataType(m.dbType, "blob")+
+			`, nonce `+system.MapDataType(m.dbType, "blob")+`, key_id text, created_by text, create_time `+
+			system.MapDataType(m.dbType, "datetime")+`, update_time `+system.MapDataType(m.dbType, "datetime")+
+			`, metadata json, PRIMARY KEY(name))`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=16, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}

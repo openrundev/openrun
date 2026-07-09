@@ -94,3 +94,41 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringMatch(t, "body", "<html> <head></head> secondbody  <footer></footer></html>", response.Body.String())
 }
+
+func TestBaseTemplateDefineRoute(t *testing.T) {
+	// A route's full template (and an ace.response template) can name a
+	// define from the base templates instead of a template file, for
+	// fragment-only responses which need no page file
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [
+	ace.html("/"),
+	ace.html("/frag", full="frag_block", handler=lambda req: {"key": "fragvalue"}),
+	ace.html("/resp", handler=lambda req: ace.response({"key": "respvalue"}, "frag_block")),
+	])
+
+def handler(req):
+	return {"key": "myvalue"}`,
+		"index.go.html":              `index {{.Data.key}}`,
+		"base_templates/aaa.go.html": `{{define "frag_block"}}frag {{.Data.key}}{{end}}`,
+	}
+	a, _, err := CreateTestAppRoot(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/frag", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertEqualsString(t, "body", "frag fragvalue", response.Body.String())
+
+	request = httptest.NewRequest("GET", "/resp", nil)
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertEqualsString(t, "body", "frag respvalue", response.Body.String())
+}

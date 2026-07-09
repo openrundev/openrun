@@ -9,11 +9,22 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added an embedded secrets store: the `db` secret provider encrypts values with AES-256-GCM and saves them in the metadata database. The master key is auto generated into `$OPENRUN_HOME/config/secret.key` or can be a `{{secret_from ...}}` reference resolved through another provider (for Kubernetes, mount it from a native Secret). Secrets are managed with the `openrun secret create/list/show/delete/rekey` commands, the `/_openrun/secret` management APIs and the `openrun_admin` plugin (`create_secret`, `get_secret`, `list_secrets`, `delete_secret`, `rekey_secrets`); `create` generates a unique name from a prefix and prints the `{{secret_from "db" "<name>"}}` reference to use. New `secret:create`, `secret:read`, `secret:delete` and `secret:reveal` RBAC permissions gate the APIs.
+- The management console can now store values as secrets with one click: value fields in app params, service and binding config, config entry forms (OAuth client id/secret, git auth) and the system config key/value tables have a lock button which encrypts the value (or a picked file's content, for example an SSH private key) into the embedded secrets store and replaces the field with the generated `{{secret ...}}` reference.
+- Added the `git_auth` setting `private_key` for providing the SSH private key contents inline (supports `{{secret ...}}` references), as an alternative to `key_file_path`.
 - Added the app code setting `container.separate_stage_prod_images` for specs that need distinct staging and production container images.
+- With structured templates, a route's `full` template (and template names passed to `ace.response`) can now name a `{{define}}` block from the base templates instead of a template file, so fragment-only endpoints need no dedicated template file.
 - Added the `static_disk` app spec for serving static files directly from a local source directory without storing the static file contents in the metadata database.
+
+### Fixed
+
+- The `delete_apps` plugin API now rejects an empty path glob instead of matching every app: a caller omitting the path argument could previously delete all apps (the HTTP route already validated this, plugin calls did not).
+- Scheduled sync runs now record a synthesized request id on their audit events, attributed to the user who created the sync. These events previously had no request id since no HTTP request is behind a scheduled run, so they could not be traced; now all events of one run share an id and the audit trace shows everything the run did.
 
 ### Changed
 
+- App responses now include baseline security headers by default: the new `security.headers_level` app config defaults to 2, which adds `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN` and `Referrer-Policy: strict-origin-when-cross-origin` when the app did not set its own value. Apps embedded in cross-origin iframes need `security.headers_level = 0` (settable per app with `openrun app update conf`) or an app-provided `X-Frame-Options`/CSP header, which takes precedence. Levels 5 and 10 opt into stricter sets (HSTS, CSP).
+- The proxy write-access check for staging and preview apps (`stage_enable_write_access` / `preview_enable_write_access`) now treats every method other than GET, HEAD and OPTIONS as a write, so PATCH and custom verbs fail closed; denied requests now return 403 instead of 500.
 - New production apps now create their linked staging app on a staging subdomain by default, for example `stage.example.com:/app`, instead of suffixing `_cl_stage` to the production path. Use `system.stage_at`, `system.default_stage_domain`, `openrun app create --stage-at`, or declarative `stage_at` to choose path-based staging or a specific staging domain for new apps.
 - Containerized staging and production apps now share the same generated image name by default when the build inputs match, avoiding a second image build during production promotion. Specs can opt out with `settings={"container": {"separate_stage_prod_images": True}}`.
 - Kubernetes deploys now watch Deployment rollout status instead of relying only on repeated polling, reducing API overhead and returning sooner when Kubernetes reports readiness or rollout failure. The watch path uses the same `container.deploy_health_attempts` budget, and the best-effort EndpointSlice convergence check now skips immediately when the Kubernetes API or RBAC policy does not allow listing EndpointSlices.

@@ -216,16 +216,16 @@ func newAppAPIMetadataTestServer(t *testing.T) (*Server, *metadata.Metadata, con
 		t.Fatalf("new secret manager: %v", err)
 	}
 	server := &Server{
-		Logger:         logger,
-		staticConfig:   config,
-		db:             db,
-		notifyClose:    make(chan types.AppPathDomain),
-		secretsManager: secretManager,
+		Logger:       logger,
+		staticConfig: config,
+		db:           db,
+		notifyClose:  make(chan types.AppPathDomain),
 		rbacManager: &rbac.RBACManager{
 			Logger:     logger,
 			RbacConfig: &types.RBACConfig{},
 		},
 	}
+	server.secretsManager.Store(secretManager)
 	server.apps = NewAppStore(logger, server)
 	return server, db, ctx
 }

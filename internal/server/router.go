@@ -33,6 +33,7 @@ const (
 	REAPPLY_ALL_ARG          = "reapplyAll"
 	DELEGATE_BUILD_OP        = "delegate_build"
 	MAX_DELEGATE_UPLOAD_SIZE = 512 << 20 // 512 MiB
+	MAX_SECRET_UPLOAD_SIZE   = 8 << 20   // 8 MiB: values are capped at 1 MiB, but json escaping can inflate a text value up to 6x
 )
 
 var (
@@ -1459,6 +1460,91 @@ func (h *Handler) runBindingCommand(r *http.Request) (any, error) {
 	return result, nil
 }
 
+func (h *Handler) createSecret(r *http.Request) (any, error) {
+	update, err := parseBoolArg(r.URL.Query().Get("update"), false)
+	if err != nil {
+		return nil, err
+	}
+
+	var createRequest types.CreateSecretRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&createRequest); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+
+	updateTargetInContext(r, cmp.Or(createRequest.Name, createRequest.Prefix), false)
+	updateOperationInContext(r, "secret_create")
+
+	response, err := h.server.CreateSecret(r.Context(), &createRequest, update)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	// Record the generated name as the audit target so the create event
+	// correlates with later reveal/delete events for the same secret
+	updateTargetInContext(r, response.Name, false)
+	return response, nil
+}
+
+func (h *Handler) deleteSecret(r *http.Request) (any, error) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		return nil, types.CreateRequestError("name is required", http.StatusBadRequest)
+	}
+
+	updateTargetInContext(r, name, false)
+	updateOperationInContext(r, "secret_delete")
+
+	if err := h.server.DeleteSecret(r.Context(), r.URL.Query().Get("provider"), name); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return types.SecretDeleteResponse{Name: name}, nil
+}
+
+func (h *Handler) listSecrets(r *http.Request) (any, error) {
+	updateOperationInContext(r, "list_secrets")
+
+	results, err := h.server.ListSecrets(r.Context(), r.URL.Query().Get("provider"), r.URL.Query().Get("glob"))
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return types.SecretListResponse{Secrets: results}, nil
+}
+
+func (h *Handler) getSecret(r *http.Request) (any, error) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		return nil, types.CreateRequestError("name is required", http.StatusBadRequest)
+	}
+	reveal, err := parseBoolArg(r.URL.Query().Get("reveal"), false)
+	if err != nil {
+		return nil, err
+	}
+
+	updateTargetInContext(r, name, false)
+	if reveal {
+		updateOperationInContext(r, "secret_reveal")
+	} else {
+		updateOperationInContext(r, "secret_get")
+	}
+
+	response, err := h.server.GetSecret(r.Context(), r.URL.Query().Get("provider"), name, reveal)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return response, nil
+}
+
+func (h *Handler) rekeySecrets(r *http.Request) (any, error) {
+	updateOperationInContext(r, "secret_rekey")
+
+	response, err := h.server.RekeySecrets(r.Context(), r.URL.Query().Get("provider"))
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return response, nil
+}
+
 func (h *Handler) configGet(r *http.Request) (any, error) {
 	updateOperationInContext(r, "config_get")
 	return types.ConfigResponse{DynamicConfig: h.server.GetDynamicConfig()}, nil
@@ -1660,6 +1746,32 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to run a command through a binding account
 	r.Post("/binding/run-command", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "binding_run_command", h.runBindingCommand, false)
+	}))
+
+	// API to store a secret (create, or update with ?update=true)
+	r.Post("/secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, MAX_SECRET_UPLOAD_SIZE)
+		h.apiHandler(w, r, enableBasicAuth, "secret_create", h.createSecret, false)
+	}))
+
+	// API to get secret info (?reveal=true returns the value)
+	r.Get("/secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "secret_get", h.getSecret, false)
+	}))
+
+	// API to delete a secret
+	r.Delete("/secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "secret_delete", h.deleteSecret, false)
+	}))
+
+	// API to list secrets
+	r.Get("/secrets", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "list_secrets", h.listSecrets, false)
+	}))
+
+	// API to re-encrypt secrets with the active master key
+	r.Post("/secret/rekey", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "secret_rekey", h.rekeySecrets, false)
 	}))
 
 	// API to get config

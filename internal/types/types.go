@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -376,6 +377,7 @@ type BuilderConfig struct {
 type GitAuthEntry struct {
 	UserID      string `toml:"user_id"`       // the user id of the user, defaults to "git" https://github.com/src-d/go-git/issues/637
 	KeyFilePath string `toml:"key_file_path"` // the path to the private key file
+	PrivateKey  string `toml:"private_key"`   // the private key contents (PEM), used instead of key_file_path; supports {{secret}} references
 	Password    string `toml:"password"`      // the password for the private key file
 }
 
@@ -976,6 +978,11 @@ const (
 	PermissionConfigRead   RBACPermission = "config:read"
 	PermissionConfigUpdate RBACPermission = "config:update"
 	PermissionServerStop   RBACPermission = "server:stop"
+
+	PermissionSecretCreate RBACPermission = "secret:create" // create/update secrets, rekey the store
+	PermissionSecretRead   RBACPermission = "secret:read"   // list secrets, get secret metadata (not values)
+	PermissionSecretDelete RBACPermission = "secret:delete"
+	PermissionSecretReveal RBACPermission = "secret:reveal" // read back a secret value
 )
 
 // RBACPermissionGroup lists the permissions for one resource type, in display order
@@ -1003,6 +1010,9 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 		PermissionBindingRead, PermissionBindingRunCommand}},
 	{Resource: "config", Permissions: []RBACPermission{
 		PermissionConfigRead, PermissionConfigUpdate}},
+	{Resource: "secret", Permissions: []RBACPermission{
+		PermissionSecretCreate, PermissionSecretRead, PermissionSecretDelete,
+		PermissionSecretReveal}},
 	{Resource: "server", Permissions: []RBACPermission{PermissionServerStop}},
 }
 
@@ -1041,6 +1051,32 @@ const (
 	OPENRUN_HEADER_PERMS            = OPENRUN_HEADER_PREFIX + "Perms"
 	OPENRUN_HEADER_APP_RBAC_ENABLED = OPENRUN_HEADER_PREFIX + "Rbac-Enabled"
 )
+
+// ErrSecretExists is returned when a secret with the given name already exists
+var ErrSecretExists = errors.New("secret already exists")
+
+// ErrSecretNotFound is returned when a secret with the given name does not exist
+var ErrSecretNotFound = errors.New("secret not found")
+
+// SecretMetadata is the non-sensitive metadata stored with an encrypted secret
+type SecretMetadata struct {
+	Description string `json:"description,omitempty"`
+	SourceFile  string `json:"source_file,omitempty"` // original file name when created from a file
+}
+
+// SecretEntry is a row in the secrets table. Value is the AES-256-GCM
+// ciphertext of the secret, sealed with the master key identified by KeyId
+// and a per-write random Nonce
+type SecretEntry struct {
+	Name       string
+	Value      []byte
+	Nonce      []byte
+	KeyId      string
+	CreatedBy  string
+	CreateTime time.Time
+	UpdateTime time.Time
+	Metadata   SecretMetadata
+}
 
 // Service is a service entry in the metadata database
 // service is the admin level connection from which bindings are created

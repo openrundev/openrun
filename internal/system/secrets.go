@@ -7,17 +7,22 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/hashicorp/vault/api"
+	"github.com/openrundev/openrun/internal/passwd"
 	"github.com/openrundev/openrun/internal/types"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -36,6 +41,7 @@ type SecretManager struct {
 
 func NewSecretManager(ctx context.Context, secretConfig map[string]types.SecretConfig, defaultProvider string, serverConfig *types.ServerConfig) (*SecretManager, error) {
 	providers := make(map[string]secretProvider)
+	dbProviderCount := 0
 	for name, conf := range secretConfig {
 		var provider secretProvider
 		if name == "asm" || strings.HasPrefix(name, "asm_") {
@@ -50,6 +56,16 @@ func NewSecretManager(ctx context.Context, secretConfig map[string]types.SecretC
 			provider = &propertiesSecretProvider{}
 		} else if name == "kubernetes" || strings.HasPrefix(name, "kubernetes_") {
 			provider = &kubernetesSecretProvider{namespace: serverConfig.Kubernetes.Namespace}
+		} else if name == "db" || strings.HasPrefix(name, "db_") {
+			// A single db provider is allowed: all db providers would share the
+			// same secrets table (and, for auto keys, the same key file), so a
+			// second one would overwrite the first one's rows and rekey would
+			// strand them
+			dbProviderCount++
+			if dbProviderCount > 1 {
+				return nil, fmt.Errorf("only one db secret provider can be configured")
+			}
+			provider = &dbSecretProvider{name: name}
 		} else {
 			return nil, fmt.Errorf("unknown secret provider %s", name)
 		}
@@ -227,6 +243,261 @@ type secretProvider interface {
 
 	// GetJoinDelimiter returns the delimiter used to join multiple secret keys
 	GetJoinDelimiter() string
+}
+
+// writableSecretProvider is implemented by secret providers which support
+// storing secrets (currently the db provider)
+type writableSecretProvider interface {
+	secretProvider
+	CreateSecret(ctx context.Context, name string, value []byte, meta types.SecretMetadata, createdBy string) error
+	UpdateSecret(ctx context.Context, name string, value []byte, meta types.SecretMetadata, createdBy string) (bool, error)
+	DeleteSecret(ctx context.Context, name string) error
+	ListSecrets(ctx context.Context) ([]types.SecretInfo, error)
+	// GetSecretInfo returns info about one stored secret. With includeValue,
+	// the decrypted value is also returned, from the same fetch as the info
+	GetSecretInfo(ctx context.Context, name string, includeValue bool) (*types.SecretInfo, []byte, error)
+	Rekey(ctx context.Context) (rekeyed int, skipped int, err error)
+}
+
+var (
+	secretNameRegex   = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,127}$`)
+	secretPrefixRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
+)
+
+const generateNameAttempts = 10
+
+// BindDBStores connects the db secret providers to the metadata database.
+// Called after the metadata database is initialized (the db provider cannot
+// be used for server config values because of this ordering). A no-op when no
+// db provider is configured
+func (s *SecretManager) BindDBStores(ctx context.Context, store SecretStore) error {
+	for _, provider := range s.providers {
+		dbProvider, ok := provider.(*dbSecretProvider)
+		if !ok {
+			continue
+		}
+		if err := dbProvider.bind(ctx, store, s.EvalTemplate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writableProvider returns the named provider if it supports writes.
+// providerName defaults to "db"
+func (s *SecretManager) writableProvider(providerName string) (writableSecretProvider, error) {
+	providerName = cmp.Or(providerName, "db")
+	provider, ok := s.providers[providerName]
+	if !ok {
+		return nil, fmt.Errorf("unknown secret provider %s", providerName)
+	}
+	writable, ok := provider.(writableSecretProvider)
+	if !ok {
+		return nil, fmt.Errorf("secret provider %s does not support storing secrets", providerName)
+	}
+	return writable, nil
+}
+
+// secretRef returns the template reference for using the secret in app
+// params/config values
+func (s *SecretManager) secretRef(providerName, name string) string {
+	if providerName == s.defaultProvider {
+		return fmt.Sprintf(`{{secret %q}}`, name)
+	}
+	return fmt.Sprintf(`{{secret_from %q %q}}`, providerName, name)
+}
+
+// decodeSecretValue decodes the request value. Encoding "base64" is used to
+// pass binary values (file contents); the decoded bytes are stored
+func decodeSecretValue(value, encoding string) ([]byte, error) {
+	switch encoding {
+	case "":
+		return []byte(value), nil
+	case "base64":
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			return nil, fmt.Errorf("value is not valid base64: %w", err)
+		}
+		return decoded, nil
+	default:
+		return nil, fmt.Errorf("unknown encoding %q, must be \"\" or \"base64\"", encoding)
+	}
+}
+
+// CreateSecret stores a secret value. If req.Name is set, that name is used
+// (update allows overwriting an existing value). Otherwise a unique name is
+// generated from req.Prefix. Returns the name and the {{secret}} template
+// reference to use
+func (s *SecretManager) CreateSecret(ctx context.Context, req *types.CreateSecretRequest, createdBy string, update bool) (*types.SecretCreateResponse, error) {
+	providerName := cmp.Or(req.Provider, "db")
+	provider, err := s.writableProvider(providerName)
+	if err != nil {
+		return nil, err
+	}
+
+	value, err := decodeSecretValue(req.Value, req.Encoding)
+	if err != nil {
+		return nil, err
+	}
+	if len(value) == 0 {
+		return nil, fmt.Errorf("secret value is required")
+	}
+	if len(value) > MaxSecretValueBytes {
+		return nil, fmt.Errorf("secret value exceeds max size of %d bytes", MaxSecretValueBytes)
+	}
+
+	meta := types.SecretMetadata{
+		Description: req.Description,
+		SourceFile:  req.SourceFile,
+	}
+
+	if req.Name != "" {
+		if req.Prefix != "" {
+			return nil, fmt.Errorf("name and prefix cannot both be set")
+		}
+		if !secretNameRegex.MatchString(req.Name) {
+			return nil, fmt.Errorf("invalid secret name %q: must start with a letter and contain only letters, digits, _ and -", req.Name)
+		}
+
+		updated := false
+		if update {
+			updated, err = provider.UpdateSecret(ctx, req.Name, value, meta, createdBy)
+		} else {
+			err = provider.CreateSecret(ctx, req.Name, value, meta, createdBy)
+			if err == types.ErrSecretExists {
+				return nil, fmt.Errorf("secret %s already exists, use the update option to overwrite", req.Name)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &types.SecretCreateResponse{
+			Name:      req.Name,
+			Provider:  providerName,
+			SecretRef: s.secretRef(providerName, req.Name),
+			Updated:   updated,
+		}, nil
+	}
+
+	if req.Prefix == "" {
+		return nil, fmt.Errorf("name or prefix is required")
+	}
+	if update {
+		return nil, fmt.Errorf("update requires an explicit name, not a prefix")
+	}
+	if !secretPrefixRegex.MatchString(req.Prefix) {
+		return nil, fmt.Errorf("invalid secret prefix %q: must start with a letter and contain only letters, digits, _ and -", req.Prefix)
+	}
+
+	// Generate a unique name; the insert fails on a name conflict (enforced by
+	// the primary key, safe across servers sharing the database), retry with a
+	// new random suffix
+	for range generateNameAttempts {
+		suffix, err := passwd.GenerateRandString(8, secretSuffixChars)
+		if err != nil {
+			return nil, err
+		}
+		name := req.Prefix + "_" + suffix
+
+		err = provider.CreateSecret(ctx, name, value, meta, createdBy)
+		if err == types.ErrSecretExists {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &types.SecretCreateResponse{
+			Name:      name,
+			Provider:  providerName,
+			SecretRef: s.secretRef(providerName, name),
+		}, nil
+	}
+	return nil, fmt.Errorf("could not generate a unique secret name with prefix %s", req.Prefix)
+}
+
+// DeleteSecret deletes a stored secret
+func (s *SecretManager) DeleteSecret(ctx context.Context, providerName, name string) error {
+	provider, err := s.writableProvider(providerName)
+	if err != nil {
+		return err
+	}
+	if !secretNameRegex.MatchString(name) {
+		return fmt.Errorf("invalid secret name %q", name)
+	}
+	return provider.DeleteSecret(ctx, name)
+}
+
+// ListSecrets returns info about stored secrets (never values), optionally
+// filtered by a glob pattern on the name
+func (s *SecretManager) ListSecrets(ctx context.Context, providerName, nameGlob string) ([]types.SecretInfo, error) {
+	provider, err := s.writableProvider(providerName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate the glob up front: matching inside the loop would silently
+	// accept an invalid pattern whenever the list is empty
+	if nameGlob != "" && !doublestar.ValidatePattern(nameGlob) {
+		return nil, fmt.Errorf("invalid glob pattern %q", nameGlob)
+	}
+
+	infos, err := provider.ListSecrets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if nameGlob == "" {
+		return infos, nil
+	}
+
+	filtered := make([]types.SecretInfo, 0, len(infos))
+	for _, info := range infos {
+		if match, err := doublestar.Match(nameGlob, info.Name); err == nil && match {
+			filtered = append(filtered, info)
+		}
+	}
+	return filtered, nil
+}
+
+// GetSecretInfo returns info about one stored secret. With reveal, the value
+// is included: binary values are base64 encoded with Encoding set to "base64"
+func (s *SecretManager) GetSecretInfo(ctx context.Context, providerName, name string, reveal bool) (*types.SecretGetResponse, error) {
+	provider, err := s.writableProvider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	if !secretNameRegex.MatchString(name) {
+		return nil, fmt.Errorf("invalid secret name %q", name)
+	}
+
+	info, value, err := provider.GetSecretInfo(ctx, name, reveal)
+	if err != nil {
+		return nil, err
+	}
+	response := types.SecretGetResponse{SecretInfo: *info}
+
+	if reveal {
+		if utf8.Valid(value) {
+			response.Value = string(value)
+		} else {
+			response.Value = base64.StdEncoding.EncodeToString(value)
+			response.Encoding = "base64"
+		}
+	}
+	return &response, nil
+}
+
+// RekeySecrets re-encrypts stored secrets with the active master key. Used
+// after adding a new key to the key material to phase out old keys
+func (s *SecretManager) RekeySecrets(ctx context.Context, providerName string) (*types.SecretRekeyResponse, error) {
+	provider, err := s.writableProvider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	rekeyed, skipped, err := provider.Rekey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &types.SecretRekeyResponse{Rekeyed: rekeyed, Skipped: skipped}, nil
 }
 
 // awsSecretProvider is a secret provider that reads secrets from AWS Secrets Manager

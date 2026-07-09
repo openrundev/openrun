@@ -51,6 +51,11 @@ func initAdminPlugin(server *Server) {
 		app.CreatePluginApiName(c.CreateBinding, app.WRITE, "create_binding"),
 		app.CreatePluginApiName(c.UpdateBinding, app.WRITE, "update_binding"),
 		app.CreatePluginApiName(c.DeleteBinding, app.WRITE, "delete_binding"),
+		app.CreatePluginApiName(c.CreateSecret, app.WRITE, "create_secret"),
+		app.CreatePluginApiName(c.DeleteSecret, app.WRITE, "delete_secret"),
+		app.CreatePluginApiName(c.ListSecrets, app.READ, "list_secrets"),
+		app.CreatePluginApiName(c.GetSecret, app.READ, "get_secret"),
+		app.CreatePluginApiName(c.RekeySecrets, app.WRITE, "rekey_secrets"),
 	}
 
 	adminPlugin := func(pluginContext *types.PluginContext) (any, error) {
@@ -429,6 +434,93 @@ func dictToStringMap(dict *starlark.Dict, name string) (map[string]string, error
 		values[key.GoString()] = value.GoString()
 	}
 	return values, nil
+}
+
+// CreateSecret stores a secret value in a writable secret provider (default
+// "db"). Either name (explicit) or prefix (a unique name is generated) must
+// be set. Returns the name and the {{secret}} template reference to use
+func (c *openrunAdminPlugin) CreateSecret(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var name, prefix, value, encoding, description, provider, sourceFile starlark.String
+	var update starlark.Bool
+	if err := starlark.UnpackArgs("create_secret", args, kwargs, "value", &value, "prefix?", &prefix,
+		"name?", &name, "encoding?", &encoding, "description?", &description, "provider?", &provider,
+		"update?", &update, "source_file?", &sourceFile); err != nil {
+		return nil, err
+	}
+
+	createRequest := &types.CreateSecretRequest{
+		Name:        name.GoString(),
+		Prefix:      prefix.GoString(),
+		Value:       value.GoString(),
+		Encoding:    encoding.GoString(),
+		Description: description.GoString(),
+		Provider:    provider.GoString(),
+		SourceFile:  sourceFile.GoString(),
+	}
+
+	result, err := c.server.CreateSecret(system.GetRequestContext(thread), createRequest, bool(update))
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(result)
+}
+
+// DeleteSecret deletes a stored secret
+func (c *openrunAdminPlugin) DeleteSecret(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var name, provider starlark.String
+	if err := starlark.UnpackArgs("delete_secret", args, kwargs, "name", &name, "provider?", &provider); err != nil {
+		return nil, err
+	}
+
+	if err := c.server.DeleteSecret(system.GetRequestContext(thread), provider.GoString(), name.GoString()); err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(types.SecretDeleteResponse{Name: name.GoString()})
+}
+
+// ListSecrets returns info about stored secrets (never values), optionally
+// filtered by a glob pattern on the name
+func (c *openrunAdminPlugin) ListSecrets(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var glob, provider starlark.String
+	if err := starlark.UnpackArgs("list_secrets", args, kwargs, "glob?", &glob, "provider?", &provider); err != nil {
+		return nil, err
+	}
+
+	results, err := c.server.ListSecrets(system.GetRequestContext(thread), provider.GoString(), glob.GoString())
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(types.SecretListResponse{Secrets: results})
+}
+
+// GetSecret returns info about one stored secret. reveal=True additionally
+// returns the value and requires the secret:reveal RBAC permission
+func (c *openrunAdminPlugin) GetSecret(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var name, provider starlark.String
+	var reveal starlark.Bool
+	if err := starlark.UnpackArgs("get_secret", args, kwargs, "name", &name, "provider?", &provider, "reveal?", &reveal); err != nil {
+		return nil, err
+	}
+
+	result, err := c.server.GetSecret(system.GetRequestContext(thread), provider.GoString(), name.GoString(), bool(reveal))
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(result)
+}
+
+// RekeySecrets re-encrypts stored secrets with the active master key
+func (c *openrunAdminPlugin) RekeySecrets(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var provider starlark.String
+	if err := starlark.UnpackArgs("rekey_secrets", args, kwargs, "provider?", &provider); err != nil {
+		return nil, err
+	}
+
+	result, err := c.server.RekeySecrets(system.GetRequestContext(thread), provider.GoString())
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(result)
 }
 
 func (c *openrunAdminPlugin) CreateSync(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

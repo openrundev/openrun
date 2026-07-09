@@ -118,6 +118,23 @@ allowed_mounts = ["$OPENRUN_HOME/mounts", "/srv/openrun/shared"]
 
 CSRF protection is automatically enabled for OpenRun internal APIs and for API calls to apps. This uses the [CrossOriginProtection](https://pkg.go.dev/net/http#CrossOriginProtection) middleware. Use `app_config.security.disable_csrf_protection = true` in `openrun.toml` to disable globally for all apps. CSRF protection can be disabled individually for apps by running `openrun app update conf --promote 'security.disable_csrf_protection=true' /myapp`
 
+## Security Response Headers
+
+OpenRun adds security related HTTP response headers to app responses based on the `security.headers_level` app config. The level is a value from 0 to 10; only 0, 2, 5 and 10 are implemented, other values round down. The default is 2.
+
+- **0**: no headers are added.
+- **2** (default): `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN` and `Referrer-Policy: strict-origin-when-cross-origin`.
+- **5**: level 2 plus `X-Frame-Options: DENY`, `Strict-Transport-Security`, `Cross-Origin-Opener-Policy: same-origin` and `X-Permitted-Cross-Domain-Policies: none`.
+- **10**: level 5 plus a restrictive `Content-Security-Policy: default-src 'self'`, `Cross-Origin-Embedder-Policy`, `Cross-Origin-Resource-Policy` and `Permissions-Policy`. This can break apps which use inline scripts or external resources, so it is opt-in.
+
+Each header is only added when the response does not already carry that header, so an app (including a proxied containerized app) can override any of them by setting its own value. The exceptions are `X-Frame-Options` at level 5+ and `Strict-Transport-Security` at level 10, which are forced. Apps that need to be embedded in cross-origin iframes should either set their own `X-Frame-Options`/`Content-Security-Policy` headers or lower the level:
+
+```bash
+openrun app update conf --promote 'security.headers_level=0' /myapp
+```
+
+The default for all apps can be changed with `app_config.security.headers_level` in `openrun.toml`.
+
 ## CORS
 
 CORS headers are disabled by default for apps. Containerized apps are normally accessed through OpenRun, which performs authentication before proxying the request to the app. With the default config, OpenRun does not add `Access-Control-Allow-Origin` and does not answer CORS preflight requests before they reach the app.
@@ -177,6 +194,16 @@ password = "mypassphrase"
 ```
 
 `mykey` is the git auth key name, `key_file_path` points to the location of a private key file for a user with access to the repository and `password` is the passphrase if any for the file.
+
+Instead of a file path, the key contents can be provided inline with `private_key`. The value supports `{{secret ...}}` references, so the key can live in a secrets manager or the [embedded secrets store]({{< ref "secrets" >}}) instead of on disk:
+
+```toml {filename="openrun.toml"}
+[git_auth.mykey]
+private_key = '{{secret_from "db" "gitauth_key1"}}'
+password = '{{secret_from "db" "gitauth_pass1"}}'
+```
+
+When both are set, `private_key` takes precedence. In the management console, the git auth form's private key field can store a picked key file into the embedded secrets store with one click.
 
 {{<callout type="info" >}}
 Use `ssh-keygen -l -f ~/.ssh/id_rsa.pub` (on public key) to check if the fingerprint matches the SHA256 fingerprint shown at https://github.com/settings/keys. To verify the passphrase, use `ssh-keygen -y -f ~/.ssh/id_rsa` (on the private key) and type in the passphrase to check if the passphrase is correct.

@@ -4,6 +4,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -276,7 +277,12 @@ func (s *Server) runSyncJobs() error {
 			continue
 		}
 
-		_, updatedApps, err := s.runSyncJob(ctx, types.Transaction{}, entry, false, true, repoCache) // each sync runs in its own transaction
+		// Each scheduled run gets its own synthesized request id, so the
+		// audit events it produces (apply, reload, promote, ...) share a
+		// trace id even though there is no HTTP request behind the run. The
+		// run is attributed to the user who created the sync
+		jobCtx := newBackgroundOperationContext(cmp.Or(entry.UserID, "scheduler"))
+		_, updatedApps, err := s.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, repoCache) // each sync runs in its own transaction
 		if err != nil {
 			s.Error().Err(err).Msgf("Error running sync job %s", entry.Id)
 			// One failure does not stop the rest

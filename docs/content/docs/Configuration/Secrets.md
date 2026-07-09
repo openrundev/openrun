@@ -8,7 +8,7 @@ OpenRun supports secret management when working with apps. Secrets can be passed
 
 ## Supported Providers
 
-OpenRun currently supports AWS Secrets Manager (ASM), AWS Systems Manager (SSM) and HashiCorp Vault as providers for secrets management. Secrets can also be read from the environment of the OpenRun server, which can be used in development and testing. Secrets can also be read from a local properties file.
+OpenRun currently supports AWS Secrets Manager (ASM), AWS Systems Manager (SSM) and HashiCorp Vault as providers for secrets management. Secrets can also be read from the environment of the OpenRun server, which can be used in development and testing. Secrets can also be read from a local properties file. In addition, OpenRun has an embedded secrets store (the `db` provider) which encrypts secret values and saves them in the metadata database, with no external service required.
 
 ### AWS Secrets Manager
 
@@ -78,6 +78,53 @@ file_name = "/etc/props.properties"
 ```
 
 `file_name` is a required property.
+
+### Embedded Secrets Store (db)
+
+The `db` provider stores secrets in the OpenRun metadata database. Values are encrypted with AES-256-GCM before being saved; the master encryption key lives outside the database, so a database backup alone does not expose secrets. The provider is enabled by default with
+
+```toml {filename="openrun.toml"}
+[secret.db]
+key = "auto"
+```
+
+With `key = "auto"` (the default), a master key is generated on first use and saved in `$OPENRUN_HOME/config/secret.key` (file mode 0600). Back up this file separately from the database: if the key is lost, the stored secrets cannot be recovered. If the key does not match the stored secrets, the server still starts (apps that do not use stored secrets are unaffected) but logs an error and the `db` provider is disabled until the key is restored. At most one `db` provider can be configured.
+
+The key can instead be resolved through another configured secret provider, which is the recommended setup for Kubernetes and multi-node deployments (all nodes share the metadata database and must use the same key):
+
+```toml {filename="openrun.toml"}
+[secret.env]
+
+[secret.db]
+key = '{{secret_from "env" "OPENRUN_SECRET_KEY"}}'
+```
+
+On Kubernetes, mount the env value from a native Kubernetes Secret. Any provider other than `db` itself can be referenced. The key material is one or more `<key_id>:<base64 encoded 32 byte key>` entries, separated by newlines or commas. The first entry is used to encrypt new values; all entries can decrypt. To rotate the master key, prepend a new entry, restart the server, run `openrun secret rekey` to re-encrypt all values with the new key, then remove the old entry.
+
+Secrets are stored with the `openrun secret` commands:
+
+```sh
+# Store a value with a generated unique name (value read from stdin)
+$ echo -n "s3cret" | openrun secret create myapp_dbpass
+Secret created: myapp_dbpass_x7f2ka9c
+Use in app params/config as: {{secret_from "db" "myapp_dbpass_x7f2ka9c"}}
+
+# Store a file (binary files are supported)
+$ openrun secret create myapp_ca --file ./ca.pem
+
+# Explicit name, and updating an existing secret (--update requires --name)
+$ openrun secret create --name myapp_token --value abc123
+$ openrun secret create --name myapp_token --update --value xyz456
+
+$ openrun secret list "myapp_*"
+$ openrun secret show myapp_token            # metadata only
+$ openrun secret show --reveal myapp_token   # print the value
+$ openrun secret delete myapp_token
+```
+
+The printed reference is used like any other secret, for example `--param MYPARAM='{{secret_from "db" "myapp_dbpass_x7f2ka9c"}}'`. The same operations are available through the `openrun_admin` plugin (`create_secret`, `get_secret`, `list_secrets`, `delete_secret`, `rekey_secrets`).
+
+When [RBAC]({{< ref "/docs/configuration/rbac" >}}) API enforcement is enabled, the operations are gated by the `secret:create`, `secret:read`, `secret:delete` and `secret:reveal` permissions. Create, update and rekey are all gated by `secret:create`. `secret:reveal` (reading back a stored value) is separate from `secret:read` (listing and metadata), so day to day operators can store and manage secrets without being able to read values back.
 
 ## Secrets Usage
 

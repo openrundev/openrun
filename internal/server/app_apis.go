@@ -504,7 +504,7 @@ func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx type
 	}
 	merged := s.Config()
 	return app.NewApp(sourceFS, workFS, &appLogger, appEntry, &merged.System,
-		merged.Plugins, merged.AppConfig, s.notifyClose, s.secretsManager.AppEvalTemplate,
+		merged.Plugins, merged.AppConfig, s.notifyClose, s.AppEvalTemplate,
 		s.InsertAuditEvent, merged, s.rbacManager, bindings)
 }
 
@@ -605,6 +605,12 @@ func (s *Server) GetApp(ctx context.Context, pathDomain types.AppPathDomain, ini
 }
 
 func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool) (*types.AppDeleteResponse, error) {
+	// An empty glob matches every app; deleting all apps must be an explicit
+	// "*", not a missing argument (the HTTP route validates this, plugin
+	// callers reach here directly)
+	if appPathGlob == "" {
+		return nil, types.CreateRequestError("appPathGlob is required", http.StatusBadRequest)
+	}
 	filteredApps, err := s.FilterApps(appPathGlob, false)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
@@ -1313,11 +1319,26 @@ func (s *Server) loadGitKey(gitAuth string) (*gitAuthEntry, error) {
 		return nil, fmt.Errorf("git auth entry %s not found in server config", gitAuth)
 	}
 
+	// {{secret}} references are resolved here rather than at startup: the db
+	// secret provider is bound only after the metadata database is up, so
+	// startup resolution cannot support db backed git keys. authEntry is a
+	// copy, the resolved values are not stored back into the config
 	var err error
+	if authEntry.PrivateKey, err = s.secretsMgr().EvalTemplate(authEntry.PrivateKey); err != nil {
+		return nil, fmt.Errorf("error resolving git auth %s private_key: %w", gitAuth, err)
+	}
+	if authEntry.Password, err = s.secretsMgr().EvalTemplate(authEntry.Password); err != nil {
+		return nil, fmt.Errorf("error resolving git auth %s password: %w", gitAuth, err)
+	}
+
 	gitKey := []byte{}
 	user := authEntry.UserID
 	usingSSH := false
-	if authEntry.KeyFilePath != "" {
+	if authEntry.PrivateKey != "" {
+		gitKey = []byte(authEntry.PrivateKey)
+		user = cmp.Or(authEntry.UserID, "git") // https://github.com/src-d/go-git/issues/637, default user to "git"
+		usingSSH = true
+	} else if authEntry.KeyFilePath != "" {
 		gitKey, err = os.ReadFile(authEntry.KeyFilePath)
 		if err != nil {
 			return nil, fmt.Errorf("error reading git key %s: %w", authEntry.KeyFilePath, err)

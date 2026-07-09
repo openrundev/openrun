@@ -4,6 +4,7 @@
 package app
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -52,14 +54,14 @@ type App struct {
 	CustomLayout bool
 	notifyClose  chan<- types.AppPathDomain // Channel to notify server to close the app
 
-	codeConfig       *apptype.CodeConfig
-	sourceFS         *appfs.SourceFs
+	codeConfig  *apptype.CodeConfig
+	sourceFS    *appfs.SourceFs
 	initMutex   sync.Mutex
 	initialized bool
 	// reloadError is written by the file-watcher reload goroutine and read on
 	// the request path, so it needs atomic access
-	reloadError     atomic.Pointer[error]
-	reloadStartTime time.Time
+	reloadError      atomic.Pointer[error]
+	reloadStartTime  time.Time
 	appDev           *dev.AppDev
 	appStyle         *dev.AppStyle
 	systemConfig     *types.SystemConfig
@@ -80,15 +82,16 @@ type App struct {
 	usesHtmlTemplate bool                          // Whether the app uses HTML templates, false if only JSON APIs
 	template         *template.Template            // unstructured templates, no base_templates defined
 	templateMap      map[string]*template.Template // structured templates, base_templates defined
+	templateBase     *template.Template            // the base templates alone, for routes/blocks naming a base define instead of a file
 	staticOnly       bool                          // app has only static files, no HTML routes
 	redirectBarePath bool                          // whether to redirect bare path requests to the full path with trailing slash
 	jsLibs           []types.JSLibrary             // JS libraries used by the app
 
-	watcher       *fsnotify.Watcher
+	watcher *fsnotify.Watcher
 	// sseListeners has its own lock (not initMutex) since notifyClients runs
 	// from code paths that already hold initMutex
-	sseMu        sync.Mutex
-	sseListeners []chan SSEMessage
+	sseMu         sync.Mutex
+	sseListeners  []chan SSEMessage
 	funcMap       template.FuncMap
 	starlarkCache map[string]*starlarkCacheEntry
 
@@ -430,6 +433,7 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 		if err != nil {
 			return false, err
 		}
+		a.templateBase = base
 
 		a.templateMap = make(map[string]*template.Template)
 		for _, paths := range a.codeConfig.Routing.TemplateLocations {
@@ -630,6 +634,10 @@ func (a *App) executeTemplate(w io.Writer, template, partial string, data any) e
 		if template == "" {
 			if _, ok := a.templateMap[partial]; ok {
 				template = partial
+			} else if a.templateBase != nil && a.templateBase.Lookup(partial) != nil {
+				// The block is a base-template define; render it directly
+				// (block-only responses, no page file involved)
+				return a.templateBase.ExecuteTemplate(w, partial, data)
 			} else {
 				template = "index.go.html"
 			}
@@ -637,6 +645,15 @@ func (a *App) executeTemplate(w io.Writer, template, partial string, data any) e
 
 		t, ok := a.templateMap[template]
 		if !ok {
+			// The route's template may name a base-template define instead
+			// of a template file
+			if a.templateBase != nil && a.templateBase.Lookup(template) != nil {
+				exec := partial
+				if partial == "" {
+					exec = template
+				}
+				return a.templateBase.ExecuteTemplate(w, exec, data)
+			}
 			return fmt.Errorf("template %s not found", template)
 		}
 		exec := partial
@@ -693,6 +710,9 @@ func (a *App) loadParamsInfo(sourceFS *appfs.SourceFs) error {
 // levels 0, 2, 5 and 10 are implemented; any other value is rounded down to the nearest
 // implemented level (values below 0 add nothing, values above 10 are treated as 10). Headers
 // are only set when absent so an app can override any of them by setting its own value.
+// Called through securityHeaderWriter just before the response headers are written, so
+// headers set by the handler (including upstream headers copied by a reverse proxy) are
+// already present and take precedence.
 func applySecurityHeaders(h http.Header, level int) {
 	if level < 2 {
 		return
@@ -728,12 +748,82 @@ func applySecurityHeaders(h http.Header, level int) {
 	}
 }
 
+// securityHeaderWriter applies the configured security headers just before the
+// response headers are written, setting each header only when the handler did
+// not produce its own value. Applying at write time (instead of pre-populating
+// the header map before the handler runs) matters for proxied apps:
+// httputil.ReverseProxy copies upstream headers with Add, so pre-populated
+// values would be emitted as duplicate conflicting headers instead of being
+// overridden by the app. The Flush/Hijack/Push/ReadFrom passthroughs keep
+// streaming, websocket upgrades and sendfile working for proxied apps.
+type securityHeaderWriter struct {
+	http.ResponseWriter
+	level   int
+	applied bool
+}
+
+func (s *securityHeaderWriter) apply() {
+	if !s.applied {
+		s.applied = true
+		applySecurityHeaders(s.Header(), s.level)
+	}
+}
+
+func (s *securityHeaderWriter) WriteHeader(statusCode int) {
+	s.apply()
+	s.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (s *securityHeaderWriter) Write(b []byte) (int, error) {
+	s.apply()
+	return s.ResponseWriter.Write(b)
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer
+func (s *securityHeaderWriter) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
+}
+
+func (s *securityHeaderWriter) Flush() {
+	s.apply()
+	if fl, ok := s.ResponseWriter.(http.Flusher); ok {
+		fl.Flush()
+	}
+}
+
+func (s *securityHeaderWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := s.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, fmt.Errorf("response writer does not support hijacking")
+}
+
+func (s *securityHeaderWriter) Push(target string, opts *http.PushOptions) error {
+	if p, ok := s.ResponseWriter.(http.Pusher); ok {
+		return p.Push(target, opts)
+	}
+	return http.ErrNotSupported
+}
+
+func (s *securityHeaderWriter) ReadFrom(src io.Reader) (int64, error) {
+	s.apply()
+	if rf, ok := s.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(src)
+	}
+	return io.Copy(io.Writer(s.ResponseWriter), src)
+}
+
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.Info().Enabled() {
 		a.Info().Str("method", r.Method).Str("url", r.URL.String()).Msg("App Received request")
 	}
 	telemetry.RecordAppRequest(r.Context(), r.Method, a.telemetryIdentityAttrs...)
-	wrapper := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+	var rw = w
+	if a.AppConfig.Security.HeadersLevel >= 2 {
+		rw = &securityHeaderWriter{ResponseWriter: w, level: a.AppConfig.Security.HeadersLevel}
+	}
+	wrapper := middleware.NewWrapResponseWriter(rw, r.ProtoMajor)
 	defer func() {
 		status := wrapper.Status()
 		if status == 0 {
@@ -741,8 +831,6 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		telemetry.RecordAppResponse(r.Context(), status, a.telemetryIdentityAttrs...)
 	}()
-
-	applySecurityHeaders(wrapper.Header(), a.AppConfig.Security.HeadersLevel)
 
 	if errPtr := a.reloadError.Load(); errPtr != nil && *errPtr != nil {
 		reloadErr := *errPtr

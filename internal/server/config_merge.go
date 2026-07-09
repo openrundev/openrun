@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -335,16 +336,31 @@ func isSecretConfigField(fieldName string) bool {
 		fieldName = fieldName[idx+1:]
 	}
 	return strings.Contains(fieldName, "secret") || strings.Contains(fieldName, "password") ||
-		strings.Contains(fieldName, "token")
+		strings.Contains(fieldName, "token") || fieldName == "private_key"
+}
+
+// secretTemplateRefRegex matches a value that is exactly one {{secret ...}}
+// or {{secret_from ...}} template action, with nothing outside it
+var secretTemplateRefRegex = regexp.MustCompile(`^\{\{\s*(secret_from|secret)\s[^{}]*\}\}$`)
+
+// isSecretTemplateRef reports whether a value is a single {{secret ...}} or
+// {{secret_from ...}} template reference. The reference itself is not
+// sensitive (the value lives encrypted in the secret provider), so the read
+// APIs return it as is instead of redacting, letting the UI show which
+// secret a field points to. The whole value must be the reference: anything
+// before or after it (a literal fallback, a composite template) is redacted
+func isSecretTemplateRef(value string) bool {
+	return secretTemplateRefRegex.MatchString(strings.TrimSpace(value))
 }
 
 // redactEntryValues returns a copy of the entry values with secret fields
-// replaced by RedactedValue
+// replaced by RedactedValue. {{secret ...}} template references are not
+// sensitive and are returned as is
 func redactEntryValues(values map[string]any) map[string]any {
 	redacted := make(map[string]any, len(values))
 	for key, value := range values {
 		if isSecretConfigField(key) {
-			if str, ok := value.(string); ok && str != "" {
+			if str, ok := value.(string); ok && str != "" && !isSecretTemplateRef(str) {
 				redacted[key] = RedactedValue
 				continue
 			}

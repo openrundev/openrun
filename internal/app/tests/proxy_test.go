@@ -364,7 +364,7 @@ permissions=[
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 
-	testutil.AssertEqualsInt(t, "code", 500, response.Code)
+	testutil.AssertEqualsInt(t, "code", 403, response.Code)
 	testutil.AssertEqualsString(t, "body", "Preview app does not have access to proxy write APIs\n", response.Body.String())
 
 	// GET works
@@ -418,7 +418,7 @@ permissions=[
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 
-	testutil.AssertEqualsInt(t, "code", 500, response.Code)
+	testutil.AssertEqualsInt(t, "code", 403, response.Code)
 	testutil.AssertEqualsString(t, "body", "Stage app does not have access to proxy write APIs\n", response.Body.String())
 
 	// Enable write access

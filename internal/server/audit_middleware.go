@@ -359,6 +359,19 @@ func updateOperationInContext(r *http.Request, operation string) {
 
 var requestCounter uint64
 
+// newBackgroundOperationContext returns a context for server-initiated work
+// (the sync scheduler and other background jobs), carrying a synthesized
+// request id and the given user id. There is no HTTP request on these paths,
+// so without this the audit events they produce have no request id; with it,
+// all events of one run share an id and the audit trace drill-down can show
+// everything the run did
+func newBackgroundOperationContext(userId string) context.Context {
+	rid := ridPrefix + strconv.FormatUint(atomic.AddUint64(&requestCounter, 1), 10)
+	ctx := context.WithValue(context.Background(), types.REQUEST_ID, rid)
+	ctx = context.WithValue(ctx, types.USER_ID, userId)
+	return ctx
+}
+
 // handleStatus returns a middleware which adds the request id and user id to the
 // context and inserts an http audit event for non-GET requests. defaultUser is the
 // user recorded when the request does not authenticate a user: the admin user for

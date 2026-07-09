@@ -880,10 +880,10 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 			isWriteRequest := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
 			if isWriteRequest {
 				if strings.HasPrefix(string(a.Id), types.ID_PREFIX_APP_PREVIEW) && !a.Settings.PreviewWriteAccess {
-					http.Error(w, "Preview app does not have access to proxy write APIs", http.StatusInternalServerError)
+					http.Error(w, "Preview app does not have access to proxy write APIs", http.StatusForbidden)
 					return
 				} else if strings.HasPrefix(string(a.Id), types.ID_PREFIX_APP_STAGE) && !a.Settings.StageWriteAccess {
-					http.Error(w, "Stage app does not have access to proxy write APIs", http.StatusInternalServerError)
+					http.Error(w, "Stage app does not have access to proxy write APIs", http.StatusForbidden)
 					return
 				}
 			}

@@ -14,8 +14,9 @@ const (
 	BCRYPT_COST    = 10
 )
 
-// GenerateRandomPassword generates a random password
-func generateRandString(length int, charsAllowed string) (string, error) {
+// GenerateRandString generates a random string of the given length using
+// crypto/rand, with each character drawn from charsAllowed
+func GenerateRandString(length int, charsAllowed string) (string, error) {
 	charsetLength := len(charsAllowed)
 	password := make([]byte, length)
 
@@ -32,7 +33,7 @@ func generateRandString(length int, charsAllowed string) (string, error) {
 
 // GeneratePassword generates a random password
 func GeneratePassword() (string, error) {
-	return generateRandString(16, PASSWORD_CHARS)
+	return GenerateRandString(16, PASSWORD_CHARS)
 }
 
 func GenerateSessionNonce() (string, string, error) {

@@ -129,6 +129,16 @@ kaniko_image = "ghcr.io/kaniko-build/dist/chainguard-dev-kaniko/executor:v1.25.3
 kaniko_cache = true    # cache build layers in the registry, reused across builds
 kaniko_cache_repo = "" # defaults to <registry_url>[/<project>]/kaniko-cache
 
+# Embedded secrets store: values are AES-256-GCM encrypted and saved in the metadata database.
+# Values are stored with "openrun secret create"; use {{secret_from "db" "<name>"}} to reference them.
+[secret.db]
+key = "auto" # "auto" generates the master key into $OPENRUN_HOME/config/secret.key on first use.
+             # Can instead be a {{secret ...}}/{{secret_from ...}} reference resolved through another
+             # provider (env/vault/asm/ssm/kubernetes/properties), for example on Kubernetes:
+             #   key = '{{secret_from "env" "OPENRUN_SECRET_KEY"}}'
+             # Key material format: one or more "<key_id>:<base64 32 byte key>" entries separated by
+             # newlines or commas; the first entry is used for new writes, all entries can decrypt.
+
 [plugin."store.in"]
 db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_app_store.db"
 

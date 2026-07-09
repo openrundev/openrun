@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"time"
 )
 
 // RequestError is the error returned by the API
@@ -290,6 +291,65 @@ type SyncListResponse struct {
 
 type ConfigResponse struct {
 	DynamicConfig DynamicConfig `json:"dynamic_config"`
+}
+
+// CreateSecretRequest is the request body for storing a secret in a writable
+// secret provider. Either Name (explicit name) or Prefix (a unique name is
+// generated with the prefix) must be set. Encoding "base64" is used to pass
+// binary values (file contents); the decoded bytes are stored
+type CreateSecretRequest struct {
+	Name        string `json:"name"`
+	Prefix      string `json:"prefix"`
+	Value       string `json:"value"`
+	Encoding    string `json:"encoding"` // "" for plain string, "base64" for binary values
+	Description string `json:"description"`
+	Provider    string `json:"provider"` // secret provider name, default "db"
+	SourceFile  string `json:"source_file"`
+}
+
+// SecretCreateResponse returns the stored secret name and the template
+// reference to use in app params/config values
+type SecretCreateResponse struct {
+	Name      string `json:"name"`
+	Provider  string `json:"provider"`
+	SecretRef string `json:"secret_ref"` // ready to use {{secret ...}} reference
+	Updated   bool   `json:"updated"`    // true if an existing secret was updated
+}
+
+// SecretInfo is the non-sensitive info about a stored secret
+type SecretInfo struct {
+	Name        string    `json:"name"`
+	KeyId       string    `json:"key_id"`
+	CreatedBy   string    `json:"created_by"`
+	CreateTime  time.Time `json:"create_time"`
+	UpdateTime  time.Time `json:"update_time"`
+	Description string    `json:"description"`
+	SourceFile  string    `json:"source_file"`
+}
+
+type SecretListResponse struct {
+	Secrets []SecretInfo `json:"secrets"`
+}
+
+// SecretGetResponse is the response for getting a secret. Value is set only
+// when reveal is requested; binary values are base64 encoded with Encoding
+// set to "base64"
+type SecretGetResponse struct {
+	SecretInfo
+	Value    string `json:"value,omitempty"`
+	Encoding string `json:"encoding,omitempty"`
+}
+
+type SecretDeleteResponse struct {
+	Name string `json:"name"`
+}
+
+// SecretRekeyResponse reports the result of re-encrypting stored secrets with
+// the active master key. Skipped counts rows sealed with a key id that is not
+// configured for the provider
+type SecretRekeyResponse struct {
+	Rekeyed int `json:"rekeyed"`
+	Skipped int `json:"skipped"`
 }
 
 type AppReloadOption string

@@ -231,12 +231,12 @@ func newApplyTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Cont
 		t.Fatalf("new secret manager: %v", err)
 	}
 	server := &Server{
-		Logger:         logger,
-		staticConfig:   config,
-		db:             db,
-		secretsManager: secretsManager,
-		notifyClose:    make(chan types.AppPathDomain),
+		Logger:       logger,
+		staticConfig: config,
+		db:           db,
+		notifyClose:  make(chan types.AppPathDomain),
 	}
+	server.secretsManager.Store(secretsManager)
 	server.apps = NewAppStore(logger, server)
 	return server, db, ctx
 }

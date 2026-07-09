@@ -53,6 +53,16 @@ The fragments array in the html page definition defines the API interactions wit
 `partial` and `handler` are inherited from the page level, unless overridden for the fragment.
 {{</callout>}}
 
+A fragment with an empty path (`""`) registers on the page path itself, defining a method variant of the page. This expresses a form page's POST without repeating the page's template:
+
+```python {filename="app.star"}
+ace.html("/items/create", full="item_form.go.html", handler=create_page_handler,
+    fragments=[
+        ace.fragment("", method=ace.POST, handler=create_submit_handler),
+    ]
+)
+```
+
 For example, in this page definition
 
 ```python {filename="app.star"}
@@ -158,5 +168,6 @@ The API flow is
 ## Notes
 
 - For HTMX requests, the `partial` template is used. For regular requests, the page-level `full` template is used
+- With structured templates (a `base_templates` folder is present), `full` normally names a template file. It can instead name a `{{define}}` block from the base templates — useful for endpoints whose response is only a fragment (for example an HTMX component update), so no dedicated template file is needed. Template names passed to `ace.response` resolve the same way
 - If there is a function called `handler` defined, that is the default handler function for all APIs
 - For non-HTMX update requests (POST/PUT/DELETE), the [Post-Redirect-Get](https://en.wikipedia.org/wiki/Post/Redirect/Get) pattern is automatically implemented by redirecting to the location pointed to by the `Referer` header.

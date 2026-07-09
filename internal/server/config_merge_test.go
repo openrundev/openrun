@@ -181,6 +181,27 @@ func TestRedactEntryValues(t *testing.T) {
 	if empty["password"] != "" {
 		t.Errorf("empty secret got a placeholder: %v", empty)
 	}
+
+	// {{secret ...}} references are not sensitive and pass through, so the
+	// UI can show which secret a field points to
+	refs := redactEntryValues(map[string]any{
+		"password":     `{{secret_from "db" "gitauth_a1b2c3d4"}}`,
+		"secret":       `{{ secret "mysecret" }}`,
+		"token":        "{{secretive}}", // not a secret ref, must redact
+		"private_key":  "-----BEGIN OPENSSH PRIVATE KEY-----",
+		"api_token":    `{{secret "a"}}:literal-fallback`, // trailing literal, must redact
+		"db_password":  `pw-{{secret "a"}}`,               // leading literal, must redact
+		"jwt_secret":   `{{secret "a"}}{{secret "b"}}`,    // composite template, must redact
+		"vault_secret": "{{secret_fromage}}",              // not a ref keyword, must redact
+	})
+	if refs["password"] != `{{secret_from "db" "gitauth_a1b2c3d4"}}` || refs["secret"] != `{{ secret "mysecret" }}` {
+		t.Errorf("secret template refs were redacted: %v", refs)
+	}
+	for _, key := range []string{"token", "private_key", "api_token", "db_password", "jwt_secret", "vault_secret"} {
+		if refs[key] != RedactedValue {
+			t.Errorf("%s not redacted, got: %v", key, refs[key])
+		}
+	}
 }
 
 func TestConfigSettingsSections(t *testing.T) {

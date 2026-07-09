@@ -358,3 +358,35 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", http.StatusOK, response.Code)
 	testutil.AssertEqualsString(t, "body", "Template main myvalue.  fragdata myvalue2 ", response.Body.String())
 }
+
+func TestFragmentEmptyPath(t *testing.T) {
+	// A fragment with an empty path registers on the page path itself,
+	// expressing a method variant (the POST of a GET form page) without
+	// repeating the page's full template
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/form",
+	full="form.go.html",
+	handler=lambda req: {"key": "getdata"},
+	fragments=[ace.fragment("", method="POST", handler=lambda req: {"key": "postdata"})]
+)])`,
+		"form.go.html": `form {{ .Data.key }}`,
+	}
+	a, _, err := CreateTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test/form", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertEqualsString(t, "body", "form getdata", response.Body.String())
+
+	request = httptest.NewRequest("POST", "/test/form", nil)
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertEqualsString(t, "body", "form postdata", response.Body.String())
+}
