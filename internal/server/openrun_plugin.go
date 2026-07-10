@@ -305,6 +305,11 @@ func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starla
 		return nil, err
 	}
 
+	// audit:read grants access to the audit log across all apps
+	if err := c.server.enforceGlobalPerm(system.GetRequestContext(thread), types.PermissionAuditRead, ""); err != nil {
+		return nil, err
+	}
+
 	var query strings.Builder
 	query.WriteString("select rid, app_id, create_time, user_id, event_type, operation, target, status, detail from audit ")
 
@@ -496,6 +501,11 @@ func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starla
 //nolint:errcheck
 func (c *openrunPlugin) ListOperations(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	if err := starlark.UnpackArgs("list_operations", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	// The distinct operation list is read from the audit log, gated by audit:read
+	if err := c.server.enforceGlobalPerm(system.GetRequestContext(thread), types.PermissionAuditRead, ""); err != nil {
 		return nil, err
 	}
 

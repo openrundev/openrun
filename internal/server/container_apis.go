@@ -146,6 +146,9 @@ func (s *Server) resolveContainerApps(infos []ContainerInfo) {
 // podman these are the containers carrying the OpenRun labels; for Kubernetes
 // these are the pods in the OpenRun apps namespace
 func (s *Server) ListManagedContainers(ctx context.Context) ([]ContainerInfo, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
+		return nil, err
+	}
 	runtime := s.containerRuntime()
 	if runtime == "" {
 		return nil, fmt.Errorf("no container command is configured on the server")
@@ -214,6 +217,9 @@ type KubernetesStats struct {
 // OpenRun system and apps namespaces. For non-kubernetes runtimes it returns
 // Enabled false
 func (s *Server) GetKubernetesStats(ctx context.Context) (*KubernetesStats, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
+		return nil, err
+	}
 	if s.containerRuntime() != types.CONTAINER_KUBERNETES {
 		return &KubernetesStats{}, nil
 	}
@@ -234,6 +240,9 @@ func (s *Server) GetKubernetesStats(ctx context.Context) (*KubernetesStats, erro
 // GetKubernetesPodStatus returns the kubernetes specific status of one
 // managed pod (conditions, container states, events)
 func (s *Server) GetKubernetesPodStatus(ctx context.Context, id string) (*container.WorkloadPodStatus, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
+		return nil, err
+	}
 	if s.containerRuntime() != types.CONTAINER_KUBERNETES {
 		return nil, fmt.Errorf("the kubernetes runtime is not configured on this server")
 	}
@@ -244,6 +253,9 @@ func (s *Server) GetKubernetesPodStatus(ctx context.Context, id string) (*contai
 // withStats also collects live resource stats and disk usage, which are slow
 // (docker stats samples for about two seconds)
 func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats bool) (*ContainerDetail, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
+		return nil, err
+	}
 	runtime := s.containerRuntime()
 	if runtime == "" {
 		return nil, fmt.Errorf("no container command is configured on the server")
@@ -377,6 +389,9 @@ func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats b
 
 // GetManagedContainerLogs returns the last tail lines of the container logs
 func (s *Server) GetManagedContainerLogs(ctx context.Context, id string, tail int) (string, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
+		return "", err
+	}
 	runtime := s.containerRuntime()
 	if runtime == "" {
 		return "", fmt.Errorf("no container command is configured on the server")
@@ -409,6 +424,9 @@ const maxLogChunkBytes = 1024 * 1024
 // stops. Each yielded value is a plain string of one or more complete lines
 // without the trailing newline (the stream writer adds one per value)
 func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, tail int, follow bool) (func(yield func(any, error) bool), error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
+		return nil, err
+	}
 	runtime := s.containerRuntime()
 	if runtime == "" {
 		return nil, fmt.Errorf("no container command is configured on the server")
@@ -526,6 +544,9 @@ func (s *Server) StopManagedContainer(ctx context.Context, id string) error {
 }
 
 func (s *Server) containerLifecycle(ctx context.Context, id, op string) error {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerManage, ""); err != nil {
+		return err
+	}
 	runtime := s.containerRuntime()
 	if runtime == "" {
 		return fmt.Errorf("no container command is configured on the server")

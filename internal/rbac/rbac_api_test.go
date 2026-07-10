@@ -295,6 +295,81 @@ func TestGlobalPermissionTargets(t *testing.T) {
 	}
 }
 
+func TestContainerPermissions(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestManager(t, grantConfig(
+		map[string][]types.RBACPermission{
+			"viewer":   {types.PermissionContainerRead},
+			"operator": {types.PermissionContainerManage},
+		},
+		// user1: read only, user2: manage only (implies read), both need the all target
+		types.RBACGrant{Description: "container viewer", Users: []string{"user1"},
+			Roles: []string{"viewer"}, Targets: []string{"all"}},
+		types.RBACGrant{Description: "container operator", Users: []string{"user2"},
+			Roles: []string{"operator"}, Targets: []string{"all"}},
+		// user3: read granted with a narrow target, which never applies to a global permission
+		types.RBACGrant{Description: "narrow container read", Users: []string{"user3"},
+			Roles: []string{"viewer"}, Targets: []string{"/test"}},
+	))
+
+	tests := []struct {
+		name    string
+		user    string
+		perm    types.RBACPermission
+		allowed bool
+	}{
+		{"viewer has container:read", "user1", types.PermissionContainerRead, true},
+		{"viewer lacks container:manage", "user1", types.PermissionContainerManage, false},
+		{"operator has container:manage", "user2", types.PermissionContainerManage, true},
+		{"container:manage implies container:read", "user2", types.PermissionContainerRead, true},
+		{"narrow target never grants global container:read", "user3", types.PermissionContainerRead, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			allowed, err := manager.AuthorizeGlobalAPI(enforcedCtx(tt.user), tt.perm, "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if allowed != tt.allowed {
+				t.Errorf("%s: expected %v, got %v", tt.name, tt.allowed, allowed)
+			}
+		})
+	}
+}
+
+func TestAuditReadPermission(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestManager(t, grantConfig(
+		map[string][]types.RBACPermission{
+			"auditor": {types.PermissionAuditRead},
+		},
+		types.RBACGrant{Description: "audit reader", Users: []string{"user1"},
+			Roles: []string{"auditor"}, Targets: []string{"all"}},
+		types.RBACGrant{Description: "narrow audit", Users: []string{"user2"},
+			Roles: []string{"auditor"}, Targets: []string{"/test"}},
+	))
+
+	allowed, err := manager.AuthorizeGlobalAPI(enforcedCtx("user1"), types.PermissionAuditRead, "")
+	if err != nil || !allowed {
+		t.Errorf("audit:read with all target should be allowed, got %v err %v", allowed, err)
+	}
+
+	// A user without the grant is denied
+	allowed, err = manager.AuthorizeGlobalAPI(enforcedCtx("nobody"), types.PermissionAuditRead, "")
+	if err != nil || allowed {
+		t.Errorf("audit:read without grant must be denied, got %v err %v", allowed, err)
+	}
+
+	// audit:read is global, a narrow target never confers it
+	allowed, err = manager.AuthorizeGlobalAPI(enforcedCtx("user2"), types.PermissionAuditRead, "")
+	if err != nil || allowed {
+		t.Errorf("audit:read with narrow target must be denied, got %v err %v", allowed, err)
+	}
+}
+
 func TestOwnerPermissions(t *testing.T) {
 	t.Parallel()
 

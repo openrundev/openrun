@@ -54,9 +54,12 @@ var globalPermissions = map[types.RBACPermission]bool{
 	types.PermissionBindingDelete:     true,
 	types.PermissionBindingRead:       true,
 	types.PermissionBindingRunCommand: true,
+	types.PermissionContainerRead:     true,
+	types.PermissionContainerManage:   true,
 	types.PermissionConfigRead:        true,
 	types.PermissionConfigUpdate:      true,
 	types.PermissionServerStop:        true,
+	types.PermissionAuditRead:         true,
 	types.PermissionSecretCreate:      true,
 	types.PermissionSecretRead:        true,
 	types.PermissionSecretDelete:      true,
@@ -107,8 +110,9 @@ var appAdminPermissions = func() []types.RBACPermission {
 // permissionImplications: holding the key permission implies the value permissions.
 // app:approve is never implied
 var permissionImplications = map[types.RBACPermission][]types.RBACPermission{
-	types.PermissionUpdate:   {types.PermissionReload, types.PermissionApply, types.PermissionRead},
-	types.PermissionAppAdmin: appAdminPermissions,
+	types.PermissionUpdate:          {types.PermissionReload, types.PermissionApply, types.PermissionRead},
+	types.PermissionAppAdmin:        appAdminPermissions,
+	types.PermissionContainerManage: {types.PermissionContainerRead},
 }
 
 // defaultOwnerPermissions are the permissions the creator of an asset gets on that

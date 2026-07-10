@@ -15,6 +15,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added the app code setting `container.separate_stage_prod_images` for specs that need distinct staging and production container images.
 - With structured templates, a route's `full` template (and template names passed to `ace.response`) can now name a `{{define}}` block from the base templates instead of a template file, so fragment-only endpoints need no dedicated template file.
 - Added the `static_disk` app spec for serving static files directly from a local source directory without storing the static file contents in the metadata database.
+- Container management operations are now gated by RBAC. New `container:read` permission covers listing containers, getting container details, logs and Kubernetes stats/status; new `container:manage` permission covers starting and stopping managed containers (and implies `container:read`). These operations previously had no RBAC check.
+- Added the `audit:read` RBAC permission, which grants read access to the audit log across all apps. It gates the `list_audit_events` and `list_operations` plugin APIs, which previously had no RBAC check.
 
 ### Fixed
 

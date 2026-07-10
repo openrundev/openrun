@@ -976,9 +976,13 @@ const (
 	PermissionBindingRead       RBACPermission = "binding:read"
 	PermissionBindingRunCommand RBACPermission = "binding:run_command"
 
+	PermissionContainerRead   RBACPermission = "container:read"   // list containers, get container details/logs/stats
+	PermissionContainerManage RBACPermission = "container:manage" // start/stop managed containers
+
 	PermissionConfigRead   RBACPermission = "config:read"
 	PermissionConfigUpdate RBACPermission = "config:update"
 	PermissionServerStop   RBACPermission = "server:stop"
+	PermissionAuditRead    RBACPermission = "audit:read" // read the audit log across all apps
 
 	PermissionSecretCreate RBACPermission = "secret:create" // create/update secrets, rekey the store
 	PermissionSecretRead   RBACPermission = "secret:read"   // list secrets, get secret metadata (not values)
@@ -1009,12 +1013,15 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 	{Resource: "binding", Permissions: []RBACPermission{
 		PermissionBindingCreate, PermissionBindingUpdate, PermissionBindingDelete,
 		PermissionBindingRead, PermissionBindingRunCommand}},
+	{Resource: "container", Permissions: []RBACPermission{
+		PermissionContainerRead, PermissionContainerManage}},
 	{Resource: "config", Permissions: []RBACPermission{
 		PermissionConfigRead, PermissionConfigUpdate}},
 	{Resource: "secret", Permissions: []RBACPermission{
 		PermissionSecretCreate, PermissionSecretRead, PermissionSecretDelete,
 		PermissionSecretReveal}},
 	{Resource: "server", Permissions: []RBACPermission{PermissionServerStop}},
+	{Resource: "audit", Permissions: []RBACPermission{PermissionAuditRead}},
 }
 
 type AuthorizerFunc func(ctx context.Context, permissions []string) (bool, error)
