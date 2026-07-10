@@ -144,6 +144,9 @@ func (c *CertStorage) List(ctx context.Context, prefix string, recursive bool) (
 		}
 		ids = append(ids, id)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return ids, nil
 }
 

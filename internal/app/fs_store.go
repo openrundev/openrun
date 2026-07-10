@@ -277,6 +277,9 @@ func listExpiredFile(ctx context.Context) ([]expiredFile, error) {
 			FilePath: file_path,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating expired files: %w", err)
+	}
 	return expiredFiles, nil
 }
 

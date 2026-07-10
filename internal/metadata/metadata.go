@@ -517,6 +517,9 @@ func (m *Metadata) getAppMetadataAndSettings(ctx context.Context, tx types.Trans
 			settings: &settings,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
 	}
@@ -664,6 +667,9 @@ func (m *Metadata) GetAppsForDomain(domain string) ([]string, error) {
 		}
 		paths = append(paths, path)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
 	}
@@ -733,6 +739,9 @@ func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
 			metadata.VersionMetadata.Version, metadata.VersionMetadata.GitCommit, metadata.VersionMetadata.GitMessage,
 			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"]), *updateTime, retainVersions,
 			metadata.AppliedSyncId, userId.String))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
 	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
@@ -812,6 +821,9 @@ func (m *Metadata) GetLinkedApps(ctx context.Context, tx types.Transaction, main
 		}
 
 		apps = append(apps, &app)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
 	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
@@ -956,6 +968,9 @@ func (m *Metadata) GetSyncEntries(ctx context.Context, tx types.Transaction) ([]
 		}
 
 		syncEntries = append(syncEntries, &sync)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
 	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
@@ -1567,6 +1582,9 @@ func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, servi
 		}
 		services = append(services, &service)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
 	}
@@ -1702,6 +1720,9 @@ func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, sourc
 			}
 		}
 		bindings = append(bindings, &binding)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
 	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)

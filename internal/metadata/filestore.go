@@ -158,6 +158,9 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 		}
 		existingSHAs[sha] = struct{}{}
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating existing shas: %w", err)
+	}
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("error closing sha rows: %w", err)
 	}
@@ -378,6 +381,9 @@ func (f *FileStore) getFileInfoTx(ctx context.Context, tx types.Transaction) (ma
 		}
 		fileInfo[name] = DbFileInfo{name: name, sha: sha, len: size, modTime: modTime}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
 	}
@@ -433,6 +439,9 @@ func (f *FileStore) PromoteApp(ctx context.Context, tx types.Transaction, prodAp
 		}
 		files = append(files, fileData{name: name, sha: sha, size: size})
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating rows: %w", err)
+	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return fmt.Errorf("error closing rows: %w", closeErr)
 	}
@@ -474,6 +483,9 @@ func (f *FileStore) GetAppVersions(ctx context.Context, tx types.Transaction) ([
 		versions = append(versions, v)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
 	}

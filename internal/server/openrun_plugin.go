@@ -483,6 +483,9 @@ func (c *openrunPlugin) ListAuditEvents(thread *starlark.Thread, builtin *starla
 		ret.Append(&v)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
 	}
@@ -515,6 +518,9 @@ func (c *openrunPlugin) ListOperations(thread *starlark.Thread, builtin *starlar
 		ret.Append(starlark.String(operation))
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
 	}
