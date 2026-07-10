@@ -247,6 +247,11 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		reload = types.AppReloadOptionUpdated
 	}
 
+	// Mark this operation as a declarative apply. App creation stores the
+	// ApplyInfo (for the three way merge on later applies) only in apply
+	// context; presence of ApplyInfo distinguishes declaratively managed apps
+	ctx = context.WithValue(ctx, types.APPLY_OPERATION, "true")
+
 	if repoCache == nil {
 		repoCache, err = NewRepoCache(s)
 		if err != nil {

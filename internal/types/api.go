@@ -97,6 +97,26 @@ type CreateBindingRequest struct {
 	ApplyInfo []byte            `json:"-"`
 }
 
+// Export reference modes, controlling how server-level config references
+// (service names, git auth entries) are written in the exported config
+const (
+	ExportRefDefault = "default" // reference the target instance's default entry
+	ExportRefExact   = "exact"   // reference the exact entry name from this instance
+)
+
+// ExportOptions are the options for exporting app config declaratively
+type ExportOptions struct {
+	ServiceRef         string `json:"service_ref"`         // default: emit service type only; exact: emit type/name
+	GitAuthRef         string `json:"git_auth_ref"`        // default: omit git_auth; exact: emit stored git auth name
+	ExactCommit        bool   `json:"exact_commit"`        // pin git_commit to the currently deployed commit
+	ExcludeDeclarative bool   `json:"exclude_declarative"` // skip apps and bindings already managed declaratively
+}
+
+// AppExportResponse is the response for the export and pretty-print APIs
+type AppExportResponse struct {
+	Config string `json:"config"`
+}
+
 // UpdateBindingRequest is the request body for updating a binding. Binding
 // updates are limited to grant changes.
 type UpdateBindingRequest struct {

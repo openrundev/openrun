@@ -304,7 +304,7 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	workEntry := appEntry
 	if !appEntry.IsDev {
 		var err error
-		stageAppEntry, err = s.prepareStageAppEntry(appEntry, applyInfo, tx)
+		stageAppEntry, err = s.prepareStageAppEntry(ctx, appEntry, applyInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -400,7 +400,7 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	return ret, nil
 }
 
-func (s *Server) prepareStageAppEntry(appEntry *types.AppEntry, applyInfo *types.CreateAppRequest, tx types.Transaction) (*types.AppEntry, error) {
+func (s *Server) prepareStageAppEntry(ctx context.Context, appEntry *types.AppEntry, applyInfo *types.CreateAppRequest) (*types.AppEntry, error) {
 	stageAt := ""
 	if applyInfo != nil {
 		stageAt = applyInfo.StageAt
@@ -426,8 +426,12 @@ func (s *Server) prepareStageAppEntry(appEntry *types.AppEntry, applyInfo *types
 	if matchedStageApp != "" {
 		return nil, fmt.Errorf("stage app overlaps with existing app at %s", matchedStageApp)
 	}
-	if tx.Tx != nil {
-		// Save the apply info in the app metadata (if called from apply context)
+	if system.GetContextValue(ctx, types.APPLY_OPERATION) != "" {
+		// Save the apply info in the app metadata, only when called from apply
+		// context. Imperatively created apps have no ApplyInfo: the first apply
+		// over them uses the adopt (no previous apply info) merge behavior, and
+		// export --exclude-declarative uses ApplyInfo presence to detect
+		// declaratively managed apps
 		applyInfoBytes, err := json.Marshal(applyInfo)
 		if err != nil {
 			return nil, err

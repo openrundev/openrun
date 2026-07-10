@@ -1,0 +1,77 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+tests:
+  export0001: ## setup
+    command: rm -rf /tmp/exportapp && cp -r ./testapp /tmp/exportapp
+    exit-code: 0
+
+  export0010: ## create an app imperatively
+    command: ../openrun app create --approve /tmp/exportapp /exporttest/app1
+    exit-code: 0
+  export0011: ## imperative param update, promoted to prod
+    command: ../openrun param update p1 v1 /exporttest/app1 --promote
+    exit-code: 0
+
+  export0020: ## export includes the imperative app with its prod params
+    command: ../openrun export "/exporttest/**"
+    stdout:
+      contains:
+        - 'app(path="/exporttest/app1",'
+        - 'source="/tmp/exportapp"'
+        - 'params={"p1": "v1"}'
+  export0021: ## imperative app is included with --exclude-declarative
+    command: ../openrun export --exclude-declarative "/exporttest/**"
+    stdout: 'app(path="/exporttest/app1"'
+  export0022: ## exported output is deterministic
+    command: ../openrun export "/exporttest/**" > /tmp/export1.ace && ../openrun export "/exporttest/**" > /tmp/export2.ace && diff /tmp/export1.ace /tmp/export2.ace && echo IDENTICAL
+    stdout: "IDENTICAL"
+
+  export0030: ## write export to a file
+    command: ../openrun export -o /tmp/export_backup.ace "/exporttest/**"
+    exit-code: 0
+  export0031: ## applying the export adopts the imperative app, creates nothing
+    command: ../openrun apply --promote /tmp/export_backup.ace
+    stdout: "0 app(s) created"
+  export0032: ## adopted app is now declaratively managed
+    command: ../openrun export --exclude-declarative "/exporttest/**"
+    stdout:
+      not-contains:
+        - 'app(path="/exporttest/app1"'
+  export0033: ## re-applying the export is a no-op
+    command: ../openrun apply --dry-run /tmp/export_backup.ace
+    stdout: "0 app(s) created, 0 app(s) updated"
+
+  export0040: ## dev apps are exported with dev=True
+    command: ../openrun app create --dev --approve /tmp/exportapp /exporttest/dev1 > /dev/null && ../openrun export "/exporttest/**"
+    stdout:
+      contains:
+        - 'app(path="/exporttest/dev1",'
+        - 'dev=True'
+
+  export0050: ## pretty-print evaluates helpers and emits canonical formatting
+    command: printf 'def p(x):\n    return "/pp" + x\n\napp(p("/one"),   "/tmp/exportapp", params={"b":"2",\n  "a":"1"})\n' > /tmp/pp_test.ace && ../openrun pretty-print /tmp/pp_test.ace
+    stdout:
+      exactly: |-
+        app(path="/pp/one",
+            source="/tmp/exportapp",
+            params={"a": "1", "b": "2"})
+  export0051: ## pretty-print -w formats the file in place
+    command: ../openrun pretty-print -w /tmp/pp_test.ace && cat /tmp/pp_test.ace
+    stdout:
+      exactly: |-
+        app(path="/pp/one",
+            source="/tmp/exportapp",
+            params={"a": "1", "b": "2"})
+  export0052: ## fmt alias works
+    command: ../openrun fmt /tmp/pp_test.ace
+    stdout: 'app(path="/pp/one"'
+
+  export0090: ## cleanup apps
+    command: ../openrun app delete "/exporttest/**"
+    exit-code: 0
+  export0091: ## cleanup files
+    command: rm -rf /tmp/exportapp /tmp/export1.ace /tmp/export2.ace /tmp/export_backup.ace /tmp/pp_test.ace
+    exit-code: 0

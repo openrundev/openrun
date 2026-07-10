@@ -65,7 +65,8 @@ const (
 	GROUPS          ContextKey = "groups"
 	RBAC_ENABLED    ContextKey = "rbac_enabled"
 	CUSTOM_PERMS    ContextKey = "custom_perms"
-	SYNC_ID         ContextKey = "sync_id" // id of the sync entry driving the current apply
+	SYNC_ID         ContextKey = "sync_id"         // id of the sync entry driving the current apply
+	APPLY_OPERATION ContextKey = "apply_operation" // set when the current operation is a declarative apply
 )
 
 const (

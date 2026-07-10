@@ -1157,6 +1157,51 @@ func (h *Handler) apply(r *http.Request) (any, error) {
 	return ret, nil
 }
 
+// export is the handler for the export API which writes the current app and
+// binding state as a declarative config file
+func (h *Handler) export(r *http.Request) (any, error) {
+	appPathGlob := cmp.Or(r.URL.Query().Get("appPathGlob"), "all")
+	exactCommit, err := parseBoolArg(r.URL.Query().Get("exactCommit"), false)
+	if err != nil {
+		return nil, err
+	}
+	excludeDeclarative, err := parseBoolArg(r.URL.Query().Get("excludeDeclarative"), false)
+	if err != nil {
+		return nil, err
+	}
+	updateTargetInContext(r, appPathGlob, false)
+	updateOperationInContext(r, "export_apps")
+
+	options := types.ExportOptions{
+		ServiceRef:         r.URL.Query().Get("serviceRef"),
+		GitAuthRef:         r.URL.Query().Get("gitAuthRef"),
+		ExactCommit:        exactCommit,
+		ExcludeDeclarative: excludeDeclarative,
+	}
+	config, err := h.server.Export(r.Context(), appPathGlob, options)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return &types.AppExportResponse{Config: config}, nil
+}
+
+// prettyPrint is the handler for the pretty-print API which reformats an
+// existing declarative config file
+func (h *Handler) prettyPrint(r *http.Request) (any, error) {
+	applyPath := r.URL.Query().Get("applyPath")
+	if applyPath == "" {
+		return nil, types.CreateRequestError("applyPath is required", http.StatusBadRequest)
+	}
+	updateTargetInContext(r, applyPath, false)
+	updateOperationInContext(r, "pretty_print")
+
+	config, err := h.server.PrettyPrint(r.Context(), applyPath)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return &types.AppExportResponse{Config: config}, nil
+}
+
 func (h *Handler) createSyncEntry(r *http.Request) (any, error) {
 	path := r.URL.Query().Get("path")
 	dryRun, err := parseBoolArg(r.URL.Query().Get(DRY_RUN_ARG), false)
@@ -1671,6 +1716,16 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to apply app config
 	r.Post("/apply", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "apply", h.apply, true)
+	}))
+
+	// API to export app config declaratively
+	r.Get("/export", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "export_apps", h.export, false)
+	}))
+
+	// API to pretty print a declarative config file
+	r.Get("/pretty_print", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "pretty_print", h.prettyPrint, false)
 	}))
 
 	// API to create sync entry
