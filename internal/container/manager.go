@@ -182,7 +182,7 @@ func GenContainerName(appId types.AppId, contentHash string, supportsInPlaceUpda
 	if supportsInPlaceUpdate {
 		return ContainerName(fmt.Sprintf("clc-%s", appId))
 	} else {
-		return ContainerName(fmt.Sprintf("clc-%s-%s", appId, genLowerCaseId(contentHash)))
+		return ContainerName(fmt.Sprintf("clc-%s-%s", appId, shortHash(contentHash)))
 	}
 }
 
@@ -192,7 +192,7 @@ func GenImageName(appId types.AppId, contentHash string) ImageName {
 	if contentHash == "" {
 		return ImageName(fmt.Sprintf("%s%s", IMAGE_NAME_PREFIX, appId))
 	} else {
-		return ImageName(fmt.Sprintf("%s%s:%s", IMAGE_NAME_PREFIX, appId, genLowerCaseId(contentHash)))
+		return ImageName(fmt.Sprintf("%s%s:%s", IMAGE_NAME_PREFIX, appId, shortHash(contentHash)))
 	}
 }
 

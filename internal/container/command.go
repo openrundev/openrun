@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"container/ring"
 	"context"
-	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,13 +27,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
-
-var base32encoder = base32.StdEncoding.WithPadding(base32.NoPadding)
-
-func genLowerCaseId(name string) string {
-	// The container id needs to be lower case. Use base32 to encode the name so that it can be lowercased
-	return strings.ToLower(base32encoder.EncodeToString([]byte(name)))
-}
 
 var mu sync.Mutex
 var buildLockChannel chan string // channel to hold the build ids, max size is MaxConcurrentBuilds

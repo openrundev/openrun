@@ -748,8 +748,9 @@ func (k *KubernetesCM) processVolumes(ctx context.Context, name string, volumes 
 
 const VERSION_HASH_LABEL = LABEL_PREFIX + "version.hash"
 
-// shortHash returns a label/name-safe version suffix. Keep more than 8 chars so
-// workloads with nearby hashes do not collide on the Kubernetes object name.
+// shortHash returns a label/name-safe version suffix, also used for Docker
+// container names and image tags. Keep more than 8 chars so versions with
+// nearby hashes do not collide on the object name.
 func shortHash(versionHash string) string {
 	h := strings.ToLower(versionHash)
 	if len(h) > 16 {
