@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.18.5] - 2026-07-12
+
 ### Added
 
 - Added an embedded secrets store: the `db` secret provider encrypts values with AES-256-GCM and saves them in the metadata database. The master key is auto generated into `$OPENRUN_HOME/config/secret.key` or can be a `{{secret_from ...}}` reference resolved through another provider (for Kubernetes, mount it from a native Secret). Secrets are managed with the `openrun secret create/list/show/delete/rekey` commands, the `/_openrun/secret` management APIs and the `openrun_admin` plugin (`create_secret`, `get_secret`, `list_secrets`, `delete_secret`, `rekey_secrets`); `create` generates a unique name from a prefix and prints the `{{secret_from "db" "<name>"}}` reference to use. New `secret:create`, `secret:read`, `secret:delete` and `secret:reveal` RBAC permissions gate the APIs.
