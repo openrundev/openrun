@@ -94,12 +94,18 @@ func podToWorkload(pod *core.Pod) WorkloadPod {
 
 // ListWorkloadPods lists the OpenRun managed pods in the apps namespace
 func ListWorkloadPods(ctx context.Context, config *types.ServerConfig) ([]WorkloadPod, error) {
+	return ListWorkloadPodsSelector(ctx, config, LABEL_PREFIX+"app.id")
+}
+
+// ListWorkloadPodsSelector lists namespace pods matching a label selector
+// (e.g. app=kaniko for the image build pods)
+func ListWorkloadPodsSelector(ctx context.Context, config *types.ServerConfig, selector string) ([]WorkloadPod, error) {
 	client, namespace, err := newWorkloadClient(config)
 	if err != nil {
 		return nil, err
 	}
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, meta.ListOptions{
-		LabelSelector: LABEL_PREFIX + "app.id",
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("error listing pods in %s: %w", namespace, err)

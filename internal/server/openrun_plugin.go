@@ -814,11 +814,23 @@ func (c *openrunPlugin) ListServices(thread *starlark.Thread, builtin *starlark.
 
 // ListContainers lists the containers (or Kubernetes pods) managed by OpenRun
 func (c *openrunPlugin) ListContainers(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	if err := starlark.UnpackArgs("list_containers", args, kwargs); err != nil {
+	var ctype starlark.String
+	if err := starlark.UnpackArgs("list_containers", args, kwargs, "type?", &ctype); err != nil {
 		return nil, err
 	}
 
-	containers, err := c.server.ListManagedContainers(system.GetRequestContext(thread))
+	var containers []ContainerInfo
+	var err error
+	switch ctype.GoString() {
+	case "":
+		containers, err = c.server.ListManagedContainers(system.GetRequestContext(thread))
+	case "agent":
+		containers, err = c.server.ListAgentContainers(system.GetRequestContext(thread))
+	case "kaniko":
+		containers, err = c.server.ListKanikoBuildContainers(system.GetRequestContext(thread))
+	default:
+		return nil, fmt.Errorf("invalid list_containers type %q, expected agent or kaniko", ctype.GoString())
+	}
 	if err != nil {
 		return nil, err
 	}

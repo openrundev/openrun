@@ -25,7 +25,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 16
+const CURRENT_DB_VERSION = 17
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -440,6 +440,28 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=16, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 17 {
+		m.Info().Msg("Upgrading to version 17")
+		if _, err := tx.ExecContext(ctx, `create table builder_sessions(id text, user_id text, name text, spec text, agent text, preset text, status text, `+
+			`workspace_dir text, preview_path text, publish_path text, create_time `+system.MapDataType(m.dbType, "datetime")+
+			`, update_time `+system.MapDataType(m.dbType, "datetime")+`, PRIMARY KEY(id))`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `create table builder_activity(id text, session_id text, user_id text, create_time `+
+			system.MapDataType(m.dbType, "datetime")+`, kind text, content text, metadata json, PRIMARY KEY(id))`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `create index idx_builder_activity_session on builder_activity(session_id, id)`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=17, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}

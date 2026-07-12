@@ -164,6 +164,49 @@ tests:
         - "/protected"
         - "/rbacapp"
     exit-code: 0
+  rbac0182: # force_rbac_when_enabled defaults to true: /protected (auth=none,
+    # no rbac: prefix) is enforced too, anonymous has no app:access grant on it
+    command: curl -s -o /dev/null -w "%{http_code}" localhost:25222/protected/
+    stdout: "401"
+    exit-code: 0
+  rbac0184: # same config with force_rbac_when_enabled false: legacy behavior,
+    # apps without the rbac: prefix are not enforced
+    command: |
+      cat > rbac_config2.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "enabled": true,
+          "force_rbac_when_enabled": false,
+          "groups": {},
+          "roles": {
+            "viewer": ["app:access", "app:read"]
+          },
+          "grants": [
+            {
+              "description": "anonymous views rbacapp",
+              "users": ["anonymous"],
+              "roles": ["viewer"],
+              "targets": ["/rbacapp"]
+            }
+          ]
+        }
+      }
+      EOF
+      ../openrun server update-config --force rbac_config2.json
+    exit-code: 0
+  rbac0186: # force off: the non-prefixed app serves without any grant
+    command: curl -s localhost:25222/protected/
+    stdout: "child ok"
+    exit-code: 0
+  rbac0188: # force off: the rbac: prefixed app is still enforced (list filtered)
+    command: curl -s localhost:25222/rbacapp/list
+    stdout:
+      contains:
+        - "/rbacapp"
+      not-contains:
+        - "/protected"
+    exit-code: 0
   rbac0190: # disable RBAC again
     command: |
       cat > rbac_config1.json <<EOF
@@ -190,5 +233,5 @@ tests:
     command: |
       ../openrun app delete /rbacapp
       ../openrun app delete /protected
-      rm -f rbac_config1.json
+      rm -f rbac_config1.json rbac_config2.json
     exit-code: 0

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openrundev/openrun/internal/builder"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -296,7 +297,9 @@ func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats b
 			labels[k] = vs
 		}
 	}
-	if labels[containerAppIdLabel] == "" {
+	// Managed means an app container (app id label) or a builder agent
+	// sandbox (builder session label); anything else stays hidden
+	if labels[containerAppIdLabel] == "" && labels[builder.SandboxSessionLabel] == "" {
 		return nil, fmt.Errorf("container %s is not managed by OpenRun", id)
 	}
 
@@ -312,12 +315,18 @@ func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats b
 		command = strings.TrimSpace(command + " " + cmd)
 	}
 
+	// Builder sandboxes have no app; surface the owning session id where
+	// the app path goes
+	appPath := labels[containerAppPathLabel]
+	if appPath == "" {
+		appPath = labels[builder.SandboxSessionLabel]
+	}
 	detail := &ContainerDetail{
 		ContainerInfo: ContainerInfo{
 			Id:      entryString(entry, "Id", "ID"),
 			Name:    strings.TrimPrefix(entryString(entry, "Name"), "/"),
 			AppId:   labels[containerAppIdLabel],
-			AppPath: labels[containerAppPathLabel],
+			AppPath: appPath,
 			Image:   entryString(config, "Image"),
 			State:   entryString(state, "Status"),
 			Runtime: filepath.Base(runtime),

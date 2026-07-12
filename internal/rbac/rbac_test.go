@@ -184,12 +184,14 @@ func TestAuthorizeAccess(t *testing.T) {
 			expectError:    false,
 		},
 		{
-			name: "non-rbac auth setting - should authorize",
+			// legacy prefix-gating: only applies with force_rbac_when_enabled off
+			name: "non-rbac auth setting with force off - should authorize",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
-				Roles:   map[string][]types.RBACPermission{},
-				Grants:  []types.RBACGrant{},
+				Enabled:              true,
+				ForceRBACWhenEnabled: boolPtr(false),
+				Groups:               map[string][]string{},
+				Roles:                map[string][]types.RBACPermission{},
+				Grants:               []types.RBACGrant{},
 			},
 			serverConfig: &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
@@ -1019,10 +1021,10 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
 
-	t.Run("non-rbac auth allows app-level permission", func(t *testing.T) {
+	t.Run("non-rbac auth with force off allows app-level permission", func(t *testing.T) {
 		t.Parallel()
 
-		rbacConfig := &types.RBACConfig{Enabled: true}
+		rbacConfig := &types.RBACConfig{Enabled: true, ForceRBACWhenEnabled: boolPtr(false)}
 		rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
 		if err != nil {
 			t.Fatalf("failed to create RBACManager: %v", err)

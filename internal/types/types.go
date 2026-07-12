@@ -42,6 +42,8 @@ const (
 	ID_PREFIX_SERVICE       = "srv_"
 	ID_PREFIX_BINDING       = "bnd_"
 	ID_PREFIX_SERVER        = "srv_id_"
+	ID_PREFIX_BUILDER_SES   = "bld_ses_"
+	ID_PREFIX_BUILDER_ACT   = "bld_act_"
 	INTERNAL_URL_PREFIX     = "/_openrun"
 	WEBHOOK_URL_PREFIX      = "/_openrun_webhook"
 	APP_INTERNAL_URL_PREFIX = "/_openrun_app"
@@ -109,27 +111,178 @@ type GlobalConfig struct {
 // ServerConfig is the configuration for the OpenRun Server
 type ServerConfig struct {
 	GlobalConfig
-	Http        HttpConfig                  `toml:"http"`
-	Https       HttpsConfig                 `toml:"https"`
-	Security    SecurityConfig              `toml:"security"`
-	Metadata    MetadataConfig              `toml:"metadata"`
-	Log         LogConfig                   `toml:"logging"`
-	Telemetry   TelemetryConfig             `toml:"telemetry"`
-	System      SystemConfig                `toml:"system"`
-	Registry    RegistryConfig              `toml:"registry"`
-	Builder     BuilderConfig               `toml:"builder"`
-	Kubernetes  KubernetesConfig            `toml:"kubernetes"`
-	GitAuth     map[string]GitAuthEntry     `toml:"git_auth"`
-	Plugins     map[string]PluginSettings   `toml:"plugin"`
-	Auth        map[string]AuthConfig       `toml:"auth"`
-	SAML        map[string]SAMLConfig       `toml:"saml"`
-	ClientAuth  map[string]ClientCertConfig `toml:"client_auth"`
-	Secret      map[string]SecretConfig     `toml:"secret"`
-	Forward     map[string]ForwardConfig    `toml:"forward"`
-	ProfileMode string                      `toml:"profile_mode"`
-	AppConfig   AppConfig                   `toml:"app_config"`
-	NodeConfig  NodeConfig                  `toml:"node_config"`
-	Permissions PermissionsConfig           `toml:"permissions"`
+	Http           HttpConfig                      `toml:"http"`
+	Https          HttpsConfig                     `toml:"https"`
+	Security       SecurityConfig                  `toml:"security"`
+	Metadata       MetadataConfig                  `toml:"metadata"`
+	Log            LogConfig                       `toml:"logging"`
+	Telemetry      TelemetryConfig                 `toml:"telemetry"`
+	System         SystemConfig                    `toml:"system"`
+	Registry       RegistryConfig                  `toml:"registry"`
+	Builder        BuilderConfig                   `toml:"builder"`
+	Kubernetes     KubernetesConfig                `toml:"kubernetes"`
+	GitAuth        map[string]GitAuthEntry         `toml:"git_auth"`
+	Plugins        map[string]PluginSettings       `toml:"plugin"`
+	Auth           map[string]AuthConfig           `toml:"auth"`
+	SAML           map[string]SAMLConfig           `toml:"saml"`
+	ClientAuth     map[string]ClientCertConfig     `toml:"client_auth"`
+	Secret         map[string]SecretConfig         `toml:"secret"`
+	Forward        map[string]ForwardConfig        `toml:"forward"`
+	ProfileMode    string                          `toml:"profile_mode"`
+	AppConfig      AppConfig                       `toml:"app_config"`
+	NodeConfig     NodeConfig                      `toml:"node_config"`
+	Permissions    PermissionsConfig               `toml:"permissions"`
+	AppBuilder     AppBuilderConfig                `toml:"app_builder"`
+	BuilderAgent   map[string]BuilderAgentConfig   `toml:"builder_agent"`
+	BuilderPublish map[string]BuilderPublishConfig `toml:"builder_publish"`
+	BuilderPrompt  map[string]BuilderPromptConfig  `toml:"builder_prompt"`
+	BuilderGit     map[string]BuilderGitConfig     `toml:"builder_git"`
+}
+
+// BuilderPromptConfig is one [builder_prompt.*] entry: a named prompt preset
+// the user can pick when creating a builder app. Replace controls whether
+// the preset replaces the system prompt or is appended to it
+type BuilderPromptConfig struct {
+	Prompt      string `toml:"prompt"`
+	Replace     bool   `toml:"replace"`     // replace the system prompt instead of appending to it
+	Description string `toml:"description"` // shown in the new-app form
+	GitConfig   string `toml:"git_config"`  // [builder_git.*] entry sessions created with this preset publish to; empty = builder default
+}
+
+// BuilderGitConfig is one [builder_git.*] entry: a named git publish
+// destination for builder apps. Empty branch/apps_file/source_dir default
+// to main/apps.star/apps
+type BuilderGitConfig struct {
+	Repo      string `toml:"repo"`       // publish repo url
+	Branch    string `toml:"branch"`     // branch for publish commits
+	Auth      string `toml:"auth"`       // [git_auth.*] entry for the repo
+	AppsFile  string `toml:"apps_file"`  // declarative file, relative to repo root
+	SourceDir string `toml:"source_dir"` // repo directory for published app sources
+}
+
+// AppBuilderConfig configures the AI app builder (console Builder tab). Not
+// supported when the container backend is Kubernetes: the agent sandbox needs
+// a local docker/podman runtime with host directory volume mounts
+type AppBuilderConfig struct {
+	Enabled         bool   `toml:"enabled"`
+	PreviewPath     string `toml:"preview_path"` // mount prefix for draft preview apps
+	DefaultAgent    string `toml:"default_agent"`
+	MaxSessions     int    `toml:"max_sessions"`
+	SessionIdleMins int    `toml:"session_idle_mins"`
+	WorkspaceDir    string `toml:"workspace_dir"` // default $OPENRUN_HOME/run/builder
+	SystemPrompt    string `toml:"system_prompt"` // replaces the embedded base prompt when set
+	PromptExtra     string `toml:"prompt_extra"`  // admin text appended to the system prompt
+
+	// DefaultGitConfig names the [builder_git.*] entry used when the
+	// session's prompt preset does not pick one. Empty (and no preset
+	// choice) selects local publish mode ($OPENRUN_HOME/app_src)
+	DefaultGitConfig string `toml:"default_git_config"`
+}
+
+// Defaults applied to empty [builder_git.*] entry fields
+const (
+	BuilderGitDefaultBranch    = "main"
+	BuilderGitDefaultAppsFile  = "apps.star"
+	BuilderGitDefaultSourceDir = "apps"
+)
+
+// ResolveBuilderGit returns the git publish destination for a builder
+// session created with promptPreset: the preset's git_config if set, else
+// app_builder.default_git_config. With neither set the result has an empty
+// Repo, which selects local publish mode ($OPENRUN_HOME/app_src)
+func (c *ServerConfig) ResolveBuilderGit(promptPreset string) (BuilderGitConfig, error) {
+	name := ""
+	if promptPreset != "" {
+		preset, ok := c.BuilderPrompt[promptPreset]
+		if !ok {
+			return BuilderGitConfig{}, fmt.Errorf("no [builder_prompt.%s] config entry", promptPreset)
+		}
+		name = preset.GitConfig
+	}
+	if name == "" {
+		name = c.AppBuilder.DefaultGitConfig
+	}
+	if name == "" {
+		return BuilderGitConfig{AppsFile: BuilderGitDefaultAppsFile}, nil // local mode
+	}
+
+	entry, ok := c.BuilderGit[name]
+	if !ok {
+		return BuilderGitConfig{}, fmt.Errorf("no [builder_git.%s] config entry", name)
+	}
+	if entry.Branch == "" {
+		entry.Branch = BuilderGitDefaultBranch
+	}
+	if entry.AppsFile == "" {
+		entry.AppsFile = BuilderGitDefaultAppsFile
+	}
+	if entry.SourceDir == "" {
+		entry.SourceDir = BuilderGitDefaultSourceDir
+	}
+	return entry, nil
+}
+
+// BuilderPublishConfig is one [builder_publish.*] entry: an app path glob
+// users may publish builder apps to, with a description of the RBAC rules
+// that apply there. No entries means any path is allowed (RBAC still gates)
+type BuilderPublishConfig struct {
+	Path        string `toml:"path"`        // app path glob, e.g. /teams/* or example.com:/**
+	Description string `toml:"description"` // shown in the publish dialog: which RBAC rules apply
+}
+
+// BuilderAgentConfig is one agent profile for the app builder. The agent
+// type is inferred from the entry name, like auth entries: opencode,
+// opencode_dev, pi, ... use the embedded Dockerfile and ACP launch command
+// for their type; custom_<name> entries must set Dockerfile and Command.
+// The command must speak the Agent Client Protocol on stdio
+type BuilderAgentConfig struct {
+	Type        string            `toml:"type"`         // optional; must match the type inferred from the name
+	Dockerfile  string            `toml:"dockerfile"`   // overrides the embedded Dockerfile
+	Command     []string          `toml:"command"`      // overrides the embedded ACP command
+	Env         map[string]string `toml:"env"`          // container env, {{secret ...}} resolved at launch
+	ConfigFiles []string          `toml:"config_files"` // host:container[:ro] mounts
+	Model       string            `toml:"model"`        // model passed to the agent at session start (agent's naming)
+	Effort      string            `toml:"effort"`       // reasoning effort level passed to the agent at session start
+}
+
+// BuilderSessionStatus is the lifecycle state of a builder session
+type BuilderSessionStatus string
+
+const (
+	BuilderSessionStarting  BuilderSessionStatus = "starting"  // sandbox launching / first turn running
+	BuilderSessionReady     BuilderSessionStatus = "ready"     // agent idle, sandbox live
+	BuilderSessionRunning   BuilderSessionStatus = "running"   // prompt turn in flight
+	BuilderSessionDetached  BuilderSessionStatus = "detached"  // sandbox stopped, workspace persists
+	BuilderSessionPublished BuilderSessionStatus = "published" // published at least once
+	BuilderSessionError     BuilderSessionStatus = "error"     // failed to start / load
+)
+
+// BuilderSession is one app builder session (draft app + agent sandbox)
+type BuilderSession struct {
+	Id           string               `json:"id"`
+	UserID       string               `json:"user_id"`
+	Name         string               `json:"name"`
+	Spec         string               `json:"spec"`
+	Agent        string               `json:"agent"`  // [builder_agent.*] profile name
+	Preset       string               `json:"preset"` // [builder_prompt.*] preset chosen at creation; decides the git destination
+	Status       BuilderSessionStatus `json:"status"`
+	WorkspaceDir string               `json:"workspace_dir"`
+	PreviewPath  string               `json:"preview_path"` // dev app path, once created
+	PublishPath  string               `json:"publish_path"` // once published
+	CreateTime   time.Time            `json:"create_time"`
+	UpdateTime   time.Time            `json:"update_time"`
+}
+
+// BuilderActivity is one activity log row: prompts, agent messages, tool
+// calls and lifecycle events for a builder session
+type BuilderActivity struct {
+	Id         string         `json:"id"`
+	SessionId  string         `json:"session_id"`
+	UserID     string         `json:"user_id"`
+	CreateTime time.Time      `json:"create_time"`
+	Kind       string         `json:"kind"` // prompt|agent_message|tool_call|lifecycle|approve|publish|unpublish|error
+	Content    string         `json:"content"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 type PluginSettings map[string]any
@@ -925,11 +1078,24 @@ type RBACConfig struct {
 	Roles   map[string][]RBACPermission `json:"roles"`   // role names to permissions.
 	Grants  []RBACGrant                 `json:"grants"`  // grants are used to grant permissions to users/groups for specific apps
 
+	// ForceRBACWhenEnabled applies RBAC to every app when RBAC is enabled,
+	// as if all app auth strings carried the rbac: prefix. When false, only
+	// apps whose auth has the rbac: prefix are enforced (the pre-flag
+	// behavior). A pointer so configs saved before this field keep the
+	// default (true); use ForceRBAC() to read
+	ForceRBACWhenEnabled *bool `json:"force_rbac_when_enabled,omitempty"`
+
 	// OwnerPermissions overrides the default permissions granted to the creator of an
 	// asset. Keys are resource names (app, sync); values are the permissions the owner
 	// gets on assets they created. Missing key means the built-in default; an empty
 	// list disables the owner rule for that resource. app:approve is not allowed.
 	OwnerPermissions map[string][]RBACPermission `json:"owner_permissions,omitempty"`
+}
+
+// ForceRBAC reports the effective ForceRBACWhenEnabled value: unset (configs
+// saved before the field existed and fresh configs) defaults to true
+func (c *RBACConfig) ForceRBAC() bool {
+	return c.ForceRBACWhenEnabled == nil || *c.ForceRBACWhenEnabled
 }
 
 type RBACGrant struct {
@@ -988,6 +1154,11 @@ const (
 	PermissionSecretRead   RBACPermission = "secret:read"   // list secrets, get secret metadata (not values)
 	PermissionSecretDelete RBACPermission = "secret:delete"
 	PermissionSecretReveal RBACPermission = "secret:reveal" // read back a secret value
+
+	PermissionBuilderList    RBACPermission = "builder:list"    // see one's own builder sessions
+	PermissionBuilderRead    RBACPermission = "builder:read"    // view any session's transcript, files, activity
+	PermissionBuilderCreate  RBACPermission = "builder:create"  // create sessions, message/stop/resume/delete own sessions
+	PermissionBuilderPublish RBACPermission = "builder:publish" // publish/unpublish (also needs app:create on the path)
 )
 
 // RBACPermissionGroup lists the permissions for one resource type, in display order
@@ -1020,6 +1191,9 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 	{Resource: "secret", Permissions: []RBACPermission{
 		PermissionSecretCreate, PermissionSecretRead, PermissionSecretDelete,
 		PermissionSecretReveal}},
+	{Resource: "builder", Permissions: []RBACPermission{
+		PermissionBuilderList, PermissionBuilderRead, PermissionBuilderCreate,
+		PermissionBuilderPublish}},
 	{Resource: "server", Permissions: []RBACPermission{PermissionServerStop}},
 	{Resource: "audit", Permissions: []RBACPermission{PermissionAuditRead}},
 }

@@ -28,6 +28,7 @@ import (
 
 	"github.com/caddyserver/certmagic"
 	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/builder"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/passwd"
@@ -136,17 +137,17 @@ type Server struct {
 	// immutable after NewServer and must only be referenced by startup paths
 	// and the dynamic config merge; everything else reads s.Config(), which
 	// includes the dynamic overrides
-	staticConfig   *types.ServerConfig
-	db             *metadata.Metadata
-	httpServer     *http.Server
-	httpsServer    *http.Server
-	udsServer      *http.Server
-	handler        *Handler
-	apps           *AppStore
-	authHandler    *AdminBasicAuth
-	oAuthManager   *OAuthManager
-	samlManager    *SAMLManager
-	notifyClose chan types.AppPathDomain
+	staticConfig *types.ServerConfig
+	db           *metadata.Metadata
+	httpServer   *http.Server
+	httpsServer  *http.Server
+	udsServer    *http.Server
+	handler      *Handler
+	apps         *AppStore
+	authHandler  *AdminBasicAuth
+	oAuthManager *OAuthManager
+	samlManager  *SAMLManager
+	notifyClose  chan types.AppPathDomain
 	// secretsManager is swapped when a dynamic config change modifies the
 	// [secret] config; read it through secretsMgr(), never capture the
 	// manager (or one of its method values) in a long-lived object
@@ -176,6 +177,7 @@ type Server struct {
 	telemetry        *telemetry.Providers
 
 	forwardAuthHTTPClient *http.Client
+	builderManager        *builder.Manager
 
 	staleContainerCleanupTicker *time.Ticker
 	staleContainerCleanupStop   chan struct{}
@@ -301,6 +303,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 
 	initOpenRunPlugin(server)
 	initAdminPlugin(server)
+	initBuilderPlugin(server)
 
 	server.dynamicConfig, err = server.db.GetConfig()
 	if err != nil && !errors.Is(err, metadata.ErrConfigNotFound) {
@@ -692,6 +695,14 @@ func (s *Server) setupAdminAccount() (string, error) {
 // Start starts the OpenRun Server
 func (s *Server) Start() error {
 	s.handler = NewTCPHandler(s.Logger, s.Config(), s)
+	// Builder config problems must not block startup: the builder config is
+	// dynamically editable, so a bad entry has to be fixable through the
+	// console. The error is logged and surfaces again on builder use
+	if err := s.initBuilder(); err != nil {
+		s.Error().Err(err).Msg("app_builder config error, the builder will not work until fixed")
+	} else if err := s.builderManager.Start(context.Background()); err != nil {
+		s.Error().Err(err).Msg("Error starting app builder")
+	}
 	serverUri := strings.TrimSpace(os.ExpandEnv(s.Config().ServerUri))
 	if serverUri == "" {
 		return errors.New("server_uri is not set")
@@ -1037,6 +1048,9 @@ func (s *Server) Stop(ctx context.Context) error {
 		if s.syncStop != nil {
 			s.syncTimer.Stop()
 			close(s.syncStop)
+		}
+		if s.builderManager != nil {
+			s.builderManager.Stop()
 		}
 
 		var err1, err2, err3 error

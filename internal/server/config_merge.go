@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/openrundev/openrun/internal/builder"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -293,6 +294,14 @@ func validateConfigEntry(section, name string, values map[string]any) error {
 			unknown = append(unknown, key.String())
 		}
 		return fmt.Errorf("unknown config fields: %s", strings.Join(unknown, ", "))
+	}
+
+	if section == "builder_agent" {
+		// The agent type comes from the entry name; a name that infers no
+		// type would only fail at session start, so reject it here
+		if _, err := builder.AgentTypeFromName(name); err != nil {
+			return err
+		}
 	}
 	return nil
 }

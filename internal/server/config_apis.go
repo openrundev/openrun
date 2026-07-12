@@ -373,10 +373,14 @@ func (s *Server) validateRBACCandidate(ctx context.Context, candidate *types.RBA
 	}
 
 	// The lockout check only applies when the caller would actually be subject
-	// to enforcement after publish: enforcement is two-level, the enabled flag
-	// AND the calling app's rbac: auth prefix. Admin access always works
+	// to enforcement after publish: the enabled flag AND rbac applying to the
+	// calling app's auth - every app when the candidate forces rbac (the
+	// default), only rbac: prefixed auth otherwise. Admin access always works
 	user := system.GetContextUserId(ctx)
-	if candidate.Enabled && rbac.RequestHasRBACAuth(ctx) && user != "" && user != types.ADMIN_USER && !force {
+	// No app context (CLI, unix socket) is never enforced, force or not
+	callerSubject := rbac.RequestHasRBACAuth(ctx) ||
+		(candidate.ForceRBAC() && ctx.Value(types.APP_AUTH) != nil)
+	if candidate.Enabled && callerSubject && user != "" && user != types.ADMIN_USER && !force {
 		authorized, err := scratch.AuthorizeUserPerm(user, system.GetContextGroups(ctx), types.PermissionConfigUpdate)
 		if err != nil {
 			return err

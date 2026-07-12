@@ -64,6 +64,10 @@ var globalPermissions = map[types.RBACPermission]bool{
 	types.PermissionSecretRead:        true,
 	types.PermissionSecretDelete:      true,
 	types.PermissionSecretReveal:      true,
+	types.PermissionBuilderList:       true,
+	types.PermissionBuilderRead:       true,
+	types.PermissionBuilderCreate:     true,
+	types.PermissionBuilderPublish:    true,
 }
 
 // builtinPermissions is the set of all valid permission names

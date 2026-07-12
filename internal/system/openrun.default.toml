@@ -97,7 +97,7 @@ stage_at = "domain"                 # "domain", "path", or a domain for staging 
 default_stage_domain = "stage"      # domain prefix for staging apps when stage_at is "domain"
 root_serve_list_apps = "auto"       # "auto" means serve list_apps app for default domain, "disable" means don't server for any domain,
                                     # any other value means serve for specified domain
-enable_compression = false          # enable compression for HTTP responses
+enable_compression = true           # enable compression for HTTP responses
 default_schedule_mins = 15          # default sync schedule interval in minutes
 max_sync_failure_count = 5          # max number of sync failures before sync is marked as disabled
 early_hints = false                 # enable early hints for HTML responses
@@ -228,3 +228,27 @@ security.disable_csrf_protection = false # disable CSRF protection for apps
 # 10 = full strict set incl. Content-Security-Policy. Only 0, 2, 5 and 10 are implemented;
 # other values round down to the nearest implemented level.
 security.headers_level = 2
+
+[app_builder]
+enabled = false                 # AI app builder (console Builder tab); not supported with the Kubernetes container backend
+preview_path = "/builder/preview" # mount prefix for draft preview apps
+default_agent = "opencode"      # [builder_agent.*] entry to use
+max_sessions = 5                # concurrent live agent sandboxes
+session_idle_mins = 120         # stop the agent sandbox after idle
+workspace_dir = ""              # default $OPENRUN_HOME/run/builder
+system_prompt = ""              # replaces the embedded base prompt when set
+prompt_extra = ""               # admin text appended to the system prompt
+default_git_config = ""         # [builder_git.*] entry used when the prompt preset picks none; empty publishes locally ($OPENRUN_HOME/app_src)
+
+# Publish destinations for builder apps: [builder_publish.<name>] entries with
+# an app path glob and a description of the RBAC rules that apply there. No
+# entries means any path is allowed (RBAC still gates who can publish where).
+# Agent profiles are [builder_agent.<name>] entries; the agent type comes from
+# the name (opencode, opencode_dev, pi, ... or custom_<name> with dockerfile
+# and command set). model/effort in a profile are passed to the agent at
+# session start (ACP config options when advertised, plus
+# OPENRUN_AGENT_MODEL/OPENRUN_AGENT_EFFORT env in the sandbox).
+# Git publish destinations are [builder_git.<name>] entries (repo, branch,
+# auth, apps_file, source_dir; defaults main/apps.star/apps). A
+# [builder_prompt.*] preset picks one with git_config, else
+# app_builder.default_git_config applies, else publish is local mode

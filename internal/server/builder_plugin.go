@@ -8,14 +8,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
+	"regexp"
 	"slices"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
+	"github.com/segmentio/ksuid"
 	"go.starlark.net/starlark"
 )
 
@@ -30,6 +35,7 @@ func initBuilderPlugin(server *Server) {
 		app.CreatePluginApiName(c.SessionEvents, app.READ, "session_events"),
 		app.CreatePluginApiName(c.ListFiles, app.READ, "list_files"),
 		app.CreatePluginApiName(c.ReadFile, app.READ, "read_file"),
+		app.CreatePluginApiName(c.GetSourceZip, app.READ, "get_source_zip"),
 		app.CreatePluginApiName(c.GetPublishConfig, app.READ, "get_publish_config"),
 		app.CreatePluginApiName(c.ListActivity, app.READ, "list_activity"),
 		app.CreatePluginApiName(c.CreateSession, app.WRITE, "create_session"),
@@ -44,13 +50,14 @@ func initBuilderPlugin(server *Server) {
 	}
 
 	newBuilderPlugin := func(pluginContext *types.PluginContext) (any, error) {
-		return &builderPlugin{server: server}, nil
+		return &builderPlugin{server: server, pluginContext: pluginContext}, nil
 	}
 	app.RegisterPlugin("build", newBuilderPlugin, pluginFuncs)
 }
 
 type builderPlugin struct {
-	server *Server
+	server        *Server
+	pluginContext *types.PluginContext
 }
 
 // requireSession loads a session and authorizes access: the owner needs the
@@ -249,6 +256,83 @@ func (c *builderPlugin) ReadFile(thread *starlark.Thread, builtin *starlark.Buil
 		return nil, err
 	}
 	return starlark.String(content), nil
+}
+
+// GetSourceZip bundles the session workspace into a zip and registers it as
+// a single-access temp download (the same user-file store the fs plugin's
+// serve_tmp_file uses), returning the download url
+func (c *builderPlugin) GetSourceZip(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id starlark.String
+	if err := starlark.UnpackArgs("get_source_zip", args, kwargs, "id", &id); err != nil {
+		return nil, err
+	}
+	ctx := system.GetRequestContext(thread)
+	session, err := c.requireSession(ctx, id.GoString(), types.PermissionBuilderList)
+	if err != nil {
+		return nil, err
+	}
+
+	zipPath, err := builderSourceZip(session.WorkspaceDir)
+	if err != nil {
+		return nil, fmt.Errorf("error bundling source: %w", err)
+	}
+
+	// The download endpoint (/_openrun_app/file/) reads the shared user-file
+	// store, which is initialized with the fs plugin's connect string
+	connectString, _ := c.server.Config().Plugins["fs.in"]["db_connection"].(string)
+	if connectString == "" {
+		os.Remove(zipPath) //nolint:errcheck
+		return nil, fmt.Errorf("no db_connection configured for plugin fs.in")
+	}
+	if err := app.InitFileStore(connectString); err != nil {
+		os.Remove(zipPath) //nolint:errcheck
+		return nil, err
+	}
+
+	genId, err := ksuid.NewRandom()
+	if err != nil {
+		os.Remove(zipPath) //nolint:errcheck
+		return nil, err
+	}
+	fileName := builderZipName(session.Name)
+	now := time.Now()
+	userFile := &types.UserFile{
+		Id:           "usr_file_" + genId.String(),
+		AppId:        string(c.pluginContext.AppId),
+		FilePath:     "file://" + zipPath,
+		FileName:     fileName,
+		MimeType:     "application/zip",
+		CreateTime:   now,
+		ExpireAt:     now.Add(10 * time.Minute),
+		CreatedBy:    system.GetContextUserId(ctx),
+		SingleAccess: true, // deleted after the download (or at expiry)
+		Visibility:   string(app.UserAccess),
+		Metadata:     map[string]any{"builder_session": session.Id},
+	}
+	if err := app.AddUserFile(ctx, userFile); err != nil {
+		os.Remove(zipPath) //nolint:errcheck
+		return nil, err
+	}
+
+	appPath := c.pluginContext.AppPath
+	if appPath == "/" {
+		appPath = ""
+	}
+	return starlark_type.ConvertToStarlark(map[string]any{
+		"url":  fmt.Sprintf("%s%s/file/%s", appPath, types.APP_INTERNAL_URL_PREFIX, userFile.Id),
+		"name": fileName,
+	})
+}
+
+var zipNameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+
+// builderZipName derives the download file name from the session name
+func builderZipName(sessionName string) string {
+	name := strings.Trim(zipNameSanitizer.ReplaceAllString(sessionName, "-"), "-.")
+	if name == "" {
+		name = "builder-app"
+	}
+	return name + "-source.zip"
 }
 
 // GetPublishConfig returns the builder publish setup for the UI. With

@@ -30,6 +30,7 @@ import (
 var (
 	CONTENT_TYPE_JSON = []string{"application/json"}
 	CONTENT_TYPE_TEXT = []string{"text/plain"}
+	CONTENT_TYPE_HTML = []string{"text/html; charset=utf-8"}
 
 	SERVER_NAME       = []string{"OpenRun"}
 	VARY_HEADER_VALUE = []string{"HX-Request"}
@@ -403,6 +404,13 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 		}
 
 		requestData.Data = handlerResponse
+		// Set the Content-Type before the template writes: net/http would
+		// sniff text/html anyway, but sniffing happens below middleware, so
+		// the compression middleware would see an empty type and never
+		// compress HTML responses
+		if respHeader.Get("Content-Type") == "" {
+			respHeader["Content-Type"] = CONTENT_TYPE_HTML
+		}
 		var err error
 		if isHtmxRequest && fragment != "" {
 			a.Trace().Msgf("Rendering block %s", fragment)
@@ -594,6 +602,9 @@ func (a *App) handleResponse(retStruct *starlarkstruct.Struct, r *http.Request, 
 
 	if deferredCleanup != nil && deferredCleanup() != nil {
 		return true, nil
+	}
+	if w.Header().Get("Content-Type") == "" {
+		w.Header()["Content-Type"] = CONTENT_TYPE_HTML
 	}
 	w.WriteHeader(int(code))
 	err = a.executeTemplateTraced(r, w, "", templateBlock, requestData)

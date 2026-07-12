@@ -307,6 +307,24 @@ func (c *openrunAdminPlugin) UpdateRBACEnabled(thread *starlark.Thread, builtin 
 		}))
 }
 
+// UpdateRBACForce sets the force_rbac_when_enabled flag in the draft config:
+// with force on (the default), enabled RBAC applies to every app; with it
+// off, only apps whose auth carries the rbac: prefix are enforced
+func (c *openrunAdminPlugin) UpdateRBACForce(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var force starlark.Bool
+	var versionId starlark.String
+	if err := starlark.UnpackArgs("update_rbac_force", args, kwargs, "force", &force, "draft_version", &versionId); err != nil {
+		return nil, err
+	}
+
+	return draftVersionResult(c.server.UpdateRBACDraft(system.GetRequestContext(thread), versionId.GoString(),
+		func(config *types.RBACConfig) error {
+			value := bool(force)
+			config.ForceRBACWhenEnabled = &value
+			return nil
+		}))
+}
+
 // SetRBACGroup creates or replaces one group in the draft config
 func (c *openrunAdminPlugin) SetRBACGroup(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var name, versionId starlark.String

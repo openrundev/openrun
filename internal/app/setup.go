@@ -829,9 +829,32 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	customTransport.DisableCompression = a.AppConfig.Proxy.DisableCompression
 	proxy.Transport = telemetry.WrapTransport(customTransport)
 
+	// resolveProxyTarget returns the upstream for the current request. For
+	// container.URL the container address is re-resolved on every request
+	// (matching the http plugin, which reads GetProxyUrl per call), so
+	// proxied routes survive container re-creates that change the host port
+	resolveProxyTarget := func() *url.URL { return urlParsed }
+	if originalUrlStr == apptype.CONTAINER_URL {
+		resolveProxyTarget = func() *url.URL {
+			current, err := url.Parse(a.containerHandler.GetProxyUrl())
+			if err != nil || current.Host == "" {
+				// keep the last known address rather than emitting a
+				// hostless upstream url
+				return urlParsed
+			}
+			return current
+		}
+	}
+
 	defaultDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
+		target := resolveProxyTarget()
 		defaultDirector(req)
+		// The default director joined the path against the setup-time
+		// target; scheme/host come from the per-request resolution (the
+		// container url never carries a path, so the join is unaffected)
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
 		if req.Header.Get("Upgrade") == "websocket" {
 			// Forward Connection/Upgrade as-is so the handshake survives. Host
 			// is intentionally left untouched (even when preserve_host=false):
@@ -843,7 +866,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 			req.Header.Set("Connection", "Upgrade")
 			req.Header.Set("Upgrade", "websocket")
 		} else if !preserveHost {
-			req.Host = urlParsed.Host
+			req.Host = target.Host
 		}
 	}
 
@@ -852,7 +875,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	// join with a.Path) is what gets used when rewriting.
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		if loc := resp.Header.Get("Location"); loc != "" && a.AppConfig.Proxy.RewriteLocation {
-			if rewritten, ok := rewriteProxyLocation(loc, urlParsed, stripPath); ok {
+			if rewritten, ok := rewriteProxyLocation(loc, resolveProxyTarget(), stripPath); ok {
 				resp.Header.Set("Location", rewritten)
 			}
 		}

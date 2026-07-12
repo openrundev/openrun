@@ -16,6 +16,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.66.2
 	github.com/beevik/etree v1.6.0
 	github.com/benbjohnson/hashfs v0.2.2
+	github.com/coder/acp-go-sdk v0.13.5
 	github.com/docker/go-units v0.5.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-chi/chi/v5 v5.2.5

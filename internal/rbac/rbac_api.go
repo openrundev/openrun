@@ -58,8 +58,9 @@ func (h *RBACManager) IsAppRBACEnabled(ctx context.Context) bool {
 	}
 
 	appAuth := string(ctx.Value(types.APP_AUTH).(types.AppAuthnType))
-	if !strings.HasPrefix(appAuth, RBAC_AUTH_PREFIX) {
-		// app auth does not have rbac enabled
+	if !h.authAppliesRBAC(appAuth) {
+		// rbac does not apply to this app's auth (force is off and the
+		// auth has no rbac: prefix)
 		return false
 	}
 

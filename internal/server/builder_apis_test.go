@@ -4,6 +4,10 @@
 package server
 
 import (
+	"archive/zip"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -83,5 +87,73 @@ func TestMarkerBlockPathPrefixNoCollision(t *testing.T) {
 	}
 	if found {
 		t.Fatal("/teams/pto matched /teams/pto2's block")
+	}
+}
+
+func TestBuilderSourceZip(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(workspace, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile("app.star", "app = 1")
+	writeFile("static/style.css", "body {}")
+	writeFile(".git/config", "excluded")
+	writeFile("node_modules/pkg/index.js", "excluded")
+	writeFile(".opencode/state", "excluded")
+
+	zipPath, err := builderSourceZip(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(zipPath) //nolint:errcheck
+
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close() //nolint:errcheck
+
+	got := map[string]bool{}
+	for _, f := range reader.File {
+		got[f.Name] = true
+	}
+	for _, want := range []string{"app.star", "static/style.css"} {
+		if !got[want] {
+			t.Errorf("zip is missing %s, has %v", want, got)
+		}
+	}
+	if len(got) != 2 {
+		t.Errorf("zip has unexpected entries (vcs/agent dirs must be excluded): %v", got)
+	}
+
+	content, err := reader.Open("app.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(content)
+	content.Close() //nolint:errcheck
+	if string(data) != "app = 1" {
+		t.Errorf("app.star content %q", data)
+	}
+}
+
+func TestBuilderZipName(t *testing.T) {
+	cases := map[string]string{
+		"my app":        "my-app-source.zip",
+		"Pets/Tracker!": "Pets-Tracker-source.zip",
+		"   ":           "builder-app-source.zip",
+		"a.b_c-d":       "a.b_c-d-source.zip",
+	}
+	for in, want := range cases {
+		if got := builderZipName(in); got != want {
+			t.Errorf("builderZipName(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

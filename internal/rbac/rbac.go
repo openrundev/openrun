@@ -46,6 +46,13 @@ func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverCo
 	return rbacManager, nil
 }
 
+// authAppliesRBAC reports whether RBAC applies to an app given its auth
+// setting: always when ForceRBACWhenEnabled is on (the default), otherwise
+// only for apps whose auth carries the rbac: prefix. Callers hold h.mu
+func (h *RBACManager) authAppliesRBAC(appAuthSetting string) bool {
+	return h.RbacConfig.ForceRBAC() || strings.HasPrefix(appAuthSetting, RBAC_AUTH_PREFIX)
+}
+
 func (h *RBACManager) AuthorizeInt(user string, appPathDomain types.AppPathDomain,
 	appAuthSetting string, permission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
 	h.mu.RLock()
@@ -61,9 +68,9 @@ func (h *RBACManager) AuthorizeInt(user string, appPathDomain types.AppPathDomai
 		return true, nil
 	}
 
-	if !strings.HasPrefix(appAuthSetting, RBAC_AUTH_PREFIX) && (permission == types.PermissionAccess || isAppLevelPermission) {
-		// if app auth does not have rbac enabled, authorize access for Access permission
-		// If authenticated, then app access is allowed
+	if !h.authAppliesRBAC(appAuthSetting) && (permission == types.PermissionAccess || isAppLevelPermission) {
+		// rbac does not apply to this app's auth, authorize access for Access
+		// permission. If authenticated, then app access is allowed
 		return true, nil
 	}
 

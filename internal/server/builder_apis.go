@@ -4,8 +4,10 @@
 package server
 
 import (
+	"archive/zip"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -448,11 +450,15 @@ func (s *Server) builderUnpublish(ctx context.Context, sessionId, commitMsg stri
 	return response, nil
 }
 
+// builderSkipDirs are the VCS and agent artifact directories excluded when
+// the workspace source is copied for publish or bundled for download
+var builderSkipDirs = map[string]bool{".git": true, "node_modules": true, "__pycache__": true,
+	".venv": true, ".claude": true, ".codex": true, ".opencode": true, ".pi": true}
+
 // copyAppSource copies the workspace source tree, excluding VCS and agent
 // artifacts. The destination is replaced
 func copyAppSource(srcDir, destDir string) error {
-	skipDirs := map[string]bool{".git": true, "node_modules": true, "__pycache__": true,
-		".venv": true, ".claude": true, ".codex": true, ".opencode": true, ".pi": true}
+	skipDirs := builderSkipDirs
 	if err := os.RemoveAll(destDir); err != nil {
 		return err
 	}
@@ -479,6 +485,58 @@ func copyAppSource(srcDir, destDir string) error {
 		}
 		return os.WriteFile(filepath.Join(destDir, rel), data, 0644)
 	})
+}
+
+// builderSourceZip bundles the session workspace (minus VCS/agent
+// artifacts, same exclusions as publish) into a zip in a temp file and
+// returns its path. The caller owns the file's lifecycle
+func builderSourceZip(workspaceDir string) (string, error) {
+	tmp, err := os.CreateTemp("", "openrun-builder-src-*.zip")
+	if err != nil {
+		return "", err
+	}
+	writer := zip.NewWriter(tmp)
+
+	err = filepath.WalkDir(workspaceDir, func(current string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if builderSkipDirs[entry.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(workspaceDir, current)
+		if err != nil {
+			return err
+		}
+		dest, err := writer.Create(filepath.ToSlash(rel))
+		if err != nil {
+			return err
+		}
+		src, err := os.Open(current)
+		if err != nil {
+			return err
+		}
+		defer src.Close() //nolint:errcheck
+		_, err = io.Copy(dest, src)
+		return err
+	})
+	if err == nil {
+		err = writer.Close()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(tmp.Name()) //nolint:errcheck
+		return "", err
+	}
+	return tmp.Name(), nil
 }
 
 // upsertMarkerBlockFile inserts or replaces the app's marker block in the

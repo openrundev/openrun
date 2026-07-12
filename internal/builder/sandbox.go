@@ -90,8 +90,6 @@ type sandbox struct {
 	stdout        io.ReadCloser
 	stderrMu      sync.Mutex
 	stderrTail    bytes.Buffer
-	waitOnce      sync.Once
-	waitErr       error
 	exited        chan struct{}
 }
 
@@ -139,7 +137,7 @@ func startSandbox(cli, image, sessionId, workspace string, p *profile, env map[s
 		return nil, fmt.Errorf("starting sandbox container: %w", err)
 	}
 	go func() {
-		s.waitErr = cmd.Wait()
+		_ = cmd.Wait() // reap; the exit reason is reported via stderrTail
 		close(s.exited)
 	}()
 	return s, nil

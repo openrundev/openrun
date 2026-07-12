@@ -162,7 +162,12 @@ func (d *driverClient) RequestPermission(ctx context.Context, params acp.Request
 	if approvals > maxAutoApprovals {
 		d.manager.Warn().Str("session", ls.id).Int("approvals", approvals).Msg("Builder auto-approval cap reached, cancelling turn")
 		ls.emit(Event{Kind: "error", Text: fmt.Sprintf("Auto-approval limit (%d) reached; stopping the agent. Send a new message to continue.", maxAutoApprovals)})
-		go d.manager.cancelTurn(ls) // async: the agent expects this response before processing the cancel
+		// async: the agent expects this response before processing the cancel
+		go func() {
+			if err := d.manager.cancelTurn(ls); err != nil {
+				d.manager.Warn().Err(err).Str("session", ls.id).Msg("Error cancelling turn at approval cap")
+			}
+		}()
 		return acp.RequestPermissionResponse{
 			Outcome: acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{Outcome: "cancelled"}},
 		}, nil
