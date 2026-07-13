@@ -11,7 +11,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add agenting builder using ACP integration
 
-## [v0.18.5] - 2026-07-12
+## [v0.18.6] - 2026-07-13
 
 ### Added
 
