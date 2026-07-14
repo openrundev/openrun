@@ -318,6 +318,17 @@ func (a *App) pluginHook(appPath, modulePath, accountName, functionName string, 
 			return nil, fmt.Errorf("plugin %s requires an authenticated user", modulePath)
 		}
 
+		// Server config disallow list: a matching entry blocks the call for
+		// every app, even when the app's approved permissions or the server
+		// config allow list would permit it
+		disallowed, err := matchesDisallowed(a.serverConfig.Permissions.Disallow, modulePath, functionName, args)
+		if err != nil {
+			return nil, err
+		}
+		if disallowed {
+			return nil, fmt.Errorf("app %s is not permitted to call %s.%s: the call is disallowed by the server config (permissions.disallow)", a.Path, modulePath, functionName)
+		}
+
 		permsList := append([]types.Permission(nil), a.Metadata.Permissions...)
 		if len(a.serverConfig.Permissions.Allow) > 0 {
 			// Add the server config allowed permissions to the list
@@ -471,6 +482,46 @@ func (a *App) pluginHook(appPath, modulePath, accountName, functionName string, 
 	}
 
 	return starlark.NewBuiltin(functionName, hook)
+}
+
+// matchesDisallowed reports whether the plugin call matches a server config
+// permissions.disallow entry. Matching mirrors the allow/approval options in
+// checkPermissions: the plugin name must match, an empty method matches every
+// method of the plugin, and argument patterns (exact or regex:, positional
+// prefix) narrow the block to matching calls. A call with fewer arguments than
+// the entry's patterns does not match. Permit/is_read/secrets have no meaning
+// on a deny rule and are ignored
+func matchesDisallowed(disallowList []types.Permission, modulePath, functionName string, args starlark.Tuple) (bool, error) {
+	for _, p := range disallowList {
+		if p.Plugin != modulePath {
+			continue
+		}
+		if p.Method != "" && p.Method != functionName {
+			continue
+		}
+		if len(p.Arguments) > len(args) {
+			continue
+		}
+		argMismatch := false
+		for i, arg := range p.Arguments {
+			funcInput := types.StripQuotes(args[i].String())
+			if funcInput == arg {
+				continue
+			}
+			match, err := types.RegexMatch(arg, funcInput)
+			if err != nil {
+				return false, err
+			}
+			if !match {
+				argMismatch = true
+				break
+			}
+		}
+		if !argMismatch {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func checkPermissions(ctx context.Context, a *App, modulePath string, functionName string, args starlark.Tuple, pluginInfo *plugin.PluginInfo, permsList []types.Permission) (error, [][]string, bool, error) {

@@ -21,19 +21,20 @@ This section of the docs covers Starlark and Hybrid apps. For a containerized ap
 
 ### Sample Starlark App
 
-To create an app with a custom HTML page which shows a listing of files in your root directory, create an `~/myapp4/app.star` file with
+To create an app with a custom HTML page which lists the repositories of a GitHub org, create an `~/myapp4/app.star` file with
 
 ```python {filename="app.star"}
-load("exec.in", "exec")
+load("http.in", "http")
 
 def handler(req):
-   ret = exec.run("ls", ["-l", "/"]).value
-   return {"Error": "", "Lines": ret}
+   repos = http.get("https://api.github.com/orgs/openrundev/repos").value.json()
+   lines = ["%s : %d stars" % (repo["name"], repo["stargazers_count"]) for repo in repos]
+   return {"Error": "", "Lines": lines}
 
 app = ace.app("hello4",
               custom_layout=True,
               routes = [ace.html("/")],
-              permissions = [ace.permission("exec.in", "run", ["ls"])]
+              permissions = [ace.permission("http.in", "get", ["regex:^https://api\\.github\\.com/.*"])]
              )
 ```
 
@@ -44,7 +45,7 @@ and an `~/myapp4/index.go.html` file with
 <!doctype html>
 <html>
   <head>
-    <title>File List</title>
+    <title>Repo List</title>
     {{ template "openrun_gen_import" . }}
   </head>
   <body>
@@ -61,11 +62,7 @@ and an `~/myapp4/index.go.html` file with
 
 Run `openrun app create --auth=none --dev --approve ~/myapp4 /hello4`. After that, the app is available at `/hello4`. Note that the `--dev` option is required for the `openrun_gen_import` file to be generated which is required for live reload.
 
-This app uses the `exec` plugin to run the ls command. The output of the command is shown when the app is accessed. To allow the app to run the plugin command, use the `openrun app approve` command.
-
-{{<callout type="warning" >}}
-**Note:** If running on Windows, change `ls` to `dir`. Else, use the `fs` plugin to make this platform independent. See https://github.com/openrundev/apps/blob/main/system/disk_usage/app.star.
-{{</callout>}}
+This app uses the `http` plugin to call the GitHub API. The repo listing is shown when the app is accessed. To allow the app to make the plugin call, use the `openrun app approve` command.
 
 ### Custom Layout HTML App
 

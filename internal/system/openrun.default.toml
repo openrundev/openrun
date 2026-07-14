@@ -185,6 +185,10 @@ arguments = ["regex:^<CONTAINER_URL>"]
 secrets = [] # no secrets allowed by default, use [["regex:.*"]] to allow all secrets
              # to be accessed by apps which are using the http plugin
 
+# Disallow exec plugin by default, since it can be used to run arbitrary commands on the host.
+[[permissions.disallow]]
+plugin = "exec.in"
+
 [app_config]
 # app config can be set at the app level using a metadata config update. For example:
 #  openrun app update conf --promote 'cors.allow_methods="GET, POST"' /myapp

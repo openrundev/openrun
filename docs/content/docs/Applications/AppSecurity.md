@@ -31,6 +31,10 @@ This security model allows for the following:
 
 As an example, the disk usage analysis app requires [two permissions](https://github.com/openrundev/openrun/blob/8b8975cea2d650c9f80dab6eb70cc5b2ddbe5c40/examples/disk_usage/app.star#L42)
 
+{{<callout type="warning" >}}
+**Note:** The `exec.in` plugin is disallowed by default at the server level (`permissions.disallow`) since it runs commands on the server host, and it requires an authenticated caller. To run apps that use it, like this example, see [default plugin permissions]({{< ref "/docs/configuration/security/#default-plugin-permissions" >}}).
+{{</callout>}}
+
 ```python {filename="app.star"}
 app = ace.app("Disk Usage",
               routes=[ace.html("/", partial="du_table_block")],

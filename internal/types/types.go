@@ -590,7 +590,13 @@ type ForwardConfig struct {
 
 // PermissionsConfig is the permissions configuration for the server. This overrides the permissions configured in the app metadata.
 type PermissionsConfig struct {
-	Allow              []Permission `toml:"allow"`                // the permissions that are allowed for all apps, without requiring explicit approval
+	Allow []Permission `toml:"allow"` // the permissions that are allowed for all apps, without requiring explicit approval
+	// Disallow blocks matching plugin calls for every app, even when the app's
+	// approved permissions (or the allow list) would permit them. Matching uses
+	// the same options as allow entries: an empty method matches every method
+	// of the plugin, and arguments (exact or regex:) narrow the block to
+	// matching calls
+	Disallow           []Permission `toml:"disallow"`
 	BindingSourcePerms []string     `toml:"binding_source_perms"` // the binding sources that are allowed for all apps, without requiring explicit approval
 	// supports a regex for the binding path, like "regex:/appdata/.*"
 }

@@ -340,8 +340,14 @@ admin_password_bcrypt = "\$2a\$10\$PMaPsOVMBfKuDG04RsqJbeKIOJjlYi1Ie1KQbPCZRQx38
 callback_url = "https://localhost:25223"
 # The rbac suite's test app (tests/rbac_app, none auth) drives openrun_admin
 # plugin calls as the anonymous user; allow that in the test env, like the
-# console testenv does
+# console testenv does. The env_app/file_app/perms suites also use the exec
+# system plugin
 unsafe_allow_system_plugins_anon = true
+
+[permissions]
+# Clear the default disallow of exec.in: the env_app/file_app/perms suites
+# exercise exec plugin calls
+disallow = []
 EOF
 
 if [[ -n "$CL_INFOCLACE_SSH" ]]; then

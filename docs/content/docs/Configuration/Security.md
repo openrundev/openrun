@@ -96,6 +96,15 @@ secrets = []
 
 The `http.in` default only auto-allows outbound HTTP calls to the app's own container (`<CONTAINER_URL>...`), so a Starlark frontend can call its own backend without an approval. The pattern is anchored with `^` because the argument matcher is unanchored — without it an app could embed `<CONTAINER_URL>` inside an external URL to bypass the restriction. Calls to any other host fall back to requiring an approved `http.in` permission. To allow all outbound HTTP (which opens an SSRF surface, since these calls originate from the server's network position and can reach internal or metadata endpoints), use `arguments = ["regex:.*"]`; to allow specific hosts, list them, e.g. `arguments = ["regex:^https://api\\.example\\.com/.*"]`.
 
+`permissions.disallow` blocks matching plugin calls for **every app**, even when the app's approved permissions (or the `permissions.allow` list) would permit them. Entries match with the same options as `allow`: an empty `method` matches every method of the plugin, and `arguments` (exact or `regex:`) narrow the block to matching calls. By default the `exec.in` plugin is disallowed, since it runs arbitrary commands on the server host:
+
+```toml {filename="openrun.toml"}
+[[permissions.disallow]]
+plugin = "exec.in"
+```
+
+To enable exec for apps, override the list in `openrun.toml` — an empty list clears the default (`disallow = []` under `[permissions]`). The exec plugin is additionally a privileged system plugin: like `openrun_admin` and `build`, it requires an authenticated (non-anonymous) caller unless `security.unsafe_allow_system_plugins_anon` is set.
+
 The default OpenRun server config already includes two implicit approvals used by containerized apps:
 
 - `proxy.config(container.URL, ...)`

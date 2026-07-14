@@ -120,27 +120,29 @@ See [containerized apps]({{< ref "container/overview/" >}}) for details.
 For use cases where an existing CLI application or API needs to be exposed as a web app, actions provide an easy solution. First, define the parameters to be exposed in the form UI. Create a `params.star` file with the params. For example,
 
 ```python {filename="params.star"}
-param("dir", description="The directory to list files from", default="/tmp")
+param("repo", description="The GitHub repository to look up", default="openrundev/openrun")
 ```
 
-The app defines a run handler which runs `ls` on the specified directory. The output text is returned.
+The app defines a run handler which calls the GitHub API for the specified repository, using the [http plugin]({{< ref "docs/plugins/overview" >}}), and returns the stats as text.
 
 ```python {filename="app.star"}
-load ("exec.in", "exec")
+load ("http.in", "http")
 
 def run(dry_run, args):
-   out = exec.run("ls", ["-Lla"]).value
-   return ace.result("File listing for " + args.dir, out)
+   repo = http.get("https://api.github.com/repos/" + args.repo).value.json()
+   out = ["Stars: %d" % repo["stargazers_count"], "Forks: %d" % repo["forks_count"],
+          "Open Issues: %d" % repo["open_issues_count"]]
+   return ace.result("Repo info for " + args.repo, out)
 
-app = ace.app("List Files",
-   actions=[ace.action("List Files", "/", run, description="Show the ls -a output for specified directory")],
+app = ace.app("Repo Info",
+   actions=[ace.action("Repo Info", "/", run, description="Show the GitHub stats for the specified repository")],
    permissions=[
-     ace.permission("exec.in", "run", ["ls"]),
+     ace.permission("http.in", "get", ["regex:^https://api\\.github\\.com/.*"]),
    ],
 )
 ```
 
-The app, when accessed will look as shown below, with the `ls` command output displayed:
+When accessed, the app shows a form for the params, with the action output displayed below it. For example, a file listing action app looks like:
 
 <picture  class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
   <source media="(prefers-color-scheme: dark)" srcset="/images/list_files_dark.png">

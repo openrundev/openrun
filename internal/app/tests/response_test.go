@@ -4,6 +4,7 @@
 package app_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
@@ -249,6 +250,8 @@ def handler(req):
 		t.Fatalf("Error %s", err)
 	}
 	request := httptest.NewRequest("GET", "/test", nil)
+	// exec is a system plugin: an authenticated caller is required
+	request = request.WithContext(context.WithValue(request.Context(), types.USER_ID, "testuser"))
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 
@@ -273,6 +276,8 @@ def handler(req):
 		t.Fatalf("Error %s", err)
 	}
 	request := httptest.NewRequest("GET", "/test", nil)
+	// exec is a system plugin: an authenticated caller is required
+	request = request.WithContext(context.WithValue(request.Context(), types.USER_ID, "testuser"))
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 
