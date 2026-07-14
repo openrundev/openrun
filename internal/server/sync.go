@@ -25,7 +25,7 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 	if sync.Approve {
 		// A sync entry with approve set approves plugin permissions on every run, in
 		// system context, for any app its glob matches (including future apps). This
-		// needs app:approve granted on all apps
+		// needs approve granted on all apps
 		if err := s.enforceGlobalApprove(ctx); err != nil {
 			return nil, err
 		}

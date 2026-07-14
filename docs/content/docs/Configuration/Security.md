@@ -84,9 +84,17 @@ plugin = "container.in"
 method = "config"
 arguments = ["regex:.*"]
 secrets = [] # no secrets allowed by default
+
+[[permissions.allow]]
+plugin = "http.in"
+method = "regex:.*"
+arguments = ["regex:^<CONTAINER_URL>"] # only calls to the app's own container are auto-allowed
+secrets = []
 ```
 
 `permissions.allow` adds globally approved plugin calls for all apps. If a permission entry includes `secrets`, that list controls which secrets the globally approved plugin call can resolve. An empty `secrets` list means the global approval does not grant access to any secret values. `permissions.full_access` list grants the listed apps access to all plugin calls without requiring app-level approvals.
+
+The `http.in` default only auto-allows outbound HTTP calls to the app's own container (`<CONTAINER_URL>...`), so a Starlark frontend can call its own backend without an approval. The pattern is anchored with `^` because the argument matcher is unanchored — without it an app could embed `<CONTAINER_URL>` inside an external URL to bypass the restriction. Calls to any other host fall back to requiring an approved `http.in` permission. To allow all outbound HTTP (which opens an SSRF surface, since these calls originate from the server's network position and can reach internal or metadata endpoints), use `arguments = ["regex:.*"]`; to allow specific hosts, list them, e.g. `arguments = ["regex:^https://api\\.example\\.com/.*"]`.
 
 The default OpenRun server config already includes two implicit approvals used by containerized apps:
 

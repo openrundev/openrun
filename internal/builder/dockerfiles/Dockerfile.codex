@@ -1,5 +1,6 @@
-# Builder sandbox for Codex, bridged to ACP via Zed's official codex-acp
-# adapter.
+# Builder sandbox for Codex, bridged to ACP via the official codex-acp
+# adapter (agentclientprotocol org, successor to Zed's codex-acp). The
+# adapter depends on @openai/codex, so no separate codex install is needed.
 FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -20,9 +21,7 @@ RUN install -dm 755 /etc/apt/keyrings \
     && rm -rf /var/lib/apt/lists/*
 ENV PATH="/root/.local/share/mise/shims:$PATH"
 
-ARG CODEX_VERSION=latest
 ARG CODEX_ACP_VERSION=latest
-RUN npm install -g @openai/codex@${CODEX_VERSION} \
-    @zed-industries/codex-acp@${CODEX_ACP_VERSION}
+RUN npm install -g @agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}
 
 WORKDIR /workspace

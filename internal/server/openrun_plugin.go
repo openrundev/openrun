@@ -640,17 +640,18 @@ func (c *openrunPlugin) GetApp(thread *starlark.Thread, builtin *starlark.Builti
 	// source_url field in the list_apps response
 	v.SetKey(starlark.String("browse_url"), //nolint:errcheck
 		starlark.String(getSourceUrl(entry.SourceUrl, entry.Metadata.VersionMetadata.GitBranch)))
-	v.SetKey(starlark.String("is_dev"), starlark.Bool(entry.IsDev))                                      //nolint:errcheck
-	v.SetKey(starlark.String("auth"), starlark.String(entry.Metadata.AuthnType))                         //nolint:errcheck
-	v.SetKey(starlark.String("spec"), starlark.String(entry.Metadata.Spec))                              //nolint:errcheck
-	v.SetKey(starlark.String("git_branch"), starlark.String(entry.Metadata.VersionMetadata.GitBranch))   //nolint:errcheck
-	v.SetKey(starlark.String("git_commit"), starlark.String(entry.Metadata.VersionMetadata.GitCommit))   //nolint:errcheck
-	v.SetKey(starlark.String("git_message"), starlark.String(entry.Metadata.VersionMetadata.GitMessage)) //nolint:errcheck
-	v.SetKey(starlark.String("git_auth"), starlark.String(entry.Metadata.GitAuthName))                   //nolint:errcheck
-	v.SetKey(starlark.String("version"), starlark.MakeInt(entry.Metadata.VersionMetadata.Version))       //nolint:errcheck
-	v.SetKey(starlark.String("applied_sync_id"), starlark.String(entry.Metadata.AppliedSyncId))          //nolint:errcheck
-	v.SetKey(starlark.String("params"), &params)                                                         //nolint:errcheck
-	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))                    //nolint:errcheck
+	v.SetKey(starlark.String("is_dev"), starlark.Bool(entry.IsDev))                                           //nolint:errcheck
+	v.SetKey(starlark.String("auth"), starlark.String(entry.Metadata.AuthnType))                              //nolint:errcheck
+	v.SetKey(starlark.String("spec"), starlark.String(entry.Metadata.Spec))                                   //nolint:errcheck
+	v.SetKey(starlark.String("git_branch"), starlark.String(entry.Metadata.VersionMetadata.GitBranch))        //nolint:errcheck
+	v.SetKey(starlark.String("git_commit"), starlark.String(entry.Metadata.VersionMetadata.GitCommit))        //nolint:errcheck
+	v.SetKey(starlark.String("git_message"), starlark.String(entry.Metadata.VersionMetadata.GitMessage))      //nolint:errcheck
+	v.SetKey(starlark.String("git_auth"), starlark.String(entry.Metadata.GitAuthName))                        //nolint:errcheck
+	v.SetKey(starlark.String("version"), starlark.MakeInt(entry.Metadata.VersionMetadata.Version))            //nolint:errcheck
+	v.SetKey(starlark.String("applied_sync_id"), starlark.String(entry.Metadata.AppliedSyncId))               //nolint:errcheck
+	v.SetKey(starlark.String("builder_published"), starlark.Bool(c.server.isBuilderManaged(&entry.AppEntry))) //nolint:errcheck
+	v.SetKey(starlark.String("params"), &params)                                                              //nolint:errcheck
+	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))                         //nolint:errcheck
 	if entry.UpdateTime != nil {
 		v.SetKey(starlark.String("update_time"), starlark.String(entry.UpdateTime.Format(time.RFC3339))) //nolint:errcheck
 	} else {
@@ -713,7 +714,10 @@ func (c *openrunPlugin) ListSpecs(thread *starlark.Thread, builtin *starlark.Bui
 	customSpecsDir := path.Clean(path.Join(os.ExpandEnv("$OPENRUN_HOME/config"), APPSPECS))
 	if entries, err := os.ReadDir(customSpecsDir); err == nil {
 		for _, entry := range entries {
-			if entry.IsDir() {
+			// The appspec checkout may live directly in this directory. Its
+			// repository metadata is not an appspec and must not be offered to
+			// callers of list_specs.
+			if entry.IsDir() && entry.Name() != ".git" {
 				names[entry.Name()] = true
 			}
 		}

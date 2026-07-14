@@ -67,11 +67,22 @@ custom JavaScript where possible. Additional pages are more ace.html(path,
 full="name.go.html", handler=fn) routes.
 `
 
+// editPreamble is added for sessions editing an existing published app: the
+// workspace is seeded with the app's current source and the agent modifies
+// it rather than scaffolding from scratch
+const editPreamble = `
+You are MODIFYING an existing, deployed application. The current source is
+already in the workspace. Read the existing files before changing anything.
+Preserve current behavior except where the request asks for a change, and
+keep the existing route paths working - the app is live and its URLs are in
+use. Do not rename or restructure files unless the change requires it.
+`
+
 // composePrompt builds the first prompt for a new session. systemPrompt
 // replaces the embedded base prompt when the admin configured one. A chosen
 // [builder_prompt.*] preset either replaces the system prompt (Replace) or
-// is appended after it
-func composePrompt(systemPrompt, spec, promptExtra, userPrompt string, preset *types.BuilderPromptConfig) string {
+// is appended after it. editApp marks an edit session (see editPreamble)
+func composePrompt(systemPrompt, spec, promptExtra, userPrompt string, preset *types.BuilderPromptConfig, editApp string) string {
 	var b strings.Builder
 	if preset != nil && preset.Replace {
 		b.WriteString(preset.Prompt)
@@ -85,7 +96,10 @@ func composePrompt(systemPrompt, spec, promptExtra, userPrompt string, preset *t
 	if preset != nil && !preset.Replace {
 		b.WriteString("\n" + preset.Prompt + "\n")
 	}
-	if spec != "" {
+	if editApp != "" {
+		b.WriteString(editPreamble)
+		fmt.Fprintf(&b, "\nThe app being modified is deployed at %s.\n", editApp)
+	} else if spec != "" {
 		fmt.Fprintf(&b, "\nThis app uses the OpenRun %q spec: its scaffold files (including app.star) "+
 			"are already in the workspace. Build within that structure - keep the existing app.star "+
 			"entry points and config files valid rather than replacing the structure.\n", spec)
@@ -97,6 +111,10 @@ func composePrompt(systemPrompt, spec, promptExtra, userPrompt string, preset *t
 	if promptExtra != "" {
 		b.WriteString("\n" + promptExtra + "\n")
 	}
-	b.WriteString("\nBuild the following app:\n\n" + userPrompt)
+	if editApp != "" {
+		b.WriteString("\nMake the following change to the app:\n\n" + userPrompt)
+	} else {
+		b.WriteString("\nBuild the following app:\n\n" + userPrompt)
+	}
 	return b.String()
 }

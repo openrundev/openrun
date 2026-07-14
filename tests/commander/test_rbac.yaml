@@ -22,7 +22,7 @@ tests:
     command: curl -s localhost:25222/rbacapp/perms
     stdout:
       contains:
-        - "app:approve"
+        - "approve"
         - "server:stop"
     exit-code: 0
   rbac0050: # write the RBAC enabled dynamic config: anonymous can view /rbacapp and create/approve /anonapp*
@@ -84,7 +84,7 @@ tests:
         - "app:access"
         - "app:read"
       not-contains:
-        - "app:approve"
+        - "approve"
         - "app:delete"
         - "server:stop"
     exit-code: 0
@@ -92,12 +92,12 @@ tests:
     command: curl -s localhost:25222/rbacapp/create
     stdout: "CREATED"
     exit-code: 0
-  rbac0105: # the approve flag needs app:approve, app:create alone is denied
+  rbac0105: # the approve flag needs approve, app:create alone is denied
     command: curl -s localhost:25222/rbacapp/create_approve
     stdout:
       contains:
         - "ERROR"
-        - "app:approve"
+        - "approve"
     exit-code: 0
   rbac0110: # created app is visible through the owner rule, without any explicit grant
     command: curl -s localhost:25222/rbacapp/list
@@ -107,7 +107,7 @@ tests:
       not-contains:
         - "/protected"
     exit-code: 0
-  rbac0120: # owner holds app:admin equivalent on own app, but never app:approve
+  rbac0120: # owner holds app:manage equivalent on own app, but never approve
     command: curl -s localhost:25222/rbacapp/perms_child
     stdout:
       contains:
@@ -115,7 +115,7 @@ tests:
         - "app:update"
         - "app:reload"
       not-contains:
-        - "app:approve"
+        - "approve"
     exit-code: 0
   rbac0130: # create outside the granted target glob is denied
     command: curl -s localhost:25222/rbacapp/create_bad
@@ -146,12 +146,12 @@ tests:
         - "ERROR"
         - "app:promote"
     exit-code: 0
-  rbac0160: # approve is operator only, denied without a literal app:approve grant
+  rbac0160: # approve is operator only, denied without a literal approve grant
     command: curl -s localhost:25222/rbacapp/approve_other
     stdout:
       contains:
         - "ERROR"
-        - "app:approve"
+        - "approve"
     exit-code: 0
   rbac0170: # owner can delete their own app
     command: curl -s localhost:25222/rbacapp/delete

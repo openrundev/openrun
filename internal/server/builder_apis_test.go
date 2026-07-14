@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestMarkerBlockUpsertAndRemove(t *testing.T) {
@@ -141,6 +143,32 @@ func TestBuilderSourceZip(t *testing.T) {
 	content.Close() //nolint:errcheck
 	if string(data) != "app = 1" {
 		t.Errorf("app.star content %q", data)
+	}
+}
+
+// TestBuilderSourceName verifies the published source directory name is
+// unique per full publish target: base-name collisions (/teams/a vs
+// /other/a) or the same path on two domains must map to different dirs
+func TestBuilderSourceName(t *testing.T) {
+	tests := []struct{ domain, path, want string }{
+		{"", "/app", "app"},
+		{"", "/teams/a", "teams_a"},
+		{"", "/other/a", "other_a"},
+		{"example.com", "/teams/app", "example.com_teams_app"},
+		{"other.example.com", "/teams/app", "other.example.com_teams_app"},
+		{"Example.com", "/Teams/MyApp", "example.com_teams_myapp"},
+	}
+	seen := map[string]string{}
+	for _, tt := range tests {
+		target := types.AppPathDomain{Domain: tt.domain, Path: tt.path}
+		got := builderSourceName(target)
+		if got != tt.want {
+			t.Errorf("builderSourceName(%s): got %q, want %q", target.String(), got, tt.want)
+		}
+		if prev, dup := seen[got]; dup {
+			t.Errorf("source name %q collides: %s and %s", got, prev, target.String())
+		}
+		seen[got] = target.String()
 	}
 }
 

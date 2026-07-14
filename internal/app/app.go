@@ -813,6 +813,13 @@ func (s *securityHeaderWriter) ReadFrom(src io.Reader) (int64, error) {
 	return io.Copy(io.Writer(s.ResponseWriter), src)
 }
 
+// MaterializeSource writes the app's current source files to a new temp
+// directory (delegating to the source FS; supported for non-dev apps whose
+// source is in the metadata file store). The caller owns the directory
+func (a *App) MaterializeSource() (string, error) {
+	return a.sourceFS.CreateTempSourceDir()
+}
+
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.Info().Enabled() {
 		a.Info().Str("method", r.Method).Str("url", r.URL.String()).Msg("App Received request")

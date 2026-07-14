@@ -383,7 +383,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	}
 
 	// app:apply gates the whole declarative apply, for every affected app path,
-	// including apps the plan would create. approve additionally needs app:approve
+	// including apps the plan would create. approve additionally needs approve
 	// and promote additionally needs app:promote
 	if s.rbacManager.APIEnforced(ctx) {
 		for _, appPath := range filteredApps {
@@ -395,7 +395,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 				return nil, nil, err
 			}
 			if approve {
-				if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPath, owner); err != nil {
+				if err := s.enforceGlobalPerm(ctx, types.PermissionApprove, ""); err != nil {
 					return nil, nil, err
 				}
 			}

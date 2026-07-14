@@ -15,9 +15,9 @@ import (
 
 func (m *Metadata) CreateBuilderSession(ctx context.Context, tx types.Transaction, session *types.BuilderSession) error {
 	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`insert into builder_sessions(id, user_id, name, spec, agent, preset, status, workspace_dir, preview_path, publish_path, create_time, update_time) `+
-			`values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		session.Id, session.UserID, session.Name, session.Spec, session.Agent, session.Preset, string(session.Status),
+		`insert into builder_sessions(id, user_id, name, spec, agent, preset, edit_app, edit_version, status, workspace_dir, preview_path, publish_path, create_time, update_time) `+
+			`values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		session.Id, session.UserID, session.Name, session.Spec, session.Agent, session.Preset, session.EditApp, session.EditVersion, string(session.Status),
 		session.WorkspaceDir, session.PreviewPath, session.PublishPath)
 	if err != nil {
 		return fmt.Errorf("error inserting builder session: %w", err)
@@ -27,8 +27,8 @@ func (m *Metadata) CreateBuilderSession(ctx context.Context, tx types.Transactio
 
 func (m *Metadata) UpdateBuilderSession(ctx context.Context, tx types.Transaction, session *types.BuilderSession) error {
 	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`update builder_sessions set status = ?, preview_path = ?, publish_path = ?, update_time = `+system.FuncNow(m.dbType)+` where id = ?`),
-		string(session.Status), session.PreviewPath, session.PublishPath, session.Id)
+		`update builder_sessions set status = ?, preview_path = ?, publish_path = ?, edit_version = ?, update_time = `+system.FuncNow(m.dbType)+` where id = ?`),
+		string(session.Status), session.PreviewPath, session.PublishPath, session.EditVersion, session.Id)
 	if err != nil {
 		return fmt.Errorf("error updating builder session: %w", err)
 	}
@@ -57,12 +57,13 @@ func (m *Metadata) DeleteBuilderSession(ctx context.Context, tx types.Transactio
 	return nil
 }
 
-const builderSessionColumns = `id, user_id, name, spec, agent, preset, status, workspace_dir, preview_path, publish_path, create_time, update_time`
+const builderSessionColumns = `id, user_id, name, spec, agent, preset, edit_app, edit_version, status, workspace_dir, preview_path, publish_path, create_time, update_time`
 
 func scanBuilderSession(scan func(dest ...any) error) (*types.BuilderSession, error) {
 	var session types.BuilderSession
 	var status string
-	if err := scan(&session.Id, &session.UserID, &session.Name, &session.Spec, &session.Agent, &session.Preset, &status,
+	if err := scan(&session.Id, &session.UserID, &session.Name, &session.Spec, &session.Agent, &session.Preset,
+		&session.EditApp, &session.EditVersion, &status,
 		&session.WorkspaceDir, &session.PreviewPath, &session.PublishPath, &session.CreateTime, &session.UpdateTime); err != nil {
 		return nil, err
 	}

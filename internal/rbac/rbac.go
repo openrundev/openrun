@@ -63,9 +63,9 @@ func (h *RBACManager) AuthorizeInt(user string, appPathDomain types.AppPathDomai
 		return true, nil
 	}
 
-	if user != "" && user == types.ADMIN_USER {
-		// admin user is always authorized if enabled
-		return true, nil
+	if isAdmin, err := h.hasAdminPermLocked(user, groups); err != nil || isAdmin {
+		// the admin super-user permission passes every check
+		return isAdmin, err
 	}
 
 	if !h.authAppliesRBAC(appAuthSetting) && (permission == types.PermissionAccess || isAppLevelPermission) {
@@ -95,8 +95,10 @@ func (h *RBACManager) GetCustomPermissionsInt(user string, appPathDomain types.A
 		return h.customPerms, nil
 	}
 
-	if user != "" && user == types.ADMIN_USER {
-		// admin user is always authorized if enabled
+	if isAdmin, err := h.hasAdminPermLocked(user, groups); err != nil {
+		return nil, err
+	} else if isAdmin {
+		// the admin super-user permission passes every check
 		return h.customPerms, nil
 	}
 
@@ -114,6 +116,18 @@ func (h *RBACManager) GetCustomPermissionsInt(user string, appPathDomain types.A
 	h.Trace().Msgf("User %s has custom permissions: %v on app %s with auth setting %s groups %v", user,
 		customPerms, appPathDomain.String(), appAuthSetting, groups)
 	return customPerms, nil
+}
+
+// hasAdminPermLocked reports whether the user holds the "admin" super-user
+// permission, which passes every RBAC check. The admin user holds it
+// implicitly; other users hold it through a grant of the literal permission
+// or the openrun-admin role (a global target is required, and permission
+// globs never match it). Callers must hold h.mu
+func (h *RBACManager) hasAdminPermLocked(user string, groups []string) (bool, error) {
+	if user != "" && user == types.ADMIN_USER {
+		return true, nil
+	}
+	return h.checkGrants(user, types.AppPathDomain{}, types.PermissionAdmin, groups, false)
 }
 
 func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathDomain,
@@ -299,12 +313,17 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*re
 	// disabled config never blocks server startup
 	validate := rbacConfig.Enabled
 	if validate {
-		if _, exists := rbacConfig.Roles[AdminRoleName]; exists {
-			return nil, fmt.Errorf("role name %q is reserved for the built-in admin role and cannot be defined", AdminRoleName)
+		for name := range rbacConfig.Roles {
+			if isBuiltinRole(name) || strings.HasPrefix(name, ReservedRolePrefix) {
+				return nil, fmt.Errorf("role name %q is reserved: the %q prefix is reserved for built-in roles",
+					name, ReservedRolePrefix)
+			}
 		}
 	}
 
-	// Helper function to recursively resolve role permissions
+	// Helper function to recursively resolve role permissions. User roles take
+	// precedence in lookup, then the built-in predefined roles, so a user role
+	// or grant can reference a predefined role like role:openrun-developer
 	var resolveRole func(roleName string, visited map[string]bool) ([]types.RBACPermission, error)
 	resolveRole = func(roleName string, visited map[string]bool) ([]types.RBACPermission, error) {
 		if visited[roleName] {
@@ -312,6 +331,9 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*re
 		}
 
 		perms, exists := rbacConfig.Roles[roleName]
+		if !exists {
+			perms, exists = predefinedRoles[roleName]
+		}
 		if !exists {
 			return nil, fmt.Errorf("role: %s is not defined", roleName)
 		}
@@ -343,7 +365,7 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*re
 	}
 
 	// Resolve all roles into fast lookup structures. Implications (app:update
-	// implying reload/apply/read, app:admin implying all app permissions except
+	// implying reload/apply/read, app:manage implying all app permissions except
 	// approve) are expanded here so grant checks stay a map lookup
 	roles := make(map[string]*resolvedRole, len(rbacConfig.Roles)+1)
 	customPermsMap := make(map[string]bool)
@@ -363,9 +385,17 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*re
 		}
 	}
 
-	// The built-in admin role matches every permission, including app:approve
-	// and custom permissions
-	roles[AdminRoleName] = &resolvedRole{matchAll: true}
+	// Built-in predefined roles (openrun-*), always available. Resolved after
+	// the user roles so a user role may reference them; each is expanded with
+	// implications like any other role
+	for role := range predefinedRoles {
+		visited := make(map[string]bool)
+		permissions, err := resolveRole(role, visited)
+		if err != nil {
+			return nil, err
+		}
+		roles[role] = newResolvedRole(permissions)
+	}
 
 	for perm := range customPermsMap {
 		h.customPerms = append(h.customPerms, perm)
@@ -443,7 +473,7 @@ func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig) error {
 			}
 		}
 		for _, role := range grant.Roles {
-			if role == AdminRoleName {
+			if isBuiltinRole(role) {
 				continue // built-in role, always defined
 			}
 			if _, exists := rbacConfig.Roles[role]; !exists {

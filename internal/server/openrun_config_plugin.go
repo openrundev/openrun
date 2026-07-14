@@ -35,6 +35,10 @@ func (c *openrunPlugin) GetRBACConfig(thread *starlark.Thread, builtin *starlark
 		"version_id": config.VersionId,
 		"rbac":       config.RBAC,
 		"has_staged": draft != nil,
+		// Built-in roles (admin + predefined openrun-*) are always available
+		// but not part of the config's roles map; surface them so the grant
+		// editor can offer them for selection
+		"builtin_roles": rbac.BuiltinRoleNames(),
 	}
 	if draft != nil {
 		ret["staged"] = draft.RBAC

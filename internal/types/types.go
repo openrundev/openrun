@@ -263,8 +263,10 @@ type BuilderSession struct {
 	UserID       string               `json:"user_id"`
 	Name         string               `json:"name"`
 	Spec         string               `json:"spec"`
-	Agent        string               `json:"agent"`  // [builder_agent.*] profile name
-	Preset       string               `json:"preset"` // [builder_prompt.*] preset chosen at creation; decides the git destination
+	Agent        string               `json:"agent"`        // [builder_agent.*] profile name
+	Preset       string               `json:"preset"`       // [builder_prompt.*] preset chosen at creation; decides the git destination
+	EditApp      string               `json:"edit_app"`     // app path this session edits (builder-published app); empty for create sessions
+	EditVersion  int                  `json:"edit_version"` // app version the workspace was seeded from
 	Status       BuilderSessionStatus `json:"status"`
 	WorkspaceDir string               `json:"workspace_dir"`
 	PreviewPath  string               `json:"preview_path"` // dev app path, once created
@@ -414,6 +416,13 @@ type SecurityConfig struct {
 	PreviewEnableWriteAccess bool              `toml:"preview_enable_write_access"`
 	AllowedContainerArgs     map[string]string `toml:"allowed_container_args"` // the container args that are allowed to be used in the app config
 	AllowedMounts            []string          `toml:"allowed_mounts"`         // the volume mounts paths that are allowed to be used in the app config
+
+	// UnsafeAgentWithoutSandbox runs app builder agents as plain host
+	// processes instead of container sandboxes. The sandbox is the safety
+	// boundary for auto-approved agent tool calls, so this is not
+	// recommended; dev-only escape hatch (e.g. codex using the host login
+	// instead of an API key)
+	UnsafeAgentWithoutSandbox bool `toml:"unsafe_agent_without_sandbox"`
 }
 
 // MetadataConfig is the configuration for the Metadata persistence layer
@@ -743,7 +752,8 @@ type AppMetadata struct {
 	AuthnType                  AppAuthnType      `json:"authn_type"`
 	GitAuthName                string            `json:"git_auth_name"`
 	Bindings                   []string          `json:"bindings"`
-	AppliedSyncId              string            `json:"applied_sync_id"` // id of the sync entry which last applied to this app, empty for imperative changes
+	AppliedSyncId              string            `json:"applied_sync_id"`             // id of the sync entry which last applied to this app, empty for imperative changes
+	BuilderPublished           bool              `json:"builder_published,omitempty"` // app was published by the app builder; enables builder edit sessions
 }
 
 // AppSettings contains the settings for an app. Settings are not version controlled.
@@ -1088,7 +1098,7 @@ type RBACConfig struct {
 	// OwnerPermissions overrides the default permissions granted to the creator of an
 	// asset. Keys are resource names (app, sync); values are the permissions the owner
 	// gets on assets they created. Missing key means the built-in default; an empty
-	// list disables the owner rule for that resource. app:approve is not allowed.
+	// list disables the owner rule for that resource. approve is not allowed.
 	OwnerPermissions map[string][]RBACPermission `json:"owner_permissions,omitempty"`
 }
 
@@ -1108,9 +1118,10 @@ type RBACGrant struct {
 type RBACPermission string
 
 // Permissions are resource:verb strings. app:read gates both listing and reading app
-// details (there is no separate list permission). app:approve is special: it is never
-// implied by app:admin, owner permissions or permission globs; it has to be granted
-// by its literal name (or via the built-in admin role).
+// details (there is no separate list permission). approve is special: it is a global
+// permission (granted with target "all"), never implied by app:manage, owner
+// permissions or permission globs; it has to be granted by its literal name (or via
+// the built-in admin role).
 const (
 	PermissionAccess      RBACPermission = "app:access"       // access the served app (rbac: auth prefix apps)
 	PermissionRead        RBACPermission = "app:read"         // list apps, get app details, list versions/files
@@ -1119,12 +1130,12 @@ const (
 	PermissionReload      RBACPermission = "app:reload"       // reload apps
 	PermissionApply       RBACPermission = "app:apply"        // declarative apply
 	PermissionDelete      RBACPermission = "app:delete"       // delete apps
-	PermissionApprove     RBACPermission = "app:approve"      // approve plugin permissions (operator-only)
+	PermissionApprove     RBACPermission = "approve"          // approve plugin permissions (operator-only, global)
 	PermissionPromote     RBACPermission = "app:promote"      // promote staging to prod
 	PermissionPreview     RBACPermission = "app:preview"      // create preview apps
 	PermissionTokenRead   RBACPermission = "app:token_read"   // list webhook tokens
 	PermissionTokenManage RBACPermission = "app:token_manage" // create/delete webhook tokens
-	PermissionAppAdmin    RBACPermission = "app:admin"        // all app permissions except app:approve
+	PermissionAppManage   RBACPermission = "app:manage"       // all app permissions except approve
 
 	PermissionSyncCreate RBACPermission = "sync:create"
 	PermissionSyncRun    RBACPermission = "sync:run"
@@ -1155,10 +1166,16 @@ const (
 	PermissionSecretDelete RBACPermission = "secret:delete"
 	PermissionSecretReveal RBACPermission = "secret:reveal" // read back a secret value
 
-	PermissionBuilderList    RBACPermission = "builder:list"    // see one's own builder sessions
-	PermissionBuilderRead    RBACPermission = "builder:read"    // view any session's transcript, files, activity
-	PermissionBuilderCreate  RBACPermission = "builder:create"  // create sessions, message/stop/resume/delete own sessions
+	PermissionBuilderList    RBACPermission = "builder:list"    // list and view one's own builder sessions (transcript, files, activity)
+	PermissionBuilderCreate  RBACPermission = "builder:create"  // create sessions, message/stop/resume/delete one's own sessions
 	PermissionBuilderPublish RBACPermission = "builder:publish" // publish/unpublish (also needs app:create on the path)
+
+	// PermissionAdmin is the super-user permission: holders pass every RBAC
+	// check (management APIs, app access, other users' builder sessions).
+	// The "admin" user holds it implicitly; other users acquire it through a
+	// grant of the literal permission (or the built-in admin role). Like
+	// approve it is never matched by permission globs
+	PermissionAdmin RBACPermission = "admin"
 )
 
 // RBACPermissionGroup lists the permissions for one resource type, in display order
@@ -1173,9 +1190,9 @@ type RBACPermissionGroup struct {
 var RBACPermissionGroups = []RBACPermissionGroup{
 	{Resource: "app", Permissions: []RBACPermission{
 		PermissionAccess, PermissionRead, PermissionCreate, PermissionUpdate,
-		PermissionReload, PermissionApply, PermissionDelete, PermissionApprove,
+		PermissionReload, PermissionApply, PermissionDelete,
 		PermissionPromote, PermissionPreview, PermissionTokenRead,
-		PermissionTokenManage, PermissionAppAdmin}},
+		PermissionTokenManage, PermissionAppManage}},
 	{Resource: "sync", Permissions: []RBACPermission{
 		PermissionSyncCreate, PermissionSyncRun, PermissionSyncDelete, PermissionSyncRead}},
 	{Resource: "service", Permissions: []RBACPermission{
@@ -1192,10 +1209,12 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 		PermissionSecretCreate, PermissionSecretRead, PermissionSecretDelete,
 		PermissionSecretReveal}},
 	{Resource: "builder", Permissions: []RBACPermission{
-		PermissionBuilderList, PermissionBuilderRead, PermissionBuilderCreate,
+		PermissionBuilderList, PermissionBuilderCreate,
 		PermissionBuilderPublish}},
 	{Resource: "server", Permissions: []RBACPermission{PermissionServerStop}},
 	{Resource: "audit", Permissions: []RBACPermission{PermissionAuditRead}},
+	{Resource: "approve", Permissions: []RBACPermission{PermissionApprove}},
+	{Resource: "admin", Permissions: []RBACPermission{PermissionAdmin}},
 }
 
 type AuthorizerFunc func(ctx context.Context, permissions []string) (bool, error)

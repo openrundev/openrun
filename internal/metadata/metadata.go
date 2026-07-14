@@ -446,7 +446,7 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 
 	if version < 17 {
 		m.Info().Msg("Upgrading to version 17")
-		if _, err := tx.ExecContext(ctx, `create table builder_sessions(id text, user_id text, name text, spec text, agent text, preset text, status text, `+
+		if _, err := tx.ExecContext(ctx, `create table builder_sessions(id text, user_id text, name text, spec text, agent text, preset text, edit_app text, edit_version int, status text, `+
 			`workspace_dir text, preview_path text, publish_path text, create_time `+system.MapDataType(m.dbType, "datetime")+
 			`, update_time `+system.MapDataType(m.dbType, "datetime")+`, PRIMARY KEY(id))`); err != nil {
 			return err

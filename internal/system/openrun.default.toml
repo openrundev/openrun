@@ -48,6 +48,11 @@ allowed_container_args = { add-host = "regex:.*" } # the container args that are
                                  # empty values allow valueless flags only
                                  # non-empty values must match exactly, or can use regex:.* to allow all values
 allowed_mounts = ["$OPENRUN_HOME/mounts"] # host paths that app volume sources are allowed to mount
+unsafe_agent_without_sandbox = false # run app builder agents directly on the host instead of inside a container sandbox.
+                                 # NOT RECOMMENDED: the sandbox is the safety boundary for the agent's auto-approved
+                                 # tool calls; without it the agent runs with full access as the server user.
+                                 # Dev-only escape hatch, e.g. to let codex use the host's ChatGPT login (no API key).
+                                 # The agent command must be installed on the host; config_files mounts are ignored.
 
 # Logging related Config
 [logging]
@@ -159,6 +164,20 @@ method = "config"
 arguments = ["regex:.*"]
 secrets = [] # no secrets allowed by default, use [["regex:.*"]] to allow all secrets
              # to be accessed by apps which are using the container plugin
+
+[[permissions.allow]]
+plugin = "http.in"
+method = "regex:.*"
+# Only auto-allow http calls to the app's own container (<CONTAINER_URL>...),
+# so a Starlark frontend can call its own backend without approval. The regex
+# is anchored (^) - the matcher is unanchored, so without ^ an app could embed
+# <CONTAINER_URL> in an external url to bypass this. Calls to any other host
+# fall back to requiring an approved http permission. Use "regex:.*" to allow
+# all outbound http (opens an SSRF surface), or list specific hosts with
+# arguments = ["regex:^https://api\\.example\\.com/.*"].
+arguments = ["regex:^<CONTAINER_URL>"]
+secrets = [] # no secrets allowed by default, use [["regex:.*"]] to allow all secrets
+             # to be accessed by apps which are using the http plugin
 
 [app_config]
 # app config can be set at the app level using a metadata config update. For example:

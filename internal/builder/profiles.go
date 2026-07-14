@@ -21,7 +21,7 @@ const AgentTypeCustom = "custom"
 // that speaks ACP on stdio
 var agentCommands = map[string][]string{
 	"opencode": {"opencode", "acp"},
-	"claude":   {"claude-code-acp"},
+	"claude":   {"claude-agent-acp"},
 	"codex":    {"codex-acp"},
 	"pi":       {"pi-acp"},
 }

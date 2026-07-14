@@ -83,7 +83,7 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 			return nil, err
 		}
 		if approve {
-			if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPathDomain, ""); err != nil {
+			if err := s.enforceGlobalPerm(ctx, types.PermissionApprove, ""); err != nil {
 				return nil, err
 			}
 		}
@@ -1579,7 +1579,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 		return nil, err
 	}
 	if approve {
-		if err := s.enforceAppPermEntry(ctx, types.PermissionApprove, mainAppEntry); err != nil {
+		if err := s.enforceGlobalPerm(ctx, types.PermissionApprove, ""); err != nil {
 			return nil, err
 		}
 	}

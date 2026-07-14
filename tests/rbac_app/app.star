@@ -42,7 +42,7 @@ def create_handler(req):
 
 
 def create_approve_handler(req):
-    # The approve flag needs app:approve, which anonymous does not have; the
+    # The approve flag needs approve, which anonymous does not have; the
     # app:create grant alone is not enough
     ret = openrun_admin.create_app(path="/anonapp2", source_url="./rbac_child_app", auth="none", approve=True)
     if ret.error:
@@ -91,7 +91,7 @@ def reload_promote_handler(req):
 
 
 def approve_other_handler(req):
-    # app:approve is operator only, anonymous has no approve grant on /protected
+    # approve is operator only, anonymous has no approve grant on /protected
     ret = openrun_admin.approve_apps(path_glob="/protected")
     if ret.error:
         return "ERROR: " + ret.error

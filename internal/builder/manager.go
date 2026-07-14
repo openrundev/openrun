@@ -61,6 +61,12 @@ func (m *Manager) Enabled() bool {
 	return m.config().AppBuilder.Enabled
 }
 
+// hostMode reports whether security.unsafe_agent_without_sandbox is set:
+// agents run as plain host processes instead of container sandboxes
+func (m *Manager) hostMode() bool {
+	return m.config().Security.UnsafeAgentWithoutSandbox
+}
+
 // containerCLI resolves the container runtime binary. The builder is not
 // supported on Kubernetes: the sandbox needs a local runtime with host
 // directory volume mounts
@@ -85,8 +91,11 @@ func (m *Manager) ValidateConfig() error {
 	if !config.AppBuilder.Enabled {
 		return nil
 	}
-	if _, err := m.containerCLI(); err != nil {
-		return err
+	// Host mode (unsafe_agent_without_sandbox) needs no container runtime
+	if !m.hostMode() {
+		if _, err := m.containerCLI(); err != nil {
+			return err
+		}
 	}
 	defaultAgent := config.AppBuilder.DefaultAgent
 	if defaultAgent == "" {
@@ -125,12 +134,14 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := m.ValidateConfig(); err != nil {
 		return err
 	}
-	cli, err := m.containerCLI()
-	if err != nil {
+	// Clean up orphan sandbox containers whenever a runtime is available;
+	// in host mode a missing runtime is fine (host agents die with the server)
+	if cli, err := m.containerCLI(); err == nil {
+		if err := StopOrphanSandboxes(ctx, cli); err != nil {
+			m.Warn().Err(err).Msg("Error stopping orphan builder sandboxes")
+		}
+	} else if !m.hostMode() {
 		return err
-	}
-	if err := StopOrphanSandboxes(ctx, cli); err != nil {
-		m.Warn().Err(err).Msg("Error stopping orphan builder sandboxes")
 	}
 
 	// Sessions that were live when the server stopped are now detached
@@ -210,8 +221,15 @@ func (m *Manager) workspaceRoot() string {
 // CreateSession creates the session row and workspace, then launches the
 // sandbox and sends the composed first prompt asynchronously. The returned
 // session is in starting state; progress streams over session events.
-// promptPreset names a [builder_prompt.*] entry chosen by the user
-func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec, agentName, promptPreset string) (*types.BuilderSession, error) {
+// promptPreset names a [builder_prompt.*] entry chosen by the user.
+// editApp marks a session editing an existing published app: the caller
+// (server) validates the app. seed populates the workspace (spec scaffold
+// or the edited app's source) and may set session fields (EditVersion,
+// PublishPath); it runs to completion BEFORE the agent launches, so the
+// first prompt never races an empty or half-copied workspace. A seed
+// failure aborts the create with nothing left behind
+func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec, agentName, promptPreset, editApp string,
+	seed func(*types.BuilderSession) error) (*types.BuilderSession, error) {
 	config := m.config()
 	if !config.AppBuilder.Enabled {
 		return nil, fmt.Errorf("app_builder is not enabled")
@@ -241,9 +259,12 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 		preset = &presetConfig
 	}
 	// Fail now, not at publish time, if the preset/default names a missing
-	// [builder_git.*] entry
-	if _, err := config.ResolveBuilderGit(promptPreset); err != nil {
-		return nil, err
+	// [builder_git.*] entry. Edit sessions republish to the app's own
+	// destination, so the preset/default git resolution does not apply
+	if editApp == "" {
+		if _, err := config.ResolveBuilderGit(promptPreset); err != nil {
+			return nil, err
+		}
 	}
 
 	m.mu.Lock()
@@ -270,8 +291,16 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 		Spec:         spec,
 		Agent:        agentName,
 		Preset:       promptPreset,
+		EditApp:      editApp,
 		Status:       types.BuilderSessionStarting,
 		WorkspaceDir: workspace,
+	}
+
+	if seed != nil {
+		if err := seed(session); err != nil {
+			os.RemoveAll(workspace) //nolint:errcheck
+			return nil, err
+		}
 	}
 
 	tx, err := m.db.BeginTransaction(ctx)
@@ -294,7 +323,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 	m.live[id] = ls
 	m.mu.Unlock()
 
-	firstPrompt := composePrompt(config.AppBuilder.SystemPrompt, spec, config.AppBuilder.PromptExtra, prompt, preset)
+	firstPrompt := composePrompt(config.AppBuilder.SystemPrompt, spec, config.AppBuilder.PromptExtra, prompt, preset, editApp)
 	go func() {
 		if err := m.launch(ls); err != nil {
 			m.failSession(ls, fmt.Errorf("starting sandbox: %w", err))
@@ -319,16 +348,6 @@ func (m *Manager) launch(ls *liveSession) error {
 		return fmt.Errorf("no [builder_agent.%s] config entry", session.Agent)
 	}
 	p, err := resolveProfile(session.Agent, agentConfig, os.ReadFile)
-	if err != nil {
-		return err
-	}
-	cli, err := m.containerCLI()
-	if err != nil {
-		return err
-	}
-
-	ls.emit(Event{Kind: "status", Status: "building image"})
-	image, err := buildImage(context.Background(), cli, p)
 	if err != nil {
 		return err
 	}
@@ -358,29 +377,63 @@ func (m *Manager) launch(ls *liveSession) error {
 		}
 	}
 
-	ls.emit(Event{Kind: "status", Status: "starting sandbox"})
-	sb, err := startSandbox(cli, image, ls.id, session.WorkspaceDir, p, env)
-	if err != nil {
-		return err
+	// The agent's working directory: the workspace mount point inside the
+	// sandbox, or the real workspace path for host-mode (no sandbox) agents
+	acpCwd := "/workspace"
+	var sb *sandbox
+	if m.hostMode() {
+		ls.emit(Event{Kind: "status", Status: "starting agent process (unsafe, no sandbox)"})
+		sb, err = startHostAgent(session.WorkspaceDir, p, env)
+		if err != nil {
+			return err
+		}
+		acpCwd = session.WorkspaceDir
+	} else {
+		cli, err := m.containerCLI()
+		if err != nil {
+			return err
+		}
+		ls.emit(Event{Kind: "status", Status: "building image"})
+		image, err := buildImage(context.Background(), cli, p)
+		if err != nil {
+			return err
+		}
+		ls.emit(Event{Kind: "status", Status: "starting sandbox"})
+		sb, err = startSandbox(cli, image, ls.id, session.WorkspaceDir, p, env)
+		if err != nil {
+			return err
+		}
 	}
 
 	conn := acp.NewClientSideConnection(&driverClient{manager: m, session: ls}, sb.stdin, sb.stdout)
 
 	handshakeCtx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
 	defer cancel()
-	if _, err := conn.Initialize(handshakeCtx, acp.InitializeRequest{
+	initResp, err := conn.Initialize(handshakeCtx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientInfo:      &acp.Implementation{Name: "openrun", Title: acp.Ptr("OpenRun App Builder"), Version: "1.0"},
-	}); err != nil {
+		// auth: terminal login methods are not supported (defaults sent
+		// explicitly so agents may rely on the declaration)
+		ClientCapabilities: acp.ClientCapabilities{Auth: acp.AuthCapabilities{Terminal: false}},
+	})
+	if err != nil {
 		sb.stop()
 		return fmt.Errorf("ACP initialize failed: %w (agent stderr: %s)", err, sb.stderr())
 	}
-	newSession, err := conn.NewSession(handshakeCtx, acp.NewSessionRequest{Cwd: "/workspace", McpServers: []acp.McpServer{}})
+	newSession, err := m.newSessionWithAuth(context.Background(), conn, sb, acpCwd, session.Agent,
+		initResp.AuthMethods, func(msg string) {
+			m.appendActivity(ls.id, ls.userID, "lifecycle", msg, nil)
+			ls.emit(Event{Kind: "status", Status: msg})
+		})
 	if err != nil {
 		sb.stop()
-		return fmt.Errorf("ACP session/new failed: %w (agent stderr: %s)", err, sb.stderr())
+		return err
 	}
-	for _, warning := range applySessionConfig(handshakeCtx, conn, newSession.SessionId,
+	// Fresh timeout: handshakeCtx may be near expiry when an interactive
+	// authentication flow ran before the session was created
+	configCtx, configCancel := context.WithTimeout(context.Background(), handshakeTimeout)
+	defer configCancel()
+	for _, warning := range applySessionConfig(configCtx, conn, newSession.SessionId,
 		newSession.ConfigOptions, agentConfig.Model, agentConfig.Effort) {
 		m.Warn().Str("session", ls.id).Msg(warning)
 		m.appendActivity(ls.id, ls.userID, "lifecycle", warning, nil)
@@ -640,6 +693,11 @@ func (m *Manager) ListFiles(ctx context.Context, id string) ([]string, error) {
 			}
 			return nil
 		}
+		if !entry.Type().IsRegular() {
+			// symlinks etc are not listed (and ReadFile rejects them): the
+			// agent controls the workspace, a link may point at host files
+			return nil
+		}
 		rel, err := filepath.Rel(session.WorkspaceDir, path)
 		if err != nil {
 			return err
@@ -660,18 +718,43 @@ func (m *Manager) ReadFile(ctx context.Context, id, relPath string) (string, err
 	if err != nil {
 		return "", err
 	}
-	full := filepath.Join(session.WorkspaceDir, filepath.Clean("/"+relPath))
-	if !strings.HasPrefix(full, session.WorkspaceDir+string(filepath.Separator)) {
+	return readWorkspaceFile(session.WorkspaceDir, relPath)
+}
+
+// readWorkspaceFile reads relPath under workspaceDir. The agent controls the
+// workspace content, so this is the console's sandbox boundary: the path is
+// jailed to the workspace, symlinks are resolved and must not escape it (a
+// link to /proc/self/environ or a host config file must not be readable),
+// and only regular files are served
+func readWorkspaceFile(workspaceDir, relPath string) (string, error) {
+	full := filepath.Join(workspaceDir, filepath.Clean("/"+relPath))
+	if !strings.HasPrefix(full, workspaceDir+string(filepath.Separator)) {
 		return "", fmt.Errorf("invalid file path %q", relPath)
 	}
-	info, err := os.Stat(full)
+	// The workspace root itself may sit behind a symlink (macOS /tmp), so
+	// compare fully resolved paths on both sides
+	resolvedRoot, err := filepath.EvalSymlinks(workspaceDir)
 	if err != nil {
 		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(resolved, resolvedRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf("file %s resolves outside the workspace", relPath)
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("file %s is not a regular file", relPath)
 	}
 	if info.Size() > maxReadFileBytes {
 		return "", fmt.Errorf("file %s is too large to view (%d bytes)", relPath, info.Size())
 	}
-	data, err := os.ReadFile(full)
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", err
 	}
@@ -793,9 +876,11 @@ func (m *Manager) VerifyProfile(ctx context.Context, name string, testPrompt boo
 	if err != nil {
 		return err
 	}
-	for _, mount := range p.configs {
-		if _, err := os.Stat(mount.host); err != nil {
-			return fmt.Errorf("config file %s: %w", mount.host, err)
+	if !m.hostMode() { // host-mode agents read their host config, mounts are ignored
+		for _, mount := range p.configs {
+			if _, err := os.Stat(mount.host); err != nil {
+				return fmt.Errorf("config file %s: %w", mount.host, err)
+			}
 		}
 	}
 	env := map[string]string{}
@@ -807,24 +892,33 @@ func (m *Manager) VerifyProfile(ctx context.Context, name string, testPrompt boo
 		env[key] = resolved
 	}
 
-	cli, err := m.containerCLI()
-	if err != nil {
-		return err
-	}
-	image, err := buildImage(ctx, cli, p)
-	if err != nil {
-		return err
-	}
-
 	workspace, err := os.MkdirTemp("", "openrun-builder-verify")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(workspace) //nolint:errcheck
 
-	sb, err := startSandbox(cli, image, "bld_ses_verify_"+p.name, workspace, p, env)
-	if err != nil {
-		return err
+	acpCwd := "/workspace"
+	var sb *sandbox
+	if m.hostMode() {
+		sb, err = startHostAgent(workspace, p, env)
+		if err != nil {
+			return err
+		}
+		acpCwd = workspace
+	} else {
+		cli, err := m.containerCLI()
+		if err != nil {
+			return err
+		}
+		image, err := buildImage(ctx, cli, p)
+		if err != nil {
+			return err
+		}
+		sb, err = startSandbox(cli, image, "bld_ses_verify_"+p.name, workspace, p, env)
+		if err != nil {
+			return err
+		}
 	}
 	defer sb.stop()
 
@@ -832,12 +926,17 @@ func (m *Manager) VerifyProfile(ctx context.Context, name string, testPrompt boo
 	conn := acp.NewClientSideConnection(&driverClient{manager: m, session: ls}, sb.stdin, sb.stdout)
 	handshakeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	if _, err := conn.Initialize(handshakeCtx, acp.InitializeRequest{ProtocolVersion: acp.ProtocolVersionNumber}); err != nil {
+	initResp, err := conn.Initialize(handshakeCtx, acp.InitializeRequest{
+		ProtocolVersion:    acp.ProtocolVersionNumber,
+		ClientCapabilities: acp.ClientCapabilities{Auth: acp.AuthCapabilities{Terminal: false}},
+	})
+	if err != nil {
 		return fmt.Errorf("ACP initialize failed: %w (agent stderr: %s)", err, sb.stderr())
 	}
-	newSession, err := conn.NewSession(handshakeCtx, acp.NewSessionRequest{Cwd: "/workspace", McpServers: []acp.McpServer{}})
+	newSession, err := m.newSessionWithAuth(ctx, conn, sb, acpCwd, name, initResp.AuthMethods,
+		func(msg string) { m.Info().Str("agent", name).Msg(msg) })
 	if err != nil {
-		return fmt.Errorf("ACP session/new failed: %w (agent stderr: %s)", err, sb.stderr())
+		return err
 	}
 
 	if testPrompt {

@@ -101,17 +101,22 @@ func (h *RBACManager) AuthorizeGlobalAPI(ctx context.Context, perm types.RBACPer
 
 func (h *RBACManager) authorizeAPIInt(user string, groups []string, perm types.RBACPermission,
 	target types.AppPathDomain, owner string) (bool, error) {
-	if user == "" || user == types.ADMIN_USER {
-		// admin (and calls with no user context) are always authorized
+	if user == "" {
+		// calls with no user context are always authorized
 		return true, nil
 	}
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
+	if isAdmin, err := h.hasAdminPermLocked(user, groups); err != nil || isAdmin {
+		// the admin super-user permission passes every check
+		return isAdmin, err
+	}
+
 	if owner != "" && user == owner {
 		// Owner virtual grant: the creator of an asset holds the owner permission
-		// set on it (never includes app:approve)
+		// set on it (never includes approve)
 		if h.ownerPerms[PermissionResource(perm)][perm] {
 			return true, nil
 		}
@@ -130,13 +135,22 @@ func (h *RBACManager) GetAPIPermissions(ctx context.Context, target types.AppPat
 
 	user := system.GetContextUserId(ctx)
 	groups := system.GetContextGroups(ctx)
-	if user == "" || user == types.ADMIN_USER {
+	if user == "" {
+		return allPermissionNames, nil
+	}
+	h.mu.RLock()
+	isAdmin, err := h.hasAdminPermLocked(user, groups)
+	h.mu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	if isAdmin {
 		return allPermissionNames, nil
 	}
 
 	perms := make([]string, 0)
 	for _, perm := range appPermissions {
-		if perm == types.PermissionAppAdmin {
+		if perm == types.PermissionAppManage {
 			continue // composite permission, reported through its expansion
 		}
 		authorized, err := h.authorizeAPIInt(user, groups, perm, target, owner)

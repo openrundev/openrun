@@ -50,6 +50,19 @@ The RBAC configuration is managed through [dynamic config]({{< ref "docs/configu
 
 If `enabled` is `false` (default), RBAC is not used. `groups` is a map of group name to group members. Members are user ids, prefixed with the auth provider name. Group composition is supported, for example group2 includes all group1 users. `roles` is a map of role name to permissions. Roles also can be composed, for example role `fullaccess` gets all permissions of role `accessor`.
 
+## Built-in Roles
+
+In addition to any roles you define, OpenRun ships a set of built-in roles that are always available. Their names all use the reserved `openrun-` prefix — user-defined role names may not start with `openrun-`. They can be referenced directly in grants, or composed into your own roles with the `role:` prefix (for example `"team-lead": ["role:openrun-developer", "approve"]`). Because a role mixes app-scoped and global permissions, grant these with `targets: ["all"]` for their global permissions to take effect (see [Permission Scope](#permission-scope)).
+
+| Role | Purpose | Highlights |
+|------|---------|------------|
+| `openrun-admin` | Unrestricted super-user; bypasses every check | the `admin` permission |
+| `openrun-operator` | Runs the platform | full app lifecycle, `approve`, sync, services, bindings, container management, config, secrets (incl. reveal), audit, server stop, builder |
+| `openrun-developer` | Builds and deploys apps | `app:manage`, services/bindings, `container:read`, `sync:run`/`read`, `secret:create`/`read`, audit — no `approve`, config, secret reveal, server stop, or builder |
+| `openrun-builder` | A developer who also uses the AI app builder | everything in `openrun-developer` plus `builder:*` |
+| `openrun-user` | Baseline authenticated user | `access` and `read` |
+| `openrun-monitor` | Read-only observability | read access across apps, audit, containers, sync, services, bindings, config, and secret metadata (no reveal, no writes) |
+
 Users have no permissions by default. Grants have to be added for each permission. A grant has a:
 
 - `description` which is a note about the grant
@@ -58,6 +71,12 @@ Users have no permissions by default. Grants have to be added for each permissio
 - `targets` which is the [glob path]({{< ref "/docs/applications/overview/#glob-pattern" >}}) list of apps to which the grant applies.
 
 The group name referenced in a grant can be a group which is seen at runtime in the user profile. This works for [OIDC]({{< ref "/docs/configuration/authentication/#openid-connect-oidc" >}}) based auth, like Okta.
+
+## Permission Scope
+
+Most permissions are **app-scoped**: `access`, `read`, `create`, `update`, `reload`, `apply`, `delete`, `promote`, `preview` and `app:manage` (the composite of all app permissions except `approve`) apply to the apps matched by the grant's `targets`. The rest are **global** (`sync:*`, `service:*`, `binding:*`, `container:*`, `config:*`, `secret:*`, `builder:*`, `audit:read`, `server:stop`, `approve`, `admin`); a global permission only takes effect when the grant's `targets` cover all apps (`all` or `*:**`). `admin` is the super-user permission that bypasses every check.
+
+`approve` is a global, operator-only permission that authorizes approving an app's plugin permissions (which run server-side code, so it is not scoped per app). It is never implied by `app:manage` or by a permission glob — it has to be granted by its literal name (or held via the `admin` super-user permission, e.g. the `openrun-admin` role). Setting the `--approve` flag on a create/reload/apply, or calling approve directly, requires this permission. (`approve` was previously named `app:approve`; the old name is still accepted in config and normalized to `approve`.)
 
 ## Group Info
 

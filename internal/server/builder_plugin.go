@@ -60,21 +60,22 @@ type builderPlugin struct {
 	pluginContext *types.PluginContext
 }
 
-// requireSession loads a session and authorizes access: the owner needs the
-// base permission, non-owners need builder:read (for reads) or are denied
-// (for writes, admin grants aside — enforceGlobalPerm owner rules apply)
+// requireSession loads a session and authorizes read access: users reach
+// only their own sessions (with the base permission); any other user's
+// session requires the admin permission
 func (c *builderPlugin) requireSession(ctx context.Context, id string, perm types.RBACPermission) (*types.BuilderSession, error) {
 	session, err := c.server.builderManager.GetSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	if session.UserID != system.GetContextUserId(ctx) {
+		if err := c.server.enforceGlobalPerm(ctx, types.PermissionAdmin, ""); err != nil {
+			return nil, err
+		}
+		return session, nil
+	}
 	if err := c.server.enforceGlobalPerm(ctx, perm, session.UserID); err != nil {
-		if perm != types.PermissionBuilderRead && session.UserID != system.GetContextUserId(ctx) {
-			return nil, err
-		}
-		if readErr := c.server.enforceGlobalPerm(ctx, types.PermissionBuilderRead, session.UserID); readErr != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	return session, nil
 }
@@ -87,6 +88,7 @@ func sessionToStarlark(session *types.BuilderSession) (starlark.Value, error) {
 		"spec":          session.Spec,
 		"agent":         session.Agent,
 		"preset":        session.Preset,
+		"edit_app":      session.EditApp,
 		"status":        string(session.Status),
 		"preview_path":  session.PreviewPath,
 		"publish_path":  session.PublishPath,
@@ -97,7 +99,7 @@ func sessionToStarlark(session *types.BuilderSession) (starlark.Value, error) {
 }
 
 // ListSessions lists builder sessions: one's own with builder:list, everyone's
-// with all_users (requires builder:read)
+// with all_users (requires the admin permission)
 func (c *builderPlugin) ListSessions(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var allUsers starlark.Bool
 	if err := starlark.UnpackArgs("list_sessions", args, kwargs, "all_users?", &allUsers); err != nil {
@@ -110,7 +112,7 @@ func (c *builderPlugin) ListSessions(thread *starlark.Thread, builtin *starlark.
 	}
 	filterUser := userID
 	if bool(allUsers) {
-		if err := c.server.enforceGlobalPerm(ctx, types.PermissionBuilderRead, ""); err != nil {
+		if err := c.server.enforceGlobalPerm(ctx, types.PermissionAdmin, ""); err != nil {
 			return nil, err
 		}
 		filterUser = ""
@@ -346,6 +348,7 @@ func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starl
 	config := c.server.Config()
 
 	promptPreset := ""
+	editApp := ""
 	if sessionId.GoString() != "" {
 		ctx := system.GetRequestContext(thread)
 		session, err := c.requireSession(ctx, sessionId.GoString(), types.PermissionBuilderList)
@@ -353,10 +356,28 @@ func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starl
 			return nil, err
 		}
 		promptPreset = session.Preset
+		editApp = session.EditApp
 	}
-	gitCfg, err := config.ResolveBuilderGit(promptPreset)
-	if err != nil {
-		return nil, err
+	var gitCfg types.BuilderGitConfig
+	var err error
+	inPlaceEdit := false
+	if editApp != "" {
+		// In-place edit sessions publish to the app's own destination,
+		// derived from its source url. Fork sessions (original not builder
+		// managed) publish as a new app with the normal resolution
+		if apps, appsErr := c.server.GetApps(system.GetRequestContext(thread), editApp, false); appsErr == nil && len(apps) == 1 &&
+			c.server.isBuilderManaged(&apps[0].AppEntry) {
+			inPlaceEdit = true
+			if matched, _, matchErr := c.server.matchBuilderGitBySource(apps[0].SourceUrl); matchErr == nil {
+				gitCfg = matched
+			}
+		}
+	}
+	if !inPlaceEdit {
+		gitCfg, err = config.ResolveBuilderGit(promptPreset)
+		if err != nil {
+			return nil, err
+		}
 	}
 	mode := "local"
 	if gitCfg.Repo != "" {
@@ -443,9 +464,9 @@ func (c *builderPlugin) ListActivity(thread *starlark.Thread, builtin *starlark.
 }
 
 func (c *builderPlugin) CreateSession(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var name, prompt, spec, agent, promptPreset starlark.String
+	var name, prompt, spec, agent, promptPreset, editApp starlark.String
 	if err := starlark.UnpackArgs("create_session", args, kwargs, "name", &name, "prompt", &prompt,
-		"spec?", &spec, "agent?", &agent, "prompt_preset?", &promptPreset); err != nil {
+		"spec?", &spec, "agent?", &agent, "prompt_preset?", &promptPreset, "edit_app?", &editApp); err != nil {
 		return nil, err
 	}
 	ctx := system.GetRequestContext(thread)
@@ -454,7 +475,7 @@ func (c *builderPlugin) CreateSession(thread *starlark.Thread, builtin *starlark
 		return nil, err
 	}
 	session, err := c.server.builderCreateSession(ctx, userID, name.GoString(), prompt.GoString(),
-		spec.GoString(), agent.GoString(), promptPreset.GoString())
+		spec.GoString(), agent.GoString(), promptPreset.GoString(), editApp.GoString())
 	if err != nil {
 		return nil, err
 	}
@@ -477,24 +498,21 @@ func (c *builderPlugin) SendMessage(thread *starlark.Thread, builtin *starlark.B
 	return starlark.None, nil
 }
 
-// requireWriteSession authorizes session mutation: builder:create scoped to
-// the session owner (owner rules and admin grants apply)
+// requireWriteSession authorizes session mutation: the owner needs
+// builder:create; any other user's session requires the admin permission
 func (c *builderPlugin) requireWriteSession(ctx context.Context, id string) (*types.BuilderSession, error) {
 	session, err := c.server.builderManager.GetSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if !c.server.rbacManager.APIEnforced(ctx) {
+	if session.UserID != system.GetContextUserId(ctx) {
+		if err := c.server.enforceGlobalPerm(ctx, types.PermissionAdmin, ""); err != nil {
+			return nil, err
+		}
 		return session, nil
 	}
 	if err := c.server.enforceGlobalPerm(ctx, types.PermissionBuilderCreate, session.UserID); err != nil {
 		return nil, err
-	}
-	if session.UserID != system.GetContextUserId(ctx) {
-		// messaging another user's agent needs builder:read as well
-		if err := c.server.enforceGlobalPerm(ctx, types.PermissionBuilderRead, session.UserID); err != nil {
-			return nil, err
-		}
 	}
 	return session, nil
 }

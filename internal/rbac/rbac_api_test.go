@@ -119,7 +119,7 @@ func TestAppAdminPermission(t *testing.T) {
 
 	manager := newTestManager(t, grantConfig(
 		map[string][]types.RBACPermission{
-			"app_owner": {types.PermissionAppAdmin},
+			"app_owner": {types.PermissionAppManage},
 		},
 		types.RBACGrant{Description: "app admin grant", Users: []string{"user1"},
 			Roles: []string{"app_owner"}, Targets: []string{"/test"}},
@@ -132,12 +132,17 @@ func TestAppAdminPermission(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			// app:admin grants everything app scoped except app:approve
-			expected := perm != types.PermissionApprove
-			if allowed != expected {
-				t.Errorf("perm %s: expected %v, got %v", perm, expected, allowed)
+			// app:manage grants every app-scoped permission
+			if !allowed {
+				t.Errorf("perm %s: app:manage should grant it, got %v", perm, allowed)
 			}
 		})
+	}
+
+	// approve is global and operator-only: app:manage never confers it
+	allowed, err := manager.AuthorizeGlobalAPI(enforcedCtx("user1"), types.PermissionApprove, "")
+	if err != nil || allowed {
+		t.Errorf("app:manage must not grant the global approve permission, got %v err %v", allowed, err)
 	}
 }
 
@@ -151,8 +156,10 @@ func TestPermissionGlobsNeverMatchApprove(t *testing.T) {
 				map[string][]types.RBACPermission{
 					"globrole": {types.RBACPermission(glob)},
 				},
+				// target "all" so the glob could confer global perms too - the
+				// approve exclusion must hold even then
 				types.RBACGrant{Description: "glob grant", Users: []string{"user1"},
-					Roles: []string{"globrole"}, Targets: []string{"/test"}},
+					Roles: []string{"globrole"}, Targets: []string{"all"}},
 			))
 
 			allowed, err := manager.AuthorizeAPI(enforcedCtx("user1"), types.PermissionDelete, testTarget(), "")
@@ -163,65 +170,301 @@ func TestPermissionGlobsNeverMatchApprove(t *testing.T) {
 				t.Errorf("glob %s should match app:delete", glob)
 			}
 
-			allowed, err = manager.AuthorizeAPI(enforcedCtx("user1"), types.PermissionApprove, testTarget(), "")
+			// approve is global and never matched by a glob, even on target all
+			allowed, err = manager.AuthorizeGlobalAPI(enforcedCtx("user1"), types.PermissionApprove, "")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if allowed {
-				t.Errorf("glob %s must not match app:approve", glob)
+				t.Errorf("glob %s must not match approve", glob)
 			}
 		})
 	}
 }
 
-func TestBuiltinAdminRole(t *testing.T) {
+// TestOpenrunAdminSuperUser verifies the openrun-admin role (which holds the
+// admin permission) is a full super-user: it passes every check, including
+// app permissions on any target and app-level custom permissions. It replaces
+// the removed built-in "admin" role
+func TestOpenrunAdminSuperUser(t *testing.T) {
 	t.Parallel()
 
 	manager := newTestManager(t, grantConfig(
 		map[string][]types.RBACPermission{},
-		types.RBACGrant{Description: "full admin", Users: []string{"user1"},
-			Roles: []string{AdminRoleName}, Targets: []string{"all"}},
-		types.RBACGrant{Description: "subtree admin", Users: []string{"user2"},
-			Roles: []string{AdminRoleName}, Targets: []string{"/test/*"}},
+		types.RBACGrant{Description: "super", Users: []string{"user1"},
+			Roles: []string{"openrun-admin"}, Targets: []string{"all"}},
 	))
 
-	// user1 has admin on all: gets app:approve and global permissions
-	allowed, err := manager.AuthorizeAPI(enforcedCtx("user1"), types.PermissionApprove, testTarget(), "")
+	// Every management permission passes, on any target and owner
+	for _, perm := range []types.RBACPermission{types.PermissionApprove, types.PermissionServerStop,
+		types.PermissionSyncCreate, types.PermissionSecretReveal} {
+		allowed, err := manager.AuthorizeGlobalAPI(enforcedCtx("user1"), perm, "")
+		if err != nil || !allowed {
+			t.Errorf("openrun-admin should grant %s, got %v err %v", perm, allowed, err)
+		}
+	}
+	allowed, err := manager.AuthorizeAPI(enforcedCtx("user1"), types.PermissionDelete,
+		types.AppPathDomain{Path: "/anywhere"}, "someone-else")
 	if err != nil || !allowed {
-		t.Errorf("admin role should grant app:approve, got %v err %v", allowed, err)
-	}
-	allowed, err = manager.AuthorizeGlobalAPI(enforcedCtx("user1"), types.PermissionSyncCreate, "")
-	if err != nil || !allowed {
-		t.Errorf("admin role with all target should grant sync:create, got %v err %v", allowed, err)
-	}
-
-	// user2 has admin scoped to /test/*: app perms there, no global perms
-	allowed, err = manager.AuthorizeAPI(enforcedCtx("user2"), types.PermissionDelete,
-		types.AppPathDomain{Path: "/test/app1"}, "")
-	if err != nil || !allowed {
-		t.Errorf("subtree admin should grant app:delete on /test/app1, got %v err %v", allowed, err)
-	}
-	allowed, err = manager.AuthorizeAPI(enforcedCtx("user2"), types.PermissionDelete,
-		types.AppPathDomain{Path: "/other"}, "")
-	if err != nil || allowed {
-		t.Errorf("subtree admin must not grant app:delete on /other, got %v err %v", allowed, err)
-	}
-	allowed, err = manager.AuthorizeGlobalAPI(enforcedCtx("user2"), types.PermissionSyncCreate, "")
-	if err != nil || allowed {
-		t.Errorf("subtree admin must not grant global sync:create, got %v err %v", allowed, err)
+		t.Errorf("openrun-admin should grant app:delete on any app, got %v err %v", allowed, err)
 	}
 }
 
-func TestAdminRoleReserved(t *testing.T) {
+// TestPredefinedRoles grants each built-in openrun-* role (on target all) and
+// checks representative allowed/denied permissions, including the app-scoped vs
+// global split and openrun-builder composing openrun-developer
+func TestPredefinedRoles(t *testing.T) {
 	t.Parallel()
 
-	logger := testutil.TestLogger()
+	roleNames := []string{"openrun-admin", "openrun-operator", "openrun-developer",
+		"openrun-builder", "openrun-user", "openrun-monitor"}
+	grants := make([]types.RBACGrant, 0, len(roleNames))
+	for _, r := range roleNames {
+		grants = append(grants, types.RBACGrant{
+			Description: r, Users: []string{"u:" + r}, Roles: []string{r}, Targets: []string{"all"},
+		})
+	}
+	manager := newTestManager(t, grantConfig(map[string][]types.RBACPermission{}, grants...))
+
+	appPerm := func(role string, perm types.RBACPermission) bool {
+		ok, err := manager.AuthorizeAPI(enforcedCtx("u:"+role), perm, testTarget(), "")
+		if err != nil {
+			t.Fatalf("app authorize %s/%s: %v", role, perm, err)
+		}
+		return ok
+	}
+	globalPerm := func(role string, perm types.RBACPermission) bool {
+		ok, err := manager.AuthorizeGlobalAPI(enforcedCtx("u:"+role), perm, "")
+		if err != nil {
+			t.Fatalf("global authorize %s/%s: %v", role, perm, err)
+		}
+		return ok
+	}
+
+	type check struct {
+		perm    types.RBACPermission
+		global  bool
+		allowed bool
+	}
+	cases := map[string][]check{
+		"openrun-admin": {
+			{types.PermissionAdmin, true, true},
+			{types.PermissionApprove, true, true},
+			{types.PermissionServerStop, true, true},
+			{types.PermissionDelete, false, true},
+		},
+		"openrun-operator": {
+			{types.PermissionDelete, false, true}, // app:manage
+			{types.PermissionApprove, true, true}, // operator holds approve
+			{types.PermissionSecretReveal, true, true},
+			{types.PermissionConfigUpdate, true, true},
+			{types.PermissionServerStop, true, true},
+			{types.PermissionBuilderCreate, true, true},
+			{types.PermissionAdmin, true, false}, // operator is not a super-user
+		},
+		"openrun-developer": {
+			{types.PermissionCreate, false, true}, // app:manage
+			{types.PermissionDelete, false, true},
+			{types.PermissionSecretCreate, true, true},
+			{types.PermissionSyncRun, true, true},
+			{types.PermissionApprove, true, false}, // operator-only
+			{types.PermissionConfigUpdate, true, false},
+			{types.PermissionSecretReveal, true, false},
+			{types.PermissionServerStop, true, false},
+			{types.PermissionSyncCreate, true, false},
+			{types.PermissionBuilderCreate, true, false}, // developer has no builder
+		},
+		"openrun-builder": {
+			{types.PermissionCreate, false, true},       // inherits developer app:manage
+			{types.PermissionBuilderCreate, true, true}, // plus builder
+			{types.PermissionBuilderPublish, true, true},
+			{types.PermissionSecretCreate, true, true}, // via developer
+			{types.PermissionApprove, true, false},
+			{types.PermissionConfigUpdate, true, false},
+		},
+		"openrun-user": {
+			{types.PermissionAccess, false, true},
+			{types.PermissionRead, false, true},
+			{types.PermissionCreate, false, false},
+			{types.PermissionDelete, false, false},
+			{types.PermissionBuilderCreate, true, false},
+		},
+		"openrun-monitor": {
+			{types.PermissionRead, false, true},
+			{types.PermissionAuditRead, true, true},
+			{types.PermissionContainerRead, true, true},
+			{types.PermissionConfigRead, true, true},
+			{types.PermissionSecretRead, true, true},
+			{types.PermissionCreate, false, false},
+			{types.PermissionConfigUpdate, true, false},
+			{types.PermissionSecretReveal, true, false},
+			{types.PermissionApprove, true, false},
+			{types.PermissionContainerManage, true, false},
+		},
+	}
+
+	for role, checks := range cases {
+		for _, c := range checks {
+			got := appPerm(role, c.perm)
+			if c.global {
+				got = globalPerm(role, c.perm)
+			}
+			if got != c.allowed {
+				t.Errorf("%s: perm %s (global=%v) = %v, want %v", role, c.perm, c.global, got, c.allowed)
+			}
+		}
+	}
+}
+
+// TestPredefinedRolesReserved verifies the built-in openrun-* role names cannot
+// be redefined in the config
+func TestPredefinedRolesReserved(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"openrun-admin", "openrun-operator", "openrun-developer",
+		"openrun-builder", "openrun-user", "openrun-monitor"} {
+		_, err := NewRBACHandler(testutil.TestLogger(), grantConfig(map[string][]types.RBACPermission{
+			name: {types.PermissionRead},
+		}), &types.ServerConfig{GlobalConfig: types.GlobalConfig{AdminUser: "admin"}})
+		if err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Errorf("defining reserved role %q should be rejected, got %v", name, err)
+		}
+	}
+}
+
+// TestUserRoleReferencesPredefined verifies a user-defined role can compose a
+// predefined role via the role: prefix and add extra permissions
+func TestUserRoleReferencesPredefined(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestManager(t, grantConfig(
+		map[string][]types.RBACPermission{
+			// a team lead is a developer who can also approve
+			"team-lead": {types.RBACPermission("role:openrun-developer"), types.PermissionApprove},
+		},
+		types.RBACGrant{Description: "lead", Users: []string{"u1"},
+			Roles: []string{"team-lead"}, Targets: []string{"all"}},
+	))
+
+	if ok, _ := manager.AuthorizeAPI(enforcedCtx("u1"), types.PermissionCreate, testTarget(), ""); !ok {
+		t.Error("team-lead should inherit developer app:create")
+	}
+	if ok, _ := manager.AuthorizeGlobalAPI(enforcedCtx("u1"), types.PermissionApprove, ""); !ok {
+		t.Error("team-lead should hold the extra approve permission")
+	}
+	if ok, _ := manager.AuthorizeGlobalAPI(enforcedCtx("u1"), types.PermissionBuilderCreate, ""); ok {
+		t.Error("team-lead should not have builder (developer has none)")
+	}
+}
+
+func TestAdminPermission(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestManager(t, grantConfig(
+		map[string][]types.RBACPermission{
+			"superuser": {types.PermissionAdmin},
+		},
+		types.RBACGrant{Description: "granted admin", Users: []string{"user1"},
+			Roles: []string{"superuser"}, Targets: []string{"all"}},
+		types.RBACGrant{Description: "admin on app target", Users: []string{"user2"},
+			Roles: []string{"superuser"}, Targets: []string{"/test"}},
+	))
+
+	// The admin permission passes every check: app perms on any target
+	// (including approve) and all global permissions
+	for _, perm := range []types.RBACPermission{types.PermissionDelete, types.PermissionApprove} {
+		allowed, err := manager.AuthorizeAPI(enforcedCtx("user1"), perm,
+			types.AppPathDomain{Path: "/anywhere"}, "someone-else")
+		if err != nil || !allowed {
+			t.Errorf("admin permission should grant %s, got %v err %v", perm, allowed, err)
+		}
+	}
+	allowed, err := manager.AuthorizeGlobalAPI(enforcedCtx("user1"), types.PermissionAdmin, "")
+	if err != nil || !allowed {
+		t.Errorf("admin permission holder should pass the admin check, got %v err %v", allowed, err)
+	}
+	perms, err := manager.GetAPIPermissions(enforcedCtx("user1"), testTarget(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(perms) != len(allPermissionNames) || !slices.Contains(perms, string(types.PermissionAdmin)) {
+		t.Errorf("admin permission holder should hold all permissions, got %v", perms)
+	}
+
+	// admin is a global permission: a grant scoped to an app target does not
+	// confer it (and the superuser role carries nothing else)
+	allowed, err = manager.AuthorizeGlobalAPI(enforcedCtx("user2"), types.PermissionAdmin, "")
+	if err != nil || allowed {
+		t.Errorf("app-targeted admin grant must not confer the admin permission, got %v err %v", allowed, err)
+	}
+	allowed, err = manager.AuthorizeAPI(enforcedCtx("user2"), types.PermissionDelete, testTarget(), "")
+	if err != nil || allowed {
+		t.Errorf("the admin permission implies nothing on non-global grants, got %v err %v", allowed, err)
+	}
+
+	// The admin user holds the admin permission implicitly, with no grants
+	allowed, err = manager.AuthorizeGlobalAPI(enforcedCtx(types.ADMIN_USER), types.PermissionAdmin, "")
+	if err != nil || !allowed {
+		t.Errorf("admin user should hold the admin permission by default, got %v err %v", allowed, err)
+	}
+}
+
+func TestPermissionGlobsNeverMatchAdmin(t *testing.T) {
+	t.Parallel()
+
+	for _, glob := range []string{"**", "ad*", "*"} {
+		t.Run(glob, func(t *testing.T) {
+			t.Parallel()
+			manager := newTestManager(t, grantConfig(
+				map[string][]types.RBACPermission{
+					"globrole": {types.RBACPermission(glob)},
+				},
+				types.RBACGrant{Description: "glob grant", Users: []string{"user1"},
+					Roles: []string{"globrole"}, Targets: []string{"all"}},
+			))
+
+			// The glob grants regular global permissions but never the admin
+			// super-user permission (nor approve through it)
+			if glob != "ad*" { // ad* is here only to probe an admin-prefix glob
+				allowed, err := manager.AuthorizeGlobalAPI(enforcedCtx("user1"), types.PermissionSyncCreate, "")
+				if err != nil || !allowed {
+					t.Errorf("glob %s should match sync:create, got %v err %v", glob, allowed, err)
+				}
+			}
+			allowed, err := manager.AuthorizeGlobalAPI(enforcedCtx("user1"), types.PermissionAdmin, "")
+			if err != nil || allowed {
+				t.Errorf("glob %s must not match the admin permission, got %v err %v", glob, allowed, err)
+			}
+			allowed, err = manager.AuthorizeAPI(enforcedCtx("user1"), types.PermissionApprove, testTarget(), "")
+			if err != nil || allowed {
+				t.Errorf("glob %s must not match approve, got %v err %v", glob, allowed, err)
+			}
+		})
+	}
+}
+
+// TestReservedRolePrefix verifies the openrun- prefix is reserved for
+// built-in roles, so no user-defined role name may use it (even a name that
+// is not itself a predefined role). A plain "admin" role name is allowed now
+// that the built-in admin role is gone
+func TestReservedRolePrefix(t *testing.T) {
+	t.Parallel()
+
 	serverConfig := &types.ServerConfig{GlobalConfig: types.GlobalConfig{AdminUser: "admin"}}
-	_, err := NewRBACHandler(logger, grantConfig(map[string][]types.RBACPermission{
-		"admin": {types.PermissionRead},
+
+	// a not-predefined openrun- name is still rejected by the prefix reservation
+	_, err := NewRBACHandler(testutil.TestLogger(), grantConfig(map[string][]types.RBACPermission{
+		"openrun-custom": {types.PermissionRead},
 	}), serverConfig)
 	if err == nil || !strings.Contains(err.Error(), "reserved") {
-		t.Errorf("expected reserved role error, got %v", err)
+		t.Errorf("openrun- prefixed role should be rejected, got %v", err)
+	}
+
+	// "admin" is no longer a reserved role name (the built-in admin role was removed)
+	if _, err := NewRBACHandler(testutil.TestLogger(), grantConfig(map[string][]types.RBACPermission{
+		"admin": {types.PermissionRead},
+	}), serverConfig); err != nil {
+		t.Errorf("a user role named admin should be allowed, got %v", err)
 	}
 }
 
@@ -378,7 +621,7 @@ func TestOwnerPermissions(t *testing.T) {
 
 	ctx := enforcedCtx("user1")
 
-	// Owner gets app:admin equivalent on their own app
+	// Owner gets app:manage equivalent on their own app
 	for _, perm := range []types.RBACPermission{types.PermissionRead, types.PermissionUpdate,
 		types.PermissionDelete, types.PermissionReload, types.PermissionAccess, types.PermissionTokenManage} {
 		allowed, err := manager.AuthorizeAPI(ctx, perm, testTarget(), "user1")
@@ -387,10 +630,10 @@ func TestOwnerPermissions(t *testing.T) {
 		}
 	}
 
-	// app:approve is never part of the owner permissions
-	allowed, err := manager.AuthorizeAPI(ctx, types.PermissionApprove, testTarget(), "user1")
+	// approve is never part of the owner permissions (it is global/operator-only)
+	allowed, err := manager.AuthorizeGlobalAPI(ctx, types.PermissionApprove, "user1")
 	if err != nil || allowed {
-		t.Errorf("owner must not hold app:approve, got %v err %v", allowed, err)
+		t.Errorf("owner must not hold approve, got %v err %v", allowed, err)
 	}
 
 	// Non-owner gets nothing
@@ -510,13 +753,13 @@ func TestGetAPIPermissions(t *testing.T) {
 		t.Errorf("expected %v, got %v", expected, perms)
 	}
 
-	// Owner holds the app:admin expansion (everything app scoped except approve/admin)
+	// Owner holds the app:manage expansion (everything app scoped except approve/admin)
 	perms, err = manager.GetAPIPermissions(enforcedCtx("user2"), testTarget(), "user2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if slices.Contains(perms, string(types.PermissionApprove)) {
-		t.Errorf("owner permissions must not include app:approve, got %v", perms)
+		t.Errorf("owner permissions must not include approve, got %v", perms)
 	}
 	if !slices.Contains(perms, string(types.PermissionDelete)) || !slices.Contains(perms, string(types.PermissionAccess)) {
 		t.Errorf("owner permissions should include app:delete and app:access, got %v", perms)

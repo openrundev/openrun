@@ -80,8 +80,10 @@ func tailBytes(b []byte, n int) string {
 	return string(b)
 }
 
-// sandbox is one running agent container. Its stdin/stdout carry the ACP
-// JSON-RPC stream; stderr is retained (bounded) for diagnostics
+// sandbox is one running agent container (or, with
+// security.unsafe_agent_without_sandbox, a bare host process — containerName
+// is empty then). Its stdin/stdout carry the ACP JSON-RPC stream; stderr is
+// retained (bounded) for diagnostics
 type sandbox struct {
 	cli           string
 	containerName string
@@ -120,7 +122,30 @@ func startSandbox(cli, image, sessionId, workspace string, p *profile, env map[s
 
 	cmd := exec.Command(cli, append(append(args, envArgs(env)...), append([]string{image}, p.command...)...)...)
 	cmd.Env = append(os.Environ(), envValues(env)...)
+	return startAgentCmd(cli, containerName, cmd)
+}
 
+// startHostAgent runs the profile's ACP command directly on the host with the
+// session workspace as the working directory. There is NO container isolation:
+// only reachable via security.unsafe_agent_without_sandbox, for dev setups
+// where the agent needs host credentials (e.g. codex using the host's ChatGPT
+// login instead of an API key). The agent command must be installed on the
+// host; config_files mounts do not apply — the agent reads its host config
+func startHostAgent(workspace string, p *profile, env map[string]string) (*sandbox, error) {
+	binary, err := exec.LookPath(p.command[0])
+	if err != nil {
+		return nil, fmt.Errorf("agent command %q not found on the host (unsafe_agent_without_sandbox runs the agent "+
+			"outside its sandbox image, so the agent must be installed locally): %w", p.command[0], err)
+	}
+	cmd := exec.Command(binary, p.command[1:]...)
+	cmd.Dir = workspace
+	cmd.Env = append(os.Environ(), envValues(env)...)
+	return startAgentCmd("", "", cmd)
+}
+
+// startAgentCmd wires the ACP stdio pipes, bounded stderr capture and the
+// exit watcher around the prepared sandbox/host command and starts it
+func startAgentCmd(cli, containerName string, cmd *exec.Cmd) (*sandbox, error) {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -134,7 +159,7 @@ func startSandbox(cli, image, sessionId, workspace string, p *profile, env map[s
 	cmd.Stderr = &boundedWriter{buf: &s.stderrTail, mu: &s.stderrMu, limit: 16 * 1024}
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("starting sandbox container: %w", err)
+		return nil, fmt.Errorf("starting agent process: %w", err)
 	}
 	go func() {
 		_ = cmd.Wait() // reap; the exit reason is reported via stderrTail
@@ -161,12 +186,15 @@ func envValues(env map[string]string) []string {
 	return values
 }
 
-// stop force-removes the container and waits for the client process to exit
+// stop force-removes the container (host-mode agents rely on the stdin EOF —
+// ACP agents exit when their stdio stream closes) and waits for the process
 func (s *sandbox) stop() {
-	cmd := exec.Command(s.cli, "rm", "-f", s.containerName)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	_ = cmd.Run()
+	if s.containerName != "" {
+		cmd := exec.Command(s.cli, "rm", "-f", s.containerName)
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
+		_ = cmd.Run()
+	}
 	s.stdin.Close() //nolint:errcheck
 	select {
 	case <-s.exited:

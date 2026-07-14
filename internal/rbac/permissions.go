@@ -5,15 +5,94 @@ package rbac
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/openrundev/openrun/internal/types"
 )
 
-// AdminRoleName is the built-in role that grants every permission (including
-// app:approve). It is always defined and cannot be redefined in the config.
-const AdminRoleName = "admin"
+// predefinedRoles are built-in convenience roles, always available in every
+// RBAC config. Their names are reserved (cannot be redefined) and grants and
+// user roles may reference them. openrun-admin is the super-user role (it
+// holds the "admin" permission, which bypasses every check). Permissions are
+// expanded through the normal implication rules (app:manage -> all app perms,
+// app:update -> reload/apply/read). openrun-builder composes openrun-developer.
+// A role mixes app-scoped and global permissions; the global ones only take
+// effect when the grant targets all apps (see the RBAC docs on scope)
+var predefinedRoles = map[string][]types.RBACPermission{
+	// Full super-user (bypasses every check). Equivalent to the built-in
+	// admin role; provided under the openrun- naming for discoverability
+	"openrun-admin": {types.PermissionAdmin},
+
+	// Runs the platform: full app lifecycle plus plugin approval, sync,
+	// services, bindings, container management, config, secrets (incl.
+	// reveal), audit, server stop and the builder
+	"openrun-operator": {
+		types.PermissionAppManage, types.PermissionApprove,
+		types.PermissionSyncCreate, types.PermissionSyncRun, types.PermissionSyncDelete, types.PermissionSyncRead,
+		types.PermissionServiceCreate, types.PermissionServiceUpdate, types.PermissionServiceDelete, types.PermissionServiceRead,
+		types.PermissionBindingCreate, types.PermissionBindingUpdate, types.PermissionBindingDelete, types.PermissionBindingRead, types.PermissionBindingRunCommand,
+		types.PermissionContainerManage,
+		types.PermissionConfigRead, types.PermissionConfigUpdate,
+		types.PermissionSecretCreate, types.PermissionSecretRead, types.PermissionSecretDelete, types.PermissionSecretReveal,
+		types.PermissionAuditRead, types.PermissionServerStop,
+		types.PermissionBuilderList, types.PermissionBuilderCreate, types.PermissionBuilderPublish,
+	},
+
+	// App lifecycle and supporting resources, minus operator-only controls
+	// (no approve, config, secret reveal/delete, server stop, sync
+	// create/delete, container manage, builder)
+	"openrun-developer": {
+		types.PermissionAppManage,
+		types.PermissionServiceCreate, types.PermissionServiceUpdate, types.PermissionServiceRead,
+		types.PermissionBindingCreate, types.PermissionBindingUpdate, types.PermissionBindingRead, types.PermissionBindingRunCommand,
+		types.PermissionContainerRead,
+		types.PermissionSyncRun, types.PermissionSyncRead,
+		types.PermissionSecretCreate, types.PermissionSecretRead,
+		types.PermissionAuditRead,
+	},
+
+	// A developer who also gets the AI app builder
+	"openrun-builder": {
+		types.RBACPermission(RBAC_ROLE_PREFIX + "openrun-developer"),
+		types.PermissionBuilderList, types.PermissionBuilderCreate, types.PermissionBuilderPublish,
+	},
+
+	// Baseline authenticated user: reach served apps and browse the app list
+	"openrun-user": {
+		types.PermissionAccess, types.PermissionRead,
+	},
+
+	// Read-only observability across the platform (no writes, no secret reveal)
+	"openrun-monitor": {
+		types.PermissionRead,
+		types.PermissionAuditRead, types.PermissionContainerRead,
+		types.PermissionSyncRead, types.PermissionServiceRead, types.PermissionBindingRead,
+		types.PermissionConfigRead, types.PermissionSecretRead,
+	},
+}
+
+// ReservedRolePrefix is reserved for built-in roles; user-defined role names
+// may not use it
+const ReservedRolePrefix = "openrun-"
+
+// isBuiltinRole reports whether name is a predefined built-in role
+func isBuiltinRole(name string) bool {
+	_, ok := predefinedRoles[name]
+	return ok
+}
+
+// BuiltinRoleNames returns the predefined built-in role names, sorted. UIs
+// list these alongside user-defined roles so they can be selected in grants
+func BuiltinRoleNames() []string {
+	names := make([]string, 0, len(predefinedRoles))
+	for name := range predefinedRoles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
 
 // Resource names used for owner permission lookup
 const (
@@ -30,12 +109,11 @@ var appPermissions = []types.RBACPermission{
 	types.PermissionReload,
 	types.PermissionApply,
 	types.PermissionDelete,
-	types.PermissionApprove,
 	types.PermissionPromote,
 	types.PermissionPreview,
 	types.PermissionTokenRead,
 	types.PermissionTokenManage,
-	types.PermissionAppAdmin,
+	types.PermissionAppManage,
 }
 
 // globalPermissions are permissions with no app path target. Grants confer these
@@ -65,9 +143,10 @@ var globalPermissions = map[types.RBACPermission]bool{
 	types.PermissionSecretDelete:      true,
 	types.PermissionSecretReveal:      true,
 	types.PermissionBuilderList:       true,
-	types.PermissionBuilderRead:       true,
 	types.PermissionBuilderCreate:     true,
 	types.PermissionBuilderPublish:    true,
+	types.PermissionApprove:           true,
+	types.PermissionAdmin:             true,
 }
 
 // builtinPermissions is the set of all valid permission names
@@ -86,8 +165,9 @@ var builtinPermissions = func() map[types.RBACPermission]bool {
 // names. Configs using the old names keep working: they are normalized to the
 // new names when the config is resolved
 var legacyPermissions = map[string]types.RBACPermission{
-	"list":   types.PermissionRead,
-	"access": types.PermissionAccess,
+	"list":        types.PermissionRead,
+	"access":      types.PermissionAccess,
+	"app:approve": types.PermissionApprove, // approve moved from app-scoped to global
 }
 
 // normalizePermission maps legacy permission names to their current names
@@ -98,12 +178,13 @@ func normalizePermission(perm types.RBACPermission) types.RBACPermission {
 	return perm
 }
 
-// appAdminPermissions is what app:admin expands to: every app permission except
-// app:approve (approving plugin permissions is operator-only) and app:admin itself
-var appAdminPermissions = func() []types.RBACPermission {
+// appManagePermissions is what app:manage expands to: every app permission except
+// app:manage itself. approve is not an app permission (it is global), so it is not
+// part of this expansion - approving plugin permissions is operator-only
+var appManagePermissions = func() []types.RBACPermission {
 	perms := make([]types.RBACPermission, 0, len(appPermissions))
 	for _, p := range appPermissions {
-		if p == types.PermissionApprove || p == types.PermissionAppAdmin {
+		if p == types.PermissionAppManage {
 			continue
 		}
 		perms = append(perms, p)
@@ -112,17 +193,17 @@ var appAdminPermissions = func() []types.RBACPermission {
 }()
 
 // permissionImplications: holding the key permission implies the value permissions.
-// app:approve is never implied
+// approve is never implied
 var permissionImplications = map[types.RBACPermission][]types.RBACPermission{
 	types.PermissionUpdate:          {types.PermissionReload, types.PermissionApply, types.PermissionRead},
-	types.PermissionAppAdmin:        appAdminPermissions,
+	types.PermissionAppManage:       appManagePermissions,
 	types.PermissionContainerManage: {types.PermissionContainerRead},
 }
 
 // defaultOwnerPermissions are the permissions the creator of an asset gets on that
 // asset when owner_permissions is not configured for the resource
 var defaultOwnerPermissions = map[string][]types.RBACPermission{
-	ResourceApp:  {types.PermissionAppAdmin},
+	ResourceApp:  {types.PermissionAppManage},
 	ResourceSync: {types.PermissionSyncRun, types.PermissionSyncDelete, types.PermissionSyncRead},
 }
 
@@ -174,23 +255,19 @@ func validatePermission(perm types.RBACPermission) error {
 // resolvedRole is a role with hierarchy and implications resolved into fast
 // lookup structures at config update time
 type resolvedRole struct {
-	exact    map[types.RBACPermission]bool // exact permission names, implications expanded
-	globs    []string                      // glob pattern entries, matched only on exact miss
-	matchAll bool                          // built-in admin role: matches every permission
+	exact map[types.RBACPermission]bool // exact permission names, implications expanded
+	globs []string                      // glob pattern entries, matched only on exact miss
 }
 
-// matches reports whether the role grants perm. app:approve is only ever matched
-// by its literal name (or the built-in admin role), never by glob entries. custom:
-// permissions are matched by glob entries only when the pattern itself has the
-// custom: prefix
+// matches reports whether the role grants perm. approve and the admin
+// super-user permission are only ever matched by their literal names, never by
+// glob entries. custom: permissions are matched by glob entries only when the
+// pattern itself has the custom: prefix
 func (r *resolvedRole) matches(perm types.RBACPermission) bool {
-	if r.matchAll {
-		return true
-	}
 	if r.exact[perm] {
 		return true
 	}
-	if perm == types.PermissionApprove {
+	if perm == types.PermissionApprove || perm == types.PermissionAdmin {
 		return false
 	}
 	permStr := string(perm)

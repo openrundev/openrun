@@ -102,12 +102,11 @@ func (s *Server) enforceGlobalPerm(ctx context.Context, perm types.RBACPermissio
 	return nil
 }
 
-// enforceGlobalApprove requires app:approve granted on all apps (target "all").
-// Used when an approve flag is set on an operation whose app set is open ended
-// (sync entries apply to apps matching a glob, including future apps)
+// enforceGlobalApprove requires the global approve permission (granted with
+// target "all"). approve is a global permission, so this is a plain global
+// check; kept as a named helper for the approve-flag call sites
 func (s *Server) enforceGlobalApprove(ctx context.Context) error {
-	// The empty app path domain only matches grant targets that cover all apps
-	return s.enforceAppPerm(ctx, types.PermissionApprove, types.AppPathDomain{}, "")
+	return s.enforceGlobalPerm(ctx, types.PermissionApprove, "")
 }
 
 // stagedUpdatePerms maps the StagedUpdate op name to the required permission

@@ -1,5 +1,7 @@
-# Builder sandbox for Claude Code, bridged to ACP via Zed's official
-# claude-code-acp adapter.
+# Builder sandbox for Claude, bridged to ACP via the official
+# claude-agent-acp adapter (agentclientprotocol org, successor to Zed's
+# claude-code-acp). The adapter bundles the Claude Agent SDK runtime, so no
+# separate claude-code install is needed.
 FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -20,9 +22,7 @@ RUN install -dm 755 /etc/apt/keyrings \
     && rm -rf /var/lib/apt/lists/*
 ENV PATH="/root/.local/share/mise/shims:$PATH"
 
-ARG CLAUDE_CODE_VERSION=latest
 ARG CLAUDE_ACP_VERSION=latest
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
-    @zed-industries/claude-code-acp@${CLAUDE_ACP_VERSION}
+RUN npm install -g @agentclientprotocol/claude-agent-acp@${CLAUDE_ACP_VERSION}
 
 WORKDIR /workspace
