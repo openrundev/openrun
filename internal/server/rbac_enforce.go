@@ -12,11 +12,11 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-// RBAC enforcement for the management APIs. Enforcement is active only when the
-// RBAC config is enabled AND the calling app has rbac: auth (the RBAC_ENABLED
-// context bool, computed once per request in authenticateAndServeApp). All API
-// calls made over the unix socket or with admin over TCP have no app context and
-// are never enforced. The operation to permission mapping is documented in
+// RBAC enforcement for the management APIs. Enforcement is active whenever the
+// RBAC config is enabled - it then applies to every app (the RBAC_ENABLED context
+// bool, computed once per request in authenticateAndServeApp). All API calls made
+// over the unix socket or with admin over TCP have no app context and are never
+// enforced. The operation to permission mapping is documented in
 // design/rbac-api-design.md.
 //
 // App scoped operations resolve stage/preview apps to the main app path and pass
@@ -24,12 +24,18 @@ import (
 // operations (sync, service, binding, config, server) have no app target and
 // require a grant targeting all apps, or ownership of the specific entry.
 
-// rbacDenied builds the 403 error returned on an RBAC authorization failure
+// rbacDenied builds the 403 error returned on an RBAC authorization failure.
+// Denials during a sync run name the sync entry, so the sync status error
+// identifies which entry's frozen creator authorization was insufficient
 func (s *Server) rbacDenied(ctx context.Context, perm types.RBACPermission, target string) error {
 	userId := system.GetContextUserId(ctx)
-	s.Warn().Msgf("RBAC denied: user %s does not have %s on %s", userId, perm, target)
+	syncMsg := ""
+	if syncId := system.GetContextValue(ctx, types.SYNC_ID); syncId != "" {
+		syncMsg = fmt.Sprintf(" (sync %s)", syncId)
+	}
+	s.Warn().Msgf("RBAC denied: user %s does not have %s on %s%s", userId, perm, target, syncMsg)
 	return types.CreateRequestError(
-		fmt.Sprintf("unauthorized: user %s does not have permission %s on %s", userId, perm, target),
+		fmt.Sprintf("unauthorized: user %s does not have permission %s on %s%s", userId, perm, target, syncMsg),
 		http.StatusForbidden)
 }
 

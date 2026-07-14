@@ -26,6 +26,12 @@ func CreateDevModeTestApp(logger *types.Logger, fileData map[string]string) (*ap
 	return CreateTestAppInt(logger, "/test", "", fileData, true, nil, nil, nil, "app_dev_testapp", types.AppSettings{}, nil, nil, nil)
 }
 
+func CreateDevModeTestAppServerConfig(logger *types.Logger, fileData map[string]string,
+	serverConfig *types.ServerConfig) (*app.App, *appfs.WorkFs, error) {
+	return createTestAppFull(logger, "/test", "", fileData, true, nil, nil, nil, "app_dev_testapp",
+		types.AppSettings{}, nil, nil, nil, testSystemConfig(), serverConfig)
+}
+
 func CreateDevModeTestAppTailwindVersion(logger *types.Logger, fileData map[string]string, tailwindVersion int) (*app.App, *appfs.WorkFs, error) {
 	systemConfig := testSystemConfig()
 	systemConfig.TailwindVersion = tailwindVersion
@@ -55,6 +61,12 @@ func CreateTestAppRoot(logger *types.Logger, fileData map[string]string) (*app.A
 func CreateTestAppPlugin(logger *types.Logger, fileData map[string]string,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings) (*app.App, *appfs.WorkFs, error) {
 	return CreateTestAppInt(logger, "/test", "", fileData, false, plugins, permissions, pluginConfig, "app_prd_testapp", types.AppSettings{}, nil, nil, nil)
+}
+
+func CreateTestAppPluginServerConfig(logger *types.Logger, fileData map[string]string,
+	plugins []string, permissions []types.Permission, serverConfig *types.ServerConfig) (*app.App, *appfs.WorkFs, error) {
+	return createTestAppFull(logger, "/test", "", fileData, false, plugins, permissions, nil,
+		"app_prd_testapp", types.AppSettings{}, nil, nil, nil, testSystemConfig(), serverConfig)
 }
 
 func CreateTestAppPluginConfig(logger *types.Logger, fileData map[string]string,
@@ -103,6 +115,14 @@ func CreateTestAppIntSystemConfig(logger *types.Logger, path, domain string, fil
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings,
 	id string, settings types.AppSettings, params map[string]string, appConfig *types.AppConfig,
 	rbacApi rbac.RBACAPI, systemConfig types.SystemConfig) (*app.App, *appfs.WorkFs, error) {
+	return createTestAppFull(logger, path, domain, fileData, isDev, plugins, permissions, pluginConfig,
+		id, settings, params, appConfig, rbacApi, systemConfig, &types.ServerConfig{})
+}
+
+func createTestAppFull(logger *types.Logger, path, domain string, fileData map[string]string, isDev bool,
+	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings,
+	id string, settings types.AppSettings, params map[string]string, appConfig *types.AppConfig,
+	rbacApi rbac.RBACAPI, systemConfig types.SystemConfig, serverConfig *types.ServerConfig) (*app.App, *appfs.WorkFs, error) {
 	var fs appfs.ReadableFS
 	if isDev {
 		fs = &TestWriteFS{TestReadFS: &TestReadFS{fileData: fileData}}
@@ -145,7 +165,7 @@ func CreateTestAppIntSystemConfig(logger *types.Logger, path, domain string, fil
 	workFS := appfs.NewWorkFs("", &TestWriteFS{TestReadFS: &TestReadFS{fileData: map[string]string{}}})
 	a, err := app.NewApp(sourceFS, workFS, logger,
 		createTestAppEntry(id, path, domain, isDev, metadata), &systemConfig, pluginConfig, *appConfig,
-		nil, secretManager.AppEvalTemplate, nil, &types.ServerConfig{}, rbacApi, []*types.Binding{})
+		nil, secretManager.AppEvalTemplate, nil, serverConfig, rbacApi, []*types.Binding{})
 	if err != nil {
 		return nil, nil, err
 	}

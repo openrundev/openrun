@@ -5,6 +5,7 @@ package rbac
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -18,8 +19,9 @@ import (
 // holds the "admin" permission, which bypasses every check). Permissions are
 // expanded through the normal implication rules (app:manage -> all app perms,
 // app:update -> reload/apply/read). openrun-builder composes openrun-developer.
-// A role mixes app-scoped and global permissions; the global ones only take
-// effect when the grant targets all apps (see the RBAC docs on scope)
+// A role mixes scoped (app:*) and global permissions; the scoped ones
+// apply to the grant's target apps, the global ones apply regardless of targets
+// (see the RBAC docs on scope)
 var predefinedRoles = map[string][]types.RBACPermission{
 	// Full super-user (bypasses every check). Equivalent to the built-in
 	// admin role; provided under the openrun- naming for discoverability
@@ -41,8 +43,9 @@ var predefinedRoles = map[string][]types.RBACPermission{
 	},
 
 	// App lifecycle and supporting resources, minus operator-only controls
-	// (no approve, config, secret reveal/delete, server stop, sync
-	// create/delete, container manage, builder)
+	// (no approve, full config, secret reveal/delete, server stop, sync
+	// create/delete, container manage, builder). Gets config:basic_read so the
+	// app create/update forms can list specs and auth/git-auth entry names.
 	"openrun-developer": {
 		types.PermissionAppManage,
 		types.PermissionServiceCreate, types.PermissionServiceUpdate, types.PermissionServiceRead,
@@ -50,7 +53,7 @@ var predefinedRoles = map[string][]types.RBACPermission{
 		types.PermissionContainerRead,
 		types.PermissionSyncRun, types.PermissionSyncRead,
 		types.PermissionSecretCreate, types.PermissionSecretRead,
-		types.PermissionAuditRead,
+		types.PermissionConfigBasicRead,
 	},
 
 	// A developer who also gets the AI app builder
@@ -100,7 +103,7 @@ const (
 	ResourceSync = "sync"
 )
 
-// appPermissions are all app scoped permissions
+// appPermissions are the app (app:*) scoped permissions
 var appPermissions = []types.RBACPermission{
 	types.PermissionAccess,
 	types.PermissionRead,
@@ -116,9 +119,27 @@ var appPermissions = []types.RBACPermission{
 	types.PermissionAppManage,
 }
 
-// globalPermissions are permissions with no app path target. Grants confer these
-// only when the grant targets include all apps ("all" or "*:**")
+// scopedPermissions are matched against the grant's target glob (the app path).
+// These are the app:* permissions. App-level custom permissions are scoped too,
+// handled via the isAppLevelPermission flag in checkGrant. Every permission not
+// in this set is global: a grant confers it regardless of its targets.
+var scopedPermissions = func() map[types.RBACPermission]bool {
+	perms := make(map[types.RBACPermission]bool, len(appPermissions))
+	for _, p := range appPermissions {
+		perms[p] = true
+	}
+	return perms
+}()
+
+// globalPermissions are the permissions with no app path target: a grant confers
+// them regardless of its targets. Everything except app:*. The builder:*
+// permissions are global (a builder session is not bound to an app path until
+// it publishes); the app the session publishes or edits is separately enforced
+// with the app permissions (app:create/app:update/app:delete) on that path.
 var globalPermissions = map[types.RBACPermission]bool{
+	types.PermissionBuilderList:       true,
+	types.PermissionBuilderCreate:     true,
+	types.PermissionBuilderPublish:    true,
 	types.PermissionSyncCreate:        true,
 	types.PermissionSyncRun:           true,
 	types.PermissionSyncDelete:        true,
@@ -134,6 +155,7 @@ var globalPermissions = map[types.RBACPermission]bool{
 	types.PermissionBindingRunCommand: true,
 	types.PermissionContainerRead:     true,
 	types.PermissionContainerManage:   true,
+	types.PermissionConfigBasicRead:   true,
 	types.PermissionConfigRead:        true,
 	types.PermissionConfigUpdate:      true,
 	types.PermissionServerStop:        true,
@@ -142,9 +164,6 @@ var globalPermissions = map[types.RBACPermission]bool{
 	types.PermissionSecretRead:        true,
 	types.PermissionSecretDelete:      true,
 	types.PermissionSecretReveal:      true,
-	types.PermissionBuilderList:       true,
-	types.PermissionBuilderCreate:     true,
-	types.PermissionBuilderPublish:    true,
 	types.PermissionApprove:           true,
 	types.PermissionAdmin:             true,
 }
@@ -198,6 +217,7 @@ var permissionImplications = map[types.RBACPermission][]types.RBACPermission{
 	types.PermissionUpdate:          {types.PermissionReload, types.PermissionApply, types.PermissionRead},
 	types.PermissionAppManage:       appManagePermissions,
 	types.PermissionContainerManage: {types.PermissionContainerRead},
+	types.PermissionConfigRead:      {types.PermissionConfigBasicRead},
 }
 
 // defaultOwnerPermissions are the permissions the creator of an asset gets on that
@@ -283,6 +303,22 @@ func (r *resolvedRole) matches(perm types.RBACPermission) bool {
 	return false
 }
 
+// permissions returns the role's entries in serializable form: sorted exact
+// permission names (implications already expanded) plus the glob entries.
+// Rebuilding with newResolvedRole yields identical matching, since
+// expandImplications is idempotent over an already expanded set
+func (r *resolvedRole) permissions() []types.RBACPermission {
+	perms := make([]types.RBACPermission, 0, len(r.exact)+len(r.globs))
+	for perm := range r.exact {
+		perms = append(perms, perm)
+	}
+	slices.Sort(perms)
+	for _, glob := range r.globs {
+		perms = append(perms, types.RBACPermission(glob))
+	}
+	return perms
+}
+
 func newResolvedRole(perms []types.RBACPermission) *resolvedRole {
 	exact := make([]types.RBACPermission, 0, len(perms))
 	globs := make([]string, 0)
@@ -313,12 +349,6 @@ var allPermissionNames = func() []string {
 	}
 	return perms
 }()
-
-// isGlobalTarget reports whether a grant target matches everything, which is the
-// requirement for global (non app path) permissions
-func isGlobalTarget(target string) bool {
-	return target == "" || strings.EqualFold(target, "all") || target == "*:**"
-}
 
 // PermissionResource returns the resource part of a permission name (app, sync, ...)
 func PermissionResource(perm types.RBACPermission) string {

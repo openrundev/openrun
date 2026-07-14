@@ -382,9 +382,11 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		allAppsMap[appInfo.AppPathDomain] = appInfo
 	}
 
-	// app:apply gates the whole declarative apply, for every affected app path,
-	// including apps the plan would create. approve additionally needs approve
-	// and promote additionally needs app:promote
+	// app:apply gates the app side of the declarative apply, for every affected
+	// app path, including apps the plan would create. approve additionally needs
+	// approve and promote additionally needs app:promote. Bindings declared in
+	// the apply file are enforced separately below (binding:create/binding:update),
+	// with the same authority the direct binding APIs require
 	if s.rbacManager.APIEnforced(ctx) {
 		for _, appPath := range filteredApps {
 			owner := ""
@@ -449,6 +451,23 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 				return nil, nil, fmt.Errorf("binding %s already exists with different source: %s", bindingPath, bindingInfo.Source)
 			}
 			updatedBindings = append(updatedBindings, bindingPath)
+		}
+	}
+
+	// Bindings in the apply file need the same authority as the direct binding
+	// APIs: binding:create for new bindings, binding:update for declared existing
+	// ones (updates and promotes). app:apply does not cover bindings, and this
+	// must be checked even when the apply has no matching apps
+	if s.rbacManager.APIEnforced(ctx) {
+		if len(newBindings) > 0 {
+			if err := s.enforceGlobalPerm(ctx, types.PermissionBindingCreate, ""); err != nil {
+				return nil, nil, err
+			}
+		}
+		if len(updatedBindings) > 0 {
+			if err := s.enforceGlobalPerm(ctx, types.PermissionBindingUpdate, ""); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 

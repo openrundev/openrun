@@ -11,8 +11,6 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-func boolPtr(v bool) *bool { return &v }
-
 func forceTestManager(t *testing.T, config *types.RBACConfig) *RBACManager {
 	t.Helper()
 	manager, err := NewRBACHandler(testutil.TestLogger(), config, &types.ServerConfig{
@@ -24,14 +22,11 @@ func forceTestManager(t *testing.T, config *types.RBACConfig) *RBACManager {
 	return manager
 }
 
-func appAuthCtx(auth string) context.Context {
-	return context.WithValue(context.Background(), types.APP_AUTH, types.AppAuthnType(auth))
-}
-
-// TestForceRBACDefault verifies that with RBAC enabled and
-// force_rbac_when_enabled unset (the default), every app is enforced as if
-// its auth carried the rbac: prefix
-func TestForceRBACDefault(t *testing.T) {
+// TestRBACAppliesToAllApps verifies that when RBAC is enabled it applies to
+// every app: authorization does not consider the app's auth setting at all
+// (the rbac: prefix has no special effect). A user with no grant is denied,
+// a granted user passes.
+func TestRBACAppliesToAllApps(t *testing.T) {
 	t.Parallel()
 
 	config := &types.RBACConfig{
@@ -41,96 +36,46 @@ func TestForceRBACDefault(t *testing.T) {
 			{Users: []string{"granted"}, Roles: []string{"access"}, Targets: []string{"all"}},
 		},
 	}
-	if !config.ForceRBAC() {
-		t.Fatal("ForceRBAC must default to true when the field is unset")
-	}
 	manager := forceTestManager(t, config)
 
-	// An app WITHOUT the rbac: prefix is enforced: no grant means no access
-	allowed, err := manager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test"}, "none",
+	allowed, err := manager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test"},
 		types.PermissionAccess, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if allowed {
-		t.Fatal("force on: non-prefixed app auth must be enforced (user without grant denied)")
+		t.Fatal("ungranted user must be denied when RBAC is enabled")
 	}
 
-	// A granted user passes
-	allowed, err = manager.AuthorizeInt("granted", types.AppPathDomain{Path: "/test"}, "none",
+	allowed, err = manager.AuthorizeInt("granted", types.AppPathDomain{Path: "/test"},
 		types.PermissionAccess, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !allowed {
-		t.Fatal("force on: granted user must be authorized on a non-prefixed app")
+		t.Fatal("granted user must be authorized")
 	}
 
-	// The request-setup check treats non-prefixed auth as rbac enabled
-	if !manager.IsAppRBACEnabled(appAuthCtx("none")) {
-		t.Fatal("force on: IsAppRBACEnabled must be true for non-prefixed app auth")
-	}
-	if !manager.IsAppRBACEnabled(appAuthCtx("rbac:none")) {
-		t.Fatal("force on: IsAppRBACEnabled must be true for prefixed app auth")
+	if !manager.IsAppRBACEnabled(context.Background()) {
+		t.Fatal("IsAppRBACEnabled must be true when RBAC is enabled")
 	}
 }
 
-// TestForceRBACOff verifies the legacy behavior when the flag is set to
-// false: only apps whose auth carries the rbac: prefix are enforced
-func TestForceRBACOff(t *testing.T) {
+// TestRBACDisabledAuthorizesAll verifies that a disabled config authorizes
+// everything and reports IsAppRBACEnabled false
+func TestRBACDisabledAuthorizesAll(t *testing.T) {
 	t.Parallel()
 
-	config := &types.RBACConfig{
-		Enabled:              true,
-		ForceRBACWhenEnabled: boolPtr(false),
-	}
-	manager := forceTestManager(t, config)
-
-	// Non-prefixed app auth is not enforced: access allowed without grants
-	allowed, err := manager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test"}, "none",
+	manager := forceTestManager(t, &types.RBACConfig{Enabled: false})
+	allowed, err := manager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test"},
 		types.PermissionAccess, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !allowed {
-		t.Fatal("force off: non-prefixed app auth must not be enforced")
+		t.Fatal("disabled rbac must authorize")
 	}
-
-	// Prefixed app auth is enforced: no grant means no access
-	allowed, err = manager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test"}, "rbac:none",
-		types.PermissionAccess, nil, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if allowed {
-		t.Fatal("force off: prefixed app auth must be enforced (user without grant denied)")
-	}
-
-	if manager.IsAppRBACEnabled(appAuthCtx("none")) {
-		t.Fatal("force off: IsAppRBACEnabled must be false for non-prefixed app auth")
-	}
-	if !manager.IsAppRBACEnabled(appAuthCtx("rbac:none")) {
-		t.Fatal("force off: IsAppRBACEnabled must be true for prefixed app auth")
-	}
-}
-
-// TestForceRBACDisabledConfig verifies the flag has no effect while RBAC is
-// disabled
-func TestForceRBACDisabledConfig(t *testing.T) {
-	t.Parallel()
-
-	for _, force := range []*bool{nil, boolPtr(true), boolPtr(false)} {
-		manager := forceTestManager(t, &types.RBACConfig{Enabled: false, ForceRBACWhenEnabled: force})
-		allowed, err := manager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test"}, "none",
-			types.PermissionAccess, nil, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !allowed {
-			t.Fatal("disabled rbac must authorize regardless of the force flag")
-		}
-		if manager.IsAppRBACEnabled(appAuthCtx("none")) {
-			t.Fatal("disabled rbac: IsAppRBACEnabled must be false")
-		}
+	if manager.IsAppRBACEnabled(context.Background()) {
+		t.Fatal("disabled rbac IsAppRBACEnabled must be false")
 	}
 }

@@ -67,8 +67,22 @@ const (
 	GROUPS          ContextKey = "groups"
 	RBAC_ENABLED    ContextKey = "rbac_enabled"
 	CUSTOM_PERMS    ContextKey = "custom_perms"
-	SYNC_ID         ContextKey = "sync_id"         // id of the sync entry driving the current apply
-	APPLY_OPERATION ContextKey = "apply_operation" // set when the current operation is a declarative apply
+	// TESTURL_DIRECTIVES holds the parsed _cl_ test URL directives
+	// (rbac.UrlDirectives) for dev app requests when security.unsafe_enable_testurl_rbac
+	// is set. Never present on prod app or management API requests.
+	TESTURL_DIRECTIVES ContextKey = "testurl_directives"
+	SYNC_ID            ContextKey = "sync_id"         // id of the sync entry driving the current apply
+	APPLY_OPERATION    ContextKey = "apply_operation" // set when the current operation is a declarative apply
+	// SYNC_RBAC holds the frozen creator authorization (rbac.SyncAuthorizer) for
+	// background sync runs. Set only when the sync entry carries an RBAC snapshot
+	// and RBAC is enabled; never present on interactive requests.
+	SYNC_RBAC ContextKey = "sync_rbac"
+	// TRUSTED_OPERATION marks a context as a trusted administrative path:
+	// authenticated admin/UDS management API requests, token authenticated
+	// webhooks and internal background operations. RBAC enforcement fails
+	// CLOSED for contexts that carry neither this nor an enforcement marker,
+	// so a context propagation bug denies instead of silently running as admin
+	TRUSTED_OPERATION ContextKey = "trusted_operation"
 )
 
 const (
@@ -423,6 +437,19 @@ type SecurityConfig struct {
 	// recommended; dev-only escape hatch (e.g. codex using the host login
 	// instead of an API key)
 	UnsafeAgentWithoutSandbox bool `toml:"unsafe_agent_without_sandbox"`
+
+	// UnsafeEnableTestUrlRbac allows _cl_perm= and _cl_role= URL path directives on
+	// dev mode apps with none auth, simulating RBAC permissions/roles for
+	// testing. Off by default.
+	UnsafeEnableTestUrlRbac bool `toml:"unsafe_enable_testurl_rbac"`
+
+	// UnsafeAllowSystemPluginsAnon allows anonymous (unauthenticated) callers to
+	// invoke the privileged system plugins (openrun_admin, build). By default
+	// these plugins require an authenticated user regardless of RBAC status, so
+	// a console app accidentally served with none auth cannot perform admin or
+	// builder operations. The read-only openrun plugin is never gated. Enabling
+	// this is dev-only (e.g. the console running with none auth).
+	UnsafeAllowSystemPluginsAnon bool `toml:"unsafe_allow_system_plugins_anon"`
 }
 
 // MetadataConfig is the configuration for the Metadata persistence layer
@@ -564,7 +591,6 @@ type ForwardConfig struct {
 // PermissionsConfig is the permissions configuration for the server. This overrides the permissions configured in the app metadata.
 type PermissionsConfig struct {
 	Allow              []Permission `toml:"allow"`                // the permissions that are allowed for all apps, without requiring explicit approval
-	FullAccess         []string     `toml:"full_access"`          // the apps that have full access to all plugins
 	BindingSourcePerms []string     `toml:"binding_source_perms"` // the binding sources that are allowed for all apps, without requiring explicit approval
 	// supports a regex for the binding path, like "regex:/appdata/.*"
 }
@@ -963,6 +989,28 @@ type SyncEntry struct {
 	Status      SyncJobStatus `json:"status"`
 }
 
+// RBACSnapshot freezes the sync creator's RBAC authorization at sync create
+// time: the grants whose Users matched the creator (group membership, including
+// SSO context groups, resolved at create time), with role permissions flattened.
+// Background sync runs are authorized against this snapshot, so later role,
+// group or grant edits do not change what an existing sync entry may do. Nil
+// when the create call was not RBAC enforced; such syncs run unrestricted.
+type RBACSnapshot struct {
+	UserId           string                      `json:"user_id"`
+	Admin            bool                        `json:"admin,omitempty"` // creator held the admin super-user permission; Grants is empty
+	Grants           []RBACSnapshotGrant         `json:"grants,omitempty"`
+	OwnerPermissions map[string][]RBACPermission `json:"owner_permissions,omitempty"` // resource -> perms, for the owner virtual grant
+}
+
+// RBACSnapshotGrant is one grant that matched the creator, with the referenced
+// roles flattened into their permission entries (exact permissions with
+// implications expanded, glob and custom: entries preserved)
+type RBACSnapshotGrant struct {
+	Description string           `json:"description,omitempty"`
+	Permissions []RBACPermission `json:"permissions"`
+	Targets     []string         `json:"targets"`
+}
+
 type SyncMetadata struct {
 	GitBranch string `json:"git_branch"` // the git branch to sync from
 	GitAuth   string `json:"git_auth"`   // the git auth entry to use for the sync
@@ -977,6 +1025,8 @@ type SyncMetadata struct {
 	WebhookUrl        string `json:"webhook_url"`        // for webhook : the url to use
 	WebhookSecret     string `json:"webhook_secret"`     // for webhook : the secret to use
 	ScheduleFrequency int    `json:"schedule_frequency"` // for scheduled: the frequency of the sync, every N minutes
+
+	RBAC *RBACSnapshot `json:"rbac,omitempty"` // creator authorization frozen at create time, nil means unrestricted
 }
 
 type SyncJobStatus struct {
@@ -1083,29 +1133,16 @@ type ConfigHistoryEntry struct {
 }
 
 type RBACConfig struct {
-	Enabled bool                        `json:"enabled"` // whether rbac is enabled
+	Enabled bool                        `json:"enabled"` // whether rbac is enabled. When enabled, RBAC applies to every app
 	Groups  map[string][]string         `json:"groups"`  // groups names to user ids. These groups are appended to the groups info from SAML
 	Roles   map[string][]RBACPermission `json:"roles"`   // role names to permissions.
 	Grants  []RBACGrant                 `json:"grants"`  // grants are used to grant permissions to users/groups for specific apps
-
-	// ForceRBACWhenEnabled applies RBAC to every app when RBAC is enabled,
-	// as if all app auth strings carried the rbac: prefix. When false, only
-	// apps whose auth has the rbac: prefix are enforced (the pre-flag
-	// behavior). A pointer so configs saved before this field keep the
-	// default (true); use ForceRBAC() to read
-	ForceRBACWhenEnabled *bool `json:"force_rbac_when_enabled,omitempty"`
 
 	// OwnerPermissions overrides the default permissions granted to the creator of an
 	// asset. Keys are resource names (app, sync); values are the permissions the owner
 	// gets on assets they created. Missing key means the built-in default; an empty
 	// list disables the owner rule for that resource. approve is not allowed.
 	OwnerPermissions map[string][]RBACPermission `json:"owner_permissions,omitempty"`
-}
-
-// ForceRBAC reports the effective ForceRBACWhenEnabled value: unset (configs
-// saved before the field existed and fresh configs) defaults to true
-func (c *RBACConfig) ForceRBAC() bool {
-	return c.ForceRBACWhenEnabled == nil || *c.ForceRBACWhenEnabled
 }
 
 type RBACGrant struct {
@@ -1123,14 +1160,13 @@ type RBACPermission string
 // permissions or permission globs; it has to be granted by its literal name (or via
 // the built-in admin role).
 const (
-	PermissionAccess      RBACPermission = "app:access"       // access the served app (rbac: auth prefix apps)
+	PermissionAccess      RBACPermission = "app:access"       // access the served app (checked for every app when RBAC is enabled)
 	PermissionRead        RBACPermission = "app:read"         // list apps, get app details, list versions/files
 	PermissionCreate      RBACPermission = "app:create"       // create app
 	PermissionUpdate      RBACPermission = "app:update"       // settings/metadata/links/params/version switch
 	PermissionReload      RBACPermission = "app:reload"       // reload apps
 	PermissionApply       RBACPermission = "app:apply"        // declarative apply
 	PermissionDelete      RBACPermission = "app:delete"       // delete apps
-	PermissionApprove     RBACPermission = "approve"          // approve plugin permissions (operator-only, global)
 	PermissionPromote     RBACPermission = "app:promote"      // promote staging to prod
 	PermissionPreview     RBACPermission = "app:preview"      // create preview apps
 	PermissionTokenRead   RBACPermission = "app:token_read"   // list webhook tokens
@@ -1156,10 +1192,11 @@ const (
 	PermissionContainerRead   RBACPermission = "container:read"   // list containers, get container details/logs/stats
 	PermissionContainerManage RBACPermission = "container:manage" // start/stop managed containers
 
-	PermissionConfigRead   RBACPermission = "config:read"
-	PermissionConfigUpdate RBACPermission = "config:update"
-	PermissionServerStop   RBACPermission = "server:stop"
-	PermissionAuditRead    RBACPermission = "audit:read" // read the audit log across all apps
+	PermissionConfigBasicRead RBACPermission = "config:basic_read" // read non-sensitive config metadata (auth/git-auth entry names, specs, permission catalog); implied by config:read
+	PermissionConfigRead      RBACPermission = "config:read"
+	PermissionConfigUpdate    RBACPermission = "config:update"
+	PermissionServerStop      RBACPermission = "server:stop"
+	PermissionAuditRead       RBACPermission = "audit:read" // read the audit log across all apps
 
 	PermissionSecretCreate RBACPermission = "secret:create" // create/update secrets, rekey the store
 	PermissionSecretRead   RBACPermission = "secret:read"   // list secrets, get secret metadata (not values)
@@ -1175,7 +1212,8 @@ const (
 	// The "admin" user holds it implicitly; other users acquire it through a
 	// grant of the literal permission (or the built-in admin role). Like
 	// approve it is never matched by permission globs
-	PermissionAdmin RBACPermission = "admin"
+	PermissionAdmin   RBACPermission = "admin"
+	PermissionApprove RBACPermission = "approve" // approve plugin permissions (operator-only, global)
 )
 
 // RBACPermissionGroup lists the permissions for one resource type, in display order
@@ -1204,7 +1242,7 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 	{Resource: "container", Permissions: []RBACPermission{
 		PermissionContainerRead, PermissionContainerManage}},
 	{Resource: "config", Permissions: []RBACPermission{
-		PermissionConfigRead, PermissionConfigUpdate}},
+		PermissionConfigBasicRead, PermissionConfigRead, PermissionConfigUpdate}},
 	{Resource: "secret", Permissions: []RBACPermission{
 		PermissionSecretCreate, PermissionSecretRead, PermissionSecretDelete,
 		PermissionSecretReveal}},

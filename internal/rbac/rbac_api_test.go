@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -31,6 +32,12 @@ func enforcedCtx(user string, groups ...string) context.Context {
 	ctx = context.WithValue(ctx, types.USER_ID, user)
 	ctx = context.WithValue(ctx, types.GROUPS, groups)
 	return ctx
+}
+
+// trustedCtx models an authenticated admin/UDS management API call: marked as
+// a trusted operation, never enforced
+func trustedCtx() context.Context {
+	return system.WithTrustedOperation(context.Background())
 }
 
 func testTarget() types.AppPathDomain {
@@ -57,11 +64,16 @@ func TestAuthorizeAPIGating(t *testing.T) {
 		ctx     context.Context
 		allowed bool
 	}{
-		{"no app context - not enforced", context.Background(), true},
-		{"rbac_enabled false in context", context.WithValue(context.Background(), types.RBAC_ENABLED, false), true},
+		// RBAC enabled with no marker at all: fail closed (a context
+		// propagation bug must not run with admin authority)
+		{"unattributed context fails closed", context.Background(), false},
+		// The per-request enforcement state stays stable for the request even
+		// if a config publish enables RBAC mid-request
+		{"request-computed rbac off stays unenforced", context.WithValue(context.Background(), types.RBAC_ENABLED, false), true},
+		{"trusted operation - not enforced", trustedCtx(), true},
 		{"enforced - user with no grants denied", enforcedCtx("user1"), false},
 		{"enforced - admin always allowed", enforcedCtx(types.ADMIN_USER), true},
-		{"enforced - empty user treated as admin", enforcedCtx(""), true},
+		{"enforced - empty user fails closed", enforcedCtx(""), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -257,6 +269,7 @@ func TestPredefinedRoles(t *testing.T) {
 			{types.PermissionDelete, false, true}, // app:manage
 			{types.PermissionApprove, true, true}, // operator holds approve
 			{types.PermissionSecretReveal, true, true},
+			{types.PermissionConfigBasicRead, true, true}, // implied by config:read
 			{types.PermissionConfigUpdate, true, true},
 			{types.PermissionServerStop, true, true},
 			{types.PermissionBuilderCreate, true, true},
@@ -267,7 +280,10 @@ func TestPredefinedRoles(t *testing.T) {
 			{types.PermissionDelete, false, true},
 			{types.PermissionSecretCreate, true, true},
 			{types.PermissionSyncRun, true, true},
-			{types.PermissionApprove, true, false}, // operator-only
+			{types.PermissionConfigBasicRead, true, true}, // for the app create/update forms
+			{types.PermissionAuditRead, true, false},      // developer has no audit:read
+			{types.PermissionApprove, true, false},        // operator-only
+			{types.PermissionConfigRead, true, false},     // only basic_read, not full config:read
 			{types.PermissionConfigUpdate, true, false},
 			{types.PermissionSecretReveal, true, false},
 			{types.PermissionServerStop, true, false},
@@ -278,7 +294,8 @@ func TestPredefinedRoles(t *testing.T) {
 			{types.PermissionCreate, false, true},       // inherits developer app:manage
 			{types.PermissionBuilderCreate, true, true}, // plus builder
 			{types.PermissionBuilderPublish, true, true},
-			{types.PermissionSecretCreate, true, true}, // via developer
+			{types.PermissionSecretCreate, true, true},    // via developer
+			{types.PermissionConfigBasicRead, true, true}, // via developer
 			{types.PermissionApprove, true, false},
 			{types.PermissionConfigUpdate, true, false},
 		},
@@ -287,12 +304,14 @@ func TestPredefinedRoles(t *testing.T) {
 			{types.PermissionRead, false, true},
 			{types.PermissionCreate, false, false},
 			{types.PermissionDelete, false, false},
+			{types.PermissionConfigBasicRead, true, false},
 			{types.PermissionBuilderCreate, true, false},
 		},
 		"openrun-monitor": {
 			{types.PermissionRead, false, true},
 			{types.PermissionAuditRead, true, true},
 			{types.PermissionContainerRead, true, true},
+			{types.PermissionConfigBasicRead, true, true}, // implied by config:read
 			{types.PermissionConfigRead, true, true},
 			{types.PermissionSecretRead, true, true},
 			{types.PermissionCreate, false, false},
@@ -391,15 +410,15 @@ func TestAdminPermission(t *testing.T) {
 		t.Errorf("admin permission holder should hold all permissions, got %v", perms)
 	}
 
-	// admin is a global permission: a grant scoped to an app target does not
-	// confer it (and the superuser role carries nothing else)
+	// admin is a global permission: it is conferred regardless of the grant's
+	// target, so an app-targeted admin grant confers it globally too
 	allowed, err = manager.AuthorizeGlobalAPI(enforcedCtx("user2"), types.PermissionAdmin, "")
-	if err != nil || allowed {
-		t.Errorf("app-targeted admin grant must not confer the admin permission, got %v err %v", allowed, err)
+	if err != nil || !allowed {
+		t.Errorf("app-targeted admin grant should confer the admin permission, got %v err %v", allowed, err)
 	}
 	allowed, err = manager.AuthorizeAPI(enforcedCtx("user2"), types.PermissionDelete, testTarget(), "")
-	if err != nil || allowed {
-		t.Errorf("the admin permission implies nothing on non-global grants, got %v err %v", allowed, err)
+	if err != nil || !allowed {
+		t.Errorf("admin permission holder should pass every app check, got %v err %v", allowed, err)
 	}
 
 	// The admin user holds the admin permission implicitly, with no grants
@@ -531,10 +550,11 @@ func TestGlobalPermissionTargets(t *testing.T) {
 		t.Errorf("sync:create with all target should be allowed, got %v err %v", allowed, err)
 	}
 
-	// Global permission granted with a narrow target never applies
+	// Global permissions are conferred regardless of the grant's target, so a
+	// narrow app target still grants sync:create globally
 	allowed, err = manager.AuthorizeGlobalAPI(enforcedCtx("user2"), types.PermissionSyncCreate, "")
-	if err != nil || allowed {
-		t.Errorf("sync:create with narrow target must be denied, got %v err %v", allowed, err)
+	if err != nil || !allowed {
+		t.Errorf("sync:create with narrow target should still be allowed (global), got %v err %v", allowed, err)
 	}
 }
 
@@ -551,7 +571,8 @@ func TestContainerPermissions(t *testing.T) {
 			Roles: []string{"viewer"}, Targets: []string{"all"}},
 		types.RBACGrant{Description: "container operator", Users: []string{"user2"},
 			Roles: []string{"operator"}, Targets: []string{"all"}},
-		// user3: read granted with a narrow target, which never applies to a global permission
+		// user3: read granted with a narrow target; global permissions are
+		// conferred regardless of the target
 		types.RBACGrant{Description: "narrow container read", Users: []string{"user3"},
 			Roles: []string{"viewer"}, Targets: []string{"/test"}},
 	))
@@ -566,7 +587,7 @@ func TestContainerPermissions(t *testing.T) {
 		{"viewer lacks container:manage", "user1", types.PermissionContainerManage, false},
 		{"operator has container:manage", "user2", types.PermissionContainerManage, true},
 		{"container:manage implies container:read", "user2", types.PermissionContainerRead, true},
-		{"narrow target never grants global container:read", "user3", types.PermissionContainerRead, false},
+		{"narrow target still grants global container:read", "user3", types.PermissionContainerRead, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -606,10 +627,10 @@ func TestAuditReadPermission(t *testing.T) {
 		t.Errorf("audit:read without grant must be denied, got %v err %v", allowed, err)
 	}
 
-	// audit:read is global, a narrow target never confers it
+	// audit:read is global, conferred regardless of the grant's target
 	allowed, err = manager.AuthorizeGlobalAPI(enforcedCtx("user2"), types.PermissionAuditRead, "")
-	if err != nil || allowed {
-		t.Errorf("audit:read with narrow target must be denied, got %v err %v", allowed, err)
+	if err != nil || !allowed {
+		t.Errorf("audit:read with narrow target should still be allowed (global), got %v err %v", allowed, err)
 	}
 }
 
@@ -733,13 +754,22 @@ func TestGetAPIPermissions(t *testing.T) {
 			Roles: []string{"deployer"}, Targets: []string{"/test"}},
 	))
 
-	// Enforcement not active: all permissions
-	perms, err := manager.GetAPIPermissions(context.Background(), testTarget(), "")
+	// Trusted operation (admin/UDS call): all permissions
+	perms, err := manager.GetAPIPermissions(trustedCtx(), testTarget(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(perms) != len(allPermissionNames) {
-		t.Errorf("expected all permissions when not enforced, got %v", perms)
+		t.Errorf("expected all permissions for a trusted operation, got %v", perms)
+	}
+
+	// Unattributed context with RBAC enabled: fail closed, no permissions
+	perms, err = manager.GetAPIPermissions(context.Background(), testTarget(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(perms) != 0 {
+		t.Errorf("expected no permissions for an unattributed context, got %v", perms)
 	}
 
 	// Granted permissions on the target
@@ -764,6 +794,50 @@ func TestGetAPIPermissions(t *testing.T) {
 	if !slices.Contains(perms, string(types.PermissionDelete)) || !slices.Contains(perms, string(types.PermissionAccess)) {
 		t.Errorf("owner permissions should include app:delete and app:access, got %v", perms)
 	}
+
+	// Enforcement active with an empty user fails closed, consistent with
+	// AuthorizeAPI: no permissions are reported
+	perms, err = manager.GetAPIPermissions(enforcedCtx(""), testTarget(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(perms) != 0 {
+		t.Errorf("expected no permissions for empty user under enforcement, got %v", perms)
+	}
+}
+
+// TestBuilderPermsGlobal verifies builder:* permissions are global: a grant
+// confers them regardless of its targets (the published app path is separately
+// enforced with the app permissions), while the app:* permissions in the same
+// grant stay scoped to the target glob
+func TestBuilderPermsGlobal(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestManager(t, grantConfig(
+		map[string][]types.RBACPermission{},
+		types.RBACGrant{Description: "team builder", Users: []string{"user1"},
+			Roles: []string{"openrun-builder"}, Targets: []string{"/team/**"}},
+	))
+
+	for _, perm := range []types.RBACPermission{types.PermissionBuilderList,
+		types.PermissionBuilderCreate, types.PermissionBuilderPublish} {
+		allowed, err := manager.AuthorizeGlobalAPI(enforcedCtx("user1"), perm, "")
+		if err != nil || !allowed {
+			t.Errorf("%s should be granted globally regardless of targets, got %v err %v", perm, allowed, err)
+		}
+	}
+
+	// The app permissions in the same grant remain target scoped
+	allowed, err := manager.AuthorizeAPI(enforcedCtx("user1"), types.PermissionCreate,
+		types.AppPathDomain{Path: "/team/app1"}, "")
+	if err != nil || !allowed {
+		t.Errorf("app:create inside the target glob should be allowed, got %v err %v", allowed, err)
+	}
+	allowed, err = manager.AuthorizeAPI(enforcedCtx("user1"), types.PermissionCreate,
+		types.AppPathDomain{Path: "/other/app1"}, "")
+	if err != nil || allowed {
+		t.Errorf("app:create outside the target glob should be denied, got %v err %v", allowed, err)
+	}
 }
 
 func TestCustomPermissionGlobs(t *testing.T) {
@@ -781,14 +855,14 @@ func TestCustomPermissionGlobs(t *testing.T) {
 	))
 
 	// custom: glob matches custom (app level) permissions
-	allowed, err := manager.AuthorizeInt("user1", testTarget(), "rbac:test",
+	allowed, err := manager.AuthorizeInt("user1", testTarget(),
 		"action_run", []string{}, true)
 	if err != nil || !allowed {
 		t.Errorf("custom glob should match action_run, got %v err %v", allowed, err)
 	}
 
 	// app:* glob does not leak into custom permissions
-	allowed, err = manager.AuthorizeInt("user2", testTarget(), "rbac:test",
+	allowed, err = manager.AuthorizeInt("user2", testTarget(),
 		"action_run", []string{}, true)
 	if err != nil || allowed {
 		t.Errorf("app:* must not match custom permissions, got %v err %v", allowed, err)

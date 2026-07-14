@@ -49,7 +49,7 @@ Change to the `openrun` account by running `sudo su -l openrun`. Edit the openru
 [security]
 admin_password_bcrypt = "$2a$10$L5dzoAEZFKmpdXbbbFddkurIP639w2.fl49737kmxxxxxxxx" # CHANGEME Retain orig value
 callback_url = "https://apps.example.com" # CHANGEME: OAuth/OIDC/SAML callback URL prefix
-app_default_auth_type = "rbac:google" # Default auth for all apps, with rbac
+app_default_auth_type = "google" # Default auth for all apps
 default_git_auth = "githubpat" # Account used for all github access
 
 [system]
@@ -92,13 +92,13 @@ To set the RBAC config, change to the `openrun` account by running `sudo su -l o
   "rbac": {
     "enabled": true,
     "groups": {
-      "admin": ["me@example.com"],
-      "family": ["family1@example.com", "family2@example.com"],
-      "friends": ["group:family", "friend1@example.com", "friend2@example.com"]
+      "admin": ["google:me@example.com"],
+      "family": ["google:family1@example.com", "google:family2@example.com"],
+      "friends": ["group:family", "google:friend1@example.com", "google:friend2@example.com"]
     },
     "roles": {
-      "viewer": ["list", "access"],
-      "user": ["access"]
+      "viewer": ["app:read", "app:access"],
+      "user": ["app:access"]
     },
     "grants": [
       {
@@ -162,6 +162,6 @@ If this file is checked into the main branch in the `myuser/myrepo` repo, then r
 openrun sync schedule --minutes 1 --approve --promote github.com/myuser/myrepo/apps.star
 ```
 
-will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) which checks every minute for new updates to the file. If an app is created with `auth="google"`, instead of the default `auth="rbac:google"`, then anyone can access the app after Google login. If `auth="none"` is used, then no auth is required to access the app.
+will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) which checks every minute for new updates to the file. When RBAC is enabled it applies to every app: who can reach an app is controlled by the `app:access` grants, not by the app's auth type. To make an app available to everyone who can log in, add a grant like the `/shared/**` one with `"users": ["regex:.*"]`. If `auth="none"` is used, no login is required for the app, and with RBAC enabled the `anonymous` user needs an `app:access` grant on it.
 
 Any new apps declared will be automatically created. Any code changes in the repos referenced or config changes in the apps will also automatically be applied on the existing apps. No further manual updates are required on the machine. All updates can be done by just checking in changes into the declarative config - **Full GitOps CI/CD, in one command.**

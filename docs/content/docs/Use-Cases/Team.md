@@ -50,7 +50,7 @@ Change to the `openrun` account by running `sudo su -l openrun`. Edit the openru
 [security]
 admin_password_bcrypt = "$2a$10$L5dzoAEZFKmpdXbbbFddkurIP639w2.fl49737kmxxxxxxxx" # CHANGEME Retain orig value
 callback_url = "https://apps.example.com" # CHANGEME: OAuth/OIDC/SAML callback URL prefix
-app_default_auth_type = "rbac:oidc_okta" # Default auth for all apps, with rbac
+app_default_auth_type = "oidc_okta" # Default auth for all apps
 auth_required = true # Prevent unauthenticated apps from being served
 default_git_auth = "githubpat" # Account used for all GitHub access
 
@@ -102,8 +102,8 @@ To set the RBAC config, change to the `openrun` account by running `sudo su -l o
   "rbac": {
     "enabled": true,
     "roles": {
-      "viewer": ["list", "access"],
-      "user": ["access"]
+      "viewer": ["app:read", "app:access"],
+      "user": ["app:access"]
     },
     "grants": [
       {
@@ -123,6 +123,12 @@ To set the RBAC config, change to the `openrun` account by running `sudo su -l o
         "users": ["group:engineering"],
         "roles": ["viewer"],
         "targets": ["/engg/**"]
+      },
+      {
+        "description": "All logged in users can access the shared apps",
+        "users": ["regex:.*"],
+        "roles": ["user"],
+        "targets": ["/shared/**"]
       }
     ]
   }
@@ -148,7 +154,7 @@ In the `openrun.toml`, instead of the `[auth.oidc_okta]` section, add a section 
 metadata_url = "https://integrator-336XXXXX.okta.com/app/exkvzxe13XXXXX/sso/saml/metadata" # CHANGEME
 ```
 
-and for `app_default_auth_type`, set the value to `rbac:saml_okta_test`. The IdP has to be configures to provide the group information under the `groups` attribute.
+and for `app_default_auth_type`, set the value to `saml_okta_test`. The IdP has to be configures to provide the group information under the `groups` attribute.
 
 For both OIDC and SAML, in addition to the group info coming from the IdP, additional groups can be defined in the OpenRun RBAC config. The user names would have to be provided in the RBAC config, prefixed with the provider name, like `oidc_okta:user1@example.com` or `saml_okta_test:user1@example.com`.
 
@@ -174,8 +180,8 @@ limits = {"cpus": "2", "memory": "512m"} # Set limits (optional)
 app("/engg/streamlit_example", "github.com/streamlit/streamlit-example", git_branch="master",
     spec="python-streamlit", container_opts=limits)
 
-# shared apps, use auth=oidc_okta instead of default rbac:oidc_okta, so accessible to all logged in users
-app("/shared/dictionary", "github.com/openrundev/apps/misc/dictionary", auth="oidc_okta")
+# shared apps: the RBAC grant on /shared/** makes these accessible to all logged in users
+app("/shared/dictionary", "github.com/openrundev/apps/misc/dictionary")
 ```
 
 If this file is checked into the main branch in the `myorg/myrepo` repo, then running a command like
@@ -184,6 +190,6 @@ If this file is checked into the main branch in the `myorg/myrepo` repo, then ru
 openrun sync schedule --minutes 1 --approve --promote github.com/myorg/myrepo/apps.star
 ```
 
-will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) which checks every minute for new updates to the file. Apps in /shared have `auth="oidc"`, instead of the default `auth="rbac:oidc_okta"`, so anyone can access the app after OIDC login. In this team setup, `auth_required = true` is enabled at the server level, so `auth="none"` apps are blocked from being served even if they are defined in app metadata.
+will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) which checks every minute for new updates to the file. When RBAC is enabled it applies to every app: who can reach an app is controlled by the `app:access` grants, not by the app's auth type. The grant on `/shared/**` makes those apps accessible to everyone who logs in via OIDC. In this team setup, `auth_required = true` is enabled at the server level, so `auth="none"` apps are blocked from being served even if they are defined in app metadata.
 
 Any new apps declared will be automatically created. Any code changes in the repos referenced or config changes in the apps will also automatically be applied on the existing apps. No further manual updates are required on the machine. All updates can be done by just checking in changes into the declarative config - **Full GitOps CI/CD, in one command.**

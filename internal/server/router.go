@@ -289,6 +289,13 @@ func (h *Handler) callApp(w http.ResponseWriter, r *http.Request) {
 	var serveApp *app.App
 	var err error
 	if !serveListApps {
+		newReq, dirErr := h.applyTestUrlDirectives(matchedApp, r)
+		if dirErr != nil {
+			h.Error().Err(dirErr).Str("path", r.URL.Path).Msg("Invalid _cl_ test url directive")
+			http.Error(w, dirErr.Error(), http.StatusBadRequest)
+			return
+		}
+		r = newReq
 		serveApp, err = h.server.GetApp(r.Context(), matchedApp.AppPathDomain, true)
 		if err != nil {
 			h.Error().Err(err).Str("path", r.URL.Path).Msg("Error getting app")
@@ -372,6 +379,12 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 			}
 		}
 	}
+
+	// The caller is the administrator: over UDS the unix file permissions
+	// authenticate, over TCP the admin/builder auth above did. Mark the
+	// context trusted so RBAC enforcement stays off for this call (an
+	// unmarked context fails closed when RBAC is enabled)
+	r = r.WithContext(system.WithTrustedOperation(r.Context()))
 
 	event := types.AuditEvent{
 		RequestId:  system.GetContextRequestId(r.Context()),
@@ -532,6 +545,11 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 			return
 		}
 	}
+
+	// The webhook token authenticated the caller for this app's configured
+	// operation; mark the context trusted so RBAC enforcement stays off (an
+	// unmarked context fails closed when RBAC is enabled)
+	r = r.WithContext(system.WithTrustedOperation(r.Context()))
 
 	// Authenticated, all failures from here on are audited. Status starts as
 	// Failed so early returns and panics are not recorded as a success

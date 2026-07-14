@@ -233,8 +233,9 @@ func (a *Action) authorizeAction(w http.ResponseWriter, r *http.Request) bool {
 			return false
 		}
 		if !authorized {
+			// Authenticated but not authorized (no matching custom permission): 403
 			userId := system.GetContextUserId(r.Context())
-			http.Error(w, fmt.Sprintf("Unauthorized : %s does not have access to action %s", userId, a.name), http.StatusUnauthorized)
+			http.Error(w, fmt.Sprintf("Forbidden : %s does not have access to action %s", userId, a.name), http.StatusForbidden)
 			return false
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -160,7 +161,10 @@ func setForwardAuthOpenRunHeaders(header http.Header, r *http.Request) {
 	}
 	customPerms := system.GetCustomPerms(r.Context())
 	header.Set(types.OPENRUN_HEADER_PERMS, strings.Join(customPerms, ","))
-	header.Set(types.OPENRUN_HEADER_APP_RBAC_ENABLED, strconv.FormatBool(system.IsAppRBACEnabled(r.Context())))
+	// Report RBAC as enabled under _cl_perm test URL directives so apps
+	// exercise their permission gated paths against the simulated set
+	appRBACEnabled := system.IsAppRBACEnabled(r.Context()) || rbac.HasTestUrlPerms(r.Context())
+	header.Set(types.OPENRUN_HEADER_APP_RBAC_ENABLED, strconv.FormatBool(appRBACEnabled))
 }
 
 // deleteForwardAuthOpenRunHeaders removes client-supplied OpenRun identity headers before setting trusted values.

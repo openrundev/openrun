@@ -16,6 +16,7 @@ import (
 
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/plugin"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
@@ -44,6 +45,16 @@ func init() {
 
 // RegisterPlugin registers a plugin with OpenRun
 func RegisterPlugin(name string, builder plugin.NewPluginFunc, funcs []plugin.PluginFunc) {
+	registerPlugin(name, builder, funcs, false)
+}
+
+// RegisterSystemPlugin registers a privileged system plugin that anonymous
+// callers may not invoke unless security.unsafe_allow_system_plugins_anon is set
+func RegisterSystemPlugin(name string, builder plugin.NewPluginFunc, funcs []plugin.PluginFunc) {
+	registerPlugin(name, builder, funcs, true)
+}
+
+func registerPlugin(name string, builder plugin.NewPluginFunc, funcs []plugin.PluginFunc, requiresAuth bool) {
 	loaderInitMutex.Lock()
 	defer loaderInitMutex.Unlock()
 
@@ -58,6 +69,7 @@ func RegisterPlugin(name string, builder plugin.NewPluginFunc, funcs []plugin.Pl
 			HandlerName:   f.FunctionName,
 			Builder:       builder,
 			ConstantValue: f.Constant,
+			RequiresAuth:  requiresAuth,
 		}
 
 		pluginMap[f.Name] = &info
@@ -281,29 +293,39 @@ func (a *App) pluginLookup(_ *starlark.Thread, module string) (plugin.PluginMap,
 	return pluginDict, nil
 }
 
+// SystemPluginsAllowed reports whether userId may invoke the privileged system
+// plugins (openrun_admin, build): an authenticated (non-anonymous) caller, or
+// any caller when security.unsafe_allow_system_plugins_anon is set. Shared by
+// the pluginHook gate and the openrun plugin's system_plugins_allowed report,
+// so the two cannot drift
+func SystemPluginsAllowed(serverConfig *types.ServerConfig, userId string) bool {
+	if serverConfig.Security.UnsafeAllowSystemPluginsAnon {
+		return true
+	}
+	return userId != "" && userId != types.ANONYMOUS_USER
+}
+
 func (a *App) pluginHook(appPath, modulePath, accountName, functionName string, pluginInfo *plugin.PluginInfo) *starlark.Builtin {
 	hook := func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		a.Trace().Msgf("Plugin called: %s.%s", modulePath, functionName)
 
-		var lastError error
-		var secrets [][]string
-		var approved bool
-		var err error
+		// Privileged system plugins (openrun_admin, build) require an
+		// authenticated caller regardless of RBAC status, so a console app
+		// accidentally served with none auth cannot run admin/builder ops. The
+		// read-only openrun plugin is not marked and stays reachable.
+		if pluginInfo.RequiresAuth &&
+			!SystemPluginsAllowed(a.serverConfig, system.GetContextUserId(system.GetRequestContext(thread))) {
+			return nil, fmt.Errorf("plugin %s requires an authenticated user", modulePath)
+		}
 
 		permsList := append([]types.Permission(nil), a.Metadata.Permissions...)
 		if len(a.serverConfig.Permissions.Allow) > 0 {
 			// Add the server config allowed permissions to the list
 			permsList = append(permsList, a.serverConfig.Permissions.Allow...)
 		}
-		if slices.Contains(a.serverConfig.Permissions.FullAccess, appPath) {
-			// App has full access to all plugins
-			approved = true
-			secrets = [][]string{{"regex:.*"}} // All secrets are allowed
-		} else {
-			lastError, secrets, approved, err = checkPermissions(GetContext(thread), a, modulePath, functionName, args, pluginInfo, permsList)
-			if err != nil {
-				return nil, err
-			}
+		lastError, secrets, approved, err := checkPermissions(GetContext(thread), a, modulePath, functionName, args, pluginInfo, permsList)
+		if err != nil {
+			return nil, err
 		}
 
 		if !approved {
@@ -507,7 +529,9 @@ func checkPermissions(ctx context.Context, a *App, modulePath string, functionNa
 				}
 			}
 
-			if a.rbacApi != nil && ctx != nil && len(p.Permit) > 0 && a.rbacApi.IsAppRBACEnabled(ctx) {
+			// Permit checks also apply under _cl_perm test URL directives (RBAC is
+			// inactive for the app then; the simulated set replaces allow-all)
+			if a.rbacApi != nil && ctx != nil && len(p.Permit) > 0 && rbac.AppRBACActive(ctx) {
 				authorized, err := a.rbacApi.AuthorizeAny(ctx, p.Permit)
 				if err != nil {
 					return nil, nil, false, err

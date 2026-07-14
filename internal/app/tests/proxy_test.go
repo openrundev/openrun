@@ -21,8 +21,7 @@ import (
 
 // testRBAC is a minimal RBACAPI implementation for tests
 type testRBAC struct {
-	perms        []string
-	rbacDisabled bool
+	perms []string
 }
 
 func (t *testRBAC) AuthorizeAny(ctx context.Context, permissions []string) (bool, error) {
@@ -42,9 +41,6 @@ func (t *testRBAC) GetCustomPermissions(ctx context.Context) ([]string, error) {
 	return t.perms, nil
 }
 
-func (t *testRBAC) IsAppRBACEnabled(ctx context.Context) bool {
-	return !t.rbacDisabled
-}
 func TestProxyBasics(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/abc" {

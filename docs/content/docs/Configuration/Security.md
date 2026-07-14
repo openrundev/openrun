@@ -92,7 +92,7 @@ arguments = ["regex:^<CONTAINER_URL>"] # only calls to the app's own container a
 secrets = []
 ```
 
-`permissions.allow` adds globally approved plugin calls for all apps. If a permission entry includes `secrets`, that list controls which secrets the globally approved plugin call can resolve. An empty `secrets` list means the global approval does not grant access to any secret values. `permissions.full_access` list grants the listed apps access to all plugin calls without requiring app-level approvals.
+`permissions.allow` adds globally approved plugin calls for all apps. If a permission entry includes `secrets`, that list controls which secrets the globally approved plugin call can resolve. An empty `secrets` list means the global approval does not grant access to any secret values.
 
 The `http.in` default only auto-allows outbound HTTP calls to the app's own container (`<CONTAINER_URL>...`), so a Starlark frontend can call its own backend without an approval. The pattern is anchored with `^` because the argument matcher is unanchored — without it an app could embed `<CONTAINER_URL>` inside an external URL to bypass the restriction. Calls to any other host fall back to requiring an approved `http.in` permission. To allow all outbound HTTP (which opens an SSRF surface, since these calls originate from the server's network position and can reach internal or metadata endpoints), use `arguments = ["regex:.*"]`; to allow specific hosts, list them, e.g. `arguments = ["regex:^https://api\\.example\\.com/.*"]`.
 
@@ -121,6 +121,19 @@ allowed_mounts = ["$OPENRUN_HOME/mounts", "/srv/openrun/shared"]
 ```
 
 `security.allowed_mounts` entries are expanded with environment variables before validation.
+
+## System Plugin Access
+
+The privileged system plugins — `openrun_admin` (app lifecycle, config, RBAC, secrets, containers, ...) and `build` (the AI app builder) — perform server-side management operations. They are used by the management console app. By default, these plugins require an authenticated (non-anonymous) caller regardless of RBAC status, so a console app accidentally served with `none` auth cannot be driven by anonymous users to create/delete apps, edit config, or run the builder. The read-only `openrun` plugin is never gated.
+
+To let anonymous callers use these plugins (for example, a development console running with `none` auth), set:
+
+```toml {filename="openrun.toml"}
+[security]
+unsafe_allow_system_plugins_anon = true
+```
+
+This is an unsafe, development-only escape hatch. In production, serve the console with an auth type that requires login and leave this off.
 
 ## CSRF Protection
 

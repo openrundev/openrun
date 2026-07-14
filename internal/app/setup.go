@@ -875,7 +875,16 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	// join with a.Path) is what gets used when rewriting.
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		if loc := resp.Header.Get("Location"); loc != "" && a.AppConfig.Proxy.RewriteLocation {
-			if rewritten, ok := rewriteProxyLocation(loc, resolveProxyTarget(), stripPath); ok {
+			rewritten, ok := rewriteProxyLocation(loc, resolveProxyTarget(), stripPath)
+			if !ok {
+				rewritten = loc
+			}
+			// Re-insert _cl_ test URL directives into path-absolute redirects
+			// under the app path (no-op unless directives are active)
+			if resp.Request != nil && strings.HasPrefix(rewritten, "/") && !strings.HasPrefix(rewritten, "//") {
+				rewritten = a.insertTestUrlPrefix(resp.Request.Context(), rewritten)
+			}
+			if rewritten != loc {
 				resp.Header.Set("Location", rewritten)
 			}
 		}
@@ -922,8 +931,10 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 			}
 			r.Header.Set("X-Forwarded-Host", system.GetHostname(r.Host))
 			r.Header.Set("X-Forwarded-Proto", requestScheme)
-			if a.Path != "" && a.Path != "/" {
-				r.Header.Set("X-Forwarded-Prefix", a.Path)
+			// effectivePath keeps _cl_ test URL directives in the prefix so
+			// prefix-aware upstream frameworks generate directive-preserving URLs
+			if effPath := a.effectivePath(r.Context()); effPath != "" && effPath != "/" {
+				r.Header.Set("X-Forwarded-Prefix", effPath)
 			}
 
 			deleteOpenRunHeaders(r.Header)

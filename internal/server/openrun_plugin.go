@@ -50,6 +50,7 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.GetContainerLogs, app.READ, "container_logs"),
 		app.CreatePluginApiName(c.GetContainerLogsStream, app.READ, "container_logs_stream"),
 		app.CreatePluginApiName(c.GetPermissions, app.READ, "get_permissions"),
+		app.CreatePluginApiName(c.SystemPluginsAllowed, app.READ, "system_plugins_allowed"),
 		app.CreatePluginApiName(c.ListRBACPermissions, app.READ, "list_rbac_permissions"),
 		app.CreatePluginApiName(c.ListAuths, app.READ, "list_auths"),
 		app.CreatePluginApiName(c.ListGitAuths, app.READ, "list_git_auths"),
@@ -707,6 +708,11 @@ func (c *openrunPlugin) ListSpecs(thread *starlark.Thread, builtin *starlark.Bui
 		return nil, err
 	}
 
+	ctx := system.GetRequestContext(thread)
+	if err := c.server.enforceGlobalPerm(ctx, types.PermissionConfigBasicRead, ""); err != nil {
+		return nil, err
+	}
+
 	names := make(map[string]bool)
 	for name := range appTypes {
 		names[name] = true
@@ -955,8 +961,15 @@ func (c *openrunPlugin) GetPermissions(thread *starlark.Thread, builtin *starlar
 			return nil, err
 		}
 		target = pathDomain
+		// Resolve the input to its main app path so the reported permissions
+		// match what enforcement uses (enforceAppPerm resolves stage/preview
+		// apps to the main path). Match the input against the app's own path or
+		// its main path, then take the main path as target and its creator as
+		// owner for the owner rule.
 		for _, appInfo := range apps {
-			if mainAppPathDomain(appInfo.AppPathDomain, appInfo.MainApp, appInfo.LinkedAppPath) == pathDomain {
+			mainPD := mainAppPathDomain(appInfo.AppPathDomain, appInfo.MainApp, appInfo.LinkedAppPath)
+			if appInfo.AppPathDomain == pathDomain || mainPD == pathDomain {
+				target = mainPD
 				owner = appInfo.UserID
 				break
 			}
@@ -975,11 +988,31 @@ func (c *openrunPlugin) GetPermissions(thread *starlark.Thread, builtin *starlar
 	return &ret, nil
 }
 
+// SystemPluginsAllowed reports whether the current caller may invoke the
+// privileged system plugins (openrun_admin, build), using the same
+// app.SystemPluginsAllowed predicate as the pluginHook gate. This read-only
+// call is on the ungated openrun plugin so the console can detect the blocked
+// state and show a clear message instead of failing on the first
+// admin/builder call.
+func (c *openrunPlugin) SystemPluginsAllowed(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("system_plugins_allowed", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	userId := system.GetContextUserId(system.GetRequestContext(thread))
+	return starlark.Bool(app.SystemPluginsAllowed(c.server.Config(), userId)), nil
+}
+
 // ListAuths returns the auth types an app can be configured with: the
 // built-ins (default/system/none) plus the oauth, saml and client cert auth
 // entries configured on this server
 func (c *openrunPlugin) ListAuths(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	if err := starlark.UnpackArgs("list_auths", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	if err := c.server.enforceGlobalPerm(ctx, types.PermissionConfigBasicRead, ""); err != nil {
 		return nil, err
 	}
 
@@ -994,6 +1027,11 @@ func (c *openrunPlugin) ListAuths(thread *starlark.Thread, builtin *starlark.Bui
 // usable for private repo access in app create and sync setup
 func (c *openrunPlugin) ListGitAuths(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	if err := starlark.UnpackArgs("list_git_auths", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	if err := c.server.enforceGlobalPerm(ctx, types.PermissionConfigBasicRead, ""); err != nil {
 		return nil, err
 	}
 

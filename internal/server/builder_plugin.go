@@ -52,7 +52,7 @@ func initBuilderPlugin(server *Server) {
 	newBuilderPlugin := func(pluginContext *types.PluginContext) (any, error) {
 		return &builderPlugin{server: server, pluginContext: pluginContext}, nil
 	}
-	app.RegisterPlugin("build", newBuilderPlugin, pluginFuncs)
+	app.RegisterSystemPlugin("build", newBuilderPlugin, pluginFuncs)
 }
 
 type builderPlugin struct {
@@ -346,17 +346,21 @@ func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starl
 		return nil, err
 	}
 	config := c.server.Config()
+	ctx := system.GetRequestContext(thread)
 
 	promptPreset := ""
 	editApp := ""
 	if sessionId.GoString() != "" {
-		ctx := system.GetRequestContext(thread)
 		session, err := c.requireSession(ctx, sessionId.GoString(), types.PermissionBuilderList)
 		if err != nil {
 			return nil, err
 		}
 		promptPreset = session.Preset
 		editApp = session.EditApp
+	} else if err := c.server.enforceGlobalPerm(ctx, types.PermissionBuilderList, ""); err != nil {
+		// Without a session the result still exposes the configured git
+		// destinations, prompts and agent names, so require builder:list
+		return nil, err
 	}
 	var gitCfg types.BuilderGitConfig
 	var err error

@@ -30,7 +30,6 @@ func initAdminPlugin(server *Server) {
 		app.CreatePluginApiName(c.RunSync, app.WRITE, "run_sync"),
 		app.CreatePluginApiName(c.DeleteSync, app.WRITE, "delete_sync"),
 		app.CreatePluginApiName(c.UpdateRBACEnabled, app.WRITE, "update_rbac_enabled"),
-		app.CreatePluginApiName(c.UpdateRBACForce, app.WRITE, "update_rbac_force"),
 		app.CreatePluginApiName(c.SetRBACGroup, app.WRITE, "set_rbac_group"),
 		app.CreatePluginApiName(c.DeleteRBACGroup, app.WRITE, "delete_rbac_group"),
 		app.CreatePluginApiName(c.SetRBACRole, app.WRITE, "set_rbac_role"),
@@ -63,7 +62,7 @@ func initAdminPlugin(server *Server) {
 		return &openrunAdminPlugin{server: server}, nil
 	}
 
-	app.RegisterPlugin("openrun_admin", adminPlugin, pluginFuncs)
+	app.RegisterSystemPlugin("openrun_admin", adminPlugin, pluginFuncs)
 }
 
 type openrunAdminPlugin struct {

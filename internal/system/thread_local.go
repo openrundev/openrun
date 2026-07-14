@@ -37,6 +37,10 @@ func GetRequestUserId(thread *starlark.Thread) string {
 	return GetContextUserId(ctx)
 }
 
+// GetRequestContext returns the request context stored on the Starlark
+// thread. A missing thread context yields context.Background(), which carries
+// no enforcement or trust marker: RBAC fails closed for it when enabled, so a
+// propagation bug denies instead of silently running as a trusted internal call
 func GetRequestContext(thread *starlark.Thread) context.Context {
 	ctxVal := thread.Local(types.TL_CONTEXT)
 	if ctxVal == nil {
@@ -77,6 +81,7 @@ var (
 	groupsKey      any = types.GROUPS
 	customPermsKey any = types.CUSTOM_PERMS
 	rbacEnabledKey any = types.RBAC_ENABLED
+	trustedOpKey   any = types.TRUSTED_OPERATION
 )
 
 func GetContextGroups(ctx context.Context) []string {
@@ -145,4 +150,35 @@ func IsAppRBACEnabled(ctx context.Context) bool {
 		}
 	}
 	return appRBACEnabled
+}
+
+// AppRBACMarkerPresent reports whether the per-request RBAC enforcement bool
+// is present in the context, regardless of its value. It is set for every app
+// request during authentication, so presence identifies an attributed app
+// request: enforcement state is computed once per request and stays stable for
+// its lifetime (enabling RBAC mid-request applies from the next request on)
+func AppRBACMarkerPresent(ctx context.Context) bool {
+	return ctx.Value(rbacEnabledKey) != nil
+}
+
+// WithTrustedOperation marks the context as a trusted administrative path.
+// Set ONLY where the caller's authority is established by other means: the
+// admin/UDS management API after authentication, token authenticated
+// webhooks, and internal background operations (newBackgroundOperationContext).
+// RBAC enforcement fails closed for contexts with neither this nor an
+// enforcement marker, so an unmarked context (a propagation bug, e.g. a
+// missing Starlark thread context) is denied instead of running as admin
+func WithTrustedOperation(ctx context.Context) context.Context {
+	return context.WithValue(ctx, trustedOpKey, true)
+}
+
+// IsTrustedOperation reports whether the context is a trusted administrative
+// path, see WithTrustedOperation
+func IsTrustedOperation(ctx context.Context) bool {
+	value := ctx.Value(trustedOpKey)
+	if value == nil {
+		return false
+	}
+	trusted, ok := value.(bool)
+	return ok && trusted
 }

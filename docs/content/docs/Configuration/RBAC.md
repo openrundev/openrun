@@ -10,7 +10,7 @@ Role based access controls (RBAC) allows fine-grained control on which users are
 
 ## Authentication versus Authorization
 
-RBAC is used for multiple authorization checks, like `list` (view app info), `access` (access the app) and various update related actions. When RBAC is enabled at the system level, by default RBAC is used for the list and update actions. App access is controlled by the authentication check alone. For example, if app is using `google` for auth, any user who can login to the google account can access the app. If app access also needs to be controlled using RBAC, then the app auth needs to be changed to `rbac:google`. With that change, only users having `access` grant on the app can access the app.
+RBAC is used for multiple authorization checks, like `app:read` (view app info), `app:access` (access the app) and various update related actions. When RBAC is enabled at the system level, it applies to **every app**: a user needs an `app:access` grant to reach an app, in addition to passing the app's authentication. For example, if an app uses `google` for auth, a user who can log into the Google account still needs an `app:access` grant on the app to reach it. The `admin` user, and any user holding the `admin` permission, always have access.
 
 ## RBAC Configuration
 
@@ -52,13 +52,13 @@ If `enabled` is `false` (default), RBAC is not used. `groups` is a map of group 
 
 ## Built-in Roles
 
-In addition to any roles you define, OpenRun ships a set of built-in roles that are always available. Their names all use the reserved `openrun-` prefix — user-defined role names may not start with `openrun-`. They can be referenced directly in grants, or composed into your own roles with the `role:` prefix (for example `"team-lead": ["role:openrun-developer", "approve"]`). Because a role mixes app-scoped and global permissions, grant these with `targets: ["all"]` for their global permissions to take effect (see [Permission Scope](#permission-scope)).
+In addition to any roles you define, OpenRun ships a set of built-in roles that are always available. Their names all use the reserved `openrun-` prefix — user-defined role names may not start with `openrun-`. They can be referenced directly in grants, or composed into your own roles with the `role:` prefix (for example `"team-lead": ["role:openrun-developer", "approve"]`). A role mixes scoped (`app:*`) and global permissions: the scoped ones apply to the grant's `targets`, the global ones apply regardless of the targets (see [Permission Scope](#permission-scope)).
 
 | Role | Purpose | Highlights |
 |------|---------|------------|
 | `openrun-admin` | Unrestricted super-user; bypasses every check | the `admin` permission |
 | `openrun-operator` | Runs the platform | full app lifecycle, `approve`, sync, services, bindings, container management, config, secrets (incl. reveal), audit, server stop, builder |
-| `openrun-developer` | Builds and deploys apps | `app:manage`, services/bindings, `container:read`, `sync:run`/`read`, `secret:create`/`read`, audit — no `approve`, config, secret reveal, server stop, or builder |
+| `openrun-developer` | Builds and deploys apps | `app:manage`, services/bindings, `container:read`, `sync:run`/`read`, `secret:create`/`read`, `config:basic_read` (for the create/update forms) — no `approve`, full config, audit, secret reveal, server stop, or builder |
 | `openrun-builder` | A developer who also uses the AI app builder | everything in `openrun-developer` plus `builder:*` |
 | `openrun-user` | Baseline authenticated user | `access` and `read` |
 | `openrun-monitor` | Read-only observability | read access across apps, audit, containers, sync, services, bindings, config, and secret metadata (no reveal, no writes) |
@@ -74,9 +74,24 @@ The group name referenced in a grant can be a group which is seen at runtime in 
 
 ## Permission Scope
 
-Most permissions are **app-scoped**: `access`, `read`, `create`, `update`, `reload`, `apply`, `delete`, `promote`, `preview` and `app:manage` (the composite of all app permissions except `approve`) apply to the apps matched by the grant's `targets`. The rest are **global** (`sync:*`, `service:*`, `binding:*`, `container:*`, `config:*`, `secret:*`, `builder:*`, `audit:read`, `server:stop`, `approve`, `admin`); a global permission only takes effect when the grant's `targets` cover all apps (`all` or `*:**`). `admin` is the super-user permission that bypasses every check.
+The `app:*` permissions are **scoped**: `app:access`, `app:read`, `app:create`, `app:update`, `app:reload`, `app:apply`, `app:delete`, `app:promote`, `app:preview`, `app:manage` (the composite of all app permissions except `approve`) apply only to the apps matched by the grant's `targets`. Custom (`custom:`) app-level permissions are scoped the same way. Every other permission is **global** (`builder:*`, `sync:*`, `service:*`, `binding:*`, `container:*`, `config:*`, `secret:*`, `audit:read`, `server:stop`, `approve`, `admin`): a grant confers a global permission **regardless of its `targets`**. `admin` is the super-user permission that bypasses every check.
+
+The `builder:*` permissions are global because a builder session is not bound to an app path until it publishes. The app a session publishes, edits or removes is enforced separately with the app permissions on that path: publishing to a new path needs `app:create`, republishing an existing app needs `app:update`, and unpublishing needs `app:delete` (local mode publishes also run through the declarative apply, which enforces `app:apply`, `app:promote` and `approve` before any file is staged). The preview dev app a session creates under the configured `preview_path` is authorized by `builder:create` itself — no app permission is needed for the preview mount — and is owned by the session creator, so the owner rule covers viewing the preview and deleting it with the session.
 
 `approve` is a global, operator-only permission that authorizes approving an app's plugin permissions (which run server-side code, so it is not scoped per app). It is never implied by `app:manage` or by a permission glob — it has to be granted by its literal name (or held via the `admin` super-user permission, e.g. the `openrun-admin` role). Setting the `--approve` flag on a create/reload/apply, or calling approve directly, requires this permission. (`approve` was previously named `app:approve`; the old name is still accepted in config and normalized to `approve`.)
+
+## Sync Jobs and Background Runs
+
+A [sync entry]({{< ref "/docs/applications/overview" >}}) runs declarative applies in the background, without an authenticated user. When a sync is created through an RBAC enforced request, the creator's authorization is frozen on the entry: the grants matching the creator (with group membership, including SSO provided groups, resolved at create time and role permissions flattened) are stored in the sync metadata. Every scheduled run is then authorized against that snapshot — each apply, reload and promote the run performs needs the corresponding permission (`app:apply`, `app:promote`, global `approve`) in the frozen grants, and a denied action fails the run (counting toward the sync failure backoff and eventual disable).
+
+Notes on the snapshot behavior:
+
+- The snapshot is frozen at create time. Later edits to roles, groups or grants do not change what an existing sync may do — delete and recreate the sync to pick up new grants.
+- Syncs created via the CLI (`admin` over the unix socket) or with RBAC disabled store no snapshot and run unrestricted, as before.
+- Disabling RBAC disables snapshot enforcement too; re-enabling it restores enforcement for entries that have a snapshot.
+- A sync created by a user holding the `admin` permission runs unrestricted (the snapshot just records the admin status).
+- Manual `sync run` calls are authorized against the caller's own current grants, not the stored snapshot.
+- The creator of a sync entry keeps the `sync:run`, `sync:delete` and `sync:read` owner permissions on it.
 
 ## Group Info
 
@@ -107,6 +122,6 @@ Plugin calls can use the same custom permissions with `ace.permission(..., permi
 
 ## Notes
 
-- The auth provider name has to be prefixed with `rbac:` for the RBAC rules to apply for app `access` permission.
+- When RBAC is enabled, it applies to every app: users need an `app:access` grant to reach an app. (The `rbac:` auth prefix is still accepted for backward compatibility but no longer has any special effect.)
 - Updates using the CLI client are done as the `admin` system user. There are no RBAC restrictions on the `admin`.
 - For apps with no authentication (using `none` auth), the user ID to use in RBAC is `anonymous`, without the auth type prefix.

@@ -53,6 +53,12 @@ unsafe_agent_without_sandbox = false # run app builder agents directly on the ho
                                  # tool calls; without it the agent runs with full access as the server user.
                                  # Dev-only escape hatch, e.g. to let codex use the host's ChatGPT login (no API key).
                                  # The agent command must be installed on the host; config_files mounts are ignored.
+unsafe_enable_testurl_rbac = false      # allow _cl_perm= and _cl_role= URL path directives on dev mode apps
+                                 # with none auth, simulating RBAC permissions/roles for testing
+unsafe_allow_system_plugins_anon = false # allow anonymous (unauthenticated) callers to use the privileged system
+                                 # plugins (openrun_admin, build). By default these require an authenticated user
+                                 # regardless of RBAC, so a console served with none auth cannot run admin/builder
+                                 # operations. The read-only openrun plugin is never gated. Dev-only escape hatch.
 
 # Logging related Config
 [logging]

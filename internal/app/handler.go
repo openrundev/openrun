@@ -19,6 +19,7 @@ import (
 	"github.com/openrundev/openrun/internal/app/action"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/telemetry"
 	"github.com/openrundev/openrun/internal/types"
@@ -177,7 +178,8 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 
 		var requestData starlark_type.Request
 		if hasArgs || rtype == apptype.HTML_TYPE {
-			appPath := a.Path
+			// effectivePath keeps _cl_ test URL directives in app-absolute URLs
+			appPath := a.effectivePath(r.Context())
 			if appPath == "/" {
 				appPath = ""
 			}
@@ -203,7 +205,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				UserSubject:    system.GetContextUserSubject(r.Context()),
 				UserEmail:      system.GetContextUserEmail(r.Context()),
 				CustomPerms:    system.GetCustomPerms(r.Context()),
-				AppRBACEnabled: system.IsAppRBACEnabled(r.Context()),
+				AppRBACEnabled: rbac.AppRBACActive(r.Context()),
 			}
 
 			chiContext := chi.RouteContext(r.Context())

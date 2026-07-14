@@ -5,6 +5,7 @@ package server
 
 import (
 	"archive/zip"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -162,10 +163,12 @@ func (s *Server) builderEditableApp(ctx context.Context, editApp string) (*types
 		return nil, fmt.Errorf("app %s is a dev app; edit its source directory directly", editApp)
 	}
 	if s.rbacManager.APIEnforced(ctx) {
-		if err := s.enforceAppPerm(ctx, types.PermissionRead, appPathDomain, ""); err != nil {
+		// The app owner is passed so the owner rule applies: the creator of an
+		// app can start an edit session on it without an explicit grant
+		if err := s.enforceAppPerm(ctx, types.PermissionRead, appPathDomain, entry.UserID); err != nil {
 			return nil, err
 		}
-		if err := s.enforceAppPerm(ctx, types.PermissionUpdate, appPathDomain, ""); err != nil {
+		if err := s.enforceAppPerm(ctx, types.PermissionUpdate, appPathDomain, entry.UserID); err != nil {
 			return nil, err
 		}
 	}
@@ -185,6 +188,16 @@ func (s *Server) builderTurnDone(sessionId string) {
 		// no app definition yet; the agent may still be scaffolding
 		return
 	}
+
+	// This callback is a system continuation of the RBAC checked builder calls
+	// that ran the turn (create_session/send_message/resume_session all require
+	// builder:create): creating the preview app under the configured preview
+	// path is authorized by builder:create, not by app permissions (grant
+	// targets rarely cover the preview mount). The context carries the session
+	// creator so the preview app is OWNED by them - the owner rule then gives
+	// them preview access and lets session deletion remove the app - and the
+	// audit events are attributed
+	ctx = newBackgroundOperationContext(cmp.Or(session.UserID, "builder"))
 
 	previewPath := path.Join(s.Config().AppBuilder.PreviewPath, strings.TrimPrefix(sessionId, types.ID_PREFIX_BUILDER_SES)[:12])
 	appRequest := &types.CreateAppRequest{
@@ -353,7 +366,7 @@ func (s *Server) builderRepublishEdit(ctx context.Context, session *types.Builde
 	}
 	entry := &apps[0].AppEntry
 	if s.rbacManager.APIEnforced(ctx) {
-		if err := s.enforceAppPerm(ctx, types.PermissionUpdate, appPathDomain, ""); err != nil {
+		if err := s.enforceAppPerm(ctx, types.PermissionUpdate, appPathDomain, entry.UserID); err != nil {
 			return nil, err
 		}
 	}
@@ -373,10 +386,19 @@ func (s *Server) builderRepublishEdit(ctx context.Context, session *types.Builde
 
 	localRoot := filepath.Join(os.ExpandEnv("$OPENRUN_HOME"), appSrcDir)
 	if strings.HasPrefix(entry.SourceUrl, localRoot+string(filepath.Separator)) {
-		// Local mode: replace the app's source directory and reload
+		// Local mode: replace the app's source directory and reload. Everything
+		// the reload below enforces is checked BEFORE the live source directory
+		// is replaced: a denial afterwards would leave staged source that a
+		// later privileged reload would deploy. The reload runs with promote
+		// set, and app:update (checked above) does not imply app:promote
 		response.Mode = "local"
 		if err := s.enforceGlobalPerm(ctx, types.PermissionApprove, ""); err != nil {
 			return nil, err
+		}
+		if s.rbacManager.APIEnforced(ctx) {
+			if err := s.enforceAppPerm(ctx, types.PermissionPromote, appPathDomain, entry.UserID); err != nil {
+				return nil, err
+			}
 		}
 		if err := copyAppSource(session.WorkspaceDir, entry.SourceUrl); err != nil {
 			return nil, fmt.Errorf("copying app source: %w", err)
@@ -511,12 +533,37 @@ func (s *Server) builderCheckPublishPath(ctx context.Context, publishPath string
 		return "", types.AppPathDomain{}, fmt.Errorf("path %s does not match any [builder_publish.*] entry", publishPath)
 	}
 
+	// The publish mutates the app at the target path (directly in local mode,
+	// via the repo's sync in git mode): the same app permissions the direct app
+	// APIs require apply, app:create for a new path and app:update (with the
+	// owner rule) for a republish to an existing app
 	if s.rbacManager.APIEnforced(ctx) {
-		if err := s.enforceAppPerm(ctx, types.PermissionCreate, appPathDomain, ""); err != nil {
+		perm, owner := types.PermissionCreate, ""
+		if appInfo, ok, err := s.findAppInfo(appPathDomain); err != nil {
+			return "", types.AppPathDomain{}, err
+		} else if ok {
+			perm, owner = types.PermissionUpdate, appInfo.UserID
+		}
+		if err := s.enforceAppPerm(ctx, perm, appPathDomain, owner); err != nil {
 			return "", types.AppPathDomain{}, err
 		}
 	}
 	return publishPath, appPathDomain, nil
+}
+
+// findAppInfo looks up an app by path without any authorization check, for
+// callers that only need existence and ownership
+func (s *Server) findAppInfo(appPathDomain types.AppPathDomain) (types.AppInfo, bool, error) {
+	allApps, err := s.apps.GetAllAppsInfo()
+	if err != nil {
+		return types.AppInfo{}, false, err
+	}
+	for _, appInfo := range allApps {
+		if appInfo.AppPathDomain == appPathDomain {
+			return appInfo, true, nil
+		}
+	}
+	return types.AppInfo{}, false, nil
 }
 
 // builderExportStanza renders the app() stanza for the published app: the
@@ -573,6 +620,32 @@ func (s *Server) builderExportStanza(ctx context.Context, exportPath,
 // updates the local apps.star and applies the entry immediately
 func (s *Server) builderPublishLocal(ctx context.Context, session *types.BuilderSession,
 	gitCfg types.BuilderGitConfig, appName, publishPath, stanza string) error {
+	// Preflight everything the apply and reload below will enforce BEFORE the
+	// shared apps file or source directory is touched: a denial after the copy
+	// would leave staged changes that a later privileged apply would deploy.
+	// The caller already enforced app:create/app:update on the path and the
+	// global approve permission; the apply runs with promote set, so app:apply
+	// and app:promote are needed too (app:reload for the unchanged-stanza
+	// republish fallback is implied by app:update)
+	if s.rbacManager.APIEnforced(ctx) {
+		appPathDomain, err := parseAppPath(publishPath)
+		if err != nil {
+			return err
+		}
+		owner := ""
+		if appInfo, ok, err := s.findAppInfo(appPathDomain); err != nil {
+			return err
+		} else if ok {
+			owner = appInfo.UserID
+		}
+		if err := s.enforceAppPerm(ctx, types.PermissionApply, appPathDomain, owner); err != nil {
+			return err
+		}
+		if err := s.enforceAppPerm(ctx, types.PermissionPromote, appPathDomain, owner); err != nil {
+			return err
+		}
+	}
+
 	root := filepath.Join(os.ExpandEnv("$OPENRUN_HOME"), appSrcDir)
 	if err := os.MkdirAll(root, 0755); err != nil {
 		return err
@@ -714,6 +787,22 @@ func (s *Server) builderUnpublish(ctx context.Context, sessionId, commitMsg stri
 	}
 	appName := builderSourceName(unpubPathDomain)
 	response := &BuilderPublishResponse{PublishPath: publishPath}
+
+	// Removing the published app needs app:delete on its path, same as the
+	// direct delete API. Checked up front (before the apps file or repo is
+	// touched) and for both modes: git mode removes the declaration the repo's
+	// sync applies, without any direct app mutation on this server
+	if s.rbacManager.APIEnforced(ctx) {
+		owner := ""
+		if appInfo, ok, err := s.findAppInfo(unpubPathDomain); err != nil {
+			return nil, err
+		} else if ok {
+			owner = appInfo.UserID
+		}
+		if err := s.enforceAppPerm(ctx, types.PermissionDelete, unpubPathDomain, owner); err != nil {
+			return nil, err
+		}
+	}
 
 	gitCfg, err := config.ResolveBuilderGit(session.Preset)
 	if err != nil {

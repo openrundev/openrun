@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -33,6 +34,5 @@ func setOpenRunHeaders(header http.Header, ctx context.Context) {
 	if userEmail := system.GetContextUserEmail(ctx); userEmail != "" {
 		header.Set(types.OPENRUN_HEADER_USER_EMAIL, userEmail)
 	}
-	appRBACEnabled := system.IsAppRBACEnabled(ctx)
-	header.Set(types.OPENRUN_HEADER_APP_RBAC_ENABLED, strconv.FormatBool(appRBACEnabled))
+	header.Set(types.OPENRUN_HEADER_APP_RBAC_ENABLED, strconv.FormatBool(rbac.AppRBACActive(ctx)))
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
@@ -85,12 +86,18 @@ func TestListAllAppsBreadcrumbGlobsCoverDisplayedBreadcrumbs(t *testing.T) {
 			UpdateTime:    now,
 		},
 	}
+	staticConfig := &types.ServerConfig{
+		System: types.SystemConfig{DefaultDomain: "utils.demo.clace.io"},
+		Http:   types.HttpConfig{Port: 80},
+	}
+	rbacManager, err := rbac.NewRBACHandler(testutil.TestLogger(), &types.RBACConfig{Enabled: false}, staticConfig)
+	if err != nil {
+		t.Fatalf("new rbac manager: %v", err)
+	}
 	server := &Server{
-		apps: &AppStore{allApps: apps},
-		staticConfig: &types.ServerConfig{
-			System: types.SystemConfig{DefaultDomain: "utils.demo.clace.io"},
-			Http:   types.HttpConfig{Port: 80},
-		},
+		apps:         &AppStore{allApps: apps},
+		staticConfig: staticConfig,
+		rbacManager:  rbacManager,
 	}
 
 	got, err := (&openrunPlugin{server: server}).ListAllApps(

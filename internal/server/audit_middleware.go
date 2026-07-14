@@ -364,12 +364,15 @@ var requestCounter uint64
 // request id and the given user id. There is no HTTP request on these paths,
 // so without this the audit events they produce have no request id; with it,
 // all events of one run share an id and the audit trace drill-down can show
-// everything the run did
+// everything the run did. The context is marked as a trusted operation: RBAC
+// enforcement fails closed for unmarked contexts, and internal background work
+// is authorized by the operation that scheduled it (a sync run additionally
+// attaches the creator's frozen snapshot, which takes precedence over trust)
 func newBackgroundOperationContext(userId string) context.Context {
 	rid := ridPrefix + strconv.FormatUint(atomic.AddUint64(&requestCounter, 1), 10)
 	ctx := context.WithValue(context.Background(), types.REQUEST_ID, rid)
 	ctx = context.WithValue(ctx, types.USER_ID, userId)
-	return ctx
+	return system.WithTrustedOperation(ctx)
 }
 
 // handleStatus returns a middleware which adds the request id and user id to the

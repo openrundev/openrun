@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/passwd"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/segmentio/ksuid"
@@ -30,6 +31,16 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 			return nil, err
 		}
 	}
+
+	// Freeze the creator's authorization on the entry: background runs are
+	// authorized against this snapshot, so later grant/role edits do not change
+	// what an existing sync may do. Nil (call not RBAC enforced) means the
+	// runs stay unrestricted
+	rbacSnapshot, err := s.rbacManager.SnapshotUserGrants(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sync.RBAC = rbacSnapshot
 
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
@@ -242,6 +253,46 @@ func (s *Server) syncRunner() {
 	}
 }
 
+// attachSyncRBAC attaches the sync entry's frozen creator authorization to a
+// background run context; the run's apply/reload actions are then enforced
+// against that snapshot (see rbac.SyncAuthorizer). Entries without a snapshot
+// (created without RBAC enforcement, or predating it) run unrestricted
+// (WithSyncAuthorizer is a no-op for a nil snapshot), and disabling RBAC
+// disables snapshot enforcement too, consistent with every other check. A
+// future webhook sync executor must build its run context through this helper
+// as well
+func (s *Server) attachSyncRBAC(ctx context.Context, entry *types.SyncEntry) context.Context {
+	if !s.rbacManager.ConfigEnabled() {
+		return ctx
+	}
+	return rbac.WithSyncAuthorizer(ctx, rbac.NewSyncAuthorizer(entry.Metadata.RBAC))
+}
+
+// enforceSyncReloadPerms authorizes everything a skipped-apply reload pass will
+// do before any app is mutated: the global approve permission when the entry
+// approves, and app:apply plus app:promote (when promoting) on every app
+func (s *Server) enforceSyncReloadPerms(ctx context.Context, entry *types.SyncEntry,
+	appPaths []types.AppPathDomain, appMap map[types.AppPathDomain]*types.AppEntry) error {
+	if entry.Metadata.Approve {
+		// an approving reload approves plugin permissions, needs the
+		// global approve permission
+		if err := s.enforceGlobalApprove(ctx); err != nil {
+			return err
+		}
+	}
+	for _, appPath := range appPaths {
+		if err := s.enforceAppPermEntry(ctx, types.PermissionApply, appMap[appPath]); err != nil {
+			return err
+		}
+		if entry.Metadata.Promote {
+			if err := s.enforceAppPermEntry(ctx, types.PermissionPromote, appMap[appPath]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Server) runSyncJobs() error {
 	ctx := context.Background()
 	tx, err := s.db.BeginTransaction(ctx)
@@ -280,8 +331,9 @@ func (s *Server) runSyncJobs() error {
 		// Each scheduled run gets its own synthesized request id, so the
 		// audit events it produces (apply, reload, promote, ...) share a
 		// trace id even though there is no HTTP request behind the run. The
-		// run is attributed to the user who created the sync
-		jobCtx := newBackgroundOperationContext(cmp.Or(entry.UserID, "scheduler"))
+		// run is attributed to the user who created the sync and authorized
+		// against the creator's frozen RBAC snapshot when one is present
+		jobCtx := s.attachSyncRBAC(newBackgroundOperationContext(cmp.Or(entry.UserID, "scheduler")), entry)
 		_, updatedApps, err := s.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, repoCache) // each sync runs in its own transaction
 		if err != nil {
 			s.Error().Err(err).Msgf("Error running sync job %s", entry.Id)
@@ -407,25 +459,25 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 			}
 			return s.runSyncJob(origCtx, inputTx, entry, dryRun, false, repoCache)
 		} else {
-			var reloadErr error
+			// Enforce all permissions before mutating anything (parity with the
+			// apply path checks at Apply): global approve when approving, then
+			// app:apply and app:promote per app
+			reloadErr := s.enforceSyncReloadPerms(ctx, entry, lastRunApps, appMap)
+
 			// In-place reloads register on the operation-level rollback stack
 			// (in ctx); the deferred finish reverts earlier apps if a later one
 			// fails, so the cluster matches the rolled-back DB transaction.
 			for _, appPath := range lastRunApps {
+				if reloadErr != nil {
+					break // abort reloads
+				}
 				app := appMap[appPath]
 				var reloadResult *types.AppReloadResult
 				reloadResult, reloadErr = s.ReloadApp(ctx, tx, app, nil, entry.Metadata.Approve, false, entry.Metadata.Promote,
 					app.Metadata.VersionMetadata.GitBranch, "", app.Metadata.GitAuthName, repoCache, entry.Metadata.ForceReload, verify)
 				if reloadErr != nil {
 					s.Error().Err(reloadErr).Msgf("Error reloading app %s sync job %s", appPath, entry.Id)
-					status.Error = reloadErr.Error()
-					status.FailureCount = entry.Status.FailureCount + 1
-					if status.FailureCount >= s.Config().System.MaxSyncFailureCount {
-						status.State = "Disabled"
-					} else {
-						status.State = "Failing"
-					}
-					break // abort reloads
+					break
 				}
 
 				reloadResults = append(reloadResults, reloadResult.ReloadResults...)
@@ -436,6 +488,13 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 			}
 
 			if reloadErr != nil {
+				status.Error = reloadErr.Error()
+				status.FailureCount = entry.Status.FailureCount + 1
+				if status.FailureCount >= s.Config().System.MaxSyncFailureCount {
+					status.State = "Disabled"
+				} else {
+					status.State = "Failing"
+				}
 				applyInfo.ReloadResults = reloadResults
 				applyInfo.ApproveResults = approveResults
 				applyInfo.PromoteResults = promoteResults

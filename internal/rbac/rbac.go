@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -30,6 +31,7 @@ type RBACManager struct {
 	regexCache  map[string]*regexp.Regexp                // cache of compiled regex patterns
 	customPerms []string                                 // custom permissions are permissions defined by the user. This list does not have the custom: prefix
 	ownerPerms  map[string]map[types.RBACPermission]bool // resource name to permissions granted to the asset owner
+	enabled     atomic.Bool                              // RbacConfig.Enabled, readable without taking mu (hot path checks)
 }
 
 func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverConfig *types.ServerConfig) (*RBACManager, error) {
@@ -46,18 +48,19 @@ func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverCo
 	return rbacManager, nil
 }
 
-// authAppliesRBAC reports whether RBAC applies to an app given its auth
-// setting: always when ForceRBACWhenEnabled is on (the default), otherwise
-// only for apps whose auth carries the rbac: prefix. Callers hold h.mu
-func (h *RBACManager) authAppliesRBAC(appAuthSetting string) bool {
-	return h.RbacConfig.ForceRBAC() || strings.HasPrefix(appAuthSetting, RBAC_AUTH_PREFIX)
-}
-
 func (h *RBACManager) AuthorizeInt(user string, appPathDomain types.AppPathDomain,
-	appAuthSetting string, permission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
+	permission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	return h.authorizeIntLocked(user, appPathDomain, permission, groups, isAppLevelPermission)
+}
 
+// authorizeIntLocked is AuthorizeInt without the read lock; the caller must
+// already hold h.mu (RWMutex read locks are not reentrant - re-acquiring one
+// while a writer waits deadlocks, so shared callers like GetCustomPermissionsInt
+// take the lock once and call this)
+func (h *RBACManager) authorizeIntLocked(user string, appPathDomain types.AppPathDomain,
+	permission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
 	if !h.RbacConfig.Enabled {
 		// rbac is not enabled, authorize all requests
 		return true, nil
@@ -68,20 +71,14 @@ func (h *RBACManager) AuthorizeInt(user string, appPathDomain types.AppPathDomai
 		return isAdmin, err
 	}
 
-	if !h.authAppliesRBAC(appAuthSetting) && (permission == types.PermissionAccess || isAppLevelPermission) {
-		// rbac does not apply to this app's auth, authorize access for Access
-		// permission. If authenticated, then app access is allowed
-		return true, nil
-	}
-
 	// Callers resolve stage/preview apps to their main app path before this point, so
 	// grant checks run against the main app path directly.
 	return h.checkGrants(user, appPathDomain, permission, groups, isAppLevelPermission)
 }
 
-// GetCustomPermissions returns the custom permissions set for the user for the given app path domain and app auth setting
+// GetCustomPermissions returns the custom permissions set for the user for the given app path domain
 // Values in returned list do not have the custom: prefix
-func (h *RBACManager) GetCustomPermissionsInt(user string, appPathDomain types.AppPathDomain, appAuthSetting string,
+func (h *RBACManager) GetCustomPermissionsInt(user string, appPathDomain types.AppPathDomain,
 	groups []string) ([]string, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -104,7 +101,9 @@ func (h *RBACManager) GetCustomPermissionsInt(user string, appPathDomain types.A
 
 	customPerms := make([]string, 0)
 	for _, perm := range h.customPerms {
-		authorized, err := h.AuthorizeInt(user, appPathDomain, appAuthSetting, types.RBACPermission(perm), groups, true)
+		// authorizeIntLocked, not AuthorizeInt: we already hold h.mu.RLock and
+		// re-acquiring it here can deadlock against a waiting config-update writer
+		authorized, err := h.authorizeIntLocked(user, appPathDomain, types.RBACPermission(perm), groups, true)
 		if err != nil {
 			return nil, err
 		}
@@ -113,9 +112,15 @@ func (h *RBACManager) GetCustomPermissionsInt(user string, appPathDomain types.A
 		}
 	}
 
-	h.Trace().Msgf("User %s has custom permissions: %v on app %s with auth setting %s groups %v", user,
-		customPerms, appPathDomain.String(), appAuthSetting, groups)
+	h.Trace().Msgf("User %s has custom permissions: %v on app %s groups %v", user,
+		customPerms, appPathDomain.String(), groups)
 	return customPerms, nil
+}
+
+// ConfigEnabled reports whether RBAC is enabled at the config level. Lock
+// free (atomic load), safe on the per-request paths
+func (h *RBACManager) ConfigEnabled() bool {
+	return h.enabled.Load()
 }
 
 // hasAdminPermLocked reports whether the user holds the "admin" super-user
@@ -149,36 +154,32 @@ func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathD
 	return false, nil
 }
 
-func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPathDomain types.AppPathDomain,
-	inputPermission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
-	userMatched := false
+// grantUserMatchesLocked reports whether the grant's Users list matches
+// inputUser: a direct user id, a group: reference (matched against the SSO
+// context groups and the resolved config groups, including regex: members) or
+// a regex: pattern. Callers must hold h.mu
+func (h *RBACManager) grantUserMatchesLocked(grant types.RBACGrant, inputUser string, groups []string) (bool, error) {
 	for _, user := range grant.Users {
 		if strings.HasPrefix(user, RBAC_GROUP_PREFIX) {
 			refGroupName := user[len(RBAC_GROUP_PREFIX):]
 			if slices.Contains(groups, refGroupName) {
 				// granted group name matched group as found from SSO login
-				userMatched = true
-				break
+				return true, nil
 			}
 			refGroup, ok := h.groups[refGroupName]
 			if ok {
 				// Check for direct user match
 				if slices.Contains(refGroup, inputUser) {
-					userMatched = true
-					break
+					return true, nil
 				}
 				// Check for regex patterns in the group
 				for _, groupMember := range refGroup {
 					if strings.HasPrefix(groupMember, RBAC_REGEX_PREFIX) {
 						regex, ok := h.regexCache[groupMember[len(RBAC_REGEX_PREFIX):]]
 						if ok && regex.MatchString(inputUser) {
-							userMatched = true
-							break
+							return true, nil
 						}
 					}
-				}
-				if userMatched {
-					break
 				}
 			}
 		} else if strings.HasPrefix(user, RBAC_REGEX_PREFIX) {
@@ -188,15 +189,21 @@ func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPat
 				return false, fmt.Errorf("regex not found for user: %s", user)
 			}
 			if regex.MatchString(inputUser) {
-				userMatched = true
-				break
+				return true, nil
 			}
 		} else if user == inputUser {
-			userMatched = true
-			break
+			return true, nil
 		}
 	}
+	return false, nil
+}
 
+func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPathDomain types.AppPathDomain,
+	inputPermission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
+	userMatched, err := h.grantUserMatchesLocked(grant, inputUser, groups)
+	if err != nil {
+		return false, err
+	}
 	if !userMatched {
 		return false, nil
 	}
@@ -218,33 +225,30 @@ func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPat
 		return false, nil
 	}
 
-	targetMatched := false
-	isGlobal := globalPermissions[inputPermission]
-	for _, target := range grant.Targets {
-		if isGlobal {
-			// Global permissions have no app path target; the grant confers them
-			// only when it targets all apps
-			if isGlobalTarget(target) {
-				targetMatched = true
-				break
-			}
-			continue
-		}
+	return permWithinTargets(inputPermission, isAppLevelPermission, grant.Targets, appPathDomain)
+}
+
+// permWithinTargets reports whether a permission a role confers applies to the
+// app at appPathDomain given the grant's targets. app:* (and
+// app-level custom permissions) are scoped to the grant's target glob. Every
+// other permission is global: the grant confers it regardless of its targets.
+// Shared by live grant checks and the frozen sync snapshot evaluation, so the
+// scoping semantics cannot diverge between them
+func permWithinTargets(perm types.RBACPermission, isAppLevelPermission bool,
+	targets []string, appPathDomain types.AppPathDomain) (bool, error) {
+	if !isAppLevelPermission && !scopedPermissions[perm] {
+		return true, nil
+	}
+	for _, target := range targets {
 		match, err := MatchGlob(target, appPathDomain)
 		if err != nil {
 			return false, err
 		}
 		if match {
-			targetMatched = true
-			break
+			return true, nil
 		}
 	}
-
-	if !targetMatched {
-		return false, nil
-	}
-
-	return true, nil
+	return false, nil
 }
 
 func (h *RBACManager) initGroupInfo(rbacConfig *types.RBACConfig) (map[string][]string, error) {
@@ -480,31 +484,6 @@ func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig) error {
 				return fmt.Errorf("grant %d ('%s'): Roles references undefined role '%s'", i, grant.Description, role)
 			}
 		}
-
-		// Grants whose roles resolve to global permissions confer them only when the
-		// grant targets all apps; warn about grants which can never take effect
-		hasGlobalTarget := false
-		for _, target := range grant.Targets {
-			if isGlobalTarget(target) {
-				hasGlobalTarget = true
-				break
-			}
-		}
-		if !hasGlobalTarget {
-			for _, role := range grant.Roles {
-				resolved, ok := h.roles[role]
-				if !ok {
-					continue
-				}
-				for perm := range globalPermissions {
-					if resolved.matches(perm) {
-						h.Warn().Msgf("grant %d ('%s') includes global permission %s but does not target 'all'; "+
-							"the global permission will not be granted", i, grant.Description, perm)
-						break
-					}
-				}
-			}
-		}
 	}
 	return nil
 }
@@ -538,5 +517,8 @@ func (h *RBACManager) UpdateRBACConfig(rbacConfig *types.RBACConfig) error {
 		return fmt.Errorf("error validating rbac grants: %w", err)
 	}
 
+	// Published last, after the config validated: ConfigEnabled readers see
+	// the new state only once the update is going to succeed
+	h.enabled.Store(rbacConfig.Enabled)
 	return nil
 }

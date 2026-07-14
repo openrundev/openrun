@@ -1178,10 +1178,10 @@ func (s *Server) ParseGlob(appGlob string) ([]types.AppInfo, error) {
 }
 
 // AuthorizeList checks if the user has access to list the specified app.
-// When RBAC enforcement is active for the calling app (RBAC config enabled and the
-// caller has rbac: auth), the app:read permission gates listing (with the owner
-// rule). Otherwise, list visibility falls back to whether the app uses the same
-// authentication type as used by the caller
+// When RBAC enforcement is active (RBAC config enabled, which applies to every
+// app), the app:read permission gates listing (with the owner rule). Otherwise,
+// list visibility falls back to whether the app uses the same authentication
+// type as used by the caller
 func (s *Server) AuthorizeList(ctx context.Context, userId string, app *types.AppInfo, groups []string) (bool, error) {
 	if s.rbacManager.APIEnforced(ctx) {
 		// Grant checks for stage/preview apps are done against the main app path

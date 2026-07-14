@@ -847,7 +847,8 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if a.redirectBarePath && r.URL.Path == a.Path && !strings.HasSuffix(r.URL.Path, "/") {
-		http.Redirect(wrapper, r, a.Path+"/", http.StatusTemporaryRedirect) // some apps like gradio need redirect to the full path with trailing slash
+		// effectivePath keeps _cl_ test URL directives in the redirect target
+		http.Redirect(wrapper, r, a.effectivePath(r.Context())+"/", http.StatusTemporaryRedirect) // some apps like gradio need redirect to the full path with trailing slash
 		return
 	}
 
@@ -1155,4 +1156,38 @@ func (a *App) getStarPath(name string) string {
 		return name
 	}
 	return path.Join(a.AppConfig.StarBase, name)
+}
+
+// effectivePath returns the app path to use when generating app-absolute URLs
+// for this request. Under a _cl_ test URL directive (dev apps only, see
+// security.unsafe_enable_testurl_rbac) it is the extended prefix including the
+// directive segments, so generated URLs keep the directives sticky. The bool
+// checks short-circuit before any context lookup, so there is no per-request
+// cost when the feature is off or the app is not a dev app.
+func (a *App) effectivePath(ctx context.Context) string {
+	if !a.serverConfig.Security.UnsafeEnableTestUrlRbac || !a.IsDev {
+		return a.Path
+	}
+	if prefix := rbac.GetTestUrlPrefix(ctx); prefix != "" {
+		return prefix
+	}
+	return a.Path
+}
+
+// insertTestUrlPrefix rewrites a path-absolute URL that starts with the app
+// path to start with the effective path instead, keeping _cl_ test URL
+// directives sticky across redirects. Returns loc unchanged when no
+// directives are active or loc is outside the app path.
+func (a *App) insertTestUrlPrefix(ctx context.Context, loc string) string {
+	prefix := a.effectivePath(ctx)
+	if prefix == a.Path {
+		return loc
+	}
+	if a.Path == "/" {
+		return prefix + loc
+	}
+	if loc == a.Path || strings.HasPrefix(loc, a.Path+"/") {
+		return prefix + loc[len(a.Path):]
+	}
+	return loc
 }

@@ -682,27 +682,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	var err error
 	appAuth := app.Metadata.AuthnType
 
-	// The auth string has the form [rbac:]<type>[+forward_<name>]. Strip the
-	// rbac: prefix (remembered) and resolve the "default" type to the configured
-	// app_default_auth_type BEFORE extracting the +forward_ modifier, because the
-	// configured default may itself carry an rbac: prefix and/or a modifier.
-	rbacPrefix := ""
-	coreAuth := string(appAuth)
-	if strings.HasPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX) {
-		rbacPrefix = rbac.RBAC_AUTH_PREFIX
-		coreAuth = strings.TrimPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX)
-	}
-	baseType, _, _ := strings.Cut(coreAuth, types.AUTH_MODIFIER_DELIMITER)
-	if baseType == "" || baseType == string(types.AppAuthnDefault) {
-		coreAuth = s.Config().Security.AppDefaultAuthType
-		if strings.HasPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX) {
-			rbacPrefix = rbac.RBAC_AUTH_PREFIX
-			coreAuth = strings.TrimPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX)
-		}
-	}
-	if coreAuth == "" { // no default auth type set, default to system admin user auth
-		coreAuth = string(types.AppAuthnSystem)
-	}
+	coreAuth := resolveAppAuth(appAuth, s.Config())
 
 	// Now extract the +forward_ modifier from the resolved auth type.
 	appAuthStr, forwardConfig, err := s.checkAuthModifiers(coreAuth)
@@ -711,7 +691,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	coreAuth = appAuthStr
-	appAuth = types.AppAuthnType(rbacPrefix + coreAuth)
+	appAuth = types.AppAuthnType(coreAuth)
 
 	userId := ""
 	userSubject := ""
@@ -801,14 +781,16 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	s.Trace().Msgf("Authenticated user %s, doing authorization check", userId)
 	// Grant checks for stage/preview apps are done against the main app path
 	grantPathDomain := mainAppPathDomain(app.AppPathDomain(), app.MainApp, app.LinkedAppPath)
-	authorized, err := s.rbacManager.AuthorizeInt(userId, grantPathDomain, string(appAuth), types.PermissionAccess, groups, false)
+	authorized, err := s.rbacManager.AuthorizeInt(userId, grantPathDomain, types.PermissionAccess, groups, false)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if !authorized {
+		// The user is authenticated but not authorized (no app:access grant): 403,
+		// not 401 - re-authenticating would not help
 		s.Warn().Msgf("User %s is not authorized to access app %s", userId, app.AppPathDomain())
-		http.Error(w, fmt.Sprintf("Unauthorized : %s does not have access to %s", userId, app.AppPathDomain()), http.StatusUnauthorized)
+		http.Error(w, fmt.Sprintf("Forbidden : %s does not have access to %s", userId, app.AppPathDomain()), http.StatusForbidden)
 		return
 	}
 
@@ -823,7 +805,11 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 
 	customPerms := make([]string, 0)
 	appRBACEnabled := s.rbacManager.IsAppRBACEnabled(ctx)
-	if appRBACEnabled {
+	if appRBACEnabled || rbac.HasTestUrlPerms(ctx) {
+		// Under a _cl_perm test URL directive GetCustomPermissions returns the
+		// simulated set (RBAC is inactive for the app then, so the computed set
+		// would be allow-all). RBAC_ENABLED below stays the real value; the app
+		// visible surfaces report enabled separately (see rbac.AppRBACActive)
 		customPerms, err = s.rbacManager.GetCustomPermissions(ctx)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -145,7 +145,6 @@ func TestAuthorizeAccess(t *testing.T) {
 		serverConfig   *types.ServerConfig
 		user           string
 		appPathDomain  types.AppPathDomain
-		appAuthSetting string
 		permission     types.RBACPermission
 		expectedResult bool
 		expectError    bool
@@ -160,7 +159,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "anyuser",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionAccess,
 			expectedResult: true,
 			expectError:    false,
@@ -178,29 +176,27 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "admin",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionAccess,
 			expectedResult: true,
 			expectError:    false,
 		},
 		{
-			// legacy prefix-gating: only applies with force_rbac_when_enabled off
-			name: "non-rbac auth setting with force off - should authorize",
+			// RBAC applies to every app when enabled (no rbac: prefix needed);
+			// a non-prefixed app with no grant denies access
+			name: "non-rbac auth setting - enforced, no grant denies",
 			rbacConfig: &types.RBACConfig{
-				Enabled:              true,
-				ForceRBACWhenEnabled: boolPtr(false),
-				Groups:               map[string][]string{},
-				Roles:                map[string][]types.RBACPermission{},
-				Grants:               []types.RBACGrant{},
+				Enabled: true,
+				Groups:  map[string][]string{},
+				Roles:   map[string][]types.RBACPermission{},
+				Grants:  []types.RBACGrant{},
 			},
 			serverConfig: &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "none",
 			permission:     types.PermissionAccess,
-			expectedResult: true,
+			expectedResult: false,
 			expectError:    false,
 		},
 		{
@@ -225,7 +221,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
@@ -252,7 +247,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "user2",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
@@ -281,7 +275,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
@@ -309,7 +302,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
@@ -336,7 +328,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test/app1", Domain: ""},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
@@ -363,7 +354,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/other/app1", Domain: ""},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
@@ -390,7 +380,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: "example.com"},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
@@ -417,7 +406,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: "other.com"},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
@@ -451,7 +439,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "user1",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionRead,
 			expectedResult: true,
 			expectError:    false,
@@ -478,7 +465,6 @@ func TestAuthorizeAccess(t *testing.T) {
 			},
 			user:           "",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
 			permission:     types.PermissionRead,
 			expectedResult: false,
 			expectError:    false,
@@ -495,7 +481,7 @@ func TestAuthorizeAccess(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.permission, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, tt.permission, []string{}, false)
 
 			if tt.expectError {
 				if err == nil {
@@ -595,7 +581,7 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, tt.permission, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -705,7 +691,7 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, tt.permission, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -750,7 +736,7 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 	t.Run("denied when no dynamic groups passed", func(t *testing.T) {
 		t.Parallel()
 		// user is not part of any configured group, and no dynamic groups provided
-		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -762,7 +748,7 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 	t.Run("allowed when dynamic group passed", func(t *testing.T) {
 		t.Parallel()
 		// user is considered part of sso_devs via dynamic groups argument
-		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""},
 			types.PermissionRead, []string{"sso_devs"}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -805,7 +791,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user1 not in configured groups; denied without dynamic groups
-	allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+	allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -814,7 +800,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user1 allowed when dynamic group provided
-	allowed, err = rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{"sso_devs"}, false)
+	allowed, err = rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{"sso_devs"}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -823,7 +809,7 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	}
 
 	// user2 is in configured group; allowed even without dynamic groups
-	allowed, err = rbacManager.AuthorizeInt("user2", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+	allowed, err = rbacManager.AuthorizeInt("user2", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -942,7 +928,7 @@ func TestUpdateRBACConfig(t *testing.T) {
 			}
 
 			// Test that the update worked by checking authorization
-			result, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/new", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+			result, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/new", Domain: ""}, types.PermissionRead, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error during authorization test: %v", err)
 				return
@@ -993,7 +979,7 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 		go func(user string) {
 			defer func() { done <- true }()
 
-			result, err := rbacManager.AuthorizeInt(user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(user, types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -1021,22 +1007,24 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
 	}
 
-	t.Run("non-rbac auth with force off allows app-level permission", func(t *testing.T) {
+	t.Run("enabled rbac denies app-level permission without a grant", func(t *testing.T) {
 		t.Parallel()
 
-		rbacConfig := &types.RBACConfig{Enabled: true, ForceRBACWhenEnabled: boolPtr(false)}
+		// RBAC applies to every app when enabled, so a non-prefixed app with no
+		// grant denies app-level (custom) permissions too
+		rbacConfig := &types.RBACConfig{Enabled: true}
 		rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
 		if err != nil {
 			t.Fatalf("failed to create RBACManager: %v", err)
 		}
 
-		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "none",
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""},
 			types.RBACPermission("action_run"), []string{}, true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !allowed {
-			t.Fatalf("expected authorization to be allowed for app-level permission with non-rbac auth")
+		if allowed {
+			t.Fatalf("expected app-level permission to be denied without a grant")
 		}
 	})
 
@@ -1064,7 +1052,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 			t.Fatalf("failed to create RBACManager: %v", err)
 		}
 
-		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""},
 			types.RBACPermission("action_run"), []string{}, true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1098,7 +1086,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 			t.Fatalf("failed to create RBACManager: %v", err)
 		}
 
-		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test",
+		allowed, err := rbacManager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test", Domain: ""},
 			types.RBACPermission("action_run"), []string{}, true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1682,7 +1670,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 				t.Fatalf("expected error but got none")
 			}
 
-			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, tt.permission, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -1857,7 +1845,7 @@ func TestRegexSupportInGroups(t *testing.T) {
 				t.Fatalf("expected error but got none")
 			}
 
-			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, "rbac:test", tt.permission, []string{}, false)
+			result, err := rbacManager.AuthorizeInt(tt.user, tt.appPathDomain, tt.permission, []string{}, false)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -2087,7 +2075,7 @@ func TestRegexCaching(t *testing.T) {
 
 	// Test that the same regex is reused (multiple authorize calls should work)
 	for i := 0; i < 10; i++ {
-		_, err := rbacManager.AuthorizeInt("dev_user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+		_, err := rbacManager.AuthorizeInt("dev_user1", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{}, false)
 		if err != nil {
 			t.Errorf("unexpected error on iteration %d: %v", i, err)
 		}
@@ -2125,7 +2113,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 
 	t.Run("regex matches user", func(t *testing.T) {
 		t.Parallel()
-		allowed, err := rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+		allowed, err := rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2136,7 +2124,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 
 	t.Run("dynamic group matches", func(t *testing.T) {
 		t.Parallel()
-		allowed, err := rbacManager.AuthorizeInt("bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{"sso_admins"}, false)
+		allowed, err := rbacManager.AuthorizeInt("bob", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{"sso_admins"}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2147,7 +2135,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 
 	t.Run("neither regex nor dynamic group matches", func(t *testing.T) {
 		t.Parallel()
-		allowed, err := rbacManager.AuthorizeInt("charlie", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+		allowed, err := rbacManager.AuthorizeInt("charlie", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{}, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2189,7 +2177,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 	}
 
 	// Verify initial config works
-	allowed, err := rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+	allowed, err := rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2222,7 +2210,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 	}
 
 	// Verify old regex no longer matches
-	allowed, err = rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+	allowed, err = rbacManager.AuthorizeInt("dev_alice", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2231,7 +2219,7 @@ func TestRegexUpdateConfig(t *testing.T) {
 	}
 
 	// Verify new regex matches
-	allowed, err = rbacManager.AuthorizeInt("admin_bob", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", types.PermissionRead, []string{}, false)
+	allowed, err = rbacManager.AuthorizeInt("admin_bob", types.AppPathDomain{Path: "/test", Domain: ""}, types.PermissionRead, []string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2244,14 +2232,13 @@ func TestGetCustomPermissions(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
-		rbacConfig     *types.RBACConfig
-		user           string
-		appPathDomain  types.AppPathDomain
-		appAuthSetting string
-		groups         []string
-		expectedPerms  []string
-		expectError    bool
+		name          string
+		rbacConfig    *types.RBACConfig
+		user          string
+		appPathDomain types.AppPathDomain
+		groups        []string
+		expectedPerms []string
+		expectError   bool
 	}{
 		{
 			name: "no custom permissions defined",
@@ -2263,12 +2250,11 @@ func TestGetCustomPermissions(t *testing.T) {
 				},
 				Grants: []types.RBACGrant{},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  nil,
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: nil,
+			expectError:   false,
 		},
 		{
 			name: "rbac disabled - returns all custom permissions",
@@ -2280,12 +2266,11 @@ func TestGetCustomPermissions(t *testing.T) {
 				},
 				Grants: []types.RBACGrant{},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{"action_run", "action_delete"},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{"action_run", "action_delete"},
+			expectError:   false,
 		},
 		{
 			name: "admin user - returns all custom permissions",
@@ -2297,12 +2282,11 @@ func TestGetCustomPermissions(t *testing.T) {
 				},
 				Grants: []types.RBACGrant{},
 			},
-			user:           "admin",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{"action_run", "action_delete"},
-			expectError:    false,
+			user:          "admin",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{"action_run", "action_delete"},
+			expectError:   false,
 		},
 		{
 			name: "user with all custom permissions granted",
@@ -2321,12 +2305,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{"action_run", "action_delete"},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{"action_run", "action_delete"},
+			expectError:   false,
 		},
 		{
 			name: "user with some custom permissions granted",
@@ -2353,12 +2336,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{"action_run", "action_update"},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{"action_run", "action_update"},
+			expectError:   false,
 		},
 		{
 			name: "user with no custom permissions granted",
@@ -2377,12 +2359,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{},
+			expectError:   false,
 		},
 		{
 			name: "user in group with custom permissions",
@@ -2403,12 +2384,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{"action_run", "action_delete"},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{"action_run", "action_delete"},
+			expectError:   false,
 		},
 		{
 			name: "user with custom permissions via dynamic groups",
@@ -2427,12 +2407,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{"sso_devs"},
-			expectedPerms:  []string{"action_run", "action_delete"},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{"sso_devs"},
+			expectedPerms: []string{"action_run", "action_delete"},
+			expectError:   false,
 		},
 		{
 			name: "user with custom permissions via regex",
@@ -2451,12 +2430,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "dev_alice",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{"action_run", "action_delete"},
-			expectError:    false,
+			user:          "dev_alice",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{"action_run", "action_delete"},
+			expectError:   false,
 		},
 		{
 			name: "user with custom permissions but wrong target",
@@ -2475,12 +2453,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{},
+			expectError:   false,
 		},
 		{
 			name: "user with custom permissions - glob target matching",
@@ -2499,12 +2476,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test/app1", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{"action_run", "action_delete"},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test/app1", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{"action_run", "action_delete"},
+			expectError:   false,
 		},
 		{
 			name: "user with mixed standard and custom permissions",
@@ -2524,12 +2500,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{"action_run", "action_delete"},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{"action_run", "action_delete"},
+			expectError:   false,
 		},
 		{
 			name: "multiple roles with overlapping custom permissions",
@@ -2555,12 +2530,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{"action_run", "action_delete", "action_update"},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: ""},
+			groups:        []string{},
+			expectedPerms: []string{"action_run", "action_delete", "action_update"},
+			expectError:   false,
 		},
 		{
 			name: "user with custom permissions and domain matching",
@@ -2579,12 +2553,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: "example.com"},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{"action_run"},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: "example.com"},
+			groups:        []string{},
+			expectedPerms: []string{"action_run"},
+			expectError:   false,
 		},
 		{
 			name: "user with custom permissions but domain not matching",
@@ -2603,12 +2576,11 @@ func TestGetCustomPermissions(t *testing.T) {
 					},
 				},
 			},
-			user:           "user1",
-			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: "other.com"},
-			appAuthSetting: "rbac:test",
-			groups:         []string{},
-			expectedPerms:  []string{},
-			expectError:    false,
+			user:          "user1",
+			appPathDomain: types.AppPathDomain{Path: "/test", Domain: "other.com"},
+			groups:        []string{},
+			expectedPerms: []string{},
+			expectError:   false,
 		},
 	}
 
@@ -2626,7 +2598,7 @@ func TestGetCustomPermissions(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			perms, err := rbacManager.GetCustomPermissionsInt(tt.user, tt.appPathDomain, tt.appAuthSetting, tt.groups)
+			perms, err := rbacManager.GetCustomPermissionsInt(tt.user, tt.appPathDomain, tt.groups)
 
 			if tt.expectError {
 				if err == nil {
@@ -2693,7 +2665,7 @@ func TestGetCustomPermissionsWithRoleHierarchy(t *testing.T) {
 		t.Fatalf("failed to create RBACManager: %v", err)
 	}
 
-	perms, err := rbacManager.GetCustomPermissionsInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
+	perms, err := rbacManager.GetCustomPermissionsInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, []string{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2748,7 +2720,7 @@ func TestGetCustomPermissionsWithGroupHierarchy(t *testing.T) {
 		t.Fatalf("failed to create RBACManager: %v", err)
 	}
 
-	perms, err := rbacManager.GetCustomPermissionsInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
+	perms, err := rbacManager.GetCustomPermissionsInt("user1", types.AppPathDomain{Path: "/test", Domain: ""}, []string{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2823,7 +2795,7 @@ func TestGetCustomPermissionsEmpty(t *testing.T) {
 				t.Fatalf("failed to create RBACManager: %v", err)
 			}
 
-			perms, err := rbacManager.GetCustomPermissionsInt(tt.user, types.AppPathDomain{Path: "/test", Domain: ""}, "rbac:test", []string{})
+			perms, err := rbacManager.GetCustomPermissionsInt(tt.user, types.AppPathDomain{Path: "/test", Domain: ""}, []string{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

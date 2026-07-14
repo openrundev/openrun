@@ -124,8 +124,11 @@ def handler(req):
 		t.Fatalf("Error %s", err)
 	}
 
+	// RBAC_ENABLED is set in the request context as the server middleware does
+	// for every app request; the permit gate reads that per-request value
 	request := httptest.NewRequest("GET", "/test", nil)
 	ctx := context.WithValue(request.Context(), types.USER_ID, "reader@example.com")
+	ctx = context.WithValue(ctx, types.RBAC_ENABLED, true)
 	request = request.WithContext(ctx)
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)
@@ -139,13 +142,15 @@ def handler(req):
 
 	request = httptest.NewRequest("GET", "/test", nil)
 	ctx = context.WithValue(request.Context(), types.USER_ID, "blocked@example.com")
+	ctx = context.WithValue(ctx, types.RBAC_ENABLED, true)
 	request = request.WithContext(ctx)
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 500, response.Code)
 	testutil.AssertStringContains(t, response.Body.String(), "user blocked@example.com does not have any required permission [net:read]")
 
-	a, _, err = CreateTestAppAuthorizer(logger, fileData, []string{"http.in"}, perms, nil, &testRBAC{rbacDisabled: true})
+	// RBAC disabled: no RBAC_ENABLED in the context, permit gate is inactive
+	a, _, err = CreateTestAppAuthorizer(logger, fileData, []string{"http.in"}, perms, nil, &testRBAC{})
 	if err != nil {
 		t.Fatalf("Error %s", err)
 	}

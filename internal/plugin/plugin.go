@@ -30,4 +30,7 @@ type PluginInfo struct {
 	HandlerName   string
 	Builder       NewPluginFunc
 	ConstantValue starlark.Value
+	// RequiresAuth marks a privileged system plugin that anonymous callers may
+	// not invoke unless security.unsafe_allow_system_plugins_anon is set
+	RequiresAuth bool
 }

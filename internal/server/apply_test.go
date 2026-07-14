@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/bindings"
+	"github.com/openrundev/openrun/internal/builder"
 	"github.com/openrundev/openrun/internal/metadata"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -238,6 +240,11 @@ func newApplyTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Cont
 	}
 	server.secretsManager.Store(secretsManager)
 	server.apps = NewAppStore(logger, server)
+	rbacManager, err := rbac.NewRBACHandler(logger, &types.RBACConfig{Enabled: false}, config)
+	if err != nil {
+		t.Fatalf("new rbac manager: %v", err)
+	}
+	server.rbacManager = rbacManager
 	return server, db, ctx
 }
 
@@ -1371,5 +1378,521 @@ func TestRollbackCompensationSkipsConcurrentlyCommittedGrants(t *testing.T) {
 	}
 	if !deadlineSeen {
 		t.Fatal("rollback revoke did not receive the operation deadline")
+	}
+}
+
+// newSyncRBACTestServer sets up the apply test server with an enabled RBAC
+// config: "creator" holds sync:create plus app:apply on /apps/allowed* only
+func newSyncRBACTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Context) {
+	t.Helper()
+	server, db, ctx := newApplyTestServer(t)
+	rbacConfig := &types.RBACConfig{
+		Enabled: true,
+		Groups:  map[string][]string{},
+		Roles: map[string][]types.RBACPermission{
+			"syncer": {types.PermissionSyncCreate, types.PermissionApply},
+		},
+		Grants: []types.RBACGrant{
+			{Description: "creator grant", Users: []string{"creator"},
+				Roles: []string{"syncer"}, Targets: []string{"/apps/allowed*"}},
+		},
+	}
+	rbacManager, err := rbac.NewRBACHandler(server.Logger, rbacConfig, server.staticConfig)
+	if err != nil {
+		t.Fatalf("new rbac manager: %v", err)
+	}
+	server.rbacManager = rbacManager
+	return server, db, ctx
+}
+
+// rbacEnforcedCtx simulates an RBAC enforced management API request context
+func rbacEnforcedCtx(ctx context.Context, user string) context.Context {
+	ctx = context.WithValue(ctx, types.RBAC_ENABLED, true)
+	ctx = context.WithValue(ctx, types.USER_ID, user)
+	return context.WithValue(ctx, types.GROUPS, []string{})
+}
+
+// writeSyncApplyFile writes an apply file declaring the given app paths, all
+// using one valid app source dir, returning the apply file path
+func writeSyncApplyFile(t *testing.T, applyPath string, appPaths ...string) {
+	t.Helper()
+	appSourceDir := filepath.Join(filepath.Dir(applyPath), "app")
+	if _, err := os.Stat(appSourceDir); os.IsNotExist(err) {
+		if err := os.Mkdir(appSourceDir, 0700); err != nil {
+			t.Fatalf("create app source dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(appSourceDir, "app.star"), []byte("app = ace.app(\"syncApp\")\n"), 0600); err != nil {
+			t.Fatalf("write app.star: %v", err)
+		}
+	}
+	applyData := ""
+	for _, appPath := range appPaths {
+		applyData += fmt.Sprintf("app(%q, %q)\n", appPath, appSourceDir)
+	}
+	if err := os.WriteFile(applyPath, []byte(applyData), 0600); err != nil {
+		t.Fatalf("write apply file: %v", err)
+	}
+}
+
+func getSyncEntryForTest(t *testing.T, db *metadata.Metadata, ctx context.Context, id string) *types.SyncEntry {
+	t.Helper()
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin read transaction: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	entry, err := db.GetSyncEntry(ctx, tx, id)
+	if err != nil {
+		t.Fatalf("get sync entry: %v", err)
+	}
+	return entry
+}
+
+func TestSyncRBACSnapshotEnforcement(t *testing.T) {
+	server, db, ctx := newSyncRBACTestServer(t)
+	defer db.Close()
+	server.staticConfig.System.MaxSyncFailureCount = 3
+
+	applyPath := filepath.Join(t.TempDir(), "sync.ace")
+	writeSyncApplyFile(t, applyPath, "/apps/allowed1")
+
+	// Create the sync as the RBAC enforced limited user; the entry must persist
+	// the creator's frozen authorization snapshot
+	creatorCtx := rbacEnforcedCtx(ctx, "creator")
+	response, err := server.CreateSyncEntry(creatorCtx, applyPath, true, false, &types.SyncMetadata{})
+	if err != nil {
+		t.Fatalf("create sync entry: %v", err)
+	}
+	entry := getSyncEntryForTest(t, db, ctx, response.Id)
+	if entry.Metadata.RBAC == nil || entry.Metadata.RBAC.UserId != "creator" ||
+		entry.Metadata.RBAC.Admin || len(entry.Metadata.RBAC.Grants) != 1 {
+		t.Fatalf("unexpected persisted snapshot %+v", entry.Metadata.RBAC)
+	}
+
+	// Grow the apply file beyond the creator's target glob and run the job the
+	// way the scheduler does: background context plus the frozen snapshot
+	writeSyncApplyFile(t, applyPath, "/apps/allowed1", "/apps/denied")
+	jobCtx := server.attachSyncRBAC(newBackgroundOperationContext(entry.UserID), entry)
+	if !server.rbacManager.APIEnforced(jobCtx) {
+		t.Fatal("expected background sync context to be RBAC enforced")
+	}
+	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, nil)
+	if err != nil {
+		t.Fatalf("run sync job: %v", err)
+	}
+	for _, part := range []string{"creator", string(types.PermissionApply), "/apps/denied", "(sync " + entry.Id + ")"} {
+		if !strings.Contains(status.Error, part) {
+			t.Errorf("denial %q does not mention %q", status.Error, part)
+		}
+	}
+
+	// The denial counts as a run failure and the out of glob app was not created
+	persisted := getSyncEntryForTest(t, db, ctx, response.Id)
+	if persisted.Status.FailureCount != 1 || persisted.Status.State != "Failing" {
+		t.Fatalf("unexpected persisted status %+v", persisted.Status)
+	}
+	verifyTx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin verify transaction: %v", err)
+	}
+	defer verifyTx.Rollback() //nolint:errcheck
+	// Apps created from an apply file keep an empty domain (the default domain
+	// applies at serving time), so look up with an empty domain. The allowed
+	// app existing proves the path form is right, making the denied-app
+	// not-found assertion meaningful
+	if _, err := db.GetAppEntryTx(ctx, verifyTx, types.AppPathDomain{Path: "/apps/allowed1"}); err != nil {
+		t.Fatalf("in-glob app should exist: %v", err)
+	}
+	if _, err := db.GetAppEntryTx(ctx, verifyTx, types.AppPathDomain{Path: "/apps/denied"}); err == nil {
+		t.Fatal("out of glob app must not be created by the denied sync run")
+	}
+
+	// After the live config is widened, the frozen snapshot still denies
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
+		Enabled: true,
+		Roles:   map[string][]types.RBACPermission{"all": {"app:*", types.PermissionSyncCreate}},
+		Grants: []types.RBACGrant{{Description: "wide", Users: []string{"creator"},
+			Roles: []string{"all"}, Targets: []string{"all"}}},
+	}); err != nil {
+		t.Fatalf("rbac config update: %v", err)
+	}
+	status, _, err = server.runSyncJob(server.attachSyncRBAC(newBackgroundOperationContext(entry.UserID), entry),
+		types.Transaction{}, persisted, false, true, nil)
+	if err != nil {
+		t.Fatalf("run sync job after config widen: %v", err)
+	}
+	if !strings.Contains(status.Error, "/apps/denied") {
+		t.Errorf("expected frozen snapshot to still deny, got %q", status.Error)
+	}
+}
+
+func TestSyncRBACSnapshotUnenforcedCreate(t *testing.T) {
+	server, db, ctx := newSyncRBACTestServer(t)
+	defer db.Close()
+
+	applyPath := filepath.Join(t.TempDir(), "sync.ace")
+	writeSyncApplyFile(t, applyPath, "/apps/anywhere")
+
+	// A trusted create call (CLI over unix socket / admin over TCP, stamped by
+	// apiHandler) is not enforced: no snapshot is stored even though RBAC is enabled
+	response, err := server.CreateSyncEntry(system.WithTrustedOperation(ctx), applyPath, true, false, &types.SyncMetadata{})
+	if err != nil {
+		t.Fatalf("create sync entry: %v", err)
+	}
+	entry := getSyncEntryForTest(t, db, ctx, response.Id)
+	if entry.Metadata.RBAC != nil {
+		t.Fatalf("expected no snapshot for unenforced create, got %+v", entry.Metadata.RBAC)
+	}
+
+	// Scheduled style run stays unrestricted, even outside any grant target
+	writeSyncApplyFile(t, applyPath, "/apps/anywhere", "/apps/elsewhere")
+	jobCtx := server.attachSyncRBAC(newBackgroundOperationContext("scheduler"), entry)
+	if server.rbacManager.APIEnforced(jobCtx) {
+		t.Fatal("expected run without snapshot to stay unenforced")
+	}
+	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, nil)
+	if err != nil {
+		t.Fatalf("run sync job: %v", err)
+	}
+	if status.Error != "" {
+		t.Fatalf("unexpected run error %q", status.Error)
+	}
+}
+
+func TestSyncRBACSnapshotAdminCreator(t *testing.T) {
+	server, db, ctx := newSyncRBACTestServer(t)
+	defer db.Close()
+
+	applyPath := filepath.Join(t.TempDir(), "sync.ace")
+	writeSyncApplyFile(t, applyPath, "/apps/anywhere")
+
+	adminCtx := rbacEnforcedCtx(ctx, types.ADMIN_USER)
+	response, err := server.CreateSyncEntry(adminCtx, applyPath, true, false, &types.SyncMetadata{})
+	if err != nil {
+		t.Fatalf("create sync entry: %v", err)
+	}
+	entry := getSyncEntryForTest(t, db, ctx, response.Id)
+	if entry.Metadata.RBAC == nil || !entry.Metadata.RBAC.Admin {
+		t.Fatalf("expected admin snapshot, got %+v", entry.Metadata.RBAC)
+	}
+
+	// Admin snapshot allows everything on background runs
+	writeSyncApplyFile(t, applyPath, "/apps/anywhere", "/apps/elsewhere")
+	jobCtx := server.attachSyncRBAC(newBackgroundOperationContext(entry.UserID), entry)
+	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, nil)
+	if err != nil {
+		t.Fatalf("run sync job: %v", err)
+	}
+	if status.Error != "" {
+		t.Fatalf("unexpected run error %q", status.Error)
+	}
+}
+
+func TestSyncRBACDisabledKillSwitch(t *testing.T) {
+	server, db, ctx := newSyncRBACTestServer(t)
+	defer db.Close()
+
+	applyPath := filepath.Join(t.TempDir(), "sync.ace")
+	writeSyncApplyFile(t, applyPath, "/apps/allowed1")
+
+	response, err := server.CreateSyncEntry(rbacEnforcedCtx(ctx, "creator"), applyPath, true, false, &types.SyncMetadata{})
+	if err != nil {
+		t.Fatalf("create sync entry: %v", err)
+	}
+	entry := getSyncEntryForTest(t, db, ctx, response.Id)
+	if entry.Metadata.RBAC == nil {
+		t.Fatal("expected snapshot to be stored")
+	}
+
+	// Disabling RBAC disables snapshot enforcement too: the same entry now
+	// runs unrestricted without being recreated
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{Enabled: false}); err != nil {
+		t.Fatalf("rbac config update: %v", err)
+	}
+	writeSyncApplyFile(t, applyPath, "/apps/allowed1", "/apps/denied")
+	jobCtx := server.attachSyncRBAC(newBackgroundOperationContext(entry.UserID), entry)
+	if server.rbacManager.APIEnforced(jobCtx) {
+		t.Fatal("expected disabled RBAC to disable snapshot enforcement")
+	}
+	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, nil)
+	if err != nil {
+		t.Fatalf("run sync job: %v", err)
+	}
+	if status.Error != "" {
+		t.Fatalf("unexpected run error %q", status.Error)
+	}
+}
+
+// registerApplyTestBinding registers the applytest service binding type and a
+// default service instance, for tests exercising bindings in apply files
+func registerApplyTestBinding(t *testing.T, db *metadata.Metadata, ctx context.Context) {
+	t.Helper()
+	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["applytest"]
+	bindings.ServiceBindings["applytest"] = func() bindings.ServiceBinding {
+		return &applyTestServiceBinding{}
+	}
+	t.Cleanup(func() {
+		if hadPreviousBuilder {
+			bindings.ServiceBindings["applytest"] = previousBuilder
+		} else {
+			delete(bindings.ServiceBindings, "applytest")
+		}
+	})
+
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	service := &types.Service{
+		Id:          types.ID_PREFIX_SERVICE + "applytest",
+		Name:        "primary",
+		ServiceType: "applytest",
+		IsDefault:   true,
+		Config:      map[string]string{},
+	}
+	if err := db.CreateService(ctx, tx, service); err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit service: %v", err)
+	}
+}
+
+// TestApplyBindingRBAC verifies that bindings declared in an apply file need
+// the same authority as the direct binding APIs (binding:create for new
+// bindings, binding:update for declared existing ones), even when the apply
+// file matches no apps
+func TestApplyBindingRBAC(t *testing.T) {
+	server, db, ctx := newSyncRBACTestServer(t)
+	defer db.Close()
+	registerApplyTestBinding(t, db, ctx)
+
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
+		Enabled: true,
+		Roles: map[string][]types.RBACPermission{
+			"apps-only": {types.PermissionApply},
+			"binder":    {types.PermissionApply, types.PermissionBindingCreate, types.PermissionBindingUpdate},
+		},
+		Grants: []types.RBACGrant{
+			{Description: "apps only", Users: []string{"apponly"}, Roles: []string{"apps-only"}, Targets: []string{"all"}},
+			{Description: "binder", Users: []string{"binder"}, Roles: []string{"binder"}, Targets: []string{"all"}},
+		},
+	}); err != nil {
+		t.Fatalf("rbac config update: %v", err)
+	}
+
+	applyPath := filepath.Join(t.TempDir(), "bindings.ace")
+	if err := os.WriteFile(applyPath, []byte("binding(\"/apps/bindonly\", \"applytest/primary\")\n"), 0600); err != nil {
+		t.Fatalf("write apply file: %v", err)
+	}
+	runApply := func(user string) error {
+		_, _, err := server.Apply(rbacEnforcedCtx(ctx, user), types.Transaction{}, applyPath, "all",
+			false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+		return err
+	}
+
+	// A bindings-only apply file matches no apps, so no app:apply check fires;
+	// the binding preflight must still deny a user without binding:create
+	err := runApply("apponly")
+	if err == nil || !strings.Contains(err.Error(), string(types.PermissionBindingCreate)) {
+		t.Fatalf("expected binding:create denial for new binding, got %v", err)
+	}
+
+	if err := runApply("binder"); err != nil {
+		t.Fatalf("binder create apply: %v", err)
+	}
+
+	// The binding now exists: re-applying the file needs binding:update
+	err = runApply("apponly")
+	if err == nil || !strings.Contains(err.Error(), string(types.PermissionBindingUpdate)) {
+		t.Fatalf("expected binding:update denial for existing binding, got %v", err)
+	}
+	if err := runApply("binder"); err != nil {
+		t.Fatalf("binder update apply: %v", err)
+	}
+
+	// Trusted calls (CLI over unix socket) stay unrestricted
+	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all",
+		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+		t.Fatalf("trusted apply: %v", err)
+	}
+}
+
+// TestBuilderPublishPathRBAC verifies the builder publish target is enforced
+// with the app permissions: app:create for a new path, app:update for a
+// republish to an existing app
+func TestBuilderPublishPathRBAC(t *testing.T) {
+	server, db, ctx := newSyncRBACTestServer(t)
+	defer db.Close()
+
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
+		Enabled: true,
+		Roles: map[string][]types.RBACPermission{
+			"create-only": {types.PermissionCreate},
+			"manager":     {types.PermissionAppManage},
+		},
+		Grants: []types.RBACGrant{
+			{Description: "create only", Users: []string{"creator"}, Roles: []string{"create-only"}, Targets: []string{"/apps/allowed*"}},
+			{Description: "manager", Users: []string{"manager"}, Roles: []string{"manager"}, Targets: []string{"/apps/allowed*"}},
+		},
+	}); err != nil {
+		t.Fatalf("rbac config update: %v", err)
+	}
+
+	// New path inside the grant target: app:create suffices
+	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "creator"), "/apps/allowed2"); err != nil {
+		t.Fatalf("new path publish check: %v", err)
+	}
+	// Outside the target glob: denied
+	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "creator"), "/apps/denied"); err == nil {
+		t.Fatal("expected denial outside the grant target")
+	}
+
+	// Create an app at the path (as a trusted CLI call), making a publish
+	// there an update
+	applyPath := filepath.Join(t.TempDir(), "app.ace")
+	writeSyncApplyFile(t, applyPath, "/apps/allowed1")
+	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all",
+		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	// The direct Apply call above does not go through CompleteTransaction,
+	// which is what refreshes the apps cache on the real code paths
+	server.apps.ResetAllAppCache()
+
+	// Existing app: app:create alone is not enough, app:update is required
+	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "creator"), "/apps/allowed1"); err == nil ||
+		!strings.Contains(err.Error(), string(types.PermissionUpdate)) {
+		t.Fatalf("expected app:update denial for existing app, got %v", err)
+	}
+	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "manager"), "/apps/allowed1"); err != nil {
+		t.Fatalf("manager republish check: %v", err)
+	}
+}
+
+// TestBuilderPublishLocalPreflight verifies a local publish checks every
+// permission the apply will need BEFORE the shared apps file or the source
+// directory is written: a post-copy denial would leave staged changes that a
+// later privileged apply would deploy
+func TestBuilderPublishLocalPreflight(t *testing.T) {
+	server, db, ctx := newSyncRBACTestServer(t)
+	defer db.Close()
+	home := t.TempDir()
+	t.Setenv("OPENRUN_HOME", home)
+
+	// The harness "creator" grant holds app:apply on /apps/allowed* but not
+	// app:promote; the local publish applies with promote set
+	session := &types.BuilderSession{Id: "bld_ses_preflight0001", UserID: "creator", WorkspaceDir: t.TempDir()}
+	gitCfg := types.BuilderGitConfig{AppsFile: "apps.star"}
+
+	err := server.builderPublishLocal(rbacEnforcedCtx(ctx, "creator"), session, gitCfg,
+		"allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
+	if err == nil || !strings.Contains(err.Error(), string(types.PermissionPromote)) {
+		t.Fatalf("expected app:promote denial, got %v", err)
+	}
+	// Nothing was staged: the local publish root was never created
+	if _, statErr := os.Stat(filepath.Join(home, "app_src")); !os.IsNotExist(statErr) {
+		t.Fatalf("publish root must not exist after denial, stat err %v", statErr)
+	}
+
+	// A user without app:apply on the path is denied on the first check
+	err = server.builderPublishLocal(rbacEnforcedCtx(ctx, "nobody"), session, gitCfg,
+		"allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
+	if err == nil || !strings.Contains(err.Error(), string(types.PermissionApply)) {
+		t.Fatalf("expected app:apply denial, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, "app_src")); !os.IsNotExist(statErr) {
+		t.Fatalf("publish root must not exist after denial, stat err %v", statErr)
+	}
+}
+
+// TestBuilderTurnDonePreviewOwner verifies the preview app created by the
+// turn-done callback is owned by the session creator: the owner rule then
+// covers preview access and session-delete cleanup (previously the background
+// context left the owner empty, orphaning the preview app)
+func TestBuilderTurnDonePreviewOwner(t *testing.T) {
+	server, db, ctx := newSyncRBACTestServer(t)
+	defer db.Close()
+	server.staticConfig.AppBuilder.PreviewPath = "/preview"
+	server.builderManager = builder.NewManager(server.Logger, server.Config, db,
+		func(input string) (string, error) { return input, nil })
+
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "app.star"), []byte("app = ace.app(\"previewApp\")\n"), 0600); err != nil {
+		t.Fatalf("write app.star: %v", err)
+	}
+	session := &types.BuilderSession{Id: "bld_ses_previewowner1", UserID: "creator",
+		WorkspaceDir: workspace, Status: types.BuilderSessionReady}
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	if err := db.CreateBuilderSession(ctx, tx, session); err != nil {
+		t.Fatalf("create builder session: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit session: %v", err)
+	}
+
+	// RBAC is enabled but the preview creation is authorized by builder:create
+	// (system continuation of the checked builder calls), not app permissions
+	server.builderTurnDone(session.Id)
+
+	verifyTx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin verify transaction: %v", err)
+	}
+	defer verifyTx.Rollback() //nolint:errcheck
+	entry, err := db.GetAppEntryTx(ctx, verifyTx, types.AppPathDomain{Path: "/preview/previewowner"})
+	if err != nil {
+		t.Fatalf("preview app not created: %v", err)
+	}
+	if entry.UserID != "creator" {
+		t.Fatalf("preview app owner = %q, want creator", entry.UserID)
+	}
+	persisted, err := db.GetBuilderSession(ctx, verifyTx, session.Id)
+	if err != nil || persisted.PreviewPath != "/preview/previewowner" {
+		t.Fatalf("session preview path = %q err %v", persisted.PreviewPath, err)
+	}
+}
+
+// TestBuilderEditableAppOwner verifies the owner rule applies to edit
+// sessions: the creator of an app can start an edit session on it without an
+// explicit grant, another user without grants cannot
+func TestBuilderEditableAppOwner(t *testing.T) {
+	server, db, ctx := newSyncRBACTestServer(t)
+	defer db.Close()
+
+	// Create the app as an RBAC enforced user so it records the owner, then
+	// drop every grant: only the owner rule can authorize after this
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
+		Enabled: true,
+		Roles:   map[string][]types.RBACPermission{"applier": {types.PermissionApply}},
+		Grants: []types.RBACGrant{{Description: "applier", Users: []string{"owner-x"},
+			Roles: []string{"applier"}, Targets: []string{"all"}}},
+	}); err != nil {
+		t.Fatalf("rbac config update: %v", err)
+	}
+	applyPath := filepath.Join(t.TempDir(), "app.ace")
+	writeSyncApplyFile(t, applyPath, "/apps/owned1")
+	if _, _, err := server.Apply(rbacEnforcedCtx(ctx, "owner-x"), types.Transaction{}, applyPath, "all",
+		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	server.apps.ResetAllAppCache()
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{Enabled: true}); err != nil {
+		t.Fatalf("rbac config update: %v", err)
+	}
+
+	entry, err := server.builderEditableApp(rbacEnforcedCtx(ctx, "owner-x"), "/apps/owned1")
+	if err != nil {
+		t.Fatalf("owner edit session check: %v", err)
+	}
+	if entry.UserID != "owner-x" {
+		t.Fatalf("app owner = %q, want owner-x", entry.UserID)
+	}
+
+	if _, err := server.builderEditableApp(rbacEnforcedCtx(ctx, "stranger"), "/apps/owned1"); err == nil {
+		t.Fatal("expected denial for non-owner without grants")
 	}
 }
