@@ -12,6 +12,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/openrundev/openrun/internal/app/action"
 	"github.com/openrundev/openrun/internal/app/appfs"
@@ -72,12 +73,16 @@ type CustomTheme struct {
 }
 
 type AppStyle struct {
-	appId                 types.AppId
-	library               types.StyleType
-	themes                []string
-	customThemes          []CustomTheme
-	libraryUrl            string
-	DisableWatcher        bool
+	appId          types.AppId
+	library        types.StyleType
+	themes         []string
+	customThemes   []CustomTheme
+	libraryUrl     string
+	DisableWatcher bool
+	// watcherMu guards watcher/watcherState/watcherStdout: besides the
+	// (reload-mutex serialized) Start/StopWatcher calls, the async exit
+	// handler goroutine clears them when the watcher process dies
+	watcherMu             sync.Mutex
 	watcher               *exec.Cmd
 	watcherState          *WatcherState
 	watcherStdout         *os.File
@@ -471,13 +476,16 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 		return nil
 	}
 
+	s.watcherMu.Lock()
+	defer s.watcherMu.Unlock()
+
 	if s.watcher != nil {
 		if s.watcherState != nil && s.watcherState.library == s.library && slices.Equal(s.watcherState.templateLocations, templateLocations) {
 			fmt.Println("Warning: tailwindcss watcher already running with current config. Skipping tailwindcss watcher") // TODO: log
 			return nil
 		}
 		fmt.Printf("Warning: tailwindcss watcher already running with older config. Stopping previous watcher %#v %#v %#v", s.watcherState, s.library, templateLocations) // TODO: log
-		if err := s.StopWatcher(); err != nil {
+		if err := s.stopWatcherLocked(); err != nil {
 			return err
 		}
 	}
@@ -495,9 +503,15 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 	if err != nil {
 		return err
 	}
-	args = append(args, "--watch")
-	if tailwindVersion(systemConfig) == types.TailwindVersionLegacy {
+	legacyTailwind := tailwindVersion(systemConfig) == types.TailwindVersionLegacy
+	if legacyTailwind {
+		args = append(args, "--watch")
 		args = append(args, "-c", path.Join(workFS.Root, "style", TAILWIND_CONFIG_FILE))
+	} else {
+		// Plain --watch exits as soon as stdin hits EOF, killing the watcher
+		// whenever the server runs detached from a terminal; =always keeps
+		// it watching (tailwind CLI v3.3+/v4)
+		args = append(args, "--watch=always")
 	}
 	args = append(args, "-i", path.Join(workFS.Root, "style", "input.css"))
 	args = append(args, "-o", targetFile)
@@ -516,7 +530,11 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 	watcher := exec.Command(split[0], args...)
 	system.SetProcessGroup(watcher) // // ensure process group
 
-	watcher.Stdin = os.Stdin // this seems to be required for the process to start
+	if legacyTailwind {
+		// The legacy CLI has no --watch=always: it needs a stdin which stays
+		// open, or the watcher exits right after the first build
+		watcher.Stdin = os.Stdin
+	}
 	watcher.Stdout = s.watcherStdout
 	watcher.Stderr = s.watcherStdout
 	if err := watcher.Start(); err != nil {
@@ -525,8 +543,23 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 	s.watcher = watcher
 	// Wait on the local variable, not s.watcher, which StopWatcher can reset
 	go func() {
-		if err := watcher.Wait(); err != nil {
-			fmt.Printf("error waiting for tailwind watcher : %s\n", err) // TODO: log
+		err := watcher.Wait()
+		s.watcherMu.Lock()
+		defer s.watcherMu.Unlock()
+		if s.watcher != watcher {
+			// StopWatcher killed this process (or a new watcher replaced
+			// it); nothing to clean up
+			return
+		}
+		// The watcher died on its own (crash, killed externally, stdin EOF
+		// on legacy CLIs). Clear the state so the next app reload restarts
+		// it, instead of skipping forever on the stale handle
+		fmt.Printf("tailwind watcher for %s exited (%v), restarting on next app reload\n", s.appId, err) // TODO: log
+		s.watcher = nil
+		s.watcherState = nil
+		if s.watcherStdout != nil {
+			_ = s.watcherStdout.Close()
+			s.watcherStdout = nil
 		}
 	}()
 
@@ -534,6 +567,14 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 }
 
 func (s *AppStyle) StopWatcher() error {
+	s.watcherMu.Lock()
+	defer s.watcherMu.Unlock()
+	return s.stopWatcherLocked()
+}
+
+// stopWatcherLocked kills the watcher process group; the caller must hold
+// watcherMu
+func (s *AppStyle) stopWatcherLocked() error {
 	if s.watcher != nil && s.watcher.Process != nil {
 		fmt.Println("Stopping watcher")
 		if err := system.KillGroup(s.watcher.Process); err != nil {
@@ -541,6 +582,7 @@ func (s *AppStyle) StopWatcher() error {
 		}
 		s.watcher = nil
 	}
+	s.watcherState = nil
 	if s.watcherStdout != nil {
 		_ = s.watcherStdout.Close()
 		s.watcherStdout = nil

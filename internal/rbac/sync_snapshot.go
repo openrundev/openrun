@@ -134,7 +134,9 @@ func (a *SyncAuthorizer) Authorize(perm types.RBACPermission, target types.AppPa
 	if a.admin {
 		return true, nil
 	}
-	if owner != "" && a.userId == owner {
+	if owner != "" && a.userId == owner && perm != types.PermissionApprove {
+		// app:approve shares the app resource prefix but is never granted
+		// through ownership, even by a hand-crafted snapshot
 		if a.ownerPerms[PermissionResource(perm)][perm] {
 			return true, nil
 		}

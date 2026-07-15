@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/openrundev/openrun/internal/system"
@@ -138,8 +139,10 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 
 func waitForShutdownSignal(serverStop <-chan struct{}) {
 	c := make(chan os.Signal, 1)
-	// We'll accept graceful shutdowns when quit via SIGINT (Ctrl+C)
-	signal.Notify(c, os.Interrupt)
+	// Accept graceful shutdowns on SIGINT (Ctrl+C) and SIGTERM (kill,
+	// service managers): both must stop the apps' child processes (dev mode
+	// tailwind watchers) instead of orphaning them
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(c)
 
 	select {

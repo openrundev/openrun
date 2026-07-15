@@ -34,7 +34,7 @@ type UrlDirectives struct {
 }
 
 // NewUrlDirectives builds the directives with the permission matcher
-// resolved. Matching follows the same rules as real grants: app:admin
+// resolved. Matching follows the same rules as real grants: app:manage
 // expands to all app permissions except app:approve, app:approve matches
 // only by its literal name, glob entries match, and entries that are not
 // builtin permissions are treated as custom permissions (matched with or

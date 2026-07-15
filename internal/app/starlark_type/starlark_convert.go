@@ -50,57 +50,55 @@ func UnmarshalStarlark(x starlark.Value) (val interface{}, err error) {
 	case startime.Time:
 		val = time.Time(v)
 	case *starlark.Dict:
-		var (
-			pval interface{}
-			kval interface{}
-			keys = make([]any, 0, v.Len())
-			vals = make([]any, 0, v.Len())
-			// key as interface if found one key is not a string
-			ki bool
-		)
-
-		for _, item := range v.Items() {
-			k := item[0]
-			dictVal := item[1]
+		// Fast path: string keys (the common case) produce map[string]any.
+		// Iterate the keys and look up each value with Get instead of calling
+		// Items(), which allocates a two-element Tuple slice per entry. Get
+		// during iteration is safe (it does not mutate the table). A non-string
+		// key drops to the map[any]any fallback below.
+		n := v.Len()
+		rs := make(map[string]interface{}, n)
+		iter := v.Iterate()
+		var key starlark.Value
+		stringKeys := true
+		for iter.Next(&key) {
+			ks, ok := key.(starlark.String)
+			if !ok {
+				stringKeys = false
+				break
+			}
+			dictVal, _, _ := v.Get(key)
+			var pval interface{}
 			pval, err = UnmarshalStarlark(dictVal)
 			if err != nil {
+				iter.Done()
 				err = fmt.Errorf("unmarshaling starlark value: %w", err)
 				return
 			}
-
-			kval, err = UnmarshalStarlark(k)
-			if err != nil {
-				err = fmt.Errorf("unmarshaling starlark key: %w", err)
-				return
-			}
-
-			if _, ok := kval.(string); !ok {
-				// found key as not a string
-				ki = true
-			}
-
-			keys = append(keys, kval)
-			vals = append(vals, pval)
+			rs[string(ks)] = pval
 		}
+		iter.Done()
 
-		// prepare result
-
-		rs := map[string]interface{}{}
-		ri := map[interface{}]interface{}{}
-
-		for i, key := range keys {
-			// key as interface
-			if ki {
-				ri[key] = vals[i]
-			} else {
-				rs[key.(string)] = vals[i]
-			}
-		}
-
-		if ki {
-			val = ri // map[interface{}]interface{}
-		} else {
+		if stringKeys {
 			val = rs // map[string]interface{}
+		} else {
+			// Rare: at least one non-string key. Rebuild from Items() into a
+			// map[any]any (the partial rs above is discarded)
+			ri := make(map[interface{}]interface{}, n)
+			for _, item := range v.Items() {
+				var kval, pval interface{}
+				kval, err = UnmarshalStarlark(item[0])
+				if err != nil {
+					err = fmt.Errorf("unmarshaling starlark key: %w", err)
+					return
+				}
+				pval, err = UnmarshalStarlark(item[1])
+				if err != nil {
+					err = fmt.Errorf("unmarshaling starlark value: %w", err)
+					return
+				}
+				ri[kval] = pval
+			}
+			val = ri // map[interface{}]interface{}
 		}
 	case *starlark.List:
 		var (

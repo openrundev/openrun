@@ -80,7 +80,13 @@ type Handler struct {
 func (h *Handler) panicRecovery(next http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if rvr := recover(); rvr != nil && rvr != http.ErrAbortHandler {
+			if rvr := recover(); rvr != nil {
+				if rvr == http.ErrAbortHandler {
+					// Deliberate connection abort (e.g. a download stream
+					// failing mid-body): re-panic so net/http drops the
+					// connection instead of finalizing the response
+					panic(rvr)
+				}
 				msg := fmt.Sprint(rvr)
 				fmt.Fprintf(os.Stderr, "Panic %s", msg)
 				h.Error().Msgf("Panic %s: %s", msg, string(debug.Stack()))

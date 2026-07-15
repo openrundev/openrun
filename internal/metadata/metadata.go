@@ -1125,11 +1125,15 @@ func (m *Metadata) UpdateConfig(ctx context.Context, user string, oldVersionId s
 }
 
 // snapshotConfig appends the config to the history table and prunes old
-// entries beyond the configured retention
+// entries beyond the configured retention. The timestamp is bound from Go
+// with full precision: sqlite's datetime('now') is second-precision, and
+// version ids (ksuids) sort RANDOMLY within one second, so the prune's
+// newest-first ordering could otherwise evict the wrong versions when
+// several config changes land in the same second
 func (m *Metadata) snapshotConfig(ctx context.Context, tx *sql.Tx, user string, dynamicConfig *types.DynamicConfig, configJson string) error {
 	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`insert into config_history (version_id, user_id, update_time, config) values (?, ?, `+system.FuncNow(m.dbType)+`, ?)`),
-		dynamicConfig.VersionId, user, configJson)
+		`insert into config_history (version_id, user_id, update_time, config) values (?, ?, ?, ?)`),
+		dynamicConfig.VersionId, user, time.Now().UTC(), configJson)
 	if err != nil {
 		return fmt.Errorf("error inserting config history: %w", err)
 	}

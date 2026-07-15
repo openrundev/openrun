@@ -4,6 +4,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"encoding/json"
@@ -144,13 +145,19 @@ var encoderPool = sync.Pool{
 	},
 }
 
+// starlarkThreadPrint is the print handler for starlark threads, shared across
+// requests so each request does not allocate a fresh closure
+func starlarkThreadPrint(_ *starlark.Thread, msg string) {
+	fmt.Println(msg)
+}
+
 func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Callable, rtype string) http.HandlerFunc {
 	hasArgs := handler != nil && !strings.HasSuffix(handler.Name(), "_no_args")
 	rtype = strings.ToUpper(rtype)
 	goHandler := func(w http.ResponseWriter, r *http.Request) {
 		thread := &starlark.Thread{
 			Name:  a.Path,
-			Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) },
+			Print: starlarkThreadPrint,
 		}
 
 		// Save the request context in the starlark thread local
@@ -159,12 +166,11 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			thread.SetLocal(types.TL_CONTAINER_HANDLER, a.containerHandler)
 			thread.SetLocal(types.TL_CONTAINER_URL, a.containerHandler.GetProxyUrl())
 		}
-		thread.SetLocal(types.TL_APP_URL, a.appUrl)
+		// appUrlLocal is pre-boxed (see App.appUrlLocal) so this does not heap
+		// allocate to box the string on every request
+		thread.SetLocal(types.TL_APP_URL, a.appUrlLocal)
 
 		header := r.Header
-		requestHeaders := header.Clone()
-		deleteOpenRunHeaders(requestHeaders)
-		setOpenRunHeaders(requestHeaders, r.Context())
 		isHtmxRequest := types.GetHTTPHeader(header, "Hx-Request") == "true" &&
 			!(types.GetHTTPHeader(header, "Hx-Boosted") == "true") //nolint:staticcheck
 
@@ -188,6 +194,23 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				pagePath = ""
 			}
 			appUrl := a.getRequestUrl(r) + appPath
+
+			// The sanitized req.Headers view (clone the incoming headers, strip
+			// spoofed openrun headers, set the trusted ones) is built lazily:
+			// most handlers never read headers, and cloning the whole map per
+			// request was a top allocation source. The result is memoized for
+			// handlers that read it more than once (one request, one goroutine).
+			var cachedHeaders http.Header
+			headersFunc := func() http.Header {
+				if cachedHeaders == nil {
+					h := header.Clone()
+					deleteOpenRunHeaders(h)
+					setOpenRunHeaders(h, r.Context())
+					cachedHeaders = h
+				}
+				return cachedHeaders
+			}
+
 			requestData = starlark_type.Request{
 				AppName:        a.Name,
 				AppPath:        appPath,
@@ -199,7 +222,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				IsPartial:      isHtmxRequest,
 				PushEvents:     a.codeConfig.Routing.PushEvents,
 				HtmxVersion:    a.codeConfig.Htmx.Version,
-				Headers:        requestHeaders,
+				HeadersFunc:    headersFunc,
 				RemoteIP:       a.getRemoteIP(r),
 				UserId:         system.GetContextUserId(r.Context()),
 				UserSubject:    system.GetContextUserSubject(r.Context()),
@@ -208,19 +231,29 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				AppRBACEnabled: rbac.AppRBACActive(r.Context()),
 			}
 
-			chiContext := chi.RouteContext(r.Context())
-			params := map[string]string{}
-			if chiContext != nil && chiContext.URLParams.Keys != nil {
+			// Only allocate the params map when the route actually has URL
+			// params (most do not)
+			if chiContext := chi.RouteContext(r.Context()); chiContext != nil && len(chiContext.URLParams.Keys) > 0 {
+				params := make(map[string]string, len(chiContext.URLParams.Keys))
 				for i, k := range chiContext.URLParams.Keys {
 					params[k] = chiContext.URLParams.Values[i]
 				}
+				requestData.UrlParams = params
 			}
-			requestData.UrlParams = params
 
+			// ParseForm parses the URL query into r.Form (and the body into
+			// r.PostForm for non-GET). Reuse r.Form for the query instead of
+			// calling r.URL.Query(), which would parse the query string a second
+			// time.
 			r.ParseForm() //nolint:errcheck // ignore error if no form data is passed
 			requestData.Form = r.Form
-			requestData.Query = r.URL.Query()
 			requestData.PostForm = r.PostForm
+			if r.Method == http.MethodGet {
+				// For GET there is no body, so r.Form holds exactly the query
+				requestData.Query = r.Form
+			} else {
+				requestData.Query = r.URL.Query()
+			}
 		}
 
 		var deferredCleanup func() error
@@ -515,6 +548,22 @@ func (a *App) handleResponse(retStruct *starlarkstruct.Struct, r *http.Request, 
 		return true, nil
 	}
 
+	download, err := apptype.GetStringAttr(retStruct, "download")
+	if err != nil {
+		a.Error().Err(err).Msg("error getting download from response")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return true, nil
+	}
+
+	if download != "" {
+		// File download: stream the response body verbatim as an attachment,
+		// no template involved. data carries the raw bytes (a starlark string,
+		// which is byte-safe). The body is written through a large buffered
+		// writer and never given a Content-Length, so it goes out with chunked
+		// transfer encoding - the whole payload need not be held by net/http.
+		return a.handleDownloadResponse(w, retStruct, data, download, deferredCleanup)
+	}
+
 	responseRtype, err := apptype.GetStringAttr(retStruct, "type")
 	if err != nil {
 		a.Error().Err(err).Msg("error getting type from response")
@@ -615,6 +664,117 @@ func (a *App) handleResponse(retStruct *starlarkstruct.Struct, r *http.Request, 
 		return true, nil
 	}
 	return true, nil
+}
+
+// downloadBufferSize is the size of the in-memory buffer used to stream a
+// download response body to the client. For a streamed download the producer
+// writes into this buffer: the first buffer-full accumulates in memory, then
+// each write past it blocks until the client reads (chunked transfer
+// encoding, TCP backpressure), so peak memory per download stays bounded
+// regardless of the payload size.
+const downloadBufferSize = 1024 * 1024
+
+func (a *App) handleDownloadResponse(w http.ResponseWriter, retStruct *starlarkstruct.Struct, data starlark.Value, fileName string, deferredCleanup func() error) (bool, error) {
+	contentType, err := apptype.GetStringAttr(retStruct, "content_type")
+	if err != nil {
+		a.Error().Err(err).Msg("error getting content_type from response")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return true, nil
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	code, err := apptype.GetIntAttr(retStruct, "code")
+	if err != nil {
+		a.Error().Err(err).Msg("error getting code from response")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return true, nil
+	}
+
+	// The body is either the raw (possibly binary) bytes carried byte-verbatim
+	// in a starlark string or bytes (both are Go strings under the hood;
+	// starlark.AsString rejects bytes, so handle it explicitly), or an opaque
+	// plugin download stream that produces the bytes at write time
+	var body string
+	var stream *starlark_type.DownloadStream
+	switch d := data.(type) {
+	case starlark.String:
+		body = string(d)
+	case starlark.Bytes:
+		body = string(d)
+	case *starlark_type.DownloadStream:
+		stream = d
+	default:
+		http.Error(w, "download response data must be a string, bytes or a plugin download stream", http.StatusInternalServerError)
+		return true, nil
+	}
+
+	if deferredCleanup != nil {
+		if err := deferredCleanup(); err != nil {
+			return false, err
+		}
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+
+	if stream == nil {
+		w.WriteHeader(int(code))
+		// Stream through a large buffer; net/http uses chunked transfer since
+		// no Content-Length is set
+		buf := bufio.NewWriterSize(w, downloadBufferSize)
+		if _, err := buf.WriteString(body); err != nil {
+			a.Error().Err(err).Msgf("error writing download %s", fileName)
+			return true, nil
+		}
+		if err := buf.Flush(); err != nil {
+			a.Error().Err(err).Msgf("error flushing download %s", fileName)
+		}
+		return true, nil
+	}
+
+	// Streamed download: the producer writes into the buffer; the status line
+	// goes out with the first flush past the buffer size (headerWriter), so a
+	// producer error before then can still return a clean 500. Once bytes are
+	// on the wire the only honest failure signal left is aborting the
+	// connection - a truncated archive must not look like a completed download
+	hw := &headerWriter{w: w, code: int(code)}
+	buf := bufio.NewWriterSize(hw, downloadBufferSize)
+	if err := stream.Produce(buf); err != nil {
+		a.Error().Err(err).Msgf("error producing download %s", fileName)
+		if !hw.wroteHeader {
+			w.Header().Del("Content-Disposition")
+			http.Error(w, fmt.Sprintf("error producing download %s: %s", fileName, err), http.StatusInternalServerError)
+			return true, nil
+		}
+		panic(http.ErrAbortHandler)
+	}
+	if err := buf.Flush(); err != nil {
+		a.Error().Err(err).Msgf("error flushing download %s", fileName)
+	}
+	if !hw.wroteHeader {
+		// The producer wrote no bytes (empty body): still send the status line
+		w.WriteHeader(int(code))
+	}
+	return true, nil
+}
+
+// headerWriter defers WriteHeader until the first body byte reaches the
+// response writer, so a download stream that fails before anything hits the
+// wire can still send an error status instead of a truncated 200
+type headerWriter struct {
+	w           http.ResponseWriter
+	code        int
+	wroteHeader bool
+}
+
+func (h *headerWriter) Write(p []byte) (int, error) {
+	if !h.wroteHeader {
+		h.wroteHeader = true
+		h.w.WriteHeader(h.code)
+	}
+	return h.w.Write(p)
 }
 
 func (a *App) getRemoteIP(r *http.Request) string {

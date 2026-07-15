@@ -231,9 +231,10 @@ func createRedirectBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlar
 
 func createResponseBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var block, retarget, reswap, redirect, rtype starlark.String
+	var download, contentType starlark.String
 	var data starlark.Value
 	var code starlark.Int
-	if err := starlark.UnpackArgs(RESPONSE, args, kwargs, "data", &data, "block?", &block, "type?", &rtype, "code?", &code, "retarget?", &retarget, "reswap?", &reswap, "redirect?", &redirect); err != nil {
+	if err := starlark.UnpackArgs(RESPONSE, args, kwargs, "data", &data, "block?", &block, "type?", &rtype, "code?", &code, "retarget?", &retarget, "reswap?", &reswap, "redirect?", &redirect, "download?", &download, "content_type?", &contentType); err != nil {
 		return nil, fmt.Errorf("error unpacking response args: %w", err)
 	}
 
@@ -248,13 +249,15 @@ func createResponseBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlar
 	}
 
 	fields := starlark.StringDict{
-		"data":     data,
-		"block":    block,
-		"type":     rtype,
-		"code":     code,
-		"retarget": retarget,
-		"reswap":   reswap,
-		"redirect": redirect,
+		"data":         data,
+		"block":        block,
+		"type":         rtype,
+		"code":         code,
+		"retarget":     retarget,
+		"reswap":       reswap,
+		"redirect":     redirect,
+		"download":     download,
+		"content_type": contentType,
 	}
 	return starlarkstruct.FromStringDict(starlark.String(RESPONSE), fields), nil
 }

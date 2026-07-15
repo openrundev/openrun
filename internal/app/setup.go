@@ -922,7 +922,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 
 			clientIP := a.getRemoteIP(r)
 			requestScheme := system.GetRequestScheme(r, a.serverConfig.Security.TrustedProxies)
-			for _, key := range []string{"Forwarded", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Prefix"} {
+			for _, key := range proxyForwardHeadersToStrip {
 				r.Header.Del(key)
 			}
 			if clientIP != "" {
@@ -1228,6 +1228,12 @@ func (a *App) userFileHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "404 Not Found", http.StatusNotFound)
 		return
 	}
+	if time.Now().After(fileEntry.ExpireAt) {
+		// The background cleanup deletes expired rows on its next tick; an
+		// expired entry must not be served in the window until then
+		http.Error(w, "404 Not Found", http.StatusNotFound)
+		return
+	}
 
 	if fileEntry.Visibility == "private" && fileEntry.CreatedBy != types.ANONYMOUS_USER {
 		// Check if the user is authorized to access the file
@@ -1250,26 +1256,27 @@ func (a *App) userFileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// For app level visibility, the file is accessible if the API is accessible
 
-	if !strings.HasPrefix(fileEntry.FilePath, "file://") {
+	switch {
+	case strings.HasPrefix(fileEntry.FilePath, "file://"):
+		filePath := fileEntry.FilePath[len("file://"):]
+		file, err := os.Open(filePath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		defer file.Close() //nolint:errcheck
+
+		w.Header().Set("Content-Type", fileEntry.MimeType)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileEntry.FileName))
+
+		// Copy the file content to the response writer
+		// This streams the content and uses chunked transfer encoding
+		if _, err := io.Copy(w, file); err != nil {
+			http.Error(w, "Error while copying file. "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	default:
 		http.Error(w, "500 Unknown file type", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", fileEntry.MimeType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileEntry.FileName))
-
-	filePath := fileEntry.FilePath[len("file://"):]
-	file, err := os.Open(filePath)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	defer file.Close() //nolint:errcheck
-
-	// Copy the file content to the response writer
-	// This streams the content and uses chunked transfer encoding
-	if _, err := io.Copy(w, file); err != nil {
-		http.Error(w, "Error while copying file. "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

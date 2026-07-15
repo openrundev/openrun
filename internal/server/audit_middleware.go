@@ -382,17 +382,19 @@ func newBackgroundOperationContext(userId string) context.Context {
 func (server *Server) handleStatus(defaultUser string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Add a request id to the context
+			// Add a request id to the context. A single context node carries
+			// the request id, default user and shared audit state instead of a
+			// chain of context.WithValue calls (one heap valueCtx each)
 			rid := ridPrefix + strconv.FormatUint(atomic.AddUint64(&requestCounter, 1), 10)
-			contextShared := ContextShared{
+			contextShared := &ContextShared{
 				UserId: defaultUser,
 			}
-
-			ctx := r.Context()
-			ctx = context.WithValue(ctx, types.REQUEST_ID, rid)
-			ctx = context.WithValue(ctx, types.USER_ID, defaultUser)
-			ctx = context.WithValue(ctx, types.SHARED, &contextShared)
-			r = r.WithContext(ctx)
+			r = r.WithContext(&statusContext{
+				Context:   r.Context(),
+				requestId: rid,
+				userId:    defaultUser,
+				shared:    contextShared,
+			})
 
 			// Wrap the ResponseWriter
 			wrapper := middleware.NewWrapResponseWriter(w, r.ProtoMajor)

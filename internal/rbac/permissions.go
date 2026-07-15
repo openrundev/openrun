@@ -28,8 +28,9 @@ var predefinedRoles = map[string][]types.RBACPermission{
 	"openrun-admin": {types.PermissionAdmin},
 
 	// Runs the platform: full app lifecycle plus plugin approval, sync,
-	// services, bindings, container management, config, secrets (incl.
-	// reveal), audit, server stop and the builder
+	// services, bindings, container management, config, secrets, audit,
+	// server stop and the builder. No secret:reveal — reading back stored
+	// secret values is admin-only (openrun-admin or an explicit grant)
 	"openrun-operator": {
 		types.PermissionAppManage, types.PermissionApprove,
 		types.PermissionSyncCreate, types.PermissionSyncRun, types.PermissionSyncDelete, types.PermissionSyncRead,
@@ -37,15 +38,16 @@ var predefinedRoles = map[string][]types.RBACPermission{
 		types.PermissionBindingCreate, types.PermissionBindingUpdate, types.PermissionBindingDelete, types.PermissionBindingRead, types.PermissionBindingRunCommand,
 		types.PermissionContainerManage,
 		types.PermissionConfigRead, types.PermissionConfigUpdate,
-		types.PermissionSecretCreate, types.PermissionSecretRead, types.PermissionSecretDelete, types.PermissionSecretReveal,
+		types.PermissionSecretCreate, types.PermissionSecretRead, types.PermissionSecretDelete,
 		types.PermissionAuditRead, types.PermissionServerStop,
 		types.PermissionBuilderList, types.PermissionBuilderCreate, types.PermissionBuilderPublish,
 	},
 
 	// App lifecycle and supporting resources, minus operator-only controls
-	// (no approve, full config, secret reveal/delete, server stop, sync
-	// create/delete, container manage, builder). Gets config:basic_read so the
-	// app create/update forms can list specs and auth/git-auth entry names.
+	// (no approve, full config, secret delete, server stop, sync
+	// create/delete, container manage, builder) and no secret:reveal
+	// (admin-only). Gets config:basic_read so the app create/update forms
+	// can list specs and auth/git-auth entry names.
 	"openrun-developer": {
 		types.PermissionAppManage,
 		types.PermissionServiceCreate, types.PermissionServiceUpdate, types.PermissionServiceRead,
@@ -117,6 +119,7 @@ var appPermissions = []types.RBACPermission{
 	types.PermissionTokenRead,
 	types.PermissionTokenManage,
 	types.PermissionAppManage,
+	types.PermissionApprove,
 }
 
 // scopedPermissions are matched against the grant's target glob (the app path).
@@ -164,7 +167,6 @@ var globalPermissions = map[types.RBACPermission]bool{
 	types.PermissionSecretRead:        true,
 	types.PermissionSecretDelete:      true,
 	types.PermissionSecretReveal:      true,
-	types.PermissionApprove:           true,
 	types.PermissionAdmin:             true,
 }
 
@@ -184,9 +186,8 @@ var builtinPermissions = func() map[types.RBACPermission]bool {
 // names. Configs using the old names keep working: they are normalized to the
 // new names when the config is resolved
 var legacyPermissions = map[string]types.RBACPermission{
-	"list":        types.PermissionRead,
-	"access":      types.PermissionAccess,
-	"app:approve": types.PermissionApprove, // approve moved from app-scoped to global
+	"list":   types.PermissionRead,
+	"access": types.PermissionAccess,
 }
 
 // normalizePermission maps legacy permission names to their current names
@@ -198,12 +199,12 @@ func normalizePermission(perm types.RBACPermission) types.RBACPermission {
 }
 
 // appManagePermissions is what app:manage expands to: every app permission except
-// app:manage itself. approve is not an app permission (it is global), so it is not
-// part of this expansion - approving plugin permissions is operator-only
+// app:manage itself and app:approve. Approving plugin permissions is operator-only:
+// app:approve always needs an explicit grant, it is never implied
 var appManagePermissions = func() []types.RBACPermission {
 	perms := make([]types.RBACPermission, 0, len(appPermissions))
 	for _, p := range appPermissions {
-		if p == types.PermissionAppManage {
+		if p == types.PermissionAppManage || p == types.PermissionApprove {
 			continue
 		}
 		perms = append(perms, p)

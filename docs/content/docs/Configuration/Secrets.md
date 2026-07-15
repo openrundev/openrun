@@ -124,7 +124,7 @@ $ openrun secret delete myapp_token
 
 The printed reference is used like any other secret, for example `--param MYPARAM='{{secret_from "db" "myapp_dbpass_x7f2ka9c"}}'`. The same operations are available through the `openrun_admin` plugin (`create_secret`, `get_secret`, `list_secrets`, `delete_secret`, `rekey_secrets`).
 
-When [RBAC]({{< ref "/docs/configuration/rbac" >}}) API enforcement is enabled, the operations are gated by the `secret:create`, `secret:read`, `secret:delete` and `secret:reveal` permissions. Create, update and rekey are all gated by `secret:create`. `secret:reveal` (reading back a stored value) is separate from `secret:read` (listing and metadata), so day to day operators can store and manage secrets without being able to read values back.
+When [RBAC]({{< ref "/docs/configuration/rbac" >}}) API enforcement is enabled, the operations are gated by the `secret:create`, `secret:read`, `secret:delete` and `secret:reveal` permissions. Create, update and rekey are all gated by `secret:create`. `secret:reveal` (reading back a stored value) is separate from `secret:read` (listing and metadata), so day to day operators can store and manage secrets without being able to read values back. No [built-in role]({{< ref "/docs/configuration/rbac/#built-in-roles" >}}) other than `openrun-admin` includes `secret:reveal` — it must be granted explicitly.
 
 ## Secrets Usage
 

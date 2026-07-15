@@ -253,6 +253,21 @@ func (a *AppStore) ClearLinkedApps(pathDomain types.AppPathDomain) error {
 	return a.server.db.NotifyAppUpdate(appPaths)
 }
 
+// CloseAll closes all cached apps, stopping their background resources (dev
+// mode style watchers, source watchers, container handlers). Called at server
+// shutdown so child processes like the tailwind watcher are not orphaned
+func (a *AppStore) CloseAll() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for pathDomain, app := range a.appMap {
+		if err := app.Close(); err != nil {
+			a.Warn().Err(err).Msgf("error closing app %s at shutdown", pathDomain)
+		}
+		delete(a.appMap, pathDomain)
+	}
+	a.generation++
+}
+
 func (a *AppStore) clearApp(pathDomain types.AppPathDomain) {
 	// Invalidate in-progress GetApp loads even when this path is not cached:
 	// the app being cleared may be exactly the one a concurrent GetApp is

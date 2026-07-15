@@ -83,7 +83,7 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 			return nil, err
 		}
 		if approve {
-			if err := s.enforceGlobalPerm(ctx, types.PermissionApprove, ""); err != nil {
+			if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPathDomain, ""); err != nil {
 				return nil, err
 			}
 		}
@@ -794,30 +794,36 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Create a new context with the user ID
-	ctx := context.WithValue(r.Context(), types.USER_ID, userId)
-	ctx = context.WithValue(ctx, types.USER_SUBJECT, userSubject)
-	ctx = context.WithValue(ctx, types.USER_EMAIL, userEmail)
-	ctx = context.WithValue(ctx, types.APP_ID, string(app.Id))
-	ctx = context.WithValue(ctx, types.APP_PATH_DOMAIN, grantPathDomain)
-	ctx = context.WithValue(ctx, types.APP_AUTH, appAuth)
-	ctx = context.WithValue(ctx, types.GROUPS, groups)
+	// Carry the per-request identity/authorization values in a single context
+	// node (authContext) instead of a chain of context.WithValue calls, each of
+	// which would allocate a heap valueCtx. customPerms/rbacEnabled are filled
+	// in below once the other values are readable through the context.
+	authCtx := &authContext{
+		Context:     r.Context(),
+		userId:      userId,
+		userSubject: userSubject,
+		userEmail:   userEmail,
+		appId:       string(app.Id),
+		pathDomain:  grantPathDomain,
+		appAuth:     appAuth,
+		groups:      groups,
+		customPerms: make([]string, 0),
+	}
+	var ctx context.Context = authCtx
 
-	customPerms := make([]string, 0)
 	appRBACEnabled := s.rbacManager.IsAppRBACEnabled(ctx)
 	if appRBACEnabled || rbac.HasTestUrlPerms(ctx) {
 		// Under a _cl_perm test URL directive GetCustomPermissions returns the
 		// simulated set (RBAC is inactive for the app then, so the computed set
 		// would be allow-all). RBAC_ENABLED below stays the real value; the app
 		// visible surfaces report enabled separately (see rbac.AppRBACActive)
-		customPerms, err = s.rbacManager.GetCustomPermissions(ctx)
+		authCtx.customPerms, err = s.rbacManager.GetCustomPermissions(ctx)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
-	ctx = context.WithValue(ctx, types.CUSTOM_PERMS, customPerms)
-	ctx = context.WithValue(ctx, types.RBAC_ENABLED, appRBACEnabled)
+	authCtx.rbacEnabled = appRBACEnabled
 
 	contextShared := ctx.Value(types.SHARED)
 	if contextShared != nil {
@@ -1565,7 +1571,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 		return nil, err
 	}
 	if approve {
-		if err := s.enforceGlobalPerm(ctx, types.PermissionApprove, ""); err != nil {
+		if err := s.enforceAppPermEntry(ctx, types.PermissionApprove, mainAppEntry); err != nil {
 			return nil, err
 		}
 	}

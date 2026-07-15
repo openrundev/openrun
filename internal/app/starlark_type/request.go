@@ -16,17 +16,23 @@ import (
 // and passed to the starlark handler function as it only argument. The Data field is updated with the handler's
 // response and then the template evaluation is done with the same Request
 type Request struct {
-	AppName        string
-	AppPath        string
-	AppUrl         string
-	PagePath       string
-	PageUrl        string
-	Method         string
-	IsDev          bool
-	IsPartial      bool
-	PushEvents     bool
-	HtmxVersion    string
+	AppName     string
+	AppPath     string
+	AppUrl      string
+	PagePath    string
+	PageUrl     string
+	Method      string
+	IsDev       bool
+	IsPartial   bool
+	PushEvents  bool
+	HtmxVersion string
+	// Headers is the sanitized request header view exposed as req.Headers. It
+	// is built lazily by HeadersFunc on first access, since most handlers never
+	// read headers and cloning the whole header map per request is expensive.
+	// Set Headers directly (with HeadersFunc nil) when the value is already
+	// known.
 	Headers        http.Header
+	HeadersFunc    func() http.Header
 	RemoteIP       string
 	UrlParams      map[string]string
 	Form           url.Values
@@ -63,7 +69,11 @@ func (r Request) Attr(name string) (starlark.Value, error) {
 	case "HtmxVersion":
 		return starlark.String(r.HtmxVersion), nil
 	case "Headers":
-		return MarshalStarlark(r.Headers)
+		headers := r.Headers
+		if headers == nil && r.HeadersFunc != nil {
+			headers = r.HeadersFunc()
+		}
+		return MarshalStarlark(headers)
 	case "RemoteIP":
 		return starlark.String(r.RemoteIP), nil
 	case "UrlParams":

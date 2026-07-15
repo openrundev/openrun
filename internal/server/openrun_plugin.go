@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"os"
@@ -36,6 +37,7 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ListSpecs, app.READ, "list_specs"),
 		app.CreatePluginApiName(c.ListVersions, app.READ, "list_versions"),
 		app.CreatePluginApiName(c.ListVersionFiles, app.READ, "list_version_files"),
+		app.CreatePluginApiName(c.GetVersionZip, app.READ, "get_version_zip"),
 		app.CreatePluginApiName(c.AuditApp, app.READ, "audit_app"),
 		app.CreatePluginApiName(c.ListServices, app.READ, "list_services"),
 		app.CreatePluginApiName(c.GetRBACConfig, app.READ, "get_rbac_config"),
@@ -57,14 +59,15 @@ func initOpenRunPlugin(server *Server) {
 	}
 
 	newOpenRunPlugin := func(pluginContext *types.PluginContext) (any, error) {
-		return &openrunPlugin{server: server}, nil
+		return &openrunPlugin{server: server, pluginContext: pluginContext}, nil
 	}
 
 	app.RegisterPlugin("openrun", newOpenRunPlugin, pluginFuncs)
 }
 
 type openrunPlugin struct {
-	server *Server
+	server        *Server
+	pluginContext *types.PluginContext
 }
 
 func (c *openrunPlugin) ListAllApps(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -77,9 +80,10 @@ func (c *openrunPlugin) ListApps(thread *starlark.Thread, builtin *starlark.Buil
 
 func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple, permCheck bool, apiName string) (starlark.Value, error) {
 	var query, path, syncId starlark.String
-	var include_internal starlark.Bool
+	var include_internal, checkApproval starlark.Bool
 	if err := starlark.UnpackArgs(apiName, args, kwargs, "query?", &query, "path?", &path,
-		"include_internal?", &include_internal, "sync_id?", &syncId); err != nil {
+		"include_internal?", &include_internal, "sync_id?", &syncId,
+		"check_approval?", &checkApproval); err != nil {
 		return nil, err
 	}
 
@@ -137,6 +141,26 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 	userId := system.GetRequestUserId(thread)
 	groups := system.GetRequestGroups(thread)
 	ctx := system.GetRequestContext(thread)
+
+	// check_approval audits each listed app for unapproved plugin loads and
+	// permissions. For prod apps the staging app is audited, since approvals
+	// apply to staging first. Results are cached, see appNeedsApproval
+	var stageByMain map[types.AppId]types.AppInfo
+	var approvalTx types.Transaction
+	if bool(checkApproval) {
+		stageByMain = map[types.AppId]types.AppInfo{}
+		for _, app := range apps {
+			if app.MainApp != "" && strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_STAGE) {
+				stageByMain[app.MainApp] = app
+			}
+		}
+		approvalTx, err = c.server.db.BeginTransaction(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer approvalTx.Rollback() //nolint:errcheck
+	}
+
 	if c.server.rbacManager.APIEnforced(ctx) {
 		// Under RBAC enforcement, list_all_apps also filters by app:read; otherwise
 		// it would be a filtering bypass
@@ -262,6 +286,28 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		v.SetKey(starlark.String("spec"), starlark.String(app.Spec))
 		v.SetKey(starlark.String("version"), starlark.MakeInt(app.Version))
 		v.SetKey(starlark.String("version_mismatch"), starlark.Bool(versionMismatchMap[app.Id]))
+		if bool(checkApproval) {
+			needsApproval := false
+			target := app
+			haveTarget := true
+			if app.MainApp != "" {
+				// Linked apps: only the staging app is audited; previews are skipped
+				haveTarget = strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_STAGE)
+			} else if !app.IsDev {
+				// Prod app: approvals apply to its staging app
+				target, haveTarget = stageByMain[app.Id]
+			}
+			if haveTarget {
+				var approvalErr error
+				needsApproval, approvalErr = c.server.appNeedsApproval(ctx, approvalTx, target)
+				if approvalErr != nil {
+					// One unauditable app (broken source) must not fail the listing
+					c.server.Warn().Err(approvalErr).Msgf("approval check failed for %s", target.AppPathDomain)
+					needsApproval = false
+				}
+			}
+			v.SetKey(starlark.String("needs_approval"), starlark.Bool(needsApproval))
+		}
 		v.SetKey(starlark.String("git_sha"), starlark.String(app.GitSha))
 		v.SetKey(starlark.String("git_message"), starlark.String(app.GitMessage))
 		v.SetKey(starlark.String("git_branch"), starlark.String(app.Branch))
@@ -660,15 +706,19 @@ func (c *openrunPlugin) GetApp(thread *starlark.Thread, builtin *starlark.Builti
 	}
 
 	stagePath := ""
+	stageUrl := ""
 	if !entry.IsDev {
-		// The path of the linked staging app, for version/file lookups
+		// The path of the linked staging app, for version/file lookups, and
+		// its serving url (staging apps are served like any other app)
 		stagePathDomain, err := parseLinkedAppPathDomain(entry.LinkedAppPath)
 		if err != nil {
 			stagePathDomain = pathBasedStageApp(&entry.AppEntry)
 		}
 		stagePath = stagePathDomain.String()
+		stageUrl = types.GetAppUrl(stagePathDomain, c.server.Config())
 	}
 	v.SetKey(starlark.String("stage_path"), starlark.String(stagePath)) //nolint:errcheck
+	v.SetKey(starlark.String("stage_url"), starlark.String(stageUrl))   //nolint:errcheck
 	return &v, nil
 }
 
@@ -700,6 +750,25 @@ func (c *openrunPlugin) ListVersionFiles(thread *starlark.Thread, builtin *starl
 		return nil, err
 	}
 	return starlark_type.ConvertToStarlark(result)
+}
+
+// GetVersionZip returns a download value whose content is a lazily produced
+// zip of one app version's files. The zip is built at response-write time by
+// the download handler, streaming to the client (chunked) with backpressure,
+// so the archive is never fully held in memory or staged to disk. Use the
+// stage path for staging versions
+func (c *openrunPlugin) GetVersionZip(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var path, version starlark.String
+	if err := starlark.UnpackArgs("get_version_zip", args, kwargs, "path", &path, "version?", &version); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	producer, fileName, err := c.server.VersionFilesZip(ctx, path.GoString(), version.GoString())
+	if err != nil {
+		return nil, err
+	}
+	return zipDownloadValue(starlark_type.NewDownloadStream(fileName, producer)), nil
 }
 
 // ListSpecs returns the available app spec names
@@ -736,6 +805,54 @@ func (c *openrunPlugin) ListSpecs(thread *starlark.Thread, builtin *starlark.Bui
 		ret.Append(starlark.String(name)) //nolint:errcheck
 	}
 	return &ret, nil
+}
+
+// approvalCacheEntry is one cached needs-approval audit result, see the
+// approvalCache field on Server for the validity rules
+type approvalCacheEntry struct {
+	version       int
+	gen           int64
+	needsApproval bool
+}
+
+// appNeedsApproval reports whether the app's current source requests plugin
+// loads or permissions that are not approved yet. Results for non-dev apps
+// are cached per (app version, binding generation): every approval-affecting
+// app change (reload, approve, update-metadata, version switch) bumps the
+// app version, and binding edits bump the generation. Dev apps serve from
+// local disk which can change without a server operation, so they are
+// audited on every call
+func (s *Server) appNeedsApproval(ctx context.Context, tx types.Transaction, appInfo types.AppInfo) (bool, error) {
+	gen := s.approvalCacheGen.Load()
+	if !appInfo.IsDev {
+		if cached, ok := s.approvalCache.Load(appInfo.Id); ok {
+			entry := cached.(approvalCacheEntry)
+			if entry.version == appInfo.Version && entry.gen == gen {
+				return entry.needsApproval, nil
+			}
+		}
+	}
+
+	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appInfo.AppPathDomain)
+	if err != nil {
+		return false, err
+	}
+	auditApp, err := s.setupApp(ctx, appEntry, tx)
+	if err != nil {
+		return false, err
+	}
+	result, err := auditApp.Audit()
+	if err != nil {
+		return false, err
+	}
+	if !appInfo.IsDev {
+		s.approvalCache.Store(appInfo.Id, approvalCacheEntry{
+			version:       appEntry.Metadata.VersionMetadata.Version,
+			gen:           gen,
+			needsApproval: result.NeedsApproval,
+		})
+	}
+	return result.NeedsApproval, nil
 }
 
 // AuditApp audits the app's code and returns the requested plugin loads and

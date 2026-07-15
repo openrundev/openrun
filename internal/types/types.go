@@ -1218,8 +1218,12 @@ const (
 	// The "admin" user holds it implicitly; other users acquire it through a
 	// grant of the literal permission (or the built-in admin role). Like
 	// approve it is never matched by permission globs
-	PermissionAdmin   RBACPermission = "admin"
-	PermissionApprove RBACPermission = "approve" // approve plugin permissions (operator-only, global)
+	PermissionAdmin RBACPermission = "admin"
+	// PermissionApprove allows approving an app's plugin permissions. App
+	// scoped (matched against the grant's target glob) but admin-only:
+	// never implied by app:manage, never matched by permission globs and
+	// never granted through ownership
+	PermissionApprove RBACPermission = "app:approve"
 )
 
 // RBACPermissionGroup lists the permissions for one resource type, in display order
@@ -1236,7 +1240,7 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 		PermissionAccess, PermissionRead, PermissionCreate, PermissionUpdate,
 		PermissionReload, PermissionApply, PermissionDelete,
 		PermissionPromote, PermissionPreview, PermissionTokenRead,
-		PermissionTokenManage, PermissionAppManage}},
+		PermissionTokenManage, PermissionAppManage, PermissionApprove}},
 	{Resource: "sync", Permissions: []RBACPermission{
 		PermissionSyncCreate, PermissionSyncRun, PermissionSyncDelete, PermissionSyncRead}},
 	{Resource: "service", Permissions: []RBACPermission{
@@ -1257,7 +1261,6 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 		PermissionBuilderPublish}},
 	{Resource: "server", Permissions: []RBACPermission{PermissionServerStop}},
 	{Resource: "audit", Permissions: []RBACPermission{PermissionAuditRead}},
-	{Resource: "approve", Permissions: []RBACPermission{PermissionApprove}},
 	{Resource: "admin", Permissions: []RBACPermission{PermissionAdmin}},
 }
 

@@ -7,20 +7,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
-	"os"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"github.com/segmentio/ksuid"
 	"go.starlark.net/starlark"
 )
 
@@ -260,9 +258,10 @@ func (c *builderPlugin) ReadFile(thread *starlark.Thread, builtin *starlark.Buil
 	return starlark.String(content), nil
 }
 
-// GetSourceZip bundles the session workspace into a zip and registers it as
-// a single-access temp download (the same user-file store the fs plugin's
-// serve_tmp_file uses), returning the download url
+// GetSourceZip returns a download value whose content is a lazily produced
+// zip of the session workspace. The zip is built at response-write time by
+// the download handler, streaming to the client (chunked) with backpressure,
+// so the archive is never fully held in memory or staged to disk or the db
 func (c *builderPlugin) GetSourceZip(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var id starlark.String
 	if err := starlark.UnpackArgs("get_source_zip", args, kwargs, "id", &id); err != nil {
@@ -274,56 +273,22 @@ func (c *builderPlugin) GetSourceZip(thread *starlark.Thread, builtin *starlark.
 		return nil, err
 	}
 
-	zipPath, err := builderSourceZip(session.WorkspaceDir)
-	if err != nil {
-		return nil, fmt.Errorf("error bundling source: %w", err)
-	}
-
-	// The download endpoint (/_openrun_app/file/) reads the shared user-file
-	// store, which is initialized with the fs plugin's connect string
-	connectString, _ := c.server.Config().Plugins["fs.in"]["db_connection"].(string)
-	if connectString == "" {
-		os.Remove(zipPath) //nolint:errcheck
-		return nil, fmt.Errorf("no db_connection configured for plugin fs.in")
-	}
-	if err := app.InitFileStore(connectString); err != nil {
-		os.Remove(zipPath) //nolint:errcheck
-		return nil, err
-	}
-
-	genId, err := ksuid.NewRandom()
-	if err != nil {
-		os.Remove(zipPath) //nolint:errcheck
-		return nil, err
-	}
-	fileName := builderZipName(session.Name)
-	now := time.Now()
-	userFile := &types.UserFile{
-		Id:           "usr_file_" + genId.String(),
-		AppId:        string(c.pluginContext.AppId),
-		FilePath:     "file://" + zipPath,
-		FileName:     fileName,
-		MimeType:     "application/zip",
-		CreateTime:   now,
-		ExpireAt:     now.Add(10 * time.Minute),
-		CreatedBy:    system.GetContextUserId(ctx),
-		SingleAccess: true, // deleted after the download (or at expiry)
-		Visibility:   string(app.UserAccess),
-		Metadata:     map[string]any{"builder_session": session.Id},
-	}
-	if err := app.AddUserFile(ctx, userFile); err != nil {
-		os.Remove(zipPath) //nolint:errcheck
-		return nil, err
-	}
-
-	appPath := c.pluginContext.AppPath
-	if appPath == "/" {
-		appPath = ""
-	}
-	return starlark_type.ConvertToStarlark(map[string]any{
-		"url":  fmt.Sprintf("%s%s/file/%s", appPath, types.APP_INTERNAL_URL_PREFIX, userFile.Id),
-		"name": fileName,
+	workspaceDir := session.WorkspaceDir
+	stream := starlark_type.NewDownloadStream(builderZipName(session.Name), func(w io.Writer) error {
+		return writeBuilderSourceZip(workspaceDir, w)
 	})
+	return zipDownloadValue(stream), nil
+}
+
+// zipDownloadValue builds the {content, name} value returned by the zip
+// download plugin APIs. content is an opaque download stream (constructible
+// only from plugin Go code) that the download response handler drains at
+// response-write time; name is the attachment file name
+func zipDownloadValue(stream *starlark_type.DownloadStream) starlark.Value {
+	dict := starlark.NewDict(2)
+	dict.SetKey(starlark.String("content"), stream)                      //nolint:errcheck
+	dict.SetKey(starlark.String("name"), starlark.String(stream.Name())) //nolint:errcheck
+	return dict
 }
 
 var zipNameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)

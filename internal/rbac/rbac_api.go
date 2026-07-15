@@ -163,9 +163,12 @@ func (h *RBACManager) authorizeAPIInt(user string, groups []string, perm types.R
 		return isAdmin, err
 	}
 
-	if owner != "" && user == owner {
-		// Owner virtual grant: the creator of an asset holds the owner permission
-		// set on it (never includes approve)
+	if owner != "" && user == owner && perm != types.PermissionApprove {
+		// Owner virtual grant: the creator of an asset holds the owner
+		// permission set on it. app:approve shares the app resource prefix
+		// but is never granted through ownership (config validation also
+		// rejects it in owner_permissions; this keeps the exclusion
+		// structural)
 		if h.ownerPerms[PermissionResource(perm)][perm] {
 			return true, nil
 		}

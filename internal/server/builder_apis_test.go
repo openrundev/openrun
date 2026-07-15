@@ -5,6 +5,7 @@ package server
 
 import (
 	"archive/zip"
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -110,17 +111,15 @@ func TestBuilderSourceZip(t *testing.T) {
 	writeFile("node_modules/pkg/index.js", "excluded")
 	writeFile(".opencode/state", "excluded")
 
-	zipPath, err := builderSourceZip(workspace)
+	var buf bytes.Buffer
+	if err := writeBuilderSourceZip(workspace, &buf); err != nil {
+		t.Fatal(err)
+	}
+	zipContent := buf.Bytes()
+	reader, err := zip.NewReader(bytes.NewReader(zipContent), int64(len(zipContent)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(zipPath) //nolint:errcheck
-
-	reader, err := zip.OpenReader(zipPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close() //nolint:errcheck
 
 	got := map[string]bool{}
 	for _, f := range reader.File {

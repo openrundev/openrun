@@ -188,6 +188,14 @@ type Server struct {
 	deployTxnMu      sync.Mutex
 	activeDeployTxns map[*container.DeployTxn]bool
 
+	// approvalCache caches the needs-approval audit result per app id for
+	// list_apps check_approval. An entry is valid for one (app version,
+	// approvalCacheGen) pair: approval-affecting app changes bump the app
+	// version, binding edits (which can change binding source perms without
+	// touching any app) bump the generation instead
+	approvalCache    sync.Map // types.AppId -> approvalCacheEntry
+	approvalCacheGen atomic.Int64
+
 	stopRequested   chan struct{}
 	stopRequestOnce sync.Once
 	stopOnce        sync.Once
@@ -1063,6 +1071,13 @@ func (s *Server) Stop(ctx context.Context) error {
 		if s.udsServer != nil {
 			err3 = s.udsServer.Shutdown(ctx)
 		}
+		// Close the apps after the HTTP servers have drained: stops dev-mode
+		// child processes (tailwind watcher) which would otherwise be
+		// orphaned when this process exits
+		if s.apps != nil {
+			s.apps.CloseAll()
+		}
+
 		// Stop the audit writer after the HTTP servers have drained so queued
 		// audit events from in-flight requests are written out
 		s.stopAuditWriter()

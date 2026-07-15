@@ -189,6 +189,10 @@ func (f *fsPlugin) ServeTmpFile(thread *starlark.Thread, builtin *starlark.Built
 }
 
 func AddUserFile(ctx context.Context, file *types.UserFile) error {
+	return addUserFile(ctx, file)
+}
+
+func addUserFile(ctx context.Context, file *types.UserFile) error {
 	metadataJson, err := json.Marshal(file.Metadata)
 	if err != nil {
 		return fmt.Errorf("error marshalling metadata: %w", err)

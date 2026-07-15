@@ -756,3 +756,132 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "body", `Template got anonymous subject-123 test@example.com subject-123 test@example.com [read:data write:data admin] true anonymous subject-123 test@example.com [read:data write:data admin] true`, response.Body.String())
 }
+
+// TestAppQueryAndForm guards the request query/form population: on GET, Query
+// and Form both hold the URL query; on POST, Query holds only the URL query
+// while Form merges query + body and PostForm holds only the body.
+func TestAppQueryAndForm(t *testing.T) {
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/", fragments=[ace.fragment("f", method="POST")])])
+
+def handler(req):
+	return {
+		"q_a": req.Query.get("a", [""])[0],
+		"q_b": req.Query.get("b", ["NONE"])[0],
+		"form_a": req.Form.get("a", [""])[0],
+		"form_b": req.Form.get("b", ["NONE"])[0],
+		"post_a": req.PostForm.get("a", ["NONE"])[0],
+		"post_b": req.PostForm.get("b", ["NONE"])[0],
+	}
+		`,
+		"index.go.html": `q[{{.Data.q_a}},{{.Data.q_b}}] form[{{.Data.form_a}},{{.Data.form_b}}] post[{{.Data.post_a}},{{.Data.post_b}}]`,
+	}
+	a, _, err := CreateDevModeTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	// GET: only a URL query param "a"; Query and Form both see it, no body
+	getReq := httptest.NewRequest("GET", "/test?a=qval", nil)
+	getResp := httptest.NewRecorder()
+	a.ServeHTTP(getResp, getReq)
+	testutil.AssertEqualsInt(t, "get code", 200, getResp.Code)
+	testutil.AssertEqualsString(t, "get body",
+		`q[qval,NONE] form[qval,NONE] post[NONE,NONE]`, getResp.Body.String())
+
+	// POST: query "a" in the URL, body form "b". Query sees only a; Form sees
+	// both; PostForm sees only b
+	postReq := httptest.NewRequest("POST", "/test/f?a=qval",
+		strings.NewReader("b=bodyval"))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postResp := httptest.NewRecorder()
+	a.ServeHTTP(postResp, postReq)
+	testutil.AssertEqualsInt(t, "post code", 200, postResp.Code)
+	testutil.AssertEqualsString(t, "post body",
+		`q[qval,NONE] form[qval,bodyval] post[NONE,bodyval]`, postResp.Body.String())
+}
+
+// TestAppHeadersSanitized checks the lazily-built req.Headers view: a client
+// header passes through, while a spoofed X-Openrun-* header is stripped and
+// replaced with the trusted value derived from the request context (empty user
+// here), so a caller cannot inject openrun identity headers.
+func TestAppHeadersSanitized(t *testing.T) {
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
+
+def handler(req):
+	return {
+		"custom": req.Headers["X-Custom"][0],
+		"spoofed_user": req.Headers["X-Openrun-User"][0],
+	}
+		`,
+		"index.go.html": `[{{ .Data.custom }}] [{{ .Data.spoofed_user }}]`,
+	}
+	a, _, err := CreateDevModeTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test", nil)
+	request.Header.Set("X-Custom", "passed-through")
+	request.Header.Set(types.OPENRUN_HEADER_USER, "hacker") // spoofed by the client
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	// The custom header survives; the spoofed openrun user header is replaced
+	// with the trusted (empty) value, not "hacker"
+	testutil.AssertEqualsString(t, "body", `[passed-through] []`, response.Body.String())
+}
+
+// TestAppHeadersAccess exercises the lazily-materialized req.Headers view when
+// the handler actually reads it: the full set of incoming request headers must
+// be present, and repeated access must be consistent (the clone is built once
+// and memoized). This is the read-side counterpart to the lazy header change.
+func TestAppHeadersAccess(t *testing.T) {
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
+
+def handler(req):
+	# Read several incoming headers, and read one of them twice to exercise
+	# the memoized lazy clone
+	return {
+		"agent": req.Headers["User-Agent"][0],
+		"accept": req.Headers["Accept"][0],
+		"custom1": req.Headers["X-Custom-1"][0],
+		"custom2": req.Headers["X-Custom-2"][0],
+		"agent_again": req.Headers["User-Agent"][0],
+		"count": len(req.Headers["X-Multi"]),
+		"multi0": req.Headers["X-Multi"][0],
+		"multi1": req.Headers["X-Multi"][1],
+	}
+		`,
+		"index.go.html": `{{.Data.agent}}|{{.Data.accept}}|{{.Data.custom1}}|{{.Data.custom2}}|{{.Data.agent_again}}|{{.Data.count}}|{{.Data.multi0}}|{{.Data.multi1}}`,
+	}
+	a, _, err := CreateDevModeTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test", nil)
+	request.Header.Set("User-Agent", "test-agent/1.0")
+	request.Header.Set("Accept", "text/html")
+	request.Header.Set("X-Custom-1", "v1")
+	request.Header.Set("X-Custom-2", "v2")
+	request.Header.Add("X-Multi", "m0")
+	request.Header.Add("X-Multi", "m1")
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	// Every incoming header is visible; the twice-read header is stable; a
+	// multi-value header keeps both values
+	testutil.AssertEqualsString(t, "body",
+		`test-agent/1.0|text/html|v1|v2|test-agent/1.0|2|m0|m1`, response.Body.String())
+}

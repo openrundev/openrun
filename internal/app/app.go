@@ -112,8 +112,11 @@ type App struct {
 	telemetryIdentityAttrs []attribute.KeyValue
 
 	// appUrl caches the app url (constant per app) so the request hot path
-	// does not format it on every call.
-	appUrl string
+	// does not format it on every call. appUrlLocal is the same value pre-boxed
+	// as an interface, so setting it as a starlark thread local does not box the
+	// string (a heap alloc) on every request.
+	appUrl      string
+	appUrlLocal any
 
 	activeContainerName container.ContainerName
 	bindings            []*types.Binding
@@ -150,6 +153,7 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 		bindings:       bindings,
 		appUrl:         types.GetAppUrl(appEntry.AppPathDomain(), serverConfig),
 	}
+	newApp.appUrlLocal = newApp.appUrl // pre-box once for the thread-local hot path
 	newApp.plugins = NewAppPlugins(newApp, plugins, appEntry.Metadata.Accounts)
 	newApp.AppConfig = appConfig
 	if err := newApp.updateAppConfig(); err != nil {

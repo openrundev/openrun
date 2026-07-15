@@ -151,7 +151,9 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 		return nil, err
 	}
 	if approve {
-		if err := s.enforceGlobalPerm(ctx, types.PermissionApprove, ""); err != nil {
+		// An approving reload approves plugin permissions, needs app:approve
+		// on every matched app
+		if err := s.enforceAppPermInfos(ctx, types.PermissionApprove, filteredApps); err != nil {
 			return nil, err
 		}
 	}
@@ -386,13 +388,7 @@ func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, p
 		if err != nil {
 			return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 		}
-		if perm == types.PermissionApprove {
-			// approve is a global permission (granted with target all), not
-			// scoped to the matched apps
-			if err := s.enforceGlobalPerm(ctx, perm, ""); err != nil {
-				return nil, err
-			}
-		} else if err := s.enforceAppPermInfos(ctx, perm, filteredApps); err != nil {
+		if err := s.enforceAppPermInfos(ctx, perm, filteredApps); err != nil {
 			return nil, err
 		}
 		if promote {

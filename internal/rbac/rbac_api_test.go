@@ -144,17 +144,18 @@ func TestAppAdminPermission(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			// app:manage grants every app-scoped permission
+			// app:manage grants every app-scoped permission except the
+			// operator-only app:approve, which is never implied
+			if perm == types.PermissionApprove {
+				if allowed {
+					t.Errorf("perm %s: app:manage must not grant it, got %v", perm, allowed)
+				}
+				return
+			}
 			if !allowed {
 				t.Errorf("perm %s: app:manage should grant it, got %v", perm, allowed)
 			}
 		})
-	}
-
-	// approve is global and operator-only: app:manage never confers it
-	allowed, err := manager.AuthorizeGlobalAPI(enforcedCtx("user1"), types.PermissionApprove, "")
-	if err != nil || allowed {
-		t.Errorf("app:manage must not grant the global approve permission, got %v err %v", allowed, err)
 	}
 }
 
@@ -266,9 +267,9 @@ func TestPredefinedRoles(t *testing.T) {
 			{types.PermissionDelete, false, true},
 		},
 		"openrun-operator": {
-			{types.PermissionDelete, false, true}, // app:manage
-			{types.PermissionApprove, true, true}, // operator holds approve
-			{types.PermissionSecretReveal, true, true},
+			{types.PermissionDelete, false, true},         // app:manage
+			{types.PermissionApprove, true, true},         // operator holds approve
+			{types.PermissionSecretReveal, true, false},   // reveal is admin-only
 			{types.PermissionConfigBasicRead, true, true}, // implied by config:read
 			{types.PermissionConfigUpdate, true, true},
 			{types.PermissionServerStop, true, true},

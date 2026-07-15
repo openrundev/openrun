@@ -1391,10 +1391,14 @@ func newSyncRBACTestServer(t *testing.T) (*Server, *metadata.Metadata, context.C
 		Groups:  map[string][]string{},
 		Roles: map[string][]types.RBACPermission{
 			"syncer": {types.PermissionSyncCreate, types.PermissionApply},
+			// apply+approve but no promote: a staging-first builder publisher
+			"publisher": {types.PermissionApply, types.PermissionApprove},
 		},
 		Grants: []types.RBACGrant{
 			{Description: "creator grant", Users: []string{"creator"},
 				Roles: []string{"syncer"}, Targets: []string{"/apps/allowed*"}},
+			{Description: "publisher grant", Users: []string{"publisher"},
+				Roles: []string{"publisher"}, Targets: []string{"/apps/allowed*"}},
 		},
 	}
 	rbacManager, err := rbac.NewRBACHandler(server.Logger, rbacConfig, server.staticConfig)
@@ -1780,29 +1784,43 @@ func TestBuilderPublishLocalPreflight(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("OPENRUN_HOME", home)
 
-	// The harness "creator" grant holds app:apply on /apps/allowed* but not
-	// app:promote; the local publish applies with promote set
 	session := &types.BuilderSession{Id: "bld_ses_preflight0001", UserID: "creator", WorkspaceDir: t.TempDir()}
 	gitCfg := types.BuilderGitConfig{AppsFile: "apps.star"}
 
-	err := server.builderPublishLocal(rbacEnforcedCtx(ctx, "creator"), session, gitCfg,
-		"allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
-	if err == nil || !strings.Contains(err.Error(), string(types.PermissionPromote)) {
-		t.Fatalf("expected app:promote denial, got %v", err)
-	}
-	// Nothing was staged: the local publish root was never created
-	if _, statErr := os.Stat(filepath.Join(home, "app_src")); !os.IsNotExist(statErr) {
-		t.Fatalf("publish root must not exist after denial, stat err %v", statErr)
-	}
-
-	// A user without app:apply on the path is denied on the first check
-	err = server.builderPublishLocal(rbacEnforcedCtx(ctx, "nobody"), session, gitCfg,
+	// A user without app:apply on the path is denied on the first check,
+	// before any file is written
+	err := server.builderPublishLocal(rbacEnforcedCtx(ctx, "nobody"), session, gitCfg,
 		"allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
 	if err == nil || !strings.Contains(err.Error(), string(types.PermissionApply)) {
 		t.Fatalf("expected app:apply denial, got %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(home, "app_src")); !os.IsNotExist(statErr) {
 		t.Fatalf("publish root must not exist after denial, stat err %v", statErr)
+	}
+
+	// The harness "creator" grant holds app:apply but not app:approve: the
+	// approving apply is denied by the preflight, before any file is written
+	err = server.builderPublishLocal(rbacEnforcedCtx(ctx, "creator"), session, gitCfg,
+		"allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
+	if err == nil || !strings.Contains(err.Error(), string(types.PermissionApprove)) {
+		t.Fatalf("expected app:approve denial, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, "app_src")); !os.IsNotExist(statErr) {
+		t.Fatalf("publish root must not exist after denial, stat err %v", statErr)
+	}
+
+	// "publisher" holds app:apply and app:approve but not app:promote. The
+	// publish is staging-first (no promote), so app:promote is NOT required:
+	// the permission preflight passes and files are staged (promotion is a
+	// separate console step)
+	err = server.builderPublishLocal(rbacEnforcedCtx(ctx, "publisher"), session, gitCfg,
+		"allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
+	if err != nil && strings.Contains(err.Error(), "unauthorized") {
+		t.Fatalf("staging-first publish must not need app:promote, got %v", err)
+	}
+	// The preflight passed: the publish root was created
+	if _, statErr := os.Stat(filepath.Join(home, "app_src")); statErr != nil {
+		t.Fatalf("publish root should exist after the permission preflight passed, stat err %v", statErr)
 	}
 }
 

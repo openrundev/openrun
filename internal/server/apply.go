@@ -397,7 +397,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 				return nil, nil, err
 			}
 			if approve {
-				if err := s.enforceGlobalPerm(ctx, types.PermissionApprove, ""); err != nil {
+				if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPath, owner); err != nil {
 					return nil, nil, err
 				}
 			}

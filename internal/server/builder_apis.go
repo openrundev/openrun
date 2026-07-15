@@ -322,7 +322,8 @@ func (s *Server) builderPublish(ctx context.Context, sessionId, publishPath, com
 		response.CommitSha = sha
 	} else {
 		response.Mode = "local"
-		if err := s.enforceGlobalPerm(ctx, types.PermissionApprove, ""); err != nil {
+		// A local publish creates and approves the app in one step
+		if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPathDomain, ""); err != nil {
 			return nil, err
 		}
 		if err := s.builderPublishLocal(ctx, session, gitCfg, appName, publishPath, stanza); err != nil {
@@ -370,12 +371,17 @@ func (s *Server) builderRepublishEdit(ctx context.Context, session *types.Builde
 			return nil, err
 		}
 	}
-	// Concurrent-change guard: the app must still be on the version this
-	// session was seeded from (a later republish from this session advances
-	// the recorded version)
-	if entry.Metadata.VersionMetadata.Version != session.EditVersion {
+	// Concurrent-change guard: the version the publish builds on (staging
+	// for prod apps - publishes land on staging first) must still be the one
+	// this session was seeded from (a later republish from this session
+	// advances the recorded version)
+	baseVersion, err := s.builderPublishBaseVersion(ctx, entry)
+	if err != nil {
+		return nil, err
+	}
+	if baseVersion != session.EditVersion {
 		return nil, fmt.Errorf("app %s changed since this edit session started (version %d, session is based on %d); start a new edit session",
-			publishPath, entry.Metadata.VersionMetadata.Version, session.EditVersion)
+			publishPath, baseVersion, session.EditVersion)
 	}
 
 	appName := builderSourceName(appPathDomain)
@@ -386,30 +392,28 @@ func (s *Server) builderRepublishEdit(ctx context.Context, session *types.Builde
 
 	localRoot := filepath.Join(os.ExpandEnv("$OPENRUN_HOME"), appSrcDir)
 	if strings.HasPrefix(entry.SourceUrl, localRoot+string(filepath.Separator)) {
-		// Local mode: replace the app's source directory and reload. Everything
-		// the reload below enforces is checked BEFORE the live source directory
-		// is replaced: a denial afterwards would leave staged source that a
-		// later privileged reload would deploy. The reload runs with promote
-		// set, and app:update (checked above) does not imply app:promote
+		// Local mode: replace the app's source directory and reload. The
+		// approve check runs BEFORE the live source directory is replaced: a
+		// denial afterwards would leave staged source that a later privileged
+		// reload would deploy. The reload applies to STAGING only (staging
+		// first, like the console app actions); promotion is a separate step
+		// offered by the console when the caller holds app:promote
 		response.Mode = "local"
-		if err := s.enforceGlobalPerm(ctx, types.PermissionApprove, ""); err != nil {
+		if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPathDomain, entry.UserID); err != nil {
 			return nil, err
-		}
-		if s.rbacManager.APIEnforced(ctx) {
-			if err := s.enforceAppPerm(ctx, types.PermissionPromote, appPathDomain, entry.UserID); err != nil {
-				return nil, err
-			}
 		}
 		if err := copyAppSource(session.WorkspaceDir, entry.SourceUrl); err != nil {
 			return nil, fmt.Errorf("copying app source: %w", err)
 		}
 		if _, err := s.ReloadApps(ctx, appPathDomain.String(), true /*approve*/, false, /*dryRun*/
-			true /*promote*/, "", "", "", false /*forceReload*/, false /*verify*/); err != nil {
+			false /*promote*/, "", "", "", false /*forceReload*/, false /*verify*/); err != nil {
 			return nil, fmt.Errorf("reloading app: %w", err)
 		}
-		// Track the reloaded version so this session can republish again
+		// Track the reloaded staging version so this session can republish again
 		if apps, err := s.GetApps(ctx, appPathDomain.String(), false); err == nil && len(apps) == 1 {
-			session.EditVersion = apps[0].Metadata.VersionMetadata.Version
+			if version, err := s.builderPublishBaseVersion(ctx, &apps[0].AppEntry); err == nil {
+				session.EditVersion = version
+			}
 		}
 	} else {
 		gitCfg, gitName, err := s.matchBuilderGitBySource(entry.SourceUrl)
@@ -616,17 +620,38 @@ func (s *Server) builderExportStanza(ctx context.Context, exportPath,
 	return stanza, nil
 }
 
+// builderPublishBaseVersion returns the version an edit session republish
+// builds on: the staging app's version for prod apps (publishes land on
+// staging first), the app's own version for dev apps
+func (s *Server) builderPublishBaseVersion(ctx context.Context, entry *types.AppEntry) (int, error) {
+	if entry.IsDev {
+		return entry.Metadata.VersionMetadata.Version, nil
+	}
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	stageEntry, err := s.getStageApp(ctx, tx, entry)
+	if err != nil {
+		return 0, err
+	}
+	return stageEntry.Metadata.VersionMetadata.Version, nil
+}
+
 // builderPublishLocal copies the workspace to $OPENRUN_HOME/app_src/<name>,
-// updates the local apps.star and applies the entry immediately
+// updates the local apps.star and applies the entry immediately. The apply
+// runs staging first: an update to an existing app lands on its staging app,
+// promotion is a separate step offered by the console (a first publish
+// creates the app, whose initial version is live on create)
 func (s *Server) builderPublishLocal(ctx context.Context, session *types.BuilderSession,
 	gitCfg types.BuilderGitConfig, appName, publishPath, stanza string) error {
 	// Preflight everything the apply and reload below will enforce BEFORE the
 	// shared apps file or source directory is touched: a denial after the copy
 	// would leave staged changes that a later privileged apply would deploy.
-	// The caller already enforced app:create/app:update on the path and the
-	// global approve permission; the apply runs with promote set, so app:apply
-	// and app:promote are needed too (app:reload for the unchanged-stanza
-	// republish fallback is implied by app:update)
+	// The apply runs with approve set, so app:apply and app:approve are
+	// needed (the caller checks app:approve too; app:reload for the
+	// unchanged-stanza republish fallback is implied by app:update)
 	if s.rbacManager.APIEnforced(ctx) {
 		appPathDomain, err := parseAppPath(publishPath)
 		if err != nil {
@@ -641,7 +666,7 @@ func (s *Server) builderPublishLocal(ctx context.Context, session *types.Builder
 		if err := s.enforceAppPerm(ctx, types.PermissionApply, appPathDomain, owner); err != nil {
 			return err
 		}
-		if err := s.enforceAppPerm(ctx, types.PermissionPromote, appPathDomain, owner); err != nil {
+		if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPathDomain, owner); err != nil {
 			return err
 		}
 	}
@@ -661,7 +686,7 @@ func (s *Server) builderPublishLocal(ctx context.Context, session *types.Builder
 	}
 
 	resp, _, err := s.Apply(ctx, types.Transaction{}, appsFile, publishPath, true /*approve*/, false, /*dryRun*/
-		true /*promote*/, types.AppReloadOptionUpdated, "", "", "", false /*clobber*/, false, /*forceReload*/
+		false /*promote*/, types.AppReloadOptionUpdated, "", "", "", false /*clobber*/, false, /*forceReload*/
 		false /*verify*/, "", nil, false)
 	if err != nil {
 		return err
@@ -673,7 +698,7 @@ func (s *Server) builderPublishLocal(ctx context.Context, session *types.Builder
 	// created nor reloaded the app, force a reload to load the updated source
 	// and record a version (the edit-session republish does the same)
 	if len(resp.CreateResults) == 0 && len(resp.ReloadResults) == 0 {
-		_, err = s.ReloadApps(ctx, publishPath, true /*approve*/, false /*dryRun*/, true, /*promote*/
+		_, err = s.ReloadApps(ctx, publishPath, true /*approve*/, false /*dryRun*/, false, /*promote*/
 			"", "", "", true /*forceReload*/, false /*verify*/)
 	}
 	return err
@@ -879,17 +904,15 @@ func copyAppSource(srcDir, destDir string) error {
 	})
 }
 
-// builderSourceZip bundles the session workspace (minus VCS/agent
-// artifacts, same exclusions as publish) into a zip in a temp file and
-// returns its path. The caller owns the file's lifecycle
-func builderSourceZip(workspaceDir string) (string, error) {
-	tmp, err := os.CreateTemp("", "openrun-builder-src-*.zip")
-	if err != nil {
-		return "", err
-	}
-	writer := zip.NewWriter(tmp)
+// writeBuilderSourceZip bundles the session workspace (minus VCS/agent
+// artifacts, same exclusions as publish) into a zip written to w. It runs as
+// a download stream producer at response-write time: the archive flows
+// through the response buffer to the client (chunked) with backpressure, so
+// it is never fully held in memory or staged to disk or the db
+func writeBuilderSourceZip(workspaceDir string, w io.Writer) error {
+	writer := zip.NewWriter(w)
 
-	err = filepath.WalkDir(workspaceDir, func(current string, entry fs.DirEntry, err error) error {
+	err := filepath.WalkDir(workspaceDir, func(current string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -918,17 +941,11 @@ func builderSourceZip(workspaceDir string) (string, error) {
 		_, err = io.Copy(dest, src)
 		return err
 	})
-	if err == nil {
-		err = writer.Close()
-	}
-	if closeErr := tmp.Close(); err == nil {
-		err = closeErr
-	}
 	if err != nil {
-		os.Remove(tmp.Name()) //nolint:errcheck
-		return "", err
+		writer.Close() //nolint:errcheck
+		return err
 	}
-	return tmp.Name(), nil
+	return writer.Close()
 }
 
 // upsertMarkerBlockFile inserts or replaces the app's marker block in the

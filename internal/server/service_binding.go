@@ -194,6 +194,7 @@ func (s *Server) CreateBinding(ctx context.Context, createRequest *types.CreateB
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.approvalCacheGen.Add(1)
 	if err := deployScope.commit(ctx); err != nil {
 		return nil, err
 	}
@@ -888,6 +889,7 @@ func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBi
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.approvalCacheGen.Add(1)
 	if err := deployScope.commit(ctx); err != nil {
 		// The binding update is committed; only the deferred revokes failed
 		return binding, err
@@ -913,7 +915,11 @@ func (s *Server) DeleteBinding(ctx context.Context, path string, dryRun bool) er
 	if dryRun {
 		return nil
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.approvalCacheGen.Add(1)
+	return nil
 }
 
 func (s *Server) GetBinding(ctx context.Context, path string) (*types.Binding, error) {

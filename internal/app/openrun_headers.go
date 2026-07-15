@@ -14,12 +14,15 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-var openrunHeaderPrefixLower = strings.ToLower(types.OPENRUN_HEADER_PREFIX)
-
 func deleteOpenRunHeaders(header http.Header) {
+	prefixLen := len(types.OPENRUN_HEADER_PREFIX)
 	for key := range header {
-		if strings.HasPrefix(strings.ToLower(key), openrunHeaderPrefixLower) {
-			header.Del(key)
+		// Case-insensitive prefix check without allocating a lowercased copy
+		// per header (strings.EqualFold allocates nothing). Keys ranged from
+		// the map are already in canonical form, so delete directly rather than
+		// header.Del, which would re-canonicalize.
+		if len(key) >= prefixLen && strings.EqualFold(key[:prefixLen], types.OPENRUN_HEADER_PREFIX) {
+			delete(header, key)
 		}
 	}
 }

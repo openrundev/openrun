@@ -108,10 +108,12 @@ func (s *Server) enforceGlobalPerm(ctx context.Context, perm types.RBACPermissio
 	return nil
 }
 
-// enforceGlobalApprove requires the global approve permission (granted with
-// target "all"). approve is a global permission, so this is a plain global
-// check; kept as a named helper for the approve-flag call sites
-func (s *Server) enforceGlobalApprove(ctx context.Context) error {
+// enforceApproveAllApps requires app:approve granted on all apps: the check
+// runs with an empty app target, which only a grant targeting "all" (or the
+// equivalent *:** glob) matches. Used by the sync entry paths, where the
+// entry's glob can match apps created in the future, so a path-scoped grant
+// is not sufficient
+func (s *Server) enforceApproveAllApps(ctx context.Context) error {
 	return s.enforceGlobalPerm(ctx, types.PermissionApprove, "")
 }
 

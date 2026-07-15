@@ -26,8 +26,8 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 	if sync.Approve {
 		// A sync entry with approve set approves plugin permissions on every run, in
 		// system context, for any app its glob matches (including future apps). This
-		// needs approve granted on all apps
-		if err := s.enforceGlobalApprove(ctx); err != nil {
+		// needs app:approve granted on all apps
+		if err := s.enforceApproveAllApps(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -269,20 +269,20 @@ func (s *Server) attachSyncRBAC(ctx context.Context, entry *types.SyncEntry) con
 }
 
 // enforceSyncReloadPerms authorizes everything a skipped-apply reload pass will
-// do before any app is mutated: the global approve permission when the entry
-// approves, and app:apply plus app:promote (when promoting) on every app
+// do before any app is mutated: app:apply, app:approve (when the entry
+// approves) and app:promote (when promoting) on every app
 func (s *Server) enforceSyncReloadPerms(ctx context.Context, entry *types.SyncEntry,
 	appPaths []types.AppPathDomain, appMap map[types.AppPathDomain]*types.AppEntry) error {
-	if entry.Metadata.Approve {
-		// an approving reload approves plugin permissions, needs the
-		// global approve permission
-		if err := s.enforceGlobalApprove(ctx); err != nil {
-			return err
-		}
-	}
 	for _, appPath := range appPaths {
 		if err := s.enforceAppPermEntry(ctx, types.PermissionApply, appMap[appPath]); err != nil {
 			return err
+		}
+		if entry.Metadata.Approve {
+			// an approving reload approves plugin permissions, needs
+			// app:approve on the app
+			if err := s.enforceAppPermEntry(ctx, types.PermissionApprove, appMap[appPath]); err != nil {
+				return err
+			}
 		}
 		if entry.Metadata.Promote {
 			if err := s.enforceAppPermEntry(ctx, types.PermissionPromote, appMap[appPath]); err != nil {

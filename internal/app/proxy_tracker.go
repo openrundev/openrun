@@ -197,6 +197,15 @@ func (c *countingConn) Close() error {
 	return err
 }
 
+// proxyForwardHeadersToStrip are the client-supplied forwarding headers the
+// proxy removes before setting its own trusted values, so a caller cannot
+// spoof them. Hoisted to a package var so the proxy handler does not allocate
+// the slice on every request.
+var proxyForwardHeadersToStrip = []string{
+	"Forwarded", "X-Forwarded-For", "X-Real-IP",
+	"X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Prefix",
+}
+
 // proxyBufPool provides the copy buffers for all reverse proxies. Without it
 // httputil.ReverseProxy allocates a fresh 32KB buffer per proxied response.
 var proxyBufPool httputil.BufferPool = &proxyBufferPool{
