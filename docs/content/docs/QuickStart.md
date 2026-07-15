@@ -142,12 +142,12 @@ app = ace.app("Repo Info",
 )
 ```
 
-When accessed, the app shows a form for the params, with the action output displayed below it. For example, a file listing action app looks like:
+The app, when accessed, shows a form for the params, with the action output displayed below it:
 
 <picture  class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
-  <source media="(prefers-color-scheme: dark)" srcset="/images/list_files_dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="/images/list_files_light.png">
-  <img alt="List files app" src="/images/list_files_light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="/images/action_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="/images/action_light.png">
+  <img alt="Repo info action app" src="/images/action_light.png">
 </picture>
 
 ## Managing Applications

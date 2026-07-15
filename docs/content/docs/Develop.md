@@ -142,15 +142,15 @@ app = ace.app("Repo Info",
 )
 ```
 
-When accessed, the app shows a form for the params, with the action output displayed below it. For example, a file listing action app looks like:
+The app, when accessed, shows a form for the params, with the action output displayed below it:
 
 <picture  class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
-  <source media="(prefers-color-scheme: dark)" srcset="/images/list_files_dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="/images/list_files_light.png">
-  <img alt="List files app" src="/images/list_files_light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="/images/action_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="/images/action_light.png">
+  <img alt="Repo info action app" src="/images/action_light.png">
 </picture>
 
-See list files [code](https://github.com/openrundev/apps/tree/main/system/list_files):[demo](https://utils.demo.clace.io/list_files) for the above app. See dictionary [code](https://github.com/openrundev/apps/tree/main/misc/dictionary):[demo](https://utils.demo.clace.io/dict) for another actions example app which shows different type of reports. [Actions]({{< ref "actions" >}}) has more details on building app actions.
+See list files [code](https://github.com/openrundev/apps/tree/main/system/list_files):[demo](https://utils.demo.clace.io/list_files) for an actions app which lists files (using the exec plugin). See dictionary [code](https://github.com/openrundev/apps/tree/main/misc/dictionary):[demo](https://utils.demo.clace.io/dict) for another actions example app which shows different type of reports. [Actions]({{< ref "actions" >}}) has more details on building app actions.
 
 ## Containerized App
 
