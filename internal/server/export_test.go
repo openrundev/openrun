@@ -63,9 +63,6 @@ func normalizeAppRequest(req *types.CreateAppRequest) {
 	if len(req.Bindings) == 0 {
 		req.Bindings = []string{}
 	}
-	if len(req.BindingSourcePerms) == 0 {
-		req.BindingSourcePerms = []string{}
-	}
 }
 
 func normalizeBindingRequest(req *types.CreateBindingRequest) {
@@ -95,13 +92,12 @@ func TestExportFormatRoundTrip(t *testing.T) {
 				"str": `"abc"`, "int": "11", "float": "1.5", "bool": "true",
 				"arr": `["a", "b"]`, "table": "k = 1\n",
 			},
-			ContainerOptions:   map[string]string{"co": "1"},
-			ContainerArgs:      map[string]string{"ca": "x y"},
-			ContainerVolumes:   []string{"v1:/abc", "v2"},
-			Bindings:           []string{"postgres", "/apps/base"},
-			BindingSourcePerms: []string{"external/apply"},
-			StageAt:            "path",
-			Verify:             true,
+			ContainerOptions: map[string]string{"co": "1"},
+			ContainerArgs:    map[string]string{"ca": "x y"},
+			ContainerVolumes: []string{"v1:/abc", "v2"},
+			Bindings:         []string{"postgres", "/apps/base"},
+			StageAt:          "path",
+			Verify:           true,
 		},
 		{Path: "/apps/minimal", SourceUrl: "/tmp/app"},
 		{Path: "/apps/devapp", SourceUrl: "/tmp/devsrc", IsDev: true},

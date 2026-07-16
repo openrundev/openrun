@@ -190,7 +190,6 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 	appEntry.Metadata.ContainerArgs = appRequest.ContainerArgs
 	appEntry.Metadata.ContainerVolumes = appRequest.ContainerVolumes
 	appEntry.Metadata.AppConfig = appRequest.AppConfig
-	appEntry.Metadata.BindingSourcePerms = append([]string{}, appRequest.BindingSourcePerms...)
 	// Set when the create is driven by a sync entry, empty for imperative creates
 	appEntry.Metadata.AppliedSyncId = system.GetContextValue(ctx, types.SYNC_ID)
 	appEntry.UserID = system.GetContextUserId(ctx)
@@ -199,7 +198,7 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 		return nil, err
 	}
 
-	appEntry.Metadata.Bindings, err = s.resolveAppBindings(ctx, currentTx, appEntry.Id, appRequest.Bindings, dryRun, bindingAccounts)
+	appEntry.Metadata.Bindings, err = s.resolveAppBindings(ctx, currentTx, appEntry.Id, appRequest.Bindings, nil, dryRun, bindingAccounts)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1107,9 +1106,8 @@ func (s *Server) auditApp(ctx context.Context, tx types.Transaction, app *app.Ap
 func (s *Server) approveAuditResult(app *app.App, auditResult *types.ApproveResult) {
 	app.Metadata.Loads = auditResult.NewLoads
 	app.Metadata.Permissions = auditResult.NewPermissions
-	app.Metadata.ApprovedBindingSourcePerms = auditResult.NewBindingSourcePerms
-	s.Info().Msgf("Approved app %s %s: loads=%+v permissions=%+v binding_sources=%+v",
-		app.Path, app.Domain, auditResult.NewLoads, auditResult.NewPermissions, auditResult.NewBindingSourcePerms)
+	s.Info().Msgf("Approved app %s %s: loads=%+v permissions=%+v",
+		app.Path, app.Domain, auditResult.NewLoads, auditResult.NewPermissions)
 }
 
 func (s *Server) CompleteTransaction(ctx context.Context, tx types.Transaction, entries []types.AppPathDomain, dryRun bool, op string) error {
@@ -1572,6 +1570,14 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	}
 	if approve {
 		if err := s.enforceAppPermEntry(ctx, types.PermissionApprove, mainAppEntry); err != nil {
+			return nil, err
+		}
+	}
+	// The preview is a NEW app owned by the caller that copies the main app's
+	// bindings, and it runs a caller-selected commit with those credentials:
+	// each copied binding is authorized like any new attach (binding:use)
+	for _, bindingPath := range mainAppEntry.Metadata.Bindings {
+		if err := s.enforceBindingSource(ctx, tx, bindingPath); err != nil {
 			return nil, err
 		}
 	}

@@ -487,23 +487,19 @@ func (s *Server) SaveDynamicConfig(ctx context.Context) error {
 }
 
 func (s *Server) updateDynamicConfigCache(ctx context.Context, newConfig *types.DynamicConfig) error {
-	// The RBAC manager is updated first so its caches rebuild, but a rejected
-	// update must not leave the rejected request's RBAC rules live: if a
-	// later step fails (for example the db secret provider bind validation),
-	// the previous RBAC config is restored. The restore also clears the
-	// partial state UpdateRBACConfig leaves behind when it fails midway
+	// The RBAC manager is updated first so its caches rebuild. UpdateRBACConfig
+	// is atomic (a rejected config leaves the current rules untouched), but if
+	// a later step fails (for example the db secret provider bind validation),
+	// the already applied RBAC config must not stay live: the previous RBAC
+	// config is restored
 	prevRBAC := &s.dynamicConfig.RBAC
-	restoreRBAC := func() {
-		if restoreErr := s.rbacManager.UpdateRBACConfig(prevRBAC); restoreErr != nil {
-			s.Error().Err(restoreErr).Msg("error restoring previous rbac config after rejected config update")
-		}
-	}
 	if err := s.rbacManager.UpdateRBACConfig(&newConfig.RBAC); err != nil {
-		restoreRBAC()
 		return fmt.Errorf("error updating rbac config: %w", err)
 	}
 	if err := s.applyDynamicConfig(ctx, newConfig, true); err != nil {
-		restoreRBAC()
+		if restoreErr := s.rbacManager.UpdateRBACConfig(prevRBAC); restoreErr != nil {
+			s.Error().Err(restoreErr).Msg("error restoring previous rbac config after rejected config update")
+		}
 		return fmt.Errorf("error applying dynamic config entries: %w", err)
 	}
 	s.dynamicConfig = newConfig

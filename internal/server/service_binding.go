@@ -43,8 +43,34 @@ func (s *Server) validateStagingService(ctx context.Context, tx types.Transactio
 	return nil
 }
 
+// serviceRBACId is the service identity RBAC target globs are matched
+// against: <type>/<name>, like postgres/main
+func serviceRBACId(serviceType, name string) string {
+	return serviceType + "/" + name
+}
+
+// enforceDefaultDisplacement authorizes making a service the default of its
+// type: displacing the current default modifies THAT service (bare-type
+// binding sources start resolving elsewhere), so it needs service:update on
+// the current default, not just on the service being promoted
+func (s *Server) enforceDefaultDisplacement(ctx context.Context, tx types.Transaction, serviceType, newDefaultName string) error {
+	if !s.rbacManager.APIEnforced(ctx) {
+		return nil
+	}
+	current, err := s.db.GetDefaultService(ctx, tx, serviceType)
+	if err != nil {
+		return nil // no current default to displace
+	}
+	if current.Name == newDefaultName {
+		return nil
+	}
+	return s.enforceServicePerm(ctx, types.PermissionServiceUpdate,
+		serviceRBACId(current.ServiceType, current.Name), current.CreatedBy)
+}
+
 func (s *Server) CreateService(ctx context.Context, service *types.Service, dryRun bool) error {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionServiceCreate, ""); err != nil {
+	if err := s.enforceServicePerm(ctx, types.PermissionServiceCreate,
+		serviceRBACId(service.ServiceType, service.Name), ""); err != nil {
 		return err
 	}
 
@@ -58,6 +84,7 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 	if err != nil {
 		return err
 	}
+	service.CreatedBy = system.GetContextUserId(ctx)
 
 	builder, ok := bindings.ServiceBindings[service.ServiceType]
 	if !ok {
@@ -78,6 +105,9 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 		// First service of this type automatically becomes the default
 		service.IsDefault = true
 	} else if service.IsDefault {
+		if err := s.enforceDefaultDisplacement(ctx, tx, service.ServiceType, service.Name); err != nil {
+			return err
+		}
 		// Clear any existing default for this service_type
 		if err := s.db.ClearServiceDefault(ctx, tx, service.ServiceType, ""); err != nil {
 			return err
@@ -99,17 +129,25 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 }
 
 func (s *Server) UpdateService(ctx context.Context, service *types.Service, dryRun bool) error {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionServiceUpdate, ""); err != nil {
-		return err
-	}
-
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	existing, err := s.db.GetService(ctx, tx, service.ServiceType, service.Name)
+	if err != nil {
+		return fmt.Errorf("service %s not found", serviceRBACId(service.ServiceType, service.Name))
+	}
+	if err := s.enforceServicePerm(ctx, types.PermissionServiceUpdate,
+		serviceRBACId(service.ServiceType, service.Name), existing.CreatedBy); err != nil {
+		return err
+	}
+
 	if service.IsDefault {
+		if err := s.enforceDefaultDisplacement(ctx, tx, service.ServiceType, service.Name); err != nil {
+			return err
+		}
 		// Clear default flag on any other service of this type
 		if err := s.db.ClearServiceDefault(ctx, tx, service.ServiceType, service.Name); err != nil {
 			return err
@@ -131,15 +169,22 @@ func (s *Server) UpdateService(ctx context.Context, service *types.Service, dryR
 }
 
 func (s *Server) DeleteService(ctx context.Context, name, serviceType string, dryRun bool) error {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionServiceDelete, ""); err != nil {
-		return err
-	}
-
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	existing, err := s.db.GetService(ctx, tx, serviceType, name)
+	if err != nil {
+		// Keep the delete operation's established error message (asserted by
+		// the CLI e2e tests) instead of the lookup's phrasing
+		return fmt.Errorf("no service found with name %s and service_type %s", name, serviceType)
+	}
+	if err := s.enforceServicePerm(ctx, types.PermissionServiceDelete,
+		serviceRBACId(serviceType, name), existing.CreatedBy); err != nil {
+		return err
+	}
 
 	if err := s.db.DeleteService(ctx, tx, name, serviceType); err != nil {
 		return err
@@ -155,21 +200,38 @@ func (s *Server) DeleteService(ctx context.Context, name, serviceType string, dr
 }
 
 func (s *Server) ListServices(ctx context.Context, serviceType, name string) ([]*types.Service, error) {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionServiceRead, ""); err != nil {
-		return nil, err
-	}
-
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	return s.db.ListServices(ctx, tx, serviceType, name)
+	services, err := s.db.ListServices(ctx, tx, serviceType, name)
+	if err != nil {
+		return nil, err
+	}
+
+	if !s.rbacManager.APIEnforced(ctx) {
+		return services, nil
+	}
+	// Under RBAC enforcement, the listing is filtered to the services the user
+	// holds service:read on (through grants or the owner rule)
+	filtered := make([]*types.Service, 0, len(services))
+	for _, service := range services {
+		authorized, err := s.rbacManager.AuthorizeResourceAPI(ctx, types.PermissionServiceRead,
+			serviceRBACId(service.ServiceType, service.Name), service.CreatedBy)
+		if err != nil {
+			return nil, err
+		}
+		if authorized {
+			filtered = append(filtered, service)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *Server) CreateBinding(ctx context.Context, createRequest *types.CreateBindingRequest, dryRun bool) (_ *types.Binding, retErr error) {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingCreate, ""); err != nil {
+	if err := s.enforceBindingPerm(ctx, types.PermissionBindingCreate, createRequest.Path, ""); err != nil {
 		return nil, err
 	}
 
@@ -178,6 +240,13 @@ func (s *Server) CreateBinding(ctx context.Context, createRequest *types.CreateB
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	// Creating a binding also needs authority over its source: provisioning an
+	// account on a service needs service:bind, deriving from a base binding
+	// needs binding:use on it
+	if err := s.enforceBindingSource(ctx, tx, createRequest.Source); err != nil {
+		return nil, err
+	}
 
 	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
 	defer func() { retErr = deployScope.finish(ctx, retErr) }()
@@ -286,6 +355,17 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 		if err != nil {
 			return nil, fmt.Errorf("error getting staging service: %w", err)
 		}
+		if derivedFrom == nil {
+			// The linked staging service hosts the staged account artifacts,
+			// so provisioning a base/auto binding needs service:bind on it
+			// too, not just on the source service (derived bindings need
+			// binding:use on the base instead, whose creator authorized both
+			// services when the base was created)
+			if err := s.enforceServicePerm(ctx, types.PermissionServiceBind,
+				serviceRBACId(stagingService.ServiceType, stagingService.Name), stagingService.CreatedBy); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Generate the staging account info, either against the staging service if set or against the main service.
@@ -313,6 +393,59 @@ func validateBindingCreatePath(bindingPath string, allowAutoPath bool) error {
 		return fmt.Errorf("binding path cannot start with /auto; /auto is reserved for autobindings")
 	}
 	return nil
+}
+
+// enforceBindingSource authorizes using source as a credential source: a
+// binding path needs binding:use on it (deriving a new binding from it, or
+// attaching it to an app), a service source needs service:bind on the service
+// (base/auto bindings). Shared by binding create, apply, builder publish and
+// preview creation so the attach rule cannot diverge between them
+func (s *Server) enforceBindingSource(ctx context.Context, tx types.Transaction, source string) error {
+	if !s.rbacManager.APIEnforced(ctx) {
+		// Skip the source lookups when there is no check to make: the create
+		// path validates the source itself, with its own error ordering
+		// (e.g. grants-on-base-binding errors before a missing source)
+		return nil
+	}
+	if source == "" {
+		return nil // createBindingTx rejects the empty source
+	}
+	if strings.HasPrefix(source, "/") {
+		sourceBinding, err := s.db.GetBinding(ctx, tx, source)
+		if err != nil {
+			return fmt.Errorf("binding source %s not found", source)
+		}
+		return s.enforceBindingPerm(ctx, types.PermissionBindingUse, sourceBinding.Path, sourceBinding.CreatedBy)
+	}
+	service, err := s.serviceForBindingSource(ctx, tx, source)
+	if err != nil {
+		return err
+	}
+	return s.enforceServiceBind(ctx, tx, service)
+}
+
+// enforceServiceBind authorizes provisioning a binding from service:
+// service:bind on the service itself and, when a staging service is linked,
+// on the staging service too — the staged account artifacts are provisioned
+// on it (createBindingTx keeps the staging check as a backstop, but preflights
+// like the builder publish never reach createBindingTx before mutating state)
+func (s *Server) enforceServiceBind(ctx context.Context, tx types.Transaction, service *types.Service) error {
+	if !s.rbacManager.APIEnforced(ctx) {
+		return nil
+	}
+	if err := s.enforceServicePerm(ctx, types.PermissionServiceBind,
+		serviceRBACId(service.ServiceType, service.Name), service.CreatedBy); err != nil {
+		return err
+	}
+	if service.Staging == "" {
+		return nil
+	}
+	stagingService, err := s.db.GetService(ctx, tx, service.ServiceType, service.Staging)
+	if err != nil {
+		return fmt.Errorf("error getting staging service: %w", err)
+	}
+	return s.enforceServicePerm(ctx, types.PermissionServiceBind,
+		serviceRBACId(stagingService.ServiceType, stagingService.Name), stagingService.CreatedBy)
 }
 
 func (s *Server) getServiceBinding(ctx context.Context, service *types.Service, binding *types.Binding) (bindings.ServiceBinding, error) {
@@ -825,10 +958,6 @@ func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBi
 		return nil, fmt.Errorf("expected at least one grant update, promote, or reapply-all")
 	}
 
-	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingUpdate, ""); err != nil {
-		return nil, err
-	}
-
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -837,6 +966,9 @@ func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBi
 
 	binding, err := s.db.GetBinding(ctx, tx, updateRequest.Path)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.enforceBindingPerm(ctx, types.PermissionBindingUpdate, binding.Path, binding.CreatedBy); err != nil {
 		return nil, err
 	}
 	if binding.DerivedFrom == "" {
@@ -898,15 +1030,23 @@ func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBi
 }
 
 func (s *Server) DeleteBinding(ctx context.Context, path string, dryRun bool) error {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingDelete, ""); err != nil {
-		return err
-	}
-
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	binding, err := s.db.GetBinding(ctx, tx, path)
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "binding not found with path: ") {
+			// Keep the delete operation's established error message
+			return fmt.Errorf("no binding found with path %s", path)
+		}
+		return err
+	}
+	if err := s.enforceBindingPerm(ctx, types.PermissionBindingDelete, binding.Path, binding.CreatedBy); err != nil {
+		return err
+	}
 
 	if err := s.db.DeleteBinding(ctx, tx, path); err != nil {
 		return err
@@ -923,10 +1063,6 @@ func (s *Server) DeleteBinding(ctx context.Context, path string, dryRun bool) er
 }
 
 func (s *Server) GetBinding(ctx context.Context, path string) (*types.Binding, error) {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingRead, ""); err != nil {
-		return nil, err
-	}
-
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -935,6 +1071,9 @@ func (s *Server) GetBinding(ctx context.Context, path string) (*types.Binding, e
 
 	binding, err := s.db.GetBinding(ctx, tx, path)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.enforceBindingPerm(ctx, types.PermissionBindingRead, binding.Path, binding.CreatedBy); err != nil {
 		return nil, err
 	}
 	return redactBindingAccount(binding), nil
@@ -954,7 +1093,36 @@ func (s *Server) GetBindingWithAccount(ctx context.Context, tx types.Transaction
 	return binding, nil
 }
 
+// ListBindings returns the bindings the caller can read: under RBAC
+// enforcement the listing is filtered to the bindings the user holds
+// binding:read on (through grants or the owner rule). Account credentials
+// are redacted. Exposed through the REST API and the openrun.in plugin
 func (s *Server) ListBindings(ctx context.Context, source string) ([]*types.Binding, error) {
+	bindings, err := s.listBindingsInternal(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	if !s.rbacManager.APIEnforced(ctx) {
+		return bindings, nil
+	}
+	filtered := make([]*types.Binding, 0, len(bindings))
+	for _, binding := range bindings {
+		authorized, err := s.rbacManager.AuthorizeResourceAPI(ctx,
+			types.PermissionBindingRead, binding.Path, binding.CreatedBy)
+		if err != nil {
+			return nil, err
+		}
+		if authorized {
+			filtered = append(filtered, binding)
+		}
+	}
+	return filtered, nil
+}
+
+// listBindingsInternal is the unfiltered listing (accounts still redacted),
+// for internal flows like apply that diff against every binding and enforce
+// per-binding permissions themselves. Never expose it to a caller directly
+func (s *Server) listBindingsInternal(ctx context.Context, source string) ([]*types.Binding, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -981,11 +1149,11 @@ func redactBindingAccount(binding *types.Binding) *types.Binding {
 	return &redacted
 }
 
+// GetBindingAccount returns the binding's account credentials (show-account).
+// Revealing credentials needs binding:reveal, which is never implied by
+// binding:manage (so binding owners do not hold it by default; operators can
+// opt owners in via owner_permissions.binding)
 func (s *Server) GetBindingAccount(ctx context.Context, path string, useStaging bool) (map[string]string, error) {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingRead, ""); err != nil {
-		return nil, err
-	}
-
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -996,6 +1164,9 @@ func (s *Server) GetBindingAccount(ctx context.Context, path string, useStaging 
 	if err != nil {
 		return nil, err
 	}
+	if err := s.enforceBindingPerm(ctx, types.PermissionBindingReveal, binding.Path, binding.CreatedBy); err != nil {
+		return nil, err
+	}
 	if useStagedBindingMetadata(binding, useStaging) {
 		return binding.StagedMetadata.Account, nil
 	}
@@ -1003,10 +1174,6 @@ func (s *Server) GetBindingAccount(ctx context.Context, path string, useStaging 
 }
 
 func (s *Server) RunBindingCommand(ctx context.Context, bindingName string, useStaging bool, command string) (map[string]any, error) {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingRunCommand, ""); err != nil {
-		return nil, err
-	}
-
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return nil, fmt.Errorf("sql is required")
@@ -1020,6 +1187,9 @@ func (s *Server) RunBindingCommand(ctx context.Context, bindingName string, useS
 
 	binding, err := s.db.GetBinding(ctx, tx, bindingName)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.enforceBindingPerm(ctx, types.PermissionBindingRunCommand, binding.Path, binding.CreatedBy); err != nil {
 		return nil, err
 	}
 

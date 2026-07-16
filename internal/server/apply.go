@@ -152,11 +152,6 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	if err != nil {
 		return nil, err
 	}
-	bindingSourcePerms, err := apptype.GetListStringAttr(appDef, "bind_perm", true)
-	if err != nil {
-		return nil, err
-	}
-
 	paramStr, err := convertToMapString(params, false)
 	if err != nil {
 		return nil, err
@@ -175,23 +170,22 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	}
 
 	return &types.CreateAppRequest{
-		Path:               path,
-		SourceUrl:          source,
-		IsDev:              dev,
-		ParamValues:        paramStr,
-		AppAuthn:           types.AppAuthnType(auth),
-		GitAuthName:        gitAuth,
-		GitBranch:          gitBranch,
-		GitCommit:          gitCommit,
-		Spec:               types.AppSpec(spec),
-		AppConfig:          appConfigStr,
-		ContainerOptions:   containerOptsStr,
-		ContainerArgs:      containerArgsStr,
-		ContainerVolumes:   containerVols,
-		Bindings:           bindings,
-		BindingSourcePerms: bindingSourcePerms,
-		StageAt:            stageAt,
-		Verify:             verify,
+		Path:             path,
+		SourceUrl:        source,
+		IsDev:            dev,
+		ParamValues:      paramStr,
+		AppAuthn:         types.AppAuthnType(auth),
+		GitAuthName:      gitAuth,
+		GitBranch:        gitBranch,
+		GitCommit:        gitCommit,
+		Spec:             types.AppSpec(spec),
+		AppConfig:        appConfigStr,
+		ContainerOptions: containerOptsStr,
+		ContainerArgs:    containerArgsStr,
+		ContainerVolumes: containerVols,
+		Bindings:         bindings,
+		StageAt:          stageAt,
+		Verify:           verify,
 	}, nil
 }
 
@@ -430,8 +424,9 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		}
 	}
 
-	// Get list of all bindings in the database
-	allBindings, err := s.ListBindings(ctx, "")
+	// Get list of all bindings in the database: the apply diff must see every
+	// binding (declared ones are permission-checked individually below)
+	allBindings, err := s.listBindingsInternal(ctx, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -455,26 +450,20 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	}
 
 	// Bindings in the apply file need the same authority as the direct binding
-	// APIs: binding:create for new bindings, binding:update for declared existing
-	// ones (updates and promotes). app:apply does not cover bindings, and this
-	// must be checked even when the apply has no matching apps
-	if s.rbacManager.APIEnforced(ctx) {
-		if len(newBindings) > 0 {
-			if err := s.enforceGlobalPerm(ctx, types.PermissionBindingCreate, ""); err != nil {
-				return nil, nil, err
-			}
-		}
-		if len(updatedBindings) > 0 {
-			if err := s.enforceGlobalPerm(ctx, types.PermissionBindingUpdate, ""); err != nil {
-				return nil, nil, err
-			}
-		}
-	}
-
+	// APIs: binding:create on the path plus source authority (service:bind /
+	// binding:use) for new bindings, binding:update for declared existing ones
+	// (updates and promotes). app:apply does not cover bindings, and this must
+	// be checked even when the apply has no matching apps
 	createBindingResults := make([]string, 0, len(newBindings))
 	for _, newBinding := range newBindings {
 		s.Trace().Msgf("Applying create binding %s", newBinding)
 		applyInfo := bindingConfig[newBinding]
+		if err := s.enforceBindingPerm(ctx, types.PermissionBindingCreate, applyInfo.Path, ""); err != nil {
+			return nil, nil, err
+		}
+		if err := s.enforceBindingSource(ctx, tx, applyInfo.Source); err != nil {
+			return nil, nil, err
+		}
 		if err := prepareBindingApplyInfo(applyInfo); err != nil {
 			return nil, nil, err
 		}
@@ -489,6 +478,11 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	for _, updateBinding := range updatedBindings {
 		s.Trace().Msgf("Applying update binding %s", updateBinding)
 		applyInfo := bindingConfig[updateBinding]
+		if existing := allBindingsMap[updateBinding]; existing != nil {
+			if err := s.enforceBindingPerm(ctx, types.PermissionBindingUpdate, existing.Path, existing.CreatedBy); err != nil {
+				return nil, nil, err
+			}
+		}
 		updated, promoted, err := s.applyBindingUpdate(ctx, tx, bindingAccounts, applyInfo, promote, clobber, forceReload)
 		if err != nil {
 			return nil, nil, err
@@ -663,7 +657,8 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		oldInfo.AppAuthn = cmp.Or(oldInfo.AppAuthn, types.AppAuthnDefault)
 	}
 	newInfo.AppAuthn = cmp.Or(newInfo.AppAuthn, types.AppAuthnDefault)
-	newInfo.Bindings, err = s.resolveAppBindings(ctx, tx, autoBindingAppID(liveApp), newInfo.Bindings, dryRun, bindingAccounts)
+	newInfo.Bindings, err = s.resolveAppBindings(ctx, tx, autoBindingAppID(liveApp), newInfo.Bindings,
+		liveApp.Metadata.Bindings, dryRun, bindingAccounts)
 	if err != nil {
 		return nil, err
 	}
@@ -754,29 +749,10 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	}
 	bindingsChanged := mergeSlice(oldBindings, newInfo.Bindings, &liveApp.Metadata.Bindings, clobber)
 
-	var oldBindingSourcePerms []string
-	if oldInfo != nil {
-		oldBindingSourcePerms = oldInfo.BindingSourcePerms
-	}
-	bindingSourcePermsChanged := mergeSlice(oldBindingSourcePerms, newInfo.BindingSourcePerms, &liveApp.Metadata.BindingSourcePerms, clobber)
 	var approvalResult *types.ApproveResult
-	if bindingSourcePermsChanged && approve {
-		liveApp.Metadata.ApprovedBindingSourcePerms = append([]string{}, liveApp.Metadata.BindingSourcePerms...)
-		approvalResult = &types.ApproveResult{
-			Id:                         liveApp.Id,
-			AppPathDomain:              liveApp.AppPathDomain(),
-			NewLoads:                   liveApp.Metadata.Loads,
-			NewPermissions:             liveApp.Metadata.Permissions,
-			ApprovedLoads:              liveApp.Metadata.Loads,
-			ApprovedPermissions:        liveApp.Metadata.Permissions,
-			NewBindingSourcePerms:      liveApp.Metadata.BindingSourcePerms,
-			ApprovedBindingSourcePerms: liveApp.Metadata.ApprovedBindingSourcePerms,
-			NeedsApproval:              true,
-		}
-	}
 
 	updated := specChanged || gitBranchChanged || gitCommitChanged || paramsChanged ||
-		contConfigChanged || contArgsChanged || contVolsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged || bindingSourcePermsChanged
+		contConfigChanged || contArgsChanged || contVolsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged
 	updatedApps := make([]types.AppPathDomain, 0)
 	if updated {
 		liveApp.Metadata.VersionMetadata.ApplyInfo, err = json.Marshal(newInfo)
@@ -1245,13 +1221,12 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 		var containerArgs = starlark.NewDict(0)
 		var containerVols = &starlark.List{}
 		var bindings = &starlark.List{}
-		var bindingSourcePerms = &starlark.List{}
 
 		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "dev?", &dev,
 			"auth?", &auth, "git_auth?", &gitAuth, "git_branch?", &gitBranch, "git_commit?", &gitCommit,
 			"params?", &params, "spec?", &appSpec, "stage_at?", &stageAt, "app_config", &appConfig,
 			"container_opts?", &containerOpts, "container_args?", &containerArgs, "container_vols?", &containerVols,
-			"bindings?", &bindings, "bind_perm?", &bindingSourcePerms, "verify?", &verify,
+			"bindings?", &bindings, "verify?", &verify,
 		); err != nil {
 			return nil, err
 		}
@@ -1272,7 +1247,6 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 			"container_args": containerArgs,
 			"container_vols": containerVols,
 			"bindings":       bindings,
-			"bind_perm":      bindingSourcePerms,
 			"verify":         verify,
 		}
 

@@ -96,13 +96,6 @@ func appCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		})
 	flags = append(flags,
 		&cli.StringSliceFlag{
-			Name:    "bind-perm",
-			Aliases: []string{"bind_perm"},
-			Usage:   "Request a binding source permission for the app. Repeat to preserve order",
-		})
-
-	flags = append(flags,
-		&cli.StringSliceFlag{
 			Name:    "app-config",
 			Aliases: []string{"conf"},
 			Usage:   "Set an default config option for the app. Format is configKey=configValue, where value has to be encoded in toml formal",
@@ -179,7 +172,6 @@ Examples:
 				return err
 			}
 			bindings := cCtx.StringSlice("binding")
-			bindingSourcePerms := cCtx.StringSlice("bind-perm")
 
 			appConfig := cCtx.StringSlice("app-config")
 			confMap := make(map[string]string)
@@ -206,22 +198,21 @@ Examples:
 			}
 
 			body := types.CreateAppRequest{
-				Path:               cCtx.Args().Get(1),
-				SourceUrl:          sourceUrl,
-				IsDev:              cCtx.Bool("dev"),
-				AppAuthn:           types.AppAuthnType(cCtx.String("auth")),
-				GitBranch:          cCtx.String("branch"),
-				GitCommit:          cCtx.String("commit"),
-				GitAuthName:        cCtx.String("git-auth"),
-				Spec:               types.AppSpec(cCtx.String("spec")),
-				ParamValues:        paramValues,
-				ContainerOptions:   coptMap,
-				ContainerArgs:      cargMap,
-				ContainerVolumes:   containerVolumes,
-				AppConfig:          confMap,
-				Bindings:           bindings,
-				BindingSourcePerms: bindingSourcePerms,
-				StageAt:            cCtx.String("stage-at"),
+				Path:             cCtx.Args().Get(1),
+				SourceUrl:        sourceUrl,
+				IsDev:            cCtx.Bool("dev"),
+				AppAuthn:         types.AppAuthnType(cCtx.String("auth")),
+				GitBranch:        cCtx.String("branch"),
+				GitCommit:        cCtx.String("commit"),
+				GitAuthName:      cCtx.String("git-auth"),
+				Spec:             types.AppSpec(cCtx.String("spec")),
+				ParamValues:      paramValues,
+				ContainerOptions: coptMap,
+				ContainerArgs:    cargMap,
+				ContainerVolumes: containerVolumes,
+				AppConfig:        confMap,
+				Bindings:         bindings,
+				StageAt:          cCtx.String("stage-at"),
 			}
 			var createResult types.AppCreateResponse
 			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
@@ -412,12 +403,6 @@ func printApproveResult(approveResult types.ApproveResult) {
 	fmt.Printf("  Plugins :\n")
 	for _, load := range approveResult.NewLoads {
 		fmt.Printf("    %s\n", load)
-	}
-	if len(approveResult.NewBindingSourcePerms) > 0 {
-		fmt.Printf("  Binding Sources:\n")
-		for _, source := range approveResult.NewBindingSourcePerms {
-			fmt.Printf("    %s\n", source)
-		}
 	}
 	fmt.Printf("  Permissions:\n")
 	for _, perm := range approveResult.NewPermissions {

@@ -322,56 +322,6 @@ tests:
     command: ../openrun binding list -f jsonl | wc -l | tr -d ' '
     stdout: "6"
 
-  # App binding source permission approval flow
-  binding0140: # create app used for binding source permission approval checks
-    command: ../openrun app create --stage-at path ./testapp /apps/bindperm
-    stdout: "App created. No approval required"
-
-  binding0141: # non-default binding source permission is staged
-    command: ../openrun app update bind-perm external/private /apps/bindperm
-    stdout: "1 app(s) updated, 0 app(s) promoted."
-
-  binding0142: # staged metadata has requested binding source permission
-    command: ../openrun app list -i -f json /apps/bindperm | jq -r 'map(select(.path == "/apps/bindperm_cl_stage"))[0].metadata.binding_source_perms | join(",")'
-    stdout: "external/private"
-
-  binding0143: # staged metadata does not have the non-default source approved yet
-    command: ../openrun app list -i -f json /apps/bindperm | jq 'map(select(.path == "/apps/bindperm_cl_stage"))[0].metadata.approved_binding_source_perms | length'
-    stdout: "0"
-
-  binding0144: # dry-run approve reports the binding source but does not persist approval
-    command: ../openrun app approve --dry-run /apps/bindperm
-    stdout: "Binding Sources:"
-
-  binding0145: # dry-run approve did not update approved binding source permissions
-    command: ../openrun app list -i -f json /apps/bindperm | jq 'map(select(.path == "/apps/bindperm_cl_stage"))[0].metadata.approved_binding_source_perms | length'
-    stdout: "0"
-
-  binding0146: # approve copies requested binding sources to approved list and promotes
-    command: '../openrun app approve --promote /apps/bindperm | sed "s/app_stg_.*/YYY/g"'
-    stdout:
-      exactly: "App permissions have been approved /apps/bindperm_cl_stage - YYY\n  Plugins :\n  Binding Sources:\n    external/private\n  Permissions:\nPromoted apps: /apps/bindperm\n1 app(s) audited, 1 app(s) approved, 1 app(s) promoted.\n"
-
-  binding0147: # approved binding source no longer requires approval
-    command: ../openrun app approve --dry-run /apps/bindperm
-    stdout: "No approval required."
-
-  binding0148: # promoted prod and staged metadata both have the approved binding source
-    command: ../openrun app list -i -f json /apps/bindperm | jq -r '[.[].metadata.approved_binding_source_perms | join(",")] | unique | join(";")'
-    stdout: "external/private"
-
-  binding0149: # create --bind-perm with --approve stores requested and approved binding source permissions
-    command: ../openrun app create --approve --bind-perm external/create ./testapp /apps/bindperm_create
-    stdout: "App created. Permissions have been approved"
-
-  binding0149a: # create --bind-perm stores requested binding source permission on prod and stage
-    command: ../openrun app list -i -f json /apps/bindperm_create | jq -r '[.[].metadata.binding_source_perms | join(",")] | unique | join(";")'
-    stdout: "external/create"
-
-  binding0149b: # --approve copied requested binding source permission into approved list
-    command: ../openrun app list -i -f json /apps/bindperm_create | jq -r '[.[].metadata.approved_binding_source_perms | join(",")] | unique | join(";")'
-    stdout: "external/create"
-
   # Dry-run create does not persist
   binding0200:
     command: ../openrun binding create --dry-run postgres/testbind /apps/dry1
@@ -606,22 +556,6 @@ tests:
     command: ../openrun binding get -f json /apps/applyglob | jq -r '.[0].path'
     stdout: "/apps/applyglob"
 
-  binding0545: # apply app definition stores bind_perm on create
-    command: ../openrun apply --approve --promote --reload=none ./apply_files/apply_bind_perm1.ace /apps/applybindperm
-    stdout: "1 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
-
-  binding0546: # bind_perm from apply is stored in requested and approved metadata
-    command: ../openrun app list -i -f json /apps/applybindperm | jq -r '([.[].metadata.binding_source_perms | join(",")] | unique | join(";")) + "|" + ([.[].metadata.approved_binding_source_perms | join(",")] | unique | join(";"))'
-    stdout: "external/apply|external/apply"
-
-  binding0547: # apply updates bind_perm through staged metadata merge
-    command: ../openrun apply --approve --reload=none ./apply_files/apply_bind_perm2.ace /apps/applybindperm
-    stdout: "0 app(s) created, 1 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 1 app(s) approved, 0 app(s) promoted."
-
-  binding0548: # updated bind_perm is staged but prod keeps the old value until promote
-    command: ../openrun app list -i -f json /apps/applybindperm | jq -r '(map(select(.path == "/apps/applybindperm_cl_stage"))[0].metadata.binding_source_perms | join(",")) + "|" + (map(select(.path == "/apps/applybindperm"))[0].metadata.binding_source_perms | join(","))'
-    stdout: "external/apply2|external/apply"
-
   binding0550: # setup CLI-created binding for first apply adoption
     command: ../openrun binding create postgres/testbind /apps/applyclibase
     stdout: "Binding /apps/applyclibase created"
@@ -644,4 +578,4 @@ tests:
 
   # Cleanup: remove remaining bindings and the source service
   binding99999:
-    command: (../openrun app delete /apps/applybindperm; ../openrun app delete /apps/bindperm_create; ../openrun app delete /apps/bindperm; ../openrun binding delete /apps/applycliread; ../openrun binding delete /apps/applyclibase; ../openrun binding delete /apps/applyglob; ../openrun binding delete /apps/applyread; ../openrun binding delete /apps/applybase; ../openrun binding delete /apps/b6; ../openrun binding delete /apps/b1; ../openrun binding delete /apps/b2; ../openrun binding delete /apps/b3; ../openrun binding delete /apps/b5; ../openrun service delete postgres/testbind) || true
+    command: (../openrun binding delete /apps/applycliread; ../openrun binding delete /apps/applyclibase; ../openrun binding delete /apps/applyglob; ../openrun binding delete /apps/applyread; ../openrun binding delete /apps/applybase; ../openrun binding delete /apps/b6; ../openrun binding delete /apps/b1; ../openrun binding delete /apps/b2; ../openrun binding delete /apps/b3; ../openrun binding delete /apps/b5; ../openrun service delete postgres/testbind) || true

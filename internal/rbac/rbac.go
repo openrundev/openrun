@@ -26,12 +26,27 @@ type RBACManager struct {
 	serverConfig *types.ServerConfig
 	mu           sync.RWMutex
 
-	groups      map[string][]string                      // group name to user ids (with group hierarchy resolved)
-	roles       map[string]*resolvedRole                 // role name to resolved permissions (hierarchy and implications resolved)
-	regexCache  map[string]*regexp.Regexp                // cache of compiled regex patterns
-	customPerms []string                                 // custom permissions are permissions defined by the user. This list does not have the custom: prefix
-	ownerPerms  map[string]map[types.RBACPermission]bool // resource name to permissions granted to the asset owner
-	enabled     atomic.Bool                              // RbacConfig.Enabled, readable without taking mu (hot path checks)
+	groups         map[string]*resolvedGroup                // group name to resolved membership (group hierarchy resolved)
+	roles          map[string]*resolvedRole                 // role name to resolved permissions (hierarchy and implications resolved)
+	resolvedGrants []resolvedGrant                          // per grant resolved state, aligned with RbacConfig.Grants
+	hasAdminGrant  bool                                     // whether any grant's roles confer the admin super-user permission
+	regexCache     map[string]*regexp.Regexp                // cache of compiled regex patterns
+	customPerms    []string                                 // custom permissions are permissions defined by the user. This list does not have the custom: prefix
+	ownerPerms     map[string]map[types.RBACPermission]bool // resource name to permissions granted to the asset owner
+	enabled        atomic.Bool                              // RbacConfig.Enabled, readable without taking mu (hot path checks)
+}
+
+// resolvedGroup is a group's membership resolved into lookup structures at
+// config update time: direct user ids as a set, regex: members precompiled
+type resolvedGroup struct {
+	members map[string]bool
+	regexes []*regexp.Regexp
+}
+
+// resolvedGrant is the per-grant state resolved at config update time, so
+// grant checks do not re-parse target globs on every authorization
+type resolvedGrant struct {
+	targets []parsedTarget
 }
 
 func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverConfig *types.ServerConfig) (*RBACManager, error) {
@@ -50,6 +65,12 @@ func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverCo
 
 func (h *RBACManager) AuthorizeInt(user string, appPathDomain types.AppPathDomain,
 	permission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
+	if !h.enabled.Load() {
+		// rbac is not enabled, authorize all requests. Checked through the
+		// atomic so the per-request hot path (every app access check) does not
+		// touch the RWMutex when RBAC is disabled
+		return true, nil
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.authorizeIntLocked(user, appPathDomain, permission, groups, isAppLevelPermission)
@@ -66,6 +87,14 @@ func (h *RBACManager) authorizeIntLocked(user string, appPathDomain types.AppPat
 		return true, nil
 	}
 
+	if user == "" {
+		// Fail closed: enforcement is active and every request is authenticated
+		// to a user id (or the anonymous principal). An empty user is a context
+		// propagation bug and must not match grants (a regex user pattern could
+		// otherwise match the empty string)
+		return false, nil
+	}
+
 	if isAdmin, err := h.hasAdminPermLocked(user, groups); err != nil || isAdmin {
 		// the admin super-user permission passes every check
 		return isAdmin, err
@@ -73,7 +102,7 @@ func (h *RBACManager) authorizeIntLocked(user string, appPathDomain types.AppPat
 
 	// Callers resolve stage/preview apps to their main app path before this point, so
 	// grant checks run against the main app path directly.
-	return h.checkGrants(user, appPathDomain, permission, groups, isAppLevelPermission)
+	return h.checkGrants(user, appPathDomain, "", permission, groups, isAppLevelPermission)
 }
 
 // GetCustomPermissions returns the custom permissions set for the user for the given app path domain
@@ -126,31 +155,50 @@ func (h *RBACManager) ConfigEnabled() bool {
 // hasAdminPermLocked reports whether the user holds the "admin" super-user
 // permission, which passes every RBAC check. The admin user holds it
 // implicitly; other users hold it through a grant of the literal permission
-// or the openrun-admin role (a global target is required, and permission
-// globs never match it). Callers must hold h.mu
+// or the openrun-admin role (admin is a global permission, conferred
+// regardless of the grant's targets, and permission globs never match it).
+// Callers must hold h.mu
 func (h *RBACManager) hasAdminPermLocked(user string, groups []string) (bool, error) {
 	if user != "" && user == types.ADMIN_USER {
 		return true, nil
 	}
-	return h.checkGrants(user, types.AppPathDomain{}, types.PermissionAdmin, groups, false)
+	if !h.hasAdminGrant {
+		// No grant's roles confer the admin permission (computed at config
+		// update time), so the grant scan below cannot match: skip it. This
+		// runs on every authorization, before the actual permission check
+		return false, nil
+	}
+	return h.checkGrants(user, types.AppPathDomain{}, "", types.PermissionAdmin, groups, false)
 }
 
-func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathDomain,
+// checkGrants evaluates the grants for inputPermission. appPathDomain is the
+// app being checked for app scoped permissions; resourceId is the service id
+// or binding path for service/binding scoped permissions ("" otherwise)
+func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathDomain, resourceId string,
 	inputPermission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
-	for _, grant := range h.RbacConfig.Grants {
-		match, err := h.checkGrant(grant, inputUser, appPathDomain, inputPermission, groups, isAppLevelPermission)
+	if isAppLevelPermission {
+		// app level permission, look for grant with custom: prefix
+		inputPermission = types.RBACPermission(RBAC_CUSTOM_PREFIX + string(inputPermission))
+	}
+	for i, grant := range h.RbacConfig.Grants {
+		match, err := h.checkGrant(grant, h.resolvedGrants[i].targets, inputUser, appPathDomain,
+			resourceId, inputPermission, groups, isAppLevelPermission)
 		if err != nil {
 			return false, err
 		}
 		if match {
 			// User, role and target matched. This is a valid grant.
-			h.Trace().Msgf("Allowed user %s access to app %s with permission %s using grant %s",
-				inputUser, appPathDomain.String(), inputPermission, grant.Description)
+			if trace := h.Trace(); trace.Enabled() {
+				trace.Msgf("Allowed user %s access to %s%s with permission %s using grant %s",
+					inputUser, appPathDomain.String(), resourceId, inputPermission, grant.Description)
+			}
 			return true, nil
 		}
 	}
-	h.Debug().Msgf("Denied user %s access to app %s with permission %s app level %t",
-		inputUser, appPathDomain.String(), inputPermission, isAppLevelPermission)
+	if debug := h.Debug(); debug.Enabled() {
+		debug.Msgf("Denied user %s access to %s%s with permission %s app level %t",
+			inputUser, appPathDomain.String(), resourceId, inputPermission, isAppLevelPermission)
+	}
 	return false, nil
 }
 
@@ -169,16 +217,13 @@ func (h *RBACManager) grantUserMatchesLocked(grant types.RBACGrant, inputUser st
 			refGroup, ok := h.groups[refGroupName]
 			if ok {
 				// Check for direct user match
-				if slices.Contains(refGroup, inputUser) {
+				if refGroup.members[inputUser] {
 					return true, nil
 				}
-				// Check for regex patterns in the group
-				for _, groupMember := range refGroup {
-					if strings.HasPrefix(groupMember, RBAC_REGEX_PREFIX) {
-						regex, ok := h.regexCache[groupMember[len(RBAC_REGEX_PREFIX):]]
-						if ok && regex.MatchString(inputUser) {
-							return true, nil
-						}
+				// Check the group's regex members
+				for _, regex := range refGroup.regexes {
+					if regex.MatchString(inputUser) {
+						return true, nil
 					}
 				}
 			}
@@ -198,21 +243,13 @@ func (h *RBACManager) grantUserMatchesLocked(grant types.RBACGrant, inputUser st
 	return false, nil
 }
 
-func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPathDomain types.AppPathDomain,
-	inputPermission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
-	userMatched, err := h.grantUserMatchesLocked(grant, inputUser, groups)
-	if err != nil {
-		return false, err
-	}
-	if !userMatched {
-		return false, nil
-	}
-
-	// user matched, check if role matches
-	if isAppLevelPermission {
-		// app level permission, look for grant with custom: prefix
-		inputPermission = types.RBACPermission(RBAC_CUSTOM_PREFIX + string(inputPermission))
-	}
+// checkGrant reports whether one grant confers inputPermission (already
+// custom: prefixed for app level permissions) on the app or resource. Roles
+// are checked before users: role matching is a map lookup while user matching
+// may run regexes, so grants that cannot confer the permission are skipped cheaply
+func (h *RBACManager) checkGrant(grant types.RBACGrant, targets []parsedTarget, inputUser string,
+	appPathDomain types.AppPathDomain, resourceId string, inputPermission types.RBACPermission,
+	groups []string, isAppLevelPermission bool) (bool, error) {
 	roleMatched := false
 	for _, role := range grant.Roles {
 		if resolved, ok := h.roles[role]; ok && resolved.matches(inputPermission) {
@@ -220,27 +257,40 @@ func (h *RBACManager) checkGrant(grant types.RBACGrant, inputUser string, appPat
 			break
 		}
 	}
-
 	if !roleMatched {
 		return false, nil
 	}
 
-	return permWithinTargets(inputPermission, isAppLevelPermission, grant.Targets, appPathDomain)
+	userMatched, err := h.grantUserMatchesLocked(grant, inputUser, groups)
+	if err != nil || !userMatched {
+		return false, err
+	}
+
+	return permWithinTargets(inputPermission, isAppLevelPermission, targets, appPathDomain, resourceId)
 }
 
 // permWithinTargets reports whether a permission a role confers applies to the
-// app at appPathDomain given the grant's targets. app:* (and
-// app-level custom permissions) are scoped to the grant's target glob. Every
-// other permission is global: the grant confers it regardless of its targets.
+// checked app or resource given the grant's targets. Scoped permissions are
+// matched against target entries of their kind: app:* (and app-level custom
+// permissions) against app path targets, service:*/binding:* against
+// service:/binding: target entries (matched against resourceId). Every other
+// permission is global: the grant confers it regardless of its targets.
 // Shared by live grant checks and the frozen sync snapshot evaluation, so the
 // scoping semantics cannot diverge between them
 func permWithinTargets(perm types.RBACPermission, isAppLevelPermission bool,
-	targets []string, appPathDomain types.AppPathDomain) (bool, error) {
-	if !isAppLevelPermission && !scopedPermissions[perm] {
+	targets []parsedTarget, appPathDomain types.AppPathDomain, resourceId string) (bool, error) {
+	kind, scoped := scopedKind(perm, isAppLevelPermission)
+	if !scoped {
 		return true, nil
 	}
 	for _, target := range targets {
-		match, err := MatchGlob(target, appPathDomain)
+		var match bool
+		var err error
+		if kind == targetKindApp {
+			match, err = target.matchesApp(appPathDomain)
+		} else {
+			match, err = target.matchesResource(kind, resourceId)
+		}
 		if err != nil {
 			return false, err
 		}
@@ -251,13 +301,28 @@ func permWithinTargets(perm types.RBACPermission, isAppLevelPermission bool,
 	return false, nil
 }
 
-func (h *RBACManager) initGroupInfo(rbacConfig *types.RBACConfig) (map[string][]string, error) {
-	groupMembers := make(map[string][]string)
-
-	// Initialize all groups
-	for group := range rbacConfig.Groups {
-		groupMembers[group] = make([]string, 0)
+// compileUserRegex compiles a regex: pattern from a users list and stores it
+// in cache, keyed by the raw pattern. Patterns are anchored (\A...\z) so they
+// must match the entire user id: with an unanchored substring search, a
+// pattern like .*@example\.com would also match evil@example.com.attacker.io,
+// silently over-granting
+func compileUserRegex(cache map[string]*regexp.Regexp, pattern string) error {
+	if _, ok := cache[pattern]; ok {
+		return nil
 	}
+	regex, err := regexp.Compile(`\A(?:` + pattern + `)\z`)
+	if err != nil {
+		return fmt.Errorf("error compiling regex %q: %w", pattern, err)
+	}
+	cache[pattern] = regex
+	return nil
+}
+
+// initGroupInfo resolves the group hierarchy into membership lookup
+// structures, compiling regex: members into regexCache. Pure: on error no
+// state has been published to the manager
+func (h *RBACManager) initGroupInfo(rbacConfig *types.RBACConfig, regexCache map[string]*regexp.Regexp) (map[string]*resolvedGroup, error) {
+	groupMembers := make(map[string]*resolvedGroup)
 
 	// Helper function to recursively resolve group membership
 	var resolveGroup func(groupName string, visited map[string]bool) ([]string, error)
@@ -285,12 +350,9 @@ func (h *RBACManager) initGroupInfo(rbacConfig *types.RBACConfig) (map[string][]
 				members = append(members, refMembers...)
 			} else {
 				if strings.HasPrefix(user, RBAC_REGEX_PREFIX) {
-					regexPattern := user[len(RBAC_REGEX_PREFIX):]
-					regex, err := regexp.Compile(regexPattern)
-					if err != nil {
+					if err := compileUserRegex(regexCache, user[len(RBAC_REGEX_PREFIX):]); err != nil {
 						return nil, err
 					}
-					h.regexCache[regexPattern] = regex
 				}
 				members = append(members, user)
 			}
@@ -299,27 +361,40 @@ func (h *RBACManager) initGroupInfo(rbacConfig *types.RBACConfig) (map[string][]
 		return members, nil
 	}
 
-	// Resolve all groups
+	// Resolve all groups into lookup structures: user ids as a set, regex
+	// members precompiled, so per-request membership checks avoid scanning
+	// the member list and re-looking up the regex cache
 	for group := range rbacConfig.Groups {
 		visited := make(map[string]bool)
 		members, err := resolveGroup(group, visited)
 		if err != nil {
 			return nil, err
 		}
-		groupMembers[group] = members
+		resolved := &resolvedGroup{members: make(map[string]bool, len(members))}
+		for _, member := range members {
+			if strings.HasPrefix(member, RBAC_REGEX_PREFIX) {
+				resolved.regexes = append(resolved.regexes, regexCache[member[len(RBAC_REGEX_PREFIX):]])
+			} else {
+				resolved.members[member] = true
+			}
+		}
+		groupMembers[group] = resolved
 	}
 
 	return groupMembers, nil
 }
 
-func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*resolvedRole, error) {
+// initRoleInfo resolves the roles (hierarchy and implications flattened) and
+// collects the custom permissions the roles define (without the custom:
+// prefix, sorted). Pure: on error no state has been published to the manager
+func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*resolvedRole, []string, error) {
 	// Permission name validation only applies when RBAC is enabled, so that a
 	// disabled config never blocks server startup
 	validate := rbacConfig.Enabled
 	if validate {
 		for name := range rbacConfig.Roles {
 			if isBuiltinRole(name) || strings.HasPrefix(name, ReservedRolePrefix) {
-				return nil, fmt.Errorf("role name %q is reserved: the %q prefix is reserved for built-in roles",
+				return nil, nil, fmt.Errorf("role name %q is reserved: the %q prefix is reserved for built-in roles",
 					name, ReservedRolePrefix)
 			}
 		}
@@ -377,7 +452,7 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*re
 		visited := make(map[string]bool)
 		permissions, err := resolveRole(role, visited)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		roles[role] = newResolvedRole(permissions)
 
@@ -396,16 +471,20 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*re
 		visited := make(map[string]bool)
 		permissions, err := resolveRole(role, visited)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		roles[role] = newResolvedRole(permissions)
 	}
 
+	// Sorted so surfaces reporting custom permissions (headers, request data)
+	// are stable across requests and restarts
+	customPerms := make([]string, 0, len(customPermsMap))
 	for perm := range customPermsMap {
-		h.customPerms = append(h.customPerms, perm)
+		customPerms = append(customPerms, perm)
 	}
+	slices.Sort(customPerms)
 
-	return roles, nil
+	return roles, customPerms, nil
 }
 
 // initOwnerPerms resolves the owner permission sets: built-in defaults overridden by
@@ -457,7 +536,11 @@ func (h *RBACManager) initOwnerPerms(rbacConfig *types.RBACConfig) (map[string]m
 
 	return ownerPerms, nil
 }
-func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig) error {
+
+// validateGrants validates grant user regexes (compiled into regexCache),
+// role references and target globs. Pure: on error no state has been
+// published to the manager
+func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig, regexCache map[string]*regexp.Regexp) error {
 	// Skip validation if RBAC is disabled
 	if !rbacConfig.Enabled {
 		return nil
@@ -465,15 +548,11 @@ func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig) error {
 
 	for i, grant := range rbacConfig.Grants {
 		// groups can be passed dynamically (for SSO login), so we don't need to validate them
-		// Validate role references in Roles
 		for _, user := range grant.Users {
 			if strings.HasPrefix(user, RBAC_REGEX_PREFIX) {
-				regexPattern := user[len(RBAC_REGEX_PREFIX):]
-				regex, err := regexp.Compile(regexPattern)
-				if err != nil {
-					return fmt.Errorf("error compiling regex: %w", err)
+				if err := compileUserRegex(regexCache, user[len(RBAC_REGEX_PREFIX):]); err != nil {
+					return err
 				}
-				h.regexCache[regexPattern] = regex
 			}
 		}
 		for _, role := range grant.Roles {
@@ -484,41 +563,73 @@ func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig) error {
 				return fmt.Errorf("grant %d ('%s'): Roles references undefined role '%s'", i, grant.Description, role)
 			}
 		}
+		// A malformed target glob would otherwise error every authorization
+		// check that evaluates the grant, denying unrelated valid grants
+		for _, target := range grant.Targets {
+			if err := ValidateGlob(target); err != nil {
+				return fmt.Errorf("grant %d ('%s'): invalid target %q: %w", i, grant.Description, target, err)
+			}
+		}
 	}
 	return nil
 }
 
+// UpdateRBACConfig resolves and validates rbacConfig and swaps it in
+// atomically: everything is built into locals first and published only when
+// the whole update has succeeded, so a rejected config never leaves partial
+// state behind (mixed old/new groups and roles, or the enabled flag out of
+// sync with the resolved state)
 func (h *RBACManager) UpdateRBACConfig(rbacConfig *types.RBACConfig) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.RbacConfig = rbacConfig
-	h.regexCache = make(map[string]*regexp.Regexp)
-	h.customPerms = make([]string, 0)
+	regexCache := make(map[string]*regexp.Regexp)
 
-	var err error
-	h.groups, err = h.initGroupInfo(rbacConfig)
+	groups, err := h.initGroupInfo(rbacConfig, regexCache)
 	if err != nil {
 		return fmt.Errorf("error initializing rbac group info: %w", err)
 	}
 
-	h.roles, err = h.initRoleInfo(rbacConfig)
+	roles, customPerms, err := h.initRoleInfo(rbacConfig)
 	if err != nil {
 		return fmt.Errorf("error initializing rbac role info: %w", err)
 	}
 
-	h.ownerPerms, err = h.initOwnerPerms(rbacConfig)
+	ownerPerms, err := h.initOwnerPerms(rbacConfig)
 	if err != nil {
 		return fmt.Errorf("error initializing rbac owner permissions: %w", err)
 	}
 
-	err = h.validateGrants(rbacConfig)
-	if err != nil {
+	if err := h.validateGrants(rbacConfig, regexCache); err != nil {
 		return fmt.Errorf("error validating rbac grants: %w", err)
 	}
 
-	// Published last, after the config validated: ConfigEnabled readers see
-	// the new state only once the update is going to succeed
+	// Per grant resolved state: pre-parsed target globs, and whether any
+	// grant confers the admin super-user permission (when none does, the
+	// admin pre-check on every authorization skips the grant scan)
+	resolvedGrants := make([]resolvedGrant, len(rbacConfig.Grants))
+	hasAdminGrant := false
+	for i, grant := range rbacConfig.Grants {
+		targets := make([]parsedTarget, 0, len(grant.Targets))
+		for _, target := range grant.Targets {
+			targets = append(targets, parseTarget(target))
+		}
+		resolvedGrants[i].targets = targets
+		for _, role := range grant.Roles {
+			if resolved, ok := roles[role]; ok && resolved.matches(types.PermissionAdmin) {
+				hasAdminGrant = true
+			}
+		}
+	}
+
+	h.RbacConfig = rbacConfig
+	h.regexCache = regexCache
+	h.groups = groups
+	h.roles = roles
+	h.resolvedGrants = resolvedGrants
+	h.hasAdminGrant = hasAdminGrant
+	h.customPerms = customPerms
+	h.ownerPerms = ownerPerms
 	h.enabled.Store(rbacConfig.Enabled)
 	return nil
 }

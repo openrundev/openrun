@@ -196,7 +196,7 @@ func TestSyncAuthorizer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			allowed, err := sa.Authorize(tt.perm, tt.target, tt.owner)
+			allowed, err := sa.Authorize(tt.perm, tt.target, "", tt.owner)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -215,7 +215,7 @@ func TestSyncAuthorizer(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		opSa := NewSyncAuthorizer(roundTrip(t, opSnap))
-		allowed, err := opSa.Authorize(types.PermissionSyncCreate, types.AppPathDomain{}, "")
+		allowed, err := opSa.Authorize(types.PermissionSyncCreate, types.AppPathDomain{}, "", "")
 		if err != nil || !allowed {
 			t.Errorf("expected global sync:create allowed, got %v err %v", allowed, err)
 		}
@@ -224,7 +224,7 @@ func TestSyncAuthorizer(t *testing.T) {
 	t.Run("admin bypass", func(t *testing.T) {
 		t.Parallel()
 		adminSa := NewSyncAuthorizer(roundTrip(t, &types.RBACSnapshot{UserId: "boss", Admin: true}))
-		allowed, err := adminSa.Authorize(types.PermissionDelete, types.AppPathDomain{Path: "/any"}, "")
+		allowed, err := adminSa.Authorize(types.PermissionDelete, types.AppPathDomain{Path: "/any"}, "", "")
 		if err != nil || !allowed {
 			t.Errorf("expected admin snapshot to allow everything, got %v err %v", allowed, err)
 		}
@@ -233,7 +233,7 @@ func TestSyncAuthorizer(t *testing.T) {
 	t.Run("empty user fails closed", func(t *testing.T) {
 		t.Parallel()
 		emptySa := NewSyncAuthorizer(roundTrip(t, &types.RBACSnapshot{UserId: "", Admin: true}))
-		allowed, err := emptySa.Authorize(types.PermissionRead, types.AppPathDomain{Path: "/apps/allowed1"}, "")
+		allowed, err := emptySa.Authorize(types.PermissionRead, types.AppPathDomain{Path: "/apps/allowed1"}, "", "")
 		if err != nil || allowed {
 			t.Errorf("expected empty user snapshot to fail closed, got %v err %v", allowed, err)
 		}
@@ -246,7 +246,7 @@ func TestSyncAuthorizer(t *testing.T) {
 		ownerSa := NewSyncAuthorizer(roundTrip(t, ownerSnap))
 		// approve has no resource prefix match with app perms; even a
 		// hand-crafted owner permission list cannot leak it through the app resource
-		allowed, err := ownerSa.Authorize(types.PermissionApprove, types.AppPathDomain{Path: "/a"}, "user1")
+		allowed, err := ownerSa.Authorize(types.PermissionApprove, types.AppPathDomain{Path: "/a"}, "", "user1")
 		if err != nil || allowed {
 			t.Errorf("expected approve never granted via owner rule, got %v err %v", allowed, err)
 		}
@@ -275,7 +275,7 @@ func TestSyncAuthorizerFrozen(t *testing.T) {
 	}
 
 	// The frozen snapshot still authorizes what the creator held at create time
-	allowed, err := sa.Authorize(types.PermissionApply, types.AppPathDomain{Path: "/apps/allowed1"}, "")
+	allowed, err := sa.Authorize(types.PermissionApply, types.AppPathDomain{Path: "/apps/allowed1"}, "", "")
 	if err != nil || !allowed {
 		t.Errorf("expected frozen snapshot to authorize after config shrink, got %v err %v", allowed, err)
 	}
@@ -287,7 +287,7 @@ func TestSyncAuthorizerFrozen(t *testing.T) {
 	)); err != nil {
 		t.Fatalf("config update failed: %v", err)
 	}
-	allowed, err = sa.Authorize(types.PermissionDelete, types.AppPathDomain{Path: "/apps/allowed1"}, "")
+	allowed, err = sa.Authorize(types.PermissionDelete, types.AppPathDomain{Path: "/apps/allowed1"}, "", "")
 	if err != nil || allowed {
 		t.Errorf("expected frozen snapshot to ignore config widening, got %v err %v", allowed, err)
 	}

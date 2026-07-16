@@ -83,8 +83,11 @@ func TestMetadata_MigrateLinkedAppPathsBackfillsInternalApps(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	_, err = db.Exec(`create table apps(id text, path text, domain text, source_url text, is_dev bool, main_app text, user_id text, create_time datetime, update_time datetime, settings json, metadata json, UNIQUE(id), UNIQUE(path, domain))`)
 	testutil.AssertNoError(t, err)
-	// Real version 11 databases have the bindings table (created in the v11
-	// migration); later migrations alter it
+	// Real version 11 databases have the services and bindings tables (created
+	// in the v11 migration); later migrations alter them
+	_, err = db.Exec(`create table services (id text not null, name text, service_type text, is_default bool, staging text not null default '', ` +
+		`config json, create_time datetime, update_time datetime, PRIMARY KEY(name, service_type), UNIQUE(id))`)
+	testutil.AssertNoError(t, err)
 	_, err = db.Exec(`create table bindings (id text not null, path text, source text, service_type text not null default '', ` +
 		`service_name text not null default '', base_binding text not null default '', metadata json, staged_metadata json, ` +
 		`create_time datetime, update_time datetime, PRIMARY KEY(path), UNIQUE(id))`)

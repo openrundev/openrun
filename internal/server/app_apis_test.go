@@ -457,23 +457,6 @@ func TestUpdateAppMetadataConfigValidatesForwardModifier(t *testing.T) {
 	}
 }
 
-func TestUpdateAppMetadataConfigBindingPerms(t *testing.T) {
-	t.Parallel()
-
-	server := newAuthRedirectTestServer("example.com", false)
-	appEntry := &types.AppEntry{}
-
-	err := server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataBindingPerms, []string{"postgres/custom", "mysql"}, false, nil)
-	if err != nil {
-		t.Fatalf("update binding perms metadata: %v", err)
-	}
-
-	want := []string{"postgres/custom", "mysql"}
-	if strings.Join(appEntry.Metadata.BindingSourcePerms, ",") != strings.Join(want, ",") {
-		t.Fatalf("binding source perms = %v, want %v", appEntry.Metadata.BindingSourcePerms, want)
-	}
-}
-
 func TestGetAppsDoesNotResolveBindingServices(t *testing.T) {
 	t.Parallel()
 

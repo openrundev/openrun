@@ -596,9 +596,7 @@ type PermissionsConfig struct {
 	// the same options as allow entries: an empty method matches every method
 	// of the plugin, and arguments (exact or regex:) narrow the block to
 	// matching calls
-	Disallow           []Permission `toml:"disallow"`
-	BindingSourcePerms []string     `toml:"binding_source_perms"` // the binding sources that are allowed for all apps, without requiring explicit approval
-	// supports a regex for the binding path, like "regex:/appdata/.*"
+	Disallow []Permission `toml:"disallow"`
 }
 
 type ClientCertConfig struct {
@@ -767,25 +765,23 @@ func (ae *AppEntry) AppPathDomain() AppPathDomain {
 
 // AppMetadata contains the configuration for an app. App configurations are version controlled.
 type AppMetadata struct {
-	Name                       string            `json:"name"`
-	VersionMetadata            VersionMetadata   `json:"version_metadata"`
-	Loads                      []string          `json:"loads"`
-	Permissions                []Permission      `json:"permissions"`
-	Accounts                   []AccountLink     `json:"accounts"`
-	BindingSourcePerms         []string          `json:"binding_source_perms"`          // the binding source permissions that are requested for the app
-	ApprovedBindingSourcePerms []string          `json:"approved_binding_source_perms"` // the binding source permissions that are approved for the app
-	ParamValues                map[string]string `json:"param_values"`
-	Spec                       AppSpec           `json:"spec"`
-	SpecFiles                  *SpecFiles        `json:"spec_files"`
-	ContainerOptions           map[string]string `json:"container_options"`
-	ContainerArgs              map[string]string `json:"container_args"`
-	ContainerVolumes           []string          `json:"container_volumes"`
-	AppConfig                  map[string]string `json:"appconfig"`
-	AuthnType                  AppAuthnType      `json:"authn_type"`
-	GitAuthName                string            `json:"git_auth_name"`
-	Bindings                   []string          `json:"bindings"`
-	AppliedSyncId              string            `json:"applied_sync_id"`             // id of the sync entry which last applied to this app, empty for imperative changes
-	BuilderPublished           bool              `json:"builder_published,omitempty"` // app was published by the app builder; enables builder edit sessions
+	Name             string            `json:"name"`
+	VersionMetadata  VersionMetadata   `json:"version_metadata"`
+	Loads            []string          `json:"loads"`
+	Permissions      []Permission      `json:"permissions"`
+	Accounts         []AccountLink     `json:"accounts"`
+	ParamValues      map[string]string `json:"param_values"`
+	Spec             AppSpec           `json:"spec"`
+	SpecFiles        *SpecFiles        `json:"spec_files"`
+	ContainerOptions map[string]string `json:"container_options"`
+	ContainerArgs    map[string]string `json:"container_args"`
+	ContainerVolumes []string          `json:"container_volumes"`
+	AppConfig        map[string]string `json:"appconfig"`
+	AuthnType        AppAuthnType      `json:"authn_type"`
+	GitAuthName      string            `json:"git_auth_name"`
+	Bindings         []string          `json:"bindings"`
+	AppliedSyncId    string            `json:"applied_sync_id"`             // id of the sync entry which last applied to this app, empty for imperative changes
+	BuilderPublished bool              `json:"builder_published,omitempty"` // app was published by the app builder; enables builder edit sessions
 }
 
 // AppSettings contains the settings for an app. Settings are not version controlled.
@@ -875,7 +871,6 @@ const (
 	AppMetadataAuthnType        AppMetadataConfigType = "auth"
 	AppMetadataGitAuthName      AppMetadataConfigType = "git_auth"
 	AppMetadataBindings         AppMetadataConfigType = "bindings"
-	AppMetadataBindingPerms     AppMetadataConfigType = "bind_perm"
 )
 
 type AppVersion struct {
@@ -1184,16 +1179,30 @@ const (
 	PermissionSyncDelete RBACPermission = "sync:delete"
 	PermissionSyncRead   RBACPermission = "sync:read"
 
+	// service:* permissions are scoped: they apply to the services matched by the
+	// grant's service:<glob> target entries (globs match the service id
+	// <type>/<name>, like postgres/main)
 	PermissionServiceCreate RBACPermission = "service:create"
 	PermissionServiceUpdate RBACPermission = "service:update"
 	PermissionServiceDelete RBACPermission = "service:delete"
 	PermissionServiceRead   RBACPermission = "service:read"
+	PermissionServiceBind   RBACPermission = "service:bind"   // provision binding accounts on the service (base/auto bindings)
+	PermissionServiceManage RBACPermission = "service:manage" // all service permissions
 
+	// binding:* permissions are scoped: they apply to the bindings matched by the
+	// grant's binding:<glob> target entries (globs match the binding path)
 	PermissionBindingCreate     RBACPermission = "binding:create"
 	PermissionBindingUpdate     RBACPermission = "binding:update"
 	PermissionBindingDelete     RBACPermission = "binding:delete"
 	PermissionBindingRead       RBACPermission = "binding:read"
 	PermissionBindingRunCommand RBACPermission = "binding:run_command"
+	PermissionBindingUse        RBACPermission = "binding:use"    // attach the binding to an app, or use it as the source of a derived binding
+	PermissionBindingManage     RBACPermission = "binding:manage" // all binding permissions except binding:reveal
+	// PermissionBindingReveal gates reading back a binding's account
+	// credentials (binding show-account). Like secret:reveal it requires an
+	// explicit grant: it is never implied by binding:manage. Operators can opt
+	// binding owners in via owner_permissions.binding
+	PermissionBindingReveal RBACPermission = "binding:reveal"
 
 	PermissionContainerRead   RBACPermission = "container:read"   // list containers, get container details/logs/stats
 	PermissionContainerManage RBACPermission = "container:manage" // start/stop managed containers
@@ -1245,10 +1254,11 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 		PermissionSyncCreate, PermissionSyncRun, PermissionSyncDelete, PermissionSyncRead}},
 	{Resource: "service", Permissions: []RBACPermission{
 		PermissionServiceCreate, PermissionServiceUpdate, PermissionServiceDelete,
-		PermissionServiceRead}},
+		PermissionServiceRead, PermissionServiceBind, PermissionServiceManage}},
 	{Resource: "binding", Permissions: []RBACPermission{
 		PermissionBindingCreate, PermissionBindingUpdate, PermissionBindingDelete,
-		PermissionBindingRead, PermissionBindingRunCommand}},
+		PermissionBindingRead, PermissionBindingRunCommand, PermissionBindingUse,
+		PermissionBindingManage, PermissionBindingReveal}},
 	{Resource: "container", Permissions: []RBACPermission{
 		PermissionContainerRead, PermissionContainerManage}},
 	{Resource: "config", Permissions: []RBACPermission{
@@ -1335,6 +1345,7 @@ type Service struct {
 	IsDefault   bool              `json:"is_default"`
 	Staging     string            `json:"staging"`
 	Config      map[string]string `json:"config"`
+	CreatedBy   string            `json:"created_by"` // user who created the service
 	CreateTime  time.Time         `json:"create_time"`
 	UpdateTime  time.Time         `json:"update_time"`
 }

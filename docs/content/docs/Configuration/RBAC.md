@@ -63,20 +63,26 @@ In addition to any roles you define, OpenRun ships a set of built-in roles that 
 | `openrun-user` | Baseline authenticated user | `access` and `read` |
 | `openrun-monitor` | Read-only observability | read access across apps, audit, containers, sync, services, bindings, config, and secret metadata (no reveal, no writes) |
 
-`secret:reveal` (reading back stored secret values) is not included in any built-in role other than `openrun-admin` (whose `admin` permission bypasses every check). Users who need to read secret values back must be granted `secret:reveal` explicitly.
+`secret:reveal` (reading back stored secret values) and `binding:reveal` (reading back binding account credentials with `binding show-account`) are not included in any built-in role other than `openrun-admin` (whose `admin` permission bypasses every check). Users who need to read these values back must be granted `secret:reveal` / `binding:reveal` explicitly.
 
 Users have no permissions by default. Grants have to be added for each permission. A grant has a:
 
 - `description` which is a note about the grant
 - `users` which is list of users or groups
 - `roles` which is list of roles granted
-- `targets` which is the [glob path]({{< ref "/docs/applications/overview/#glob-pattern" >}}) list of apps to which the grant applies.
+- `targets` which is the list of targets the grant's scoped permissions apply to. A plain entry is an app [glob path]({{< ref "/docs/applications/overview/#glob-pattern" >}}) (`domain:path` format) matching apps. A `service:<glob>` entry matches service ids in the `<type>/<name>` form, without a leading slash: `service:postgres/*` matches `postgres/main`, `service:**` matches all services. A `binding:<glob>` entry matches binding paths: `binding:/apps/team1/**`. The `all` keyword (or `*:**`) matches every app, service and binding.
 
 The group name referenced in a grant can be a group which is seen at runtime in the user profile. This works for [OIDC]({{< ref "/docs/configuration/authentication/#openid-connect-oidc" >}}) based auth, like Okta.
 
 ## Permission Scope
 
-The `app:*` permissions are **scoped**: `app:access`, `app:read`, `app:create`, `app:update`, `app:reload`, `app:apply`, `app:delete`, `app:promote`, `app:preview`, `app:approve`, `app:manage` (the composite of all app permissions except `app:approve`) apply only to the apps matched by the grant's `targets`. Custom (`custom:`) app-level permissions are scoped the same way. Every other permission is **global** (`builder:*`, `sync:*`, `service:*`, `binding:*`, `container:*`, `config:*`, `secret:*`, `audit:read`, `server:stop`, `admin`): a grant confers a global permission **regardless of its `targets`**. `admin` is the super-user permission that bypasses every check.
+The `app:*` permissions are **scoped**: `app:access`, `app:read`, `app:create`, `app:update`, `app:reload`, `app:apply`, `app:delete`, `app:promote`, `app:preview`, `app:approve`, `app:manage` (the composite of all app permissions except `app:approve`) apply only to the apps matched by the grant's app path `targets`. Custom (`custom:`) app-level permissions are scoped the same way.
+
+The `service:*` and `binding:*` permissions are scoped too, against the grant's `service:<glob>` and `binding:<glob>` target entries: `service:create`, `service:update`, `service:delete`, `service:read`, `service:bind` (provision binding accounts on the service, needed to create base/auto bindings from it) and the `service:manage` composite apply to the services matched by the grant's `service:` targets; `binding:create`, `binding:update`, `binding:delete`, `binding:read`, `binding:run_command`, `binding:use` (attach the binding to an app, or derive a new binding from it), `binding:reveal` (read back the binding account credentials) and the `binding:manage` composite apply to the bindings matched by the grant's `binding:` targets. Like `app:approve`, `binding:reveal` is never implied by `binding:manage`: it needs an explicit grant, and binding owners do not hold it by default (add it to `owner_permissions.binding` to opt owners in). A grant whose targets only name app paths confers no service or binding permissions; use `service:**` / `binding:/**` entries (or `all`) to grant them broadly. Attaching a binding to an app requires `binding:use` on the binding (or `service:bind` on the service for auto bindings created from a service source), in addition to the app permission for the app update itself. Service and binding list operations return only the entries the user can read.
+
+Every other permission is **global** (`builder:*`, `sync:*`, `container:*`, `config:*`, `secret:*`, `audit:read`, `server:stop`, `admin`): a grant confers a global permission **regardless of its `targets`**. `admin` is the super-user permission that bypasses every check.
+
+The creator of a service or binding holds the configured owner permissions on it (default `service:manage` / `binding:manage`) without needing a grant, like app and sync owners. Override with `owner_permissions.service` / `owner_permissions.binding`.
 
 The `builder:*` permissions are global because a builder session is not bound to an app path until it publishes. The app a session publishes, edits or removes is enforced separately with the app permissions on that path: publishing to a new path needs `app:create`, republishing an existing app needs `app:update`, and unpublishing needs `app:delete` (local mode publishes also run through the declarative apply, which enforces `app:apply`, `app:promote` and `app:approve` before any file is staged). The preview dev app a session creates under the configured `preview_path` is authorized by `builder:create` itself — no app permission is needed for the preview mount — and is owned by the session creator, so the owner rule covers viewing the preview and deleting it with the session.
 
@@ -106,7 +112,7 @@ To get the group info dynamically as part of the user login (instead of statical
 
 ## Regex User Name
 
-In the `groups.<group_name>` property and in `grant.users`, the username can be specified as a regex. If the value starts with `regex:` prefix, the subsequent value is considered as a regex. For example, `regex:google:^.*@example.com$` matches any user ID with google provider.
+In the `groups.<group_name>` property and in `grant.users`, the username can be specified as a regex. If the value starts with `regex:` prefix, the subsequent value is considered as a regex. The pattern must match the entire user ID (it is evaluated fully anchored, as if wrapped in `\A(?:...)\z`), so a partial match does not grant access: `regex:google:.*@example\.com` matches any user ID with the google provider and an example.com email, and does not match `google:user@example.com.attacker.io`.
 
 ## Custom Permissions
 

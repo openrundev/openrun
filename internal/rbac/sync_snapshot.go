@@ -76,10 +76,11 @@ func (h *RBACManager) SnapshotUserGrants(ctx context.Context) (*types.RBACSnapsh
 	return snap, nil
 }
 
-// syncGrant is one snapshot grant with its role permissions resolved for matching
+// syncGrant is one snapshot grant with its role permissions resolved for
+// matching and its target globs pre-parsed
 type syncGrant struct {
 	role    *resolvedRole
-	targets []string
+	targets []parsedTarget
 }
 
 // SyncAuthorizer evaluates management API permissions against a frozen
@@ -104,9 +105,13 @@ func NewSyncAuthorizer(snap *types.RBACSnapshot) *SyncAuthorizer {
 		ownerPerms: make(map[string]map[types.RBACPermission]bool, len(snap.OwnerPermissions)),
 	}
 	for _, grant := range snap.Grants {
+		targets := make([]parsedTarget, 0, len(grant.Targets))
+		for _, target := range grant.Targets {
+			targets = append(targets, parseTarget(target))
+		}
 		a.grants = append(a.grants, syncGrant{
 			role:    newResolvedRole(grant.Permissions),
-			targets: grant.Targets,
+			targets: targets,
 		})
 	}
 	for resource, perms := range snap.OwnerPermissions {
@@ -122,9 +127,11 @@ func NewSyncAuthorizer(snap *types.RBACSnapshot) *SyncAuthorizer {
 // Authorize mirrors authorizeAPIInt against the snapshot: empty user fails
 // closed, admin bypasses every check, the snapshot user holds the snapshotted
 // owner permissions on assets they own (never approve), and otherwise a grant
-// must match the permission with scoped permissions (app:*) matched
-// against the grant's target globs and every other permission global
-func (a *SyncAuthorizer) Authorize(perm types.RBACPermission, target types.AppPathDomain, owner string) (bool, error) {
+// must match the permission with scoped permissions matched against the
+// grant's target entries of the matching kind (app path domain for app:*,
+// resourceId for service:*/binding:*) and every other permission global
+func (a *SyncAuthorizer) Authorize(perm types.RBACPermission, target types.AppPathDomain,
+	resourceId string, owner string) (bool, error) {
 	if a.userId == "" {
 		// Fail closed, same as authorizeAPIInt: a snapshot without a user id
 		// (e.g. created under a test URL simulation with no authenticated user)
@@ -145,7 +152,7 @@ func (a *SyncAuthorizer) Authorize(perm types.RBACPermission, target types.AppPa
 		if !grant.role.matches(perm) {
 			continue
 		}
-		match, err := permWithinTargets(perm, false, grant.targets, target)
+		match, err := permWithinTargets(perm, false, grant.targets, target, resourceId)
 		if err != nil || match {
 			return match, err
 		}

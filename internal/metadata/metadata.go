@@ -25,7 +25,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 17
+const CURRENT_DB_VERSION = 18
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -462,6 +462,17 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=17, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 18 {
+		m.Info().Msg("Upgrading to version 18")
+		if _, err := tx.ExecContext(ctx, `alter table services add column created_by text not null default ''`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=18, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}
@@ -1431,8 +1442,8 @@ func (m *Metadata) CreateService(ctx context.Context, tx types.Transaction, serv
 	}
 
 	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into services(id, name, service_type, is_default, staging, config, create_time, update_time) values(?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		service.Id, service.Name, service.ServiceType, service.IsDefault, service.Staging, string(configJson))
+		`INSERT into services(id, name, service_type, is_default, staging, config, created_by, create_time, update_time) values(?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		service.Id, service.Name, service.ServiceType, service.IsDefault, service.Staging, string(configJson), service.CreatedBy)
 	if err != nil {
 		return fmt.Errorf("error inserting service: %w", err)
 	}
@@ -1527,10 +1538,10 @@ func (m *Metadata) DeleteService(ctx context.Context, tx types.Transaction, name
 
 func (m *Metadata) GetDefaultService(ctx context.Context, tx types.Transaction, serviceType string) (*types.Service, error) {
 	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select id, name, service_type, is_default, staging, config, create_time, update_time from services where service_type = ? and is_default`), serviceType)
+		`select id, name, service_type, is_default, staging, config, created_by, create_time, update_time from services where service_type = ? and is_default`), serviceType)
 	var service types.Service
 	var configStr sql.NullString
-	err := row.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
+	err := row.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreatedBy, &service.CreateTime, &service.UpdateTime)
 	if err != nil {
 		return nil, fmt.Errorf("error querying default service: %w", err)
 	}
@@ -1545,10 +1556,10 @@ func (m *Metadata) GetDefaultService(ctx context.Context, tx types.Transaction, 
 
 func (m *Metadata) GetService(ctx context.Context, tx types.Transaction, serviceType, name string) (*types.Service, error) {
 	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select id, name, service_type, is_default, staging, config, create_time, update_time from services where service_type = ? and name = ?`), serviceType, name)
+		`select id, name, service_type, is_default, staging, config, created_by, create_time, update_time from services where service_type = ? and name = ?`), serviceType, name)
 	var service types.Service
 	var configStr sql.NullString
-	err := row.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
+	err := row.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreatedBy, &service.CreateTime, &service.UpdateTime)
 	if err != nil {
 		return nil, fmt.Errorf("error querying service: %w", err)
 	}
@@ -1564,7 +1575,7 @@ func (m *Metadata) GetService(ctx context.Context, tx types.Transaction, service
 
 // ListServices returns services filtered by the optional serviceType and name. Empty string means no filter.
 func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, serviceType, name string) ([]*types.Service, error) {
-	query := `select id, name, service_type, is_default, staging, config, create_time, update_time from services`
+	query := `select id, name, service_type, is_default, staging, config, created_by, create_time, update_time from services`
 	args := make([]any, 0, 2)
 	conds := make([]string, 0, 2)
 	if serviceType != "" {
@@ -1596,7 +1607,7 @@ func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, servi
 	for rows.Next() {
 		var service types.Service
 		var configStr sql.NullString
-		err = rows.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
+		err = rows.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreatedBy, &service.CreateTime, &service.UpdateTime)
 		if err != nil {
 			return nil, fmt.Errorf("error scanning service: %w", err)
 		}

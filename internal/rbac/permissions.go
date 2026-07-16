@@ -29,13 +29,13 @@ var predefinedRoles = map[string][]types.RBACPermission{
 
 	// Runs the platform: full app lifecycle plus plugin approval, sync,
 	// services, bindings, container management, config, secrets, audit,
-	// server stop and the builder. No secret:reveal — reading back stored
-	// secret values is admin-only (openrun-admin or an explicit grant)
+	// server stop and the builder. No secret:reveal or binding:reveal —
+	// reading back stored secret values and binding account credentials is
+	// admin-only (openrun-admin or an explicit grant)
 	"openrun-operator": {
 		types.PermissionAppManage, types.PermissionApprove,
 		types.PermissionSyncCreate, types.PermissionSyncRun, types.PermissionSyncDelete, types.PermissionSyncRead,
-		types.PermissionServiceCreate, types.PermissionServiceUpdate, types.PermissionServiceDelete, types.PermissionServiceRead,
-		types.PermissionBindingCreate, types.PermissionBindingUpdate, types.PermissionBindingDelete, types.PermissionBindingRead, types.PermissionBindingRunCommand,
+		types.PermissionServiceManage, types.PermissionBindingManage,
 		types.PermissionContainerManage,
 		types.PermissionConfigRead, types.PermissionConfigUpdate,
 		types.PermissionSecretCreate, types.PermissionSecretRead, types.PermissionSecretDelete,
@@ -50,8 +50,8 @@ var predefinedRoles = map[string][]types.RBACPermission{
 	// can list specs and auth/git-auth entry names.
 	"openrun-developer": {
 		types.PermissionAppManage,
-		types.PermissionServiceCreate, types.PermissionServiceUpdate, types.PermissionServiceRead,
-		types.PermissionBindingCreate, types.PermissionBindingUpdate, types.PermissionBindingRead, types.PermissionBindingRunCommand,
+		types.PermissionServiceCreate, types.PermissionServiceUpdate, types.PermissionServiceRead, types.PermissionServiceBind,
+		types.PermissionBindingCreate, types.PermissionBindingUpdate, types.PermissionBindingRead, types.PermissionBindingRunCommand, types.PermissionBindingUse,
 		types.PermissionContainerRead,
 		types.PermissionSyncRun, types.PermissionSyncRead,
 		types.PermissionSecretCreate, types.PermissionSecretRead,
@@ -101,8 +101,10 @@ func BuiltinRoleNames() []string {
 
 // Resource names used for owner permission lookup
 const (
-	ResourceApp  = "app"
-	ResourceSync = "sync"
+	ResourceApp     = "app"
+	ResourceSync    = "sync"
+	ResourceService = "service"
+	ResourceBinding = "binding"
 )
 
 // appPermissions are the app (app:*) scoped permissions
@@ -122,58 +124,102 @@ var appPermissions = []types.RBACPermission{
 	types.PermissionApprove,
 }
 
-// scopedPermissions are matched against the grant's target glob (the app path).
-// These are the app:* permissions. App-level custom permissions are scoped too,
-// handled via the isAppLevelPermission flag in checkGrant. Every permission not
-// in this set is global: a grant confers it regardless of its targets.
-var scopedPermissions = func() map[types.RBACPermission]bool {
-	perms := make(map[types.RBACPermission]bool, len(appPermissions))
+// servicePermissions are scoped to the grant's service:<glob> target entries,
+// matched against the service id (<type>/<name>, no leading slash)
+var servicePermissions = []types.RBACPermission{
+	types.PermissionServiceCreate,
+	types.PermissionServiceUpdate,
+	types.PermissionServiceDelete,
+	types.PermissionServiceRead,
+	types.PermissionServiceBind,
+	types.PermissionServiceManage,
+}
+
+// bindingPermissions are scoped to the grant's binding:<glob> target entries,
+// matched against the binding path
+var bindingPermissions = []types.RBACPermission{
+	types.PermissionBindingCreate,
+	types.PermissionBindingUpdate,
+	types.PermissionBindingDelete,
+	types.PermissionBindingRead,
+	types.PermissionBindingRunCommand,
+	types.PermissionBindingUse,
+	types.PermissionBindingManage,
+	types.PermissionBindingReveal,
+}
+
+// scopedPermKinds maps each scoped permission to the target kind its grant
+// target entries are matched against: app:* permissions against app path
+// targets, service:* against service:<glob> entries, binding:* against
+// binding:<glob> entries. App-level custom permissions are app scoped too,
+// handled via the isAppLevelPermission flag. Every permission not in this map
+// is global: a grant confers it regardless of its targets.
+var scopedPermKinds = func() map[types.RBACPermission]targetKind {
+	perms := make(map[types.RBACPermission]targetKind,
+		len(appPermissions)+len(servicePermissions)+len(bindingPermissions))
 	for _, p := range appPermissions {
-		perms[p] = true
+		perms[p] = targetKindApp
+	}
+	for _, p := range servicePermissions {
+		perms[p] = targetKindService
+	}
+	for _, p := range bindingPermissions {
+		perms[p] = targetKindBinding
 	}
 	return perms
 }()
 
-// globalPermissions are the permissions with no app path target: a grant confers
-// them regardless of its targets. Everything except app:*. The builder:*
-// permissions are global (a builder session is not bound to an app path until
-// it publishes); the app the session publishes or edits is separately enforced
-// with the app permissions (app:create/app:update/app:delete) on that path.
-var globalPermissions = map[types.RBACPermission]bool{
-	types.PermissionBuilderList:       true,
-	types.PermissionBuilderCreate:     true,
-	types.PermissionBuilderPublish:    true,
-	types.PermissionSyncCreate:        true,
-	types.PermissionSyncRun:           true,
-	types.PermissionSyncDelete:        true,
-	types.PermissionSyncRead:          true,
-	types.PermissionServiceCreate:     true,
-	types.PermissionServiceUpdate:     true,
-	types.PermissionServiceDelete:     true,
-	types.PermissionServiceRead:       true,
-	types.PermissionBindingCreate:     true,
-	types.PermissionBindingUpdate:     true,
-	types.PermissionBindingDelete:     true,
-	types.PermissionBindingRead:       true,
-	types.PermissionBindingRunCommand: true,
-	types.PermissionContainerRead:     true,
-	types.PermissionContainerManage:   true,
-	types.PermissionConfigBasicRead:   true,
-	types.PermissionConfigRead:        true,
-	types.PermissionConfigUpdate:      true,
-	types.PermissionServerStop:        true,
-	types.PermissionAuditRead:         true,
-	types.PermissionSecretCreate:      true,
-	types.PermissionSecretRead:        true,
-	types.PermissionSecretDelete:      true,
-	types.PermissionSecretReveal:      true,
-	types.PermissionAdmin:             true,
+// scopedKind returns the target kind perm is scoped to, false if perm is global
+func scopedKind(perm types.RBACPermission, isAppLevelPermission bool) (targetKind, bool) {
+	if isAppLevelPermission {
+		return targetKindApp, true
+	}
+	kind, ok := scopedPermKinds[perm]
+	return kind, ok
 }
+
+// globalPermissions are the permissions with no resource target: a grant confers
+// them regardless of its targets. The builder:* permissions are global (a
+// builder session is not bound to an app path until it publishes); the app the
+// session publishes or edits is separately enforced with the app permissions
+// (app:create/app:update/app:delete) on that path.
+var globalPermissions = map[types.RBACPermission]bool{
+	types.PermissionBuilderList:     true,
+	types.PermissionBuilderCreate:   true,
+	types.PermissionBuilderPublish:  true,
+	types.PermissionSyncCreate:      true,
+	types.PermissionSyncRun:         true,
+	types.PermissionSyncDelete:      true,
+	types.PermissionSyncRead:        true,
+	types.PermissionContainerRead:   true,
+	types.PermissionContainerManage: true,
+	types.PermissionConfigBasicRead: true,
+	types.PermissionConfigRead:      true,
+	types.PermissionConfigUpdate:    true,
+	types.PermissionServerStop:      true,
+	types.PermissionAuditRead:       true,
+	types.PermissionSecretCreate:    true,
+	types.PermissionSecretRead:      true,
+	types.PermissionSecretDelete:    true,
+	types.PermissionSecretReveal:    true,
+	types.PermissionAdmin:           true,
+}
+
+// globalPermissionNames is the sorted list of global permission names, for
+// deterministic enumeration (map iteration order varies per run)
+var globalPermissionNames = func() []types.RBACPermission {
+	perms := make([]types.RBACPermission, 0, len(globalPermissions))
+	for p := range globalPermissions {
+		perms = append(perms, p)
+	}
+	slices.Sort(perms)
+	return perms
+}()
 
 // builtinPermissions is the set of all valid permission names
 var builtinPermissions = func() map[types.RBACPermission]bool {
-	perms := make(map[types.RBACPermission]bool, len(appPermissions)+len(globalPermissions))
-	for _, p := range appPermissions {
+	perms := make(map[types.RBACPermission]bool, len(scopedPermKinds)+len(globalPermissions))
+	for p := range scopedPermKinds {
 		perms[p] = true
 	}
 	for p := range globalPermissions {
@@ -212,11 +258,30 @@ var appManagePermissions = func() []types.RBACPermission {
 	return perms
 }()
 
+// managePermissions returns what a <resource>:manage composite expands to:
+// every permission in perms except the manage permission itself and the
+// excluded permissions (reveal-style permissions that always need an explicit grant)
+func managePermissions(perms []types.RBACPermission, manage types.RBACPermission,
+	exclude ...types.RBACPermission) []types.RBACPermission {
+	expanded := make([]types.RBACPermission, 0, len(perms))
+	for _, p := range perms {
+		if p == manage || slices.Contains(exclude, p) {
+			continue
+		}
+		expanded = append(expanded, p)
+	}
+	return expanded
+}
+
 // permissionImplications: holding the key permission implies the value permissions.
-// approve is never implied
+// approve and binding:reveal are never implied
 var permissionImplications = map[types.RBACPermission][]types.RBACPermission{
-	types.PermissionUpdate:          {types.PermissionReload, types.PermissionApply, types.PermissionRead},
-	types.PermissionAppManage:       appManagePermissions,
+	types.PermissionUpdate:        {types.PermissionReload, types.PermissionApply, types.PermissionRead},
+	types.PermissionAppManage:     appManagePermissions,
+	types.PermissionServiceManage: managePermissions(servicePermissions, types.PermissionServiceManage),
+	// binding:reveal (reading back account credentials) is excluded, like
+	// app:approve from app:manage: it always needs an explicit grant
+	types.PermissionBindingManage:   managePermissions(bindingPermissions, types.PermissionBindingManage, types.PermissionBindingReveal),
 	types.PermissionContainerManage: {types.PermissionContainerRead},
 	types.PermissionConfigRead:      {types.PermissionConfigBasicRead},
 }
@@ -224,8 +289,10 @@ var permissionImplications = map[types.RBACPermission][]types.RBACPermission{
 // defaultOwnerPermissions are the permissions the creator of an asset gets on that
 // asset when owner_permissions is not configured for the resource
 var defaultOwnerPermissions = map[string][]types.RBACPermission{
-	ResourceApp:  {types.PermissionAppManage},
-	ResourceSync: {types.PermissionSyncRun, types.PermissionSyncDelete, types.PermissionSyncRead},
+	ResourceApp:     {types.PermissionAppManage},
+	ResourceSync:    {types.PermissionSyncRun, types.PermissionSyncDelete, types.PermissionSyncRead},
+	ResourceService: {types.PermissionServiceManage},
+	ResourceBinding: {types.PermissionBindingManage},
 }
 
 // expandImplications returns perms with all implied permissions appended (deduplicated).
@@ -339,13 +406,21 @@ func newResolvedRole(perms []types.RBACPermission) *resolvedRole {
 }
 
 // allPermissionNames is the shared, immutable list of every permission name,
-// returned by GetAPIPermissions when enforcement is not active
+// returned by GetAPIPermissions when enforcement is not active. App, service
+// and binding permissions in display order, then global permissions sorted,
+// so the reported order is stable
 var allPermissionNames = func() []string {
-	perms := make([]string, 0, len(appPermissions)+len(globalPermissions))
+	perms := make([]string, 0, len(scopedPermKinds)+len(globalPermissionNames))
 	for _, p := range appPermissions {
 		perms = append(perms, string(p))
 	}
-	for p := range globalPermissions {
+	for _, p := range servicePermissions {
+		perms = append(perms, string(p))
+	}
+	for _, p := range bindingPermissions {
+		perms = append(perms, string(p))
+	}
+	for _, p := range globalPermissionNames {
 		perms = append(perms, string(p))
 	}
 	return perms

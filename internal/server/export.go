@@ -22,23 +22,22 @@ import (
 // incomplete exports. When adding a field, update exportApp/formatApp (or
 // document why it is not exportable) and then add it here.
 var appExportFields = map[string]bool{
-	"path":                 true,
-	"source_url":           true,
-	"is_dev":               true,
-	"app_authn":            true,
-	"git_branch":           true,
-	"git_commit":           true,
-	"git_auth_name":        true,
-	"spec":                 true,
-	"param_values":         true,
-	"container_options":    true,
-	"container_args":       true,
-	"container_volumes":    true,
-	"appconfig":            true,
-	"bindings":             true,
-	"binding_source_perms": true,
-	"stage_at":             true,
-	"verify":               true,
+	"path":              true,
+	"source_url":        true,
+	"is_dev":            true,
+	"app_authn":         true,
+	"git_branch":        true,
+	"git_commit":        true,
+	"git_auth_name":     true,
+	"spec":              true,
+	"param_values":      true,
+	"container_options": true,
+	"container_args":    true,
+	"container_volumes": true,
+	"appconfig":         true,
+	"bindings":          true,
+	"stage_at":          true,
+	"verify":            true,
 }
 
 // bindingExportFields is the CreateBindingRequest equivalent of appExportFields.
@@ -149,10 +148,6 @@ func (s *Server) Export(ctx context.Context, appPathGlob string, opts types.Expo
 	if opts.GitAuthRef != types.ExportRefDefault && opts.GitAuthRef != types.ExportRefExact {
 		return "", fmt.Errorf("invalid git-auth %q, expected %s or %s", opts.GitAuthRef, types.ExportRefDefault, types.ExportRefExact)
 	}
-	if err := s.enforceGlobalPerm(ctx, types.PermissionBindingRead, ""); err != nil {
-		return "", err
-	}
-
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return "", err
@@ -164,6 +159,22 @@ func (s *Server) Export(ctx context.Context, appPathGlob string, opts types.Expo
 	allBindings, err := s.db.ListBindings(ctx, tx, "")
 	if err != nil {
 		return "", err
+	}
+	if s.rbacManager.APIEnforced(ctx) {
+		// Under RBAC enforcement the export includes only the bindings the user
+		// holds binding:read on, matching the app filtering below
+		readable := make([]*types.Binding, 0, len(allBindings))
+		for _, binding := range allBindings {
+			authorized, err := s.rbacManager.AuthorizeResourceAPI(ctx,
+				types.PermissionBindingRead, binding.Path, binding.CreatedBy)
+			if err != nil {
+				return "", err
+			}
+			if authorized {
+				readable = append(readable, binding)
+			}
+		}
+		allBindings = readable
 	}
 	bindingsByPath := make(map[string]*types.Binding, len(allBindings))
 	for _, binding := range allBindings {
@@ -278,16 +289,15 @@ func (s *Server) exportApp(ctx context.Context, tx types.Transaction, appEntry *
 	bindingsByPath map[string]*types.Binding, builder *exportBuilder) *types.CreateAppRequest {
 	metadata := &appEntry.Metadata
 	req := &types.CreateAppRequest{
-		Path:               appEntry.String(),
-		SourceUrl:          appEntry.SourceUrl,
-		IsDev:              appEntry.IsDev,
-		Spec:               metadata.Spec,
-		ParamValues:        metadata.ParamValues,
-		AppConfig:          metadata.AppConfig,
-		ContainerOptions:   metadata.ContainerOptions,
-		ContainerArgs:      metadata.ContainerArgs,
-		ContainerVolumes:   metadata.ContainerVolumes,
-		BindingSourcePerms: metadata.BindingSourcePerms,
+		Path:             appEntry.String(),
+		SourceUrl:        appEntry.SourceUrl,
+		IsDev:            appEntry.IsDev,
+		Spec:             metadata.Spec,
+		ParamValues:      metadata.ParamValues,
+		AppConfig:        metadata.AppConfig,
+		ContainerOptions: metadata.ContainerOptions,
+		ContainerArgs:    metadata.ContainerArgs,
+		ContainerVolumes: metadata.ContainerVolumes,
 	}
 
 	// The deprecated AppSettings auth fields are migrated into AppMetadata on

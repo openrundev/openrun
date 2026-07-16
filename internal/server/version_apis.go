@@ -279,6 +279,22 @@ func (s *Server) VersionSwitch(ctx context.Context, mainAppPath string, dryRun b
 		return nil, fmt.Errorf("error getting version %d: %w", versionInt, err)
 	}
 
+	// The restored metadata may re-attach bindings that were since removed
+	// from the app: switching hands their credentials back to the app, so
+	// each newly restored binding is authorized like any new attach
+	// (binding:use), before the metadata is replaced
+	currentBindings := make(map[string]bool, len(appEntry.Metadata.Bindings))
+	for _, bindingPath := range appEntry.Metadata.Bindings {
+		currentBindings[bindingPath] = true
+	}
+	for _, bindingPath := range newVersion.Metadata.Bindings {
+		if !currentBindings[bindingPath] {
+			if err := s.enforceBindingSource(ctx, tx, bindingPath); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	fromVersion := appEntry.Metadata.VersionMetadata.Version
 	appEntry.Metadata = *newVersion.Metadata
 	appEntry.Metadata.VersionMetadata.PreviousVersion = fromVersion

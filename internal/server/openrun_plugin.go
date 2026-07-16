@@ -1173,11 +1173,8 @@ func (c *openrunPlugin) ListBindings(thread *starlark.Thread, builtin *starlark.
 	}
 
 	ctx := system.GetRequestContext(thread)
-	// The ListBindings server method is not gated (apply uses it internally), so
-	// the plugin entry point enforces binding:read
-	if err := c.server.enforceGlobalPerm(ctx, types.PermissionBindingRead, ""); err != nil {
-		return nil, err
-	}
+	// ListBindings filters to the bindings the user holds binding:read on
+	// (through grants or the owner rule) and redacts account credentials
 	bindings, err := c.server.ListBindings(ctx, source.GoString())
 	if err != nil {
 		return nil, err
@@ -1185,11 +1182,11 @@ func (c *openrunPlugin) ListBindings(thread *starlark.Thread, builtin *starlark.
 
 	ret := starlark.List{}
 	for _, binding := range bindings {
-		// Account info (credentials) is redacted, the raw apply info is dropped
-		redacted := redactBindingAccount(binding)
+		// The raw apply info is dropped
+		redacted := *binding
 		redacted.Metadata.ApplyInfo = nil
 		redacted.StagedMetadata.ApplyInfo = nil
-		entryMap, err := starlark_type.ConvertToStarlark(redacted)
+		entryMap, err := starlark_type.ConvertToStarlark(&redacted)
 		if err != nil {
 			return nil, err
 		}

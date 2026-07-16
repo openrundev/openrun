@@ -73,16 +73,31 @@ func GetRequestGroups(thread *starlark.Thread) []string {
 // passing a ContextKey variable boxes it and allocates on every lookup; these
 // getters run several times per request, so the keys are boxed once here.
 var (
-	userIdKey      any = types.USER_ID
-	userSubjectKey any = types.USER_SUBJECT
-	userEmailKey   any = types.USER_EMAIL
-	requestIdKey   any = types.REQUEST_ID
-	appIdKey       any = types.APP_ID
-	groupsKey      any = types.GROUPS
-	customPermsKey any = types.CUSTOM_PERMS
-	rbacEnabledKey any = types.RBAC_ENABLED
-	trustedOpKey   any = types.TRUSTED_OPERATION
+	userIdKey        any = types.USER_ID
+	userSubjectKey   any = types.USER_SUBJECT
+	userEmailKey     any = types.USER_EMAIL
+	requestIdKey     any = types.REQUEST_ID
+	appIdKey         any = types.APP_ID
+	groupsKey        any = types.GROUPS
+	customPermsKey   any = types.CUSTOM_PERMS
+	rbacEnabledKey   any = types.RBAC_ENABLED
+	trustedOpKey     any = types.TRUSTED_OPERATION
+	appPathDomainKey any = types.APP_PATH_DOMAIN
 )
+
+// GetContextAppPathDomain returns the path domain of the app serving the
+// request, the zero value when not present
+func GetContextAppPathDomain(ctx context.Context) types.AppPathDomain {
+	value := ctx.Value(appPathDomainKey)
+	if value == nil {
+		return types.AppPathDomain{}
+	}
+	pathDomain, ok := value.(types.AppPathDomain)
+	if !ok {
+		return types.AppPathDomain{}
+	}
+	return pathDomain
+}
 
 func GetContextGroups(ctx context.Context) []string {
 	value := ctx.Value(groupsKey)

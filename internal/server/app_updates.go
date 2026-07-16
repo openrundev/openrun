@@ -846,14 +846,12 @@ func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transacti
 			appEntry.Metadata.Bindings = []string{}
 			return nil
 		}
-		resolvedBindings, err := s.resolveAppBindings(ctx, tx, autoBindingAppID(appEntry), configEntries, dryRun, accounts)
+		resolvedBindings, err := s.resolveAppBindings(ctx, tx, autoBindingAppID(appEntry), configEntries,
+			appEntry.Metadata.Bindings, dryRun, accounts)
 		if err != nil {
 			return err
 		}
 		appEntry.Metadata.Bindings = resolvedBindings
-		return nil
-	case types.AppMetadataBindingPerms:
-		appEntry.Metadata.BindingSourcePerms = configEntries
 		return nil
 	case types.AppMetadataAuthnType:
 		if err := s.validateAppAuthnType(string(value)); err != nil {

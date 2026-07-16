@@ -110,19 +110,11 @@ tests:
     command: ../openrun app create --spec python-flask --bind /pgcontainer/private ./pg_flaskapp /pg_container_private
     stdout: "App: /pg_container_private"
 
-  postgres_container0093: # non-default binding source is blocked until approved
-    command: curl -sS localhost:${HTTP_PORT}/pg_container_private
-    stdout: "not approved to use binding source postgres/pgprivate"
-
-  postgres_container0094: # request non-default binding source permission
-    command: ../openrun app update bind-perm postgres/pgprivate /pg_container_private
-    stdout: "1 app(s) updated, 0 app(s) promoted."
-
-  postgres_container0095: # approve and promote the non-default source permission
+  postgres_container0093: # promote the app so prod serves the binding (nothing needs approval - binding access is not approval based)
     command: ../openrun app approve --promote /pg_container_private
-    stdout: "1 app(s) audited, 1 app(s) approved, 1 app(s) promoted."
+    stdout: "1 app(s) audited, 0 app(s) approved, 1 app(s) promoted."
 
-  postgres_container0096: # approved non-default binding source now reaches the container
+  postgres_container0096: # non-default binding source reaches the container (binding access is RBAC gated, no approval needed)
     command: curl -sS localhost:${HTTP_PORT}/pg_container_private
     stdout: "source=POSTGRES_URL"
 

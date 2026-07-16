@@ -9,7 +9,20 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Add agenting builder using ACP integration
+- Add agentic builder using ACP integration
+- Service and binding RBAC permissions are now scoped by grant targets, like app permissions. Grant `targets` accept `service:<glob>` entries matched against service ids (`<type>/<name>`, e.g. `service:postgres/*`) and `binding:<glob>` entries matched against binding paths (e.g. `binding:/apps/team1/**`); `all` matches every app, service and binding. New permissions: `service:bind` (provision binding accounts on a service, required to create base/auto bindings from it), `binding:use` (attach a binding to an app or derive a new binding from it), `binding:reveal` (read back binding account credentials with `binding show-account`; like `secret:reveal` it always needs an explicit grant — it is never implied by `binding:manage` and binding owners do not hold it by default, opt owners in via `owner_permissions.binding`), and the `service:manage` / `binding:manage` composites. Attaching bindings at app create/update/apply time now enforces `binding:use` / `service:bind` for newly added bindings, sync background runs enforce them against the frozen creator snapshot, and service/binding list operations (including export) return only the entries the user can read. The creator of a service or binding holds the owner permissions on it (default `service:manage` / `binding:manage`, configurable via `owner_permissions`).
+
+### Changed
+
+- `service:*` and `binding:*` permissions are no longer global. A grant that should confer them must include `service:`/`binding:` target entries (or use the `all` target); grants whose targets only name app paths no longer confer any service or binding permissions. Sync entries created before this change froze grants without typed targets — recreate RBAC-snapshotted syncs whose apply files manage bindings.
+- The app-level binding source whitelist is removed in favor of the scoped RBAC checks: the `--bind-perm` flag, `openrun app update bind-perm`, the `bind_perm` apply file argument, the `permissions.binding_source_perms` server config and the runtime container-start source check are gone, and approval no longer covers binding sources. Binding access authority is now checked when the binding is attached (RBAC `binding:use`/`service:bind`); with RBAC disabled, management operations are admin-only as usual.
+- RBAC check performance: the app access check no longer takes the manager lock when RBAC is disabled, grant target globs and group memberships are resolved once at config update time (group member sets and precompiled regexes), the admin pre-check skips the grant scan when no grant confers the `admin` permission, and `get_permissions` evaluates the whole report under one lock acquisition. Permission listings (`get_permissions`) and the custom permission list are now reported in a stable sorted order.
+
+### Fixed
+
+- RBAC `regex:` user patterns (in `grant.users` and group members) now must match the entire user ID instead of any substring. Patterns already anchored with `^...$` behave the same as before.
+- Grant target globs are now validated when the RBAC config is updated. A malformed target previously caused authorization checks that evaluated the grant to error at request time.
+- App-level RBAC checks (action and plugin `permit` lists) no longer panic if a request context is missing its identity values; such requests now fail closed. An empty user ID also fails closed in grant evaluation instead of being matched against grants.
 
 ## [v0.18.6] - 2026-07-13
 

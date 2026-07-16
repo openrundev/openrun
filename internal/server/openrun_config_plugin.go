@@ -440,6 +440,14 @@ func unpackGrantArgs(apiName string, args starlark.Tuple, kwargs []starlark.Tupl
 	if err != nil {
 		return nil, "", err
 	}
+	// Malformed target globs are rejected when the grant is staged, matching
+	// the stage-time permission name validation on roles, so the error
+	// surfaces in the grant form instead of at publish
+	for _, target := range targetList {
+		if err := rbac.ValidateGlob(target); err != nil {
+			return nil, "", fmt.Errorf("invalid target %q: %w", target, err)
+		}
+	}
 
 	grant := types.RBACGrant{
 		Description: description.GoString(),

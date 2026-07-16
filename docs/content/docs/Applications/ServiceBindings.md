@@ -108,7 +108,10 @@ openrun binding create mysql/main /apps/inventory-db
 Base bindings cannot have grants. The generated account owns the bindings schema or database.
 
 The account information is not shown by `binding get` or `binding list`. Use
-`binding show-account` to view the generated connection information.
+`binding show-account` to view the generated connection information. With RBAC
+enabled, `show-account` needs the `binding:reveal` permission, which requires
+an explicit grant (it is not implied by `binding:manage` and binding owners do
+not hold it by default).
 
 ```shell
 openrun binding show-account /apps/reporting-db
@@ -200,40 +203,11 @@ openrun app update bindings /apps/reporting-read /apps/metrics-read /reporting
 
 This updates staging. Add `--promote` to update prod in the same command.
 
-## Binding Source Permissions
+## Binding Access Control
 
-Apps can only use bindings whose source is allowed by the app metadata or by the system-level `permissions.binding_source_perms` setting in `openrun.toml`. The `--bind-perm` option records the binding sources an app is requesting permission to use. If `--approve` is also used during app creation, the requested binding source permissions are copied into the app's approved list.
+Access to services and bindings is controlled through [RBAC]({{< ref "/docs/configuration/rbac" >}}). The `service:*` and `binding:*` permissions are scoped by the grant's `service:<glob>` / `binding:<glob>` target entries. Attaching a binding to an app requires the `binding:use` permission on that binding path (or `service:bind` on the service, for auto bindings created from a service source), in addition to the app permission for the update itself. The creator of a service or binding holds the owner permissions (`service:manage` / `binding:manage` by default) on their own entries.
 
-```shell
-openrun app create \
-  --bind-perm postgres/main \
-  --approve \
-  github.com/example/reporting-app \
-  /reporting
-
-openrun app update bind-perm postgres/main /reporting
-openrun app approve --promote /reporting
-```
-
-Runtime binding access is checked against the approved binding source permissions. Updating `bind-perm` on an existing app stages the requested source list, but it does not approve it. Run `openrun app approve` after the update, or use `openrun apply --approve` for declarative updates, so the new binding sources are approved before the app uses them.
-
-By default at the system level, bindings are allowed to the default postgres and mysql services. This can be configured by updating `openrun.toml`:
-
-```toml {filename="openrun.toml"}
-[permissions]
-binding_source_perms = ["postgres", "mysql"] # default postgres and mysql binding sources are allowed by default
-```
-
-For declarative apply files, use `bind_perm` in the app definition:
-
-```python {filename="apps.ace"}
-app(
-    "/reporting",
-    "github.com/example/reporting-app",
-    bindings=["/apps/reporting-db"],
-    bind_perm=["postgres/main"],
-)
-```
+When RBAC is not enabled, management operations are restricted to the admin user, so no separate approval step applies to binding access.
 
 ## Auto Bindings
 
@@ -242,7 +216,6 @@ When the value passed to `--bind` starts with `/`, OpenRun treats it as an exist
 ```shell
 openrun app create \
   --bind postgres/main \
-  --bind-perm postgres/main \
   --approve \
   github.com/example/reporting-app \
   /reporting

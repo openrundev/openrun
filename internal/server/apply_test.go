@@ -319,11 +319,8 @@ app("/apps/uses-derived", %q, bindings=["/apps/derived"])
 		t.Fatal("created app did not include approval results")
 	}
 	approveResult := response.CreateResults[0].ApproveResults[0]
-	if !approveResult.NeedsApproval {
-		t.Fatal("created app with derived binding did not require approval")
-	}
-	if !slices.Contains(approveResult.NewBindingSourcePerms, "/apps/base") {
-		t.Fatalf("binding source perms = %v, want /apps/base", approveResult.NewBindingSourcePerms)
+	if approveResult.NeedsApproval {
+		t.Fatal("app with no plugin permissions should not require approval (binding access is RBAC gated, not approval gated)")
 	}
 
 	readTx, err := db.BeginTransaction(ctx)
@@ -1675,10 +1672,13 @@ func TestApplyBindingRBAC(t *testing.T) {
 		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"apps-only": {types.PermissionApply},
-			"binder":    {types.PermissionApply, types.PermissionBindingCreate, types.PermissionBindingUpdate},
+			"no-bind":   {types.PermissionApply, types.PermissionBindingCreate, types.PermissionBindingUpdate},
+			"binder": {types.PermissionApply, types.PermissionBindingCreate, types.PermissionBindingUpdate,
+				types.PermissionServiceBind},
 		},
 		Grants: []types.RBACGrant{
 			{Description: "apps only", Users: []string{"apponly"}, Roles: []string{"apps-only"}, Targets: []string{"all"}},
+			{Description: "no bind", Users: []string{"nobind"}, Roles: []string{"no-bind"}, Targets: []string{"all"}},
 			{Description: "binder", Users: []string{"binder"}, Roles: []string{"binder"}, Targets: []string{"all"}},
 		},
 	}); err != nil {
@@ -1700,6 +1700,13 @@ func TestApplyBindingRBAC(t *testing.T) {
 	err := runApply("apponly")
 	if err == nil || !strings.Contains(err.Error(), string(types.PermissionBindingCreate)) {
 		t.Fatalf("expected binding:create denial for new binding, got %v", err)
+	}
+
+	// Creating a base binding provisions an account on the service, which
+	// needs service:bind on it in addition to binding:create on the path
+	err = runApply("nobind")
+	if err == nil || !strings.Contains(err.Error(), string(types.PermissionServiceBind)) {
+		t.Fatalf("expected service:bind denial for new base binding, got %v", err)
 	}
 
 	if err := runApply("binder"); err != nil {

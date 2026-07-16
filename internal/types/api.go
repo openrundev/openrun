@@ -34,23 +34,22 @@ func (r RequestError) Error() string {
 // CreateAppRequest is the request body for creating an app
 // This gets saved as ApplyInfo when doing declarative app creation
 type CreateAppRequest struct {
-	Path               string            `json:"path"`
-	SourceUrl          string            `json:"source_url"`
-	IsDev              bool              `json:"is_dev"`
-	AppAuthn           AppAuthnType      `json:"app_authn"`
-	GitBranch          string            `json:"git_branch"`
-	GitCommit          string            `json:"git_commit"`
-	GitAuthName        string            `json:"git_auth_name"`
-	Spec               AppSpec           `json:"spec"`
-	ParamValues        map[string]string `json:"param_values"`
-	ContainerOptions   map[string]string `json:"container_options"`
-	ContainerArgs      map[string]string `json:"container_args"`
-	ContainerVolumes   []string          `json:"container_volumes"`
-	AppConfig          map[string]string `json:"appconfig"`
-	Bindings           []string          `json:"bindings"`
-	BindingSourcePerms []string          `json:"binding_source_perms"`
-	StageAt            string            `json:"stage_at"`
-	Verify             bool              `json:"verify"`
+	Path             string            `json:"path"`
+	SourceUrl        string            `json:"source_url"`
+	IsDev            bool              `json:"is_dev"`
+	AppAuthn         AppAuthnType      `json:"app_authn"`
+	GitBranch        string            `json:"git_branch"`
+	GitCommit        string            `json:"git_commit"`
+	GitAuthName      string            `json:"git_auth_name"`
+	Spec             AppSpec           `json:"spec"`
+	ParamValues      map[string]string `json:"param_values"`
+	ContainerOptions map[string]string `json:"container_options"`
+	ContainerArgs    map[string]string `json:"container_args"`
+	ContainerVolumes []string          `json:"container_volumes"`
+	AppConfig        map[string]string `json:"appconfig"`
+	Bindings         []string          `json:"bindings"`
+	StageAt          string            `json:"stage_at"`
+	Verify           bool              `json:"verify"`
 	// fields supported by declarative apply must be merged in applyAppUpdate
 }
 
@@ -135,15 +134,13 @@ type RunBindingCommandRequest struct {
 
 // ApproveResult represents the result of an app approval audit
 type ApproveResult struct {
-	Id                         AppId         `json:"id"`
-	AppPathDomain              AppPathDomain `json:"app_path_domain"`
-	NewLoads                   []string      `json:"new_loads"`
-	NewPermissions             []Permission  `json:"new_permissions"`
-	ApprovedLoads              []string      `json:"approved_loads"`
-	ApprovedPermissions        []Permission  `json:"approved_permissions"`
-	NewBindingSourcePerms      []string      `json:"new_binding_source_perms"`
-	ApprovedBindingSourcePerms []string      `json:"approved_binding_source_perms"`
-	NeedsApproval              bool          `json:"needs_approval"`
+	Id                  AppId         `json:"id"`
+	AppPathDomain       AppPathDomain `json:"app_path_domain"`
+	NewLoads            []string      `json:"new_loads"`
+	NewPermissions      []Permission  `json:"new_permissions"`
+	ApprovedLoads       []string      `json:"approved_loads"`
+	ApprovedPermissions []Permission  `json:"approved_permissions"`
+	NeedsApproval       bool          `json:"needs_approval"`
 }
 
 type AppResponse struct {

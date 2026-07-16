@@ -40,8 +40,15 @@ func useStagedBindingMetadata(binding *types.Binding, useStaging bool) bool {
 // source (serviceType or serviceType/name) for which an auto binding is created.
 // Auto binding accounts are tracked on the operation's account manager, so they
 // are removed from the service if the operation's transaction is rolled back.
+//
+// Attaching a binding hands its credentials to the app, so newly attached
+// references are RBAC checked: an existing binding path needs binding:use on it,
+// a service source needs service:bind on the service (which covers creating and
+// attaching the auto binding). References already attached to the app
+// (existingBindings) are kept without a check, so a caller who cannot use a
+// previously attached binding can still update the app.
 func (s *Server) resolveAppBindings(ctx context.Context, tx types.Transaction, appID types.AppId,
-	bindingRefs []string, dryRun bool, accounts *bindingAccountManager) ([]string, error) {
+	bindingRefs, existingBindings []string, dryRun bool, accounts *bindingAccountManager) ([]string, error) {
 	resolved := make([]string, 0, len(bindingRefs))
 	seen := make(map[string]bool, len(bindingRefs))
 	addResolved := func(path string) {
@@ -50,14 +57,24 @@ func (s *Server) resolveAppBindings(ctx context.Context, tx types.Transaction, a
 			seen[path] = true
 		}
 	}
+	existing := make(map[string]bool, len(existingBindings))
+	for _, path := range existingBindings {
+		existing[path] = true
+	}
 
 	for _, bindingRef := range bindingRefs {
 		if bindingRef == "" {
 			return nil, fmt.Errorf("binding path cannot be empty")
 		}
 		if strings.HasPrefix(bindingRef, "/") {
-			if _, err := s.db.GetBinding(ctx, tx, bindingRef); err != nil {
+			binding, err := s.db.GetBinding(ctx, tx, bindingRef)
+			if err != nil {
 				return nil, fmt.Errorf("binding %s not found: %w", bindingRef, err)
+			}
+			if !existing[bindingRef] {
+				if err := s.enforceBindingPerm(ctx, types.PermissionBindingUse, binding.Path, binding.CreatedBy); err != nil {
+					return nil, err
+				}
 			}
 			addResolved(bindingRef)
 			continue
@@ -68,6 +85,11 @@ func (s *Server) resolveAppBindings(ctx context.Context, tx types.Transaction, a
 			return nil, err
 		}
 		autoPath := autoBindingPathForAppID(appID, service.ServiceType)
+		if !existing[autoPath] {
+			if err := s.enforceServiceBind(ctx, tx, service); err != nil {
+				return nil, err
+			}
+		}
 		if err := s.ensureAutoBinding(ctx, tx, autoPath, bindingRef, service, accounts); err != nil {
 			return nil, err
 		}

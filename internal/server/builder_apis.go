@@ -602,6 +602,15 @@ func (s *Server) builderExportStanza(ctx context.Context, exportPath,
 
 	exporter := newExportBuilder(types.ExportOptions{ServiceRef: types.ExportRefDefault, GitAuthRef: types.ExportRefDefault})
 	req := s.exportApp(ctx, tx, appEntry, bindingsByPath, exporter)
+	// Publishing attaches the exported binding references to the NEW app at
+	// publishPath (git mode pushes the desired state immediately, local mode
+	// writes the shared apps file): authorize each reference (binding:use /
+	// service:bind) before the caller mutates anything with this stanza
+	for _, ref := range req.Bindings {
+		if err := s.enforceBindingSource(ctx, tx, ref); err != nil {
+			return "", err
+		}
+	}
 	req.Path = publishPath
 	req.SourceUrl = sourceUrl
 	req.IsDev = false

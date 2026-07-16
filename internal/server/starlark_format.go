@@ -112,9 +112,6 @@ func formatApp(req *types.CreateAppRequest) (string, []string) {
 	if len(req.Bindings) > 0 {
 		args = append(args, strArg("bindings="+formatStringList(req.Bindings)))
 	}
-	if len(req.BindingSourcePerms) > 0 {
-		args = append(args, strArg("bind_perm="+formatStringList(req.BindingSourcePerms)))
-	}
 	if req.Verify {
 		args = append(args, strArg("verify=True"))
 	}

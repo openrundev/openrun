@@ -92,7 +92,7 @@ func (s *Server) enforceAppPermEntry(ctx context.Context, perm types.RBACPermiss
 	return nil
 }
 
-// enforceGlobalPerm authorizes a global (non app path) permission. owner is the
+// enforceGlobalPerm authorizes a global (untargeted) permission. owner is the
 // creator of the specific entry being operated on ("" when not applicable)
 func (s *Server) enforceGlobalPerm(ctx context.Context, perm types.RBACPermission, owner string) error {
 	if !s.rbacManager.APIEnforced(ctx) {
@@ -104,6 +104,34 @@ func (s *Server) enforceGlobalPerm(ctx context.Context, perm types.RBACPermissio
 	}
 	if !authorized {
 		return s.rbacDenied(ctx, perm, "server")
+	}
+	return nil
+}
+
+// enforceServicePerm authorizes a service:* permission on one service, matched
+// against the grants' service:<glob> target entries. serviceId is
+// <type>/<name>; owner is the service creator ("" if not known)
+func (s *Server) enforceServicePerm(ctx context.Context, perm types.RBACPermission, serviceId, owner string) error {
+	return s.enforceResourcePerm(ctx, perm, serviceId, owner)
+}
+
+// enforceBindingPerm authorizes a binding:* permission on one binding, matched
+// against the grants' binding:<glob> target entries. owner is the binding
+// creator ("" if not known)
+func (s *Server) enforceBindingPerm(ctx context.Context, perm types.RBACPermission, bindingPath, owner string) error {
+	return s.enforceResourcePerm(ctx, perm, bindingPath, owner)
+}
+
+func (s *Server) enforceResourcePerm(ctx context.Context, perm types.RBACPermission, resourceId, owner string) error {
+	if !s.rbacManager.APIEnforced(ctx) {
+		return nil
+	}
+	authorized, err := s.rbacManager.AuthorizeResourceAPI(ctx, perm, resourceId, owner)
+	if err != nil {
+		return err
+	}
+	if !authorized {
+		return s.rbacDenied(ctx, perm, resourceId)
 	}
 	return nil
 }

@@ -1510,10 +1510,6 @@ func (h *ContainerHandler) getBindingEnv() (map[string]string, error) {
 	env := make(map[string]string)
 	serviceTypeCount := make(map[string]int)
 	for _, binding := range h.bindings {
-		if !h.bindingSourceApproved(binding) {
-			return nil, fmt.Errorf("app %s is not approved to use binding source %s. Audit the app and approve binding source permissions", h.app.Path, binding.Source)
-		}
-
 		serviceTypeCount[binding.ServiceType]++
 
 		countSuffix := ""
@@ -1532,37 +1528,4 @@ func (h *ContainerHandler) getBindingEnv() (map[string]string, error) {
 		}
 	}
 	return env, nil
-}
-
-func (h *ContainerHandler) bindingSourceApproved(binding *types.Binding) bool {
-	if h.bindingSourceInList(binding, h.serverConfig.Permissions.BindingSourcePerms) {
-		return true
-	}
-	return h.bindingSourceInList(binding, h.app.Metadata.ApprovedBindingSourcePerms)
-}
-
-func (h *ContainerHandler) bindingSourceInList(binding *types.Binding, approvedSources []string) bool {
-	for _, approvedSource := range approvedSources {
-		if bindingSourceMatches(binding, approvedSource) {
-			return true
-		}
-	}
-	return false
-}
-
-func bindingSourceMatches(binding *types.Binding, approvedSource string) bool {
-	if approvedSource == binding.Source {
-		return true
-	}
-
-	defaultSource := binding.ServiceType + "/" + binding.ServiceName
-	if binding.ServiceIsDefault && binding.Source == binding.ServiceType && approvedSource == defaultSource {
-		return true
-	}
-	if binding.ServiceIsDefault && approvedSource == binding.ServiceType && binding.Source == defaultSource {
-		return true
-	}
-
-	match, err := types.RegexMatch(approvedSource, binding.Source)
-	return err == nil && match
 }

@@ -23,9 +23,12 @@ func (h *RBACManager) AuthorizeAny(ctx context.Context, permissions []string) (b
 		}
 		return false, nil
 	}
-	userId := ctx.Value(types.USER_ID).(string)
-	groups := ctx.Value(types.GROUPS).([]string)
-	appPathDomain := ctx.Value(types.APP_PATH_DOMAIN).(types.AppPathDomain)
+	// nil-safe getters: a context missing these values (a propagation bug)
+	// yields an empty user, which fails closed in the grant evaluation
+	// instead of panicking the request
+	userId := system.GetContextUserId(ctx)
+	groups := system.GetContextGroups(ctx)
+	appPathDomain := system.GetContextAppPathDomain(ctx)
 	for _, permission := range permissions {
 		authorized, err := h.AuthorizeInt(userId, appPathDomain, types.RBACPermission(permission), groups, true)
 		if err != nil {
@@ -47,10 +50,8 @@ func (h *RBACManager) Authorize(ctx context.Context, permission types.RBACPermis
 		}
 		return dirs.MatchesPerm(permission), nil
 	}
-	userId := ctx.Value(types.USER_ID).(string)
-	groups := ctx.Value(types.GROUPS).([]string)
-	appPathDomain := ctx.Value(types.APP_PATH_DOMAIN).(types.AppPathDomain)
-	return h.AuthorizeInt(userId, appPathDomain, permission, groups, isCustomPermission)
+	return h.AuthorizeInt(system.GetContextUserId(ctx), system.GetContextAppPathDomain(ctx),
+		permission, system.GetContextGroups(ctx), isCustomPermission)
 }
 
 // GetCustomPermissions returns the custom permissions for the user on the current app
@@ -60,10 +61,8 @@ func (h *RBACManager) GetCustomPermissions(ctx context.Context) ([]string, error
 		// custom permissions, see AuthorizeAPI
 		return simPerms, nil
 	}
-	userId := ctx.Value(types.USER_ID).(string)
-	groups := ctx.Value(types.GROUPS).([]string)
-	appPathDomain := ctx.Value(types.APP_PATH_DOMAIN).(types.AppPathDomain)
-	return h.GetCustomPermissionsInt(userId, appPathDomain, groups)
+	return h.GetCustomPermissionsInt(system.GetContextUserId(ctx),
+		system.GetContextAppPathDomain(ctx), system.GetContextGroups(ctx))
 }
 
 // IsAppRBACEnabled checks if RBAC is enabled. When enabled, RBAC applies to
@@ -103,10 +102,34 @@ func (h *RBACManager) APIEnforced(ctx context.Context) bool {
 // Returns true without any evaluation when enforcement is not active (see APIEnforced)
 func (h *RBACManager) AuthorizeAPI(ctx context.Context, perm types.RBACPermission,
 	target types.AppPathDomain, owner string) (bool, error) {
+	return h.authorizeAPICtx(ctx, perm, target, "", owner)
+}
+
+// AuthorizeResourceAPI checks a service or binding scoped permission against the
+// resource identity: the service id (<type>/<name>) for service:* permissions,
+// the binding path for binding:* permissions. owner is the entry's creator ("" if
+// not known); the owner holds the configured owner permissions on their entries
+func (h *RBACManager) AuthorizeResourceAPI(ctx context.Context, perm types.RBACPermission,
+	resourceId string, owner string) (bool, error) {
+	return h.authorizeAPICtx(ctx, perm, types.AppPathDomain{}, resourceId, owner)
+}
+
+// AuthorizeGlobalAPI checks a global (untargeted) permission like sync:create
+// or config:read. owner is the creator of the specific entry being operated on
+// ("" when not applicable); the owner holds the configured owner permissions on
+// their entries
+func (h *RBACManager) AuthorizeGlobalAPI(ctx context.Context, perm types.RBACPermission, owner string) (bool, error) {
+	return h.authorizeAPICtx(ctx, perm, types.AppPathDomain{}, "", owner)
+}
+
+// authorizeAPICtx is the shared context gating for the management API checks,
+// see AuthorizeAPI
+func (h *RBACManager) authorizeAPICtx(ctx context.Context, perm types.RBACPermission,
+	target types.AppPathDomain, resourceId string, owner string) (bool, error) {
 	if system.IsAppRBACEnabled(ctx) {
 		// live config enforcement; test URL directives and sync snapshots are
 		// only ever attached to contexts where this is not set
-		return h.authorizeAPIInt(system.GetContextUserId(ctx), system.GetContextGroups(ctx), perm, target, owner)
+		return h.authorizeAPIInt(system.GetContextUserId(ctx), system.GetContextGroups(ctx), perm, target, resourceId, owner)
 	}
 	if dirs := GetUrlDirectives(ctx); dirs.HasPerms() {
 		// _cl_perm test URL directive: only set when enforcement is otherwise
@@ -117,7 +140,7 @@ func (h *RBACManager) AuthorizeAPI(ctx context.Context, perm types.RBACPermissio
 	if sa := GetSyncAuthorizer(ctx); sa != nil {
 		// background sync run: evaluate against the creator authorization
 		// frozen on the sync entry, not the live config
-		return sa.Authorize(perm, target, owner)
+		return sa.Authorize(perm, target, resourceId, owner)
 	}
 	if system.IsTrustedOperation(ctx) || system.AppRBACMarkerPresent(ctx) || !h.ConfigEnabled() {
 		// Trusted administrative path (authenticated admin/UDS API, token
@@ -131,19 +154,22 @@ func (h *RBACManager) AuthorizeAPI(ctx context.Context, perm types.RBACPermissio
 	// That is a context propagation bug (e.g. a missing Starlark thread
 	// context), not a trusted internal call - it must not silently run with
 	// admin authority
-	h.Warn().Msgf("Denying management API call with unattributed context: perm %s target %s", perm, target)
+	h.Warn().Msgf("Denying management API call with unattributed context: perm %s target %s%s", perm, target, resourceId)
 	return false, nil
 }
 
-// AuthorizeGlobalAPI checks a global (non app path) permission like sync:create or
-// binding:read. owner is the creator of the specific entry being operated on ("" when
-// not applicable); the owner holds the configured owner permissions on their entries
-func (h *RBACManager) AuthorizeGlobalAPI(ctx context.Context, perm types.RBACPermission, owner string) (bool, error) {
-	return h.AuthorizeAPI(ctx, perm, types.AppPathDomain{}, owner)
+func (h *RBACManager) authorizeAPIInt(user string, groups []string, perm types.RBACPermission,
+	target types.AppPathDomain, resourceId string, owner string) (bool, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.authorizeAPIIntLocked(user, groups, perm, target, resourceId, owner)
 }
 
-func (h *RBACManager) authorizeAPIInt(user string, groups []string, perm types.RBACPermission,
-	target types.AppPathDomain, owner string) (bool, error) {
+// authorizeAPIIntLocked is authorizeAPIInt without the read lock, for callers
+// that evaluate several permissions under one lock acquisition (RWMutex read
+// locks are not reentrant). Callers must hold h.mu
+func (h *RBACManager) authorizeAPIIntLocked(user string, groups []string, perm types.RBACPermission,
+	target types.AppPathDomain, resourceId string, owner string) (bool, error) {
 	if user == "" {
 		// Fail closed. This is only reached with enforcement active (the
 		// ctx-taking callers short-circuit to allow-all when it is not), where
@@ -154,9 +180,6 @@ func (h *RBACManager) authorizeAPIInt(user string, groups []string, perm types.R
 		// the owner rule via an empty owner id.
 		return false, nil
 	}
-
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 
 	if isAdmin, err := h.hasAdminPermLocked(user, groups); err != nil || isAdmin {
 		// the admin super-user permission passes every check
@@ -174,7 +197,7 @@ func (h *RBACManager) authorizeAPIInt(user string, groups []string, perm types.R
 		}
 	}
 
-	return h.checkGrants(user, target, perm, groups, false)
+	return h.checkGrants(user, target, resourceId, perm, groups, false)
 }
 
 // GetAPIPermissions returns the management API permissions the user holds: app
@@ -211,9 +234,13 @@ func (h *RBACManager) GetAPIPermissions(ctx context.Context, target types.AppPat
 		// not claim permissions that every actual operation would deny
 		return []string{}, nil
 	}
+
+	// One lock acquisition for the whole enumeration instead of one per
+	// permission; the config state is consistent across the report
 	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	isAdmin, err := h.hasAdminPermLocked(user, groups)
-	h.mu.RUnlock()
 	if err != nil {
 		return nil, err
 	}
@@ -221,19 +248,21 @@ func (h *RBACManager) GetAPIPermissions(ctx context.Context, target types.AppPat
 		return allPermissionNames, nil
 	}
 
-	return collectAPIPermissions(func(perm types.RBACPermission, target types.AppPathDomain, owner string) (bool, error) {
-		return h.authorizeAPIInt(user, groups, perm, target, owner)
+	return collectAPIPermissions(func(perm types.RBACPermission, target types.AppPathDomain, resourceId string, owner string) (bool, error) {
+		return h.authorizeAPIIntLocked(user, groups, perm, target, resourceId, owner)
 	}, target, owner)
 }
 
-// collectAPIPermissions enumerates the permissions granted by authorize: scoped
-// permissions (app:*) evaluated against the target app and owner, global
-// permissions (including builder:*) with no app target
-func collectAPIPermissions(authorize func(perm types.RBACPermission, target types.AppPathDomain, owner string) (bool, error),
+// collectAPIPermissions enumerates the permissions granted by authorize: app
+// permissions evaluated against the target app and owner, service/binding
+// permissions with no resource identity (so only grants targeting all
+// services/bindings, ownership aside, report them), global permissions
+// (including builder:*) with no target
+func collectAPIPermissions(authorize func(perm types.RBACPermission, target types.AppPathDomain, resourceId string, owner string) (bool, error),
 	target types.AppPathDomain, owner string) ([]string, error) {
 	perms := make([]string, 0)
 	appendGranted := func(perm types.RBACPermission, target types.AppPathDomain, owner string) error {
-		authorized, err := authorize(perm, target, owner)
+		authorized, err := authorize(perm, target, "", owner)
 		if err != nil {
 			return err
 		}
@@ -250,7 +279,23 @@ func collectAPIPermissions(authorize func(perm types.RBACPermission, target type
 			return nil, err
 		}
 	}
-	for perm := range globalPermissions {
+	for _, perm := range servicePermissions {
+		if perm == types.PermissionServiceManage {
+			continue // composite permission, reported through its expansion
+		}
+		if err := appendGranted(perm, types.AppPathDomain{}, ""); err != nil {
+			return nil, err
+		}
+	}
+	for _, perm := range bindingPermissions {
+		if perm == types.PermissionBindingManage {
+			continue // composite permission, reported through its expansion
+		}
+		if err := appendGranted(perm, types.AppPathDomain{}, ""); err != nil {
+			return nil, err
+		}
+	}
+	for _, perm := range globalPermissionNames {
 		if err := appendGranted(perm, types.AppPathDomain{}, ""); err != nil {
 			return nil, err
 		}
@@ -274,7 +319,7 @@ var _ RBACAPI = (*RBACManager)(nil)
 // directly against this manager's config, without request context. Used for
 // lockout checks when publishing a candidate config
 func (h *RBACManager) AuthorizeUserPerm(user string, groups []string, perm types.RBACPermission) (bool, error) {
-	return h.authorizeAPIInt(user, groups, perm, types.AppPathDomain{}, "")
+	return h.authorizeAPIInt(user, groups, perm, types.AppPathDomain{}, "", "")
 }
 
 // ValidatePermissionName checks that a permission entry is a valid resource:verb
