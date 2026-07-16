@@ -26,6 +26,7 @@ func initAdminPlugin(server *Server) {
 		app.CreatePluginApiName(c.PromoteApps, app.WRITE, "promote_apps"),
 		app.CreatePluginApiName(c.UpdateParams, app.WRITE, "update_params"),
 		app.CreatePluginApiName(c.UpdateAuth, app.WRITE, "update_auth"),
+		app.CreatePluginApiName(c.UpdateBindings, app.WRITE, "update_bindings"),
 		app.CreatePluginApiName(c.CreateSync, app.WRITE, "create_sync"),
 		app.CreatePluginApiName(c.RunSync, app.WRITE, "run_sync"),
 		app.CreatePluginApiName(c.DeleteSync, app.WRITE, "delete_sync"),
@@ -70,18 +71,25 @@ type openrunAdminPlugin struct {
 }
 
 // CreateApp creates a new app (imperative create). With dry_run, the create
-// is validated and the requested permissions are returned without committing
+// is validated and the requested permissions are returned without committing.
+// bindings entries are binding paths or service sources (serviceType or
+// serviceType/name), for which an auto binding is created
 func (c *openrunAdminPlugin) CreateApp(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var appPath, sourceUrl, auth, spec, gitBranch, gitAuth starlark.String
 	var params *starlark.Dict
+	var bindings *starlark.List
 	var dryRun, approve starlark.Bool
 	if err := starlark.UnpackArgs("create_app", args, kwargs, "path", &appPath, "source_url", &sourceUrl,
 		"approve?", &approve, "auth?", &auth, "spec?", &spec, "git_branch?", &gitBranch,
-		"git_auth?", &gitAuth, "params?", &params, "dry_run?", &dryRun); err != nil {
+		"git_auth?", &gitAuth, "params?", &params, "bindings?", &bindings, "dry_run?", &dryRun); err != nil {
 		return nil, err
 	}
 
 	paramValues, err := dictToStringMap(params, "params")
+	if err != nil {
+		return nil, err
+	}
+	bindingList, err := listToStringSlice(bindings, "bindings")
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +102,7 @@ func (c *openrunAdminPlugin) CreateApp(thread *starlark.Thread, builtin *starlar
 		GitBranch:   gitBranch.GoString(),
 		GitAuthName: gitAuth.GoString(),
 		ParamValues: paramValues,
+		Bindings:    bindingList,
 	}
 
 	result, err := c.server.CreateApp(system.GetRequestContext(thread), appPath.GoString(), bool(approve), bool(dryRun), appRequest)
@@ -222,6 +231,42 @@ func (c *openrunAdminPlugin) UpdateAuth(thread *starlark.Thread, builtin *starla
 	updateRequest.AuthnType = types.StringValue(auth.GoString())
 
 	result, err := c.server.UpdateAppSettings(system.GetRequestContext(thread), pathGlob.GoString(), bool(dryRun), updateRequest)
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(result)
+}
+
+// UpdateBindings replaces the binding references on apps matching the glob.
+// Entries are binding paths or service sources (serviceType or
+// serviceType/name), for which an auto binding is created; a single "-" entry
+// clears all bindings. The change applies to staging and is promoted to prod
+// when promote is true
+func (c *openrunAdminPlugin) UpdateBindings(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var pathGlob starlark.String
+	var bindings *starlark.List
+	var dryRun starlark.Bool
+	promote := starlark.Bool(true)
+	if err := starlark.UnpackArgs("update_bindings", args, kwargs, "path_glob", &pathGlob, "bindings", &bindings,
+		"promote?", &promote, "dry_run?", &dryRun); err != nil {
+		return nil, err
+	}
+
+	bindingList, err := listToStringSlice(bindings, "bindings")
+	if err != nil {
+		return nil, err
+	}
+
+	updateMetadata := types.CreateUpdateAppMetadataRequest()
+	updateMetadata.ConfigType = types.AppMetadataBindings
+	updateMetadata.ConfigEntries = bindingList
+
+	metadataArgs := map[string]any{
+		"metadata": updateMetadata,
+		"dryRun":   bool(dryRun),
+	}
+	result, err := c.server.StagedUpdate(system.GetRequestContext(thread), pathGlob.GoString(), bool(dryRun), bool(promote),
+		c.server.updateMetadataHandler, metadataArgs, "update_metadata")
 	if err != nil {
 		return nil, err
 	}

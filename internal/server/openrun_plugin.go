@@ -676,6 +676,10 @@ func (c *openrunPlugin) GetApp(thread *starlark.Thread, builtin *starlark.Builti
 	for k, val := range entry.Metadata.ParamValues {
 		params.SetKey(starlark.String(k), starlark.String(val)) //nolint:errcheck
 	}
+	bindings := starlark.List{}
+	for _, bindingPath := range entry.Metadata.Bindings {
+		bindings.Append(starlark.String(bindingPath)) //nolint:errcheck
+	}
 
 	v := starlark.Dict{}
 	v.SetKey(starlark.String("path"), starlark.String(entry.AppPathDomain().String()))                           //nolint:errcheck
@@ -698,6 +702,7 @@ func (c *openrunPlugin) GetApp(thread *starlark.Thread, builtin *starlark.Builti
 	v.SetKey(starlark.String("applied_sync_id"), starlark.String(entry.Metadata.AppliedSyncId))               //nolint:errcheck
 	v.SetKey(starlark.String("builder_published"), starlark.Bool(c.server.isBuilderManaged(&entry.AppEntry))) //nolint:errcheck
 	v.SetKey(starlark.String("params"), &params)                                                              //nolint:errcheck
+	v.SetKey(starlark.String("bindings"), &bindings)                                                          //nolint:errcheck
 	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))                         //nolint:errcheck
 	if entry.UpdateTime != nil {
 		v.SetKey(starlark.String("update_time"), starlark.String(entry.UpdateTime.Format(time.RFC3339))) //nolint:errcheck

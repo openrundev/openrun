@@ -840,6 +840,12 @@ func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transacti
 		appEntry.Metadata.ContainerVolumes = configEntries
 		return nil
 	case types.AppMetadataBindings:
+		if len(configEntries) == 1 && configEntries[0] == "-" {
+			// A single "-" clears all bindings (an empty entries list is a
+			// no-op, see the top of this function)
+			appEntry.Metadata.Bindings = []string{}
+			return nil
+		}
 		resolvedBindings, err := s.resolveAppBindings(ctx, tx, autoBindingAppID(appEntry), configEntries, dryRun, accounts)
 		if err != nil {
 			return err

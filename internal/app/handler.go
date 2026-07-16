@@ -34,8 +34,11 @@ var (
 	CONTENT_TYPE_TEXT = []string{"text/plain"}
 	CONTENT_TYPE_HTML = []string{"text/html; charset=utf-8"}
 
-	SERVER_NAME       = []string{"OpenRun"}
-	VARY_HEADER_VALUE = []string{"HX-Request"}
+	SERVER_NAME = []string{"OpenRun"}
+	// Boosted requests (HX-Request + HX-Boosted) get the full page while
+	// non-boosted HTMX requests get the partial block, so both headers are
+	// part of the cache key
+	VARY_HEADER_VALUE = []string{"HX-Request", "HX-Boosted"}
 )
 
 func (a *App) earlyHints(w http.ResponseWriter, r *http.Request) {

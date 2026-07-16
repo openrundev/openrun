@@ -47,4 +47,6 @@ layout: hextra-home
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Security Sandbox" link="/docs/applications/appsecurity/#security-model" subtitle="Apps built in Starlark based micro-framework use sandboxing for security"  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
 
+<!-- prettier-ignore --> {{< hextra/feature-card title="Management Console" link="/console-tour/" subtitle="Console - Web management console for OpenRun"  icon="desktop-computer" class="openrun-feature-card openrun-feature-card-light" >}}
+
 {{< /hextra/feature-grid >}}

@@ -55,3 +55,24 @@ h2, h3, h4, h5, h6 {
   --openrun-card-rgb: 11 95 139;
   --openrun-card-alpha: 0.2;
 }
+
+/* theme-image shortcode (layouts/shortcodes/theme-image.html): a light/dark
+   screenshot pair where only the variant matching the site theme shows.
+   Hextra sets the `dark` class on <html> for both the manual toggle and the
+   system default, so the class is the single source of truth. */
+.theme-image {
+  display: block;
+  margin: 1rem auto;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+.theme-image-dark {
+  display: none;
+}
+html.dark .theme-image-light {
+  display: none;
+}
+html.dark .theme-image-dark {
+  display: block;
+}

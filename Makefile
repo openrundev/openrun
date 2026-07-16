@@ -26,7 +26,7 @@ endif
 .RECIPEPREFIX = >
 TAG := 
 
-.PHONY: help test unit int testui covtest covunit covint release int_single lint verify build-linux image tags
+.PHONY: help test unit int testui covtest covunit covint release int_single lint verify build-linux image tags docs-screenshots
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -68,6 +68,16 @@ int: ## Run integration tests
 
 testui: ## Run the console app integration tests (ui/console_tests, own module)
 > cd ui/console_tests && go test -count=1 ./...
+
+docs-screenshots: ## Copy the console walkthrough screenshots (light/dark pairs) into the public docs; generate first with: cd ui/console_tests && make todoflow
+> @if ! ls ui/console_tests/browser/walkthrough/*.png > /dev/null 2>&1; then \
+>    echo "Error: no screenshots found, generate them with: cd ui/console_tests && make todoflow"; \
+>    exit 1; \
+> fi
+> mkdir -p docs/static/images/console
+> rm -f docs/static/images/console/*.png
+> cp ui/console_tests/browser/walkthrough/*.png docs/static/images/console/
+> @echo "Copied `ls docs/static/images/console/*.png | wc -l | tr -d ' '` screenshots to docs/static/images/console/"
 
 int_single: ## Run one integration test
 > CL_SINGLE_TEST=${INPUT} OPENRUN_HOME=$(OPENRUN_HOME) ./tests/run_cli_tests.sh

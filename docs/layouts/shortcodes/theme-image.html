@@ -1,0 +1,16 @@
+{{- /* Theme-aware image pair: renders the light or dark variant following
+     the site's theme. Hextra stamps the `light`/`dark` class on <html>
+     (from the navbar toggle, with the system preference as the default),
+     so gating on the class tracks the user's effective choice - a plain
+     <picture> with a prefers-color-scheme media query would ignore the
+     manual toggle. The console walkthrough test (openrun repo,
+     ui/console_tests `make todoflow`) generates matching
+     NN-name-light.png / NN-name-dark.png pairs.
+
+     Usage:
+       {{< theme-image light="/images/console/01-service-form-light.png"
+                       dark="/images/console/01-service-form-dark.png"
+                       alt="New service form" >}}
+*/ -}}
+<img class="theme-image theme-image-light" src="{{ .Get "light" }}" alt="{{ .Get "alt" }}" loading="lazy" />
+<img class="theme-image theme-image-dark" src="{{ .Get "dark" }}" alt="{{ .Get "alt" }}" loading="lazy" />

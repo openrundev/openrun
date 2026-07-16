@@ -277,14 +277,27 @@ func permissionCoveredByServerConfig(perm types.Permission, serverPerms []types.
 	return false
 }
 
+// auditBindingSourcePerms collects the binding source permissions the app
+// needs: the sources explicitly requested (bind_perm) plus one per attached
+// binding - the base binding path for derived bindings, the service source
+// for base/auto bindings. The container runtime enforces approval of every
+// attached binding's source (bindingSourceApproved), so the audit must
+// surface all of them or an app that audits clean fails at container start.
+// A base/auto binding on the default service of its type is reported as the
+// bare service type, the form the server config allow-list
+// (permissions.binding_source_perms) and the runtime matcher use
 func (a *App) auditBindingSourcePerms() []string {
 	bindingSourcePerms := append([]string{}, a.Metadata.BindingSourcePerms...)
 	for _, binding := range a.bindings {
-		if binding == nil || binding.DerivedFrom == "" || binding.Source == "" {
+		if binding == nil || binding.Source == "" {
 			continue
 		}
-		if !slices.Contains(bindingSourcePerms, binding.Source) {
-			bindingSourcePerms = append(bindingSourcePerms, binding.Source)
+		source := binding.Source
+		if binding.DerivedFrom == "" && binding.ServiceIsDefault {
+			source = binding.ServiceType
+		}
+		if !slices.Contains(bindingSourcePerms, source) {
+			bindingSourcePerms = append(bindingSourcePerms, source)
 		}
 	}
 	return bindingSourcePerms
