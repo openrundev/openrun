@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -215,7 +214,7 @@ Examples:
 				StageAt:          cCtx.String("stage-at"),
 			}
 			var createResult types.AppCreateResponse
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			err = client.Post("/_openrun/app", values, body, &createResult)
 			if err != nil {
 				return err
@@ -290,7 +289,7 @@ Examples:
 				values.Add("appPathGlob", cCtx.Args().Get(0))
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var appListResponse types.AppListResponse
 			err := client.Get("/_openrun/apps", values, &appListResponse)
 			if err != nil {
@@ -450,7 +449,7 @@ Examples:
 				return fmt.Errorf("requires one argument: <appPathGlob>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().Get(0))
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -500,7 +499,7 @@ func appApproveCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 				return fmt.Errorf("requires one argument: <appPathGlob>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().Get(0))
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -587,7 +586,7 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 				return fmt.Errorf("requires one argument: <appPathGlob>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().First())
 			values.Add("approve", strconv.FormatBool(cCtx.Bool("approve")))
@@ -686,7 +685,7 @@ func appPromoteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 				return fmt.Errorf("requires one argument: <appPathGlob>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().First())
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))

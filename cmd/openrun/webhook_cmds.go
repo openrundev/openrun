@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -48,7 +47,7 @@ func webhookListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 				return fmt.Errorf("requires one argument: <appPath>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 
@@ -122,7 +121,7 @@ func webhookCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 				return fmt.Errorf("requires two arguments: <webhookType> <appPath>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("webhookType", cCtx.Args().Get(0))
 			values.Add("appPath", cCtx.Args().Get(1))
@@ -168,7 +167,7 @@ func webhookDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 				return fmt.Errorf("requires two arguments: <webhookType> <appPath>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("webhookType", cCtx.Args().Get(0))
 			values.Add("appPath", cCtx.Args().Get(1))

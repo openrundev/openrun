@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -49,7 +48,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 				return fmt.Errorf("requires two arguments: <value> <appPathGlob>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().Get(1))
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -110,7 +109,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 				return fmt.Errorf("requires two arguments: <value> <appPathGlob>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().Get(1))
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -189,7 +188,7 @@ The last required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 				return fmt.Errorf("requires two arguments: <value> <appPathGlob>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().Get(1))
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -254,7 +253,7 @@ The initial argument are strings. The last argument is <appPathGlob>. `+PATH_SPE
 				return fmt.Errorf("requires at least two arguments: key=value [key=value ...] <appPathGlob>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 
 			values.Add("appPathGlob", cCtx.Args().Get(cCtx.NArg()-1))

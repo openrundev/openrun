@@ -1,0 +1,239 @@
+# The console todo flow (ui/console_tests/browser/todo_flow_test.go), driven
+# through the CLI as a non-admin builtin user with the --as flag instead of
+# the browser: a todo-dev user creates the postgres/tododb service (connection
+# url stored as a secret), the /bind/todo binding from it and the /todo1 app
+# bound to it (validate with --dry-run first, then create), then the staging
+# and prod apps are checked to render the todo UI. Every management call runs
+# with RBAC enforcement as builtin:tododev; scoped grants, list filtering, the
+# owner rule and the denials (out-of-scope service, foreign app delete,
+# server stop) are verified along the way. The app is a local flask app
+# instead of the github fasthtml example, so the flow does not depend on
+# github access; the operation sequence is the same.
+config:
+  env:
+    CL_CONFIG_FILE: config_container.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    HTTP_PORT: ${HTTP_PORT}
+    OPENRUN_CONTAINER_COMMAND: ${OPENRUN_CONTAINER_COMMAND}
+    PATH: ${PATH}
+    TEST_POSTGRES_URL: ${TEST_POSTGRES_URL}
+
+tests:
+  todoflow0010: # setup the todo flask app source
+    command: |
+      rm -rf ./todo_flaskapp
+      mkdir ./todo_flaskapp
+      cat > ./todo_flaskapp/requirements.txt <<'EOF'
+      flask
+      pg8000
+      EOF
+      cat > ./todo_flaskapp/app.py <<'EOF'
+      import os
+      from urllib.parse import unquote, urlparse
+
+      import pg8000.dbapi
+      from flask import Flask
+
+      app = Flask(__name__)
+
+
+      def connect():
+          parsed = urlparse(os.environ["POSTGRES_URL"])
+          return pg8000.dbapi.connect(
+              user=unquote(parsed.username or ""),
+              password=unquote(parsed.password or ""),
+              host=parsed.hostname,
+              port=parsed.port or 5432,
+              database=(parsed.path or "/").lstrip("/") or "postgres",
+          )
+
+
+      @app.route("/")
+      def todos():
+          conn = connect()
+          cursor = conn.cursor()
+          cursor.execute("create table if not exists todos (id integer primary key, item text)")
+          cursor.execute("insert into todos (id, item) values (1, 'write the yaml test') on conflict (id) do nothing")
+          conn.commit()
+          cursor.execute("select item from todos order by id")
+          items = "".join(f"<li>{row[0]}</li>" for row in cursor.fetchall())
+          cursor.close()
+          conn.close()
+          return f"<h1>Todo</h1><ul>{items}</ul>"
+      EOF
+
+  todoflow0020: # --as fails while RBAC is not enabled: without enforcement the
+    # call would silently run with full admin authority (checked before the
+    # user lookup, so the user does not need to exist yet)
+    command: ../openrun --as builtin:tododev app list
+    stderr: "RBAC is not enabled"
+    exit-code: 1
+
+  todoflow0040: # enable RBAC: the todo-team group gets the flow's permissions,
+    # scoped to the /todo1 app, the postgres/tododb service and /bind/todo
+    # bindings; secret:create is global so it needs its own "all" targeted
+    # grant; anonymous gets app:access so the created apps can be opened
+    command: |
+      cat > todo_rbac.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "enabled": true,
+          "groups": {},
+          "roles": {
+            "todo-dev": ["app:create", "app:read", "app:reload",
+                         "service:create", "service:read", "service:bind",
+                         "binding:create", "binding:read", "binding:use", "binding:run_command"],
+            "secret-creator": ["secret:create"],
+            "viewer": ["app:access"]
+          },
+          "grants": [
+            {
+              "description": "todo team runs the todo flow",
+              "users": ["group:todo-team"],
+              "roles": ["todo-dev"],
+              "targets": ["/todo1*", "service:postgres/tododb", "binding:/bind/todo*"]
+            },
+            {
+              "description": "todo team stores secrets",
+              "users": ["group:todo-team"],
+              "roles": ["secret-creator"],
+              "targets": ["all"]
+            },
+            {
+              "description": "anonymous views the todo apps",
+              "users": ["anonymous"],
+              "roles": ["viewer"],
+              "targets": ["/todo1*"]
+            }
+          ]
+        }
+      }
+      EOF
+      ../openrun server update-config --force todo_rbac.json
+    exit-code: 0
+
+  todoflow0045: # create the builtin todo-dev user (admin, trusted CLI). Added
+    # after the RBAC config publish: update-config --force replaces the whole
+    # dynamic config, which would wipe a dynamically added user entry
+    command: ../openrun user add tododev --value todopw --groups todo-team
+    stdout: "User added: tododev"
+
+  todoflow0050: # an unknown builtin user cannot be impersonated
+    command: ../openrun --as builtin:nosuchuser app list
+    stderr: "is not configured"
+    exit-code: 1
+
+  todoflow0060: # the as user must be <provider>:<username>
+    command: ../openrun --as tododev app list
+    stderr: "format is <provider>:<username>"
+    exit-code: 1
+
+  todoflow0070: # store the connection url as a secret (the browser flow's
+    # secret-input lock button), recorded as created by builtin:tododev
+    command: ../openrun --as builtin:tododev secret create --name todo_db_url --value ${TEST_POSTGRES_URL}
+    stdout: "Secret created: todo_db_url"
+
+  todoflow0080: # create the service. The url is passed directly: {{secret}}
+    # references in plugin call arguments are resolved by the plugin layer
+    # (how the console service form works), but the /_openrun/service API
+    # does not resolve them, so the CLI cannot use the stored secret here
+    command: ../openrun --as builtin:tododev service create --config url=${TEST_POSTGRES_URL} postgres/tododb
+    stdout: "Service postgres/tododb created"
+
+  todoflow0090: # service:create is scoped to service:postgres/tododb, another id is denied
+    command: ../openrun --as builtin:tododev service create --config url=x postgres/other
+    stderr: "service:create"
+    exit-code: 1
+
+  todoflow0100: # create the binding from the service, provisioning a database account
+    command: ../openrun --as builtin:tododev binding create postgres/tododb /bind/todo
+    stdout: "Binding /bind/todo created"
+
+  todoflow0110: # validate the app first (the browser flow's validate button)
+    command: ../openrun --as builtin:tododev app create --dry-run --stage-at path --spec python-flask --bind /bind/todo ./todo_flaskapp /todo1
+    stdout:
+      contains:
+        - "App: /todo1"
+        - "dry-run mode"
+
+  todoflow0120: # create the app bound to /bind/todo
+    command: ../openrun --as builtin:tododev app create --stage-at path --spec python-flask --bind /bind/todo ./todo_flaskapp /todo1
+    stdout: "App: /todo1"
+
+  todoflow0130: # the prod todo app comes up and renders the todo UI
+    command: curl -sS localhost:${HTTP_PORT}/todo1
+    stdout: "<h1>Todo</h1>"
+
+  todoflow0140: # the staging app renders too (own binding schema)
+    command: curl -sS localhost:${HTTP_PORT}/todo1_cl_stage
+    stdout: "<h1>Todo</h1>"
+
+  todoflow0150: # the prod table was created through the binding account
+    command: ../openrun --as builtin:tododev binding run-command /bind/todo "select count(*) as n from todos" | jq -r '.rows[0].n'
+    stdout:
+      exactly: "1\n"
+
+  todoflow0160: # an admin owned app for the list filtering checks
+    command: ../openrun app create ./rbac_child_app /admin_only
+    stdout: "App: /admin_only"
+
+  todoflow0170: # app list is filtered to what tododev can read (the console apps page view)
+    command: ../openrun --as builtin:tododev app list all
+    stdout:
+      contains:
+        - "/todo1"
+      not-contains:
+        - "/admin_only"
+
+  todoflow0180: # the trusted admin CLI stays unfiltered
+    command: ../openrun app list all
+    stdout:
+      contains:
+        - "/todo1"
+        - "/admin_only"
+
+  todoflow0190: # deleting the admin owned app is denied
+    command: ../openrun --as builtin:tododev app delete /admin_only
+    stderr: "app:delete"
+    exit-code: 1
+
+  todoflow0200: # server stop requires server:stop, which the todo-dev role does not hold
+    command: ../openrun --as builtin:tododev server stop
+    stderr: "server:stop"
+    exit-code: 1
+
+  todoflow0210: # tododev deletes their own app through the owner rule
+    command: ../openrun --as builtin:tododev app delete /todo1
+    exit-code: 0
+
+  todoflow0220: # disable RBAC again
+    command: |
+      cat > todo_rbac.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "enabled": false,
+          "groups": {},
+          "roles": {},
+          "grants": []
+        }
+      }
+      EOF
+      ../openrun server update-config --force todo_rbac.json
+    exit-code: 0
+
+  todoflow0230: # --as stops working as soon as RBAC is disabled
+    command: ../openrun --as builtin:tododev app list
+    stderr: "RBAC is not enabled"
+    exit-code: 1
+
+  todoflow9999: # cleanup (admin). The tododev user was already wiped by the
+    # disable-RBAC update-config replacing the dynamic config
+    command: |
+      (../openrun app delete /admin_only
+      ../openrun binding delete /bind/todo
+      ../openrun service delete postgres/tododb
+      ../openrun secret delete todo_db_url
+      rm -rf ./todo_flaskapp todo_rbac.json) || true
+    exit-code: 0

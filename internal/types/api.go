@@ -361,6 +361,37 @@ type SecretDeleteResponse struct {
 	Name string `json:"name"`
 }
 
+// UserUpdateRequest is the request to create or update one builtin auth user
+// as a dynamic config entry. Password carries the bcrypt hash of the password
+// (hashed on the client side); an empty Password on an update keeps the
+// stored hash. Groups nil on an update keeps the stored groups; an empty
+// (non-nil) list clears them
+type UserUpdateRequest struct {
+	Password string   `json:"password"` // bcrypt hash of the password
+	Groups   []string `json:"groups"`
+}
+
+type UserUpdateResponse struct {
+	Username string `json:"username"`
+	Updated  bool   `json:"updated"` // true if an existing user entry was updated
+}
+
+// BuiltinUserInfo is the non-sensitive info about one builtin auth user
+type BuiltinUserInfo struct {
+	Username   string   `json:"username"`
+	Groups     []string `json:"groups"`
+	Source     string   `json:"source"`     // "static" (openrun.toml) or "dynamic"
+	Overridden bool     `json:"overridden"` // static entry shadowed by a dynamic entry of the same name
+}
+
+type UserListResponse struct {
+	Users []BuiltinUserInfo `json:"users"`
+}
+
+type UserDeleteResponse struct {
+	Username string `json:"username"`
+}
+
 // SecretRekeyResponse reports the result of re-encrypting stored secrets with
 // the active master key. Skipped counts rows sealed with a key id that is not
 // configured for the provider

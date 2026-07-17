@@ -152,7 +152,7 @@ func waitForShutdownSignal(serverStop <-chan struct{}) {
 }
 
 func stopServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
-	client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+	client := newHttpClient(clientConfig)
 
 	var response types.AppVersionListResponse
 	err := client.Post("/_openrun/stop", nil, nil, &response)
@@ -163,7 +163,7 @@ func stopServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
 }
 
 func showConfig(_ *cli.Context, clientConfig *types.ClientConfig) error {
-	client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+	client := newHttpClient(clientConfig)
 
 	var response types.ConfigResponse
 	err := client.Get("/_openrun/config", nil, &response)
@@ -179,7 +179,7 @@ func showConfig(_ *cli.Context, clientConfig *types.ClientConfig) error {
 }
 
 func updateConfig(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
-	client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+	client := newHttpClient(clientConfig)
 
 	if cCtx.NArg() != 1 {
 		return fmt.Errorf("expected one argument: <configFilePath>")

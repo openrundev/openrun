@@ -9,7 +9,6 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -63,7 +62,7 @@ Examples:
 			values.Add("exactCommit", strconv.FormatBool(cCtx.Bool("exact-commit")))
 			values.Add("excludeDeclarative", strconv.FormatBool(cCtx.Bool("exclude-declarative")))
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response types.AppExportResponse
 			if err := client.Get("/_openrun/export", values, &response); err != nil {
 				return err
@@ -114,7 +113,7 @@ Examples:
 			values := url.Values{}
 			values.Add("applyPath", filePath)
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response types.AppExportResponse
 			if err := client.Get("/_openrun/pretty_print", values, &response); err != nil {
 				return err

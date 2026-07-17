@@ -305,7 +305,9 @@ func (s *Server) exportApp(ctx context.Context, tx types.Transaction, appEntry *
 	auth := metadata.AuthnType
 	if auth != "" && auth != types.AppAuthnDefault {
 		req.AppAuthn = auth
-		if auth != types.AppAuthnNone && auth != types.AppAuthnSystem {
+		if auth != types.AppAuthnNone && auth != types.AppAuthnSystem && auth != types.AppAuthnBuiltin {
+			// builtin is a keyword like none/system, not a named auth entry (its
+			// users are [builtin_auth.*] entries, not required for the export)
 			builder.authNames[string(auth)] = true
 		}
 	}

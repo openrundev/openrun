@@ -281,7 +281,10 @@ func (s *OAuthManager) ValidateProviderName(provider string) bool {
 func (s *OAuthManager) ValidateAuthType(authType string) bool {
 	authType = strings.TrimPrefix(authType, rbac.RBAC_AUTH_PREFIX)
 	switch authType {
-	case string(types.AppAuthnDefault), string(types.AppAuthnSystem), string(types.AppAuthnNone):
+	case string(types.AppAuthnDefault), string(types.AppAuthnSystem), string(types.AppAuthnNone),
+		string(types.AppAuthnBuiltin):
+		// builtin is always a valid auth type: user entries can be added
+		// dynamically after the app is created
 		return true
 	default:
 		if authType == "cert" || strings.HasPrefix(authType, "cert_") {

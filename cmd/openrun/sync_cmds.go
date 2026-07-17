@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -87,7 +86,7 @@ Examples:
 				ScheduleFrequency: cCtx.Int("minutes"),
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var syncResponse types.SyncCreateResponse
 			err = client.Post("/_openrun/sync", values, sync, &syncResponse)
 			if err != nil {
@@ -129,7 +128,7 @@ func syncListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 				return fmt.Errorf("no args expected")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 
@@ -163,7 +162,7 @@ func syncRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 				return fmt.Errorf("expected one args: <syncId>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("id", cCtx.Args().First())
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -206,7 +205,7 @@ func syncDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 				return fmt.Errorf("expected one args: <syncId>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("id", cCtx.Args().First())
 

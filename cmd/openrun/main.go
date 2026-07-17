@@ -47,7 +47,7 @@ func getAllCommands(clientConfig *types.ClientConfig, serverConfig *types.Server
 	return allCommands, nil
 }
 
-func globalFlags(globalConfig *types.GlobalConfig) ([]cli.Flag, error) {
+func globalFlags(globalConfig *types.GlobalConfig, clientConfig *types.ClientConfig) ([]cli.Flag, error) {
 	return []cli.Flag{
 		&cli.StringFlag{
 			Name:        configFileFlagName,
@@ -55,6 +55,12 @@ func globalFlags(globalConfig *types.GlobalConfig) ([]cli.Flag, error) {
 			Usage:       "TOML configuration file",
 			Destination: &globalConfig.ConfigFile,
 			EnvVars:     []string{"CL_CONFIG_FILE"},
+		},
+		&cli.StringFlag{
+			Name:        "as",
+			Usage:       "Run the command as this user id (like builtin:user1) with RBAC enforcement. Requires RBAC to be enabled; supported over the unix domain socket only",
+			Destination: &clientConfig.Client.AsUser,
+			EnvVars:     []string{"OPENRUN_AS_USER"},
 		},
 		&cli.BoolFlag{
 			Name:    "version",
@@ -176,7 +182,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	globalFlags, err := globalFlags(globalConfig)
+	globalFlags, err := globalFlags(globalConfig, clientConfig)
 	if err != nil {
 		log.Fatal(err)
 	}

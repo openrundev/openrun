@@ -93,12 +93,12 @@ func (a *AdminBasicAuth) BasicAuth(authHeader string) (username, password string
 	if authHeader == "" {
 		return "", "", false
 	}
-	return a.parseBasicAuth(authHeader)
+	return parseBasicAuth(authHeader)
 }
 
 // parseBasicAuth parses an HTTP Basic Authentication string.
 // "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" returns ("Aladdin", "open sesame", true).
-func (a *AdminBasicAuth) parseBasicAuth(auth string) (username, password string, ok bool) {
+func parseBasicAuth(auth string) (username, password string, ok bool) {
 	const prefix = "Basic "
 	if len(auth) < len(prefix) {
 		return "", "", false

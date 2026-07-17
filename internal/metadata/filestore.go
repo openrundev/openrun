@@ -33,6 +33,17 @@ const (
 	defaultUser = "admin"
 )
 
+// versionUser is the user recorded on an app_versions row: the caller from
+// the request context; trusted CLI/UDS calls carry no user id and record the
+// admin user. Previously every version was hardcoded to "admin", so version
+// listings misattributed changes made by RBAC users
+func versionUser(ctx context.Context) string {
+	if user := system.GetContextUserId(ctx); user != "" {
+		return user
+	}
+	return defaultUser
+}
+
 type FileStore struct {
 	appId    types.AppId
 	version  int
@@ -72,7 +83,7 @@ func (f *FileStore) IncrementAppVersion(ctx context.Context, tx types.Transactio
 	}
 
 	if _, err := tx.ExecContext(ctx, system.RebindQuery(f.metadata.dbType, `insert into app_versions (appid, previous_version, version, metadata, user_id, create_time) values (?, ?, ?, ?, ?, `+system.FuncNow(f.metadata.dbType)+")"),
-		f.appId, currentVersion, nextVersion, metadataJson, defaultUser); err != nil {
+		f.appId, currentVersion, nextVersion, metadataJson, versionUser(ctx)); err != nil {
 		return fmt.Errorf("error inserting app version: %w", err)
 	}
 
@@ -101,7 +112,7 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 	}
 
 	if _, err := tx.ExecContext(ctx, system.RebindQuery(f.metadata.dbType, `insert into app_versions (appid, previous_version, version, metadata, user_id, create_time) values (?, ?, ?, ?, ?, `+system.FuncNow(f.metadata.dbType)+")"),
-		f.appId, metadata.VersionMetadata.PreviousVersion, metadata.VersionMetadata.Version, metadataJson, defaultUser); err != nil {
+		f.appId, metadata.VersionMetadata.PreviousVersion, metadata.VersionMetadata.Version, metadataJson, versionUser(ctx)); err != nil {
 		return fmt.Errorf("error inserting app version: %w", err)
 	}
 
@@ -407,7 +418,7 @@ func (f *FileStore) PromoteApp(ctx context.Context, tx types.Transaction, prodAp
 		return fmt.Errorf("error marshalling metadata: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, system.RebindQuery(f.metadata.dbType, `insert into app_versions (appid, previous_version, version, metadata, user_id, create_time) values (?, ?, ?, ?, ?, `+system.FuncNow(f.metadata.dbType)+")"),
-		prodAppId, metadata.VersionMetadata.PreviousVersion, metadata.VersionMetadata.Version, metadataJson, defaultUser); err != nil {
+		prodAppId, metadata.VersionMetadata.PreviousVersion, metadata.VersionMetadata.Version, metadataJson, versionUser(ctx)); err != nil {
 		return err
 	}
 

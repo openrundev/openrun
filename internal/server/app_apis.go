@@ -234,7 +234,8 @@ func (s *Server) validateAppAuthnType(authStr string) error {
 // auth entries configured on this server. The rbac: prefix and +forward_
 // modifiers are not expanded here
 func (s *Server) ListAppAuths() []string {
-	auths := []string{string(types.AppAuthnDefault), string(types.AppAuthnSystem), string(types.AppAuthnNone)}
+	auths := []string{string(types.AppAuthnDefault), string(types.AppAuthnSystem), string(types.AppAuthnNone),
+		string(types.AppAuthnBuiltin)}
 
 	mergedConfig := s.Config()
 	oauth := slices.Collect(maps.Keys(mergedConfig.Auth))
@@ -730,6 +731,15 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		userId = types.ADMIN_USER // not using the actual user id, just a admin placeholder
+	} else if strippedAuth == types.AppAuthnBuiltin {
+		// Builtin user/password auth, basic auth against the [builtin_auth.*] entries
+		var authOk bool
+		userId, groups, authOk = s.builtinAuth.authenticate(r.Header.Get("Authorization"))
+		if !authOk {
+			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, REALM))
+			http.Error(w, "Authentication failed", http.StatusUnauthorized)
+			return
+		}
 	} else if strippedAuthStr == "cert" || strings.HasPrefix(strippedAuthStr, "cert_") {
 		// Use client certificate authentication
 		if s.Config().Https.DisableClientCerts {
@@ -849,7 +859,8 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 }
 
 func usesSessionCookieAuth(authType string) bool {
-	if authType == "" || authType == string(types.AppAuthnNone) || authType == string(types.AppAuthnSystem) {
+	if authType == "" || authType == string(types.AppAuthnNone) || authType == string(types.AppAuthnSystem) ||
+		authType == string(types.AppAuthnBuiltin) {
 		return false
 	}
 	if authType == "cert" || strings.HasPrefix(authType, "cert_") {

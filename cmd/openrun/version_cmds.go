@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -49,7 +48,7 @@ func versionListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 				return fmt.Errorf("requires one argument: <appPath>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 
@@ -136,7 +135,7 @@ func versionFilesCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 				return fmt.Errorf("requires argument: <appPath> [<version>]")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 			if cCtx.NArg() > 1 {
@@ -216,7 +215,7 @@ func versionSwitchCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 				return fmt.Errorf("requires argument: <version> <appPath>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().Get(1))
 			values.Add("version", cCtx.Args().Get(0))
@@ -262,7 +261,7 @@ func versionRevertCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 				return fmt.Errorf("requires argument: <appPath>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 			values.Add("version", "revert") // Use revert as the switch API version

@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -78,7 +77,7 @@ Examples:
 			values.Add("forceReload", strconv.FormatBool(cCtx.Bool("force-reload")))
 			values.Add("dev", strconv.FormatBool(cCtx.Bool("dev")))
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var applyResponse types.AppApplyResponse
 			err = client.Post("/_openrun/apply", values, nil, &applyResponse)
 			if err != nil {

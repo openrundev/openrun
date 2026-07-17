@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -47,7 +46,7 @@ func previewCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 				return fmt.Errorf("requires two arguments: <gitCommitId> <appPath>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().Get(1))
 			values.Add("commitId", cCtx.Args().Get(0))

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
 
@@ -66,6 +67,17 @@ func newBoolFlag(name, alias, usage string, value bool) *cli.BoolFlag {
 		Usage:   usage,
 		Value:   value,
 	}
+}
+
+// newHttpClient creates the management API client from the client config,
+// applying the --as user header when set
+func newHttpClient(clientConfig *types.ClientConfig) *system.HttpClient {
+	client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser,
+		clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+	if client != nil && clientConfig.Client.AsUser != "" {
+		client.SetHeader(types.OPENRUN_HEADER_AS_USER, clientConfig.Client.AsUser)
+	}
+	return client
 }
 
 func validateNoFlagLikeValues(flagName string, valueName string, values []string) error {

@@ -202,7 +202,11 @@ func (h *RBACManager) authorizeAPIIntLocked(user string, groups []string, perm t
 
 // GetAPIPermissions returns the management API permissions the user holds: app
 // permissions evaluated against target/owner plus the global permissions the user
-// holds. When enforcement is not active, all permissions are returned
+// holds. With no target (empty AppPathDomain, no owner) scoped permissions are
+// reported when held on at least one target of their kind ("can the user do
+// this somewhere"), so UIs can gate chrome for users whose grants are all
+// scoped; enforcement stays per resource at action time. When enforcement is
+// not active, all permissions are returned
 func (h *RBACManager) GetAPIPermissions(ctx context.Context, target types.AppPathDomain, owner string) ([]string, error) {
 	if dirs := GetUrlDirectives(ctx); dirs.HasPerms() {
 		// _cl_perm test URL directive: report the simulated permission set, see AuthorizeAPI
@@ -248,9 +252,53 @@ func (h *RBACManager) GetAPIPermissions(ctx context.Context, target types.AppPat
 		return allPermissionNames, nil
 	}
 
+	anyTarget := target == (types.AppPathDomain{}) && owner == ""
 	return collectAPIPermissions(func(perm types.RBACPermission, target types.AppPathDomain, resourceId string, owner string) (bool, error) {
+		if anyTarget {
+			if kind, scoped := scopedKind(perm, false); scoped {
+				return h.holdsPermSomewhereLocked(user, groups, perm, kind)
+			}
+		}
 		return h.authorizeAPIIntLocked(user, groups, perm, target, resourceId, owner)
 	}, target, owner)
+}
+
+// holdsPermSomewhereLocked reports whether any grant confers the scoped
+// permission to the user on at least one target entry of the permission's
+// kind (or an all target). Used by the no-target GetAPIPermissions report;
+// which specific resources match is not evaluated here (list APIs and
+// per-resource enforcement handle that). The owner virtual grant does not
+// feed this report: it would require scanning every resource's creator.
+// Callers must hold h.mu
+func (h *RBACManager) holdsPermSomewhereLocked(user string, groups []string, perm types.RBACPermission, kind targetKind) (bool, error) {
+	if user == "" {
+		return false, nil // fail closed, consistent with authorizeAPIIntLocked
+	}
+	for i, grant := range h.RbacConfig.Grants {
+		roleMatched := false
+		for _, role := range grant.Roles {
+			if resolved, ok := h.roles[role]; ok && resolved.matches(perm) {
+				roleMatched = true
+				break
+			}
+		}
+		if !roleMatched {
+			continue
+		}
+		userMatched, err := h.grantUserMatchesLocked(grant, user, groups)
+		if err != nil {
+			return false, err
+		}
+		if !userMatched {
+			continue
+		}
+		for _, target := range h.resolvedGrants[i].targets {
+			if target.err == nil && (target.all || target.kind == kind) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // collectAPIPermissions enumerates the permissions granted by authorize: app

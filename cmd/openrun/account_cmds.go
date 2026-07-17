@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -48,7 +47,7 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 				return fmt.Errorf("requires three arguments: <pluginName> <accountName> <appPathGlob>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("plugin", cCtx.Args().Get(0))
 			values.Add("account", cCtx.Args().Get(1))
@@ -110,7 +109,7 @@ func accountListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 				return fmt.Errorf("requires one argument: <appPath>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 
@@ -171,7 +170,7 @@ func updateParamsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 				return fmt.Errorf("requires three arguments: <paramName> <paramValue> <appPathGlob>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("paramName", cCtx.Args().Get(0))
 			values.Add("paramValue", cCtx.Args().Get(1))
@@ -233,7 +232,7 @@ func paramListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 				return fmt.Errorf("requires one argument: <appPath>")
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 

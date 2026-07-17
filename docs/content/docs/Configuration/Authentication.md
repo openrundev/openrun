@@ -8,6 +8,31 @@ By default, apps are created with the `none` authentication type. A `system` aut
 
 To set the auth type, add `--auth system` to the app create command. After an app is created, the auth type can be changed by running `app update auth --promote system /myapp`.
 
+## Builtin Users
+
+The `builtin` auth type provides simple username/password authentication, without requiring an OAuth/OIDC/SAML provider. Each user is a `builtin_auth` config entry with a bcrypt password hash and an optional groups list; the entry name is the username:
+
+```toml {filename="openrun.toml"}
+[builtin_auth.alice]
+password = "$2a$10$xxxxxxxxx" # bcrypt hash, generate with "openrun password --prompt"
+groups = ["dev", "qa"]
+```
+
+Apps use this auth type with `--auth builtin`. Requests authenticate with HTTP Basic auth, so `curl -u alice:mypassword https://example.com:25223/myapp` works. For [RBAC]({{< ref "RBAC" >}}), the user id is `builtin:alice` and the groups list is matched by `group:` references in grants, the same way SSO provider groups are.
+
+Users can also be managed dynamically through the CLI, without a server restart. Dynamic entries take effect immediately and shadow a static entry with the same username:
+
+```sh
+openrun user add alice --groups dev,qa    # a random password is generated and printed
+openrun user add bob --prompt             # prompt for the password
+openrun user update alice --value newpass # change the password, keep the groups
+openrun user update alice --groups dev    # change the groups, keep the password
+openrun user list
+openrun user delete alice
+```
+
+The password is bcrypt hashed on the client; only the hash is sent to the server and stored in the config. Builtin users are intended for small deployments and for testing RBAC policies with multiple users and groups; prefer OAuth/OIDC/SAML for production single sign-on.
+
 ## Default Authentication Type
 
 Any app when created uses the default auth type configured for the server. `none` is the default. To change this, add

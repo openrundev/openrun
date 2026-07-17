@@ -110,6 +110,21 @@ To get the group info dynamically as part of the user login (instead of statical
 - The Identity Provider is configured to return the groups info in the user profile, with the `groups` key. For example, see [Okta forum](https://devforum.okta.com/t/userinfo-not-returning-groups/31907/1) about configuring Okta with OIDC.
 - The group name as returned in the user profile is used in the grant
 
+## Testing RBAC with Builtin Users
+
+To try out RBAC policies with multiple users and groups without setting up an OAuth/SAML provider, use the [builtin auth type]({{< ref "Authentication#builtin-users" >}}). Create users with groups using `openrun user add alice --groups dev,qa` (no server restart needed), point an app at it with `--auth builtin`, and exercise grants with `curl -u alice:password`. The user id in grants is `builtin:alice`; the groups on the user entry are matched by `group:` references like SSO groups.
+
+### Testing management API grants with --as
+
+To test the management API side of a policy (app/service/binding/secret operations, list filtering, the owner rule), run CLI commands as another user with the global `--as` flag:
+
+```shell
+openrun --as builtin:alice app list
+openrun --as builtin:alice service create --config url=... postgres/teamdb
+```
+
+The call is authorized against the named user's current grants instead of running as the trusted `admin`, and audit events record that user. `--as` requires RBAC to be enabled and works only over the unix domain socket (the caller is already the administrator; impersonation only ever narrows authority, no password is needed). For `builtin:` users the entry must exist and its groups feed `group:` matching; any other `<provider>:<username>` id (like `github:user1`) is taken literally with no groups, so grants for SSO identities can be tested without creating the users.
+
 ## Regex User Name
 
 In the `groups.<group_name>` property and in `grant.users`, the username can be specified as a regex. If the value starts with `regex:` prefix, the subsequent value is considered as a regex. The pattern must match the entire user ID (it is evaluated fully anchored, as if wrapped in `\A(?:...)\z`), so a partial match does not grant access: `regex:google:.*@example\.com` matches any user ID with the google provider and an example.com email, and does not match `google:user@example.com.attacker.io`.

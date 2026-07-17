@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -238,9 +239,14 @@ func (c *CommandCM) getContainers(ctx context.Context, name ContainerName, getAl
 	return c.listContainers(ctx, filters, getAll)
 }
 
-// ListOpenRunContainers returns running containers with an OpenRun ownership label.
+// ListOpenRunContainers returns running containers started by THIS server
+// installation, matched by the server.home ownership label. Scoping matters
+// on a shared container daemon: the stale-container sweeper must never stop
+// containers owned by another server (another OPENRUN_HOME, a test server,
+// or a kubernetes-managed install whose pod containers carry the app.id
+// label too). Containers started before the label existed are not returned
 func (c *CommandCM) ListOpenRunContainers(ctx context.Context) ([]Container, error) {
-	return c.listContainers(ctx, []string{fmt.Sprintf("label=%sapp.id", LABEL_PREFIX)}, false)
+	return c.listContainers(ctx, []string{fmt.Sprintf("label=%sserver.home=%s", LABEL_PREFIX, serverHomeLabelValue())}, false)
 }
 
 // listContainers runs `<containerCommand> ps --format json` with the given
@@ -399,6 +405,18 @@ func (c *CommandCM) StartContainer(ctx context.Context, name ContainerName) erro
 
 const LABEL_PREFIX = "dev.openrun."
 
+// serverHomeLabelValue identifies the server installation that started a
+// container: the absolute OPENRUN_HOME. Stable across server restarts
+// (unlike the per-process server id), and distinct per installation on a
+// shared container daemon
+func serverHomeLabelValue() string {
+	home := os.Getenv(types.OPENRUN_HOME)
+	if abs, err := filepath.Abs(home); err == nil {
+		home = abs
+	}
+	return home
+}
+
 func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
 	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool,
@@ -427,6 +445,7 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 
 	args = append(args, "--label", LABEL_PREFIX+"app.id="+string(appEntry.Id))
 	args = append(args, "--label", LABEL_PREFIX+"app.path="+appEntry.Path)
+	args = append(args, "--label", LABEL_PREFIX+"server.home="+serverHomeLabelValue())
 	if appEntry.IsDev {
 		args = append(args, "--label", LABEL_PREFIX+"dev=true")
 	} else {

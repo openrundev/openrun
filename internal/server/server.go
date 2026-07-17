@@ -145,6 +145,7 @@ type Server struct {
 	handler      *Handler
 	apps         *AppStore
 	authHandler  *AdminBasicAuth
+	builtinAuth  *BuiltinAuth
 	oAuthManager *OAuthManager
 	samlManager  *SAMLManager
 	notifyClose  chan types.AppPathDomain
@@ -262,6 +263,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	db.ConfigNotifyFunc = server.configNotifyHandler
 	server.apps = NewAppStore(l, server)
 	server.authHandler = NewAdminBasicAuth(l, config)
+	server.builtinAuth = NewBuiltinAuth(l, server.Config)
 	server.notifyClose = make(chan types.AppPathDomain)
 
 	csrfMiddleware := http.NewCrossOriginProtection()
@@ -453,6 +455,10 @@ func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicCo
 	}
 	if !reflect.DeepEqual(previous.SAML, effective.SAML) {
 		s.samlManager.UpdateProviders(ctx, effective.SAML)
+	}
+	if !reflect.DeepEqual(previous.BuiltinAuth, effective.BuiltinAuth) {
+		// A password change or user delete must take effect immediately
+		s.builtinAuth.ResetCache()
 	}
 
 	if !reflect.DeepEqual(previous.System, effective.System) ||

@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -95,7 +94,7 @@ Examples:
 			values := url.Values{}
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response types.Binding
 			if err := client.Post("/_openrun/binding", values, &createRequest, &response); err != nil {
 				return err
@@ -166,7 +165,7 @@ Examples:
 				DeleteGrants: deleteGrants,
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response types.Binding
 			if err := client.Put("/_openrun/binding", values, updateRequest, &response); err != nil {
 				return err
@@ -208,7 +207,7 @@ Examples:
 			values.Add("path", path)
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response map[string]any
 			if err := client.Delete("/_openrun/binding", values, &response); err != nil {
 				return err
@@ -249,7 +248,7 @@ Examples:
 			values := url.Values{}
 			values.Add("path", path)
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var binding types.Binding
 			if err := client.Get("/_openrun/binding", values, &binding); err != nil {
 				return err
@@ -289,7 +288,7 @@ Examples:
 			values.Add("path", path)
 			values.Add(STAGING_FLAG, strconv.FormatBool(cCtx.Bool(STAGING_FLAG)))
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var account map[string]string
 			if err := client.Get("/_openrun/binding/account", values, &account); err != nil {
 				return err
@@ -327,7 +326,7 @@ func bindingListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 				values.Add("source", source)
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response []types.Binding
 			if err := client.Get("/_openrun/bindings", values, &response); err != nil {
 				return err
@@ -371,7 +370,7 @@ Examples:
 				Command:     sql,
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response map[string]any
 			if err := client.Post("/_openrun/binding/run-command", nil, request, &response); err != nil {
 				return err

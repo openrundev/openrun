@@ -82,7 +82,7 @@ error_handler () {
 
 cleanup() {
   rm -rf metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp sqlite_tmp verifyapp_tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
-  rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp
+  rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp todo_flaskapp todo_rbac.json
 
   if [[ -n "$POSTGRES_TEST_CONTAINER_ID" ]]; then
     $POSTGRES_TEST_CONTAINER_COMMAND rm -f "$POSTGRES_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
@@ -379,6 +379,11 @@ EOF
 fi
 
 cat <<EOF >> $CL_CONFIG_FILE
+# Static builtin auth user for test_builtin_auth.yaml, password is "abcd"
+[builtin_auth.statictester]
+password = "\$2a\$10\$Hk5/XcvwrN.JRFrjdG0vjuGZxa5JaILdir1qflIj5i9DUPUyvIK7C"
+groups = ["static-group"]
+
 [https]
 disable_client_certs = false
 
@@ -400,7 +405,7 @@ EOF
 
 export TESTENV=abc
 export c1c2_c3=xyz
-if [[ "$CL_CONTAINER_COMMANDS" != "disable" && ( -z "$CL_SINGLE_TEST" || "$CL_SINGLE_TEST" = "test_postgres_container.yaml" ) ]]; then
+if [[ "$CL_CONTAINER_COMMANDS" != "disable" && ( -z "$CL_SINGLE_TEST" || "$CL_SINGLE_TEST" = "test_postgres_container.yaml" || "$CL_SINGLE_TEST" = "test_todo_flow.yaml" ) ]]; then
   # Containerized apps connect to the test Postgres through POSTGRES_URL.
   # Publish on all host interfaces so Docker/Podman host aliases can reach the
   # mapped port from inside the app container.
@@ -440,14 +445,14 @@ elif [[ $CL_SINGLE_TEST != "disable" ]]; then
         else
             echo "Skipping $CL_SINGLE_TEST; TEST_MYSQL_URL is not set"
         fi
-    elif [[ $CL_SINGLE_TEST = "test_containers.yaml" || $CL_SINGLE_TEST = "test_postgres_container.yaml" ]]; then
+    elif [[ $CL_SINGLE_TEST = "test_containers.yaml" || $CL_SINGLE_TEST = "test_postgres_container.yaml" || $CL_SINGLE_TEST = "test_todo_flow.yaml" ]]; then
         echo "Deferring $CL_SINGLE_TEST to containerized app test phase"
     else
         commander test $CL_TEST_VERBOSE ./commander/$CL_SINGLE_TEST
     fi
 fi
 
-if [[ -n $CL_SINGLE_TEST && -z $CL_TEST_CONTAINER && "$CL_SINGLE_TEST" != "test_containers.yaml" && "$CL_SINGLE_TEST" != "test_postgres_container.yaml" ]]; then
+if [[ -n $CL_SINGLE_TEST && -z $CL_TEST_CONTAINER && "$CL_SINGLE_TEST" != "test_containers.yaml" && "$CL_SINGLE_TEST" != "test_postgres_container.yaml" && "$CL_SINGLE_TEST" != "test_todo_flow.yaml" ]]; then
     CL_CONTAINER_COMMANDS="disable"
 fi
 
@@ -538,6 +543,17 @@ EOF
             fi
         else
             echo "Skipping test_postgres_container.yaml; TEST_POSTGRES_URL is not set"
+        fi
+    fi
+    if [[ -z "$CL_SINGLE_TEST" || "$CL_SINGLE_TEST" = "test_todo_flow.yaml" ]]; then
+        if [[ -n "$TEST_POSTGRES_URL" ]]; then
+            if [[ -z "$POSTGRES_TEST_CONTAINER_COMMAND" || "$cmd" = "$POSTGRES_TEST_CONTAINER_COMMAND" ]]; then
+                commander test $CL_TEST_VERBOSE test_todo_flow.yaml
+            else
+                echo "Skipping test_todo_flow.yaml for $cmd; postgres test container is running under $POSTGRES_TEST_CONTAINER_COMMAND"
+            fi
+        else
+            echo "Skipping test_todo_flow.yaml; TEST_POSTGRES_URL is not set"
         fi
     fi
     CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop

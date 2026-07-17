@@ -184,9 +184,15 @@ esac
 }
 
 func TestCommandByOpenRunLabel(t *testing.T) {
+	// The listing must be scoped to containers started by THIS server
+	// installation (server.home ownership label) - a sweep filtered on the
+	// generic app.id label would stop other servers' containers on a shared
+	// container daemon
+	home := t.TempDir()
+	t.Setenv(types.OPENRUN_HOME, home)
 	commandPath := filepath.Join(t.TempDir(), "docker")
 	script := `#!/bin/sh
-if [ "$1" != "ps" ] || [ "$2" != "--format" ] || [ "$3" != "json" ] || [ "$4" != "--filter" ] || [ "$5" != "label=dev.openrun.app.id" ]; then
+if [ "$1" != "ps" ] || [ "$2" != "--format" ] || [ "$3" != "json" ] || [ "$4" != "--filter" ] || [ "$5" != "label=dev.openrun.server.home=` + home + `" ]; then
 	echo "unexpected args: $*" >&2
 	exit 64
 fi

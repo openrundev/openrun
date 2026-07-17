@@ -138,6 +138,7 @@ type ServerConfig struct {
 	GitAuth        map[string]GitAuthEntry         `toml:"git_auth"`
 	Plugins        map[string]PluginSettings       `toml:"plugin"`
 	Auth           map[string]AuthConfig           `toml:"auth"`
+	BuiltinAuth    map[string]BuiltinAuthEntry     `toml:"builtin_auth"`
 	SAML           map[string]SAMLConfig           `toml:"saml"`
 	ClientAuth     map[string]ClientCertConfig     `toml:"client_auth"`
 	Secret         map[string]SecretConfig         `toml:"secret"`
@@ -582,6 +583,15 @@ type AuthConfig struct {
 	Scopes       []string `toml:"scopes"`        // oauth scopes
 }
 
+// BuiltinAuthEntry is one user for the builtin app auth type. The
+// [builtin_auth.<username>] entry name is the username; requests authenticate
+// with HTTP Basic auth against the bcrypt password hash. The groups are
+// passed to RBAC the same way SSO provider groups are
+type BuiltinAuthEntry struct {
+	Password string   `toml:"password" json:"password"` // bcrypt hash of the user's password
+	Groups   []string `toml:"groups" json:"groups"`     // groups the user belongs to, matched by RBAC group: references
+}
+
 type ForwardConfig struct {
 	AuthUrl             string   `toml:"auth_url"`              // the auth url to send the GET request to
 	ForwardHeaders      []string `toml:"forward_headers"`       // the headers to forward to the auth url. If empty, all headers are forwarded.
@@ -615,6 +625,10 @@ type ClientConfigStruct struct {
 	SkipCertCheck bool   `toml:"skip_cert_check"`
 	AdminPassword string `toml:"admin_password"`
 	DefaultFormat string `toml:"default_format"` // the default format for the CLI output
+	// AsUser runs the management API call as this user id (the --as flag,
+	// e.g. builtin:user1) with RBAC enforcement instead of as the trusted
+	// administrator. Per invocation, not a config file setting
+	AsUser string `toml:"-"`
 }
 
 // AppId is the identifier for an App
@@ -711,6 +725,7 @@ const (
 	AppAuthnNone    AppAuthnType = "none"    // No auth
 	AppAuthnDefault AppAuthnType = "default" // Use whatever auth is the default for the system
 	AppAuthnSystem  AppAuthnType = "system"  // Use the system admin user
+	AppAuthnBuiltin AppAuthnType = "builtin" // Builtin user/password auth against [builtin_auth.*] entries
 )
 
 type AppSpec string
@@ -1308,6 +1323,11 @@ const (
 	OPENRUN_HEADER_USER_EMAIL       = OPENRUN_HEADER_PREFIX + "User-Email"
 	OPENRUN_HEADER_PERMS            = OPENRUN_HEADER_PREFIX + "Perms"
 	OPENRUN_HEADER_APP_RBAC_ENABLED = OPENRUN_HEADER_PREFIX + "Rbac-Enabled"
+
+	// OPENRUN_HEADER_AS_USER is sent by the CLI --as flag on management API
+	// calls over the unix domain socket: run the call as this user id with
+	// RBAC enforcement instead of as the trusted administrator
+	OPENRUN_HEADER_AS_USER = OPENRUN_HEADER_PREFIX + "As-User"
 )
 
 // ErrSecretExists is returned when a secret with the given name already exists

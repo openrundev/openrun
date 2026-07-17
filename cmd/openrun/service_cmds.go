@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -109,7 +108,7 @@ Examples:
 			values := url.Values{}
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response types.Service
 			if err := client.Post("/_openrun/service", values, &service, &response); err != nil {
 				return err
@@ -160,7 +159,7 @@ Examples:
 				return err
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 
 			// Fetch the existing service to merge changes onto
 			fetchValues := url.Values{}
@@ -245,7 +244,7 @@ Examples:
 			values.Add("name", name)
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response map[string]any
 			if err := client.Delete("/_openrun/service", values, &response); err != nil {
 				return err
@@ -301,7 +300,7 @@ Examples:
 				values.Add("name", name)
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response []types.Service
 			if err := client.Get("/_openrun/services", values, &response); err != nil {
 				return err

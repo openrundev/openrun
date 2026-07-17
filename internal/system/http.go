@@ -31,6 +31,7 @@ type HttpClient struct {
 	serverUri string
 	user      string
 	password  string
+	headers   map[string]string // extra headers sent with every request
 }
 
 // NewHttpClient creates a new HttpClient instance
@@ -82,6 +83,14 @@ func NewHttpClient(serverUri, user, password string, skipCertCheck bool) *HttpCl
 	}
 }
 
+// SetHeader adds a header sent with every request made by this client
+func (h *HttpClient) SetHeader(name, value string) {
+	if h.headers == nil {
+		h.headers = map[string]string{}
+	}
+	h.headers[name] = value
+}
+
 func (h *HttpClient) Get(url string, params url.Values, output any) error {
 	return h.request(http.MethodGet, url, params, nil, output)
 }
@@ -124,6 +133,9 @@ func (h *HttpClient) request(method, apiPath string, params url.Values, input an
 
 	request.SetBasicAuth(h.user, h.password)
 	request.Header.Set("Accept", ApplicationJson)
+	for name, value := range h.headers {
+		request.Header.Set(name, value)
+	}
 
 	if method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch {
 		request.Header.Set("Content-Type", ApplicationJson)

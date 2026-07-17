@@ -24,5 +24,6 @@ func getClientCommands(clientConfig *types.ClientConfig) ([]*cli.Command, error)
 	commands = append(commands, initWebhookCommand(flags, clientConfig))
 	commands = append(commands, initPreviewCommand(flags, clientConfig))
 	commands = append(commands, initAccountCommand(flags, clientConfig))
+	commands = append(commands, initUserCommand(flags, clientConfig))
 	return commands, nil
 }

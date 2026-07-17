@@ -875,3 +875,108 @@ func TestCustomPermissionGlobs(t *testing.T) {
 		t.Errorf("custom glob must not match app:delete, got %v err %v", allowed, err)
 	}
 }
+
+// TestNoTargetPermissionsAnyTarget verifies the no-target GetAPIPermissions
+// report: scoped permissions are reported when held on at least one target of
+// their kind ("can the user do this somewhere"), so UI chrome unlocks for
+// users whose grants are all scoped. Per-path reports stay exact
+func TestNoTargetPermissionsAnyTarget(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestManager(t, grantConfig(map[string][]types.RBACPermission{},
+		types.RBACGrant{Description: "eng developers", Users: []string{"engdev", "group:engdevs"},
+			Roles:   []string{"openrun-developer"},
+			Targets: []string{"*.eng.localhost:**", "/eng/**", "service:postgres/eng", "service:postgres/shared"}},
+		types.RBACGrant{Description: "eng users", Users: []string{"enguser"},
+			Roles: []string{"openrun-user"}, Targets: []string{"/eng/**"}},
+		types.RBACGrant{Description: "operators", Users: []string{"operator"},
+			Roles: []string{"openrun-operator"}, Targets: []string{"all"}},
+	))
+
+	noTargetPerms := func(user string, groups ...string) []string {
+		perms, err := manager.GetAPIPermissions(enforcedCtx(user, groups...), types.AppPathDomain{}, "")
+		if err != nil {
+			t.Fatalf("GetAPIPermissions(%s): %v", user, err)
+		}
+		return perms
+	}
+
+	type check struct {
+		perm types.RBACPermission
+		held bool
+	}
+	cases := map[string][]check{
+		"engdev": {
+			{types.PermissionCreate, true}, // app:manage via developer, held on /eng/**
+			{types.PermissionAccess, true},
+			{types.PermissionDelete, true},
+			{types.PermissionServiceRead, true}, // held on the service: targets
+			{types.PermissionServiceBind, true},
+			{types.PermissionBindingUse, false},      // developer holds it, but the grant has no binding: targets
+			{types.PermissionBindingRead, false},     //
+			{types.PermissionConfigBasicRead, true},  // global, targets irrelevant
+			{types.PermissionSecretCreate, true},     // global
+			{types.PermissionApprove, false},         // developer never holds approve
+			{types.PermissionAuditRead, false},       // developer has no audit:read
+			{types.PermissionContainerManage, false}, // operator-only
+		},
+		"enguser": {
+			{types.PermissionAccess, true}, // held on /eng/**
+			{types.PermissionRead, true},
+			{types.PermissionCreate, false},      // openrun-user has no app:create anywhere
+			{types.PermissionServiceRead, false}, // no service permission at all
+			{types.PermissionConfigBasicRead, false},
+		},
+		"operator": {
+			{types.PermissionCreate, true}, // all target
+			{types.PermissionServiceRead, true},
+			{types.PermissionBindingUse, true},
+			{types.PermissionApprove, true},
+			{types.PermissionConfigUpdate, true},
+			{types.PermissionSecretReveal, false}, // admin-only
+		},
+		"stranger": {
+			{types.PermissionAccess, false},
+			{types.PermissionRead, false},
+		},
+	}
+	for user, checks := range cases {
+		perms := noTargetPerms(user)
+		for _, c := range checks {
+			if got := slices.Contains(perms, string(c.perm)); got != c.held {
+				t.Errorf("%s: no-target report of %s = %v, want %v (report: %v)", user, c.perm, got, c.held, perms)
+			}
+		}
+	}
+
+	// group: membership from the auth context feeds the report the same way
+	perms := noTargetPerms("someone", "engdevs")
+	if !slices.Contains(perms, string(types.PermissionCreate)) || !slices.Contains(perms, string(types.PermissionServiceRead)) {
+		t.Errorf("group member should get the developer no-target report, got %v", perms)
+	}
+
+	// Per-path reports stay exact: engdev holds app perms on /eng/** apps only
+	perms, err := manager.GetAPIPermissions(enforcedCtx("engdev"), types.AppPathDomain{Path: "/eng/todo1"}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Contains(perms, string(types.PermissionCreate)) {
+		t.Errorf("engdev should hold app:create on /eng/todo1, got %v", perms)
+	}
+	perms, err = manager.GetAPIPermissions(enforcedCtx("engdev"), types.AppPathDomain{Path: "/finance/todo1"}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if slices.Contains(perms, string(types.PermissionCreate)) || slices.Contains(perms, string(types.PermissionAccess)) {
+		t.Errorf("engdev must not hold app perms on /finance/todo1, got %v", perms)
+	}
+	// The domain glob target is a real app target: domain apps report exactly
+	perms, err = manager.GetAPIPermissions(enforcedCtx("engdev"),
+		types.AppPathDomain{Domain: "todo2.eng.localhost", Path: "/"}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Contains(perms, string(types.PermissionCreate)) {
+		t.Errorf("engdev should hold app:create on todo2.eng.localhost:/, got %v", perms)
+	}
+}

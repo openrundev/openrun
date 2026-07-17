@@ -16,7 +16,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
 )
@@ -103,7 +102,7 @@ Examples:
 			values := url.Values{}
 			values.Add(SECRET_UPDATE_FLAG, strconv.FormatBool(cCtx.Bool(SECRET_UPDATE_FLAG)))
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response types.SecretCreateResponse
 			if err := client.Post("/_openrun/secret", values, &createRequest, &response); err != nil {
 				return err
@@ -191,7 +190,7 @@ func secretListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 				values.Add(SECRET_PROVIDER_FLAG, provider)
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response types.SecretListResponse
 			if err := client.Get("/_openrun/secrets", values, &response); err != nil {
 				return err
@@ -231,7 +230,7 @@ func secretShowCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 				values.Add(SECRET_PROVIDER_FLAG, provider)
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response types.SecretGetResponse
 			if err := client.Get("/_openrun/secret", values, &response); err != nil {
 				return err
@@ -286,7 +285,7 @@ func secretDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 				values.Add(SECRET_PROVIDER_FLAG, provider)
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response types.SecretDeleteResponse
 			if err := client.Delete("/_openrun/secret", values, &response); err != nil {
 				return err
@@ -323,7 +322,7 @@ Examples:
 				values.Add(SECRET_PROVIDER_FLAG, provider)
 			}
 
-			client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser, clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+			client := newHttpClient(clientConfig)
 			var response types.SecretRekeyResponse
 			if err := client.Post("/_openrun/secret/rekey", values, nil, &response); err != nil {
 				return err

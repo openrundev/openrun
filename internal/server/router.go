@@ -386,11 +386,30 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 		}
 	}
 
-	// The caller is the administrator: over UDS the unix file permissions
-	// authenticate, over TCP the admin/builder auth above did. Mark the
-	// context trusted so RBAC enforcement stays off for this call (an
-	// unmarked context fails closed when RBAC is enabled)
-	r = r.WithContext(system.WithTrustedOperation(r.Context()))
+	if asUser := r.Header.Get(types.OPENRUN_HEADER_AS_USER); asUser != "" && !enableBasicAuth {
+		// The CLI --as flag, over the unix domain socket only: the caller is
+		// the administrator (unix file permissions), who chooses to run this
+		// call as the given user with RBAC enforcement instead. Requires RBAC
+		// to be enabled; the audit event below records the as user
+		asCtx, err := h.server.asUserRequestContext(r.Context(), asUser)
+		if err != nil {
+			h.server.insertAuthFailureEvent(r, operation, err.Error())
+			if reqError, ok := err.(types.RequestError); ok {
+				http.Error(w, reqError.Error(), reqError.Code)
+			} else {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			}
+			return
+		}
+		r = r.WithContext(asCtx)
+	} else {
+		// The caller is the administrator: over UDS the unix file permissions
+		// authenticate, over TCP the admin/builder auth above did (the as
+		// user header is ignored over TCP). Mark the context trusted so RBAC
+		// enforcement stays off for this call (an unmarked context fails
+		// closed when RBAC is enabled)
+		r = r.WithContext(system.WithTrustedOperation(r.Context()))
+	}
 
 	event := types.AuditEvent{
 		RequestId:  system.GetContextRequestId(r.Context()),
@@ -716,6 +735,9 @@ func (h *Handler) getApps(r *http.Request) (any, error) {
 }
 
 func (h *Handler) stopServer(r *http.Request) (any, error) {
+	if err := h.server.enforceGlobalPerm(r.Context(), types.PermissionServerStop, ""); err != nil {
+		return nil, err
+	}
 	h.Warn().Msgf("Server stop called")
 	updateOperationInContext(r, "stop_server")
 	h.server.RequestStop()
@@ -1614,6 +1636,53 @@ func (h *Handler) rekeySecrets(r *http.Request) (any, error) {
 	return response, nil
 }
 
+func (h *Handler) userUpdate(r *http.Request) (any, error) {
+	username := r.URL.Query().Get("username")
+	update, err := parseBoolArg(r.URL.Query().Get("update"), false)
+	if err != nil {
+		return nil, err
+	}
+
+	updateTargetInContext(r, username, false)
+	if update {
+		updateOperationInContext(r, "user_update")
+	} else {
+		updateOperationInContext(r, "user_add")
+	}
+
+	var updateRequest types.UserUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&updateRequest); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+
+	updated, err := h.server.CreateUpdateUser(r.Context(), username, updateRequest.Password, updateRequest.Groups, update)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return types.UserUpdateResponse{Username: username, Updated: updated}, nil
+}
+
+func (h *Handler) userDelete(r *http.Request) (any, error) {
+	username := r.URL.Query().Get("username")
+	updateTargetInContext(r, username, false)
+	updateOperationInContext(r, "user_delete")
+
+	if err := h.server.DeleteUser(r.Context(), username); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return types.UserDeleteResponse{Username: username}, nil
+}
+
+func (h *Handler) userList(r *http.Request) (any, error) {
+	updateOperationInContext(r, "user_list")
+
+	users, err := h.server.ListUsers(r.Context())
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return types.UserListResponse{Users: users}, nil
+}
+
 func (h *Handler) configGet(r *http.Request) (any, error) {
 	updateOperationInContext(r, "config_get")
 	return types.ConfigResponse{DynamicConfig: h.server.GetDynamicConfig()}, nil
@@ -1851,6 +1920,21 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to re-encrypt secrets with the active master key
 	r.Post("/secret/rekey", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "secret_rekey", h.rekeySecrets, false)
+	}))
+
+	// API to create/update a builtin auth user (update with ?update=true)
+	r.Post("/user", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "user_add", h.userUpdate, false)
+	}))
+
+	// API to delete a builtin auth user
+	r.Delete("/user", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "user_delete", h.userDelete, false)
+	}))
+
+	// API to list builtin auth users
+	r.Get("/users", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "user_list", h.userList, false)
 	}))
 
 	// API to get config

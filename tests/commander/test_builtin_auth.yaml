@@ -1,0 +1,141 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+tests:
+  builtin0010: # create an app with builtin user/password auth
+    command: ../openrun app create --auth=builtin ./rbac_child_app /builtin_app
+    stdout: "App: /builtin_app"
+    exit-code: 0
+  builtin0020: # no credentials - 401
+    command: curl -s -o /dev/null -w "%{http_code}" localhost:25222/builtin_app/
+    stdout: "401"
+    exit-code: 0
+  builtin0030: # static openrun.toml user can log in
+    command: curl -s -u statictester:abcd localhost:25222/builtin_app/
+    stdout: "child ok"
+    exit-code: 0
+  builtin0040: # wrong password - 401
+    command: curl -s -u statictester:wrong -o /dev/null -w "%{http_code}" localhost:25222/builtin_app/
+    stdout: "401"
+    exit-code: 0
+  builtin0050: # unknown user - 401
+    command: curl -s -u nosuchuser:abcd -o /dev/null -w "%{http_code}" localhost:25222/builtin_app/
+    stdout: "401"
+    exit-code: 0
+  builtin0060: # enable RBAC. builtin users are granted access by user id
+    # (builtin:<username>) or by group (group: matches the user entry's groups)
+    command: |
+      cat > builtin_rbac.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "enabled": true,
+          "groups": {},
+          "roles": {
+            "viewer": ["app:access"]
+          },
+          "grants": [
+            {
+              "description": "statictester views builtin_app",
+              "users": ["builtin:statictester"],
+              "roles": ["viewer"],
+              "targets": ["/builtin_app"]
+            },
+            {
+              "description": "devs group views builtin_app",
+              "users": ["group:devs"],
+              "roles": ["viewer"],
+              "targets": ["/builtin_app"]
+            }
+          ]
+        }
+      }
+      EOF
+      ../openrun server update-config --force builtin_rbac.json
+    exit-code: 0
+  builtin0070: # statictester allowed through the builtin:statictester user id grant
+    command: curl -s -u statictester:abcd localhost:25222/builtin_app/
+    stdout: "child ok"
+    exit-code: 0
+  builtin0080: # add a dynamic user in the devs group, no server restart needed
+    command: ../openrun user add testuser1 --value pw1 --groups devs,qa
+    stdout: "User added: testuser1"
+    exit-code: 0
+  builtin0090: # testuser1 allowed through the group:devs grant
+    command: curl -s -u testuser1:pw1 localhost:25222/builtin_app/
+    stdout: "child ok"
+    exit-code: 0
+  builtin0100: # adding an existing user fails
+    command: ../openrun user add testuser1 --value pw1
+    stderr: "already exists"
+    exit-code: 1
+  builtin0110: # updating a missing user fails
+    command: ../openrun user update nosuchuser --value pw1
+    stderr: "does not exist"
+    exit-code: 1
+  builtin0120: # list shows the static and dynamic users with groups
+    command: ../openrun user list
+    stdout:
+      contains:
+        - "statictester"
+        - "static-group"
+        - "testuser1"
+        - "devs,qa"
+    exit-code: 0
+  builtin0130: # change the password, groups are kept
+    command: ../openrun user update testuser1 --value pw2
+    stdout: "User updated: testuser1"
+    exit-code: 0
+  builtin0140: # the old password stops working immediately
+    command: curl -s -u testuser1:pw1 -o /dev/null -w "%{http_code}" localhost:25222/builtin_app/
+    stdout: "401"
+    exit-code: 0
+  builtin0150: # the new password works, groups were kept (group:devs grant)
+    command: curl -s -u testuser1:pw2 localhost:25222/builtin_app/
+    stdout: "child ok"
+    exit-code: 0
+  builtin0160: # update the groups only, password is kept
+    command: ../openrun user update testuser1 --groups qa
+    stdout: "User updated: testuser1"
+    exit-code: 0
+  builtin0170: # no longer in devs - authenticated but not authorized (403)
+    command: curl -s -u testuser1:pw2 -o /dev/null -w "%{http_code}" localhost:25222/builtin_app/
+    stdout: "403"
+    exit-code: 0
+  builtin0180: # delete the dynamic user
+    command: ../openrun user delete testuser1
+    stdout: "User deleted: testuser1"
+    exit-code: 0
+  builtin0190: # the deleted user can no longer authenticate (401)
+    command: curl -s -u testuser1:pw2 -o /dev/null -w "%{http_code}" localhost:25222/builtin_app/
+    stdout: "401"
+    exit-code: 0
+  builtin0200: # static openrun.toml entries cannot be deleted through the API
+    command: ../openrun user delete statictester
+    stderr: "static entries cannot be deleted"
+    exit-code: 1
+  builtin0210: # disable RBAC again
+    command: |
+      cat > builtin_rbac.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "enabled": false,
+          "groups": {},
+          "roles": {},
+          "grants": []
+        }
+      }
+      EOF
+      ../openrun server update-config --force builtin_rbac.json
+    exit-code: 0
+  builtin0220: # with RBAC disabled, any builtin user can access the app again
+    command: curl -s -u statictester:abcd localhost:25222/builtin_app/
+    stdout: "child ok"
+    exit-code: 0
+  builtin0230: # cleanup app and config file
+    command: |
+      ../openrun app delete /builtin_app
+      rm -f builtin_rbac.json
+    exit-code: 0
