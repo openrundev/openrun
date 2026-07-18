@@ -1,0 +1,157 @@
+// Copyright (c) ClaceIO, LLC
+// SPDX-License-Identifier: Apache-2.0
+
+// Wire contract between the OpenRun server and out-of-process binding
+// providers. This proto is the single source of truth for the provider
+// protocol; the server and the provider SDK each map it to their own Go types.
+//
+// Application-level failures are carried in the response `error` field, not as
+// gRPC status errors: GenerateAccount must return already-created artifacts
+// together with an error so the server can roll them back. gRPC status errors
+// are reserved for transport failures (provider crash, protocol mismatch),
+// which the server treats as retryable by respawning the provider.
+syntax = "proto3";
+
+package openrun.binding.v1;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/openrundev/openrun/pkg/binding/proto";
+
+service BindingProvider {
+  // Describe reports the service types served by this provider binary and
+  // their config schemas. Valid before InitializeService.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+
+  // GetAccountEnv reports the names of the env values included in the binding
+  // account info for a service type: the always-present params, then the
+  // optional params. Static info; valid before InitializeService.
+  rpc GetAccountEnv(GetAccountEnvRequest) returns (GetAccountEnvResponse);
+
+  rpc InitializeService(InitializeServiceRequest) returns (InitializeServiceResponse);
+  rpc CloseService(CloseServiceRequest) returns (CloseServiceResponse);
+  rpc GenerateAccount(GenerateAccountRequest) returns (GenerateAccountResponse);
+  rpc DeleteArtifact(DeleteArtifactRequest) returns (DeleteArtifactResponse);
+  rpc ApplyGrants(ApplyGrantsRequest) returns (ApplyGrantsResponse);
+  rpc RevokeGrants(RevokeGrantsRequest) returns (RevokeGrantsResponse);
+  rpc RunCommand(RunCommandRequest) returns (RunCommandResponse);
+}
+
+message BindingMetadata {
+  repeated string grants = 1;
+  repeated BindingGrant grants_applied = 2;
+  map<string, string> config = 3;
+  map<string, string> account = 4;
+  bytes apply_info = 5;
+}
+
+message BindingGrant {
+  string grant_type = 1;
+  string grant_target = 2;
+}
+
+message Artifact {
+  string type = 1;
+  string name = 2;
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  string provider_version = 1;
+  repeated ServiceTypeInfo service_types = 2;
+}
+
+message ServiceTypeInfo {
+  string service_type = 1;
+  repeated string supported_grant_types = 2;
+  repeated string required_config_keys = 3;
+  repeated string optional_config_keys = 4;
+}
+
+message GetAccountEnvRequest {
+  string service_type = 1;
+}
+
+message GetAccountEnvResponse {
+  repeated string params = 1;
+  repeated string optional_params = 2;
+  string error = 3;
+}
+
+message InitializeServiceRequest {
+  // The service type to serve; one provider binary may implement several.
+  string service_type = 1;
+  map<string, string> service_config = 2;
+  // ServiceBindingRuntime, flattened.
+  string localhost_binding_hostname = 3;
+}
+
+message InitializeServiceResponse {
+  string error = 1;
+}
+
+message CloseServiceRequest {}
+
+message CloseServiceResponse {
+  string error = 1;
+}
+
+message GenerateAccountRequest {
+  string binding_id = 1;
+  string binding_path = 2;
+  BindingMetadata binding_metadata = 3;
+  optional BindingMetadata derived_from_metadata = 4;
+  bool is_staging = 5;
+}
+
+message GenerateAccountResponse {
+  map<string, string> account = 1;
+  // Artifacts created on the service, in creation order. Populated even when
+  // error is set, so the caller can clean up after a partial failure.
+  repeated Artifact created_artifacts = 2;
+  string error = 3;
+}
+
+message DeleteArtifactRequest {
+  Artifact artifact = 1;
+}
+
+message DeleteArtifactResponse {
+  string error = 1;
+}
+
+message ApplyGrantsRequest {
+  map<string, string> account = 1;
+  BindingMetadata binding_metadata = 2;
+  BindingMetadata derived_from_metadata = 3;
+  bool reapply_all = 4;
+}
+
+message ApplyGrantsResponse {
+  repeated BindingGrant grants_applied = 1;
+  repeated BindingGrant granted = 2;
+  repeated BindingGrant pending_revokes = 3;
+  string error = 4;
+}
+
+message RevokeGrantsRequest {
+  map<string, string> account = 1;
+  BindingMetadata derived_from_metadata = 2;
+  repeated BindingGrant revokes = 3;
+  repeated BindingGrant regrants = 4;
+}
+
+message RevokeGrantsResponse {
+  string error = 1;
+}
+
+message RunCommandRequest {
+  BindingMetadata binding_metadata = 1;
+  string command = 2;
+}
+
+message RunCommandResponse {
+  google.protobuf.Struct result = 1;
+  string error = 2;
+}

@@ -45,6 +45,10 @@ func init() {
 
 var _ ServiceBinding = (*PostgresServiceBinding)(nil)
 
+func (b *PostgresServiceBinding) GetAccountEnv(ctx context.Context) ([]string, []string, error) {
+	return []string{"url", "url_direct", "schema", "role"}, []string{}, nil
+}
+
 func NewPostgresServiceBinding() ServiceBinding {
 	return &PostgresServiceBinding{}
 }

@@ -236,6 +236,13 @@ func TestStaticDiskSpecServesFromDiskWithoutPersistingSourceFiles(t *testing.T) 
 	server, db, ctx := newAppAPIMetadataTestServer(t)
 	defer db.Close()
 
+	// The static_disk spec comes from the appspecs repo, which CI clones into
+	// internal/server/appspecs before testing; a fresh checkout only has the
+	// embedded dummy placeholder.
+	if server.GetAppSpec(types.StaticDiskSpec) == nil {
+		t.Skipf("spec %s not available, clone github.com/openrundev/appspecs into internal/server/appspecs to run this test", types.StaticDiskSpec)
+	}
+
 	sourceDir := t.TempDir()
 	indexPath := filepath.Join(sourceDir, "index.html")
 	if err := os.WriteFile(indexPath, []byte("version one"), 0o600); err != nil {

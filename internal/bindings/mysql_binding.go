@@ -82,6 +82,10 @@ func init() {
 
 var _ ServiceBinding = (*MysqlServiceBinding)(nil)
 
+func (b *MysqlServiceBinding) GetAccountEnv(ctx context.Context) ([]string, []string, error) {
+	return []string{"url", "url_direct", "database", "user", "host"}, []string{}, nil
+}
+
 func NewMysqlServiceBinding() ServiceBinding {
 	return &MysqlServiceBinding{}
 }

@@ -10,9 +10,13 @@ MAKEFLAGS += --no-builtin-rules
 OPENRUN_HOME := `pwd`
 INPUT := $(word 2,$(MAKECMDGOALS))
 INPUT2 := $(word 3,$(MAKECMDGOALS))
-GO_PACKAGES = $$(go list ./... | grep -v '/ui/')
-GO_COVER_PACKAGES = $$(go list ./... | grep -v '/ui/' | paste -sd, -)
-GO_LINT_PACKAGES = $$(module=$$(go list -m); go list ./... | grep -v '/ui/' | awk -v module="$$module" '{ sub("^" module, "."); print }')
+# GOWORK=off: package lists are computed in module mode so a local go.work
+# (used for pkg/binding development) does not change what gets built/linted.
+# In workspace mode `go list -m` returns every workspace module and
+# `go list ./...` crosses into the nested pkg/binding module.
+GO_PACKAGES = $$(GOWORK=off go list ./... | grep -v '/ui/')
+GO_COVER_PACKAGES = $$(GOWORK=off go list ./... | grep -v '/ui/' | paste -sd, -)
+GO_LINT_PACKAGES = $$(module=$$(GOWORK=off go list -m); GOWORK=off go list ./... | grep -v '/ui/' | awk -v module="$$module" '{ sub("^" module, "."); print }')
 
 ARCH        := $(shell uname -m)
 TARGET_DIR  := dist/linux/$(ARCH)
@@ -49,10 +53,12 @@ covtest: covunit covint ## Run all tests with coverage
 unit: ## Run unit tests
 > packages="$(GO_PACKAGES)"
 > go test $$packages
+> cd pkg/binding && GOWORK=off go test ./...
 
 lint: ## Run lint
 > packages="$(GO_LINT_PACKAGES)"
 > golangci-lint run $$packages
+> cd pkg/binding && GOWORK=off golangci-lint run ./...
 
 covunit: ## Run unit tests with coverage
 > rm -rf $(OPENRUN_HOME)/coverage/unit && mkdir -p $(OPENRUN_HOME)/coverage/unit

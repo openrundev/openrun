@@ -28,6 +28,7 @@ const (
 	ArtifactSchema   ArtifactType = "schema"
 	ArtifactUser     ArtifactType = "user"
 	ArtifactDatabase ArtifactType = "database"
+	ArtifactLogin    ArtifactType = "login" // SQL Server server-level login backing a database user
 )
 
 // Artifact identifies one object created on the service by GenerateAccount, such as a
@@ -60,6 +61,12 @@ type GrantApplyResult struct {
 }
 
 type ServiceBinding interface {
+	// GetAccountEnv returns the names of the env values included in the
+	// account info for this binding: the always-present params first, then the
+	// optional params. This is static info: it must be callable on an
+	// uninitialized instance, before InitializeService.
+	GetAccountEnv(ctx context.Context) ([]string, []string, error)
+
 	// Initialize the service with the given config. This is called when the service binding is created.
 	InitializeService(ctx context.Context, logger *types.Logger, serviceConfig map[string]string, runtime ServiceBindingRuntime) error
 

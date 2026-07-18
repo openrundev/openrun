@@ -261,6 +261,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	server.forwardAuthHTTPClient = newForwardAuthHTTPClient(config)
 	db.AppNotifyFunc = server.appNotifyHandler
 	db.ConfigNotifyFunc = server.configNotifyHandler
+	db.ProviderNotifyFunc = server.providerNotifyHandler
 	server.apps = NewAppStore(l, server)
 	server.authHandler = NewAdminBasicAuth(l, config)
 	server.builtinAuth = NewBuiltinAuth(l, server.Config)
@@ -705,6 +706,11 @@ func (s *Server) setupAdminAccount() (string, error) {
 // Start starts the OpenRun Server
 func (s *Server) Start() error {
 	s.handler = NewTCPHandler(s.Logger, s.Config(), s)
+
+	// Register out-of-process binding providers (dev config entries and
+	// database-registered installs) before serving traffic, so binding
+	// operations never race the provider registrations.
+	s.setupBindingProviders(context.Background())
 	// Builder config problems must not block startup: the builder config is
 	// dynamically editable, so a bad entry has to be fixable through the
 	// console. The error is logged and surfaces again on builder use

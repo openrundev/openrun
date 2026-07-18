@@ -1404,6 +1404,53 @@ func (h *Handler) listServices(r *http.Request) (any, error) {
 	return results, nil
 }
 
+func (h *Handler) installProvider(r *http.Request) (any, error) {
+	var request types.ProviderInstallRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	if request.Name == "" || request.SourceURL == "" {
+		return nil, types.CreateRequestError("name and source_url are required", http.StatusBadRequest)
+	}
+
+	updateTargetInContext(r, request.Name, false)
+	updateOperationInContext(r, "provider_install")
+
+	provider, err := h.server.InstallProvider(r.Context(), &request)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return provider, nil
+}
+
+func (h *Handler) uninstallProvider(r *http.Request) (any, error) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		return nil, types.CreateRequestError("name is required", http.StatusBadRequest)
+	}
+	force, err := parseBoolArg(r.URL.Query().Get("force"), false)
+	if err != nil {
+		return nil, err
+	}
+
+	updateTargetInContext(r, name, false)
+	updateOperationInContext(r, "provider_uninstall")
+
+	if err := h.server.UninstallProvider(r.Context(), name, force); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return map[string]any{"name": name}, nil
+}
+
+func (h *Handler) listProviders(r *http.Request) (any, error) {
+	updateOperationInContext(r, "list_providers")
+	results, err := h.server.ListProviders(r.Context())
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return results, nil
+}
+
 func (h *Handler) createBinding(r *http.Request) (any, error) {
 	dryRun, err := parseBoolArg(r.URL.Query().Get(DRY_RUN_ARG), false)
 	if err != nil {
@@ -1859,6 +1906,21 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to list services
 	r.Get("/services", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "list_services", h.listServices, false)
+	}))
+
+	// API to install a binding provider
+	r.Post("/provider", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "provider_install", h.installProvider, false)
+	}))
+
+	// API to uninstall a binding provider
+	r.Delete("/provider", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "provider_uninstall", h.uninstallProvider, false)
+	}))
+
+	// API to list binding providers
+	r.Get("/providers", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "list_providers", h.listProviders, false)
 	}))
 
 	// API to create binding

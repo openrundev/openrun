@@ -15,6 +15,13 @@ host = "127.0.0.1"        # bind to localhost by default for HTTP
 port = 25222              # default port for HTTP
 redirect_to_https = false # redirect HTTP to HTTPS
 
+# Out of process binding providers related config
+[bindings]
+cache_dir = "$OPENRUN_HOME/bindings" # node-local cache for installed binding provider executables
+# Development override, registers a provider executable directly from a local path:
+# [bindings.dev_providers.mongodb]
+# path = "/path/to/openrun-binding-mongodb"
+
 # HTTPS port binding related Config
 [https]
 host = "0.0.0.0"                               # bind to all interfaces (if port is >= 0)

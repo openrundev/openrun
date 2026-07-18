@@ -128,6 +128,7 @@ type ServerConfig struct {
 	Http           HttpConfig                      `toml:"http"`
 	Https          HttpsConfig                     `toml:"https"`
 	Security       SecurityConfig                  `toml:"security"`
+	Bindings       BindingsConfig                  `toml:"bindings"`
 	Metadata       MetadataConfig                  `toml:"metadata"`
 	Log            LogConfig                       `toml:"logging"`
 	Telemetry      TelemetryConfig                 `toml:"telemetry"`
@@ -497,6 +498,22 @@ const (
 	TailwindVersionDefault = TailwindVersionCurrent
 	TailwindVersionMin     = TailwindVersionLegacy
 )
+
+// BindingsConfig configures out-of-process binding providers.
+type BindingsConfig struct {
+	// CacheDir is the node-local directory where installed provider
+	// executables are materialized from the metadata database.
+	CacheDir string `toml:"cache_dir"`
+	// DevProviders registers a provider executable directly from a local path,
+	// bypassing database registration and checksum verification. Development
+	// use only; keys are provider names.
+	DevProviders map[string]DevProviderConfig `toml:"dev_providers"`
+}
+
+// DevProviderConfig is one [bindings.dev_providers.<name>] entry.
+type DevProviderConfig struct {
+	Path string `toml:"path"` // path to the provider executable
+}
 
 // SystemConfig is the system level configuration
 type SystemConfig struct {
@@ -1066,6 +1083,7 @@ var CurrentServerId ServerId // initialized in server.go init()
 
 const MessageTypeAppUpdate = "app_update"
 const MessageTypeConfigUpdate = "config_update"
+const MessageTypeProviderUpdate = "provider_update"
 
 type AppUpdatePayload struct {
 	AppPathDomains []AppPathDomain `json:"app_path_domains"`
@@ -1084,6 +1102,20 @@ type ConfigUpdatePayload struct {
 type ConfigUpdateMessage struct {
 	MessageType string              `json:"message_type"`
 	Payload     ConfigUpdatePayload `json:"payload"`
+}
+
+// ProviderUpdatePayload notifies replicas that a binding provider was
+// installed, updated or uninstalled; each replica reconciles the named
+// provider from the database.
+type ProviderUpdatePayload struct {
+	Name     string   `json:"name"`
+	Deleted  bool     `json:"deleted"`
+	ServerId ServerId `json:"server_id"`
+}
+
+type ProviderUpdateMessage struct {
+	MessageType string                `json:"message_type"`
+	Payload     ProviderUpdatePayload `json:"payload"`
 }
 
 type LibraryType string
@@ -1222,6 +1254,11 @@ const (
 	PermissionContainerRead   RBACPermission = "container:read"   // list containers, get container details/logs/stats
 	PermissionContainerManage RBACPermission = "container:manage" // start/stop managed containers
 
+	// provider:* permissions are global (granted with target "all"): binding
+	// providers are deployment-wide plugin executables, not per-resource entries
+	PermissionProviderRead   RBACPermission = "provider:read"   // list installed binding providers
+	PermissionProviderManage RBACPermission = "provider:manage" // install/uninstall binding providers
+
 	PermissionConfigBasicRead RBACPermission = "config:basic_read" // read non-sensitive config metadata (auth/git-auth entry names, specs, permission catalog); implied by config:read
 	PermissionConfigRead      RBACPermission = "config:read"
 	PermissionConfigUpdate    RBACPermission = "config:update"
@@ -1276,6 +1313,8 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 		PermissionBindingManage, PermissionBindingReveal}},
 	{Resource: "container", Permissions: []RBACPermission{
 		PermissionContainerRead, PermissionContainerManage}},
+	{Resource: "provider", Permissions: []RBACPermission{
+		PermissionProviderRead, PermissionProviderManage}},
 	{Resource: "config", Permissions: []RBACPermission{
 		PermissionConfigBasicRead, PermissionConfigRead, PermissionConfigUpdate}},
 	{Resource: "secret", Permissions: []RBACPermission{
@@ -1354,6 +1393,36 @@ type SecretEntry struct {
 	CreateTime time.Time
 	UpdateTime time.Time
 	Metadata   SecretMetadata
+}
+
+// BindingProvider is a binding provider entry in the metadata database: an
+// out-of-process binding plugin installed on this deployment. The database row
+// is the source of truth; the executable in the local bindings cache directory
+// is materialized from it by each server replica.
+type BindingProvider struct {
+	Name string `json:"name"` // provider name, e.g. "mongodb"
+	// Version is the provider release version reported by Describe.
+	Version string `json:"version"`
+	// SourceURL is where the provider binary was installed from: an http(s)
+	// URL (re-downloadable by other replicas) with optional {os}/{arch}
+	// placeholders, or a local file path (single node installs only).
+	SourceURL string `json:"source_url"`
+	// Checksums maps "os/arch" to the hex sha256 of the provider binary.
+	Checksums map[string]string `json:"checksums"`
+	// ServiceTypes are the service types served, cached from Describe.
+	ServiceTypes []string  `json:"service_types"`
+	CreatedBy    string    `json:"created_by"`
+	CreateTime   time.Time `json:"create_time"`
+	UpdateTime   time.Time `json:"update_time"`
+}
+
+// ProviderInstallRequest is the request body for the provider install API.
+type ProviderInstallRequest struct {
+	Name string `json:"name"`
+	// SourceURL is an http(s) URL for the provider binary, with optional
+	// {os}/{arch} placeholders, or a local (server side) file path.
+	SourceURL string `json:"source_url"`
+	Version   string `json:"version"`
 }
 
 // Service is a service entry in the metadata database

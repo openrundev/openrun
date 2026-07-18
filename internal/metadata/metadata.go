@@ -25,7 +25,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 18
+const CURRENT_DB_VERSION = 19
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -33,15 +33,16 @@ var ErrAppNotFound = errors.New("app not found")
 // Metadata is the metadata persistence layer
 type Metadata struct {
 	*types.Logger
-	certStorage      *CertStorage
-	leaderElection   *LeaderElection
-	config           *types.ServerConfig
-	db               *sql.DB
-	dbType           system.DBType
-	pgListener       *pgxlisten.Listener
-	pgListenerCancel context.CancelFunc
-	AppNotifyFunc    func(types.AppUpdatePayload)
-	ConfigNotifyFunc func(types.ConfigUpdatePayload)
+	certStorage        *CertStorage
+	leaderElection     *LeaderElection
+	config             *types.ServerConfig
+	db                 *sql.DB
+	dbType             system.DBType
+	pgListener         *pgxlisten.Listener
+	pgListenerCancel   context.CancelFunc
+	AppNotifyFunc      func(types.AppUpdatePayload)
+	ConfigNotifyFunc   func(types.ConfigUpdatePayload)
+	ProviderNotifyFunc func(types.ProviderUpdatePayload)
 
 	// fileCache is the shared file cache, created lazily on first use. A single
 	// instance is shared by all FileStores since each cache instance holds its
@@ -136,6 +137,16 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 					return err
 				}
 				m.ConfigNotifyFunc(updateMsg.Payload)
+			case types.MessageTypeProviderUpdate:
+				updateMsg := types.ProviderUpdateMessage{}
+				err := json.Unmarshal([]byte(notification.Payload), &updateMsg)
+				if err != nil {
+					m.Error().Err(err).Msg("error unmarshalling provider update message")
+					return err
+				}
+				if m.ProviderNotifyFunc != nil {
+					m.ProviderNotifyFunc(updateMsg.Payload)
+				}
 			default:
 				m.Error().Msgf("unknown message type: %s", msg.MessageType)
 			}
@@ -473,6 +484,20 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=18, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 19 {
+		m.Info().Msg("Upgrading to version 19")
+		if _, err := tx.ExecContext(ctx, `create table binding_providers (name text not null, version text not null default '', `+
+			`source_url text not null default '', checksums json, service_types json, created_by text not null default '', `+
+			`create_time `+system.MapDataType(m.dbType, "datetime")+`, update_time `+system.MapDataType(m.dbType, "datetime")+
+			`, PRIMARY KEY(name))`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=19, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}

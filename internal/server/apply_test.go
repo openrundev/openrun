@@ -1921,3 +1921,19 @@ func TestBuilderEditableAppOwner(t *testing.T) {
 		t.Fatal("expected denial for non-owner without grants")
 	}
 }
+
+func (b *applyTestServiceBinding) GetAccountEnv(ctx context.Context) ([]string, []string, error) {
+	return []string{"url", "url_direct"}, []string{}, nil
+}
+
+func (b *applyPendingGrantServiceBinding) GetAccountEnv(ctx context.Context) ([]string, []string, error) {
+	return []string{"url", "url_direct"}, []string{}, nil
+}
+
+func (b *applyAccountTrackingServiceBinding) GetAccountEnv(ctx context.Context) ([]string, []string, error) {
+	return []string{"url", "url_direct"}, []string{}, nil
+}
+
+func (b *grantLifecycleServiceBinding) GetAccountEnv(ctx context.Context) ([]string, []string, error) {
+	return []string{"url", "url_direct"}, []string{}, nil
+}
