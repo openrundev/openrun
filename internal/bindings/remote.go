@@ -5,12 +5,16 @@ package bindings
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-plugin"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/openrundev/openrun/pkg/binding"
 )
@@ -26,18 +30,66 @@ var remoteOwners = map[string]string{}
 // (which build binding instances but open no connections) spawn nothing.
 // Compiled-in bindings always win: registering a service type they serve is an
 // error, as is a type already registered by a different provider.
-func RegisterRemoteBinding(providerName, serviceType, execPath string) error {
-	initMutex.Lock()
-	defer initMutex.Unlock()
+// sha256Hex is the expected checksum of the executable, verified by go-plugin
+// before every launch; empty (dev providers) disables the check.
+func RegisterRemoteBinding(providerName, serviceType, execPath, sha256Hex string) error {
+	registryMutex.Lock()
+	defer registryMutex.Unlock()
 	if owner, ok := remoteOwners[serviceType]; ok && owner != providerName {
 		return fmt.Errorf("service type %s is already served by provider %s", serviceType, owner)
 	}
-	if _, ok := ServiceBindings[serviceType]; ok && remoteOwners[serviceType] == "" {
+	if _, ok := serviceBindings[serviceType]; ok && remoteOwners[serviceType] == "" {
 		return fmt.Errorf("service type %s is served by a built-in binding", serviceType)
 	}
 	remoteOwners[serviceType] = providerName
-	ServiceBindings[serviceType] = func() ServiceBinding {
-		return &remoteServiceBinding{serviceType: serviceType, execPath: execPath}
+	serviceBindings[serviceType] = func() ServiceBinding {
+		return &remoteServiceBinding{serviceType: serviceType, execPath: execPath, sha256Hex: sha256Hex}
+	}
+	return nil
+}
+
+// ProviderSecureConfig builds the go-plugin SecureConfig that verifies the
+// executable's sha256 before launch; nil when no checksum is available.
+func ProviderSecureConfig(sha256Hex string) (*plugin.SecureConfig, error) {
+	if sha256Hex == "" {
+		return nil, nil
+	}
+	sum, err := hex.DecodeString(sha256Hex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid provider checksum %q: %w", sha256Hex, err)
+	}
+	return &plugin.SecureConfig{Checksum: sum, Hash: sha256.New()}, nil
+}
+
+// ReplaceProviderBindings atomically replaces the named provider's
+// registrations: service types no longer served are removed, the given types
+// are registered with the new executable and checksum, all under one lock so
+// no caller ever observes a half-registered provider. Conflicts (built-in
+// types, types owned by another provider) fail the whole call before any
+// change is made.
+func ReplaceProviderBindings(providerName string, serviceTypes []string, execPath, sha256Hex string) error {
+	registryMutex.Lock()
+	defer registryMutex.Unlock()
+	for _, serviceType := range serviceTypes {
+		if owner, ok := remoteOwners[serviceType]; ok && owner != providerName {
+			return fmt.Errorf("service type %s is already served by provider %s", serviceType, owner)
+		}
+		if _, ok := serviceBindings[serviceType]; ok && remoteOwners[serviceType] == "" {
+			return fmt.Errorf("service type %s is served by a built-in binding", serviceType)
+		}
+	}
+	for serviceType, owner := range remoteOwners {
+		if owner == providerName && !slices.Contains(serviceTypes, serviceType) {
+			delete(remoteOwners, serviceType)
+			delete(serviceBindings, serviceType)
+		}
+	}
+	for _, serviceType := range serviceTypes {
+		st := serviceType
+		remoteOwners[st] = providerName
+		serviceBindings[st] = func() ServiceBinding {
+			return &remoteServiceBinding{serviceType: st, execPath: execPath, sha256Hex: sha256Hex}
+		}
 	}
 	return nil
 }
@@ -45,12 +97,12 @@ func RegisterRemoteBinding(providerName, serviceType, execPath string) error {
 // UnregisterProviderBindings removes all service types registered by the named
 // provider. Compiled-in bindings are never unregistered.
 func UnregisterProviderBindings(providerName string) {
-	initMutex.Lock()
-	defer initMutex.Unlock()
+	registryMutex.Lock()
+	defer registryMutex.Unlock()
 	for serviceType, owner := range remoteOwners {
 		if owner == providerName {
 			delete(remoteOwners, serviceType)
-			delete(ServiceBindings, serviceType)
+			delete(serviceBindings, serviceType)
 		}
 	}
 }
@@ -61,15 +113,19 @@ func UnregisterProviderBindings(providerName string) {
 // Error handling contract: application-level failures cross the wire in
 // response payloads and surface as *binding.ProviderError; any other error is
 // a transport failure (the provider crashed or broke protocol). Transport
-// failures after a successful InitializeService are retried once after
-// respawning the provider and replaying InitializeService. This matters for
-// rollback: bindingAccountManager calls DeleteArtifact/RevokeGrants on the
-// same instance that did the work, and the provider having crashed is the
-// likely reason a rollback is running at all — without the respawn, artifacts
-// would leak on the target service.
+// failures are retried (respawn + replay InitializeService + retry once) only
+// for the idempotent compensation operations, DeleteArtifact and RevokeGrants:
+// bindingAccountManager calls them on the same instance that did the work, and
+// the provider having crashed is the likely reason a rollback is running at
+// all — without the respawn, artifacts would leak on the target service.
+// Non-idempotent operations (GenerateAccount, ApplyGrants, RunCommand) fail
+// fast instead: a crash after the operation executed on the service but before
+// the response arrived must not execute it a second time.
 type remoteServiceBinding struct {
 	serviceType string
 	execPath    string
+	// sha256Hex is verified against the executable before every launch.
+	sha256Hex string
 
 	mu       sync.Mutex
 	logger   *types.Logger
@@ -87,10 +143,15 @@ func (b *remoteServiceBinding) launch() (*binding.Provider, error) {
 	if b.logger != nil && b.logger.Logger != nil {
 		logLevel = strings.ToUpper(b.logger.GetLevel().String())
 	}
+	secureConfig, err := ProviderSecureConfig(b.sha256Hex)
+	if err != nil {
+		return nil, err
+	}
 	return binding.LaunchProvider(binding.LaunchConfig{
-		ExecPath: b.execPath,
-		Logger:   NewProviderHCLogger(b.logger, b.serviceType),
-		LogLevel: logLevel,
+		ExecPath:     b.execPath,
+		Logger:       NewProviderHCLogger(b.logger, b.serviceType),
+		LogLevel:     logLevel,
+		SecureConfig: secureConfig,
 	})
 }
 
@@ -156,11 +217,13 @@ func (b *remoteServiceBinding) CloseService(ctx context.Context) error {
 	return err
 }
 
-// call invokes fn against the running provider. On a transport failure it
-// respawns the provider, replays InitializeService, and retries fn once.
-// Application errors (*binding.ProviderError) are returned as-is, unwrapped to
-// a plain error string so callers and logs see the provider's message.
-func (b *remoteServiceBinding) call(ctx context.Context, fn func(p *binding.Provider) error) error {
+// call invokes fn against the running provider. Application errors
+// (*binding.ProviderError) are returned as-is. On a transport failure,
+// idempotent operations (retryable=true) respawn the provider, replay
+// InitializeService, and retry fn once; non-idempotent operations return the
+// transport error without retrying, since the operation may already have
+// executed on the service.
+func (b *remoteServiceBinding) call(ctx context.Context, retryable bool, fn func(p *binding.Provider) error) error {
 	b.mu.Lock()
 	provider := b.provider
 	initialized := b.initialized
@@ -172,6 +235,15 @@ func (b *remoteServiceBinding) call(ctx context.Context, fn func(p *binding.Prov
 	err := fn(provider)
 	var providerError *binding.ProviderError
 	if err == nil || errors.As(err, &providerError) {
+		return err
+	}
+	if !retryable {
+		return err
+	}
+	if ctx.Err() != nil {
+		// The transport error came from the caller's context being cancelled
+		// or timing out; the provider is likely healthy, and a retry with the
+		// same context cannot succeed. Leave the process running.
 		return err
 	}
 
@@ -206,7 +278,7 @@ func (b *remoteServiceBinding) GenerateAccount(ctx context.Context, bindingId, b
 	derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, []Artifact, error) {
 	var account map[string]string
 	var artifacts []Artifact
-	err := b.call(ctx, func(p *binding.Provider) error {
+	err := b.call(ctx, false, func(p *binding.Provider) error {
 		var derivedFrom *binding.BindingMetadata
 		if derivedFromMetadata != nil {
 			m := metadataToSDK(*derivedFromMetadata)
@@ -221,7 +293,7 @@ func (b *remoteServiceBinding) GenerateAccount(ctx context.Context, bindingId, b
 }
 
 func (b *remoteServiceBinding) DeleteArtifact(ctx context.Context, artifact Artifact) error {
-	return b.call(ctx, func(p *binding.Provider) error {
+	return b.call(ctx, true, func(p *binding.Provider) error {
 		return p.DeleteArtifact(ctx, binding.Artifact{Type: binding.ArtifactType(artifact.Type), Name: artifact.Name})
 	})
 }
@@ -229,7 +301,7 @@ func (b *remoteServiceBinding) DeleteArtifact(ctx context.Context, artifact Arti
 func (b *remoteServiceBinding) ApplyGrants(ctx context.Context, account map[string]string,
 	bindingMetadata, derivedFromMetadata types.BindingMetadata, reapplyAll bool) (GrantApplyResult, error) {
 	var result GrantApplyResult
-	err := b.call(ctx, func(p *binding.Provider) error {
+	err := b.call(ctx, false, func(p *binding.Provider) error {
 		sdkResult, err := p.ApplyGrants(ctx, account, metadataToSDK(bindingMetadata), metadataToSDK(derivedFromMetadata), reapplyAll)
 		result = GrantApplyResult{
 			GrantsApplied:  grantsFromSDK(sdkResult.GrantsApplied),
@@ -243,14 +315,14 @@ func (b *remoteServiceBinding) ApplyGrants(ctx context.Context, account map[stri
 
 func (b *remoteServiceBinding) RevokeGrants(ctx context.Context, account map[string]string,
 	derivedFromMetadata types.BindingMetadata, revokes, regrants []types.BindingGrant) error {
-	return b.call(ctx, func(p *binding.Provider) error {
+	return b.call(ctx, true, func(p *binding.Provider) error {
 		return p.RevokeGrants(ctx, account, metadataToSDK(derivedFromMetadata), grantsToSDK(revokes), grantsToSDK(regrants))
 	})
 }
 
 func (b *remoteServiceBinding) RunCommand(ctx context.Context, bindingMetadata types.BindingMetadata, command string) (map[string]any, error) {
 	var result map[string]any
-	err := b.call(ctx, func(p *binding.Provider) error {
+	err := b.call(ctx, false, func(p *binding.Provider) error {
 		var err error
 		result, err = p.RunCommand(ctx, metadataToSDK(bindingMetadata), command)
 		return err

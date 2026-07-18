@@ -86,9 +86,9 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 	}
 	service.CreatedBy = system.GetContextUserId(ctx)
 
-	builder, ok := bindings.ServiceBindings[service.ServiceType]
-	if !ok {
-		return fmt.Errorf("unknown service type: %s", service.ServiceType)
+	builder, err := s.resolveServiceBinding(ctx, service.ServiceType)
+	if err != nil {
+		return err
 	}
 
 	serviceBinding := builder()
@@ -449,12 +449,11 @@ func (s *Server) enforceServiceBind(ctx context.Context, tx types.Transaction, s
 }
 
 func (s *Server) getServiceBinding(ctx context.Context, service *types.Service, binding *types.Binding) (bindings.ServiceBinding, error) {
-	builder, ok := bindings.ServiceBindings[service.ServiceType]
-	if !ok {
-		return nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
+	builder, err := s.resolveServiceBinding(ctx, service.ServiceType)
+	if err != nil {
+		return nil, err
 	}
 
-	var err error
 	serviceBinding := builder()
 	if err = serviceBinding.InitializeService(ctx, s.Logger, service.Config, s.serviceBindingRuntime()); err != nil {
 		return nil, fmt.Errorf("error initializing service: %w", err)
@@ -552,8 +551,8 @@ func (m *bindingAccountManager) getServiceBinding(ctx context.Context, service *
 // On dry run nothing is created and an empty account is returned.
 func (m *bindingAccountManager) generateAccount(ctx context.Context, service *types.Service, binding *types.Binding, derivedFrom *types.Binding,
 	isStaging, reapplyAll bool) (map[string]string, []types.BindingGrant, error) {
-	if _, ok := bindings.ServiceBindings[service.ServiceType]; !ok {
-		return nil, nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
+	if _, err := m.server.resolveServiceBinding(ctx, service.ServiceType); err != nil {
+		return nil, nil, err
 	}
 	if m.dryRun {
 		return nil, nil, nil
@@ -612,8 +611,8 @@ func (m *bindingAccountManager) generateAccount(ctx context.Context, service *ty
 // On dry run nothing is changed and the currently applied grants are returned.
 func (m *bindingAccountManager) applyGrants(ctx context.Context, service *types.Service, binding *types.Binding, derivedFrom *types.Binding,
 	isStaging bool, reapplyAll bool) ([]types.BindingGrant, error) {
-	if _, ok := bindings.ServiceBindings[service.ServiceType]; !ok {
-		return nil, fmt.Errorf("unknown service type: %s", service.ServiceType)
+	if _, err := m.server.resolveServiceBinding(ctx, service.ServiceType); err != nil {
+		return nil, err
 	}
 
 	metadata := binding.Metadata

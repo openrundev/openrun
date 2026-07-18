@@ -40,12 +40,12 @@ func TestRemoteBindingE2E(t *testing.T) {
 	execPath := buildFixtureProvider(t)
 	ctx := context.Background()
 
-	if err := RegisterRemoteBinding("test-fixture", "fixture", execPath); err != nil {
+	if err := RegisterRemoteBinding("test-fixture", "fixture", execPath, ""); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { UnregisterProviderBindings("test-fixture") })
 
-	builder, ok := ServiceBindings["fixture"]
+	builder, ok := GetServiceBinding("fixture")
 	if !ok {
 		t.Fatal("fixture service type not registered")
 	}
@@ -106,18 +106,39 @@ func TestRemoteBindingE2E(t *testing.T) {
 		t.Fatalf("expected fixture command failed, got %v", err)
 	}
 
-	// Crash recovery: the provider process exits mid-call; the adapter must
-	// respawn it, replay InitializeService and retry the call once.
+	// Crash on a non-idempotent operation: RunCommand must NOT be retried (a
+	// crash after execution but before the response must not run it twice), so
+	// the transport error surfaces to the caller.
 	marker := filepath.Join(t.TempDir(), "crash_marker")
-	result, err = serviceBinding.RunCommand(ctx, types.BindingMetadata{}, "crash_once:"+marker)
-	if err != nil {
-		t.Fatalf("expected crash recovery, got %v", err)
-	}
-	if result["recovered"] != true {
-		t.Fatalf("result = %v", result)
+	if _, err := serviceBinding.RunCommand(ctx, types.BindingMetadata{}, "crash_once:"+marker); err == nil {
+		t.Fatal("expected transport error for crashed non-idempotent RunCommand")
 	}
 	if _, err := os.Stat(marker); err != nil {
-		t.Fatal("crash marker missing: provider did not crash before recovering")
+		t.Fatal("crash marker missing: provider did not crash")
+	}
+
+	// The previous step left a dead provider process. DeleteArtifact is
+	// idempotent (the rollback compensation path), so the adapter must respawn
+	// the provider, replay InitializeService and retry — exactly the scenario
+	// the retry exists for: cleanup after a provider crash.
+	if err := serviceBinding.DeleteArtifact(ctx, Artifact{Type: ArtifactUser, Name: "fx_cleanup"}); err != nil {
+		t.Fatalf("expected respawn recovery for idempotent DeleteArtifact, got %v", err)
+	}
+
+	// Crash during the idempotent operation itself: first attempt crashes the
+	// healthy provider, the single retry runs on the respawned one and succeeds.
+	marker2 := filepath.Join(t.TempDir(), "crash_marker2")
+	if err := serviceBinding.DeleteArtifact(ctx, Artifact{Type: ArtifactUser, Name: "crash_once:" + marker2}); err != nil {
+		t.Fatalf("expected crash recovery for idempotent DeleteArtifact, got %v", err)
+	}
+	if _, err := os.Stat(marker2); err != nil {
+		t.Fatal("crash marker2 missing: provider did not crash during DeleteArtifact")
+	}
+
+	// After recovery the provider serves normal calls again.
+	result, err = serviceBinding.RunCommand(ctx, types.BindingMetadata{}, "echo:back")
+	if err != nil || result["echo"] != "back" {
+		t.Fatalf("post-recovery result = %v err = %v", result, err)
 	}
 
 	if err := serviceBinding.CloseService(ctx); err != nil {
@@ -149,27 +170,27 @@ func TestRemoteBindingInitFailure(t *testing.T) {
 // TestRegisterRemoteBindingConflicts verifies built-in bindings always win and
 // a service type cannot be claimed by two providers.
 func TestRegisterRemoteBindingConflicts(t *testing.T) {
-	if err := RegisterRemoteBinding("p1", "postgres", "/does/not/matter"); err == nil {
+	if err := RegisterRemoteBinding("p1", "postgres", "/does/not/matter", ""); err == nil {
 		t.Fatal("expected conflict with built-in postgres binding")
 	}
 
-	if err := RegisterRemoteBinding("p1", "conflict-type", "/p1"); err != nil {
+	if err := RegisterRemoteBinding("p1", "conflict-type", "/p1", ""); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { UnregisterProviderBindings("p1") })
-	if err := RegisterRemoteBinding("p2", "conflict-type", "/p2"); err == nil {
+	if err := RegisterRemoteBinding("p2", "conflict-type", "/p2", ""); err == nil {
 		t.Fatal("expected conflict between providers")
 	}
 	// Re-registration by the same provider (reconcile) is allowed.
-	if err := RegisterRemoteBinding("p1", "conflict-type", "/p1b"); err != nil {
+	if err := RegisterRemoteBinding("p1", "conflict-type", "/p1b", ""); err != nil {
 		t.Fatal(err)
 	}
 
 	UnregisterProviderBindings("p1")
-	if _, ok := ServiceBindings["conflict-type"]; ok {
+	if _, ok := GetServiceBinding("conflict-type"); ok {
 		t.Fatal("conflict-type still registered after unregister")
 	}
-	if _, ok := ServiceBindings["postgres"]; !ok {
+	if _, ok := GetServiceBinding("postgres"); !ok {
 		t.Fatal("built-in postgres binding must never be unregistered")
 	}
 }

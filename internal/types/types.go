@@ -504,6 +504,22 @@ type BindingsConfig struct {
 	// CacheDir is the node-local directory where installed provider
 	// executables are materialized from the metadata database.
 	CacheDir string `toml:"cache_dir"`
+	// ReleaseURLTemplate is the source url used by provider install when no
+	// source url is given. {provider}, {version}, {os} and {arch} are
+	// replaced. Point this at a mirror for restricted networks.
+	ReleaseURLTemplate string `toml:"release_url_template"`
+	// Install declares providers (name = version, or name =
+	// "version@sha256:HEX[,HEX...]" to pin accepted binary digests; list one
+	// per platform for mixed-architecture deployments) installed automatically at server
+	// startup from ReleaseURLTemplate. This is the declarative alternative to
+	// `openrun provider install`, for deployments managed through config
+	// (Kubernetes/Helm); providers listed here cannot be modified with the
+	// provider CLI. Removing an entry does not uninstall the provider: it
+	// stays installed and becomes manageable with the provider CLI.
+	Install map[string]string `toml:"install"`
+	// UnsafeAllowHTTP allows plain http:// provider source urls. Downloads over
+	// http can be tampered with in transit; enable only for isolated dev setups.
+	UnsafeAllowHTTP bool `toml:"unsafe_allow_http"`
 	// DevProviders registers a provider executable directly from a local path,
 	// bypassing database registration and checksum verification. Development
 	// use only; keys are provider names.
@@ -1255,9 +1271,12 @@ const (
 	PermissionContainerManage RBACPermission = "container:manage" // start/stop managed containers
 
 	// provider:* permissions are global (granted with target "all"): binding
-	// providers are deployment-wide plugin executables, not per-resource entries
+	// providers are deployment-wide plugin executables, not per-resource entries.
+	// provider:manage is deployment-admin level authority: installed provider
+	// binaries execute as the server user, with access to the server's config,
+	// secrets and (on Kubernetes) service account. Grant it like admin.
 	PermissionProviderRead   RBACPermission = "provider:read"   // list installed binding providers
-	PermissionProviderManage RBACPermission = "provider:manage" // install/uninstall binding providers
+	PermissionProviderManage RBACPermission = "provider:manage" // install/uninstall binding providers (RCE-equivalent, see above)
 
 	PermissionConfigBasicRead RBACPermission = "config:basic_read" // read non-sensitive config metadata (auth/git-auth entry names, specs, permission catalog); implied by config:read
 	PermissionConfigRead      RBACPermission = "config:read"
@@ -1423,6 +1442,9 @@ type ProviderInstallRequest struct {
 	// {os}/{arch} placeholders, or a local (server side) file path.
 	SourceURL string `json:"source_url"`
 	Version   string `json:"version"`
+	// Sha256 optionally pins the expected hex sha256 of the binary; the
+	// install fails before the binary is written or executed on a mismatch.
+	Sha256 string `json:"sha256"`
 }
 
 // Service is a service entry in the metadata database

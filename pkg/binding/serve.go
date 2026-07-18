@@ -14,6 +14,7 @@ import (
 
 	"github.com/hashicorp/go-plugin"
 	pb "github.com/openrundev/openrun/pkg/binding/proto"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -47,7 +48,10 @@ func Serve(config *ServeConfig) {
 		VersionedPlugins: map[int]plugin.PluginSet{
 			ProtocolVersion: {PluginName: &providerPlugin{srv: srv}},
 		},
-		GRPCServer: plugin.DefaultGRPCServer,
+		GRPCServer: func(opts []grpc.ServerOption) *grpc.Server {
+			opts = append(opts, grpc.MaxRecvMsgSize(MaxMessageSize), grpc.MaxSendMsgSize(MaxMessageSize))
+			return plugin.DefaultGRPCServer(opts)
+		},
 	})
 }
 

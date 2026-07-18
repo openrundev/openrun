@@ -19,6 +19,11 @@ const ProtocolVersion = 1
 // PluginName is the go-plugin dispense name for the binding provider plugin.
 const PluginName = "binding"
 
+// MaxMessageSize is the gRPC send/receive message limit on both sides of the
+// provider connection. It bounds RunCommand results: a command returning more
+// than this fails with a transport error instead of unbounded growth.
+const MaxMessageSize = 64 * 1024 * 1024
+
 // Handshake is the go-plugin handshake shared by the server and providers. The
 // magic cookie is a sanity check that the launched executable is a binding
 // provider, not a security measure.

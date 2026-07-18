@@ -242,15 +242,15 @@ func registerExportTestService(t *testing.T, db interface {
 	CreateService(context.Context, types.Transaction, *types.Service) error
 }, ctx context.Context, serviceName string) {
 	t.Helper()
-	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["applytest"]
-	bindings.ServiceBindings["applytest"] = func() bindings.ServiceBinding {
+	previousBuilder, hadPreviousBuilder := bindings.GetServiceBinding("applytest")
+	bindings.SetServiceBinding("applytest", func() bindings.ServiceBinding {
 		return &applyTestServiceBinding{}
-	}
+	})
 	t.Cleanup(func() {
 		if hadPreviousBuilder {
-			bindings.ServiceBindings["applytest"] = previousBuilder
+			bindings.SetServiceBinding("applytest", previousBuilder)
 		} else {
-			delete(bindings.ServiceBindings, "applytest")
+			bindings.SetServiceBinding("applytest", nil)
 		}
 	})
 

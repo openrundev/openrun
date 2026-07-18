@@ -9,10 +9,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,6 +28,10 @@ import (
 const (
 	providerDownloadTimeout = 5 * time.Minute
 	providerMaxDownloadSize = 512 * 1024 * 1024
+	// providerDescribeTimeout bounds the Describe RPC during install and
+	// startup registration, so a provider that handshakes but hangs cannot
+	// block server startup.
+	providerDescribeTimeout = 30 * time.Second
 )
 
 // providerPlatform is the "os/arch" key used in the provider checksums map.
@@ -50,20 +57,84 @@ func (s *Server) providerExecPath(name string) string {
 	return filepath.Join(s.providerCacheDir(), execName)
 }
 
-// expandProviderSourceURL substitutes the {version}, {os} and {arch}
-// placeholders in a provider source URL.
+// expandProviderSourceURL substitutes the {version}, {os}, {arch} and {ext}
+// placeholders in a provider source URL. {ext} is ".exe" on Windows and empty
+// elsewhere, matching the release asset naming.
 func expandProviderSourceURL(sourceURL, version string) string {
-	r := strings.NewReplacer("{version}", version, "{os}", runtime.GOOS, "{arch}", runtime.GOARCH)
+	ext := ""
+	if runtime.GOOS == "windows" {
+		ext = ".exe"
+	}
+	r := strings.NewReplacer("{version}", version, "{os}", runtime.GOOS, "{arch}", runtime.GOARCH, "{ext}", ext)
 	return r.Replace(sourceURL)
+}
+
+// defaultProviderReleaseURL is the release_url_template fallback when the
+// config entry is empty: the openrundev/bindings GitHub releases, whose
+// per-provider tags (name/vX.Y.Z) are url-encoded in the download path.
+const defaultProviderReleaseURL = "https://github.com/openrundev/bindings/releases/download/{provider}%2F{version}/openrun-binding-{provider}-{os}-{arch}{ext}"
+
+// parseProviderVersion splits a config install entry of the form "vX.Y.Z" or
+// "vX.Y.Z@sha256:HEX[,HEX...]" into version and the accepted digests. Multiple
+// digests support mixed-architecture deployments: each replica's download must
+// match one of them.
+func parseProviderVersion(entry string) (version string, sha256Hexes []string) {
+	version, digests, found := strings.Cut(entry, "@sha256:")
+	if !found {
+		return entry, nil
+	}
+	return version, splitDigests(digests)
+}
+
+// splitDigests splits a comma-separated digest list, trimming whitespace.
+func splitDigests(digests string) []string {
+	if digests == "" {
+		return nil
+	}
+	parts := strings.Split(digests, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
+}
+
+// digestMatches reports whether checksum is in the accepted digest set.
+func digestMatches(pins []string, checksum string) bool {
+	return slices.ContainsFunc(pins, func(pin string) bool {
+		return strings.EqualFold(pin, checksum)
+	})
+}
+
+// providerSourceURL returns the source url for a provider install: the
+// requested url, or the release url template with {provider} substituted
+// ({version}/{os}/{arch} stay, they are expanded per fetch). Installing from
+// the template requires an explicit version.
+func (s *Server) providerSourceURL(request *types.ProviderInstallRequest) (string, error) {
+	if request.SourceURL != "" {
+		return request.SourceURL, nil
+	}
+	if request.Version == "" {
+		return "", fmt.Errorf("either source_url or version is required")
+	}
+	template := s.staticConfig.Bindings.ReleaseURLTemplate
+	if template == "" {
+		template = defaultProviderReleaseURL
+	}
+	return strings.ReplaceAll(template, "{provider}", request.Name), nil
 }
 
 func isProviderURL(source string) bool {
 	return strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://")
 }
 
-// fetchProviderBinary reads the provider binary from an http(s) URL or a local
-// (server-side) file path, returning its contents and hex sha256.
-func fetchProviderBinary(ctx context.Context, source string) ([]byte, string, error) {
+// fetchProviderBinary reads the provider binary from an https URL or a local
+// (server-side) file path, returning its contents and hex sha256. Plain http
+// is refused unless bindings.unsafe_allow_http is set: the downloaded bytes
+// are executed as the server user, so a tamperable transport is not accepted.
+func (s *Server) fetchProviderBinary(ctx context.Context, source string) ([]byte, string, error) {
+	if strings.HasPrefix(source, "http://") && !s.staticConfig.Bindings.UnsafeAllowHTTP {
+		return nil, "", fmt.Errorf("plain http provider source %s is not allowed, use https (or set bindings.unsafe_allow_http for isolated dev setups)", source)
+	}
 	var data []byte
 	if isProviderURL(source) {
 		reqCtx, cancel := context.WithTimeout(ctx, providerDownloadTimeout)
@@ -99,36 +170,78 @@ func fetchProviderBinary(ctx context.Context, source string) ([]byte, string, er
 	return data, hex.EncodeToString(sum[:]), nil
 }
 
-// writeProviderBinary atomically writes the provider executable into the cache dir.
-func (s *Server) writeProviderBinary(name string, data []byte) (string, error) {
+// stageProviderBinary writes the provider executable to a unique staging path
+// in the cache dir. The staged file is validated (Describe) before it replaces
+// any previously working executable via promoteProviderBinary, so a failed
+// install or upgrade never destroys a working provider. Unique names also keep
+// concurrent installs of the same provider from clobbering each other.
+func (s *Server) stageProviderBinary(name string, data []byte) (string, error) {
 	cacheDir := s.providerCacheDir()
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return "", fmt.Errorf("error creating bindings cache dir %s: %w", cacheDir, err)
 	}
-	execPath := s.providerExecPath(name)
-	tmpPath := execPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o700); err != nil { //nolint:gosec // provider must be executable
-		return "", fmt.Errorf("error writing provider binary %s: %w", tmpPath, err)
+	staged, err := os.CreateTemp(cacheDir, ".staged-"+name+"-*")
+	if err != nil {
+		return "", fmt.Errorf("error creating staged provider file: %w", err)
 	}
-	if err := os.Rename(tmpPath, execPath); err != nil {
-		os.Remove(tmpPath) //nolint:errcheck
-		return "", fmt.Errorf("error renaming provider binary: %w", err)
+	stagedPath := staged.Name()
+	if _, err := staged.Write(data); err != nil {
+		staged.Close()        //nolint:errcheck
+		os.Remove(stagedPath) //nolint:errcheck
+		return "", fmt.Errorf("error writing staged provider binary: %w", err)
 	}
-	return execPath, nil
+	if err := staged.Close(); err != nil {
+		os.Remove(stagedPath) //nolint:errcheck
+		return "", fmt.Errorf("error writing staged provider binary: %w", err)
+	}
+	if err := os.Chmod(stagedPath, 0o700); err != nil { //nolint:gosec // provider must be executable
+		os.Remove(stagedPath) //nolint:errcheck
+		return "", err
+	}
+	return stagedPath, nil
+}
+
+// promoteProviderBinary moves a validated staged binary into its final path.
+func (s *Server) promoteProviderBinary(stagedPath, execPath string) error {
+	if runtime.GOOS == "windows" {
+		// Windows cannot rename over an existing file.
+		os.Remove(execPath) //nolint:errcheck
+	}
+	if err := os.Rename(stagedPath, execPath); err != nil {
+		os.Remove(stagedPath) //nolint:errcheck
+		return fmt.Errorf("error renaming provider binary: %w", err)
+	}
+	return nil
 }
 
 // describeProvider launches the provider executable and calls Describe,
-// returning the provider version and served service types.
-func (s *Server) describeProvider(ctx context.Context, execPath string) (string, []binding.ServiceTypeInfo, error) {
+// returning the provider version and served service types. sha256Hex, when
+// set, is verified against the executable before it runs.
+func (s *Server) describeProvider(ctx context.Context, execPath, sha256Hex string) (string, []binding.ServiceTypeInfo, error) {
+	secureConfig, err := bindings.ProviderSecureConfig(sha256Hex)
+	if err != nil {
+		return "", nil, err
+	}
 	provider, err := binding.LaunchProvider(binding.LaunchConfig{
-		ExecPath: execPath,
-		Logger:   bindings.NewProviderHCLogger(s.Logger, "describe"),
+		ExecPath:     execPath,
+		Logger:       bindings.NewProviderHCLogger(s.Logger, "describe"),
+		SecureConfig: secureConfig,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("error launching provider %s: %w", execPath, err)
 	}
 	defer provider.Kill()
-	return provider.Describe(ctx)
+	describeCtx, cancel := context.WithTimeout(ctx, providerDescribeTimeout)
+	defer cancel()
+	return provider.Describe(describeCtx)
+}
+
+// isConfigManagedProvider reports whether the provider is declared in the
+// [bindings.install] server config; those providers are managed through the
+// config and cannot be modified with the provider CLI/API.
+func (s *Server) isConfigManagedProvider(name string) bool {
+	_, ok := s.staticConfig.Bindings.Install[name]
+	return ok
 }
 
 // InstallProvider installs or updates an out-of-process binding provider: the
@@ -139,34 +252,70 @@ func (s *Server) InstallProvider(ctx context.Context, request *types.ProviderIns
 	if err := s.enforceGlobalPerm(ctx, types.PermissionProviderManage, ""); err != nil {
 		return nil, err
 	}
-	if request.Name == "" || request.SourceURL == "" {
-		return nil, fmt.Errorf("provider name and source url are required")
+	if s.isConfigManagedProvider(request.Name) {
+		return nil, fmt.Errorf("provider %s is managed through the [bindings.install] server config, update the config instead", request.Name)
+	}
+	return s.installProvider(ctx, request, system.GetContextUserId(ctx))
+}
+
+// installProvider is InstallProvider without the RBAC and config-managed
+// checks, also used by the startup path for [bindings.install] entries.
+func (s *Server) installProvider(ctx context.Context, request *types.ProviderInstallRequest, createdBy string) (*types.BindingProvider, error) {
+	s.providerMutex.Lock()
+	defer s.providerMutex.Unlock()
+	if request.Name == "" {
+		return nil, fmt.Errorf("provider name is required")
 	}
 	if strings.ContainsAny(request.Name, "/\\ ") {
 		return nil, fmt.Errorf("invalid provider name %q", request.Name)
 	}
+	sourceURL, err := s.providerSourceURL(request)
+	if err != nil {
+		return nil, err
+	}
+	// The (possibly defaulted) source url is what gets recorded in the
+	// database, so other replicas re-fetch from the same place.
+	request.SourceURL = sourceURL
 
 	source := expandProviderSourceURL(request.SourceURL, request.Version)
-	data, checksum, err := fetchProviderBinary(ctx, source)
+	data, checksum, err := s.fetchProviderBinary(ctx, source)
 	if err != nil {
 		return nil, err
 	}
-	execPath, err := s.writeProviderBinary(request.Name, data)
-	if err != nil {
-		return nil, err
+	if pins := splitDigests(request.Sha256); len(pins) > 0 && !digestMatches(pins, checksum) {
+		return nil, fmt.Errorf("provider %s checksum mismatch from %s: pinned %s got %s",
+			request.Name, source, request.Sha256, checksum)
 	}
 
-	providerVersion, serviceTypes, err := s.describeProvider(ctx, execPath)
+	// Stage and validate the binary before it replaces any previously working
+	// executable: a failed install or upgrade must not destroy a working
+	// provider.
+	stagedPath, err := s.stageProviderBinary(request.Name, data)
 	if err != nil {
-		os.Remove(execPath) //nolint:errcheck
+		return nil, err
+	}
+	removeStaged := true
+	defer func() {
+		if removeStaged {
+			os.Remove(stagedPath) //nolint:errcheck
+		}
+	}()
+
+	providerVersion, serviceTypes, err := s.describeProvider(ctx, stagedPath, checksum)
+	if err != nil {
 		return nil, fmt.Errorf("error describing provider: %w", err)
 	}
 	if len(serviceTypes) == 0 {
-		os.Remove(execPath) //nolint:errcheck
 		return nil, fmt.Errorf("provider %s serves no service types", request.Name)
 	}
 	if request.Version == "" {
 		request.Version = providerVersion
+	} else if providerVersion != "" && providerVersion != request.Version {
+		// A mislabeled artifact (or stale mirror) must not be recorded under
+		// the requested version: replicas would install different binaries
+		// under one DB version.
+		return nil, fmt.Errorf("provider %s version mismatch: requested %s but the binary reports %s",
+			request.Name, request.Version, providerVersion)
 	}
 
 	typeNames := make([]string, 0, len(serviceTypes))
@@ -180,7 +329,7 @@ func (s *Server) InstallProvider(ctx context.Context, request *types.ProviderIns
 		SourceURL:    request.SourceURL,
 		Checksums:    map[string]string{providerPlatform(): checksum},
 		ServiceTypes: typeNames,
-		CreatedBy:    system.GetContextUserId(ctx),
+		CreatedBy:    createdBy,
 	}
 
 	tx, err := s.db.BeginTransaction(ctx)
@@ -200,19 +349,38 @@ func (s *Server) InstallProvider(ctx context.Context, request *types.ProviderIns
 		provider.CreatedBy = existing.CreatedBy
 	}
 
+	// Reject service types claimed by another installed provider. This is a
+	// same-transaction read, so sequential conflicting installs from any
+	// replica are caught; simultaneous commits on different replicas are not
+	// (that needs a uniqueness constraint, tracked as a follow-up).
+	otherProviders, err := s.db.ListBindingProviders(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	for _, other := range otherProviders {
+		if other.Name == request.Name {
+			continue
+		}
+		for _, serviceType := range typeNames {
+			if slices.Contains(other.ServiceTypes, serviceType) {
+				return nil, fmt.Errorf("service type %s is already provided by %s", serviceType, other.Name)
+			}
+		}
+	}
+
 	if err := s.db.UpsertBindingProvider(ctx, tx, provider); err != nil {
-		os.Remove(execPath) //nolint:errcheck
 		return nil, err
 	}
 
-	// Register before commit so a registration conflict (e.g. a built-in
-	// service type) aborts the install.
-	for _, serviceType := range typeNames {
-		if err := bindings.RegisterRemoteBinding(request.Name, serviceType, execPath); err != nil {
-			bindings.UnregisterProviderBindings(request.Name)
-			os.Remove(execPath) //nolint:errcheck
-			return nil, err
-		}
+	// The binary is validated: move it into place and swap the registrations
+	// atomically (types dropped by this version are removed in the same swap).
+	execPath := s.providerExecPath(request.Name)
+	if err := s.promoteProviderBinary(stagedPath, execPath); err != nil {
+		return nil, err
+	}
+	removeStaged = false
+	if err := bindings.ReplaceProviderBindings(request.Name, typeNames, execPath, checksum); err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -233,6 +401,11 @@ func (s *Server) UninstallProvider(ctx context.Context, name string, force bool)
 	if err := s.enforceGlobalPerm(ctx, types.PermissionProviderManage, ""); err != nil {
 		return err
 	}
+	if s.isConfigManagedProvider(name) {
+		return fmt.Errorf("provider %s is managed through the [bindings.install] server config, remove it from the config instead", name)
+	}
+	s.providerMutex.Lock()
+	defer s.providerMutex.Unlock()
 
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
@@ -273,7 +446,9 @@ func (s *Server) UninstallProvider(ctx context.Context, name string, force bool)
 	return nil
 }
 
-// ListProviders returns the installed binding providers.
+// ListProviders returns the installed binding providers. Source url
+// credentials (userinfo of an authenticated mirror) are redacted: provider:read
+// holders must not learn mirror credentials.
 func (s *Server) ListProviders(ctx context.Context) ([]*types.BindingProvider, error) {
 	if err := s.enforceGlobalPerm(ctx, types.PermissionProviderRead, ""); err != nil {
 		return nil, err
@@ -283,7 +458,27 @@ func (s *Server) ListProviders(ctx context.Context) ([]*types.BindingProvider, e
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	return s.db.ListBindingProviders(ctx, tx)
+	providers, err := s.db.ListBindingProviders(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	for _, provider := range providers {
+		provider.SourceURL = redactURLCredentials(provider.SourceURL)
+	}
+	return providers, nil
+}
+
+// redactURLCredentials strips the userinfo from an http(s) url.
+func redactURLCredentials(source string) string {
+	if !isProviderURL(source) {
+		return source
+	}
+	u, err := url.Parse(source)
+	if err != nil || u.User == nil {
+		return source
+	}
+	u.User = url.User("xxxxx")
+	return u.String()
 }
 
 // setupBindingProviders is called during server startup: it registers dev
@@ -294,19 +489,31 @@ func (s *Server) ListProviders(ctx context.Context) ([]*types.BindingProvider, e
 func (s *Server) setupBindingProviders(ctx context.Context) {
 	for name, devConfig := range s.staticConfig.Bindings.DevProviders {
 		execPath := os.ExpandEnv(devConfig.Path)
-		version, serviceTypes, err := s.describeProvider(ctx, execPath)
+		version, serviceTypes, err := s.describeProvider(ctx, execPath, "")
 		if err != nil {
 			s.Error().Err(err).Str("provider", name).Str("path", execPath).Msg("error describing dev binding provider")
 			continue
 		}
 		for _, t := range serviceTypes {
-			if err := bindings.RegisterRemoteBinding("dev:"+name, t.ServiceType, execPath); err != nil {
+			if err := bindings.RegisterRemoteBinding("dev:"+name, t.ServiceType, execPath, ""); err != nil {
 				s.Error().Err(err).Str("provider", name).Msg("error registering dev binding provider")
 				continue
 			}
 		}
 		s.Warn().Str("provider", name).Str("path", execPath).Str("version", version).
 			Msg("Registered DEV binding provider from local path, checksum verification is disabled")
+	}
+
+	// Install providers declared in the config: the declarative path for
+	// config-managed (Kubernetes/Helm) deployments, where every replica runs
+	// this on startup. The install is skipped when the database row already
+	// matches the declared version; concurrent installs from replicas starting
+	// together are benign (same content, idempotent upsert).
+	for _, name := range slices.Sorted(maps.Keys(s.staticConfig.Bindings.Install)) {
+		version := s.staticConfig.Bindings.Install[name]
+		if err := s.ensureConfigProvider(ctx, name, version); err != nil {
+			s.Error().Err(err).Str("provider", name).Str("version", version).Msg("error installing config-declared binding provider")
+		}
 	}
 
 	tx, err := s.db.BeginTransaction(ctx)
@@ -327,12 +534,40 @@ func (s *Server) setupBindingProviders(ctx context.Context) {
 	}
 }
 
+// ensureConfigProvider installs one [bindings.install] entry if the database
+// does not already have it at the declared version. The following reconcile
+// pass materializes the binary into the local cache when needed.
+func (s *Server) ensureConfigProvider(ctx context.Context, name, entry string) error {
+	version, pins := parseProviderVersion(entry)
+
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return err
+	}
+	existing, getErr := s.db.GetBindingProvider(ctx, tx, name)
+	tx.Rollback() //nolint:errcheck
+	if getErr == nil && existing.Version == version {
+		// A changed digest pin forces a reinstall even at the same version.
+		if len(pins) == 0 || digestMatches(pins, existing.Checksums[providerPlatform()]) {
+			return nil
+		}
+	}
+
+	s.Info().Str("provider", name).Str("version", version).Msg("Installing config-declared binding provider")
+	_, err = s.installProvider(ctx, &types.ProviderInstallRequest{Name: name, Version: version, Sha256: strings.Join(pins, ",")}, "config")
+	return err
+}
+
 // reconcileProvider materializes one database-registered provider into the
 // local cache dir (verifying the recorded checksum) and registers its service
 // types.
 func (s *Server) reconcileProvider(ctx context.Context, provider *types.BindingProvider) error {
+	s.providerMutex.Lock()
+	defer s.providerMutex.Unlock()
 	execPath := s.providerExecPath(provider.Name)
 	expected, hasChecksum := provider.Checksums[providerPlatform()]
+	// verifiedSha is the checksum registrations verify at every launch.
+	verifiedSha := expected
 
 	current := ""
 	if data, err := os.ReadFile(execPath); err == nil {
@@ -344,7 +579,7 @@ func (s *Server) reconcileProvider(ctx context.Context, provider *types.BindingP
 		// Cache miss (new/updated provider, fresh node) or corrupted cache:
 		// re-fetch from the recorded source.
 		source := expandProviderSourceURL(provider.SourceURL, provider.Version)
-		data, checksum, err := fetchProviderBinary(ctx, source)
+		data, checksum, err := s.fetchProviderBinary(ctx, source)
 		if err != nil {
 			return err
 		}
@@ -371,18 +606,63 @@ func (s *Server) reconcileProvider(ctx context.Context, provider *types.BindingP
 				return err
 			}
 		}
-		if _, err := s.writeProviderBinary(provider.Name, data); err != nil {
+		stagedPath, err := s.stageProviderBinary(provider.Name, data)
+		if err != nil {
 			return err
 		}
+		if err := s.promoteProviderBinary(stagedPath, execPath); err != nil {
+			return err
+		}
+		verifiedSha = checksum
 	}
 
-	for _, serviceType := range provider.ServiceTypes {
-		if err := bindings.RegisterRemoteBinding(provider.Name, serviceType, execPath); err != nil {
-			return err
-		}
+	if err := bindings.ReplaceProviderBindings(provider.Name, provider.ServiceTypes, execPath, verifiedSha); err != nil {
+		return err
 	}
 	s.Debug().Str("provider", provider.Name).Str("version", provider.Version).Msg("Reconciled binding provider")
 	return nil
+}
+
+// resolveServiceBinding returns the builder for a service type. When the type
+// is not registered but an installed provider serves it — e.g. this replica
+// missed the pg_notify broadcast for an install — the provider is reconciled
+// on demand before failing.
+func (s *Server) resolveServiceBinding(ctx context.Context, serviceType string) (bindings.ServiceBindingBuilder, error) {
+	if builder, ok := bindings.GetServiceBinding(serviceType); ok {
+		return builder, nil
+	}
+	if s.reconcileForServiceType(ctx, serviceType) {
+		if builder, ok := bindings.GetServiceBinding(serviceType); ok {
+			return builder, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown service type: %s", serviceType)
+}
+
+// reconcileForServiceType reconciles the installed provider serving the given
+// service type, if there is one. Returns true when a reconcile ran successfully.
+func (s *Server) reconcileForServiceType(ctx context.Context, serviceType string) bool {
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return false
+	}
+	providers, err := s.db.ListBindingProviders(ctx, tx)
+	tx.Rollback() //nolint:errcheck
+	if err != nil {
+		return false
+	}
+	for _, provider := range providers {
+		if slices.Contains(provider.ServiceTypes, serviceType) {
+			s.Info().Str("provider", provider.Name).Str("service_type", serviceType).
+				Msg("Service type not registered, reconciling installed binding provider on demand")
+			if err := s.reconcileProvider(ctx, provider); err != nil {
+				s.Error().Err(err).Str("provider", provider.Name).Msg("error reconciling binding provider on demand")
+				return false
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // providerNotifyHandler handles provider update notifications from other

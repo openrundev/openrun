@@ -45,6 +45,15 @@ func (f *fixtureBinding) GenerateAccount(ctx context.Context, bindingId, binding
 }
 
 func (f *fixtureBinding) DeleteArtifact(ctx context.Context, artifact binding.Artifact) error {
+	// Crash the provider process the first time based on a marker file, like
+	// RunCommand's crash_once: used to verify idempotent operations recover
+	// through respawn.
+	if marker, ok := strings.CutPrefix(artifact.Name, "crash_once:"); ok {
+		if _, err := os.Stat(marker); err != nil {
+			_ = os.WriteFile(marker, []byte("crashed"), 0o600)
+			os.Exit(1)
+		}
+	}
 	return nil
 }
 

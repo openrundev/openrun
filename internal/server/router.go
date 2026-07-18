@@ -1409,8 +1409,11 @@ func (h *Handler) installProvider(r *http.Request) (any, error) {
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
-	if request.Name == "" || request.SourceURL == "" {
-		return nil, types.CreateRequestError("name and source_url are required", http.StatusBadRequest)
+	if request.Name == "" {
+		return nil, types.CreateRequestError("name is required", http.StatusBadRequest)
+	}
+	if request.SourceURL == "" && request.Version == "" {
+		return nil, types.CreateRequestError("either source_url or version is required", http.StatusBadRequest)
 	}
 
 	updateTargetInContext(r, request.Name, false)

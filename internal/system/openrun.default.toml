@@ -18,6 +18,21 @@ redirect_to_https = false # redirect HTTP to HTTPS
 # Out of process binding providers related config
 [bindings]
 cache_dir = "$OPENRUN_HOME/bindings" # node-local cache for installed binding provider executables
+# Source for provider install when no --source-url is given. {provider}, {version},
+# {os}, {arch} and {ext} (".exe" on Windows) are replaced. Point this at a mirror
+# for restricted networks.
+release_url_template = "https://github.com/openrundev/bindings/releases/download/{provider}%2F{version}/openrun-binding-{provider}-{os}-{arch}{ext}"
+unsafe_allow_http = false # allow plain http provider source urls. NOT RECOMMENDED:
+                          # the downloaded binaries run as the server user
+# Providers installed automatically at server startup, downloaded from
+# release_url_template. The declarative alternative to `openrun provider install`,
+# for config-managed (Kubernetes/Helm) deployments. Append @sha256:<hex>[,<hex>] to
+# pin the accepted binary digests (list one per platform for mixed-architecture
+# deployments). Removing an entry does not uninstall the provider; it stays
+# installed and becomes manageable with the provider CLI.
+# [bindings.install]
+# redis = "v0.1.0"
+# mongodb = "v0.1.0@sha256:8f4e..."
 # Development override, registers a provider executable directly from a local path:
 # [bindings.dev_providers.mongodb]
 # path = "/path/to/openrun-binding-mongodb"

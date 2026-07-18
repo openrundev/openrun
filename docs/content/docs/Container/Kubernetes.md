@@ -99,6 +99,24 @@ is the main config which enables Kubernetes mode. By default. Kaniko based build
 
 OpenRun service and Kaniko jobs run in the main namespace (default `openrun`). Applications are started in the `<main_ns>-apps` namespace (default `openrun-apps`), which is automatically created by the Helm chart. To clear all apps (including any volume data), run `kubectl delete namespace openrun-apps; kubectl create namespace openrun-apps`.
 
+## Binding Providers
+
+Out-of-process [binding providers](https://github.com/openrundev/bindings) (mongodb, redis, sqlserver, oracle) work on Kubernetes without any special setup: installed providers are registered in the metadata database (Postgres, required for Kubernetes installs), which is the source of truth. Each server replica materializes the provider executables into a node-local cache directory at startup, before serving traffic, and re-downloads them (with checksum verification) whenever a pod starts on a fresh node. Installs and uninstalls propagate to all replicas through Postgres notifications, so `openrun provider install` works on multi-replica deployments exactly as on a single server.
+
+For declarative, config-managed deployments, declare the providers in the server config instead of using the CLI:
+
+```toml {filename="openrun.toml"}
+[bindings.install]
+redis = "v0.1.0"
+mongodb = "v0.1.0"
+```
+
+Every replica installs the declared providers at startup, downloading them from `bindings.release_url_template` (the openrundev/bindings GitHub releases by default; point it at an internal mirror when the cluster restricts egress). Append `@sha256:<hex>` to a version to pin the binary digest, GitOps-style; the install fails before anything is written or executed if the download does not match. For mixed-architecture clusters, list one digest per platform separated by commas (`v0.1.0@sha256:<amd64-hex>,<arm64-hex>`); each replica's download must match one of them. Providers declared this way cannot be modified with the provider CLI; version upgrades are config changes followed by a rollout. Removing an entry does not uninstall the provider: it stays installed and becomes manageable with the provider CLI (`openrun provider uninstall`). Providers installed imperatively with `openrun provider install` can be used alongside config-declared ones.
+
+A replica that misses an install notification (for example after a transient database disconnect) recovers on demand: a binding operation against a service type that is installed but not yet registered triggers a reconcile of that provider before the operation proceeds.
+
+The provider processes run inside the OpenRun server pod, so a provider binary must run in the server container image; the published providers are static pure-Go binaries and need nothing beyond the stock image. Provider startup materialization completes before the server starts serving, so binding operations never race provider registration during a rollout.
+
 ## Architecture
 
 OpenRun is installed as a Kubernetes Deployment, with a Service for routing API calls. For each containerized app installed on OpenRun, a ClusterIP Service is created for app traffic. API calls to the OpenRun API Server are routed to the app-specific Service using its cluster IP.

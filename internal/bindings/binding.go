@@ -108,16 +108,40 @@ type ServiceBinding interface {
 
 type ServiceBindingBuilder func() ServiceBinding
 
+// serviceBindings maps service types to their binding builders. It is mutated
+// at runtime (provider install/uninstall/reconcile), so all access goes
+// through the registryMutex-guarded accessors below.
 var (
-	initMutex       sync.Mutex
-	ServiceBindings = map[string]ServiceBindingBuilder{}
+	registryMutex   sync.RWMutex
+	serviceBindings = map[string]ServiceBindingBuilder{}
 )
 
 // RegisterServiceBinding registers a service binding
 func RegisterServiceBinding(name string, serviceBindingBuilder ServiceBindingBuilder) {
-	initMutex.Lock()
-	defer initMutex.Unlock()
-	ServiceBindings[name] = serviceBindingBuilder
+	registryMutex.Lock()
+	defer registryMutex.Unlock()
+	serviceBindings[name] = serviceBindingBuilder
+}
+
+// GetServiceBinding returns the builder registered for a service type.
+func GetServiceBinding(name string) (ServiceBindingBuilder, bool) {
+	registryMutex.RLock()
+	defer registryMutex.RUnlock()
+	builder, ok := serviceBindings[name]
+	return builder, ok
+}
+
+// SetServiceBinding registers a builder for a service type, removing the
+// registration when builder is nil. Used by tests to install fakes and
+// restore the previous state.
+func SetServiceBinding(name string, builder ServiceBindingBuilder) {
+	registryMutex.Lock()
+	defer registryMutex.Unlock()
+	if builder == nil {
+		delete(serviceBindings, name)
+		return
+	}
+	serviceBindings[name] = builder
 }
 
 func verifyKeys(inputKeys []string, requiredKeys []string, optionalKeys []string) error {

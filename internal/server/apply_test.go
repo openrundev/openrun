@@ -252,15 +252,15 @@ func TestApplyCreatesDerivedBindingFromBaseCreatedInSameApply(t *testing.T) {
 	server, db, ctx := newApplyTestServer(t)
 	defer db.Close()
 
-	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["applytest"]
-	bindings.ServiceBindings["applytest"] = func() bindings.ServiceBinding {
+	previousBuilder, hadPreviousBuilder := bindings.GetServiceBinding("applytest")
+	bindings.SetServiceBinding("applytest", func() bindings.ServiceBinding {
 		return &applyTestServiceBinding{}
-	}
+	})
 	defer func() {
 		if hadPreviousBuilder {
-			bindings.ServiceBindings["applytest"] = previousBuilder
+			bindings.SetServiceBinding("applytest", previousBuilder)
 		} else {
-			delete(bindings.ServiceBindings, "applytest")
+			bindings.SetServiceBinding("applytest", nil)
 		}
 	}()
 
@@ -407,20 +407,20 @@ func TestBindingAccountManagerRollbackDeletesUncommittedArtifacts(t *testing.T) 
 	failAfterCreate := false
 	deletedArtifacts := []bindings.Artifact{}
 	closed := 0
-	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["accounttest"]
-	bindings.ServiceBindings["accounttest"] = func() bindings.ServiceBinding {
+	previousBuilder, hadPreviousBuilder := bindings.GetServiceBinding("accounttest")
+	bindings.SetServiceBinding("accounttest", func() bindings.ServiceBinding {
 		return &applyAccountTrackingServiceBinding{
 			generateCalls:    &generateCalls,
 			failAfterCreate:  &failAfterCreate,
 			deletedArtifacts: &deletedArtifacts,
 			closed:           &closed,
 		}
-	}
+	})
 	defer func() {
 		if hadPreviousBuilder {
-			bindings.ServiceBindings["accounttest"] = previousBuilder
+			bindings.SetServiceBinding("accounttest", previousBuilder)
 		} else {
-			delete(bindings.ServiceBindings, "accounttest")
+			bindings.SetServiceBinding("accounttest", nil)
 		}
 	}()
 
@@ -509,20 +509,20 @@ func TestCreateSyncEntryKeepsBindingAccountsAfterOuterCommit(t *testing.T) {
 	failAfterCreate := false
 	deletedArtifacts := []bindings.Artifact{}
 	closed := 0
-	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["syncaccounttest"]
-	bindings.ServiceBindings["syncaccounttest"] = func() bindings.ServiceBinding {
+	previousBuilder, hadPreviousBuilder := bindings.GetServiceBinding("syncaccounttest")
+	bindings.SetServiceBinding("syncaccounttest", func() bindings.ServiceBinding {
 		return &applyAccountTrackingServiceBinding{
 			generateCalls:    &generateCalls,
 			failAfterCreate:  &failAfterCreate,
 			deletedArtifacts: &deletedArtifacts,
 			closed:           &closed,
 		}
-	}
+	})
 	defer func() {
 		if hadPreviousBuilder {
-			bindings.ServiceBindings["syncaccounttest"] = previousBuilder
+			bindings.SetServiceBinding("syncaccounttest", previousBuilder)
 		} else {
-			delete(bindings.ServiceBindings, "syncaccounttest")
+			bindings.SetServiceBinding("syncaccounttest", nil)
 		}
 	}()
 
@@ -584,19 +584,19 @@ func TestReapplyPendingBindingGrantsAppliesOnlyCurrentPendingGrants(t *testing.T
 	grantAvailable := false
 	pendingApplyCalls := 0
 	reapplyAllCalls := 0
-	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["pendingtest"]
-	bindings.ServiceBindings["pendingtest"] = func() bindings.ServiceBinding {
+	previousBuilder, hadPreviousBuilder := bindings.GetServiceBinding("pendingtest")
+	bindings.SetServiceBinding("pendingtest", func() bindings.ServiceBinding {
 		return &applyPendingGrantServiceBinding{
 			grantAvailable:    &grantAvailable,
 			pendingApplyCalls: &pendingApplyCalls,
 			reapplyAllCalls:   &reapplyAllCalls,
 		}
-	}
+	})
 	defer func() {
 		if hadPreviousBuilder {
-			bindings.ServiceBindings["pendingtest"] = previousBuilder
+			bindings.SetServiceBinding("pendingtest", previousBuilder)
 		} else {
-			delete(bindings.ServiceBindings, "pendingtest")
+			bindings.SetServiceBinding("pendingtest", nil)
 		}
 	}()
 
@@ -833,15 +833,15 @@ func (b *grantLifecycleServiceBinding) RunCommand(context.Context, types.Binding
 func registerGrantLifecycleBinding(t *testing.T, server *Server, db *metadata.Metadata, ctx context.Context,
 	serviceType string, grants []string, grantCalls, revokeCalls, regrantCalls *[]string, revokeHook *func(context.Context)) {
 	t.Helper()
-	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings[serviceType]
-	bindings.ServiceBindings[serviceType] = func() bindings.ServiceBinding {
+	previousBuilder, hadPreviousBuilder := bindings.GetServiceBinding(serviceType)
+	bindings.SetServiceBinding(serviceType, func() bindings.ServiceBinding {
 		return &grantLifecycleServiceBinding{grantCalls: grantCalls, revokeCalls: revokeCalls, regrantCalls: regrantCalls, revokeHook: revokeHook}
-	}
+	})
 	t.Cleanup(func() {
 		if hadPreviousBuilder {
-			bindings.ServiceBindings[serviceType] = previousBuilder
+			bindings.SetServiceBinding(serviceType, previousBuilder)
 		} else {
-			delete(bindings.ServiceBindings, serviceType)
+			bindings.SetServiceBinding(serviceType, nil)
 		}
 	})
 
@@ -1072,20 +1072,20 @@ func TestCreateAppRollbackRemovesAutoBindingAccount(t *testing.T) {
 	failAfterCreate := false
 	deletedArtifacts := []bindings.Artifact{}
 	closed := 0
-	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["autoacct"]
-	bindings.ServiceBindings["autoacct"] = func() bindings.ServiceBinding {
+	previousBuilder, hadPreviousBuilder := bindings.GetServiceBinding("autoacct")
+	bindings.SetServiceBinding("autoacct", func() bindings.ServiceBinding {
 		return &applyAccountTrackingServiceBinding{
 			generateCalls:    &generateCalls,
 			failAfterCreate:  &failAfterCreate,
 			deletedArtifacts: &deletedArtifacts,
 			closed:           &closed,
 		}
-	}
+	})
 	defer func() {
 		if hadPreviousBuilder {
-			bindings.ServiceBindings["autoacct"] = previousBuilder
+			bindings.SetServiceBinding("autoacct", previousBuilder)
 		} else {
-			delete(bindings.ServiceBindings, "autoacct")
+			bindings.SetServiceBinding("autoacct", nil)
 		}
 	}()
 
@@ -1628,15 +1628,15 @@ func TestSyncRBACDisabledKillSwitch(t *testing.T) {
 // default service instance, for tests exercising bindings in apply files
 func registerApplyTestBinding(t *testing.T, db *metadata.Metadata, ctx context.Context) {
 	t.Helper()
-	previousBuilder, hadPreviousBuilder := bindings.ServiceBindings["applytest"]
-	bindings.ServiceBindings["applytest"] = func() bindings.ServiceBinding {
+	previousBuilder, hadPreviousBuilder := bindings.GetServiceBinding("applytest")
+	bindings.SetServiceBinding("applytest", func() bindings.ServiceBinding {
 		return &applyTestServiceBinding{}
-	}
+	})
 	t.Cleanup(func() {
 		if hadPreviousBuilder {
-			bindings.ServiceBindings["applytest"] = previousBuilder
+			bindings.SetServiceBinding("applytest", previousBuilder)
 		} else {
-			delete(bindings.ServiceBindings, "applytest")
+			bindings.SetServiceBinding("applytest", nil)
 		}
 	})
 

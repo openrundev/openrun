@@ -198,6 +198,10 @@ type Server struct {
 	approvalCacheGen atomic.Int64
 
 	stopRequested   chan struct{}
+	// providerMutex serializes binding provider installs, uninstalls and
+	// reconciles on this node: concurrent mutations of the same provider's
+	// binary and registrations must not interleave.
+	providerMutex sync.Mutex
 	stopRequestOnce sync.Once
 	stopOnce        sync.Once
 	stopErr         error

@@ -18,6 +18,7 @@ import (
 const (
 	SOURCE_URL_FLAG       = "source-url"
 	PROVIDER_VERSION_FLAG = "version"
+	SHA256_FLAG           = "sha256"
 )
 
 func initProviderCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -35,8 +36,9 @@ func initProviderCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 func providerInstallCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+2)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newStringFlag(SOURCE_URL_FLAG, "", "The provider binary source: an http(s) url (supports {version}, {os} and {arch} placeholders) or a server-local file path", ""))
-	flags = append(flags, newStringFlag(PROVIDER_VERSION_FLAG, "", "The provider version to install", ""))
+	flags = append(flags, newStringFlag(SOURCE_URL_FLAG, "", "The provider binary source: an http(s) url (supports {version}, {os} and {arch} placeholders) or a server-local file path. Defaults to the openrundev/bindings releases (configurable with bindings.release_url_template)", ""))
+	flags = append(flags, newStringFlag(PROVIDER_VERSION_FLAG, "", "The provider version to install. Required when no --source-url is given", ""))
+	flags = append(flags, newStringFlag(SHA256_FLAG, "", "Pin the accepted hex sha256 digests of the provider binary (comma-separated for multiple platforms); install fails on a mismatch", ""))
 
 	return &cli.Command{
 		Name:      "install",
@@ -47,9 +49,12 @@ func providerInstallCommand(commonFlags []cli.Flag, clientConfig *types.ClientCo
 
 The provider binary is downloaded (or copied), verified, registered in the
 metadata database and its service types become available for service create.
+Without --source-url, the binary is downloaded from the openrundev/bindings
+GitHub releases (or the configured bindings.release_url_template).
 
 Examples:
-  openrun provider install mongodb --source-url https://github.com/openrundev/openrun-bindings/releases/download/mongodb%2F{version}/openrun-binding-mongodb-{os}-{arch} --version v0.1.0
+  openrun provider install redis --version v0.1.0
+  openrun provider install mongodb --source-url https://github.com/openrundev/bindings/releases/download/mongodb%2F{version}/openrun-binding-mongodb-{os}-{arch} --version v0.1.0
   openrun provider install redis --source-url /tmp/openrun-binding-redis
 `,
 		Action: func(cCtx *cli.Context) error {
@@ -60,9 +65,10 @@ Examples:
 				Name:      cCtx.Args().First(),
 				SourceURL: cCtx.String(SOURCE_URL_FLAG),
 				Version:   cCtx.String(PROVIDER_VERSION_FLAG),
+				Sha256:    cCtx.String(SHA256_FLAG),
 			}
-			if request.SourceURL == "" {
-				return fmt.Errorf("--%s is required", SOURCE_URL_FLAG)
+			if request.SourceURL == "" && request.Version == "" {
+				return fmt.Errorf("either --%s or --%s is required", SOURCE_URL_FLAG, PROVIDER_VERSION_FLAG)
 			}
 
 			client := newHttpClient(clientConfig)

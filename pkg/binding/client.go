@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 	pb "github.com/openrundev/openrun/pkg/binding/proto"
+	"google.golang.org/grpc"
 )
 
 // Provider is a running provider process, launched by the OpenRun server.
@@ -52,6 +53,9 @@ func LaunchProvider(config LaunchConfig) (*Provider, error) {
 		AutoMTLS:         true,
 		Logger:           config.Logger,
 		SecureConfig:     config.SecureConfig,
+		GRPCDialOptions: []grpc.DialOption{
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxMessageSize), grpc.MaxCallSendMsgSize(MaxMessageSize)),
+		},
 	}
 
 	client := plugin.NewClient(clientConfig)
