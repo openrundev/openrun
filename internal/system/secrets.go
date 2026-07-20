@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"text/template/parse"
 	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -221,9 +222,17 @@ func (s *SecretManager) AppEvalTemplate(appSecrets [][]string, defaultProvider, 
 	funcMap["secret"] = secretFunc
 	funcMap["secret_from"] = secretFromFunc
 
+	// Plugin arguments are arbitrary user strings (chat messages, params
+	// holding code or template snippets): only strings that are real
+	// templates REFERENCING secrets are executed. Anything that does not
+	// parse, or parses without a secret/secret_from call, passes through
+	// literally instead of failing the plugin call
 	tmpl, err := template.New("secret template").Funcs(funcMap).Parse(input)
 	if err != nil {
-		return "", err
+		return input, nil
+	}
+	if !templateReferencesSecrets(tmpl) {
+		return input, nil
 	}
 	var doc bytes.Buffer
 	err = tmpl.Execute(&doc, nil)
@@ -231,6 +240,74 @@ func (s *SecretManager) AppEvalTemplate(appSecrets [][]string, defaultProvider, 
 		return "", err
 	}
 	return doc.String(), nil
+}
+
+// templateReferencesSecrets reports whether any action in the parsed
+// template calls the secret or secret_from function (in any position,
+// including nested pipelines and branch bodies)
+func templateReferencesSecrets(t *template.Template) bool {
+	for _, tm := range t.Templates() {
+		if tm.Tree == nil || tm.Root == nil {
+			continue
+		}
+		if nodeReferencesSecrets(tm.Root) {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeReferencesSecrets(node parse.Node) bool {
+	switch n := node.(type) {
+	case *parse.ListNode:
+		if n == nil {
+			return false
+		}
+		for _, item := range n.Nodes {
+			if nodeReferencesSecrets(item) {
+				return true
+			}
+		}
+	case *parse.ActionNode:
+		return pipeReferencesSecrets(n.Pipe)
+	case *parse.IfNode:
+		return branchReferencesSecrets(&n.BranchNode)
+	case *parse.RangeNode:
+		return branchReferencesSecrets(&n.BranchNode)
+	case *parse.WithNode:
+		return branchReferencesSecrets(&n.BranchNode)
+	case *parse.TemplateNode:
+		return pipeReferencesSecrets(n.Pipe)
+	}
+	return false
+}
+
+func branchReferencesSecrets(n *parse.BranchNode) bool {
+	if pipeReferencesSecrets(n.Pipe) || nodeReferencesSecrets(n.List) {
+		return true
+	}
+	return n.ElseList != nil && nodeReferencesSecrets(n.ElseList)
+}
+
+func pipeReferencesSecrets(pipe *parse.PipeNode) bool {
+	if pipe == nil {
+		return false
+	}
+	for _, cmd := range pipe.Cmds {
+		for _, arg := range cmd.Args {
+			switch a := arg.(type) {
+			case *parse.IdentifierNode:
+				if a.Ident == "secret" || a.Ident == "secret_from" {
+					return true
+				}
+			case *parse.PipeNode:
+				if pipeReferencesSecrets(a) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // secretProvider is an interface for secret providers

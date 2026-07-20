@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -181,6 +182,197 @@ func TestBuilderZipName(t *testing.T) {
 	for in, want := range cases {
 		if got := builderZipName(in); got != want {
 			t.Errorf("builderZipName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestValidateProfilePublish(t *testing.T) {
+	valid := [][2]string{
+		{"", ""},
+		{"subdomain", "apps.example.com"},
+		{"subdomain", "."},
+		{"subdomain", "apps."},
+		{"path", "/teams"},
+		{"glob", "/teams/*"},
+		{"glob", "example.com:/**"},
+	}
+	for _, pair := range valid {
+		if err := validateProfilePublish(pair[0], pair[1]); err != nil {
+			t.Errorf("mode %q target %q: unexpected error %v", pair[0], pair[1], err)
+		}
+	}
+	invalid := [][2]string{
+		{"", "/teams"},            // target without a mode
+		{"subdomain", ""},         // missing target
+		{"subdomain", "a.com:/x"}, // domain only
+		{"path", "teams"},         // must start with /
+		{"path", "/teams/*"},      // glob syntax in path mode
+		{"glob", ""},              // missing target
+		{"glob", "/teams/[x"},     // bad glob
+		{"somewhere", "/teams"},   // unknown mode
+	}
+	for _, pair := range invalid {
+		if err := validateProfilePublish(pair[0], pair[1]); err == nil {
+			t.Errorf("mode %q target %q: expected an error", pair[0], pair[1])
+		}
+	}
+}
+
+func TestBuilderCheckProfileTarget(t *testing.T) {
+	s := &Server{staticConfig: &types.ServerConfig{}}
+	s.staticConfig.System.DefaultDomain = "example.com"
+
+	check := func(mode, target, path string) error {
+		profile := &types.BuilderProfileConfig{Agent: "opencode", PublishMode: mode, PublishTarget: target}
+		appPathDomain, err := parseAppPath(path)
+		if err != nil {
+			t.Fatalf("parse %q: %v", path, err)
+		}
+		return s.builderCheckProfileTarget("prof", profile, appPathDomain)
+	}
+
+	// No mode: anywhere
+	if err := check("", "", "/anywhere"); err != nil {
+		t.Errorf("empty mode: %v", err)
+	}
+
+	// Subdomain: label under the target domain, path must be /
+	if err := check("subdomain", "apps.example.com", "my-app.apps.example.com:/"); err != nil {
+		t.Errorf("subdomain ok case: %v", err)
+	}
+	// trailing dot appends the default domain; "." alone is the default domain
+	if err := check("subdomain", "apps.", "my-app.apps.example.com:/"); err != nil {
+		t.Errorf("subdomain trailing dot: %v", err)
+	}
+	if err := check("subdomain", ".", "my-app.example.com:/"); err != nil {
+		t.Errorf("subdomain of default domain: %v", err)
+	}
+	for _, bad := range []string{"/plain-path", "apps.example.com:/", "my-app.other.com:/",
+		"my-app.apps.example.com:/sub"} {
+		if err := check("subdomain", "apps.example.com", bad); err == nil {
+			t.Errorf("subdomain: expected rejection of %q", bad)
+		}
+	}
+
+	// Path prefix: no domain, path under the prefix
+	if err := check("path", "/teams", "/teams/my-app"); err != nil {
+		t.Errorf("path ok case: %v", err)
+	}
+	for _, bad := range []string{"/teamsother/x", "/other/my-app", "d.com:/teams/x"} {
+		if err := check("path", "/teams", bad); err == nil {
+			t.Errorf("path: expected rejection of %q", bad)
+		}
+	}
+
+	// Glob: full match required
+	if err := check("glob", "/teams/*", "/teams/my-app"); err != nil {
+		t.Errorf("glob ok case: %v", err)
+	}
+	if err := check("glob", "/teams/*", "/other/my-app"); err == nil {
+		t.Error("glob: expected rejection outside the glob")
+	}
+}
+
+func TestBuilderSubdomainLabelValidation(t *testing.T) {
+	s := &Server{staticConfig: &types.ServerConfig{}}
+	s.staticConfig.System.DefaultDomain = "example.com"
+	profile := &types.BuilderProfileConfig{Agent: "opencode", PublishMode: "subdomain", PublishTarget: "."}
+	for _, bad := range []string{"some/path", "UPPER", "-lead", "trail-", "a_b", "dot..dot"} {
+		appPathDomain := types.AppPathDomain{Domain: bad + ".example.com", Path: "/"}
+		if err := s.builderCheckProfileTarget("prof", profile, appPathDomain); err == nil {
+			t.Errorf("expected rejection of subdomain label %q", bad)
+		}
+	}
+	for _, good := range []string{"my-app", "a", "team.my-app"} {
+		appPathDomain := types.AppPathDomain{Domain: good + ".example.com", Path: "/"}
+		if err := s.builderCheckProfileTarget("prof", profile, appPathDomain); err != nil {
+			t.Errorf("subdomain label %q: %v", good, err)
+		}
+	}
+}
+
+func TestBuilderResolvePath(t *testing.T) {
+	s := &Server{staticConfig: &types.ServerConfig{}}
+	s.staticConfig.System.DefaultDomain = "example.com"
+
+	resolved, pathDomain, err := s.builderResolvePath("my-app.:/")
+	if err != nil || resolved != "my-app.example.com:/" || pathDomain.Domain != "my-app.example.com" {
+		t.Errorf("relative domain not resolved: %q %+v %v", resolved, pathDomain, err)
+	}
+	resolved, _, err = s.builderResolvePath("my-app.other.com:/")
+	if err != nil || resolved != "my-app.other.com:/" {
+		t.Errorf("absolute domain changed: %q %v", resolved, err)
+	}
+	resolved, _, err = s.builderResolvePath("/plain/path")
+	if err != nil || resolved != "/plain/path" {
+		t.Errorf("plain path changed: %q %v", resolved, err)
+	}
+}
+
+// TestBuilderFirstPublishConflicts: a FIRST publish is rejected when an app
+// already exists at the target or the local source folder does; a republish
+// to the session's own path skips both checks. Relative (trailing ".")
+// domains are preserved in the returned path but resolved for the checks
+func TestBuilderFirstPublishConflicts(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+	server.staticConfig.System.DefaultDomain = "example.com"
+
+	// Create an app at /apps/taken (trusted, no RBAC)
+	applyPath := filepath.Join(t.TempDir(), "app.ace")
+	writeSyncApplyFile(t, applyPath, "/apps/taken")
+	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all",
+		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	server.apps.ResetAllAppCache()
+
+	session := &types.BuilderSession{Id: "bld_ses_x", Profile: ""}
+
+	// First publish onto an existing app: rejected
+	if _, _, err := server.builderCheckPublishPath(ctx, "/apps/taken", session); err == nil ||
+		!strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected app-exists conflict, got %v", err)
+	}
+	// Republish to the session's own path: allowed
+	session.PublishPath = "/apps/taken"
+	if _, _, err := server.builderCheckPublishPath(ctx, "/apps/taken", session); err != nil {
+		t.Fatalf("republish to own path rejected: %v", err)
+	}
+	session.PublishPath = ""
+
+	// Local source folder conflict (publish root is $OPENRUN_HOME/app_src)
+	home := t.TempDir()
+	t.Setenv("OPENRUN_HOME", home)
+	folder := filepath.Join(home, appSrcDir, builderSourceName(types.AppPathDomain{Path: "/apps/foldertaken"}))
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := server.builderCheckPublishPath(ctx, "/apps/foldertaken", session); err == nil ||
+		!strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected folder conflict, got %v", err)
+	}
+
+	// A relative-domain target is preserved in the returned path (portable
+	// apps.star declaration) while checks run against the resolved path
+	publishPath, appPathDomain, err := server.builderCheckPublishPath(ctx, "my-app.:/", session)
+	if err != nil {
+		t.Fatalf("relative target: %v", err)
+	}
+	if publishPath != "my-app.:/" || appPathDomain.Domain != "my-app." {
+		t.Fatalf("relative domain not preserved: %q %+v", publishPath, appPathDomain)
+	}
+}
+
+func TestValidateProfileServices(t *testing.T) {
+	for _, valid := range [][]string{nil, {}, {"defaults"}, {"postgres"}, {"postgres/main", "redis"}} {
+		if err := validateProfileServices(valid); err != nil {
+			t.Errorf("services %v: unexpected error %v", valid, err)
+		}
+	}
+	for _, invalid := range [][]string{{"defaults", "postgres"}, {""}, {"a b"}, {"a/b/c"}} {
+		if err := validateProfileServices(invalid); err == nil {
+			t.Errorf("services %v: expected an error", invalid)
 		}
 	}
 }

@@ -429,7 +429,6 @@ def handler(req):
 	</head>
 
 	<body>
-	  <h1>OpenRun: testApp</h1>
 	  ABC
 	</body>
 	</html>`

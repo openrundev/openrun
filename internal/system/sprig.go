@@ -4,6 +4,7 @@
 package system
 
 import (
+	htmltemplate "html/template"
 	"net/url"
 	"text/template"
 
@@ -19,5 +20,10 @@ func GetFuncMap() template.FuncMap {
 	funcMap["pathUnescape"] = url.PathUnescape
 	funcMap["queryEscape"] = url.QueryEscape
 	funcMap["queryUnescape"] = url.QueryUnescape
+	// safeHTML marks a handler-built string as pre-escaped markup, opting it
+	// out of html/template's contextual escaping (sprig has no equivalent).
+	// Apps that render server-side HTML (markdown previews, rich text) need
+	// it; any user input must be escaped while building the string
+	funcMap["safeHTML"] = func(s string) htmltemplate.HTML { return htmltemplate.HTML(s) }
 	return funcMap
 }

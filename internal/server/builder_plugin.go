@@ -42,6 +42,7 @@ func initBuilderPlugin(server *Server) {
 		app.CreatePluginApiName(c.StopSession, app.WRITE, "stop_session"),
 		app.CreatePluginApiName(c.ResumeSession, app.WRITE, "resume_session"),
 		app.CreatePluginApiName(c.DeleteSession, app.WRITE, "delete_session"),
+		app.CreatePluginApiName(c.CheckPublishPath, app.READ, "check_publish_path"),
 		app.CreatePluginApiName(c.PublishApp, app.WRITE, "publish_app"),
 		app.CreatePluginApiName(c.UnpublishApp, app.WRITE, "unpublish_app"),
 		app.CreatePluginApiName(c.VerifyConfig, app.WRITE, "verify_config"),
@@ -78,21 +79,35 @@ func (c *builderPlugin) requireSession(ctx context.Context, id string, perm type
 	return session, nil
 }
 
-func sessionToStarlark(session *types.BuilderSession) (starlark.Value, error) {
+func (c *builderPlugin) sessionToStarlark(session *types.BuilderSession) (starlark.Value, error) {
+	// The stored publish path may carry a relative (trailing ".") domain;
+	// app operations in the console need the path resolved on this instance
+	resolved := session.PublishPath
+	if session.PublishPath != "" {
+		if r, _, err := c.server.builderResolvePath(session.PublishPath); err == nil {
+			resolved = r
+		}
+	}
+	sessionServices := session.Services
+	if sessionServices == nil {
+		sessionServices = []string{}
+	}
 	return starlark_type.ConvertToStarlark(map[string]any{
-		"id":            session.Id,
-		"user_id":       session.UserID,
-		"name":          session.Name,
-		"spec":          session.Spec,
-		"agent":         session.Agent,
-		"preset":        session.Preset,
-		"edit_app":      session.EditApp,
-		"status":        string(session.Status),
-		"preview_path":  session.PreviewPath,
-		"publish_path":  session.PublishPath,
-		"create_time":   session.CreateTime.UTC().Format("2006-01-02T15:04:05Z"),
-		"update_time":   session.UpdateTime.UTC().Format("2006-01-02T15:04:05Z"),
-		"workspace_dir": session.WorkspaceDir,
+		"publish_path_resolved": resolved,
+		"services":              sessionServices,
+		"id":                    session.Id,
+		"user_id":               session.UserID,
+		"name":                  session.Name,
+		"spec":                  session.Spec,
+		"agent":                 session.Agent,
+		"profile":               session.Profile,
+		"edit_app":              session.EditApp,
+		"status":                string(session.Status),
+		"preview_path":          session.PreviewPath,
+		"publish_path":          session.PublishPath,
+		"create_time":           session.CreateTime.UTC().Format("2006-01-02T15:04:05Z"),
+		"update_time":           session.UpdateTime.UTC().Format("2006-01-02T15:04:05Z"),
+		"workspace_dir":         session.WorkspaceDir,
 	})
 }
 
@@ -121,7 +136,7 @@ func (c *builderPlugin) ListSessions(thread *starlark.Thread, builtin *starlark.
 	}
 	ret := starlark.List{}
 	for _, session := range sessions {
-		value, err := sessionToStarlark(session)
+		value, err := c.sessionToStarlark(session)
 		if err != nil {
 			return nil, err
 		}
@@ -140,7 +155,7 @@ func (c *builderPlugin) GetSession(thread *starlark.Thread, builtin *starlark.Bu
 	if err != nil {
 		return nil, err
 	}
-	return sessionToStarlark(session)
+	return c.sessionToStarlark(session)
 }
 
 // GetMessages returns the transcript: activity rows plus the live in-flight
@@ -313,18 +328,18 @@ func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starl
 	config := c.server.Config()
 	ctx := system.GetRequestContext(thread)
 
-	promptPreset := ""
+	sessionProfile := ""
 	editApp := ""
 	if sessionId.GoString() != "" {
 		session, err := c.requireSession(ctx, sessionId.GoString(), types.PermissionBuilderList)
 		if err != nil {
 			return nil, err
 		}
-		promptPreset = session.Preset
+		sessionProfile = session.Profile
 		editApp = session.EditApp
 	} else if err := c.server.enforceGlobalPerm(ctx, types.PermissionBuilderList, ""); err != nil {
 		// Without a session the result still exposes the configured git
-		// destinations, prompts and agent names, so require builder:list
+		// destinations, profiles and agent names, so require builder:list
 		return nil, err
 	}
 	var gitCfg types.BuilderGitConfig
@@ -343,7 +358,7 @@ func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starl
 		}
 	}
 	if !inPlaceEdit {
-		gitCfg, err = config.ResolveBuilderGit(promptPreset)
+		gitCfg, err = config.ResolveBuilderGit(sessionProfile)
 		if err != nil {
 			return nil, err
 		}
@@ -357,24 +372,56 @@ func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starl
 		agents = append(agents, name)
 	}
 	sort.Strings(agents)
-	publishPaths := make([]any, 0, len(config.BuilderPublish))
-	for _, name := range slices.Sorted(maps.Keys(config.BuilderPublish)) {
-		entry := config.BuilderPublish[name]
-		publishPaths = append(publishPaths, map[string]any{
-			"name":        name,
-			"path":        entry.Path,
-			"description": entry.Description,
+	// The session's publish restriction: its profile's publish mode/target
+	// (empty mode = anywhere). The subdomain target stays RAW - a trailing
+	// "." keeps the apps.star declaration relative so other instances can
+	// sync it under their own default_domain; the resolved form is returned
+	// separately for the dialog hint
+	sessionPublishMode := ""
+	sessionPublishTarget := ""
+	sessionPublishResolved := ""
+	sessionPublishDesc := ""
+	if _, profile, err := config.ResolveBuilderProfile(sessionProfile); err == nil && profile != nil {
+		sessionPublishMode = profile.PublishMode
+		sessionPublishTarget = profile.PublishTarget
+		sessionPublishDesc = profile.Description
+		if sessionPublishMode == "subdomain" {
+			if base, err := c.server.builderPublishBaseDomain(sessionPublishTarget); err == nil {
+				sessionPublishResolved = base
+			}
+		}
+	}
+	profiles := make([]any, 0, len(config.BuilderProfile))
+	for _, name := range slices.Sorted(maps.Keys(config.BuilderProfile)) {
+		entry := config.BuilderProfile[name]
+		profileServices := entry.Services
+		if profileServices == nil {
+			profileServices = []string{}
+		}
+		profiles = append(profiles, map[string]any{
+			"name":           name,
+			"description":    entry.Description,
+			"agent":          entry.Agent,
+			"git_config":     entry.GitConfig,
+			"publish_mode":   entry.PublishMode,
+			"publish_target": entry.PublishTarget,
+			"spec":           entry.Spec,
+			"replace":        entry.Replace,
+			"services":       profileServices,
 		})
 	}
-	prompts := make([]any, 0, len(config.BuilderPrompt))
-	for _, name := range slices.Sorted(maps.Keys(config.BuilderPrompt)) {
-		entry := config.BuilderPrompt[name]
-		prompts = append(prompts, map[string]any{
-			"name":        name,
-			"description": entry.Description,
-			"replace":     entry.Replace,
-			"git_config":  entry.GitConfig,
-		})
+	// Live services for the new-app Services checklist (offer computation
+	// happens in the console per selected profile)
+	allServices := []any{}
+	if serviceRows, err := c.server.ListServices(ctx, "", ""); err == nil {
+		for _, service := range serviceRows {
+			allServices = append(allServices, map[string]any{
+				"id":         service.ServiceType + "/" + service.Name,
+				"type":       service.ServiceType,
+				"name":       service.Name,
+				"is_default": service.IsDefault,
+			})
+		}
 	}
 	gitConfigs := make([]any, 0, len(config.BuilderGit))
 	for _, name := range slices.Sorted(maps.Keys(config.BuilderGit)) {
@@ -386,19 +433,22 @@ func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starl
 		})
 	}
 	return starlark_type.ConvertToStarlark(map[string]any{
-		"enabled":            config.AppBuilder.Enabled,
-		"mode":               mode,
-		"git_repo":           gitCfg.Repo,
-		"git_branch":         gitCfg.Branch,
-		"apps_file":          gitCfg.AppsFile,
-		"source_dir":         gitCfg.SourceDir,
-		"publish_paths":      publishPaths,
-		"preview_path":       config.AppBuilder.PreviewPath,
-		"default_agent":      config.AppBuilder.DefaultAgent,
-		"default_git_config": config.AppBuilder.DefaultGitConfig,
-		"git_configs":        gitConfigs,
-		"agents":             agents,
-		"prompts":            prompts,
+		"enabled":                 config.AppBuilder.Enabled,
+		"mode":                    mode,
+		"git_repo":                gitCfg.Repo,
+		"git_branch":              gitCfg.Branch,
+		"apps_file":               gitCfg.AppsFile,
+		"source_dir":              gitCfg.SourceDir,
+		"publish_mode":            sessionPublishMode,
+		"publish_target":          sessionPublishTarget,
+		"publish_target_resolved": sessionPublishResolved,
+		"publish_desc":            sessionPublishDesc,
+		"preview_path":            config.AppBuilder.PreviewPath,
+		"default_builder_profile": config.AppBuilder.DefaultBuilderProfile,
+		"git_configs":             gitConfigs,
+		"all_services":            allServices,
+		"agents":                  agents,
+		"profiles":                profiles,
 	})
 }
 
@@ -433,10 +483,19 @@ func (c *builderPlugin) ListActivity(thread *starlark.Thread, builtin *starlark.
 }
 
 func (c *builderPlugin) CreateSession(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var name, prompt, spec, agent, promptPreset, editApp starlark.String
+	var name, prompt, profile, editApp starlark.String
+	var servicesList *starlark.List
 	if err := starlark.UnpackArgs("create_session", args, kwargs, "name", &name, "prompt", &prompt,
-		"spec?", &spec, "agent?", &agent, "prompt_preset?", &promptPreset, "edit_app?", &editApp); err != nil {
+		"profile?", &profile, "edit_app?", &editApp, "services?", &servicesList); err != nil {
 		return nil, err
+	}
+	services := []string{}
+	if servicesList != nil {
+		for entry := range servicesList.Elements() {
+			if str, ok := starlark.AsString(entry); ok {
+				services = append(services, str)
+			}
+		}
 	}
 	ctx := system.GetRequestContext(thread)
 	userID := system.GetContextUserId(ctx)
@@ -444,11 +503,11 @@ func (c *builderPlugin) CreateSession(thread *starlark.Thread, builtin *starlark
 		return nil, err
 	}
 	session, err := c.server.builderCreateSession(ctx, userID, name.GoString(), prompt.GoString(),
-		spec.GoString(), agent.GoString(), promptPreset.GoString(), editApp.GoString())
+		profile.GoString(), editApp.GoString(), services)
 	if err != nil {
 		return nil, err
 	}
-	return sessionToStarlark(session)
+	return c.sessionToStarlark(session)
 }
 
 func (c *builderPlugin) SendMessage(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -548,6 +607,39 @@ func (c *builderPlugin) DeleteSession(thread *starlark.Thread, builtin *starlark
 		return nil, err
 	}
 	return starlark.None, nil
+}
+
+// CheckPublishPath validates a publish target for a session without
+// publishing: normalization, the profile's publish restriction and the app
+// RBAC permissions all run exactly as a real publish would. Returns the
+// normalized path and whether an app already exists there (a republish)
+func (c *builderPlugin) CheckPublishPath(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id, path starlark.String
+	if err := starlark.UnpackArgs("check_publish_path", args, kwargs, "id", &id, "path", &path); err != nil {
+		return nil, err
+	}
+	ctx := system.GetRequestContext(thread)
+	session, err := c.requireSession(ctx, id.GoString(), types.PermissionBuilderPublish)
+	if err != nil {
+		return nil, err
+	}
+	publishPath, _, err := c.server.builderCheckPublishPath(ctx, path.GoString(), session)
+	if err != nil {
+		return nil, err
+	}
+	resolvedPath, resolvedPathDomain, err := c.server.builderResolvePath(publishPath)
+	if err != nil {
+		return nil, err
+	}
+	_, exists, err := c.server.findAppInfo(resolvedPathDomain)
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(map[string]any{
+		"path":     publishPath,
+		"resolved": resolvedPath,
+		"exists":   exists,
+	})
 }
 
 func (c *builderPlugin) PublishApp(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

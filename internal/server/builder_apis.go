@@ -18,9 +18,13 @@ import (
 	"slices"
 	"strings"
 
+	"errors"
+
 	"github.com/go-git/go-git/v5"
+	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	gitobject "github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/openrundev/openrun/internal/builder"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/rbac"
@@ -51,9 +55,21 @@ func (s *Server) BuilderManager() *builder.Manager {
 }
 
 // builderCreateSession creates a session, seeding the workspace with the
-// spec's scaffold files (create) or the app's current source (edit).
-// editApp names a builder-published app this session modifies
-func (s *Server) builderCreateSession(ctx context.Context, userID, name, prompt, spec, agent, promptPreset, editApp string) (*types.BuilderSession, error) {
+// profile's spec scaffold files (create) or the app's current source (edit).
+// profileChoice names a [builder_profile.*] entry; empty resolves the
+// implicit default or the only configured profile. editApp names a
+// builder-published app this session modifies
+func (s *Server) builderCreateSession(ctx context.Context, userID, name, prompt, profileChoice, editApp string, services []string) (*types.BuilderSession, error) {
+	// The profile decides the spec scaffold (edit sessions inherit the
+	// app's spec instead)
+	_, profileCfg, err := s.Config().ChooseBuilderProfile(profileChoice)
+	if err != nil {
+		return nil, err
+	}
+	spec := ""
+	if profileCfg != nil {
+		spec = profileCfg.Spec
+	}
 	var editEntry *types.AppEntry
 	if editApp != "" {
 		entry, err := s.builderEditableApp(ctx, editApp)
@@ -65,6 +81,18 @@ func (s *Server) builderCreateSession(ctx context.Context, userID, name, prompt,
 		// The session inherits the app's spec; the workspace is seeded from
 		// the app source, not the spec scaffold
 		spec = string(entry.Metadata.Spec)
+		// Edit sessions MIRROR the app's auto-bound services on the preview
+		// (the app must work while being edited); the form offers no choice
+		services, err = s.builderMirrorServices(ctx, entry)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		var err error
+		services, err = s.builderResolveServices(ctx, profileCfg, services)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if editApp == "" && spec != "" {
 		if _, ok := appTypes[spec]; !ok {
@@ -112,7 +140,135 @@ func (s *Server) builderCreateSession(ctx context.Context, userID, name, prompt,
 		}
 		return nil
 	}
-	return s.builderManager.CreateSession(ctx, userID, name, prompt, spec, agent, promptPreset, editApp, seed)
+	return s.builderManager.CreateSession(ctx, userID, name, prompt, spec, builderSpecKind(spec), profileChoice,
+		editApp, services, seed)
+}
+
+// builderSpecKind classifies a spec's app shape for the session prompt: a
+// scaffold with a Containerfile is a full-container app (the agent works on
+// the framework code), anything else is the starlark template shape. Empty
+// spec returns empty - the prompt then carries the shape decision tree
+func builderSpecKind(spec string) string {
+	if spec == "" {
+		return ""
+	}
+	if _, ok := appTypes[spec]["Containerfile"]; ok {
+		return builder.SpecKindContainer
+	}
+	return builder.SpecKindStarlark
+}
+
+// builderResolveServices validates and normalizes the service choices for a
+// new session. Each choice must be offered by the profile (its services
+// list; "defaults" - and the implicit default profile - offers the default
+// service of every type; an empty list offers nothing), must exist, and the
+// caller must hold service:bind on it - the preview app is created later on
+// a trusted background context, so THIS is the authorization point. Auto
+// binding paths are keyed by service type, so at most one service per type
+// is allowed. Returns normalized type/name ids
+func (s *Server) builderResolveServices(ctx context.Context, profile *types.BuilderProfileConfig, choices []string) ([]string, error) {
+	if len(choices) == 0 {
+		return nil, nil
+	}
+	allowDefaults := profile == nil
+	allowed := map[string]bool{}
+	if profile != nil {
+		for _, entry := range profile.Services {
+			if entry == "defaults" {
+				allowDefaults = true
+			}
+			allowed[entry] = true
+		}
+	}
+
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	normalized := make([]string, 0, len(choices))
+	seenType := map[string]bool{}
+	for _, choice := range choices {
+		choice = strings.TrimSpace(choice)
+		if choice == "" {
+			continue
+		}
+		service, err := s.serviceForBindingSource(ctx, tx, choice)
+		if err != nil {
+			return nil, err
+		}
+		id := service.ServiceType + "/" + service.Name
+		// a bare-type profile entry offers the type's default service, as
+		// does the "defaults" sentinel for every type
+		offered := allowed[id] || (service.IsDefault && (allowDefaults || allowed[service.ServiceType]))
+		if !offered {
+			return nil, fmt.Errorf("service %s is not offered by the builder profile", id)
+		}
+		if seenType[service.ServiceType] {
+			return nil, fmt.Errorf("only one %s service can be bound: auto bindings are per service type", service.ServiceType)
+		}
+		seenType[service.ServiceType] = true
+		if err := s.enforceServiceBind(ctx, tx, service); err != nil {
+			return nil, err
+		}
+		normalized = append(normalized, id)
+	}
+	return normalized, nil
+}
+
+// builderMirrorServices returns the service sources of an app's auto
+// bindings (type/name ids), used to bind the same services on an edit
+// session's preview. Bindings attached by path (non-auto) are not mirrored.
+// The caller must hold service:bind on every mirrored service: the preview
+// attach provisions NEW accounts under the trusted background context, so
+// session create is the authorization point here exactly as it is for new
+// sessions (builderResolveServices) - app read/update on the edited app
+// does not by itself authorize provisioning on its services
+func (s *Server) builderMirrorServices(ctx context.Context, entry *types.AppEntry) ([]string, error) {
+	bindings, err := s.getAppBindings(ctx, types.Transaction{}, entry)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	services := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		if !strings.HasPrefix(binding.Path, autoBindingPathPrefix+"/") || binding.ServiceType == "" {
+			continue
+		}
+		id := binding.ServiceType + "/" + binding.ServiceName
+		service, err := s.serviceForBindingSource(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.enforceServiceBind(ctx, tx, service); err != nil {
+			return nil, err
+		}
+		services = append(services, id)
+	}
+	return services, nil
+}
+
+// validateProfileServices checks the shape of a builder profile services
+// list: "defaults" (the default service of every type) must stand alone;
+// other entries are service sources (type or type/name)
+func validateProfileServices(services []string) error {
+	for _, entry := range services {
+		if entry == "defaults" {
+			if len(services) > 1 {
+				return fmt.Errorf("services \"defaults\" must be the only entry")
+			}
+			continue
+		}
+		if entry == "" || strings.ContainsAny(entry, " \t") || strings.Count(entry, "/") > 1 {
+			return fmt.Errorf("invalid services entry %q: use a service type, type/name, or \"defaults\"", entry)
+		}
+	}
+	return nil
 }
 
 // isBuilderManaged reports whether the builder can republish an app in
@@ -143,6 +299,10 @@ func builderSourceName(appPathDomain types.AppPathDomain) string {
 }
 
 var builderNameSanitizer = regexp.MustCompile(`[^a-z0-9._-]`)
+
+// subdomainLabelRe: hostname labels for subdomain-mode publishes (dots allow
+// nested subdomains; each label alnum with inner dashes)
+var subdomainLabelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
 // builderEditableApp validates that editApp names an app builder edit
 // sessions support. Builder-managed apps (see isBuilderManaged) are edited
@@ -206,6 +366,11 @@ func (s *Server) builderTurnDone(sessionId string) {
 		IsDev:     true,
 		AppAuthn:  types.AppAuthnDefault,
 		Spec:      types.AppSpec(session.Spec),
+		// The session's chosen services auto-bind to the preview (staging
+		// accounts: dev app ids never see prod credentials). service:bind
+		// was enforced with the creator's grants at session create; this
+		// context is a trusted continuation
+		Bindings: session.Services,
 	}
 	if _, err := s.CreateApp(ctx, previewPath, false, false, appRequest); err != nil {
 		s.Warn().Err(err).Str("session", sessionId).Msg("Builder preview app creation failed")
@@ -238,12 +403,16 @@ func (s *Server) builderDeleteSession(ctx context.Context, sessionId, userID str
 
 // BuilderPublishResponse is the publish/unpublish result
 type BuilderPublishResponse struct {
-	Mode        string `json:"mode"` // git or local
-	PublishPath string `json:"publish_path"`
-	Source      string `json:"source"`
-	CommitSha   string `json:"commit_sha,omitempty"`
-	Repo        string `json:"repo,omitempty"`
-	Stanza      string `json:"stanza"`
+	// ResolvedPath is the publish path with a relative domain expanded to
+	// this instance's default_domain (equals PublishPath otherwise); app
+	// operations (open, promote, staged check) use it
+	ResolvedPath string `json:"resolved_path"`
+	Mode         string `json:"mode"` // git or local
+	PublishPath  string `json:"publish_path"`
+	Source       string `json:"source"`
+	CommitSha    string `json:"commit_sha,omitempty"`
+	Repo         string `json:"repo,omitempty"`
+	Stanza       string `json:"stanza"`
 }
 
 // builderPublish publishes a session's app: source copy + an app() stanza in
@@ -257,6 +426,17 @@ func (s *Server) builderPublish(ctx context.Context, sessionId, publishPath, com
 	}
 	if session.PreviewPath == "" {
 		return nil, fmt.Errorf("session has no preview app yet, the app must load before publishing")
+	}
+	// Publishing copies the workspace source, which must include the *_gen
+	// template files the preview dev app generates on load. Load it now: a
+	// session published without the preview ever being opened used to ship a
+	// source missing them (the published app 500'd with "index_gen.go.html
+	// is undefined"). This also validates the app still loads before
+	// anything is written to git/disk
+	if previewPathDomain, err := parseAppPath(session.PreviewPath); err == nil {
+		if _, err := s.GetApp(ctx, previewPathDomain, true); err != nil {
+			return nil, fmt.Errorf("the workspace app does not load (fix it before publishing): %w", err)
+		}
 	}
 	var forkFrom *types.AppEntry
 	if session.EditApp != "" {
@@ -276,7 +456,15 @@ func (s *Server) builderPublish(ctx context.Context, sessionId, publishPath, com
 		forkFrom = origEntry
 	}
 
-	publishPath, appPathDomain, err := s.builderCheckPublishPath(ctx, publishPath)
+	publishPath, appPathDomain, err := s.builderCheckPublishPath(ctx, publishPath, session)
+	if err != nil {
+		return nil, err
+	}
+	// publishPath/appPathDomain keep a relative (trailing ".") domain for
+	// the portable identities (apps.star declaration, marker block, source
+	// folder, session publish path); resolvedPath targets the real app on
+	// this instance
+	resolvedPath, resolvedPathDomain, err := s.builderResolvePath(publishPath)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +473,7 @@ func (s *Server) builderPublish(ctx context.Context, sessionId, publishPath, com
 	}
 
 	appName := builderSourceName(appPathDomain)
-	gitCfg, err := config.ResolveBuilderGit(session.Preset)
+	gitCfg, err := config.ResolveBuilderGit(session.Profile)
 	if err != nil {
 		return nil, err
 	}
@@ -311,11 +499,12 @@ func (s *Server) builderPublish(ctx context.Context, sessionId, publishPath, com
 		return nil, err
 	}
 
-	response := &BuilderPublishResponse{PublishPath: publishPath, Source: sourceUrl, Stanza: stanza}
+	response := &BuilderPublishResponse{PublishPath: publishPath, ResolvedPath: resolvedPath, Source: sourceUrl, Stanza: stanza}
 	if gitMode {
 		response.Mode = "git"
 		response.Repo = gitCfg.Repo
-		sha, err := s.builderPublishGit(ctx, session, gitCfg, appName, publishPath, stanza, commitMsg, true, false)
+		firstPublish := session.PublishPath == "" || publishPath != session.PublishPath
+		sha, err := s.builderPublishGit(ctx, session, gitCfg, appName, publishPath, stanza, commitMsg, true, firstPublish, false)
 		if err != nil {
 			return nil, err
 		}
@@ -323,16 +512,16 @@ func (s *Server) builderPublish(ctx context.Context, sessionId, publishPath, com
 	} else {
 		response.Mode = "local"
 		// A local publish creates and approves the app in one step
-		if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPathDomain, ""); err != nil {
+		if err := s.enforceAppPerm(ctx, types.PermissionApprove, resolvedPathDomain, ""); err != nil {
 			return nil, err
 		}
-		if err := s.builderPublishLocal(ctx, session, gitCfg, appName, publishPath, stanza); err != nil {
+		if err := s.builderPublishLocal(ctx, session, gitCfg, appName, publishPath, resolvedPath, stanza); err != nil {
 			return nil, err
 		}
 		// Mark the created app as builder-published: the flag gates edit
 		// sessions. Apply updates merge metadata, so the flag sticks
-		if err := s.setBuilderPublished(ctx, appPathDomain); err != nil {
-			s.Warn().Err(err).Msgf("Error setting builder-published flag on %s", publishPath)
+		if err := s.setBuilderPublished(ctx, resolvedPathDomain); err != nil {
+			s.Warn().Err(err).Msgf("Error setting builder-published flag on %s", resolvedPath)
 		}
 	}
 
@@ -388,7 +577,7 @@ func (s *Server) builderRepublishEdit(ctx context.Context, session *types.Builde
 	if commitMsg == "" {
 		commitMsg = "Update app source for " + publishPath
 	}
-	response := &BuilderPublishResponse{PublishPath: publishPath, Source: entry.SourceUrl}
+	response := &BuilderPublishResponse{PublishPath: publishPath, ResolvedPath: publishPath, Source: entry.SourceUrl}
 
 	localRoot := filepath.Join(os.ExpandEnv("$OPENRUN_HOME"), appSrcDir)
 	if strings.HasPrefix(entry.SourceUrl, localRoot+string(filepath.Separator)) {
@@ -422,7 +611,7 @@ func (s *Server) builderRepublishEdit(ctx context.Context, session *types.Builde
 		}
 		response.Mode = "git"
 		response.Repo = gitCfg.Repo
-		sha, err := s.builderPublishGit(ctx, session, gitCfg, appName, publishPath, "", commitMsg, false /*updateAppsFile*/, false)
+		sha, err := s.builderPublishGit(ctx, session, gitCfg, appName, publishPath, "", commitMsg, false /*updateAppsFile*/, false /*firstPublish*/, false)
 		if err != nil {
 			return nil, err
 		}
@@ -496,9 +685,19 @@ func (s *Server) setBuilderPublished(ctx context.Context, appPathDomain types.Ap
 	return tx.Commit()
 }
 
-// builderCheckPublishPath validates the target path against the configured
-// publish_paths globs and the caller's app:create authorization
-func (s *Server) builderCheckPublishPath(ctx context.Context, publishPath string) (string, types.AppPathDomain, error) {
+// builderCheckPublishPath validates the target path against the session
+// profile's publish restriction, the caller's app RBAC authorization, and -
+// for a FIRST publish to the path - conflicts with an existing app or a
+// previously published source folder (a republish to the session's own path
+// skips the conflict checks). A nil session allows any path - RBAC still
+// gates.
+//
+// The returned path/appPathDomain keep a RELATIVE domain (trailing ".")
+// as typed: the apps.star declaration and the session's publish path stay
+// portable across instances with different default_domain settings; the
+// resolved (expanded) domain is used only for the RBAC and existence checks
+// on this instance
+func (s *Server) builderCheckPublishPath(ctx context.Context, publishPath string, session *types.BuilderSession) (string, types.AppPathDomain, error) {
 	// Normalize only the path component: targets may be domain qualified
 	// (example.com:/teams/app), and the domain must survive normalization
 	target := strings.TrimSpace(publishPath)
@@ -507,7 +706,9 @@ func (s *Server) builderCheckPublishPath(ctx context.Context, publishPath string
 		domain, target = target[:idx], target[idx+1:]
 	}
 	target = "/" + strings.Trim(target, "/")
-	if target == "/" {
+	if target == "/" && domain == "" {
+		// A domain-qualified root path is a real target (subdomain-mode
+		// publishes land at <sub>.<domain>:/); a bare "/" is empty input
 		return "", types.AppPathDomain{}, fmt.Errorf("publish path is required")
 	}
 	if domain != "" {
@@ -518,23 +719,46 @@ func (s *Server) builderCheckPublishPath(ctx context.Context, publishPath string
 		return "", types.AppPathDomain{}, err
 	}
 	publishPath = appPathDomain.String()
+	resolvedPathDomain := appPathDomain
+	if resolvedPathDomain.Domain, err = s.normalizeRelativeDomain(appPathDomain.Domain, "domain"); err != nil {
+		return "", types.AppPathDomain{}, err
+	}
 
-	// No configured [builder_publish.*] entries means any path is allowed
-	// (RBAC still gates); with entries, the path must match one of them
-	publishEntries := s.Config().BuilderPublish
-	allowed := len(publishEntries) == 0
-	for entryName, entry := range publishEntries {
-		match, err := rbac.MatchGlob(entry.Path, appPathDomain)
+	firstPublish := session != nil && (session.PublishPath == "" || publishPath != session.PublishPath)
+
+	// The session profile's publish mode (when set) restricts where the
+	// session may publish. Republishing to the session's already-published
+	// path stays allowed even if the profile restriction changed since
+	if firstPublish {
+		_, profile, err := s.Config().ResolveBuilderProfile(session.Profile)
 		if err != nil {
-			return "", types.AppPathDomain{}, fmt.Errorf("invalid builder_publish.%s path %q: %w", entryName, entry.Path, err)
+			return "", types.AppPathDomain{}, err
 		}
-		if match {
-			allowed = true
-			break
+		if profile != nil {
+			if err := s.builderCheckProfileTarget(session.Profile, profile, resolvedPathDomain); err != nil {
+				return "", types.AppPathDomain{}, err
+			}
 		}
 	}
-	if !allowed {
-		return "", types.AppPathDomain{}, fmt.Errorf("path %s does not match any [builder_publish.*] entry", publishPath)
+
+	// A first publish must not silently take over an existing app or an
+	// already-published source folder; republishing the session's own path
+	// legitimately overwrites both
+	if firstPublish {
+		if _, exists, err := s.findAppInfo(resolvedPathDomain); err != nil {
+			return "", types.AppPathDomain{}, err
+		} else if exists {
+			return "", types.AppPathDomain{}, fmt.Errorf("an app already exists at %s; pick a different name", resolvedPathDomain.String())
+		}
+		// Local mode: the source folder from a previous publish (possibly by
+		// another session). Git mode is checked inside builderPublishGit
+		// against a fresh clone
+		if gitCfg, err := s.Config().ResolveBuilderGit(session.Profile); err == nil && gitCfg.Repo == "" {
+			destDir := filepath.Join(os.ExpandEnv("$OPENRUN_HOME"), appSrcDir, builderSourceName(appPathDomain))
+			if _, statErr := os.Stat(destDir); statErr == nil {
+				return "", types.AppPathDomain{}, fmt.Errorf("published source for %s already exists (%s); pick a different name", publishPath, destDir)
+			}
+		}
 	}
 
 	// The publish mutates the app at the target path (directly in local mode,
@@ -543,16 +767,129 @@ func (s *Server) builderCheckPublishPath(ctx context.Context, publishPath string
 	// owner rule) for a republish to an existing app
 	if s.rbacManager.APIEnforced(ctx) {
 		perm, owner := types.PermissionCreate, ""
-		if appInfo, ok, err := s.findAppInfo(appPathDomain); err != nil {
+		if appInfo, ok, err := s.findAppInfo(resolvedPathDomain); err != nil {
 			return "", types.AppPathDomain{}, err
 		} else if ok {
 			perm, owner = types.PermissionUpdate, appInfo.UserID
 		}
-		if err := s.enforceAppPerm(ctx, perm, appPathDomain, owner); err != nil {
+		if err := s.enforceAppPerm(ctx, perm, resolvedPathDomain, owner); err != nil {
 			return "", types.AppPathDomain{}, err
 		}
 	}
 	return publishPath, appPathDomain, nil
+}
+
+// builderCheckProfileTarget enforces a profile's publish restriction against
+// the (already normalized) target. See BuilderProfileConfig.PublishMode
+func (s *Server) builderCheckProfileTarget(profileName string, profile *types.BuilderProfileConfig,
+	appPathDomain types.AppPathDomain) error {
+	switch profile.PublishMode {
+	case "":
+		return nil
+	case "subdomain":
+		base, err := s.builderPublishBaseDomain(profile.PublishTarget)
+		if err != nil {
+			return fmt.Errorf("builder_profile.%s: %w", profileName, err)
+		}
+		if appPathDomain.Path != "/" {
+			return fmt.Errorf("the %s profile publishes apps as subdomains of %s: the path part must be / (got %s)",
+				profileName, base, appPathDomain.Path)
+		}
+		label, ok := strings.CutSuffix(appPathDomain.Domain, "."+base)
+		if !ok || label == "" {
+			return fmt.Errorf("the %s profile publishes apps as subdomains of %s (e.g. my-app.%s:/)",
+				profileName, base, base)
+		}
+		if !subdomainLabelRe.MatchString(label) {
+			return fmt.Errorf("invalid subdomain %q: lowercase letters, digits and '-' only", label)
+		}
+		return nil
+	case "path":
+		prefix := "/" + strings.Trim(profile.PublishTarget, "/")
+		if appPathDomain.Domain != "" {
+			return fmt.Errorf("the %s profile publishes apps under %s on the default domain (no domain prefix)",
+				profileName, prefix)
+		}
+		if appPathDomain.Path != prefix && !strings.HasPrefix(appPathDomain.Path, prefix+"/") {
+			return fmt.Errorf("the %s profile publishes apps under %s (e.g. %s/my-app)",
+				profileName, prefix, prefix)
+		}
+		return nil
+	case "glob":
+		match, err := rbac.MatchGlob(profile.PublishTarget, appPathDomain)
+		if err != nil {
+			return fmt.Errorf("invalid builder_profile.%s publish_target %q: %w",
+				profileName, profile.PublishTarget, err)
+		}
+		if !match {
+			return fmt.Errorf("path %s does not match the %s profile's publish destination %s",
+				appPathDomain.String(), profileName, profile.PublishTarget)
+		}
+		return nil
+	}
+	return fmt.Errorf("builder_profile.%s has unknown publish_mode %q", profileName, profile.PublishMode)
+}
+
+// builderPublishBaseDomain normalizes a subdomain-mode publish target: a
+// trailing "." appends system.default_domain ("." alone means the default
+// domain itself)
+func (s *Server) builderPublishBaseDomain(target string) (string, error) {
+	base, err := s.normalizeRelativeDomain(target, "publish_target")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimPrefix(base, "."), nil
+}
+
+// builderResolvePath expands a relative (trailing ".") domain in a declared
+// publish path to this instance's default_domain: declarations stay portable
+// across instances, app operations run against the real local path
+func (s *Server) builderResolvePath(publishPath string) (string, types.AppPathDomain, error) {
+	appPathDomain, err := parseAppPath(publishPath)
+	if err != nil {
+		return "", types.AppPathDomain{}, err
+	}
+	if appPathDomain.Domain, err = s.normalizeRelativeDomain(appPathDomain.Domain, "domain"); err != nil {
+		return "", types.AppPathDomain{}, err
+	}
+	return appPathDomain.String(), appPathDomain, nil
+}
+
+// validateProfilePublish checks a profile's publish_mode/publish_target pair
+// statically (shared by entry staging and the verify checklist)
+func validateProfilePublish(mode, target string) error {
+	switch mode {
+	case "":
+		if target != "" {
+			return fmt.Errorf("publish_target is set but publish_mode is empty (pick subdomain, path or glob)")
+		}
+		return nil
+	case "subdomain":
+		if target == "" {
+			return fmt.Errorf("publish_mode subdomain needs a publish_target parent domain (\".\" = the default domain)")
+		}
+		if strings.ContainsAny(target, ":/") {
+			return fmt.Errorf("publish_target %q must be a domain (no path or ':')", target)
+		}
+		return nil
+	case "path":
+		if target == "" || !strings.HasPrefix(target, "/") {
+			return fmt.Errorf("publish_mode path needs a publish_target path prefix starting with / (got %q)", target)
+		}
+		if strings.ContainsAny(target, "*?[") {
+			return fmt.Errorf("publish_target %q must be a plain path prefix, not a glob (use publish_mode glob)", target)
+		}
+		return nil
+	case "glob":
+		if target == "" {
+			return fmt.Errorf("publish_mode glob needs a publish_target app path glob")
+		}
+		if _, err := rbac.MatchGlob(target, types.AppPathDomain{Domain: "localhost", Path: "/probe"}); err != nil {
+			return fmt.Errorf("invalid publish_target glob %q: %w", target, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("unknown publish_mode %q (subdomain, path or glob)", mode)
 }
 
 // findAppInfo looks up an app by path without any authorization check, for
@@ -653,8 +990,11 @@ func (s *Server) builderPublishBaseVersion(ctx context.Context, entry *types.App
 // runs staging first: an update to an existing app lands on its staging app,
 // promotion is a separate step offered by the console (a first publish
 // creates the app, whose initial version is live on create)
+// publishPath is the declared (possibly relative-domain) path used for the
+// apps file declaration; resolvedPath is the expanded path of the app on
+// this instance (permission checks and the forced reload)
 func (s *Server) builderPublishLocal(ctx context.Context, session *types.BuilderSession,
-	gitCfg types.BuilderGitConfig, appName, publishPath, stanza string) error {
+	gitCfg types.BuilderGitConfig, appName, publishPath, resolvedPath, stanza string) error {
 	// Preflight everything the apply and reload below will enforce BEFORE the
 	// shared apps file or source directory is touched: a denial after the copy
 	// would leave staged changes that a later privileged apply would deploy.
@@ -662,7 +1002,7 @@ func (s *Server) builderPublishLocal(ctx context.Context, session *types.Builder
 	// needed (the caller checks app:approve too; app:reload for the
 	// unchanged-stanza republish fallback is implied by app:update)
 	if s.rbacManager.APIEnforced(ctx) {
-		appPathDomain, err := parseAppPath(publishPath)
+		appPathDomain, err := parseAppPath(resolvedPath)
 		if err != nil {
 			return err
 		}
@@ -684,20 +1024,62 @@ func (s *Server) builderPublishLocal(ctx context.Context, session *types.Builder
 	if err := os.MkdirAll(root, 0755); err != nil {
 		return err
 	}
+
+	// The publish only sticks when the apply succeeds: snapshot what is
+	// about to be overwritten (a previous publish's source dir, the shared
+	// apps file) and restore it if the apply/reload below fails - failed
+	// publishes must not leave staged source or stanza changes behind.
+	// The apps file is read BEFORE the source dir is renamed away: every
+	// error return after the rename must go through rollback(), so nothing
+	// mutating may happen before the snapshot is complete
+	appsFile := filepath.Join(root, gitCfg.AppsFile)
+	appsBackup, appsExisted, err := readFileIfExists(appsFile)
+	if err != nil {
+		return err
+	}
 	destDir := filepath.Join(root, appName)
-	if err := copyAppSource(session.WorkspaceDir, destDir); err != nil {
-		return fmt.Errorf("copying app source: %w", err)
+	backupDir := ""
+	if _, statErr := os.Stat(destDir); statErr == nil {
+		backupDir = destDir + ".publish-backup"
+		os.RemoveAll(backupDir) //nolint:errcheck
+		if err := os.Rename(destDir, backupDir); err != nil {
+			return fmt.Errorf("backing up existing app source: %w", err)
+		}
+	}
+	rollback := func() {
+		os.RemoveAll(destDir) //nolint:errcheck
+		if backupDir != "" {
+			os.Rename(backupDir, destDir) //nolint:errcheck
+		}
+		if appsExisted {
+			os.WriteFile(appsFile, appsBackup, 0644) //nolint:errcheck
+		} else {
+			os.Remove(appsFile) //nolint:errcheck
+		}
+	}
+	cleanup := func() {
+		if backupDir != "" {
+			os.RemoveAll(backupDir) //nolint:errcheck
+		}
 	}
 
-	appsFile := filepath.Join(root, gitCfg.AppsFile)
+	if err := copyAppSource(session.WorkspaceDir, destDir); err != nil {
+		rollback()
+		return fmt.Errorf("copying app source: %w", err)
+	}
 	if err := upsertMarkerBlockFile(appsFile, publishPath, stanza); err != nil {
+		rollback()
 		return err
 	}
 
-	resp, _, err := s.Apply(ctx, types.Transaction{}, appsFile, publishPath, true /*approve*/, false, /*dryRun*/
+	// Apply expands relative (trailing ".") declared domains to the default
+	// domain when loading the file, so the target filter must use the
+	// RESOLVED path - the relative form would match nothing
+	resp, _, err := s.Apply(ctx, types.Transaction{}, appsFile, resolvedPath, true /*approve*/, false, /*dryRun*/
 		false /*promote*/, types.AppReloadOptionUpdated, "", "", "", false /*clobber*/, false, /*forceReload*/
 		false /*verify*/, "", nil, false)
 	if err != nil {
+		rollback()
 		return err
 	}
 	// Apply is declarative: it reloads the app only when the app.star stanza
@@ -707,16 +1089,41 @@ func (s *Server) builderPublishLocal(ctx context.Context, session *types.Builder
 	// created nor reloaded the app, force a reload to load the updated source
 	// and record a version (the edit-session republish does the same)
 	if len(resp.CreateResults) == 0 && len(resp.ReloadResults) == 0 {
-		_, err = s.ReloadApps(ctx, publishPath, true /*approve*/, false /*dryRun*/, false, /*promote*/
-			"", "", "", true /*forceReload*/, false /*verify*/)
+		if _, err = s.ReloadApps(ctx, resolvedPath, true /*approve*/, false /*dryRun*/, false, /*promote*/
+			"", "", "", true /*forceReload*/, false /*verify*/); err != nil {
+			rollback()
+			return err
+		}
 	}
-	return err
+	// The apply/reload can succeed while matching nothing (a target/
+	// declaration mismatch); a publish that did not produce the app must
+	// fail loudly instead of reporting success
+	if resolvedPathDomain, err := parseAppPath(resolvedPath); err == nil {
+		if _, exists, err := s.findAppInfo(resolvedPathDomain); err != nil || !exists {
+			rollback()
+			return fmt.Errorf("publish did not create the app at %s (apply matched nothing)", resolvedPath)
+		}
+	}
+	cleanup()
+	return nil
+}
+
+// readFileIfExists returns the file's content and whether it existed
+func readFileIfExists(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return data, true, nil
 }
 
 // builderPublishGit clones the publish repo, copies the source, updates
 // apps.star and pushes. One retry on push rejection (concurrent publish)
 func (s *Server) builderPublishGit(ctx context.Context, session *types.BuilderSession,
-	gitCfg types.BuilderGitConfig, appName, publishPath, stanza, commitMsg string, updateAppsFile, isRetry bool) (string, error) {
+	gitCfg types.BuilderGitConfig, appName, publishPath, stanza, commitMsg string, updateAppsFile, firstPublish, isRetry bool) (string, error) {
 	repoCache, err := NewRepoCache(s)
 	if err != nil {
 		return "", err
@@ -745,7 +1152,23 @@ func (s *Server) builderPublishGit(ctx context.Context, session *types.BuilderSe
 		Depth:         1,
 	})
 	if err != nil {
-		return "", fmt.Errorf("cloning %s: %w", repoUrl, err)
+		if errors.Is(err, transport.ErrEmptyRemoteRepository) && session != nil {
+			// First publish into a brand-new (empty) repo: initialize it
+			// locally on the target branch with the remote configured - the
+			// publish commit below becomes the repo's first commit. An
+			// unpublish against an empty repo stays an error
+			repo, err = git.PlainInitWithOptions(cloneDir, &git.PlainInitOptions{
+				InitOptions: git.InitOptions{DefaultBranch: gitBranchRef(branch)},
+			})
+			if err == nil {
+				_, err = repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{repoUrl}})
+			}
+			if err != nil {
+				return "", fmt.Errorf("initializing empty repo %s: %w", repoUrl, err)
+			}
+		} else {
+			return "", fmt.Errorf("cloning %s: %w", repoUrl, err)
+		}
 	}
 
 	var updateErr error
@@ -753,6 +1176,16 @@ func (s *Server) builderPublishGit(ctx context.Context, session *types.BuilderSe
 		// publish: copy the source and (create sessions only) upsert the
 		// stanza; edit sessions leave the apps file untouched
 		destDir := filepath.Join(cloneDir, filepath.FromSlash(gitCfg.SourceDir), appName)
+		if firstPublish {
+			// A first publish must not take over a folder some other
+			// session/user already published. Checked against the fresh
+			// clone, so the push-rejection retry re-checks and catches a
+			// concurrent first publish of the same name
+			if _, statErr := os.Stat(destDir); statErr == nil {
+				return "", fmt.Errorf("%s/%s already exists in %s; pick a different name",
+					gitCfg.SourceDir, appName, repoUrl)
+			}
+		}
 		if err := copyAppSource(session.WorkspaceDir, destDir); err != nil {
 			return "", fmt.Errorf("copying app source: %w", err)
 		}
@@ -792,7 +1225,7 @@ func (s *Server) builderPublishGit(ctx context.Context, session *types.BuilderSe
 		if !isRetry {
 			// the remote may have moved (concurrent publish); retry once from a fresh clone
 			s.Warn().Err(err).Msg("Builder publish push rejected, retrying once")
-			return s.builderPublishGit(ctx, session, gitCfg, appName, publishPath, stanza, commitMsg, updateAppsFile, true)
+			return s.builderPublishGit(ctx, session, gitCfg, appName, publishPath, stanza, commitMsg, updateAppsFile, firstPublish, true)
 		}
 		return "", fmt.Errorf("pushing to %s: %w (retry also failed; publish again to retry)", repoUrl, err)
 	}
@@ -820,7 +1253,13 @@ func (s *Server) builderUnpublish(ctx context.Context, sessionId, commitMsg stri
 		return nil, err
 	}
 	appName := builderSourceName(unpubPathDomain)
-	response := &BuilderPublishResponse{PublishPath: publishPath}
+	// App operations run against the resolved path; the marker block and
+	// source folder keep the declared (possibly relative) identity
+	resolvedPath, resolvedPathDomain, err := s.builderResolvePath(publishPath)
+	if err != nil {
+		return nil, err
+	}
+	response := &BuilderPublishResponse{PublishPath: publishPath, ResolvedPath: resolvedPath}
 
 	// Removing the published app needs app:delete on its path, same as the
 	// direct delete API. Checked up front (before the apps file or repo is
@@ -828,17 +1267,17 @@ func (s *Server) builderUnpublish(ctx context.Context, sessionId, commitMsg stri
 	// sync applies, without any direct app mutation on this server
 	if s.rbacManager.APIEnforced(ctx) {
 		owner := ""
-		if appInfo, ok, err := s.findAppInfo(unpubPathDomain); err != nil {
+		if appInfo, ok, err := s.findAppInfo(resolvedPathDomain); err != nil {
 			return nil, err
 		} else if ok {
 			owner = appInfo.UserID
 		}
-		if err := s.enforceAppPerm(ctx, types.PermissionDelete, unpubPathDomain, owner); err != nil {
+		if err := s.enforceAppPerm(ctx, types.PermissionDelete, resolvedPathDomain, owner); err != nil {
 			return nil, err
 		}
 	}
 
-	gitCfg, err := config.ResolveBuilderGit(session.Preset)
+	gitCfg, err := config.ResolveBuilderGit(session.Profile)
 	if err != nil {
 		return nil, err
 	}
@@ -847,7 +1286,7 @@ func (s *Server) builderUnpublish(ctx context.Context, sessionId, commitMsg stri
 		if commitMsg == "" {
 			commitMsg = "Unpublish app " + publishPath
 		}
-		sha, err := s.builderPublishGit(ctx, nil, gitCfg, appName, publishPath, "", commitMsg, true, false)
+		sha, err := s.builderPublishGit(ctx, nil, gitCfg, appName, publishPath, "", commitMsg, true, false /*firstPublish*/, false)
 		if err != nil {
 			return nil, err
 		}
@@ -858,7 +1297,7 @@ func (s *Server) builderUnpublish(ctx context.Context, sessionId, commitMsg stri
 		if err := removeMarkerBlockFile(filepath.Join(root, gitCfg.AppsFile), publishPath); err != nil {
 			return nil, err
 		}
-		if _, err := s.DeleteApps(ctx, publishPath, false); err != nil {
+		if _, err := s.DeleteApps(ctx, resolvedPath, false); err != nil {
 			return nil, err
 		}
 		if err := os.RemoveAll(filepath.Join(root, appName)); err != nil {
@@ -1147,17 +1586,30 @@ func (s *Server) builderVerify(ctx context.Context, testPrompt bool) []BuilderCh
 		return checks
 	}
 
+	agentDetail := "image built, ACP handshake ok"
+	if testPrompt {
+		agentDetail += ", test prompt ok"
+	}
 	for name := range config.BuilderAgent {
-		detail := "image built, ACP handshake ok"
-		if testPrompt {
-			detail += ", test prompt ok"
+		appendCheck("agent "+name, s.builderManager.VerifyProfile(ctx, name, testPrompt), agentDetail)
+	}
+	if len(config.BuilderProfile) == 0 {
+		if _, ok := config.BuilderAgent["opencode"]; !ok {
+			// With no profiles, every session runs the implicit opencode
+			// agent (no [builder_agent] entry needed) - the checklist must
+			// exercise it, not report green on an empty agent list
+			appendCheck("agent opencode (implicit)", s.builderManager.VerifyProfile(ctx, "opencode", testPrompt), agentDetail)
 		}
-		appendCheck("agent "+name, s.builderManager.VerifyProfile(ctx, name, testPrompt), detail)
 	}
 
-	for entryName, entry := range config.BuilderPublish {
-		if _, err := rbac.MatchGlob(entry.Path, types.AppPathDomain{Domain: "localhost", Path: "/probe"}); err != nil {
-			appendCheck("builder_publish."+entryName, fmt.Errorf("invalid path glob %q: %w", entry.Path, err), "")
+	for entryName, entry := range config.BuilderProfile {
+		if err := validateProfilePublish(entry.PublishMode, entry.PublishTarget); err != nil {
+			appendCheck("builder_profile."+entryName, err, "")
+		}
+		if entry.Spec != "" {
+			if _, ok := appTypes[entry.Spec]; !ok {
+				appendCheck("builder_profile."+entryName, fmt.Errorf("unknown spec %q", entry.Spec), "")
+			}
 		}
 	}
 

@@ -1751,11 +1751,11 @@ func TestBuilderPublishPathRBAC(t *testing.T) {
 	}
 
 	// New path inside the grant target: app:create suffices
-	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "creator"), "/apps/allowed2"); err != nil {
+	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "creator"), "/apps/allowed2", nil); err != nil {
 		t.Fatalf("new path publish check: %v", err)
 	}
 	// Outside the target glob: denied
-	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "creator"), "/apps/denied"); err == nil {
+	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "creator"), "/apps/denied", nil); err == nil {
 		t.Fatal("expected denial outside the grant target")
 	}
 
@@ -1772,11 +1772,11 @@ func TestBuilderPublishPathRBAC(t *testing.T) {
 	server.apps.ResetAllAppCache()
 
 	// Existing app: app:create alone is not enough, app:update is required
-	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "creator"), "/apps/allowed1"); err == nil ||
+	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "creator"), "/apps/allowed1", nil); err == nil ||
 		!strings.Contains(err.Error(), string(types.PermissionUpdate)) {
 		t.Fatalf("expected app:update denial for existing app, got %v", err)
 	}
-	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "manager"), "/apps/allowed1"); err != nil {
+	if _, _, err := server.builderCheckPublishPath(rbacEnforcedCtx(ctx, "manager"), "/apps/allowed1", nil); err != nil {
 		t.Fatalf("manager republish check: %v", err)
 	}
 }
@@ -1797,7 +1797,7 @@ func TestBuilderPublishLocalPreflight(t *testing.T) {
 	// A user without app:apply on the path is denied on the first check,
 	// before any file is written
 	err := server.builderPublishLocal(rbacEnforcedCtx(ctx, "nobody"), session, gitCfg,
-		"allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
+		"allowed2", "/apps/allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
 	if err == nil || !strings.Contains(err.Error(), string(types.PermissionApply)) {
 		t.Fatalf("expected app:apply denial, got %v", err)
 	}
@@ -1808,7 +1808,7 @@ func TestBuilderPublishLocalPreflight(t *testing.T) {
 	// The harness "creator" grant holds app:apply but not app:approve: the
 	// approving apply is denied by the preflight, before any file is written
 	err = server.builderPublishLocal(rbacEnforcedCtx(ctx, "creator"), session, gitCfg,
-		"allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
+		"allowed2", "/apps/allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
 	if err == nil || !strings.Contains(err.Error(), string(types.PermissionApprove)) {
 		t.Fatalf("expected app:approve denial, got %v", err)
 	}
@@ -1821,7 +1821,7 @@ func TestBuilderPublishLocalPreflight(t *testing.T) {
 	// the permission preflight passes and files are staged (promotion is a
 	// separate console step)
 	err = server.builderPublishLocal(rbacEnforcedCtx(ctx, "publisher"), session, gitCfg,
-		"allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
+		"allowed2", "/apps/allowed2", "/apps/allowed2", "app(\"/apps/allowed2\", \"src\")\n")
 	if err != nil && strings.Contains(err.Error(), "unauthorized") {
 		t.Fatalf("staging-first publish must not need app:promote, got %v", err)
 	}

@@ -101,12 +101,25 @@ type sandbox struct {
 // ("-e KEY" form), not on the command line
 func startSandbox(cli, image, sessionId, workspace string, p *profile, env map[string]string) (*sandbox, error) {
 	containerName := "openrun_agent_" + strings.TrimPrefix(sessionId, "bld_ses_")
+	// The agent's home persists across sandbox restarts in a named docker
+	// volume, so its own conversation state survives and session/resume /
+	// session/load can restore the chat after an idle stop or server
+	// restart. Created explicitly so it carries the session label (a volume
+	// auto-created by docker run has no labels); removed when the builder
+	// session is deleted (and by the orphan sweep at server start)
+	stateVolume := stateVolumeName(sessionId)
+	create := exec.Command(cli, "volume", "create", "--label", sandboxLabel+"=1",
+		"--label", sandboxSessionLabel+"="+sessionId, stateVolume)
+	if output, err := create.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("creating agent state volume: %w (%s)", err, output)
+	}
 	args := []string{
 		"run", "-i", "--rm",
 		"--name", containerName,
 		"--label", sandboxLabel + "=1",
 		"--label", sandboxSessionLabel + "=" + sessionId,
 		"-v", workspace + ":/workspace",
+		"-v", stateVolume + ":/root",
 		"-w", "/workspace",
 	}
 	for _, mount := range p.configs {
@@ -209,6 +222,52 @@ func (s *sandbox) stderr() string {
 	s.stderrMu.Lock()
 	defer s.stderrMu.Unlock()
 	return s.stderrTail.String()
+}
+
+// stateVolumeName is the named docker volume holding the agent's home
+// (conversation state) for a session
+func stateVolumeName(sessionId string) string {
+	return "openrun_agent_state_" + strings.TrimPrefix(sessionId, "bld_ses_")
+}
+
+// RemoveStateVolume deletes a session's agent state volume (session delete).
+// Best effort: a missing volume is fine
+func RemoveStateVolume(ctx context.Context, cli, sessionId string) error {
+	cmd := exec.CommandContext(ctx, cli, "volume", "rm", "-f", stateVolumeName(sessionId))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		text := string(output)
+		if strings.Contains(text, "no such volume") || strings.Contains(text, "No such volume") {
+			return nil
+		}
+		return fmt.Errorf("removing agent state volume: %w (%s)", err, text)
+	}
+	return nil
+}
+
+// SweepOrphanStateVolumes removes labeled agent state volumes whose builder
+// session no longer exists (a delete that ran while docker was unavailable)
+func SweepOrphanStateVolumes(ctx context.Context, cli string, sessionExists func(id string) bool) error {
+	list := exec.CommandContext(ctx, cli, "volume", "ls", "-q", "--filter", "label="+sandboxLabel+"=1")
+	output, err := list.Output()
+	if err != nil {
+		return err
+	}
+	for _, name := range strings.Fields(string(output)) {
+		inspect := exec.CommandContext(ctx, cli, "volume", "inspect", "--format",
+			"{{ index .Labels \""+sandboxSessionLabel+"\" }}", name)
+		labelOut, err := inspect.Output()
+		if err != nil {
+			continue
+		}
+		sessionId := strings.TrimSpace(string(labelOut))
+		if sessionId == "" || sessionExists(sessionId) {
+			continue
+		}
+		if output, err := exec.CommandContext(ctx, cli, "volume", "rm", "-f", name).CombinedOutput(); err != nil {
+			return fmt.Errorf("removing orphan state volume %s: %w (%s)", name, err, output)
+		}
+	}
+	return nil
 }
 
 // StopOrphanSandboxes removes any builder sandbox containers left over from

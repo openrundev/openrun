@@ -303,6 +303,31 @@ func validateConfigEntry(section, name string, values map[string]any) error {
 			return err
 		}
 	}
+	if section == "builder_profile" {
+		// Reject at staging what would otherwise only fail at session start
+		if agent, _ := values["agent"].(string); agent == "" {
+			return fmt.Errorf("agent is required for a builder profile")
+		}
+		mode, _ := values["publish_mode"].(string)
+		target, _ := values["publish_target"].(string)
+		if err := validateProfilePublish(mode, target); err != nil {
+			return err
+		}
+		var services []string
+		switch raw := values["services"].(type) {
+		case []any:
+			for _, entry := range raw {
+				if str, ok := entry.(string); ok {
+					services = append(services, str)
+				}
+			}
+		case []string:
+			services = raw
+		}
+		if err := validateProfileServices(services); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

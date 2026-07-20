@@ -30,6 +30,7 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ListApps, app.READ, "list_apps"),
 		app.CreatePluginApiName(c.ListAllApps, app.READ, "list_all_apps"),
 		app.CreatePluginApiName(c.ListAuditEvents, app.READ, "list_audit_events"),
+		app.CreatePluginApiName(c.AnalyticsSummary, app.READ, "analytics_summary"),
 		app.CreatePluginApiName(c.ListOperations, app.READ, "list_operations"),
 		app.CreatePluginApiName(c.ListSync, app.READ, "list_sync"),
 		app.CreatePluginApiName(c.ListBindings, app.READ, "list_bindings"),

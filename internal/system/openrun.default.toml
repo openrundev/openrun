@@ -280,23 +280,28 @@ security.headers_level = 2
 [app_builder]
 enabled = false                 # AI app builder (console Builder tab); not supported with the Kubernetes container backend
 preview_path = "/builder/preview" # mount prefix for draft preview apps
-default_agent = "opencode"      # [builder_agent.*] entry to use
+default_builder_profile = ""    # [builder_profile.*] entry used when the user does not pick one; empty auto-uses a single profile or the built-in opencode default
 max_sessions = 5                # concurrent live agent sandboxes
 session_idle_mins = 120         # stop the agent sandbox after idle
 workspace_dir = ""              # default $OPENRUN_HOME/run/builder
 system_prompt = ""              # replaces the embedded base prompt when set
-prompt_extra = ""               # admin text appended to the system prompt
-default_git_config = ""         # [builder_git.*] entry used when the prompt preset picks none; empty publishes locally ($OPENRUN_HOME/app_src)
 
-# Publish destinations for builder apps: [builder_publish.<name>] entries with
-# an app path glob and a description of the RBAC rules that apply there. No
-# entries means any path is allowed (RBAC still gates who can publish where).
-# Agent profiles are [builder_agent.<name>] entries; the agent type comes from
+# Agent configs are [builder_agent.<name>] entries; the agent type comes from
 # the name (opencode, opencode_dev, pi, ... or custom_<name> with dockerfile
-# and command set). model/effort in a profile are passed to the agent at
+# and command set). model/effort in an agent config are passed to the agent at
 # session start (ACP config options when advertised, plus
 # OPENRUN_AGENT_MODEL/OPENRUN_AGENT_EFFORT env in the sandbox).
-# Git publish destinations are [builder_git.<name>] entries (repo, branch,
-# auth, apps_file, source_dir; defaults main/apps.star/apps). A
-# [builder_prompt.*] preset picks one with git_config, else
-# app_builder.default_git_config applies, else publish is local mode
+# Git targets are [builder_git.<name>] entries (repo, branch, auth, apps_file,
+# source_dir; defaults main/apps.star/apps).
+# Builder profiles are [builder_profile.<name>] entries bundling how apps get
+# built and published: agent (required), git_config (empty = local publish to
+# $OPENRUN_HOME/app_src), publish_mode/publish_target (where sessions may
+# publish: "subdomain" of a target domain - target ending in "." appends
+# system.default_domain; "path" under a target path prefix; "glob" matching a
+# target app glob; empty mode = anywhere), spec (default scaffold),
+# prompt/replace (instructions
+# added to or replacing the system prompt). Sessions use
+# app_builder.default_builder_profile when the user does not pick one; with
+# no default, a single profile applies automatically and no profiles at all
+# selects the built-in default (opencode, local publish, publish anywhere).
+# With several profiles (and no default) the new-app form asks which to use

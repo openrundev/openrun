@@ -150,19 +150,43 @@ type ServerConfig struct {
 	Permissions    PermissionsConfig               `toml:"permissions"`
 	AppBuilder     AppBuilderConfig                `toml:"app_builder"`
 	BuilderAgent   map[string]BuilderAgentConfig   `toml:"builder_agent"`
-	BuilderPublish map[string]BuilderPublishConfig `toml:"builder_publish"`
-	BuilderPrompt  map[string]BuilderPromptConfig  `toml:"builder_prompt"`
+	BuilderProfile map[string]BuilderProfileConfig `toml:"builder_profile"`
 	BuilderGit     map[string]BuilderGitConfig     `toml:"builder_git"`
 }
 
-// BuilderPromptConfig is one [builder_prompt.*] entry: a named prompt preset
-// the user can pick when creating a builder app. Replace controls whether
-// the preset replaces the system prompt or is appended to it
-type BuilderPromptConfig struct {
-	Prompt      string `toml:"prompt"`
+// BuilderProfileConfig is one [builder_profile.*] entry: a named bundle of
+// how builder apps are built and published. With no profiles configured the
+// implicit default applies (default_agent_config or opencode, local publish,
+// publish anywhere); once profiles exist, sessions use a configured profile
+// (the only one automatically, or the one picked in the new-app form)
+type BuilderProfileConfig struct {
+	Agent     string `toml:"agent"`      // [builder_agent.*] entry to run (required)
+	GitConfig string `toml:"git_config"` // [builder_git.*] target; empty = local publish
+
+	// PublishMode restricts where sessions publish and shapes the publish
+	// dialog input:
+	//   ""          - anywhere (free-form path)
+	//   "subdomain" - as a subdomain of PublishTarget: the user types the
+	//                 subdomain label, the app publishes at <label>.<target>:/.
+	//                 A target ending in "." appends system.default_domain
+	//                 ("." alone = subdomain of the default domain)
+	//   "path"      - under the PublishTarget path prefix: the user types the
+	//                 app name, the app publishes at <target>/<name>
+	//   "glob"      - the typed path must match the PublishTarget app glob
+	PublishMode   string `toml:"publish_mode"`
+	PublishTarget string `toml:"publish_target"`
+
+	Spec        string `toml:"spec"`        // default appspec scaffold for new sessions
+	Prompt      string `toml:"prompt"`      // instructions added to (or replacing) the system prompt
 	Replace     bool   `toml:"replace"`     // replace the system prompt instead of appending to it
 	Description string `toml:"description"` // shown in the new-app form
-	GitConfig   string `toml:"git_config"`  // [builder_git.*] entry sessions created with this preset publish to; empty = builder default
+
+	// Services the new-app form offers for auto binding: service sources
+	// ("postgres" = the type's default service, "postgres/main" = that
+	// service), or ["defaults"] to offer the default service of every type
+	// (one per type). Empty offers none. The implicit default profile (no
+	// profiles configured) behaves as defaults
+	Services []string `toml:"services"`
 }
 
 // BuilderGitConfig is one [builder_git.*] entry: a named git publish
@@ -182,17 +206,16 @@ type BuilderGitConfig struct {
 type AppBuilderConfig struct {
 	Enabled         bool   `toml:"enabled"`
 	PreviewPath     string `toml:"preview_path"` // mount prefix for draft preview apps
-	DefaultAgent    string `toml:"default_agent"`
 	MaxSessions     int    `toml:"max_sessions"`
 	SessionIdleMins int    `toml:"session_idle_mins"`
 	WorkspaceDir    string `toml:"workspace_dir"` // default $OPENRUN_HOME/run/builder
 	SystemPrompt    string `toml:"system_prompt"` // replaces the embedded base prompt when set
-	PromptExtra     string `toml:"prompt_extra"`  // admin text appended to the system prompt
 
-	// DefaultGitConfig names the [builder_git.*] entry used when the
-	// session's prompt preset does not pick one. Empty (and no preset
-	// choice) selects local publish mode ($OPENRUN_HOME/app_src)
-	DefaultGitConfig string `toml:"default_git_config"`
+	// DefaultBuilderProfile names the [builder_profile.*] entry used when
+	// the user does not pick one. Empty: a single configured profile is
+	// used automatically; none at all selects the built-in default
+	// (opencode agent, local publish, publish anywhere)
+	DefaultBuilderProfile string `toml:"default_builder_profile"`
 }
 
 // Defaults applied to empty [builder_git.*] entry fields
@@ -202,21 +225,60 @@ const (
 	BuilderGitDefaultSourceDir = "apps"
 )
 
-// ResolveBuilderGit returns the git publish destination for a builder
-// session created with promptPreset: the preset's git_config if set, else
-// app_builder.default_git_config. With neither set the result has an empty
-// Repo, which selects local publish mode ($OPENRUN_HOME/app_src)
-func (c *ServerConfig) ResolveBuilderGit(promptPreset string) (BuilderGitConfig, error) {
-	name := ""
-	if promptPreset != "" {
-		preset, ok := c.BuilderPrompt[promptPreset]
-		if !ok {
-			return BuilderGitConfig{}, fmt.Errorf("no [builder_prompt.%s] config entry", promptPreset)
-		}
-		name = preset.GitConfig
+// ChooseBuilderProfile resolves the profile choice for a NEW session. An
+// empty choice resolves app_builder.default_builder_profile when set;
+// otherwise with no configured profiles the implicit default applies (nil
+// profile - opencode agent, local publish, publish anywhere), exactly one
+// profile is used automatically, and with several the caller must pick one.
+// The returned name is the resolved profile name (empty for the implicit
+// default), stored on the session
+func (c *ServerConfig) ChooseBuilderProfile(choice string) (string, *BuilderProfileConfig, error) {
+	if choice == "" {
+		choice = c.AppBuilder.DefaultBuilderProfile
 	}
-	if name == "" {
-		name = c.AppBuilder.DefaultGitConfig
+	if choice == "" {
+		switch len(c.BuilderProfile) {
+		case 0:
+			return "", nil, nil // implicit default
+		case 1:
+			for name, profile := range c.BuilderProfile {
+				return name, &profile, nil
+			}
+		}
+		return "", nil, fmt.Errorf("multiple builder profiles are configured, pick one")
+	}
+	return c.ResolveBuilderProfile(choice)
+}
+
+// ResolveBuilderProfile looks up a STORED session profile name. Empty means
+// the session was created under the implicit default (possibly before any
+// profiles existed) and stays unrestricted - the create-time defaulting of
+// ChooseBuilderProfile never applies retroactively
+func (c *ServerConfig) ResolveBuilderProfile(profileName string) (string, *BuilderProfileConfig, error) {
+	if profileName == "" {
+		return "", nil, nil
+	}
+	profile, ok := c.BuilderProfile[profileName]
+	if !ok {
+		return "", nil, fmt.Errorf("no [builder_profile.%s] config entry", profileName)
+	}
+	return profileName, &profile, nil
+}
+
+// ResolveBuilderGit returns the git publish destination for a builder
+// session created with the named profile: the profile's git_config when
+// set. Otherwise the result has an empty Repo, which selects local publish
+// mode ($OPENRUN_HOME/app_src)
+func (c *ServerConfig) ResolveBuilderGit(profileName string) (BuilderGitConfig, error) {
+	name := ""
+	if profileName != "" {
+		_, profile, err := c.ResolveBuilderProfile(profileName)
+		if err != nil {
+			return BuilderGitConfig{}, err
+		}
+		if profile != nil {
+			name = profile.GitConfig
+		}
 	}
 	if name == "" {
 		return BuilderGitConfig{AppsFile: BuilderGitDefaultAppsFile}, nil // local mode
@@ -236,14 +298,6 @@ func (c *ServerConfig) ResolveBuilderGit(promptPreset string) (BuilderGitConfig,
 		entry.SourceDir = BuilderGitDefaultSourceDir
 	}
 	return entry, nil
-}
-
-// BuilderPublishConfig is one [builder_publish.*] entry: an app path glob
-// users may publish builder apps to, with a description of the RBAC rules
-// that apply there. No entries means any path is allowed (RBAC still gates)
-type BuilderPublishConfig struct {
-	Path        string `toml:"path"`        // app path glob, e.g. /teams/* or example.com:/**
-	Description string `toml:"description"` // shown in the publish dialog: which RBAC rules apply
 }
 
 // BuilderAgentConfig is one agent profile for the app builder. The agent
@@ -279,10 +333,12 @@ type BuilderSession struct {
 	UserID       string               `json:"user_id"`
 	Name         string               `json:"name"`
 	Spec         string               `json:"spec"`
-	Agent        string               `json:"agent"`        // [builder_agent.*] profile name
-	Preset       string               `json:"preset"`       // [builder_prompt.*] preset chosen at creation; decides the git destination
-	EditApp      string               `json:"edit_app"`     // app path this session edits (builder-published app); empty for create sessions
-	EditVersion  int                  `json:"edit_version"` // app version the workspace was seeded from
+	Agent        string               `json:"agent"`          // [builder_agent.*] config name
+	Profile      string               `json:"profile"`        // [builder_profile.*] entry resolved at creation; decides git/publish destinations
+	EditApp      string               `json:"edit_app"`       // app path this session edits (builder-published app); empty for create sessions
+	Services     []string             `json:"services"`       // service ids auto-bound to the preview and published app
+	AcpSessionId string               `json:"acp_session_id"` // agent-side ACP session id, for session/resume-session/load on sandbox restart
+	EditVersion  int                  `json:"edit_version"`   // app version the workspace was seeded from
 	Status       BuilderSessionStatus `json:"status"`
 	WorkspaceDir string               `json:"workspace_dir"`
 	PreviewPath  string               `json:"preview_path"` // dev app path, once created

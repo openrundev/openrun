@@ -43,19 +43,21 @@ type liveSession struct {
 	id     string
 	userID string
 
-	mu           sync.Mutex
-	sandbox      *sandbox
-	conn         *acp.ClientSideConnection
-	acpSessionId acp.SessionId
-	turnActive   bool
-	turnCancel   context.CancelFunc
-	approvals    int
-	msgBuf       strings.Builder
-	chunkBreak   bool              // a non-message event arrived since the last chunk
-	toolTitles   map[string]string // tool call id -> last title, for activity rows
-	lastActive   time.Time
-	subscribers  map[int]chan Event
-	nextSubId    int
+	mu            sync.Mutex
+	sandbox       *sandbox
+	conn          *acp.ClientSideConnection
+	acpSessionId  acp.SessionId
+	turnActive    bool
+	turnCancel    context.CancelFunc
+	turnCancelled bool // session/cancel was sent for the current turn
+	restoring     bool // session/load in progress: replayed history updates are dropped
+	approvals     int
+	msgBuf        strings.Builder
+	chunkBreak    bool              // a non-message event arrived since the last chunk
+	toolTitles    map[string]string // tool call id -> last title, fills update events that omit it
+	lastActive    time.Time
+	subscribers   map[int]chan Event
+	nextSubId     int
 }
 
 func newLiveSession(id, userID string) *liveSession {
@@ -155,6 +157,15 @@ func (d *driverClient) WaitForTerminalExit(context.Context, acp.WaitForTerminalE
 func (d *driverClient) RequestPermission(ctx context.Context, params acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 	ls := d.session
 	ls.mu.Lock()
+	if ls.turnCancelled {
+		// session/cancel was sent for this turn: the protocol requires
+		// pending permission requests to resolve as cancelled, and nothing
+		// may be approved after the user (or a timeout) stopped the turn
+		ls.mu.Unlock()
+		return acp.RequestPermissionResponse{
+			Outcome: acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{Outcome: "cancelled"}},
+		}, nil
+	}
 	ls.approvals++
 	approvals := ls.approvals
 	ls.mu.Unlock()
@@ -207,6 +218,15 @@ func (d *driverClient) SessionUpdate(ctx context.Context, params acp.SessionNoti
 	ls := d.session
 	update := params.Update
 
+	// session/load replays the stored conversation as updates; the console
+	// transcript already has it (builder_activity), so replays are dropped
+	ls.mu.Lock()
+	restoring := ls.restoring
+	ls.mu.Unlock()
+	if restoring {
+		return nil
+	}
+
 	switch {
 	case update.AgentMessageChunk != nil:
 		text := contentText(update.AgentMessageChunk.Content)
@@ -244,9 +264,14 @@ func (d *driverClient) SessionUpdate(ctx context.Context, params acp.SessionNoti
 	case update.ToolCallUpdate != nil:
 		toolUpdate := update.ToolCallUpdate
 		event := Event{Kind: "tool_call_update", ToolCallId: string(toolUpdate.ToolCallId)}
+		ls.mu.Lock()
 		if toolUpdate.Title != nil {
-			event.Title = *toolUpdate.Title
+			ls.toolTitles[string(toolUpdate.ToolCallId)] = *toolUpdate.Title
 		}
+		// updates usually omit the title; fall back to the last known one
+		// so SSE viewers can render the update standalone
+		event.Title = ls.toolTitles[string(toolUpdate.ToolCallId)]
+		ls.mu.Unlock()
 		if toolUpdate.Status != nil {
 			event.ToolStatus = string(*toolUpdate.Status)
 		}

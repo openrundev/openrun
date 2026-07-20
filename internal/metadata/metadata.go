@@ -25,7 +25,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 19
+const CURRENT_DB_VERSION = 20
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -498,6 +498,28 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=19, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 20 {
+		m.Info().Msg("Upgrading to version 20")
+		// builder prompt presets became builder profiles
+		if _, err := tx.ExecContext(ctx, `alter table builder_sessions rename column preset to profile`); err != nil {
+			return err
+		}
+
+		// services auto-bound to a builder session's app (json array)
+		if _, err := tx.ExecContext(ctx, `alter table builder_sessions add column services json`); err != nil {
+			return err
+		}
+
+		// agent-side ACP session id, for conversation restore on resume
+		if _, err := tx.ExecContext(ctx, `alter table builder_sessions add column acp_session_id text`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=20, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}

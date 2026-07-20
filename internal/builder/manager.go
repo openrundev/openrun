@@ -8,6 +8,7 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -97,32 +98,50 @@ func (m *Manager) ValidateConfig() error {
 			return err
 		}
 	}
-	defaultAgent := config.AppBuilder.DefaultAgent
-	if defaultAgent == "" {
-		return fmt.Errorf("app_builder.default_agent is required")
-	}
-	if _, ok := config.BuilderAgent[defaultAgent]; !ok {
-		return fmt.Errorf("app_builder.default_agent %q has no [builder_agent.%s] entry", defaultAgent, defaultAgent)
+	if name := config.AppBuilder.DefaultBuilderProfile; name != "" {
+		if _, ok := config.BuilderProfile[name]; !ok {
+			return fmt.Errorf("app_builder.default_builder_profile %q has no [builder_profile.%s] entry", name, name)
+		}
 	}
 	for name, agentConfig := range config.BuilderAgent {
 		if _, err := resolveProfile(name, agentConfig, os.ReadFile); err != nil {
 			return err
 		}
 	}
-	if name := config.AppBuilder.DefaultGitConfig; name != "" {
-		if _, ok := config.BuilderGit[name]; !ok {
-			return fmt.Errorf("app_builder.default_git_config %q has no [builder_git.%s] entry", name, name)
+	for name, profile := range config.BuilderProfile {
+		if profile.Agent == "" {
+			return fmt.Errorf("builder_profile.%s: agent is required", name)
 		}
-	}
-	for name, preset := range config.BuilderPrompt {
-		if preset.GitConfig != "" {
-			if _, ok := config.BuilderGit[preset.GitConfig]; !ok {
-				return fmt.Errorf("builder_prompt.%s git_config %q has no [builder_git.%s] entry",
-					name, preset.GitConfig, preset.GitConfig)
+		if _, ok := config.BuilderAgent[profile.Agent]; !ok {
+			return fmt.Errorf("builder_profile.%s agent %q has no [builder_agent.%s] entry",
+				name, profile.Agent, profile.Agent)
+		}
+		if profile.GitConfig != "" {
+			if _, ok := config.BuilderGit[profile.GitConfig]; !ok {
+				return fmt.Errorf("builder_profile.%s git_config %q has no [builder_git.%s] entry",
+					name, profile.GitConfig, profile.GitConfig)
 			}
 		}
 	}
 	return nil
+}
+
+// agentConfig resolves an agent config name to its entry. Empty name (a
+// session with no builder profile) falls back to opencode - which works
+// without a [builder_agent.opencode] entry since the type is inferred from
+// the name (the implicit default for fresh installs)
+func (m *Manager) agentConfig(name string) (string, types.BuilderAgentConfig, error) {
+	config := m.config()
+	if name == "" {
+		name = "opencode"
+	}
+	if cfg, ok := config.BuilderAgent[name]; ok {
+		return name, cfg, nil
+	}
+	if name == "opencode" {
+		return name, types.BuilderAgentConfig{}, nil
+	}
+	return "", types.BuilderAgentConfig{}, fmt.Errorf("no [builder_agent.%s] config entry", name)
 }
 
 // Start reconciles orphan sandboxes from a previous run, marks their
@@ -139,6 +158,24 @@ func (m *Manager) Start(ctx context.Context) error {
 	if cli, err := m.containerCLI(); err == nil {
 		if err := StopOrphanSandboxes(ctx, cli); err != nil {
 			m.Warn().Err(err).Msg("Error stopping orphan builder sandboxes")
+		}
+		// State volumes whose session was deleted while docker was down.
+		// Only a definitive not-found permits removal: a transient lookup
+		// failure (cancelled startup context, database hiccup) must not
+		// destroy a live session's agent state, so those keep the volume
+		sessionExists := func(id string) bool {
+			_, err := m.db.GetBuilderSession(ctx, types.Transaction{}, id)
+			if err == nil {
+				return true
+			}
+			if !errors.Is(err, metadata.ErrBuilderSessionNotFound) {
+				m.Warn().Err(err).Str("session", id).Msg("Error checking session for state volume sweep, keeping volume")
+				return true
+			}
+			return false
+		}
+		if err := SweepOrphanStateVolumes(ctx, cli, sessionExists); err != nil {
+			m.Warn().Err(err).Msg("Error sweeping orphan agent state volumes")
 		}
 	} else if !m.hostMode() {
 		return err
@@ -221,15 +258,18 @@ func (m *Manager) workspaceRoot() string {
 // CreateSession creates the session row and workspace, then launches the
 // sandbox and sends the composed first prompt asynchronously. The returned
 // session is in starting state; progress streams over session events.
-// promptPreset names a [builder_prompt.*] entry chosen by the user.
+// profileChoice names a [builder_profile.*] entry chosen by the user; empty
+// resolves the implicit default (no profiles) or the only configured one.
+// The resolved profile decides the agent config, git target and publish
+// restrictions and is stored on the session.
 // editApp marks a session editing an existing published app: the caller
 // (server) validates the app. seed populates the workspace (spec scaffold
 // or the edited app's source) and may set session fields (EditVersion,
 // PublishPath); it runs to completion BEFORE the agent launches, so the
 // first prompt never races an empty or half-copied workspace. A seed
 // failure aborts the create with nothing left behind
-func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec, agentName, promptPreset, editApp string,
-	seed func(*types.BuilderSession) error) (*types.BuilderSession, error) {
+func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec, specKind, profileChoice, editApp string,
+	services []string, seed func(*types.BuilderSession) error) (*types.BuilderSession, error) {
 	config := m.config()
 	if !config.AppBuilder.Enabled {
 		return nil, fmt.Errorf("app_builder is not enabled")
@@ -240,29 +280,26 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 	if strings.TrimSpace(prompt) == "" {
 		return nil, fmt.Errorf("prompt is required")
 	}
-	if agentName == "" {
-		agentName = config.AppBuilder.DefaultAgent
-	}
-	agentConfig, ok := config.BuilderAgent[agentName]
-	if !ok {
-		return nil, fmt.Errorf("no [builder_agent.%s] config entry", agentName)
-	}
-	if _, err := resolveProfile(agentName, agentConfig, os.ReadFile); err != nil {
+	profileName, profile, err := config.ChooseBuilderProfile(profileChoice)
+	if err != nil {
 		return nil, err
 	}
-	var preset *types.BuilderPromptConfig
-	if promptPreset != "" {
-		presetConfig, ok := config.BuilderPrompt[promptPreset]
-		if !ok {
-			return nil, fmt.Errorf("no [builder_prompt.%s] config entry", promptPreset)
-		}
-		preset = &presetConfig
+	agentChoice := ""
+	if profile != nil {
+		agentChoice = profile.Agent
 	}
-	// Fail now, not at publish time, if the preset/default names a missing
+	agentName, agentEntry, err := m.agentConfig(agentChoice)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := resolveProfile(agentName, agentEntry, os.ReadFile); err != nil {
+		return nil, err
+	}
+	// Fail now, not at publish time, if the profile names a missing
 	// [builder_git.*] entry. Edit sessions republish to the app's own
-	// destination, so the preset/default git resolution does not apply
+	// destination, so the profile git resolution does not apply
 	if editApp == "" {
-		if _, err := config.ResolveBuilderGit(promptPreset); err != nil {
+		if _, err := config.ResolveBuilderGit(profileName); err != nil {
 			return nil, err
 		}
 	}
@@ -290,8 +327,9 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 		Name:         name,
 		Spec:         spec,
 		Agent:        agentName,
-		Preset:       promptPreset,
+		Profile:      profileName,
 		EditApp:      editApp,
+		Services:     services,
 		Status:       types.BuilderSessionStarting,
 		WorkspaceDir: workspace,
 	}
@@ -300,6 +338,20 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 		if err := seed(session); err != nil {
 			os.RemoveAll(workspace) //nolint:errcheck
 			return nil, err
+		}
+	}
+
+	// Edit workspaces are seeded from the app's own source, and the spec
+	// (and so the spec kind) only reflects the app's metadata: a custom
+	// containerized app without a spec would read as the starlark shape.
+	// The seeded files are the truth - a container file means the agent
+	// must get the container guidance, not the starlark template shape
+	if editApp != "" && specKind != SpecKindContainer {
+		for _, name := range []string{"Containerfile", "Dockerfile"} {
+			if _, err := os.Stat(filepath.Join(workspace, name)); err == nil {
+				specKind = SpecKindContainer
+				break
+			}
 		}
 	}
 
@@ -319,17 +371,24 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 	m.appendActivity(id, userID, "prompt", prompt, nil)
 
 	ls := newLiveSession(id, userID)
+	// The first turn is claimed up front so SendMessage rejects with "still
+	// working" during launch instead of racing (and dropping) the first prompt
+	ls.turnActive = true
 	m.mu.Lock()
 	m.live[id] = ls
 	m.mu.Unlock()
 
-	firstPrompt := composePrompt(config.AppBuilder.SystemPrompt, spec, config.AppBuilder.PromptExtra, prompt, preset, editApp)
+	// App containers (previews included) need a container runtime; when
+	// disabled the no-spec guidance must not offer container shapes
+	containersAvailable := strings.TrimSpace(config.System.ContainerCommand) != ""
+	firstPrompt := composePrompt(config.AppBuilder.SystemPrompt, spec, specKind, prompt, profile, editApp,
+		services, containersAvailable)
 	go func() {
 		if err := m.launch(ls); err != nil {
 			m.failSession(ls, fmt.Errorf("starting sandbox: %w", err))
 			return
 		}
-		m.runTurn(ls, firstPrompt)
+		m.runTurn(ls, firstPrompt, true)
 	}()
 
 	return session, nil
@@ -338,14 +397,13 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 // launch builds the profile image if needed, starts the sandbox container
 // and performs the ACP handshake
 func (m *Manager) launch(ls *liveSession) error {
-	config := m.config()
 	session, err := m.db.GetBuilderSession(context.Background(), types.Transaction{}, ls.id)
 	if err != nil {
 		return err
 	}
-	agentConfig, ok := config.BuilderAgent[session.Agent]
-	if !ok {
-		return fmt.Errorf("no [builder_agent.%s] config entry", session.Agent)
+	_, agentConfig, err := m.agentConfig(session.Agent)
+	if err != nil {
+		return err
 	}
 	p, err := resolveProfile(session.Agent, agentConfig, os.ReadFile)
 	if err != nil {
@@ -420,29 +478,91 @@ func (m *Manager) launch(ls *liveSession) error {
 		sb.stop()
 		return fmt.Errorf("ACP initialize failed: %w (agent stderr: %s)", err, sb.stderr())
 	}
-	newSession, err := m.newSessionWithAuth(context.Background(), conn, sb, acpCwd, session.Agent,
-		initResp.AuthMethods, func(msg string) {
-			m.appendActivity(ls.id, ls.userID, "lifecycle", msg, nil)
-			ls.emit(Event{Kind: "status", Status: msg})
-		})
-	if err != nil {
+	// Version negotiation: the agent echoes our version if it supports it,
+	// otherwise it answers with its own latest. The client must disconnect
+	// when it does not support the returned version
+	if initResp.ProtocolVersion != acp.ProtocolVersionNumber {
 		sb.stop()
-		return err
+		return fmt.Errorf("agent %s uses unsupported ACP protocol version %v (supported: %v)",
+			session.Agent, initResp.ProtocolVersion, acp.ProtocolVersionNumber)
 	}
-	// Fresh timeout: handshakeCtx may be near expiry when an interactive
-	// authentication flow ran before the session was created
-	configCtx, configCancel := context.WithTimeout(context.Background(), handshakeTimeout)
-	defer configCancel()
-	for _, warning := range applySessionConfig(configCtx, conn, newSession.SessionId,
-		newSession.ConfigOptions, agentConfig.Model, agentConfig.Effort) {
-		m.Warn().Str("session", ls.id).Msg(warning)
-		m.appendActivity(ls.id, ls.userID, "lifecycle", warning, nil)
+	// Restore the previous conversation when the agent supports it and this
+	// session ran before: session/resume (rehydrates without replaying the
+	// history) is preferred over session/load (streams the whole history
+	// back as updates, suppressed by the restoring flag). The agent's own
+	// state lives in its home - persisted across sandbox restarts by the
+	// state volume (host mode uses the real home). A failed restore falls
+	// back to a fresh session: the chat transcript in the console is
+	// unaffected either way, only the agent's memory of it
+	acpSessionId := acp.SessionId(session.AcpSessionId)
+	restored := false
+	if session.AcpSessionId != "" {
+		restoreCtx, restoreCancel := context.WithTimeout(context.Background(), handshakeTimeout)
+		caps := initResp.AgentCapabilities
+		if caps.SessionCapabilities.Resume != nil {
+			_, err := conn.ResumeSession(restoreCtx, acp.ResumeSessionRequest{
+				Cwd: acpCwd, SessionId: acpSessionId})
+			restored = err == nil
+			if err != nil {
+				m.Warn().Err(err).Str("session", ls.id).Msg("ACP session/resume failed, starting fresh")
+			}
+		} else if caps.LoadSession {
+			ls.mu.Lock()
+			ls.restoring = true
+			ls.mu.Unlock()
+			_, err := conn.LoadSession(restoreCtx, acp.LoadSessionRequest{
+				Cwd: acpCwd, SessionId: acpSessionId, McpServers: []acp.McpServer{}})
+			ls.mu.Lock()
+			ls.restoring = false
+			ls.mu.Unlock()
+			restored = err == nil
+			if err != nil {
+				m.Warn().Err(err).Str("session", ls.id).Msg("ACP session/load failed, starting fresh")
+			}
+		}
+		restoreCancel()
+		if restored {
+			m.appendActivity(ls.id, ls.userID, "lifecycle", "conversation restored", nil)
+		} else {
+			m.appendActivity(ls.id, ls.userID, "lifecycle",
+				"previous conversation could not be restored; the agent starts fresh (the transcript above is unaffected)", nil)
+		}
+	}
+
+	if !restored {
+		newSession, err := m.newSessionWithAuth(context.Background(), conn, sb, acpCwd, session.Agent,
+			initResp.AuthMethods, func(msg string) {
+				m.appendActivity(ls.id, ls.userID, "lifecycle", msg, nil)
+				ls.emit(Event{Kind: "status", Status: msg})
+			})
+		if err != nil {
+			sb.stop()
+			return err
+		}
+		// Fresh timeout: handshakeCtx may be near expiry when an interactive
+		// authentication flow ran before the session was created
+		configCtx, configCancel := context.WithTimeout(context.Background(), handshakeTimeout)
+		defer configCancel()
+		for _, warning := range applySessionConfig(configCtx, conn, newSession.SessionId,
+			newSession.ConfigOptions, agentConfig.Model, agentConfig.Effort) {
+			m.Warn().Str("session", ls.id).Msg(warning)
+			m.appendActivity(ls.id, ls.userID, "lifecycle", warning, nil)
+		}
+		acpSessionId = newSession.SessionId
+		// Persist the agent-side session id so the conversation can be
+		// restored on the next resume
+		if string(acpSessionId) != session.AcpSessionId {
+			session.AcpSessionId = string(acpSessionId)
+			if err := m.updateSession(context.Background(), session); err != nil {
+				m.Warn().Err(err).Str("session", ls.id).Msg("Error persisting ACP session id")
+			}
+		}
 	}
 
 	ls.mu.Lock()
 	ls.sandbox = sb
 	ls.conn = conn
-	ls.acpSessionId = newSession.SessionId
+	ls.acpSessionId = acpSessionId
 	ls.lastActive = time.Now()
 	ls.mu.Unlock()
 
@@ -481,24 +601,36 @@ func (m *Manager) SendMessage(ctx context.Context, id, userID, text string) erro
 		ls.mu.Unlock()
 		return fmt.Errorf("the agent is still working, wait for the turn to finish")
 	}
+	// Claim the turn before releasing the lock: two concurrent sends would
+	// otherwise both pass the check and one message would be persisted to
+	// the transcript but silently never sent to the agent
+	ls.turnActive = true
 	ls.mu.Unlock()
 
 	m.appendActivity(id, userID, "prompt", text, nil)
-	go m.runTurn(ls, text)
+	go m.runTurn(ls, text, true)
 	return nil
 }
 
 // runTurn sends one prompt and blocks until the turn completes, persisting
-// the accumulated agent message
-func (m *Manager) runTurn(ls *liveSession, text string) {
+// the accumulated agent message. claimed means the caller already set
+// turnActive under the lock (SendMessage), so the guard here must not
+// treat that claim as a concurrent turn
+func (m *Manager) runTurn(ls *liveSession, text string, claimed bool) {
 	ls.mu.Lock()
-	if ls.turnActive || ls.conn == nil {
+	if !claimed && ls.turnActive {
+		ls.mu.Unlock()
+		return
+	}
+	if ls.conn == nil {
+		ls.turnActive = false
 		ls.mu.Unlock()
 		return
 	}
 	turnCtx, cancel := context.WithTimeout(context.Background(), turnTimeout)
 	ls.turnActive = true
 	ls.turnCancel = cancel
+	ls.turnCancelled = false
 	ls.approvals = 0
 	ls.msgBuf.Reset()
 	ls.chunkBreak = false
@@ -516,6 +648,23 @@ func (m *Manager) runTurn(ls *liveSession, text string) {
 		Prompt:    []acp.ContentBlock{acp.TextBlock(text)},
 	})
 
+	timedOut := err != nil && errors.Is(turnCtx.Err(), context.DeadlineExceeded)
+	if timedOut {
+		// The client stopped waiting but the agent does not know: per the
+		// protocol the turn is ended with session/cancel, so a still-running
+		// agent does not keep working (and burning tokens) unattended. A
+		// stopped session (context cancelled) needs no cancel: the sandbox
+		// is being torn down. The cancel is sent BEFORE the turn claim is
+		// released below - session/cancel is session-scoped, so a new turn
+		// claimed in between would be the one cancelled
+		ls.mu.Lock()
+		ls.turnCancelled = true
+		ls.mu.Unlock()
+		if cancelErr := conn.Cancel(context.Background(), acp.CancelNotification{SessionId: acpSessionId}); cancelErr != nil {
+			m.Warn().Err(cancelErr).Str("session", ls.id).Msg("Error cancelling timed-out builder turn")
+		}
+	}
+
 	ls.mu.Lock()
 	ls.turnActive = false
 	ls.turnCancel = nil
@@ -525,9 +674,13 @@ func (m *Manager) runTurn(ls *liveSession, text string) {
 	ls.mu.Unlock()
 
 	if err != nil {
+		errText := err.Error()
+		if timedOut {
+			errText = fmt.Sprintf("turn timed out after %v, the agent was cancelled", turnTimeout)
+		}
 		m.Warn().Err(err).Str("session", ls.id).Msg("Builder prompt turn failed")
-		m.appendActivity(ls.id, ls.userID, "error", "turn failed: "+err.Error(), nil)
-		ls.emit(Event{Kind: "error", Text: "The agent turn failed: " + err.Error()})
+		m.appendActivity(ls.id, ls.userID, "error", "turn failed: "+errText, nil)
+		ls.emit(Event{Kind: "error", Text: "The agent turn failed: " + errText})
 		m.setStatus(ls, types.BuilderSessionReady)
 		return
 	}
@@ -562,8 +715,21 @@ func (m *Manager) cancelTurn(ls *liveSession) error {
 	conn := ls.conn
 	acpSessionId := ls.acpSessionId
 	active := ls.turnActive
+	if conn != nil && active {
+		// From here on, pending and new permission requests for this turn
+		// must resolve with the cancelled outcome, not auto-approval
+		ls.turnCancelled = true
+	}
 	ls.mu.Unlock()
-	if conn == nil || !active {
+	if conn == nil {
+		if active {
+			// the first turn is claimed while the sandbox launches; there
+			// is no agent to cancel yet
+			return fmt.Errorf("the session is still starting, stop the session to abort")
+		}
+		return fmt.Errorf("no agent turn is running")
+	}
+	if !active {
 		return fmt.Errorf("no agent turn is running")
 	}
 	return conn.Cancel(context.Background(), acp.CancelNotification{SessionId: acpSessionId})
@@ -632,6 +798,14 @@ func (m *Manager) DeleteSession(ctx context.Context, id, userID string) error {
 	if session.WorkspaceDir != "" && strings.HasPrefix(session.WorkspaceDir, m.workspaceRoot()) {
 		if err := os.RemoveAll(session.WorkspaceDir); err != nil {
 			m.Warn().Err(err).Str("session", id).Msg("Error removing builder workspace")
+		}
+	}
+	// The agent state volume (conversation state) dies with the session
+	if !m.hostMode() {
+		if cli, err := m.containerCLI(); err == nil {
+			if err := RemoveStateVolume(ctx, cli, id); err != nil {
+				m.Warn().Err(err).Str("session", id).Msg("Error removing agent state volume")
+			}
 		}
 	}
 
@@ -928,10 +1102,15 @@ func (m *Manager) VerifyProfile(ctx context.Context, name string, testPrompt boo
 	defer cancel()
 	initResp, err := conn.Initialize(handshakeCtx, acp.InitializeRequest{
 		ProtocolVersion:    acp.ProtocolVersionNumber,
+		ClientInfo:         &acp.Implementation{Name: "openrun", Title: acp.Ptr("OpenRun App Builder"), Version: "1.0"},
 		ClientCapabilities: acp.ClientCapabilities{Auth: acp.AuthCapabilities{Terminal: false}},
 	})
 	if err != nil {
 		return fmt.Errorf("ACP initialize failed: %w (agent stderr: %s)", err, sb.stderr())
+	}
+	if initResp.ProtocolVersion != acp.ProtocolVersionNumber {
+		return fmt.Errorf("agent %s uses unsupported ACP protocol version %v (supported: %v)",
+			name, initResp.ProtocolVersion, acp.ProtocolVersionNumber)
 	}
 	newSession, err := m.newSessionWithAuth(ctx, conn, sb, acpCwd, name, initResp.AuthMethods,
 		func(msg string) { m.Info().Str("agent", name).Msg(msg) })

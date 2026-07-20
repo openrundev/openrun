@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/openrundev/openrun/internal/system"
@@ -14,10 +15,14 @@ import (
 )
 
 func (m *Metadata) CreateBuilderSession(ctx context.Context, tx types.Transaction, session *types.BuilderSession) error {
-	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`insert into builder_sessions(id, user_id, name, spec, agent, preset, edit_app, edit_version, status, workspace_dir, preview_path, publish_path, create_time, update_time) `+
-			`values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		session.Id, session.UserID, session.Name, session.Spec, session.Agent, session.Preset, session.EditApp, session.EditVersion, string(session.Status),
+	servicesJson, err := json.Marshal(session.Services)
+	if err != nil {
+		return fmt.Errorf("error marshalling session services: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`insert into builder_sessions(id, user_id, name, spec, agent, profile, services, acp_session_id, edit_app, edit_version, status, workspace_dir, preview_path, publish_path, create_time, update_time) `+
+			`values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		session.Id, session.UserID, session.Name, session.Spec, session.Agent, session.Profile, string(servicesJson), session.AcpSessionId, session.EditApp, session.EditVersion, string(session.Status),
 		session.WorkspaceDir, session.PreviewPath, session.PublishPath)
 	if err != nil {
 		return fmt.Errorf("error inserting builder session: %w", err)
@@ -27,8 +32,8 @@ func (m *Metadata) CreateBuilderSession(ctx context.Context, tx types.Transactio
 
 func (m *Metadata) UpdateBuilderSession(ctx context.Context, tx types.Transaction, session *types.BuilderSession) error {
 	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`update builder_sessions set status = ?, preview_path = ?, publish_path = ?, edit_version = ?, update_time = `+system.FuncNow(m.dbType)+` where id = ?`),
-		string(session.Status), session.PreviewPath, session.PublishPath, session.EditVersion, session.Id)
+		`update builder_sessions set status = ?, preview_path = ?, publish_path = ?, edit_version = ?, acp_session_id = ?, update_time = `+system.FuncNow(m.dbType)+` where id = ?`),
+		string(session.Status), session.PreviewPath, session.PublishPath, session.EditVersion, session.AcpSessionId, session.Id)
 	if err != nil {
 		return fmt.Errorf("error updating builder session: %w", err)
 	}
@@ -57,19 +62,32 @@ func (m *Metadata) DeleteBuilderSession(ctx context.Context, tx types.Transactio
 	return nil
 }
 
-const builderSessionColumns = `id, user_id, name, spec, agent, preset, edit_app, edit_version, status, workspace_dir, preview_path, publish_path, create_time, update_time`
+const builderSessionColumns = `id, user_id, name, spec, agent, profile, services, acp_session_id, edit_app, edit_version, status, workspace_dir, preview_path, publish_path, create_time, update_time`
 
 func scanBuilderSession(scan func(dest ...any) error) (*types.BuilderSession, error) {
 	var session types.BuilderSession
 	var status string
-	if err := scan(&session.Id, &session.UserID, &session.Name, &session.Spec, &session.Agent, &session.Preset,
-		&session.EditApp, &session.EditVersion, &status,
+	var servicesJson, acpSessionId sql.NullString
+	if err := scan(&session.Id, &session.UserID, &session.Name, &session.Spec, &session.Agent, &session.Profile,
+		&servicesJson, &acpSessionId, &session.EditApp, &session.EditVersion, &status,
 		&session.WorkspaceDir, &session.PreviewPath, &session.PublishPath, &session.CreateTime, &session.UpdateTime); err != nil {
 		return nil, err
+	}
+	session.AcpSessionId = acpSessionId.String
+	if servicesJson.Valid && servicesJson.String != "" && servicesJson.String != "null" {
+		if err := json.Unmarshal([]byte(servicesJson.String), &session.Services); err != nil {
+			return nil, fmt.Errorf("error unmarshalling session services: %w", err)
+		}
 	}
 	session.Status = types.BuilderSessionStatus(status)
 	return &session, nil
 }
+
+// ErrBuilderSessionNotFound marks a definitive missing-session lookup, as
+// opposed to a transient query failure. Callers that DELETE state based on
+// a session's absence (the startup state-volume sweep) must match this
+// error specifically - any other error proves nothing about existence
+var ErrBuilderSessionNotFound = errors.New("not found")
 
 func (m *Metadata) GetBuilderSession(ctx context.Context, tx types.Transaction, id string) (*types.BuilderSession, error) {
 	query := system.RebindQuery(m.dbType, `select `+builderSessionColumns+` from builder_sessions where id = ?`)
@@ -82,7 +100,7 @@ func (m *Metadata) GetBuilderSession(ctx context.Context, tx types.Transaction, 
 	session, err := scanBuilderSession(row.Scan)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("builder session %s not found", id)
+			return nil, fmt.Errorf("builder session %s: %w", id, ErrBuilderSessionNotFound)
 		}
 		return nil, fmt.Errorf("error querying builder session: %w", err)
 	}
