@@ -748,6 +748,29 @@ if [[ -n "$KUBE_REGISTRY_URL" ]] && contains_any "test_kubernetes.yaml"; then
   kubectl create namespace "$KUBE_TEST_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
   kubectl create namespace "${KUBE_TEST_NAMESPACE}-apps" --dry-run=client -o yaml | kubectl apply -f -
 
+  # OCI binding provider distribution test setup: the fixture provider is
+  # built once for the host (registered with the local server through
+  # bindings.preinstalled_dir, as the chart's shared volume would be) and once
+  # for the cluster platform, packaged as a FROM scratch image and pushed to
+  # the test registry (pulled by the init container in test_kubernetes.yaml).
+  KUBE_BINDINGS_DIR="$(pwd)/kube_bindings"
+  rm -rf "$KUBE_BINDINGS_DIR"
+  mkdir -p "$KUBE_BINDINGS_DIR/preinstalled"
+  (cd ../internal/bindings/testdata/fixtureprovider && \
+    GOWORK=off CGO_ENABLED=0 go build -o "$KUBE_BINDINGS_DIR/preinstalled/openrun-binding-fixture" .)
+  KUBE_NODE_ARCH=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}')
+  (cd ../internal/bindings/testdata/fixtureprovider && \
+    GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH="$KUBE_NODE_ARCH" go build -o "$KUBE_BINDINGS_DIR/openrun-binding-fixture-linux" .)
+  cat <<EOF > "$KUBE_BINDINGS_DIR/Dockerfile"
+FROM scratch
+COPY openrun-binding-fixture-linux /openrun-binding-fixture
+ENTRYPOINT ["/openrun-binding-fixture"]
+EOF
+  export KUBE_BINDING_IMAGE="$KUBE_REGISTRY_URL/openrun-binding-fixture:cli-test"
+  $CONTAINER_TOOL build --platform "linux/$KUBE_NODE_ARCH" -q -t "$KUBE_BINDING_IMAGE" "$KUBE_BINDINGS_DIR"
+  $CONTAINER_TOOL push "$KUBE_BINDING_IMAGE"
+  export KUBE_TEST_NAMESPACE
+
   cat <<EOF > config_k8s.toml
 [http]
 port = $K8S_HTTP_PORT
@@ -762,6 +785,9 @@ use_node_port = true
 [registry]
 url="$KUBE_REGISTRY_URL"
 insecure = true
+[bindings]
+preinstalled_dir = "$KUBE_BINDINGS_DIR/preinstalled"
+disable_install = true
 [app_config]
 container.health_attempts_after_startup = 20
 container.health_timeout_secs = 1
@@ -774,6 +800,12 @@ container.status_check_interval_secs = 60
 EOF
 
     rm -rf metadata run/openrun.sock
+    # The CLI commands in test_kubernetes.yaml run with CL_CONFIG_FILE=openrun.toml
+    # (commander replaces the environment with the yaml env map). In a full run the
+    # main test block has already written openrun.toml; create an empty one for
+    # standalone runs (`run_cli_tests.sh --kube-registry ... test_kubernetes.yaml`)
+    # so the CLI does not fail parsing a missing config file.
+    [[ -f openrun.toml ]] || : > openrun.toml
     CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
     wait_for_http "$K8S_HTTP_PORT"
     wait_for_socket

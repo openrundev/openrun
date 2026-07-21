@@ -180,11 +180,12 @@ fullrelease: ## Tag+push openrun, pkg/binding and all bindings under one version
 >   echo "Error: bindings tags for v$$version already exist:" $$(git -C ../bindings tag -l "*/v$$version")
 >   exit 1
 > fi
-> # openrun server + pkg/binding SDK: tag and push. The SDK tag must be on the
-> # remote before the bindings release, whose go mod tidy resolves it.
+> # openrun server + pkg/binding SDK: tag, then push the current branch and
+> # both tags. The SDK tag must be on the remote before the bindings release,
+> # whose go mod tidy resolves it.
 > git tag -a "v$$version" -m "Release v$$version"
 > git tag -a "pkg/binding/v$$version" -m "Release pkg/binding/v$$version"
-> git push origin "v$$version" "pkg/binding/v$$version"
+> git push origin HEAD "v$$version" "pkg/binding/v$$version"
 > # Bindings: update every provider module to the new SDK version, tag each
 > # module and push; the bindings release workflow builds and publishes each
 > # provider (binaries + OCI image) from its pushed tag

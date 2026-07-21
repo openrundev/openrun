@@ -10,7 +10,7 @@
 #   OBS_PROJECT  target OBS project (default: home:ajayvk:openrun)
 #   DRY_RUN=1    prepare everything and show the pending change, skip commit
 #
-# Requires: osc with credentials configured, go >= version in go.mod, git.
+# Requires: osc with credentials configured, the Go minor version in go.mod, git.
 
 set -euo pipefail
 
@@ -54,10 +54,14 @@ mv "$WORK/embed.go" internal/server/list_apps/embed.go
 rm -rf apps
 
 # Distro toolchains lag behind Go patch releases; the minor version is what
-# actually gates the language level, so drop the patch from the go directive.
+# actually gates the language level, so drop the patch from the main module and
+# local module dependencies before creating vendor metadata.
 echo "==> Relaxing go.mod patch version and vendoring modules"
-sed -E 's/^go ([0-9]+\.[0-9]+)\.[0-9]+$/go \1/' go.mod > go.mod.new && mv go.mod.new go.mod
-go mod vendor
+for mod_file in go.mod pkg/binding/go.mod; do
+    sed -E 's/^go ([0-9]+\.[0-9]+)\.[0-9]+$/go \1/' "$mod_file" > "$mod_file.new"
+    mv "$mod_file.new" "$mod_file"
+done
+GOTOOLCHAIN=local go mod vendor
 CGO_ENABLED=0 GOTOOLCHAIN=local go build -mod=vendor -o /dev/null ./cmd/openrun
 
 echo "==> Creating source tarball"

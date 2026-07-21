@@ -1,8 +1,16 @@
 config:
   env:
     CL_CONFIG_FILE: openrun.toml
+    # commander replaces the process environment with this map; OPENRUN_HOME
+    # anchors the CLI's socket/config resolution to the tests dir, and
+    # PATH/HOME are needed for kubectl (binary lookup + kubeconfig)
+    OPENRUN_HOME: .
+    PATH: ${PATH}
+    HOME: ${HOME}
     HTTP_PORT: ${HTTP_PORT}
     GOCOVERDIR: ${GOCOVERDIR}/../client
+    KUBE_BINDING_IMAGE: ${KUBE_BINDING_IMAGE}
+    KUBE_TEST_NAMESPACE: ${KUBE_TEST_NAMESPACE}
 tests:
   kubernetes010: # setup flask app
     command: rm -rf ./flaskapp && mkdir flaskapp && cp flask.py flaskapp/app.py
@@ -127,3 +135,67 @@ tests:
   kubernetes823: # health endpoint still serves the old, working version
     command: curl -sS localhost:${HTTP_PORT}/kube_verify
     stdout: "ok"
+
+  # Out-of-process binding providers, OCI distribution path: the harness built
+  # the fixture provider into bindings.preinstalled_dir (as the Helm chart's
+  # init containers populate the shared volume) and pushed it as a FROM
+  # scratch image to the test registry.
+  kubernetes900: # preinstalled provider is registered: its service type works
+    command: ../openrun service create --config url=fixture://kube fixture/kfx1
+    stdout: "Service fixture/kfx1 created"
+  kubernetes901: # binding create goes through the preinstalled provider
+    command: ../openrun binding create fixture/kfx1 /kube_fx1
+    stdout: "Binding /kube_fx1 created"
+  kubernetes902: # run-command round trip through the provider process
+    command: ../openrun binding run-command /kube_fx1 "echo:oci-ok" | jq -r '.echo'
+    stdout: "oci-ok"
+  kubernetes903: # disable_install rejects imperative provider install
+    command: ../openrun provider install fixture --version v0.1.0
+    stderr: "provider install is disabled"
+    exit-code: 1
+  kubernetes904: # disable_install rejects imperative provider uninstall
+    command: ../openrun provider uninstall fixture
+    stderr: "provider uninstall is disabled"
+    exit-code: 1
+  kubernetes910: # in-cluster export: init container copies the provider out of the scratch image
+    command: |
+      kubectl apply -n ${KUBE_TEST_NAMESPACE} -f - <<EOF
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: binding-export-test
+      spec:
+        restartPolicy: Never
+        initContainers:
+          - name: binding-provider-fixture
+            image: ${KUBE_BINDING_IMAGE}
+            command: ["/openrun-binding-fixture", "export", "/providers"]
+            volumeMounts:
+              - name: providers
+                mountPath: /providers
+        containers:
+          - name: check
+            image: busybox:1.36
+            command: ["sh", "-c", "test -x /providers/openrun-binding-fixture && echo EXPORT_OK"]
+            volumeMounts:
+              - name: providers
+                mountPath: /providers
+        volumes:
+          - name: providers
+            emptyDir: {}
+      EOF
+    stdout: "pod/binding-export-test created"
+  kubernetes911: # exported binary is present and executable in the shared volume
+    command: kubectl wait -n ${KUBE_TEST_NAMESPACE} --for=jsonpath='{.status.phase}'=Succeeded pod/binding-export-test --timeout=120s && kubectl logs -n ${KUBE_TEST_NAMESPACE} binding-export-test -c check
+    stdout: "EXPORT_OK"
+  kubernetes912: # init container logged the export
+    command: kubectl logs -n ${KUBE_TEST_NAMESPACE} binding-export-test -c binding-provider-fixture
+    stdout: "exported /providers/openrun-binding-fixture"
+  kubernetes913: # cleanup export test pod
+    command: kubectl delete pod binding-export-test -n ${KUBE_TEST_NAMESPACE} --ignore-not-found
+  kubernetes920: # binding delete through the provider
+    command: ../openrun binding delete /kube_fx1
+    stdout: "Binding /kube_fx1 deleted"
+  kubernetes921: # service delete
+    command: ../openrun service delete fixture/kfx1
+    stdout: "Service fixture/kfx1 deleted"
