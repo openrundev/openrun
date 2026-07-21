@@ -48,9 +48,9 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
 	go.starlark.net v0.0.0-20241125201518-c05ff208a98f
-	golang.org/x/net v0.55.0
-	golang.org/x/sync v0.20.0
-	golang.org/x/term v0.43.0
+	golang.org/x/net v0.56.0
+	golang.org/x/sync v0.22.0
+	golang.org/x/term v0.44.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.3
@@ -196,11 +196,11 @@ require (
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
-	golang.org/x/mod v0.35.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	golang.org/x/tools v0.44.0 // indirect
+	golang.org/x/tools v0.47.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
@@ -232,8 +232,8 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
-	golang.org/x/crypto v0.52.0
-	golang.org/x/sys v0.45.0
+	golang.org/x/crypto v0.53.0
+	golang.org/x/sys v0.46.0
 )
 
 replace cloud.google.com/go/compute/metadata => cloud.google.com/go/compute/metadata v0.2.3
