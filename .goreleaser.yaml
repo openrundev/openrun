@@ -23,7 +23,10 @@ before:
     - mv apps/openrun/list_apps internal/server
     - mv embed.go internal/server/list_apps/
     - rm -rf apps
-    - go test -race ./...
+    # skipped when GOOS is set (the sign-windows job cross-builds the Windows
+    # exe, and -race needs cgo which is off for cross builds); the release run
+    # has no GOOS set and gates publishing on the full test suite
+    - sh -c 'if [ -z "$GOOS" ]; then go test -race ./...; fi'
 
 builds:
   - id: openrun
