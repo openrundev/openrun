@@ -2,6 +2,8 @@ config:
   env:
     CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
 tests:
   reload0010: # copy sample app
     command: cp -r ./testapp reloadtest
@@ -14,33 +16,33 @@ tests:
   reload0050: # create domain level app
     command: ../openrun app create ./reloadtest reload.localhost:/
   reload0060: # check curl
-    command: curl -su "admin:qwerty" reload.localhost:25222/test1
+    command: curl -su "admin:qwerty" reload.localhost:${MAIN_HTTP_PORT}/test1
     stdout: "111"
   reload0070: # Update code
     command: perl -i -pe 's/111/222/g' ./reloadtest/app.star
   reload0080: # Reload one app, without promote
     command: ../openrun app reload reload.localhost:/
   reload0090: # check stage is updated at the default stage domain
-    command: curl -su "admin:qwerty" stage.reload.localhost:25222/test1
+    command: curl -su "admin:qwerty" stage.reload.localhost:${MAIN_HTTP_PORT}/test1
     stdout: "222"
   reload0091: # check versions
     command: ../openrun app list --internal --format csv reload.localhost:/ | grep reload | grep ",2," | wc -l
     stdout:
       exactly: "1"
   reload0100: # check prod is still old
-    command: curl -su "admin:qwerty" reload.localhost:25222/test1
+    command: curl -su "admin:qwerty" reload.localhost:${MAIN_HTTP_PORT}/test1
     stdout: "111"
   reload0110: # Promote app
     command: ../openrun app promote reload.localhost:/
   reload0120: # check prod is updated now
-    command: curl -su "admin:qwerty" reload.localhost:25222/test1
+    command: curl -su "admin:qwerty" reload.localhost:${MAIN_HTTP_PORT}/test1
     stdout: "222"
   reload0130: # check versions
     command: ../openrun app list --internal --format csv reload.localhost:/ | grep reload | grep ",2," | wc -l
     stdout:
       exactly: "2"
   reload0200: # check curl
-    command: curl -su "admin:qwerty" localhost:25222/reload_local1/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1/test1
     stdout: "111"
   reload0210: # Reload apps with promote
     command: ../openrun app reload --promote "*:/reload*"
@@ -49,10 +51,10 @@ tests:
     stdout:
       exactly: "2" # two apps are at version 2, dev stays at version 1
   reload0230: #Check static file hash
-    command: 'curl -Iu "admin:qwerty" localhost:25222/reload_local1/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep 200'
+    command: 'curl -Iu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep 200'
     stdout:
   reload0240: #Check static file direct
-    command: 'curl -Iu "admin:qwerty" localhost:25222/reload_local1/static/gen/lib/htmx.min.js | grep 200'
+    command: 'curl -Iu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1/static/gen/lib/htmx.min.js | grep 200'
 
   # Audit checks, change in app perms requires an approval
   reload0300: # Added plugin permission
@@ -60,30 +62,30 @@ tests:
   reload0310: # Update code
     command: perl -i -pe 's/222/333/g' ./reloadtest/app.star
   reload0320: # check curl
-    command: curl -su "admin:qwerty" localhost:25222/reload_local1_cl_stage/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1_cl_stage/test1
     stdout: "222"
   reload0330: # app reload without approve
     command: ../openrun app reload /reload_local1
     exit-code: 1
   reload0340: # check curl
-    command: curl -su "admin:qwerty" localhost:25222/reload_local1_cl_stage/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1_cl_stage/test1
     stdout: "222"
   reload0350: # app reload with approve
     command: ../openrun app reload --approve /reload_local1
   reload0360: # check curl is updated now
-    command: curl -su "admin:qwerty" localhost:25222/reload_local1_cl_stage/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1_cl_stage/test1
     stdout: "333"
   reload0370: # Check versions
     command: ../openrun app list --format csv "/reload_local*" | grep -v Path | grep ",2," | wc -l
     stdout:
       exactly: "2" # both prod apps are still at version 2
   reload0375: # check curl for prod is still old
-    command: curl -su "admin:qwerty" localhost:25222/reload_local1/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1/test1
     stdout: "222"
   reload0380: # promote app
     command: ../openrun app promote  /reload_local1
   reload0390: # check curl for prod is updated now
-    command: curl -su "admin:qwerty" localhost:25222/reload_local1/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1/test1
     stdout: "333"
   reload0391: # Check versions
     command: ../openrun app list --format csv "/reload_local*" | grep -v Path | grep ",3," | wc -l
@@ -92,7 +94,7 @@ tests:
   reload0392: # app reload with approve and promote
     command: ../openrun app reload --approve --promote "/reload_local*"
   reload0393: # check curl for local2 prod is updated now
-    command: curl -su "admin:qwerty" localhost:25222/reload_local2/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local2/test1
     stdout: "333"
   reload0394: # Check versions
     command: ../openrun app list --format csv "/reload_local2" | grep -v Path | grep ",3," | wc -l
@@ -105,16 +107,16 @@ tests:
   reload0410: # create git app from main
     command: ../openrun app create --stage-at path https://github.com/openrundev/openrun/tests/testapp /reload_git2
   reload0420: # check curl for app1 stage
-    command: curl -su "admin:qwerty" localhost:25222/reload_git1_cl_stage/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_git1_cl_stage/test1
     stdout: "555"
   reload0421: # check curl for app1
-    command: curl -su "admin:qwerty" localhost:25222/reload_git1/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_git1/test1
     stdout: "555"
   reload0430: # check curl for app2 stage
-    command: curl -su "admin:qwerty" localhost:25222/reload_git2_cl_stage/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_git2_cl_stage/test1
     stdout: "111"
   reload0431: # check curl for app2
-    command: curl -su "admin:qwerty" localhost:25222/reload_git2/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_git2/test1
     stdout: "111"
   reload0432: # check app list
     command: '../openrun app list --internal "/reload_git*" | grep 0e23273f | grep -v main | wc -l'
@@ -123,16 +125,16 @@ tests:
   reload0440: # app reload
     command: ../openrun app reload "/reload_git*"
   reload0441: # check curl for app1 stage, updated
-    command: curl -su "admin:qwerty" localhost:25222/reload_git1_cl_stage/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_git1_cl_stage/test1
     stdout: "111"
   reload0442: # check curl for app1, not updated since promote not done
-    command: curl -su "admin:qwerty" localhost:25222/reload_git1/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_git1/test1
     stdout: "555"
   reload0443: # check curl for app2 stage, updated
-    command: curl -su "admin:qwerty" localhost:25222/reload_git2_cl_stage/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_git2_cl_stage/test1
     stdout: "111"
   reload0444: # check curl for app2
-    command: curl -su "admin:qwerty" localhost:25222/reload_git2/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_git2/test1
     stdout: "111"
   reload0445: # check app list
     command: '../openrun app list --internal "/reload_git*" | grep 0e23273f | wc -l'
@@ -243,7 +245,7 @@ tests:
 
   # Test webhook operations
   reload_webhook010:
-    command: curl -su "admin:qwerty" localhost:25222/reload_git2_cl_stage/test1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_git2_cl_stage/test1
     stdout: "111"
   reload_webhook020:
     command: ../openrun app-webhook create reload /reload_git2
@@ -270,28 +272,28 @@ tests:
     stdout:
       line-count: 3
   reload_webhook090:
-    command: ../openrun app-webhook list /reload_git2
-    stdout: "https://localhost:25223/_openrun_webhook/reload?appPath=%2Freload_git2"
+    command: ../openrun app-webhook list /reload_git2 | grep -qF "https://localhost:${MAIN_HTTPS_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2" && echo MATCHED
+    stdout: MATCHED
   reload_webhook100:
-    command: ../openrun app-webhook list /reload_git2
-    stdout: "https://localhost:25223/_openrun_webhook/reload_promote?appPath=%2Freload_git2"
+    command: ../openrun app-webhook list /reload_git2 | grep -qF "https://localhost:${MAIN_HTTPS_PORT}/_openrun_webhook/reload_promote?appPath=%2Freload_git2" && echo MATCHED
+    stdout: MATCHED
   reload_webhook110:
-    command: curl -v http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2
+    command: curl -v http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2
     stderr: 405 Method Not Allowed
   reload_webhook120:
-    command: curl -v -XPOST http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2
+    command: curl -v -XPOST http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2
     stdout: No auth header and no signature found
   reload_webhook130:
-    command: 'curl -v -XPOST -H "Authorization: Basic abc" http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2'
+    command: 'curl -v -XPOST -H "Authorization: Basic abc" http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2'
     stdout: Authorization header with bearer token is required
   reload_webhook140:
-    command: 'curl -v -XPOST -H "Authorization: Bearer abc" http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2'
+    command: 'curl -v -XPOST -H "Authorization: Bearer abc" http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2'
     stdout: Invalid bearer token
   reload_webhook150:
-    command: 'curl -v -XPOST -H "X-Hub-Signature-256: abc" http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2'
+    command: 'curl -v -XPOST -H "X-Hub-Signature-256: abc" http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2'
     stdout: "invalid signature header"
   reload_webhook160:
-    command: "curl -v -XPOST -d'{}' -H 'X-Hub-Signature-256: sha256=abc' http://localhost:25222/_openrun_webhook/reload?appPath=%2Freload_git2"
+    command: "curl -v -XPOST -d'{}' -H 'X-Hub-Signature-256: sha256=abc' http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2"
     stdout: "invalid payload, signature match failed"
   # commander does not support output capture to get the token, so there are no success tests currently
 

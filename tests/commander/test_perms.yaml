@@ -2,6 +2,8 @@ config:
   env:
     CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
 tests:
   perms0100: # copy disk usage app
     command: cp -r ../examples/disk_usage ./perms_disk_usage
@@ -12,23 +14,23 @@ tests:
   perms0104: # Create app2
     command: ../openrun app create --stage-at path --approve ./perms_disk_usage /perms2
   perms0105: # test prod app
-    command: curl -su "admin:qwerty" localhost:25222/perms1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/perms1
     stdout: "Disk Usage"
   perms0106: # test stage app
-    command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/perms1_cl_stage
     stdout: "Disk Usage"
   perms0107: # Update stage perms
     command: ../openrun app settings stage-write-access false "/perms*"
   perms0108: # test stage app
-    command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/perms1_cl_stage
     stdout: "Stage app does not have access to write operation"
   perms0109: # Update stage perms again to allow write
     command: ../openrun app settings stage-write-access true "/perms*"
   perms0110: # test stage app
-    command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/perms1_cl_stage
     stdout: "Disk Usage"
   perms0111: # test prod app
-    command: curl -su "admin:qwerty" localhost:25222/perms1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/perms1
     stdout: "Disk Usage"
   perms0112: # Update code to change plugin call to be READ type
     command: perl -i -pe 's/type="WRITE"/type="READ"/g' ./perms_disk_usage/app.star
@@ -36,7 +38,7 @@ tests:
     command: ../openrun app reload --approve "/perms*"
     stdout: "2 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   perms0114: # test stage app
-    command: curl -su "admin:qwerty" localhost:25222/perms1_cl_stage
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/perms1_cl_stage
     stdout: "Disk Usage"
 
   # Test RBAC permit on plugin calls
@@ -51,13 +53,13 @@ tests:
     command: ../openrun app create --auth=rbac:none --approve ./perms_plugin_permit /perms_plugin_permit
     stdout: "permit=plugin_exec"
   perms0123: # Plugin call denied when user lacks custom permission
-    command: curl localhost:25222/perms_plugin_permit
+    command: curl localhost:${MAIN_HTTP_PORT}/perms_plugin_permit
     stdout: "user anonymous does not have any required permission [plugin_exec]"
   perms0124: # Grant custom plugin permission
     command: |
       ../openrun server show-config | jq '.rbac.grants += [{"description": "permit plugin call", "users": ["anonymous"], "roles": ["plugin_runner"], "targets": ["/perms_plugin_permit"]}]' > perms_rbac_config.json && ../openrun server update-config --force perms_rbac_config.json
   perms0125: # Plugin call allowed when user has custom permission
-    command: curl localhost:25222/perms_plugin_permit
+    command: curl localhost:${MAIN_HTTP_PORT}/perms_plugin_permit
     stdout: "permit-ok"
   perms0126: # Reset RBAC config
     command: |
@@ -74,12 +76,12 @@ tests:
   perms0202: # Create preview app
     command: ../openrun preview create --approve 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec /permsgit1
   perms0203: # test preview app
-    command: curl -su "admin:qwerty" localhost:25222/permsgit1_cl_preview_0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/permsgit1_cl_preview_0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
     stdout: "Disk Usage"
   perms0204: # Update preview perms
     command: ../openrun app settings preview-write-access false "/perms*"
   perms0205: # test preview app
-    command: curl -su "admin:qwerty" localhost:25222/permsgit1_cl_preview_0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/permsgit1_cl_preview_0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec
     stdout: "Preview app does not have access to write operation"
   perms0206: # Create preview app for non git
     command: ../openrun preview create 0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec /perms1

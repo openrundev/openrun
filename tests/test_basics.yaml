@@ -2,6 +2,8 @@ config:
   env:
     CL_CONFIG_FILE: config_basic_test.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
+    BASIC_HTTP_PORT: ${BASIC_HTTP_PORT}
+    BASIC_HTTPS_PORT: ${BASIC_HTTPS_PORT}
 
 tests:
   basic010:
@@ -40,21 +42,21 @@ tests:
     exit-code: 0
 
   basic070: # check curl works with password
-    command: curl -sS -u "admin:abcd" localhost:9154/test1
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/test1
     stdout: "Test app body"
 
   basic080: # check curl fails without password
-    command: curl -sS localhost:9154/test1
+    command: curl -sS localhost:${BASIC_HTTP_PORT}/test1
     stdout:
       exactly: "Authentication failed"
 
   basic090: # check curl fails with wrong password
-    command: curl -sS -u "admin:abcd2" localhost:9154/test1
+    command: curl -sS -u "admin:abcd2" localhost:${BASIC_HTTP_PORT}/test1
     stdout:
       exactly: "Authentication failed"
 
   basic100: # check curl fails with wrong user
-    command: curl -sS -u "admin2:abcd" localhost:9154/test1
+    command: curl -sS -u "admin2:abcd" localhost:${BASIC_HTTP_PORT}/test1
     stdout:
       exactly: "Authentication failed"
 
@@ -64,41 +66,41 @@ tests:
 
   basic161: ## Check static files are using optimized fetch path (no compression/decompression)
     ## The data should be streamed directly from sqlite. x-openrun-compressed header should be true
-    command: 'curl -sI -u "admin:abcd" -H "Accept-Encoding: br" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: br" -e "Content-Length: 15595" | wc -l'
+    command: 'curl -sI -u "admin:abcd" -H "Accept-Encoding: br" localhost:${BASIC_HTTP_PORT}/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: br" -e "Content-Length: 15595" | wc -l'
     stdout:
       exactly: "3"
     exit-code: 0
 
   basic162: ## Check static files are using are gzipped when only gzip encoding is accepted
-    command: 'curl -sI -u "admin:abcd" -H "Accept-Encoding: gzip" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: gzip" | wc -l'
+    command: 'curl -sI -u "admin:abcd" -H "Accept-Encoding: gzip" localhost:${BASIC_HTTP_PORT}/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: gzip" | wc -l'
     stdout:
       exactly: "1" # X-OpenRun-Compressed is not set, content length depends on gzip
     exit-code: 0
 
   basic163: ## Check static files are not compressed if no encoding is accepted
-    command: 'curl -sI -u "admin:abcd" localhost:9154/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-OpenRun-Compressed: true" -e "Content-Encoding: " -e "Content-Length: 50387" | wc -l'
+    command: 'curl -sI -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-OpenRun-Compressed: true" -e "Content-Encoding: " -e "Content-Length: 50387" | wc -l'
     stdout:
       exactly: "1" # X-OpenRun-Compressed is not set, encoding is not set
     exit-code: 0
 
   #basic164: ## Check HTTP early hints (early hints are disabled by default)
-  #  command: 'curl -kv -H "sec-fetch-mode: navigate" —http2 https://localhost:9155/test2?aaaa'
+  #  command: 'curl -kv -H "sec-fetch-mode: navigate" —http2 https://localhost:${BASIC_HTTPS_PORT}/test2?aaaa'
   #  stderr: "HTTP/2 103"
 
   basic170: # check curl works with password
-    command: curl -sS -u "admin:abcd" localhost:9154/test2
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/test2
     stdout: "Test app body"
 
   basic180: # check curl without auth
-    command: curl -sS localhost:9154/test2
+    command: curl -sS localhost:${BASIC_HTTP_PORT}/test2
     stdout: "Authentication failed"
 
   basic181: # check curl with wrong password
-    command: curl -sS -u "admin:abcd2" localhost:9154/test2
+    command: curl -sS -u "admin:abcd2" localhost:${BASIC_HTTP_PORT}/test2
     stdout: "Authentication failed"
 
   basic182: # check curl with wrong user
-    command: curl -sS -u "admin2:abcd" localhost:9154/test2
+    command: curl -sS -u "admin2:abcd" localhost:${BASIC_HTTP_PORT}/test2
     stdout: "Authentication failed"
 
   basic190: ## create test2 app with authentication disabled
@@ -106,11 +108,11 @@ tests:
     exit-code: 0
 
   basic191: # check curl without auth
-    command: curl -sS localhost:9154/test_na
+    command: curl -sS localhost:${BASIC_HTTP_PORT}/test_na
     stdout: "Authentication required" # auth_required is true, so this fails
 
   basic192: # check curl with auth
-    command: curl -sS -u "admin:abcd" localhost:9154/test_na
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/test_na
     stdout: "Authentication required" # auth_required is true, so this fails
 
   basic193: # delete app
@@ -131,21 +133,21 @@ tests:
     exit-code: 0
 
   basic270: # check curl works with password
-    command: curl -sS -u "admin:abcd" localhost:9154/test3
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/test3
     stdout: "Test app body"
 
   basic280: # check curl fails without password
-    command: curl -sS localhost:9154/test3
+    command: curl -sS localhost:${BASIC_HTTP_PORT}/test3
     stdout:
       exactly: "Authentication failed"
 
   basic290: # check curl fails with wrong password
-    command: curl -sS -u "admin:abcd2" localhost:9154/test3
+    command: curl -sS -u "admin:abcd2" localhost:${BASIC_HTTP_PORT}/test3
     stdout:
       exactly: "Authentication failed"
 
   basic300: # check curl fails with wrong user
-    command: curl -sS -u "admin2:abcd" localhost:9154/test3
+    command: curl -sS -u "admin2:abcd" localhost:${BASIC_HTTP_PORT}/test3
     stdout:
       exactly: "Authentication failed"
 
@@ -272,13 +274,13 @@ tests:
     exit-code: 0
 
   basic720: # static_disk serves index file from disk
-    command: curl -sS -u "admin:abcd" localhost:9154/static_disk
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/static_disk
     stdout:
       exactly: "disk index v1"
     exit-code: 0
 
   basic730: # static_disk serves non-index files when single_file is not set
-    command: curl -sS -u "admin:abcd" localhost:9154/static_disk/nested/file.txt
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/static_disk/nested/file.txt
     stdout:
       exactly: "disk nested file"
     exit-code: 0
@@ -288,13 +290,13 @@ tests:
     exit-code: 0
 
   basic750: # static_disk serves updated disk content without app reload
-    command: curl -sS -u "admin:abcd" localhost:9154/static_disk
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/static_disk
     stdout:
       exactly: "disk index v2"
     exit-code: 0
 
   basic760: # static_disk continues serving non-index files after disk changes
-    command: curl -sS -u "admin:abcd" localhost:9154/static_disk/nested/file.txt
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/static_disk/nested/file.txt
     stdout:
       exactly: "disk nested file"
     exit-code: 0
@@ -304,13 +306,13 @@ tests:
     exit-code: 0
 
   basic780: # static_disk single_file serves the index file
-    command: curl -sS -u "admin:abcd" localhost:9154/static_disk_single
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/static_disk_single
     stdout:
       exactly: "disk index v2"
     exit-code: 0
 
   basic790: # static_disk single_file does not serve other files
-    command: curl -sS -u "admin:abcd" localhost:9154/static_disk_single/nested/file.txt
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/static_disk_single/nested/file.txt
     stdout: "404 page not found"
     exit-code: 0
 

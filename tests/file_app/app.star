@@ -10,14 +10,19 @@ def handler(req):
    ret2 = fs.serve_tmp_file("/tmp/fileapptmp/testfileapp.txt") # single_access=True is default
    ret3 = fs.serve_tmp_file("/tmp/fileapptmp/testfileapp2.txt", single_access=False)
 
+   # AppUrl is "scheme://host" + AppPath; strip AppPath back off to get the
+   # bare origin, since serve_tmp_file's url is already app-path-relative.
+   # This avoids hardcoding the server's port, which varies per test run.
+   origin = req.AppUrl[:len(req.AppUrl) - len(req.AppPath)]
+
    # First attempt works
-   ret4 = http.get("http://localhost:25222" + ret2.value["url"])
-   ret5 = http.get("http://localhost:25222" + ret3.value["url"], error_on_fail=True)
+   ret4 = http.get(origin + ret2.value["url"])
+   ret5 = http.get(origin + ret3.value["url"], error_on_fail=True)
    # Second attempt  fails for file1 (it got deleted on first GET call), works for file2 as it is multi_access
-   ret6 = http.get("http://localhost:25222" + ret2.value["url"], error_on_fail=False)
+   ret6 = http.get(origin + ret2.value["url"], error_on_fail=False)
    if ret6.value.status_code == 200:
       return "Error: %d" % ret6.value.status_code
-   ret7 = http.get("http://localhost:25222" + ret3.value["url"])
+   ret7 = http.get(origin + ret3.value["url"])
 
    ret8 = fs.find("/tmp/fileapptmp", "testfileapp.txt")
    if len(ret8.value) != 0:

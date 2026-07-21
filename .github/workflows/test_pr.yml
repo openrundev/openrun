@@ -59,8 +59,8 @@ jobs:
           cd $OPENRUN_HOME
 
           go install github.com/commander-cli/commander/v2/cmd/commander@v2.5.0
-          export CL_CONTAINER_COMMANDS=disable # pull requests uses github runner, docker/podman does not run
-          gmake covtest
+          # pull requests use the github runner, docker/podman does not run there
+          gmake covtest CONTAINER_COMMANDS=disable
 
       - name: Upload Go test results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

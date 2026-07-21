@@ -2,6 +2,8 @@ config:
   env:
     CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
 tests:
   versions0001: # clearn test app
     command: rm -rf ./versionstest
@@ -15,10 +17,10 @@ tests:
   versions0040: # create local2 app
     command: ../openrun app create --stage-at path ./versionstest /versions_local2
   versions0050: # check curl
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1/rootfile.txt
     stdout: "1"
   versions0051: # check curl
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1/abc/def/test.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1/abc/def/test.txt
     stdout: "abc"
   versions0060: # check list, four apps on version 1
     command: ../openrun app list -i "/versions*" | grep "1 DEFAULT" | wc -l
@@ -29,18 +31,18 @@ tests:
   versions0080: # update static file
     command: echo "22" > ./versionstest/static_root/rootfile.txt
   versions0090: # no update yet for local1
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1/rootfile.txt
     stdout: "1"
   versions0100: # dev app is updated
-    command: curl -su "admin:qwerty" localhost:25222/versions_dev/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_dev/rootfile.txt
     stdout: "22"
   versions0110: # reload local1 app without promotion
     command: ../openrun app reload /versions_local1
   versions0120: # local1 stage is updated
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1_cl_stage/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1_cl_stage/rootfile.txt
     stdout: "22"
   versions0130: # local1 prod is not updated
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1/rootfile.txt
     stdout: "1"
   versions0140: # version list
     command: ../openrun version list /versions_local1 | wc -l
@@ -62,7 +64,7 @@ tests:
     command: ../openrun version list /versions_local1_cl_stage | sed -n '4p'
     stdout: "=====>        3" # third version is current
   versions0160: # local1 stage is updated
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1_cl_stage/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1_cl_stage/rootfile.txt
     stdout: "33"
   versions0160a: # check indicator
     command: ../openrun app list /versions_local1
@@ -76,13 +78,13 @@ tests:
     command: ../openrun version list /versions_local1 | sed -n '3p'
     stdout: "=====>        3" # prod is at version 3, same as stage
   versions0163: # local1 prod stage is updated
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1/rootfile.txt
     stdout: "33"
   versions0170: # switch stage back
     command: ../openrun version switch previous /versions_local1_cl_stage
     stdout: "Switched /versions_local1_cl_stage from version 3 to version 2"
   versions0171: # local1 stage is updated to version 2
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1_cl_stage/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1_cl_stage/rootfile.txt
     stdout: "22"
   versions0173: # switch prod back
     command: ../openrun version switch previous /versions_local1
@@ -94,7 +96,7 @@ tests:
     command: ../openrun version revert /versions_local1
     stdout: "Reverted /versions_local1 from version 3 to version 1"
   versions0174: # local1 prod is updated to back version 1, since version was not promoted
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1/rootfile.txt
     stdout: "1"
   versions0175: # version list
     command: ../openrun version list /versions_local1_cl_stage
@@ -105,22 +107,22 @@ tests:
   versions0177: # switch stage forward
     command: ../openrun version switch next /versions_local1_cl_stage
   versions0178: # local1 stage is updated to version 3
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1_cl_stage/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1_cl_stage/rootfile.txt
     stdout: "33"
   versions0179: # switch prod forward
     command: ../openrun version switch next /versions_local1
   versions0180: # local1 prod is updated to version 3
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1/rootfile.txt
     stdout: "33"
   versions0181: # switch stage to version 1
     command: ../openrun version switch 1 /versions_local1_cl_stage
   versions0182: # local1 stage is updated to version 1
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1_cl_stage/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1_cl_stage/rootfile.txt
     stdout: "1"
   versions0183: # promote to prod with existing version
     command: ../openrun app promote /versions_local1
   versions0184: # version prod version
-    command: curl -su "admin:qwerty" localhost:25222/versions_local1/rootfile.txt
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1/rootfile.txt
     stdout: "1"
 
   versions0190: # files
@@ -171,33 +173,33 @@ tests:
 
   # Test CORS
   versions0300: # default is CORS disabled
-    command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
+    command: curl -Iu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout:
       line-count: 0
   versions0301: # change to "origin" setting
     command: ../openrun app update conf --promote 'cors.allow_origin="origin"' /versions_local1
   versions0302:
-    command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
-    stdout: "http://localhost:25222"
+    command: curl -Iu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':' | grep -qF "http://localhost:${MAIN_HTTP_PORT}" && echo MATCHED
+    stdout: MATCHED
   versions0303: # custom origin
     command: ../openrun app update conf --promote 'cors.allow_origin="abc"' /versions_local1
   versions0304:
-    command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
+    command: curl -Iu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout: "abc"
   versions0305: # custom headers
     command: ../openrun app update conf --promote 'cors.allow_headers="aa,bb"' /versions_local1
   versions0306:
-    command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-headers | cut -f2- -d':'
+    command: curl -Iu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1 | grep -i access-control-allow-headers | cut -f2- -d':'
     stdout: "aa,bb"
   versions0307: # delete custom headers
     command: ../openrun app update conf --promote cors.allow_headers=- /versions_local1
   versions0308:
-    command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-headers | cut -f2- -d':'
+    command: curl -Iu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1 | grep -i access-control-allow-headers | cut -f2- -d':'
     stdout: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Requested-With"
   versions0309: # disable CORS
     command: ../openrun app update conf --promote 'cors.allow_origin=""' /versions_local1
   versions0310:
-    command: curl -Iu "admin:qwerty" localhost:25222/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
+    command: curl -Iu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1 | grep -i access-control-allow-origin | cut -f2- -d':'
     stdout:
       line-count: 0
 

@@ -2,6 +2,8 @@ config:
   env:
     CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
 tests:
   rbac0010: # create an admin owned app, no grants for anonymous on this
     command: ../openrun app create --auth=none ./rbac_child_app /protected
@@ -12,14 +14,14 @@ tests:
     stdout: "App: /rbacapp"
     exit-code: 0
   rbac0030: # RBAC disabled - no filtering, all apps visible through list_apps
-    command: curl -s localhost:25222/rbacapp/list
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/list
     stdout:
       contains:
         - "/protected"
         - "/rbacapp"
     exit-code: 0
   rbac0040: # RBAC disabled - get_permissions returns all permissions
-    command: curl -s localhost:25222/rbacapp/perms
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/perms
     stdout:
       contains:
         - "app:approve"
@@ -66,11 +68,11 @@ tests:
     command: ../openrun server update-config --force rbac_config1.json
     exit-code: 0
   rbac0070: # app access still works, anonymous has app:access on /rbacapp
-    command: curl -s localhost:25222/rbacapp/
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/
     stdout: "rbacapp ok"
     exit-code: 0
   rbac0080: # list is now filtered, /protected is not visible
-    command: curl -s localhost:25222/rbacapp/list
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/list
     stdout:
       contains:
         - "/rbacapp"
@@ -78,7 +80,7 @@ tests:
         - "/protected"
     exit-code: 0
   rbac0090: # get_permissions on /rbacapp shows granted perms only
-    command: curl -s localhost:25222/rbacapp/perms
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/perms
     stdout:
       contains:
         - "app:access"
@@ -89,18 +91,18 @@ tests:
         - "server:stop"
     exit-code: 0
   rbac0100: # create works, anonymous has app:create on /anonapp*
-    command: curl -s localhost:25222/rbacapp/create
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/create
     stdout: "CREATED"
     exit-code: 0
   rbac0105: # the approve flag needs app:approve, app:create alone is denied
-    command: curl -s localhost:25222/rbacapp/create_approve
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/create_approve
     stdout:
       contains:
         - "ERROR"
         - "app:approve"
     exit-code: 0
   rbac0110: # created app is visible through the owner rule, without any explicit grant
-    command: curl -s localhost:25222/rbacapp/list
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/list
     stdout:
       contains:
         - "/anonapp1"
@@ -108,7 +110,7 @@ tests:
         - "/protected"
     exit-code: 0
   rbac0120: # owner holds app:manage equivalent on own app, but never app:approve
-    command: curl -s localhost:25222/rbacapp/perms_child
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/perms_child
     stdout:
       contains:
         - "app:delete"
@@ -118,14 +120,14 @@ tests:
         - "app:approve"
     exit-code: 0
   rbac0130: # create outside the granted target glob is denied
-    command: curl -s localhost:25222/rbacapp/create_bad
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/create_bad
     stdout:
       contains:
         - "ERROR"
         - "app:create"
     exit-code: 0
   rbac0140: # deleting an admin owned app is denied
-    command: curl -s localhost:25222/rbacapp/delete_other
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/delete_other
     stdout:
       contains:
         - "ERROR"
@@ -136,25 +138,25 @@ tests:
     stdout: "/protected"
     exit-code: 0
   rbac0152: # reload without promote works, anonymous has app:reload on /protected
-    command: curl -s localhost:25222/rbacapp/reload_ok
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/reload_ok
     stdout: "RELOADED"
     exit-code: 0
   rbac0154: # reload with promote also needs app:promote, denied
-    command: curl -s localhost:25222/rbacapp/reload_promote
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/reload_promote
     stdout:
       contains:
         - "ERROR"
         - "app:promote"
     exit-code: 0
   rbac0160: # approve is operator only, denied without a literal app:approve grant
-    command: curl -s localhost:25222/rbacapp/approve_other
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/approve_other
     stdout:
       contains:
         - "ERROR"
         - "app:approve"
     exit-code: 0
   rbac0170: # owner can delete their own app
-    command: curl -s localhost:25222/rbacapp/delete
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/delete
     stdout: "DELETED"
     exit-code: 0
   rbac0180: # admin CLI is never subject to RBAC enforcement
@@ -167,7 +169,7 @@ tests:
   rbac0182: # RBAC applies to every app when enabled: /protected (auth=none) is
     # enforced too, anonymous has no app:access grant on it (403, the
     # anonymous principal is authenticated but not authorized)
-    command: curl -s -o /dev/null -w "%{http_code}" localhost:25222/protected/
+    command: curl -s -o /dev/null -w "%{http_code}" localhost:${MAIN_HTTP_PORT}/protected/
     stdout: "403"
     exit-code: 0
   rbac0190: # disable RBAC again
@@ -186,7 +188,7 @@ tests:
       ../openrun server update-config --force rbac_config1.json
     exit-code: 0
   rbac0200: # with RBAC disabled, filtering is off again
-    command: curl -s localhost:25222/rbacapp/list
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/list
     stdout:
       contains:
         - "/protected"

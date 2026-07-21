@@ -18,6 +18,31 @@ GO_PACKAGES = $$(GOWORK=off go list ./... | grep -v '/ui/')
 GO_COVER_PACKAGES = $$(GOWORK=off go list ./... | grep -v '/ui/' | paste -sd, -)
 GO_LINT_PACKAGES = $$(module=$$(GOWORK=off go list -m); GOWORK=off go list ./... | grep -v '/ui/' | awk -v module="$$module" '{ sub("^" module, "."); print }')
 
+# tests/run_cli_tests.sh flags, settable from the make command line, e.g.
+# `make int CONTAINER_COMMANDS=docker POSTGRES=1`. RUN_CLI_TEST_ARGS is an
+# escape hatch for anything not covered by a dedicated variable.
+CONTAINER_COMMANDS ?=
+CONTAINER_TOOL ?=
+POSTGRES ?=
+POSTGRES_URL ?=
+MYSQL ?=
+MYSQL_URL ?=
+KUBE_REGISTRY ?=
+KUBE_NAMESPACE ?=
+SKIP_BUILD ?=
+RUN_CLI_TEST_ARGS ?=
+RUN_CLI_TESTS_FLAGS = --home $(OPENRUN_HOME) \
+  $(if $(CONTAINER_COMMANDS),--container-commands "$(CONTAINER_COMMANDS)") \
+  $(if $(CONTAINER_TOOL),--container-tool $(CONTAINER_TOOL)) \
+  $(if $(POSTGRES),--postgres) \
+  $(if $(POSTGRES_URL),--postgres-url $(POSTGRES_URL)) \
+  $(if $(MYSQL),--mysql) \
+  $(if $(MYSQL_URL),--mysql-url $(MYSQL_URL)) \
+  $(if $(KUBE_REGISTRY),--kube-registry $(KUBE_REGISTRY)) \
+  $(if $(KUBE_NAMESPACE),--kube-namespace $(KUBE_NAMESPACE)) \
+  $(if $(SKIP_BUILD),--skip-build) \
+  $(RUN_CLI_TEST_ARGS)
+
 ARCH        := $(shell uname -m)
 TARGET_DIR  := dist/linux/$(ARCH)
 BINARY      := openrun
@@ -70,7 +95,7 @@ covunit: ## Run unit tests with coverage
 > go tool cover -func coverage/profile
 
 int: ## Run integration tests
-> OPENRUN_HOME=$(OPENRUN_HOME) ./tests/run_cli_tests.sh
+> ./tests/run_cli_tests.sh $(RUN_CLI_TESTS_FLAGS)
 
 testui: ## Run the console app integration tests (ui/console_tests, own module)
 > cd ui/console_tests && go test -count=1 ./...
@@ -85,13 +110,13 @@ docs-screenshots: ## Copy the console walkthrough screenshots (light/dark pairs)
 > cp ui/console_tests/browser/walkthrough/*.png docs/static/images/console/
 > @echo "Copied `ls docs/static/images/console/*.png | wc -l | tr -d ' '` screenshots to docs/static/images/console/"
 
-int_single: ## Run one integration test
-> CL_SINGLE_TEST=${INPUT} OPENRUN_HOME=$(OPENRUN_HOME) ./tests/run_cli_tests.sh
+int_single: ## Run one integration test; args: <test-file.yaml>
+> ./tests/run_cli_tests.sh $(RUN_CLI_TESTS_FLAGS) ${INPUT}
 
 covint: ## Run integration tests with coverage
 > rm -rf $(OPENRUN_HOME)/coverage/int && mkdir -p $(OPENRUN_HOME)/coverage/int
 > rm -rf $(OPENRUN_HOME)/coverage/client && mkdir -p $(OPENRUN_HOME)/coverage/client
-> OPENRUN_HOME=. GOCOVERDIR=$(OPENRUN_HOME)/coverage/int ./tests/run_cli_tests.sh
+> ./tests/run_cli_tests.sh $(RUN_CLI_TESTS_FLAGS) --coverdir $(OPENRUN_HOME)/coverage/int
 > go tool covdata percent -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/int
 > go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/int -o $(OPENRUN_HOME)/coverage/profile
 > go tool cover -func coverage/profile
@@ -125,3 +150,9 @@ release: ## Tag and push a release; args: <app_version> <helm_version>
 > echo "************************************************** "
 > echo "Run above command to push the Helm chart after the OpenRun release job is done"
 > @cd - > /dev/null
+
+# Swallow extra command-line words (e.g. `make int_single test_reload.yaml`)
+# so make doesn't also try to build them as targets; $(INPUT)/$(INPUT2) above
+# already pick them up positionally.
+%:
+> @:

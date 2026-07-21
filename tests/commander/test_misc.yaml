@@ -2,6 +2,8 @@ config:
   env:
     CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
 tests:
   domain010: ## create test1 domain app
     command: ../openrun app create ./testapp test1.openrun.dev:/
@@ -54,17 +56,17 @@ tests:
     command: ../openrun app create --approve --param secret_provider=env --param secret_key=TESTENV ./env_app  /secret1
     stdout: "secrets=c1,c2,c3;TESTENV"
   secret0310:
-    command: curl -su "admin:qwerty" localhost:25222/secret1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/secret1
     stdout: abc
   secret0320: # Create app, with invalid provider
     command: ../openrun app create --approve --param secret_provider=vault --param secret_key=TESTENV ./env_app  /secret2
   secret0330:
-    command: curl -su "admin:qwerty" localhost:25222/secret2
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/secret2
     stdout: unknown secret provider vault
   secret0340: # Create app, with secret param
     command: ../openrun app create --approve --param secret_provider=default ./env_app  /secret3
   secret0350:
-    command: curl -su "admin:qwerty" localhost:25222/secret3/multi
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/secret3/multi
     stdout: xyz # value of c1c2_c3 env
 
   # Test errors
@@ -115,43 +117,43 @@ tests:
   static0100: # Create app, with test folder user as input
     command: ../openrun app create --approve  --spec static --param index=test_misc.yaml ./commander /static_app1
   static0200:
-    command: curl -su "admin:qwerty" localhost:25222/static_app1
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/static_app1
     stdout: static0100
   static0300:
-    command: curl -su "admin:qwerty" localhost:25222/static_app1/test_certs.yaml
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/static_app1/test_certs.yaml
     stdout: certs010
   static0350:
-    command: curl -su "admin:qwerty" localhost:25222/static_app1/_openrun_app/verify_file/test_misc.yaml | jq -r '.file_exists + " " + .file_path'
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/static_app1/_openrun_app/verify_file/test_misc.yaml | jq -r '.file_exists + " " + .file_path'
     stdout: "true test_misc.yaml"
   static0360:
-    command: curl -su "admin:qwerty" -o /dev/null -w "%{http_code}" 'localhost:25222/static_app1/_openrun_app/verify_file/..%5Ctest_misc.yaml'
+    command: curl -su "admin:qwerty" -o /dev/null -w "%{http_code}" "localhost:${MAIN_HTTP_PORT}/static_app1/_openrun_app/verify_file/..%5Ctest_misc.yaml"
     stdout: "400"
   static0400: # Create app, with test folder user as input
     command: ../openrun app create --approve  --spec static --param index=test_misc.yaml --param single_file=True ./commander /static_app2
   static0500:
-    command: curl -su "admin:qwerty" localhost:25222/static_app2
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/static_app2
     stdout: static0100
   static0600:
-    command: curl -su "admin:qwerty" localhost:25222/static_app2/test_certs.yaml
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/static_app2/test_certs.yaml
     stdout: 404 page not found
 
   # Test actions file handling
   actions0100: # Create app
     command: ../openrun app create --approve github.com/openrundev/apps/misc/num_lines /numlines
   actions0200:
-    command: curl -su "admin:qwerty" localhost:25222/numlines
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/numlines
     stdout: type="file"
   actions0300:
     command: echo "abc" > action_inp.txt
   actions0400:
-    command: curl -su "admin:qwerty" -vX POST -F "file=@action_inp.txt" localhost:25222/numlines
+    command: curl -su "admin:qwerty" -vX POST -F "file=@action_inp.txt" localhost:${MAIN_HTTP_PORT}/numlines
     stdout: /numlines/_openrun_app/file/usr_file_
   actions0500:
     command: rm action_inp.txt
   actions1000: # Create app
     command: ../openrun app create --auth=none --approve ./file_app /file_app
   actions1100:
-    command: curl localhost:25222/file_app
+    command: curl localhost:${MAIN_HTTP_PORT}/file_app
     stdout: Success
 
   # Test audit APIs
@@ -160,8 +162,8 @@ tests:
   audit0110: # reload
     command: ../openrun app reload --promote /audittestapp
   audit0200:
-    command: curl localhost:25222/audittestapp/audit
+    command: curl localhost:${MAIN_HTTP_PORT}/audittestapp/audit
     stdout: OK
   audit0300:
-    command: curl localhost:25222/audittestapp
+    command: curl localhost:${MAIN_HTTP_PORT}/audittestapp
     stdout: OK

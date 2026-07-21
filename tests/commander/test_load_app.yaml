@@ -3,6 +3,8 @@ config:
     CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
     OPENRUN_HOME: ${OPENRUN_HOME}
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
 tests:
   load0010: # copy sample app
     command: cp -r ../examples/disk_usage .
@@ -19,14 +21,14 @@ tests:
     stdout: "App: /disk_usage_prod"
     exit-code: 0
   load0040: # test dev app
-    command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev
     stdout: "app /disk_usage_dev is not permitted to load plugin fs.in. Audit the app and approve permissions"
   load0041: # check audit output
     command: '../openrun app approve --dry-run /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
     stdout: "dry-run mode, changes have NOT been committed."
     exit-code: 0
   load0041a: # test dev app, make sure dry run did not update the in memory cache
-    command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev
     stdout: "app /disk_usage_dev is not permitted to load plugin fs.in. Audit the app and approve permissions"
   load0042: # approve audit
     command: '../openrun app approve /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
@@ -34,33 +36,33 @@ tests:
       exactly: "App permissions have been approved /disk_usage_dev - YYY\n  Plugins :\n    fs.in\n  Permissions:\n    fs.in.abs [] \n    fs.in.list [] \n    fs.in.find [] \n1 app(s) audited, 1 app(s) approved, 0 app(s) promoted.\n"
     exit-code: 0
   load0043: # check curl after approval
-    command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev/
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev/
     stdout: "Disk Usage"
   load0044: # setup permission check, remove permissions entry from config
     command: cp ./disk_usage/app.star ./disk_usage/app.star.bk && grep -v "ace.permission" ./disk_usage/app.star > ./disk_usage/app.star.new && cp ./disk_usage/app.star.new ./disk_usage/app.star
   load0045: # check curl, still works since the old approvals with run are in place
-    command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev/
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev/
     stdout: "Disk Usage"
   load0046: # approve audit, no more permissions
     command: '../openrun app approve /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
     stdout: "No approval required. /disk_usage_dev - YYY"
     exit-code: 0
   load0047: # check curl
-    command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev
     stdout: "app /disk_usage_dev is not permitted to call fs.in.abs. Audit the app and approve permissions"
   load0051: # update config
     command: cp ./disk_usage/app.star.bk ./disk_usage/app.star
   load0052: # approve audit
     command: '../openrun app approve /disk_usage_dev | sed "s/app_dev_.*/YYY/g"'
   load0053: # check curl after approval
-    command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev/
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev/
     stdout: "Disk Usage"
   load0054: # check Vary header
-    command: curl -vsu "admin:qwerty" localhost:25222/disk_usage_dev 2>&1 | grep Vary
+    command: curl -vsu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev 2>&1 | grep Vary
     stdout: "Vary: HX-Request"
     exit-code: 0
   load0055: # check static root
-    command: curl -u "admin:qwerty" localhost:25222/disk_usage_dev/robots.txt | grep Disallow
+    command: curl -u "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev/robots.txt | grep Disallow
     stdout: "Disallow: /"
     exit-code: 0
   load0060: # audit prod app
@@ -69,26 +71,26 @@ tests:
       exactly: "App permissions have been approved /disk_usage_prod_cl_stage - YYY\n  Plugins :\n    fs.in\n  Permissions:\n    fs.in.abs [] \n    fs.in.list [] \n    fs.in.find [] \n1 app(s) audited, 1 app(s) approved, 0 app(s) promoted.\n"
     exit-code: 0
   load0061: # test prod app
-    command: curl -su "admin:qwerty" localhost:25222/disk_usage_prod/
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_prod/
     stdout: "/disk_usage_prod is not permitted to load plugin fs.in"
   load0062: # promote prod app
     command: "../openrun app reload --approve --promote /disk_usage_prod"
   load0063: # test prod app
-    command: curl -su "admin:qwerty" localhost:25222/disk_usage_prod/
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_prod/
     stdout: "Disk Usage"
   load0064: # check static root for prod
-    command: curl -u "admin:qwerty" localhost:25222/disk_usage_prod/robots.txt | grep Disallow
+    command: curl -u "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_prod/robots.txt | grep Disallow
     stdout: "Disallow: /"
     exit-code: 0
   load0070: # Update app code
     command: perl -pi -e 's/Disk Usage/DiskTest Usage/g' ./disk_usage/app.star && sleep 4
   load0080: # with --dev, changes are picked up immediately
-    command: curl -su "admin:qwerty" localhost:25222/disk_usage_dev
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev
     stderr:
       line-count: 0
     stdout: "DiskTest Usage"
   load0090: # without --dev, changes are not picked up
-    command: curl -su "admin:qwerty" localhost:25222/disk_usage_prod
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_prod
     stderr:
       line-count: 0
     stdout: "Disk Usage"
@@ -121,12 +123,12 @@ tests:
     stdout: "app_src"
     exit-code: 0
   load0220: # test calling app
-    command: curl -su "admin:qwerty" localhost:25222/ghload1/
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/ghload1/
     stderr:
       line-count: 0
     stdout: "Disk Usage"
   load0221: # test calling dev app
-    command: curl -su "admin:qwerty" localhost:25222/ghloaddev1/
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/ghloaddev1/
     stderr:
       line-count: 0
     stdout: "Disk Usage"
@@ -143,23 +145,23 @@ tests:
     stderr: 'find remote ref "refs/heads/invalid"'
     exit-code: 1
   load0270: # Create app, valid branch
-    command: ../openrun app create --approve --branch main https://github.com/openrundev/openrun/examples/disk_usage /ghload3
-    stdout: "HTTPS Url: https://localhost:25223/ghload3"
+    command: '../openrun app create --approve --branch main https://github.com/openrundev/openrun/examples/disk_usage /ghload3 | grep -qF "HTTPS Url: https://localhost:${MAIN_HTTPS_PORT}/ghload3" && echo MATCHED'
+    stdout: MATCHED
     exit-code: 0
   load0280: # Create app, invalid commit id.
     command: ../openrun app create --approve --commit invalid https://github.com/openrundev/openrun/examples/disk_usage /ghload4
     stderr: "reference not found"
     exit-code: 1
   load0290: # Create app, valid commit id
-    command: ../openrun app create --approve --commit 6574d08b47abb71636665fbcbad51c2f7e8cab71 https://github.com/openrundev/openrun/examples/disk_usage /ghload5
-    stdout: "HTTP Url: http://localhost:25222/ghload5"
+    command: '../openrun app create --approve --commit 6574d08b47abb71636665fbcbad51c2f7e8cab71 https://github.com/openrundev/openrun/examples/disk_usage /ghload5 | grep -qF "HTTP Url: http://localhost:${MAIN_HTTP_PORT}/ghload5" && echo MATCHED'
+    stdout: MATCHED
     exit-code: 0
   load0300: # Create app with custom domain (domain ending in . becomes .localhost)
     command: "../openrun app create --approve github.com/openrundev/openrun/examples/disk_usage ghload3.:"
     stdout: "App created. Permissions have been approved"
     exit-code: 0
   load0310: # test calling app
-    command: curl -su "admin:qwerty" https://ghload3.localhost:25223/
+    command: curl -su "admin:qwerty" https://ghload3.localhost:${MAIN_HTTPS_PORT}/
     stderr:
       line-count: 0
   load0320: # check certificates

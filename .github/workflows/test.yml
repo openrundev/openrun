@@ -70,9 +70,8 @@ jobs:
           cd $OPENRUN_HOME
 
           go install github.com/commander-cli/commander/v2/cmd/commander@v2.5.0
-          export CL_CONTAINER_COMMANDS=docker # using self-hosted runner, use Docker for container tests
-          export ENABLE_POSTGRES_TESTCONTAINER=1
-          export ENABLE_MYSQL_TESTCONTAINER=1
+          # Using a self-hosted runner, use Docker for container tests
+          MAKE_TEST_ARGS=(CONTAINER_COMMANDS=docker POSTGRES=1 MYSQL=1)
 
           RUN_KUBERNETES_TESTS=false
           if [[ "${{ inputs.enable_kubernetes_tests }}" == "true" ]]; then
@@ -99,13 +98,13 @@ jobs:
             kubectl delete namespace openrun-apps --ignore-not-found=true --wait=true
             kubectl create namespace openrun-apps
             echo "----------Kubernetes tests enabled------------"
-            export KUBE_REGISTRY_URL=registry.registry.svc.cluster.local:5000
+            MAKE_TEST_ARGS+=(KUBE_REGISTRY=registry.registry.svc.cluster.local:5000)
           else
             echo "**********Kubernetes tests skipped************"
           fi
 
           docker system prune -f
-          gmake covtest
+          gmake covtest "${MAKE_TEST_ARGS[@]}"
 
           if [[ -n "$(docker ps -a -q)" ]]; then
             docker stop -t 1 $(docker ps -a -q)

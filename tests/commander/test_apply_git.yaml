@@ -3,6 +3,8 @@ config:
     CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
     PATH: ${PATH}
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
 tests:
   apply_git0010: ## create all apps
     command: ../openrun apply ./apply_files/apply_git.ace all
@@ -18,13 +20,13 @@ tests:
     command: ../openrun apply --approve --promote --reload=matched --force-reload ./apply_files/apply_git.ace all
     stdout: "0 app(s) created, 0 app(s) updated, 6 app(s) reloaded, 0 app(s) skipped, 3 app(s) approved, 3 app(s) promoted."
   apply_git0030: # check curl after approval
-    command: curl -su "admin:qwerty" localhost:25222/applytest/test1/
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/applytest/test1/
     stdout: "Disk Usage"
   apply_git0040: # check curl after approval for stage
-    command: curl -su "admin:qwerty" localhost:25222/applytest/test1_cl_stage/
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/applytest/test1_cl_stage/
     stdout: "Disk Usage"
   apply_git0041: # check curl after approval
-    command: curl -su "admin:qwerty" localhost:25222/applytest/test3/
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/applytest/test3/
     stdout: "List Files"
 
   apply_git0050: ## check auth apply
