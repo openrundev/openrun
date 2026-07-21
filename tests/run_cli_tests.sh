@@ -160,17 +160,31 @@ port_free() {
   ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
 }
 
-# pick_port_base finds a random block of ports that looks free, so
-# concurrent invocations of this script (e.g. from different --home
-# worktrees) don't fight over the same TCP ports. A handful of
-# representative offsets are checked rather than the full block, on the
-# assumption that collisions are rare and the block is regenerated (not
-# just retried) on any hit.
+# wait_port_free waits for PORT to be released — the previous server (or the
+# forward-auth container) can take a moment to shut down after `server stop`
+# returns — and fails with a clear error if the port stays occupied.
+wait_port_free() {
+  local port="$1" attempt
+  for attempt in {1..100}; do
+    if port_free "$port"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "Port $port is still in use, cannot start the next server" >&2
+  return 1
+}
+
+# pick_port_base finds a random block of ports where every port this script
+# will listen on (http, https, forward auth) is currently free, so concurrent
+# invocations of this script (e.g. from different --home worktrees) or
+# unrelated processes on the host don't fight over the same TCP ports. The
+# block is regenerated (not just retried) on any hit.
 pick_port_base() {
   local base attempt
   for attempt in {1..30}; do
     base=$(( 20000 + (RANDOM % 380) * 100 ))
-    if port_free "$base" && port_free "$((base + 1))" && port_free "$((base + 10))" && port_free "$((base + 30))"; then
+    if port_free "$base" && port_free "$((base + 1))" && port_free "$((base + 2))"; then
       echo "$base"
       return 0
     fi
@@ -180,17 +194,23 @@ pick_port_base() {
 }
 
 PORT_BASE=$(pick_port_base)
-MAIN_HTTP_PORT=$((PORT_BASE))
-MAIN_HTTPS_PORT=$((PORT_BASE + 1))
-BASIC_HTTP_PORT=$((PORT_BASE + 2))
-BASIC_HTTPS_PORT=$((PORT_BASE + 3))
-NP_HTTP_PORT=$((PORT_BASE + 4))
-NP_HTTPS_PORT=$((PORT_BASE + 5))
-CONTAINER_PORT_BASE=$((PORT_BASE + 10))
-K8S_HTTP_PORT=$((PORT_BASE + 30))
-K8S_HTTPS_PORT=$((PORT_BASE + 31))
+# Every server in this script runs sequentially — each block stops its server
+# before the next starts — so they all reuse one HTTP/HTTPS port pair; the
+# forward-auth test container is the only additional listener that runs
+# concurrently with a server. Using just three ports keeps the odds of
+# colliding with an unrelated process low; every port is verified free at
+# selection (pick_port_base) and again right before each bind
+# (wait_port_free, which also absorbs the previous server's shutdown lag).
+SERVER_HTTP_PORT=$((PORT_BASE))
+SERVER_HTTPS_PORT=$((PORT_BASE + 1))
+FORWARD_AUTH_PORT=$((PORT_BASE + 2))
+# Names the test yaml env maps use for the shared pair
+MAIN_HTTP_PORT=$SERVER_HTTP_PORT
+MAIN_HTTPS_PORT=$SERVER_HTTPS_PORT
+BASIC_HTTP_PORT=$SERVER_HTTP_PORT
+BASIC_HTTPS_PORT=$SERVER_HTTPS_PORT
 export MAIN_HTTP_PORT MAIN_HTTPS_PORT BASIC_HTTP_PORT BASIC_HTTPS_PORT
-echo "Using port block starting at $PORT_BASE (main=$MAIN_HTTP_PORT/$MAIN_HTTPS_PORT, basic=$BASIC_HTTP_PORT/$BASIC_HTTPS_PORT)"
+echo "Using ports http=$SERVER_HTTP_PORT https=$SERVER_HTTPS_PORT forward_auth=$FORWARD_AUTH_PORT"
 
 # wait_for_http polls localhost:PORT until the server accepts HTTP connections
 # or up to 10 seconds, replacing the fixed `sleep 2` guards after server start.
@@ -447,6 +467,7 @@ enable_compression = true
 default_format = "table"
 EOF
 
+  wait_port_free "$SERVER_HTTP_PORT" && wait_port_free "$SERVER_HTTPS_PORT"
   CL_CONFIG_FILE=config_basic_test.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
   wait_for_http "$BASIC_HTTP_PORT"
 
@@ -482,14 +503,15 @@ fi
 if [[ ${#TESTS[@]} -eq 0 ]]; then
   cat <<EOF > config_np.toml
 [http]
-port = $NP_HTTP_PORT
+port = $SERVER_HTTP_PORT
 [https]
-port = $NP_HTTPS_PORT
+port = $SERVER_HTTPS_PORT
 EOF
 
   # Test server prints a password when started without config
+  wait_port_free "$SERVER_HTTP_PORT" && wait_port_free "$SERVER_HTTPS_PORT"
   CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start > server.stdout &
-  wait_for_http "$NP_HTTP_PORT"
+  wait_for_http "$SERVER_HTTP_PORT"
   grep "Admin password" server.stdout
   CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
   rm -f run/openrun.sock config_np.toml
@@ -598,6 +620,7 @@ EOF
 
   export TESTENV=abc
   export c1c2_c3=xyz
+  wait_port_free "$SERVER_HTTP_PORT" && wait_port_free "$SERVER_HTTPS_PORT"
   GOCOVERDIR=$GOCOVERDIR ../openrun server start &
   wait_for_http "$MAIN_HTTP_PORT"
   wait_for_socket
@@ -664,14 +687,13 @@ elif [[ "$CONTAINER_COMMANDS" = "disable" ]]; then
 fi
 
 export PYTHON_VERSION=3.14
-port_base=$CONTAINER_PORT_BASE
 for cmd in ${CONTAINER_COMMANDS}; do
     export OPENRUN_CONTAINER_COMMAND="$cmd"
-    http_port=`expr $port_base + 1`
-    https_port=`expr $port_base + 2`
-    forward_auth_port=`expr $port_base + 3`
-    port_base=`expr $port_base + 3`
+    http_port=$SERVER_HTTP_PORT
+    https_port=$SERVER_HTTPS_PORT
+    forward_auth_port=$FORWARD_AUTH_PORT
 
+    wait_port_free "$forward_auth_port"
     start_forward_auth_testcontainer "$cmd" "$forward_auth_port" "localhost:$http_port"
 
     cat <<EOF > config_container.toml
@@ -709,6 +731,7 @@ secrets = [["regex:.*"]]
 [secret.env]
 EOF
     rm -rf metadata run/openrun.sock
+    wait_port_free "$http_port" && wait_port_free "$https_port"
     CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
     wait_for_http $http_port
     wait_for_socket
@@ -773,9 +796,9 @@ EOF
 
   cat <<EOF > config_k8s.toml
 [http]
-port = $K8S_HTTP_PORT
+port = $SERVER_HTTP_PORT
 [https]
-port = $K8S_HTTPS_PORT
+port = $SERVER_HTTPS_PORT
 [secret.env]
 [system]
 container_command="kubernetes"
@@ -806,11 +829,12 @@ EOF
     # standalone runs (`run_cli_tests.sh --kube-registry ... test_kubernetes.yaml`)
     # so the CLI does not fail parsing a missing config file.
     [[ -f openrun.toml ]] || : > openrun.toml
+    wait_port_free "$SERVER_HTTP_PORT" && wait_port_free "$SERVER_HTTPS_PORT"
     CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
-    wait_for_http "$K8S_HTTP_PORT"
+    wait_for_http "$SERVER_HTTP_PORT"
     wait_for_socket
 
-    export HTTP_PORT=$K8S_HTTP_PORT
+    export HTTP_PORT=$SERVER_HTTP_PORT
     echo "********Testing containerized apps with kubernetes *********"
     commander test $VERBOSE test_kubernetes.yaml
     MATCHED_TESTS+=(test_kubernetes.yaml)
