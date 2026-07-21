@@ -9,11 +9,16 @@ on:
 permissions: {}
 
 jobs:
-  goreleaser:
+  # Builds the Windows binary and Authenticode-signs it via SignPath (the
+  # certificate lives in SignPath's HSM, so signing is a round-trip: upload
+  # the unsigned exe as a workflow artifact, SignPath signs it, download the
+  # signed copy). The goreleaser job then swaps the signed exe in before
+  # archiving via deploy/sign-windows.sh.
+  sign-windows:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      packages: write # required to push to GHCR
+      contents: read
+      actions: read # SignPath downloads the unsigned artifact with the workflow token
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -24,9 +29,69 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: "1.26.5"
-      # osslsigncode is used to Authenticode-sign windows binaries
-      - name: Install osslsigncode
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends osslsigncode
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          distribution: goreleaser
+          version: "v2.12.7"
+          install-only: true
+      - name: Build unsigned Windows binary
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: goreleaser build --single-target --id openrun -o "$RUNNER_TEMP/unsigned/openrun.exe"
+      - name: Upload unsigned Windows binary
+        id: upload-unsigned
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openrun-windows-unsigned
+          path: ${{ runner.temp }}/unsigned/openrun.exe
+          if-no-files-found: error
+      - name: Submit SignPath signing request
+        uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: 7825b39c-bb11-4b89-9458-997088c35878
+          # override with the SIGNPATH_PROJECT_SLUG repository variable if the
+          # SignPath project slug is not "openrun"
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'openrun' }}
+          # set the SIGNPATH_SIGNING_POLICY_SLUG repository variable to
+          # "test-signing" to sign with the self-signed test certificate
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          # leave room for manual approval of the signing request
+          wait-for-completion-timeout-in-seconds: "1800"
+          output-artifact-directory: ${{ runner.temp }}/signed
+      - name: Upload signed Windows binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openrun-windows-signed
+          path: ${{ runner.temp }}/signed/openrun.exe
+          if-no-files-found: error
+
+  goreleaser:
+    needs: sign-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write # required to push to GHCR
+      actions: read # required to download the signed Windows artifact
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: "1.26.5"
+      - name: Download signed Windows binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openrun-windows-signed
+          path: ${{ runner.temp }}/signed
       # Buildx is required for multi-arch (dockers_v2 uses buildx)
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - name: Set up Docker Buildx
@@ -50,10 +115,9 @@ jobs:
           # PAT with push access to the openrundev/winget-pkgs fork, used to
           # open the manifest PR against microsoft/winget-pkgs
           WINGET_GITHUB_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
-          # base64 encoded .pfx code signing certificate and its password,
-          # used to Authenticode-sign the windows binaries
-          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
-          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          # SignPath-signed exe from the sign-windows job; deploy/sign-windows.sh
+          # swaps it in for the freshly built Windows binary before archiving
+          SIGNED_WINDOWS_BINARY: ${{ runner.temp }}/signed/openrun.exe
 
   obs:
     name: Publish to Open Build Service

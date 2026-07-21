@@ -52,9 +52,10 @@ builds:
       - goos: windows
         goarch: arm64
     hooks:
-      # Authenticode-sign windows binaries before they are archived, so the
-      # exe inside the winget zip is signed. No-op for other platforms and
-      # when WINDOWS_CERT_PFX is not set (local/snapshot builds).
+      # Swap in the SignPath Authenticode-signed windows binary before it is
+      # archived, so the exe inside the winget zip is signed. No-op for other
+      # platforms and when SIGNED_WINDOWS_BINARY is not set (local/snapshot
+      # builds).
       post:
         - cmd: ./deploy/sign-windows.sh "{{ .Path }}"
           output: true
