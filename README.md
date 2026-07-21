@@ -41,6 +41,7 @@ Some of the unique features of OpenRun are:
 - Scales idle apps down to zero
 - Staged deployment, for code and config changes
 - Atomic (all or nothing) updates across apps
+- Service bindings to easiy provision Postgres/MySQL accounts for apps
 
 This repo hosts the source code for OpenRun. The source for the documentation site [openrun.dev](https://openrun.dev) is in the docs folder. App specifications, which are templates to create apps, are defined in the [appspecs](https://github.com/openrundev/appspecs) repo. Sample apps are in the [apps](https://github.com/openrundev/apps) repo.
 
