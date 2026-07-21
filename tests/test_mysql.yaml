@@ -100,7 +100,7 @@ tests:
     stdout: "1"
 
   mysql0046a: # simulate an already-recorded grant missing from the database
-    command: "bash -c 'acct=$(../openrun binding show-account /apps/my1read); db=$(jq -r \".database\" <<<\"$acct\"); user=$(jq -r \".user\" <<<\"$acct\"); host=$(jq -r \".host\" <<<\"$acct\"); \"$MYSQL_TEST_CONTAINER_COMMAND\" exec \"$MYSQL_TEST_CONTAINER_ID\" mysql -uroot -pmysql -e \"REVOKE SELECT ON \\`$db\\`.* FROM '\\''$user'\\''@'\\''$host'\\'';\"; echo REVOKE'"
+    command: "bash -c 'acct=$(../openrun binding show-account /apps/my1read); db=$(jq -r \".database\" <<<\"$acct\"); user=$(jq -r \".user\" <<<\"$acct\"); host=$(jq -r \".host\" <<<\"$acct\"); \"$MYSQL_TEST_CONTAINER_COMMAND\" exec \"$MYSQL_TEST_CONTAINER_ID\" mysql -uroot -pmysql -e \"REVOKE SELECT ON \\`$db\\`.* FROM '\\''$user'\\''@'\\''$host'\\'';\" && echo REVOKE'"
     stdout: "REVOKE"
 
   mysql0046b:

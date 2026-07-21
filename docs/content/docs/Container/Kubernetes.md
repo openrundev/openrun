@@ -103,7 +103,28 @@ OpenRun service and Kaniko jobs run in the main namespace (default `openrun`). A
 
 Out-of-process [binding providers](https://github.com/openrundev/bindings) (mongodb, redis, sqlserver, oracle) work on Kubernetes without any special setup: installed providers are registered in the metadata database (Postgres, required for Kubernetes installs), which is the source of truth. Each server replica materializes the provider executables into a node-local cache directory at startup, before serving traffic, and re-downloads them (with checksum verification) whenever a pod starts on a fresh node. Installs and uninstalls propagate to all replicas through Postgres notifications, so `openrun provider install` works on multi-replica deployments exactly as on a single server.
 
-For declarative, config-managed deployments, declare the providers in the server config instead of using the CLI:
+For declarative, config-managed deployments, declare the providers in the Helm values instead of using the CLI:
+
+```yaml {filename="values.yaml"}
+bindings:
+  install:
+    redis: v0.1.0
+    mongodb: v0.1.0
+  # Optional mirror for clusters with restricted egress; {provider}, {version},
+  # {os} and {arch} are replaced.
+  # releaseUrlTemplate: "https://mirror.internal/{provider}/{version}/openrun-binding-{provider}-{os}-{arch}"
+```
+
+or with `--set bindings.install.redis=v0.1.0` on the Helm command line. For Terraform-managed EKS installs, set the `openrun_binding_providers` variable in `terraform.tfvars`:
+
+```hcl {filename="terraform.tfvars"}
+openrun_binding_providers = {
+  redis   = "v0.1.0"
+  mongodb = "v0.1.0"
+}
+```
+
+The chart renders these into the `[bindings.install]` section of the generated server config:
 
 ```toml {filename="openrun.toml"}
 [bindings.install]
@@ -116,6 +137,21 @@ Every replica installs the declared providers at startup, downloading them from 
 A replica that misses an install notification (for example after a transient database disconnect) recovers on demand: a binding operation against a service type that is installed but not yet registered triggers a reconcile of that provider before the operation proceeds.
 
 The provider processes run inside the OpenRun server pod, so a provider binary must run in the server container image; the published providers are static pure-Go binaries and need nothing beyond the stock image. Provider startup materialization completes before the server starts serving, so binding operations never race provider registration during a rollout.
+
+### OCI image install
+
+Providers are also published as minimal OCI images (`ghcr.io/openrundev/openrun-binding-<provider>`, a `FROM scratch` image holding the provider binary). For clusters where binaries must come through image provenance policies, or where the server pods have no egress at all, declare the providers as images instead of versions:
+
+```yaml {filename="values.yaml"}
+bindings:
+  images:
+    redis: ghcr.io/openrundev/openrun-binding-redis:v0.1.0
+    mongodb: ghcr.io/openrundev/openrun-binding-mongodb@sha256:8f4e...
+```
+
+The Helm chart renders one init container per provider, which copies the binary from its image into a shared volume (`export` subcommand of the provider binary); the server registers the pre-placed providers at startup, with no downloads and no database registration. Integrity comes from the image digests that placed the binaries — reference images by digest where policy requires it — and the server pins the discovered binary's checksum so every provider launch verifies the file has not changed. Images are pulled by the container runtime, so `imagePullSecrets` and registry mirrors apply as for any other image.
+
+With either declarative path, `bindings.disableInstall: true` additionally rejects the imperative `openrun provider install`/`uninstall` CLI on the deployment, making the chart values the only way providers are added.
 
 ## Architecture
 

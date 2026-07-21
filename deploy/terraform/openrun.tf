@@ -107,6 +107,10 @@ locals {
     }
     auth = local.openrun_oidc_values
     saml = local.openrun_saml_values
+    bindings = {
+      install            = var.openrun_binding_providers
+      releaseUrlTemplate = var.openrun_bindings_release_url_template
+    }
   }
 }
 

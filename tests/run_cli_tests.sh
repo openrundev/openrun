@@ -386,6 +386,9 @@ start_mysql_testcontainer() {
     --env MYSQL_ROOT_PASSWORD=mysql \
     mysql:8.4)
   export MYSQL_TEST_CONTAINER_ID
+  # Tool for suites that exec into the container (e.g. out-of-band REVOKE in
+  # test_mysql.yaml)
+  export MYSQL_TEST_CONTAINER_COMMAND="$CONTAINER_TOOL"
 
   local port=""
   for _ in {1..75}; do

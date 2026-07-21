@@ -32,10 +32,23 @@ openrun_chart_version = ""
 openrun_default_domain = ""
 
 # Email for Let's Encrypt certificate registration. Required for Let's Encrypt certificate issuance.
-openrun_lets_encrypt_email = "
+openrun_lets_encrypt_email = ""
 
 # Use Let's Encrypt staging environment (set to true for testing to avoid rate limits)
 openrun_lets_encrypt_use_staging = false
+
+# Out-of-process binding providers (https://github.com/openrundev/bindings) installed
+# at server startup, provider name to version. Append @sha256:<hex> to a version to
+# pin the binary digest (comma-separated digests for multi-arch node groups).
+# openrun_binding_providers = {
+#   redis   = "v0.1.0"
+#   mongodb = "v0.1.0"
+# }
+
+# Mirror url template for provider downloads when the cluster restricts egress.
+# {provider}, {version}, {os} and {arch} are replaced. Leave empty to download
+# from the openrundev/bindings GitHub releases.
+# openrun_bindings_release_url_template = ""
 
 # -----------------------------------------------------------------------------
 # EKS Cluster Configuration

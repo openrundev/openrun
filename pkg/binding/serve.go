@@ -6,9 +6,11 @@ package binding
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 
@@ -38,6 +40,18 @@ type ServeConfig struct {
 // OPENRUN_PROVIDER_LOG_LEVEL environment variable (set by the server from its
 // own log level) controls provider log verbosity.
 func Serve(config *ServeConfig) {
+	// `<provider> export <dir>` copies the running executable into <dir> and
+	// exits. Provider OCI images are FROM scratch with no shell, so on
+	// Kubernetes an init container runs the provider binary itself to place it
+	// into the shared volume the server discovers via bindings.preinstalled_dir.
+	if len(os.Args) >= 2 && os.Args[1] == "export" {
+		if err := exportExecutable(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "export failed: %s\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	srv := &providerServer{
 		config: config,
 		logger: newServeLogger(os.Getenv("OPENRUN_PROVIDER_LOG_LEVEL")),
@@ -239,6 +253,51 @@ func (s *providerServer) RunCommand(ctx context.Context, req *pb.RunCommandReque
 		return &pb.RunCommandResponse{Error: fmt.Sprintf("provider returned non-serializable command result: %s", err)}, nil
 	}
 	return &pb.RunCommandResponse{Result: resultStruct}, nil
+}
+
+// exportExecutable copies the running provider executable into the target
+// directory, keeping its base name (openrun-binding-<name>). The copy is
+// atomic (temp file + rename) and mode 0555, so a restarted init container can
+// re-export over a previous copy and the server user can execute it regardless
+// of the exporting user.
+func exportExecutable(args []string) error {
+	if len(args) != 1 || args[0] == "" {
+		return errors.New("usage: export <target-dir>")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(self)
+	if err != nil {
+		return err
+	}
+	targetDir := args[0]
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(targetDir, ".export-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	_, writeErr := tmp.Write(data)
+	closeErr := tmp.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		os.Remove(tmpPath) //nolint:errcheck
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o555); err != nil { //nolint:gosec // provider must be executable by the server user
+		os.Remove(tmpPath) //nolint:errcheck
+		return err
+	}
+	target := filepath.Join(targetDir, filepath.Base(self))
+	if err := os.Rename(tmpPath, target); err != nil {
+		os.Remove(tmpPath) //nolint:errcheck
+		return err
+	}
+	fmt.Printf("exported %s\n", target)
+	return nil
 }
 
 // normalizeJSONMap converts a command result into plain JSON types

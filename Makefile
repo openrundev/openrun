@@ -55,7 +55,7 @@ endif
 .RECIPEPREFIX = >
 TAG := 
 
-.PHONY: help test unit int testui covtest covunit covint release int_single lint verify build-linux image tags docs-screenshots
+.PHONY: help test unit int testui covtest covunit covint release fullrelease int_single lint verify build-linux image tags docs-screenshots
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -150,6 +150,62 @@ release: ## Tag and push a release; args: <app_version> <helm_version>
 > echo "************************************************** "
 > echo "Run above command to push the Helm chart after the OpenRun release job is done"
 > @cd - > /dev/null
+
+fullrelease: ## Tag+push openrun, pkg/binding and all bindings under one version; stage (not push) the Helm chart; args: <version>
+> @version="$(INPUT)"
+> version="$${version#v}"
+> if [[ -z "$$version" ]]; then
+>   echo "Usage: make fullrelease <version>, e.g. make fullrelease 0.19.0"
+>   exit 1
+> fi
+> if ! [[ "$$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$$ ]]; then
+>   echo "Error: version '$$version' does not look like a semver version"
+>   exit 1
+> fi
+> # Everything is tagged from the current checkouts: all three repos must be
+> # clean, and nothing may be tagged/pushed if any tag already exists
+> for repo in . ../bindings ../openrun-helm-charts; do
+>   if [[ -n "$$(git -C $$repo status --porcelain)" ]]; then
+>     echo "Error: working tree $$repo is not clean, commit or stash changes first"
+>     exit 1
+>   fi
+> done
+> for tag in "v$$version" "pkg/binding/v$$version"; do
+>   if git rev-parse -q --verify "refs/tags/$$tag" > /dev/null; then
+>     echo "Error: tag $$tag already exists"
+>     exit 1
+>   fi
+> done
+> if [[ -n "$$(git -C ../bindings tag -l "*/v$$version")" ]]; then
+>   echo "Error: bindings tags for v$$version already exist:" $$(git -C ../bindings tag -l "*/v$$version")
+>   exit 1
+> fi
+> # openrun server + pkg/binding SDK: tag and push. The SDK tag must be on the
+> # remote before the bindings release, whose go mod tidy resolves it.
+> git tag -a "v$$version" -m "Release v$$version"
+> git tag -a "pkg/binding/v$$version" -m "Release pkg/binding/v$$version"
+> git push origin "v$$version" "pkg/binding/v$$version"
+> # Bindings: update every provider module to the new SDK version, tag each
+> # module and push; the bindings release workflow builds and publishes each
+> # provider (binaries + OCI image) from its pushed tag
+> $(MAKE) -C ../bindings release INPUT="v$$version" INPUT2="v$$version" PUSH=1
+> # Helm chart: stage the release commit only. It is pushed manually after the
+> # OpenRun release job has published the v$$version images, since the chart's
+> # appVersion is the server image tag.
+> cd ../openrun-helm-charts/
+> sed -i.bak -E "s/^([[:space:]]*version:[[:space:]]*)[^#[:space:]]+/\1$$version/" charts/openrun/Chart.yaml
+> rm -f charts/openrun/Chart.yaml.bak
+> sed -i.bak -E "s/^([[:space:]]*appVersion:[[:space:]]*)[^#[:space:]]+/\1$$version/" charts/openrun/Chart.yaml
+> rm -f charts/openrun/Chart.yaml.bak
+> git add charts/openrun/Chart.yaml
+> git commit -m "Updated Helm chart to $$version, app version to $$version"
+> cd - > /dev/null
+> echo "**************************************************"
+> echo " Tagged and pushed: v$$version, pkg/binding/v$$version, bindings */v$$version"
+> echo " Helm chart commit staged in ../openrun-helm-charts (not pushed)"
+> echo " After the OpenRun release job for v$$version is done, run:"
+> echo "   cd ../openrun-helm-charts/ && git push"
+> echo "**************************************************"
 
 # Swallow extra command-line words (e.g. `make int_single test_reload.yaml`)
 # so make doesn't also try to build them as targets; $(INPUT)/$(INPUT2) above

@@ -576,6 +576,19 @@ type BindingsConfig struct {
 	// UnsafeAllowHTTP allows plain http:// provider source urls. Downloads over
 	// http can be tampered with in transit; enable only for isolated dev setups.
 	UnsafeAllowHTTP bool `toml:"unsafe_allow_http"`
+	// PreinstalledDir is a directory of pre-placed provider executables
+	// (openrun-binding-<name>), discovered and registered at startup without
+	// database registration or downloads. Used by the Kubernetes OCI image
+	// distribution path, where init containers copy provider binaries from
+	// per-provider images into a shared volume; integrity comes from the image
+	// digests that placed the files (the sha256 computed at discovery is still
+	// verified on every launch).
+	PreinstalledDir string `toml:"preinstalled_dir"`
+	// DisableInstall disables the imperative `openrun provider
+	// install/uninstall` API/CLI on this server; providers come only from the
+	// Install config or PreinstalledDir. For declaratively managed
+	// (Kubernetes/Helm) deployments.
+	DisableInstall bool `toml:"disable_install"`
 	// DevProviders registers a provider executable directly from a local path,
 	// bypassing database registration and checksum verification. Development
 	// use only; keys are provider names.

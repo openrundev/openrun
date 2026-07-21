@@ -249,6 +249,18 @@ variable "openrun_enable_nlb_eips" {
   default     = true
 }
 
+variable "openrun_binding_providers" {
+  description = "Out-of-process binding providers installed at server startup, provider name to version (e.g. { redis = \"v0.1.0\" }). Append @sha256:<hex> to a version to pin the binary digest (comma-separated digests for multi-arch). Providers declared here cannot be modified with the openrun provider CLI."
+  type        = map(string)
+  default     = {}
+}
+
+variable "openrun_bindings_release_url_template" {
+  description = "Optional mirror url template for downloading binding provider binaries ({provider}, {version}, {os}, {arch} are replaced). Leave empty to download from the openrundev/bindings GitHub releases."
+  type        = string
+  default     = ""
+}
+
 variable "openrun_auth_mode" {
   description = "Authentication mode for OpenRun: none, oidc, or saml."
   type        = string

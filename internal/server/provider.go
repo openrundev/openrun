@@ -244,6 +244,20 @@ func (s *Server) isConfigManagedProvider(name string) bool {
 	return ok
 }
 
+// providerModifyError returns the error rejecting an imperative provider
+// install/uninstall when the deployment manages providers declaratively:
+// either globally (bindings.disable_install) or for one config-declared
+// provider. operation is "install" or "uninstall", for the error text.
+func (s *Server) providerModifyError(name, operation string) error {
+	if s.staticConfig.Bindings.DisableInstall {
+		return fmt.Errorf("provider %s is disabled on this server (bindings.disable_install), providers are managed through the server config", operation)
+	}
+	if s.isConfigManagedProvider(name) {
+		return fmt.Errorf("provider %s is managed through the [bindings.install] server config, update the config instead", name)
+	}
+	return nil
+}
+
 // InstallProvider installs or updates an out-of-process binding provider: the
 // binary is fetched, verified, registered in the metadata database (the source
 // of truth) and materialized into the local cache dir. Other replicas
@@ -252,8 +266,8 @@ func (s *Server) InstallProvider(ctx context.Context, request *types.ProviderIns
 	if err := s.enforceGlobalPerm(ctx, types.PermissionProviderManage, ""); err != nil {
 		return nil, err
 	}
-	if s.isConfigManagedProvider(request.Name) {
-		return nil, fmt.Errorf("provider %s is managed through the [bindings.install] server config, update the config instead", request.Name)
+	if err := s.providerModifyError(request.Name, "install"); err != nil {
+		return nil, err
 	}
 	return s.installProvider(ctx, request, system.GetContextUserId(ctx))
 }
@@ -401,8 +415,8 @@ func (s *Server) UninstallProvider(ctx context.Context, name string, force bool)
 	if err := s.enforceGlobalPerm(ctx, types.PermissionProviderManage, ""); err != nil {
 		return err
 	}
-	if s.isConfigManagedProvider(name) {
-		return fmt.Errorf("provider %s is managed through the [bindings.install] server config, remove it from the config instead", name)
+	if err := s.providerModifyError(name, "uninstall"); err != nil {
+		return err
 	}
 	s.providerMutex.Lock()
 	defer s.providerMutex.Unlock()
@@ -504,6 +518,8 @@ func (s *Server) setupBindingProviders(ctx context.Context) {
 			Msg("Registered DEV binding provider from local path, checksum verification is disabled")
 	}
 
+	s.registerPreinstalledProviders(ctx)
+
 	// Install providers declared in the config: the declarative path for
 	// config-managed (Kubernetes/Helm) deployments, where every replica runs
 	// this on startup. The install is skipped when the database row already
@@ -531,6 +547,59 @@ func (s *Server) setupBindingProviders(ctx context.Context) {
 		if err := s.reconcileProvider(ctx, provider); err != nil {
 			s.Error().Err(err).Str("provider", provider.Name).Msg("error reconciling binding provider")
 		}
+	}
+}
+
+// registerPreinstalledProviders discovers provider executables pre-placed in
+// bindings.preinstalled_dir and registers their service types, without
+// database registration or downloads. This is the Kubernetes OCI image
+// distribution path: init containers copy each provider binary from its
+// per-provider image into a shared volume before the server starts, so
+// integrity comes from the image digests that placed the files. The sha256
+// computed here is still pinned in the registration, so every launch verifies
+// the file has not changed since discovery. Preinstalled providers register
+// before database reconcile: a database-installed provider claiming the same
+// service types fails reconcile with a logged conflict.
+func (s *Server) registerPreinstalledProviders(ctx context.Context) {
+	dir := os.ExpandEnv(s.staticConfig.Bindings.PreinstalledDir)
+	if dir == "" {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		s.Error().Err(err).Str("dir", dir).Msg("error reading preinstalled bindings dir")
+		return
+	}
+	for _, entry := range entries {
+		name, found := strings.CutPrefix(entry.Name(), "openrun-binding-")
+		name = strings.TrimSuffix(name, ".exe")
+		if !found || name == "" || entry.IsDir() {
+			continue
+		}
+		execPath := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(execPath)
+		if err != nil {
+			s.Error().Err(err).Str("path", execPath).Msg("error reading preinstalled binding provider")
+			continue
+		}
+		sum := sha256.Sum256(data)
+		checksum := hex.EncodeToString(sum[:])
+
+		version, serviceTypes, err := s.describeProvider(ctx, execPath, checksum)
+		if err != nil {
+			s.Error().Err(err).Str("provider", name).Str("path", execPath).Msg("error describing preinstalled binding provider")
+			continue
+		}
+		typeNames := make([]string, 0, len(serviceTypes))
+		for _, t := range serviceTypes {
+			typeNames = append(typeNames, t.ServiceType)
+		}
+		if err := bindings.ReplaceProviderBindings("preinstalled:"+name, typeNames, execPath, checksum); err != nil {
+			s.Error().Err(err).Str("provider", name).Msg("error registering preinstalled binding provider")
+			continue
+		}
+		s.Info().Str("provider", name).Str("path", execPath).Str("version", version).Strs("service_types", typeNames).
+			Msg("Registered preinstalled binding provider")
 	}
 }
 

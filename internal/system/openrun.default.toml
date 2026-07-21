@@ -24,6 +24,15 @@ cache_dir = "$OPENRUN_HOME/bindings" # node-local cache for installed binding pr
 release_url_template = "https://github.com/openrundev/bindings/releases/download/{provider}%2F{version}/openrun-binding-{provider}-{os}-{arch}{ext}"
 unsafe_allow_http = false # allow plain http provider source urls. NOT RECOMMENDED:
                           # the downloaded binaries run as the server user
+# Directory of pre-placed provider executables (openrun-binding-<name>), registered
+# at startup without database registration or downloads. Used by the Kubernetes OCI
+# image path, where init containers copy providers into a shared volume; integrity
+# comes from the image digests that placed the files.
+preinstalled_dir = ""
+# Disable the imperative `openrun provider install/uninstall` API/CLI; providers
+# come only from [bindings.install] or preinstalled_dir. For declaratively managed
+# deployments.
+disable_install = false
 # Providers installed automatically at server startup, downloaded from
 # release_url_template. The declarative alternative to `openrun provider install`,
 # for config-managed (Kubernetes/Helm) deployments. Append @sha256:<hex>[,<hex>] to

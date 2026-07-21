@@ -4,12 +4,24 @@
 package server
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/types"
+	"github.com/rs/zerolog"
 )
+
+// nopLogger is a no-op logger for tests that exercise error paths.
+func nopLogger() *types.Logger {
+	logger := zerolog.Nop()
+	return &types.Logger{Logger: &logger}
+}
 
 func TestProviderSourceURL(t *testing.T) {
 	s := &Server{staticConfig: &types.ServerConfig{}}
@@ -56,6 +68,80 @@ func TestExpandProviderSourceURL(t *testing.T) {
 	if got != want {
 		t.Fatalf("expanded = %q, want %q", got, want)
 	}
+}
+
+func TestProviderModifyError(t *testing.T) {
+	s := &Server{staticConfig: &types.ServerConfig{}}
+	if err := s.providerModifyError("redis", "install"); err != nil {
+		t.Fatalf("expected install allowed, got %v", err)
+	}
+
+	s.staticConfig.Bindings.Install = map[string]string{"redis": "v0.1.0"}
+	if err := s.providerModifyError("redis", "install"); err == nil ||
+		!strings.Contains(err.Error(), "[bindings.install]") {
+		t.Fatalf("expected config-managed error, got %v", err)
+	}
+	if err := s.providerModifyError("mongodb", "install"); err != nil {
+		t.Fatalf("expected non-config-managed provider allowed, got %v", err)
+	}
+
+	s.staticConfig.Bindings.DisableInstall = true
+	if err := s.providerModifyError("mongodb", "uninstall"); err == nil ||
+		!strings.Contains(err.Error(), "bindings.disable_install") {
+		t.Fatalf("expected disable_install error, got %v", err)
+	}
+}
+
+func TestRegisterPreinstalledProviders(t *testing.T) {
+	// Build the fixture provider into a preinstalled dir under its
+	// openrun-binding-<name> file name, alongside files that must be skipped.
+	dir := t.TempDir()
+	execPath := filepath.Join(dir, "openrun-binding-fixture")
+	cmd := exec.Command("go", "build", "-o", execPath, ".")
+	cmd.Dir = "../bindings/testdata/fixtureprovider"
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("error building fixture provider: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("not a provider"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "openrun-binding-broken"), []byte("not executable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{
+		Logger:       nopLogger(),
+		staticConfig: &types.ServerConfig{Bindings: types.BindingsConfig{PreinstalledDir: dir}},
+	}
+	t.Cleanup(func() {
+		bindings.UnregisterProviderBindings("preinstalled:fixture")
+		bindings.UnregisterProviderBindings("preinstalled:broken")
+	})
+	s.registerPreinstalledProviders(context.Background())
+
+	if _, ok := bindings.GetServiceBinding("fixture"); !ok {
+		t.Fatal("fixture service type not registered from preinstalled dir")
+	}
+
+	// The registration works end to end: launch the provider and make a call.
+	builder, _ := bindings.GetServiceBinding("fixture")
+	params, _, err := builder().GetAccountEnv(context.Background())
+	if err != nil || len(params) != 1 || params[0] != "user" {
+		t.Fatalf("GetAccountEnv through preinstalled provider: params=%v err=%v", params, err)
+	}
+}
+
+func TestRegisterPreinstalledProvidersMissingDir(t *testing.T) {
+	// A missing dir (or empty config) logs and returns without registering.
+	s := &Server{
+		Logger:       nopLogger(),
+		staticConfig: &types.ServerConfig{Bindings: types.BindingsConfig{PreinstalledDir: "/nonexistent/providers"}},
+	}
+	s.registerPreinstalledProviders(context.Background())
+
+	s.staticConfig.Bindings.PreinstalledDir = ""
+	s.registerPreinstalledProviders(context.Background())
 }
 
 func TestParseProviderVersion(t *testing.T) {

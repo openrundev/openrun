@@ -105,6 +105,19 @@ Wait for DNS to propagate before completing TLS issuance.
 
 Set `openrun_auth_mode` to `oidc` or `saml` and provide the matching variables. Outputs include the callback/ACS URLs.
 
+## Binding providers (optional)
+
+Out-of-process [binding providers](https://github.com/openrundev/bindings) (mongodb, redis, sqlserver, oracle) can be installed declaratively:
+
+```hcl
+openrun_binding_providers = {
+  redis   = "v0.1.0"
+  mongodb = "v0.1.0"
+}
+```
+
+Every OpenRun replica downloads, verifies and registers the declared providers at startup; their service types become available for `openrun service create`. Upgrading a provider is a version change followed by `terraform apply` (which rolls out the deployment). Append `@sha256:<hex>` to a version to pin the binary digest. Set `openrun_bindings_release_url_template` to download from an internal mirror when the cluster restricts egress.
+
 ## Security summary
 
 - EKS worker nodes are private and egress via NAT.
