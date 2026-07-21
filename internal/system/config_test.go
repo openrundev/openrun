@@ -41,6 +41,10 @@ func TestServerConfig(t *testing.T) {
 	// Metadata related settings
 	testutil.AssertEqualsString(t, "db connection", "sqlite:$OPENRUN_HOME/metadata/clace_metadata.db", c.Metadata.DBConnection)
 	testutil.AssertEqualsBool(t, "auto upgrade", true, c.Metadata.AutoUpgrade)
+	testutil.AssertEqualsInt(t, "sqlite journal size limit", 33554432, int(c.Metadata.SQLiteJournalSizeLimit))
+	testutil.AssertEqualsInt(t, "sqlite maintenance interval", 60, c.Metadata.SQLiteMaintenanceIntervalSecs)
+	testutil.AssertEqualsInt(t, "sqlite truncate checkpoint every", 10, c.Metadata.SQLiteTruncateCheckpointEvery)
+	testutil.AssertEqualsInt(t, "sqlite vacuum pages", 2000, c.Metadata.SQLiteVacuumPages)
 
 	// HTTPS listen related settings
 	testutil.AssertEqualsString(t, "https host", "0.0.0.0", c.Https.Host)

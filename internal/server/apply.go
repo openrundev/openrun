@@ -209,12 +209,78 @@ func (s *Server) setupSource(applyPath, branch, commit, gitAuth string, repoCach
 	return repo, applyFile, nil
 }
 
+// checkoutApplySource resolves the latest commit of a git apply path and
+// checks out the source (both cached in repoCache). skipped is true when the
+// apply can be skipped because the last synced commit is still the latest.
+// Callers that later run Apply under a database transaction call this first,
+// before opening the transaction, so the git network operations never run
+// while a transaction is held; Apply's own calls then hit the cache.
+func (s *Server) checkoutApplySource(applyPath, branch, commit, gitAuth, lastRunCommitId string,
+	forceReload bool, reload types.AppReloadOption, repoCache *RepoCache, isDev bool) (newSha, dir, file string, skipped bool, err error) {
+	if system.IsGit(applyPath) {
+		branch = cmp.Or(branch, "main")
+		newSha, err = repoCache.GetSha(applyPath, branch, gitAuth)
+		if err != nil {
+			return "", "", "", false, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
+		}
+		if !forceReload && (reload != types.AppReloadOptionMatched) &&
+			lastRunCommitId != "" && newSha == lastRunCommitId && (commit == "" || commit == lastRunCommitId) {
+			// If no commit is specified, and the current version is the same as the latest commit, skip apply
+			// Only schedule sync passes in the lastRunCommitId, so this does not happen for normal apply
+			s.Debug().Msgf("Already applied commit for %s, skipping apply", applyPath)
+			return newSha, "", "", true, nil
+		}
+	}
+
+	dir, file, err = s.setupSource(applyPath, branch, commit, gitAuth, repoCache, isDev)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	return newSha, dir, file, false, nil
+}
+
 func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath string, appPathGlob string, approve, dryRun, promote bool,
 	reload types.AppReloadOption, branch, commit, gitAuth string, clobber,
 	forceReload, verify bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (_ *types.AppApplyResponse, _ []types.AppPathDomain, retErr error) {
 	var tx types.Transaction
 	var err error
 	verify = verify && !dryRun
+
+	if reload == "" {
+		reload = types.AppReloadOptionUpdated
+	}
+
+	if repoCache == nil {
+		repoCache, err = NewRepoCache(s)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer repoCache.Cleanup()
+	}
+
+	// Resolve and check out the apply source before any transaction is opened,
+	// so the network git operations do not run while a database transaction is
+	// held. Callers that pass a transaction in are expected to have warmed the
+	// repo cache the same way beforehand (see runSyncJob), making the calls
+	// below cache hits.
+	if system.IsGit(applyPath) {
+		branch = cmp.Or(branch, "main")
+	} else {
+		branch = ""
+	}
+	newSha, dir, file, skipped, err := s.checkoutApplySource(applyPath, branch, commit, gitAuth,
+		lastRunCommitId, forceReload, reload, repoCache, isDev)
+	if err != nil {
+		return nil, nil, err
+	}
+	if skipped {
+		return &types.AppApplyResponse{
+			DryRun:       dryRun,
+			SkippedApply: true,
+			CommitId:     newSha,
+		}, nil, nil
+	}
+
 	if inputTx.Tx == nil {
 		tx, err = s.db.BeginTransaction(ctx)
 		if err != nil {
@@ -237,47 +303,11 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 	bindingAccounts := deployScope.accounts
 
-	if reload == "" {
-		reload = types.AppReloadOptionUpdated
-	}
-
 	// Mark this operation as a declarative apply. App creation stores the
 	// ApplyInfo (for the three way merge on later applies) only in apply
 	// context; presence of ApplyInfo distinguishes declaratively managed apps
 	ctx = context.WithValue(ctx, types.APPLY_OPERATION, "true")
 
-	if repoCache == nil {
-		repoCache, err = NewRepoCache(s)
-		if err != nil {
-			return nil, nil, err
-		}
-		defer repoCache.Cleanup()
-	}
-
-	newSha := ""
-	if system.IsGit(applyPath) {
-		branch = cmp.Or(branch, "main")
-		newSha, err = repoCache.GetSha(applyPath, branch, gitAuth)
-		if err != nil {
-			return nil, nil, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
-		}
-		if !forceReload && (reload != types.AppReloadOptionMatched) &&
-			lastRunCommitId != "" && newSha == lastRunCommitId && (commit == "" || commit == lastRunCommitId) {
-			// If no commit is specified, and the current version is the same as the latest commit, skip apply
-			// Only schedule sync passes in the lastRunCommitId, so this does not happen for normal apply
-			s.Debug().Msgf("Already applied commit for %s, skipping apply", applyPath)
-			return &types.AppApplyResponse{
-				DryRun:       dryRun,
-				SkippedApply: true,
-				CommitId:     newSha,
-			}, nil, nil
-		}
-	}
-
-	dir, file, err := s.setupSource(applyPath, branch, commit, gitAuth, repoCache, isDev)
-	if err != nil {
-		return nil, nil, err
-	}
 	sourceFS, err := appfs.NewSourceFs(dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
 	if err != nil {
 		return nil, nil, err
@@ -289,10 +319,6 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	globFiles, err := sourceFS.Glob(file)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	if !system.IsGit(applyPath) {
-		branch = ""
 	}
 
 	if len(globFiles) == 0 {

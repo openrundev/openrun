@@ -29,7 +29,7 @@ func init() {
 
 func (s *Server) initAuditDB(connectString string) error {
 	var err error
-	s.auditDB, s.auditDbType, err = system.InitDBConnection(connectString, "audit", system.DB_SQLITE_POSTGRES)
+	s.auditDB, s.auditDbType, err = system.InitDBConnection(s.Logger, connectString, "audit", system.DB_SQLITE_POSTGRES, &s.Config().Metadata)
 	if err != nil {
 		return err
 	}

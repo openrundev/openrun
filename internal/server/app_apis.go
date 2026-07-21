@@ -89,17 +89,29 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 		}
 	}
 
-	tx, err := s.db.BeginTransaction(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
 	repoCache, err := NewRepoCache(s)
 	if err != nil {
 		return nil, err
 	}
 	defer repoCache.Cleanup()
+
+	// Check out the app source before the transaction is opened, so the git
+	// network operations do not run while the transaction below is held; the
+	// in-transaction load then hits the repo cache. Best-effort: errors are
+	// left for CreateAppTx to report
+	if sourceUrl := strings.Split(appRequest.SourceUrl, "#")[0]; system.IsGit(sourceUrl) {
+		branch := cmp.Or(appRequest.GitBranch, "main")
+		if _, _, _, _, err := repoCache.CheckoutRepo(sourceUrl, branch, appRequest.GitCommit,
+			appRequest.GitAuthName, appRequest.IsDev); err != nil {
+			s.Debug().Err(err).Msgf("git prefetch: error checking out %s", sourceUrl)
+		}
+	}
+
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
 
 	// The scope's account manager tracks auto binding accounts created for the
 	// app, so they are removed from the service if this transaction rolls back
@@ -1559,17 +1571,34 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 		return nil, err
 	}
 
-	tx, err := s.db.BeginTransaction(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
 	repoCache, err := NewRepoCache(s)
 	if err != nil {
 		return nil, err
 	}
 	defer repoCache.Cleanup()
+
+	// Check out the requested commit before the transaction is opened, so the
+	// git network operations do not run while the transaction below is held.
+	// Best-effort: errors are left for the in-transaction load to report. The
+	// clone runs only when the caller holds the preview permission and the
+	// preview does not already exist, so an unauthorized or duplicate request
+	// cannot make the server fetch the repo; the authoritative checks run
+	// under the transaction below
+	if prefetchEntry, err := s.db.GetAppEntry(ctx, mainAppPathDomain); err == nil {
+		previewPath := types.AppPathDomain{Domain: prefetchEntry.Domain,
+			Path: prefetchEntry.Path + types.PREVIEW_SUFFIX + "_" + commitId}
+		if _, err := s.db.GetAppEntry(ctx, previewPath); err != nil {
+			if err := s.enforceAppPermEntry(ctx, types.PermissionPreview, prefetchEntry); err == nil {
+				s.prefetchAppSource(prefetchEntry, "", commitId, prefetchEntry.Metadata.GitAuthName, repoCache, true)
+			}
+		}
+	}
+
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
 
 	mainAppEntry, err := s.db.GetAppEntryTx(ctx, tx, mainAppPathDomain)
 	if err != nil {

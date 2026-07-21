@@ -56,7 +56,7 @@ const pg_listen_channel = "openrun_events"
 
 // NewMetadata creates a new metadata persistence layer
 func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, error) {
-	db, dbType, err := system.InitDBConnection(config.Metadata.DBConnection, "metadata", system.DB_SQLITE_POSTGRES)
+	db, dbType, err := system.InitDBConnection(logger, config.Metadata.DBConnection, "metadata", system.DB_SQLITE_POSTGRES, &config.Metadata)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing db: %w", err)
 	}

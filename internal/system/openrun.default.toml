@@ -123,6 +123,12 @@ audit_db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_audit.db"
 file_cache_connection = "sqlite:$OPENRUN_HOME/metadata/file_cache.db"
 config_history_versions = 20    # number of dynamic config snapshots retained
 
+# SQLite self-maintenance, applied to the metadata, audit and file cache databases
+sqlite_journal_size_limit = 33554432   # WAL size in bytes the file is truncated back to on checkpoint, <=0 for no limit
+sqlite_maintenance_interval_secs = 60  # background checkpoint/vacuum period, <=0 disables the maintenance loop
+sqlite_truncate_checkpoint_every = 10  # maintenance passes between truncate checkpoints, <=0 disables truncate checkpoints
+sqlite_vacuum_pages = 2000             # max free pages returned to the OS per maintenance pass, <=0 disables incremental vacuum
+
 [system]
 tailwindcss_command = "tailwindcss"
 tailwind_version = 4 # 3 uses legacy Tailwind 3/daisyUI 4 config, 4 uses Tailwind 4/daisyUI 5 CSS config

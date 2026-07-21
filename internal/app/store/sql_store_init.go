@@ -24,7 +24,7 @@ func (s *SqlStore) initStore(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	db, dbType, err := system.InitDBConnection(connectString, "store", system.DB_SQLITE_POSTGRES)
+	db, dbType, err := system.InitDBConnection(s.Logger, connectString, "store", system.DB_SQLITE_POSTGRES, nil)
 	if err != nil {
 		return err
 	}

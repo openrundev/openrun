@@ -521,6 +521,14 @@ type MetadataConfig struct {
 	// ConfigHistoryVersions is the number of dynamic config snapshots retained
 	// in the config_history table. Every config change appends a snapshot
 	ConfigHistoryVersions int `toml:"config_history_versions"`
+
+	// SQLite self-maintenance settings, applied to the server's sqlite
+	// databases (metadata, audit, file cache). App data stores use the
+	// built-in defaults.
+	SQLiteJournalSizeLimit        int64 `toml:"sqlite_journal_size_limit"`        // WAL size in bytes the file is truncated back to on checkpoint, <=0 for no limit
+	SQLiteMaintenanceIntervalSecs int   `toml:"sqlite_maintenance_interval_secs"` // background checkpoint/vacuum period, <=0 disables the maintenance loop
+	SQLiteTruncateCheckpointEvery int   `toml:"sqlite_truncate_checkpoint_every"` // maintenance passes between truncate checkpoints, <=0 disables truncate checkpoints
+	SQLiteVacuumPages             int   `toml:"sqlite_vacuum_pages"`              // max free pages returned to the OS per maintenance pass, <=0 disables incremental vacuum
 }
 
 // LogConfig is the configuration for the Logger

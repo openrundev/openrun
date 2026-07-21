@@ -13,30 +13,40 @@ import (
 
 func TestAddSQLitePragmas(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected string
+		name             string
+		input            string
+		journalSizeLimit int64
+		expected         string
 	}{
 		{
-			name:     "plain path",
-			input:    "/tmp/test.db",
-			expected: "/tmp/test.db?_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)",
+			name:             "plain path",
+			input:            "/tmp/test.db",
+			journalSizeLimit: sqliteJournalSizeLimit,
+			expected:         "/tmp/test.db?_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)&_pragma=journal_size_limit(33554432)",
 		},
 		{
-			name:     "existing query params",
-			input:    "/tmp/test.db?_time_format=sqlite",
-			expected: "/tmp/test.db?_time_format=sqlite&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)",
+			name:             "existing query params",
+			input:            "/tmp/test.db?_time_format=sqlite",
+			journalSizeLimit: sqliteJournalSizeLimit,
+			expected:         "/tmp/test.db?_time_format=sqlite&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)&_pragma=journal_size_limit(33554432)",
 		},
 		{
-			name:     "user pragma not overridden",
-			input:    "/tmp/test.db?_pragma=busy_timeout(500)",
-			expected: "/tmp/test.db?_pragma=busy_timeout(500)&_pragma=synchronous(NORMAL)",
+			name:             "user pragma not overridden",
+			input:            "/tmp/test.db?_pragma=busy_timeout(500)",
+			journalSizeLimit: sqliteJournalSizeLimit,
+			expected:         "/tmp/test.db?_pragma=busy_timeout(500)&_pragma=synchronous(NORMAL)&_pragma=journal_size_limit(33554432)",
+		},
+		{
+			name:             "journal size limit disabled",
+			input:            "/tmp/test.db",
+			journalSizeLimit: 0,
+			expected:         "/tmp/test.db?_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			testutil.AssertEqualsString(t, "connect string", tt.expected, AddSQLitePragmas(tt.input))
+			testutil.AssertEqualsString(t, "connect string", tt.expected, AddSQLitePragmas(tt.input, tt.journalSizeLimit))
 		})
 	}
 }
@@ -45,7 +55,7 @@ func TestAddSQLitePragmas(t *testing.T) {
 // pooled connection, not just the first one
 func TestSQLitePragmasPerConnection(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "pragma_test.db")
-	db, dbType, err := InitDBConnection("sqlite:"+dbPath, "test", DB_SQLITE)
+	db, dbType, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +95,51 @@ func TestSQLitePragmasPerConnection(t *testing.T) {
 	wg.Wait()
 	close(errs)
 	for err := range errs {
+		t.Fatal(err)
+	}
+}
+
+// TestSQLiteAutoVacuumMigration verifies that init migrates the database file
+// to incremental auto-vacuum (one time, persisted) and applies
+// journal_size_limit on the pooled connections
+func TestSQLiteAutoVacuumMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "vacuum_test.db")
+	db, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var autoVacuum int
+	if err := db.QueryRow("PRAGMA auto_vacuum").Scan(&autoVacuum); err != nil {
+		t.Fatal(err)
+	}
+	testutil.AssertEqualsInt(t, "auto_vacuum", 2, autoVacuum)
+
+	var journalSizeLimit int64
+	if err := db.QueryRow("PRAGMA journal_size_limit").Scan(&journalSizeLimit); err != nil {
+		t.Fatal(err)
+	}
+	testutil.AssertEqualsInt(t, "journal_size_limit", sqliteJournalSizeLimit, int(journalSizeLimit))
+
+	if _, err := db.Exec("create table t1 (id integer primary key)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopen: the persisted auto_vacuum setting survives and data is intact
+	db, _, err = InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close() //nolint:errcheck
+	if err := db.QueryRow("PRAGMA auto_vacuum").Scan(&autoVacuum); err != nil {
+		t.Fatal(err)
+	}
+	testutil.AssertEqualsInt(t, "auto_vacuum after reopen", 2, autoVacuum)
+	var count int
+	if err := db.QueryRow("select count(*) from t1").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -23,7 +23,7 @@ type FileCache struct {
 }
 
 func InitFileCache(logger *types.Logger, config *types.ServerConfig) (*FileCache, error) {
-	db, _, err := system.InitDBConnection(config.Metadata.FileCacheConnection, "filecache", system.DB_SQLITE)
+	db, _, err := system.InitDBConnection(logger, config.Metadata.FileCacheConnection, "filecache", system.DB_SQLITE, &config.Metadata)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing db: %w", err)
 	}

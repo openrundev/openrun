@@ -172,6 +172,15 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	}
 	defer repoCache.Cleanup()
 
+	// Warm the git cache before any transaction is opened, so neither the
+	// pre-build pass nor the main reload loop runs network git operations
+	// while holding a database transaction
+	appPaths := make([]types.AppPathDomain, 0, len(filteredApps))
+	for _, appInfo := range filteredApps {
+		appPaths = append(appPaths, appInfo.AppPathDomain)
+	}
+	s.prefetchAppSources(ctx, appPaths, branch, commit, gitAuth, repoCache, forceReload)
+
 	if verify && s.Config().System.UseImagePreBuildStep {
 		// Build container images before the metadata transaction is opened.
 		// Image names are content-hashed, so the main loop's ImageExists check

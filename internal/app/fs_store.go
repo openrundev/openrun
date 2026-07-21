@@ -42,7 +42,7 @@ func InitFileStore(connectString string) error {
 		return nil
 	}
 
-	db, dbType, err := system.InitDBConnection(connectString, "fs_store", system.DB_SQLITE_POSTGRES)
+	db, dbType, err := system.InitDBConnection(nil, connectString, "fs_store", system.DB_SQLITE_POSTGRES, nil)
 	if err != nil {
 		return err
 	}
