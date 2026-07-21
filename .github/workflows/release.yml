@@ -39,7 +39,9 @@ jobs:
         env:
           GOOS: windows
           GOARCH: amd64
-        run: goreleaser build --single-target --id openrun -o "$RUNNER_TEMP/unsigned/openrun.exe"
+        run: |
+          mkdir -p "$RUNNER_TEMP/unsigned"
+          goreleaser build --single-target --id openrun -o "$RUNNER_TEMP/unsigned/openrun.exe"
       - name: Upload unsigned Windows binary
         id: upload-unsigned
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
