@@ -736,22 +736,24 @@ func waitForJobContainerStartOrExit(
 }
 
 func waitForTerminalPhase(ctx context.Context, cs kubernetes.Interface, ns, name string) (corev1.PodPhase, error) {
-	// Builds run for tens of seconds to minutes; 1s polling keeps API churn low.
+	// Builds run for tens of seconds to minutes; 1s polling keeps API churn
+	// low. The first check runs immediately: by the time this is called the
+	// build stream has completed, so the pod is often already terminal.
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
+		p, err := cs.CoreV1().Pods(ns).Get(ctx, name, meta.GetOptions{})
+		if err != nil {
+			return "", err
+		}
+		switch p.Status.Phase {
+		case corev1.PodSucceeded, corev1.PodFailed:
+			return p.Status.Phase, nil
+		}
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-t.C:
-			p, err := cs.CoreV1().Pods(ns).Get(ctx, name, meta.GetOptions{})
-			if err != nil {
-				return "", err
-			}
-			switch p.Status.Phase {
-			case corev1.PodSucceeded, corev1.PodFailed:
-				return p.Status.Phase, nil
-			}
 		}
 	}
 }

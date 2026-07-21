@@ -650,7 +650,10 @@ func TestTailLogsNoPod(t *testing.T) {
 
 func TestWaitForTerminalPhase(t *testing.T) {
 	t.Run("returns succeeded phase", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		// Deadline is well above the 1s poll interval so the second poll (the
+		// first one runs immediately, before the status update below lands)
+		// cannot race the context deadline under load
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		pod := &corev1.Pod{
