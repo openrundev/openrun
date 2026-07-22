@@ -73,7 +73,7 @@ image: build-linux ## Build docker image
 covtest: covunit covint ## Run all tests with coverage
 > go tool covdata percent -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/unit,$(OPENRUN_HOME)/coverage/int
 > go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/unit,$(OPENRUN_HOME)/coverage/int -o $(OPENRUN_HOME)/coverage.txt
-> go tool cover -func coverage/profile
+> go tool cover -func coverage/profile | grep '^total:'
 
 unit: ## Run unit tests
 > packages="$(GO_PACKAGES)"
@@ -92,7 +92,7 @@ covunit: ## Run unit tests with coverage
 > go test -coverpkg "$$cover_packages" $$packages -args -test.gocoverdir="$(OPENRUN_HOME)/coverage/unit"
 > go tool covdata percent -i=$(OPENRUN_HOME)/coverage/unit
 > go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/unit -o $(OPENRUN_HOME)/coverage/profile
-> go tool cover -func coverage/profile
+> go tool cover -func coverage/profile | grep '^total:'
 
 int: ## Run integration tests
 > ./tests/run_cli_tests.sh $(RUN_CLI_TESTS_FLAGS)
@@ -119,7 +119,7 @@ covint: ## Run integration tests with coverage
 > ./tests/run_cli_tests.sh $(RUN_CLI_TESTS_FLAGS) --coverdir $(OPENRUN_HOME)/coverage/int
 > go tool covdata percent -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/int
 > go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/int -o $(OPENRUN_HOME)/coverage/profile
-> go tool cover -func coverage/profile
+> go tool cover -func coverage/profile | grep '^total:'
 
 tags: ## Show current release version tags
 > @echo "OpenRun   : " `git tag -l --sort=-creatordate | head -n 1`
