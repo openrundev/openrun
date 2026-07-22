@@ -235,6 +235,21 @@ func (a *App) Close() error {
 	return nil
 }
 
+// PauseIdleShutdown suspends idle-based container shutdown for this app's
+// container handler, if it has one. See ContainerHandler.PauseIdleShutdown
+func (a *App) PauseIdleShutdown() {
+	if a.containerHandler != nil {
+		a.containerHandler.PauseIdleShutdown()
+	}
+}
+
+// ResumeIdleShutdown re-enables idle-based container shutdown for this app
+func (a *App) ResumeIdleShutdown() {
+	if a.containerHandler != nil {
+		a.containerHandler.ResumeIdleShutdown()
+	}
+}
+
 // PrepareContainerBuild computes the build plan for the app's container image:
 // image name, whether a build is needed, and (when it is) a temp source dir
 // extracted from the app's source FS. All DB reads happen here, so the caller

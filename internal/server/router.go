@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -756,6 +757,26 @@ func (h *Handler) stopServer(r *http.Request) (any, error) {
 	h.server.RequestStop()
 
 	return map[string]any{}, nil
+}
+
+// restartServer performs a zero downtime in-place restart: a new server
+// process takes over the listeners and this process drains. Blocks until the
+// new process is ready or the restart has failed (in which case this process
+// continues serving). Uses the server stop permission: restarting is a
+// stop/start of the same server
+func (h *Handler) restartServer(r *http.Request) (any, error) {
+	if err := h.server.enforceGlobalPerm(r.Context(), types.PermissionServerStop, ""); err != nil {
+		return nil, err
+	}
+	h.Warn().Msgf("Server in-place restart called")
+	updateOperationInContext(r, "restart_server")
+	if err := h.server.RequestRestart(); err != nil {
+		if errors.Is(err, system.ErrInPlaceRestartUnavailable) {
+			return nil, types.CreateRequestError(err.Error(), http.StatusNotImplemented)
+		}
+		return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
+	}
+	return map[string]any{"status": "restarted, new process is serving"}, nil
 }
 
 func (h *Handler) createApp(r *http.Request) (any, error) {
@@ -1774,9 +1795,14 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// These API's are mounted at /_openrun
 	r := chi.NewRouter()
 
-	// Get apps
+	// Stop server
 	r.Post("/stop", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "stop_server", h.stopServer, false)
+	}))
+
+	// Zero downtime in-place restart
+	r.Post("/restart", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "restart_server", h.restartServer, false)
 	}))
 
 	// Get apps

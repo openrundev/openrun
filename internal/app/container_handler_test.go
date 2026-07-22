@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/container"
@@ -20,14 +21,15 @@ import (
 )
 
 type healthTestManager struct {
-	hostNamePort    string
-	running         bool
-	supportsInPlace bool
-	currentHash     string
-	currentHashErr  error
-	imageExists     bool
-	deployReq       *container.DeployRequest
-	runSourceDir    string
+	hostNamePort       string
+	running            bool
+	supportsInPlace    bool
+	currentHash        string
+	currentHashErr     error
+	imageExists        bool
+	deployReq          *container.DeployRequest
+	runSourceDir       string
+	stopContainerCalls int
 }
 
 func (m *healthTestManager) BuildImage(context.Context, container.ImageName, string, string, map[string]string) error {
@@ -51,6 +53,7 @@ func (m *healthTestManager) StartContainer(context.Context, container.ContainerN
 }
 
 func (m *healthTestManager) StopContainer(context.Context, container.ContainerName) error {
+	m.stopContainerCalls++
 	return nil
 }
 
@@ -805,5 +808,240 @@ func TestGetBindingEnvUsesStagedAccountForDevApp(t *testing.T) {
 	}
 	if env["POSTGRES_URL_DIRECT"] != "postgres://stage-direct" {
 		t.Fatalf("POSTGRES_URL_DIRECT = %q", env["POSTGRES_URL_DIRECT"])
+	}
+}
+
+// TestContainerHandlerIdleShutdownPauseResume covers the pause primitive
+// used during a zero downtime in-place restart: idle detection is
+// process-local, so the old process must not stop a container based on its
+// own stale view of activity while the new process may already be serving
+// it. See Server.PauseBackground
+func TestContainerHandlerIdleShutdownPauseResume(t *testing.T) {
+	t.Parallel()
+
+	h := &ContainerHandler{}
+	if h.idlePaused.Load() {
+		t.Fatal("expected idle shutdown not paused by default")
+	}
+
+	h.PauseIdleShutdown()
+	if !h.idlePaused.Load() {
+		t.Fatal("expected idle shutdown paused after PauseIdleShutdown")
+	}
+
+	h.ResumeIdleShutdown()
+	if h.idlePaused.Load() {
+		t.Fatal("expected idle shutdown not paused after ResumeIdleShutdown")
+	}
+}
+
+// TestAppPauseIdleShutdownDelegatesToContainerHandler covers App's thin
+// wrapper: both methods must delegate to the container handler when present
+// and be safe no-ops when it is nil (apps with no container: static, dev
+// without a container, ...).
+func TestAppPauseIdleShutdownDelegatesToContainerHandler(t *testing.T) {
+	t.Parallel()
+
+	var nilHandlerApp App
+	nilHandlerApp.PauseIdleShutdown()  // must not panic with a nil containerHandler
+	nilHandlerApp.ResumeIdleShutdown() // must not panic with a nil containerHandler
+
+	withHandlerApp := App{containerHandler: &ContainerHandler{}}
+	withHandlerApp.PauseIdleShutdown()
+	if !withHandlerApp.containerHandler.idlePaused.Load() {
+		t.Fatal("expected App.PauseIdleShutdown to pause its container handler")
+	}
+	withHandlerApp.ResumeIdleShutdown()
+	if withHandlerApp.containerHandler.idlePaused.Load() {
+		t.Fatal("expected App.ResumeIdleShutdown to resume its container handler")
+	}
+}
+
+// blockingVersionManager blocks CurrentVersionHash until release is closed,
+// signaling arrived first. Used to pin the idleAppShutdown goroutine at a
+// known point inside staleInPlaceHandler -- reached only after the fast-path
+// idlePaused check and the idle-time/byte-watermark checks have all already
+// passed -- so a test can inject a pause with a real happens-before edge
+// instead of racing a channel handshake against the goroutine's own
+// continuation.
+type blockingVersionManager struct {
+	healthTestManager
+	arrived chan struct{}
+	release chan struct{}
+}
+
+func (m *blockingVersionManager) SupportsInPlaceUpdate() bool { return true }
+
+func (m *blockingVersionManager) CurrentVersionHash(context.Context, container.ContainerName) (string, error) {
+	close(m.arrived)
+	<-m.release
+	return "", nil // empty hash: staleInPlaceHandler treats this as not-stale and continues
+}
+
+// TestIdleAppShutdownRechecksPauseBeforeStoppingContainer drives the real
+// idleAppShutdown loop and pauses it in the window between the fast-path
+// idlePaused check at the top of the loop and the actual StopContainer call
+// -- the exact gap a restart's PauseBackground can land in while this
+// goroutine is already committed to an idle-shutdown decision (running
+// getAppHash/staleInPlaceHandler/notifyClose). The recheck under stateLock
+// immediately before StopContainer must catch a pause that arrives in that
+// window instead of stopping the container anyway.
+func TestIdleAppShutdownRechecksPauseBeforeStoppingContainer(t *testing.T) {
+	t.Parallel()
+
+	manager := &blockingVersionManager{
+		arrived: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	closeCh := make(chan struct{})
+	// Short period so the loop body runs promptly; safe to keep firing after
+	// the pause below since a paused tick is a no-op via the fast-path check
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	h := &ContainerHandler{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app: &App{
+			Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+			AppEntry: &types.AppEntry{
+				Id:    types.AppId(types.ID_PREFIX_APP_PROD + "idle_pause_race_test"),
+				Path:  "/idle-pause-race",
+				IsDev: true, // short-circuits getAppHash: no sourceFS needed
+			},
+		},
+		manager:            manager,
+		containerConfig:    types.Container{IdleShutdownSecs: 1},
+		currentState:       ContainerStateRunning,
+		activeVersionHash:  "some-version", // non-empty, so staleInPlaceHandler calls CurrentVersionHash
+		idleShutdownTicker: ticker,
+		closeCh:            closeCh,
+	}
+	h.app.lastRequestTime.Store(time.Now().Add(-time.Hour).Unix()) // well past the idle threshold
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.idleAppShutdown(context.Background())
+	}()
+
+	// Reaching CurrentVersionHash proves the fast-path idlePaused check (and
+	// every check before it) already passed for this iteration
+	select {
+	case <-manager.arrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("idleAppShutdown did not reach staleInPlaceHandler in time")
+	}
+
+	// Pause here happens-before the goroutine's continuation past <-release
+	// below (channel synchronization), which happens-before its recheck of
+	// idlePaused: no race, unlike relying on a single channel handshake that
+	// both confirms arrival and releases the goroutine in the same step
+	h.PauseIdleShutdown()
+	close(manager.release)
+	close(closeCh)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("idleAppShutdown goroutine did not exit after closeCh was closed")
+	}
+
+	if manager.stopContainerCalls != 0 {
+		t.Fatalf("expected StopContainer not to be called once idle shutdown was paused mid-decision, got %d calls", manager.stopContainerCalls)
+	}
+}
+
+// blockingStopManager blocks StopContainer until release is closed,
+// signaling arrived first. The idle runner calls StopContainer while holding
+// stateLock, so this pins the runner inside a committed container stop
+type blockingStopManager struct {
+	healthTestManager
+	stopArrived chan struct{}
+	stopRelease chan struct{}
+}
+
+func (m *blockingStopManager) StopContainer(context.Context, container.ContainerName) error {
+	close(m.stopArrived)
+	<-m.stopRelease
+	m.stopContainerCalls++
+	return nil
+}
+
+// TestPauseIdleShutdownJoinsCommittedStop covers the pause-vs-committed-stop
+// race: an idle shutdown that already passed its final pause recheck (and so
+// holds stateLock through StopContainer) cannot be aborted, but
+// PauseIdleShutdown must not return while that stop is still executing --
+// the caller proceeds with a restart handoff on return, and the handoff must
+// not overlap a container stop still in progress
+func TestPauseIdleShutdownJoinsCommittedStop(t *testing.T) {
+	t.Parallel()
+
+	manager := &blockingStopManager{
+		stopArrived: make(chan struct{}),
+		stopRelease: make(chan struct{}),
+	}
+	closeCh := make(chan struct{})
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	h := &ContainerHandler{
+		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app: &App{
+			Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
+			AppEntry: &types.AppEntry{
+				Id:    types.AppId(types.ID_PREFIX_APP_PROD + "idle_pause_join_test"),
+				Path:  "/idle-pause-join",
+				IsDev: true, // short-circuits getAppHash: no sourceFS needed
+			},
+		},
+		manager:            manager,
+		containerConfig:    types.Container{IdleShutdownSecs: 1},
+		currentState:       ContainerStateRunning,
+		activeVersionHash:  "", // empty: staleInPlaceHandler returns without a version check
+		idleShutdownTicker: ticker,
+		closeCh:            closeCh,
+	}
+	h.app.lastRequestTime.Store(time.Now().Add(-time.Hour).Unix()) // well past the idle threshold
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.idleAppShutdown(context.Background())
+	}()
+
+	// stopArrived is closed inside StopContainer, which the runner calls
+	// while holding stateLock: from here until stopRelease is closed, the
+	// stop is committed and in progress
+	select {
+	case <-manager.stopArrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("idleAppShutdown did not reach StopContainer in time")
+	}
+
+	pauseReturned := make(chan struct{})
+	go func() {
+		h.PauseIdleShutdown()
+		close(pauseReturned)
+	}()
+
+	select {
+	case <-pauseReturned:
+		t.Fatal("PauseIdleShutdown returned while a committed container stop was still in progress")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(manager.stopRelease)
+	select {
+	case <-pauseReturned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PauseIdleShutdown did not return after the container stop finished")
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("idleAppShutdown goroutine did not exit after the container stop")
+	}
+	if manager.stopContainerCalls != 1 {
+		t.Fatalf("expected exactly one container stop, got %d", manager.stopContainerCalls)
 	}
 }

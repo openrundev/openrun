@@ -152,6 +152,18 @@ type ServerConfig struct {
 	BuilderAgent   map[string]BuilderAgentConfig   `toml:"builder_agent"`
 	BuilderProfile map[string]BuilderProfileConfig `toml:"builder_profile"`
 	BuilderGit     map[string]BuilderGitConfig     `toml:"builder_git"`
+	Restart        RestartConfig                   `toml:"restart"`
+
+	// EnableInPlaceRestart is set by the server start command; zero downtime
+	// in-place restarts need process-wide state (signal handling, re-exec)
+	// which embedded and test servers must not take over
+	EnableInPlaceRestart bool `toml:"-"`
+}
+
+// RestartConfig controls zero downtime in-place restarts and shutdown drain
+type RestartConfig struct {
+	DrainTimeoutSecs   int `toml:"drain_timeout_secs"`   // max wait for in-flight requests and websockets to finish on shutdown
+	UpgradeTimeoutSecs int `toml:"upgrade_timeout_secs"` // max wait for the new process to report ready during an in-place restart
 }
 
 // BuilderProfileConfig is one [builder_profile.*] entry: a named bundle of

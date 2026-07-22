@@ -132,6 +132,10 @@ sqlite_maintenance_interval_secs = 60  # background checkpoint/vacuum period, <=
 sqlite_truncate_checkpoint_every = 10  # maintenance passes between truncate checkpoints, <=0 disables truncate checkpoints
 sqlite_vacuum_pages = 2000             # max free pages returned to the OS per maintenance pass, <=0 disables incremental vacuum
 
+[restart]
+drain_timeout_secs = 300  # max wait on shutdown for in-flight requests and websockets to finish
+upgrade_timeout_secs = 90 # max wait for the new process to report ready during an in-place restart
+
 [system]
 tailwindcss_command = "tailwindcss"
 tailwind_version = 4 # 3 uses legacy Tailwind 3/daisyUI 4 config, 4 uses Tailwind 4/daisyUI 5 CSS config

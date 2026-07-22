@@ -28,23 +28,34 @@ func (s *Server) startStaleContainerCleanup() {
 	interval := time.Duration(s.Config().System.StaleContainerCleanupIntervalMins) * time.Minute
 	s.staleContainerCleanupTicker = time.NewTicker(interval)
 	s.staleContainerCleanupStop = make(chan struct{})
-	go s.staleContainerCleanupRunner()
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.staleContainerCleanupCancel = cancel
+	s.staleContainerCleanupDone = make(chan struct{})
+	// ticker/stop/ctx/done are passed in rather than read from s inside the
+	// loop: PauseBackground/ResumeBackground reassign these fields (under
+	// bgMu) to pause and restart the loop across an in-place restart, and the
+	// running goroutine must keep observing the instances it was started
+	// with, not race against those reassignments on every loop iteration
+	go s.staleContainerCleanupRunner(s.staleContainerCleanupTicker, s.staleContainerCleanupStop, runCtx, s.staleContainerCleanupDone)
 }
 
-func (s *Server) staleContainerCleanupRunner() {
+func (s *Server) staleContainerCleanupRunner(ticker *time.Ticker, stop <-chan struct{}, runCtx context.Context, done chan<- struct{}) {
+	defer close(done)
 	s.Info().Msg("Starting stale container cleanup loop")
 	for {
 		select {
-		case <-s.staleContainerCleanupTicker.C:
-		case <-s.staleContainerCleanupStop:
-			s.staleContainerCleanupTicker.Stop()
+		case <-ticker.C:
+		case <-stop:
+			ticker.Stop()
 			s.Info().Msg("Stale container cleanup loop stopped")
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		// The sweep timeout derives from runCtx so PauseBackground can abort
+		// a sweep already in flight, not just prevent the next one
+		ctx, cancel := context.WithTimeout(runCtx, 2*time.Minute)
 		err := s.cleanupStaleContainers(ctx)
 		cancel()
-		if err != nil {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			s.Error().Err(err).Msg("Error cleaning up stale containers")
 		}
 	}

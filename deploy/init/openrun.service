@@ -16,7 +16,18 @@ User=openrun
 Group=openrun
 Environment=OPENRUN_HOME=/var/lib/openrun
 ExecStart=/usr/bin/openrun server start
-TimeoutStopSec=5s
+# systemctl reload performs a zero downtime in-place restart: a new server
+# process takes over the listeners, the old process drains and exits. The
+# pid file lets systemd follow the main pid across the handoff (tableflip
+# writes the new pid before the old process exits). KillMode=mixed sends the
+# stop SIGTERM only to the main process, so an old process still draining
+# from a reload is not signaled again, while the final SIGKILL after
+# TimeoutStopSec still sweeps the whole cgroup. TimeoutStopSec covers the
+# restart.drain_timeout_secs config (default 300s) for websocket draining
+ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/var/lib/openrun/run/openrun.pid
+KillMode=mixed
+TimeoutStopSec=330s
 LimitNOFILE=1048576
 PrivateTmp=true
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE

@@ -37,6 +37,11 @@ type AppStore struct {
 	// built App, so an App built from a read that a concurrent clear made
 	// stale is never cached.
 	generation uint64
+	// idleShutdownPaused mirrors the pause state onto apps added after
+	// PauseIdleShutdown was called (e.g. a first access during an in-place
+	// restart's overlap window), so they start paused too instead of
+	// defaulting to active idle shutdown. See PauseIdleShutdown
+	idleShutdownPaused bool
 }
 
 func NewAppStore(logger *types.Logger, server *Server) *AppStore {
@@ -224,8 +229,45 @@ func (a *AppStore) AddAppIfUnchanged(app *app.App, generation uint64) bool {
 		return false
 	}
 	a.appMap[types.CreateAppPathDomain(app.Path, app.Domain)] = app
+	if a.idleShutdownPaused {
+		app.PauseIdleShutdown()
+	}
 	a.resetAllAppCache()
 	return true
+}
+
+// PauseIdleShutdown suspends idle-based container shutdown for all cached
+// apps, and for any app added to the store until ResumeIdleShutdown is
+// called. Called when an in-place restart starts: see
+// Server.PauseBackground for why activity-based container shutdown cannot
+// be trusted during the overlap between the old and new process
+func (a *AppStore) PauseIdleShutdown() {
+	a.mu.Lock()
+	a.idleShutdownPaused = true
+	apps := make([]*app.App, 0, len(a.appMap))
+	for _, application := range a.appMap {
+		apps = append(apps, application)
+	}
+	a.mu.Unlock()
+	// Pause outside the store lock: each pause joins any idle container stop
+	// already in progress (up to a few seconds), and holding the store lock
+	// across that would stall request routing. An app added concurrently is
+	// paused by AddAppIfUnchanged via the flag set above; pausing an app
+	// removed concurrently is harmless
+	for _, application := range apps {
+		application.PauseIdleShutdown()
+	}
+}
+
+// ResumeIdleShutdown re-enables idle-based container shutdown, after a
+// failed in-place restart
+func (a *AppStore) ResumeIdleShutdown() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.idleShutdownPaused = false
+	for _, app := range a.appMap {
+		app.ResumeIdleShutdown()
+	}
 }
 
 func (a *AppStore) ClearLinkedApps(pathDomain types.AppPathDomain) error {

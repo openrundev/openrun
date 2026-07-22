@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/openrundev/openrun/internal/app/appfs"
@@ -66,6 +67,14 @@ type ContainerHandler struct {
 	// since a stopped ticker's channel is never closed
 	closeCh   chan struct{}
 	closeOnce sync.Once
+
+	// idlePaused suspends idle-based container shutdown while set. Set during
+	// a zero downtime in-place restart: activity tracking (lastRequestTime,
+	// the proxy byte window) is process-local, so the old process's view of
+	// "idle" does not account for requests the new process is now serving,
+	// and stopping the container on that stale view would take down an app
+	// the new process is actively routing to
+	idlePaused atomic.Bool
 
 	// Idle shutdown related fields
 	idleShutdownTicker  *time.Ticker
@@ -298,6 +307,10 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 		if currentState != ContainerStateRunning {
 			continue
 		}
+		if h.idlePaused.Load() {
+			h.Trace().Msgf("Idle shutdown paused for app %s", h.app.Id)
+			continue
+		}
 		idleTimeSecs := time.Now().Unix() - h.app.lastRequestTime.Load()
 		if idleTimeSecs < int64(h.containerConfig.IdleShutdownSecs) {
 			// Not idle
@@ -339,6 +352,16 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 		}
 
 		h.stateLock.Lock()
+		// Re-check right before the point of no return: idlePaused may have
+		// been set after the fast-path check above (line 310) while this
+		// goroutine was doing the getAppHash/staleInPlaceHandler/notifyClose
+		// work, so a PauseIdleShutdown landing in that window would otherwise
+		// be silently missed and the container stopped anyway
+		if h.idlePaused.Load() {
+			h.stateLock.Unlock()
+			h.Trace().Msgf("Idle shutdown paused for app %s, skipping container stop", h.app.Id)
+			continue
+		}
 		h.currentState = ContainerStateIdleShutdown
 
 		err = h.manager.StopContainer(ctx, containerName)
@@ -1449,6 +1472,26 @@ func (h *ContainerHandler) buildHealthProbe() *container.HealthProbe {
 		// StartupFailures × period bounds total startup time (default ~30s).
 		StartupFailures: startupFailures,
 	}
+}
+
+// PauseIdleShutdown suspends idle-based container shutdown for this app. See
+// idlePaused. Blocks until any idle shutdown already committed past its
+// final pause recheck has finished: the idle runner holds stateLock from
+// that recheck through the container stop, so acquiring it here joins an
+// in-progress stop instead of returning while the container is still being
+// stopped concurrently (the caller proceeds with a restart handoff on
+// return). Any iteration that has not yet taken stateLock observes the flag
+// at the recheck
+func (h *ContainerHandler) PauseIdleShutdown() {
+	h.idlePaused.Store(true)
+	h.stateLock.Lock()
+	_ = h.currentState // the critical section exists only for the join
+	h.stateLock.Unlock()
+}
+
+// ResumeIdleShutdown re-enables idle-based container shutdown for this app
+func (h *ContainerHandler) ResumeIdleShutdown() {
+	h.idlePaused.Store(false)
 }
 
 func (h *ContainerHandler) Close() error {

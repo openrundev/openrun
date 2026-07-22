@@ -7,6 +7,16 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Zero downtime in-place restarts (Linux/macOS): `openrun server restart` (or `SIGHUP`, or `POST /_openrun/restart`) re-execs the server binary and hands the HTTP/HTTPS/unix-socket listeners to the new process.
+- Added login page for system and builtin auth type and generic logout page
+- Add support for Windows binary signing with signpath.io
+
+### Fixed
+
+- Fix WAL cleanup for SQLite based metadata
+
 ## [v0.18.7] - 2026-07-20
 
 ### Added

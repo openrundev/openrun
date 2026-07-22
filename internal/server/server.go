@@ -183,6 +183,13 @@ type Server struct {
 
 	staleContainerCleanupTicker *time.Ticker
 	staleContainerCleanupStop   chan struct{}
+	// staleContainerCleanupCancel aborts a sweep already in flight and
+	// staleContainerCleanupDone is closed when the runner goroutine returns:
+	// PauseBackground must not return while a sweep can still stop
+	// containers, since during an in-place restart the new process may
+	// already be starting containers this process would classify as stale
+	staleContainerCleanupCancel context.CancelFunc
+	staleContainerCleanupDone   chan struct{}
 
 	// deployTxnMu guards activeDeployTxns: the deploy transactions of
 	// operations currently in flight, whose containers must not be treated as
@@ -206,6 +213,14 @@ type Server struct {
 	stopRequestOnce sync.Once
 	stopOnce        sync.Once
 	stopErr         error
+
+	// upgrader performs zero downtime in-place restarts by passing the
+	// listeners to a re-exec'ed child process; connTracker tracks hijacked
+	// (websocket) connections so shutdown can drain them
+	upgrader    *system.Upgrader
+	connTracker connTracker
+	restartMu   sync.Mutex // single-flights RequestRestart pause/resume
+	bgMu        sync.Mutex // guards the background job fields (syncStop, staleContainerCleanupStop) across pause/resume/stop
 }
 
 // NewServer creates a new instance of the OpenRun Server
@@ -378,13 +393,145 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("error initializing rbac manager: %w", err)
 	}
 
-	// Start the idle shutdown check
-	server.syncTimer = time.NewTicker(time.Minute) // run sync every minute
-	server.syncStop = make(chan struct{})
-	go server.syncRunner()
+	// Start the sync runner (which includes the idle shutdown check) and the
+	// stale container sweeper
+	server.startSyncRunner()
 	server.startStaleContainerCleanup()
 	telemetryCleanup = false
 	return server, nil
+}
+
+func (s *Server) startSyncRunner() {
+	s.syncTimer = time.NewTicker(time.Minute) // run sync every minute
+	s.syncStop = make(chan struct{})
+	// syncTimer and syncStop are passed in rather than read from s inside the
+	// loop: PauseBackground/ResumeBackground reassign these fields (under
+	// bgMu) to pause and restart the loop across an in-place restart, and the
+	// running goroutine must keep observing the instances it was started
+	// with, not race against those reassignments on every loop iteration
+	go s.syncRunner(s.syncTimer, s.syncStop)
+}
+
+// PauseBackground stops the timer driven background jobs (sync runner and
+// stale container sweeper) and suspends per-app idle container shutdown.
+// Called when an in-place restart starts, so the old process cannot stop
+// containers the new process is starting to use: idle detection is
+// process-local (last request time, proxied byte counts), so the old
+// process's view of "idle" does not account for requests the new process is
+// now serving. Request driven subsystems keep working since the old process
+// serves traffic until the handoff completes. Also the first step of Stop
+func (s *Server) PauseBackground() {
+	s.bgMu.Lock()
+	defer s.bgMu.Unlock()
+	if s.syncStop != nil {
+		s.syncTimer.Stop()
+		close(s.syncStop)
+		s.syncStop = nil
+	}
+	if s.staleContainerCleanupStop != nil {
+		s.staleContainerCleanupTicker.Stop()
+		close(s.staleContainerCleanupStop)
+		s.staleContainerCleanupStop = nil
+		// Abort any sweep already in flight and wait for the runner to
+		// return: closing the stop channel only affects the runner's next
+		// select, and a sweep running concurrently with a restart handoff
+		// could stop containers the new process is starting to use
+		s.staleContainerCleanupCancel()
+		s.staleContainerCleanupCancel = nil
+		<-s.staleContainerCleanupDone
+		s.staleContainerCleanupDone = nil
+	}
+	if s.apps != nil {
+		s.apps.PauseIdleShutdown()
+	}
+}
+
+// ResumeBackground restarts the background jobs and per-app idle shutdown
+// stopped by PauseBackground, after a failed in-place restart or once the
+// previous process of a completed handoff has exited. A no-op once shutdown
+// has been requested: Stop always pauses after raising stopRequested, so a
+// resume that slips past this check is re-paused by Stop's own
+// PauseBackground queued behind it on bgMu
+func (s *Server) ResumeBackground() {
+	s.bgMu.Lock()
+	defer s.bgMu.Unlock()
+	select {
+	case <-s.stopRequested:
+		return
+	default:
+	}
+	if s.syncStop == nil {
+		s.startSyncRunner()
+	}
+	if s.staleContainerCleanupStop == nil {
+		s.startStaleContainerCleanup()
+	}
+	if s.apps != nil {
+		s.apps.ResumeIdleShutdown()
+	}
+}
+
+// RequestRestart starts a zero downtime in-place restart: the current binary
+// is re-exec'ed, the listeners are handed off and this process drains once
+// the new process reports ready. Blocks until the new process is ready or
+// has failed; on failure this process resumes normal operation and the error
+// is returned
+func (s *Server) RequestRestart() error {
+	if s.upgrader == nil {
+		return fmt.Errorf("%w: server is not started", system.ErrInPlaceRestartUnavailable)
+	}
+	if !s.upgrader.Supported() {
+		return s.upgrader.Upgrade() // returns the unavailable error with the reason
+	}
+	// Serialized against blockRestarts (the first step of Stop): a restart
+	// racing a stop must not win it. If a stop already closed stopRequested
+	// before this acquires the lock, bail out immediately below instead of
+	// forking a child that would end up serving after the old process
+	// intentionally shut down. If a stop is raised while this holds the
+	// lock, blockRestarts blocks until this call resolves (bounded by
+	// upgrade_timeout_secs) rather than proceeding concurrently
+	s.restartMu.Lock()
+	defer s.restartMu.Unlock()
+	select {
+	case <-s.stopRequested:
+		return fmt.Errorf("%w: server shutdown already in progress", system.ErrInPlaceRestartUnavailable)
+	default:
+	}
+	// While the previous process of an earlier handoff is still draining,
+	// tableflip would reject the upgrade anyway ("parent hasn't exited");
+	// reject it here first so the failure path below cannot call
+	// ResumeBackground and re-enable container stops that Start paused for
+	// the duration of the parent's drain
+	if !s.upgrader.ParentExited() {
+		return fmt.Errorf("%w: the previous server process is still draining after an earlier in-place restart, retry once it has exited", system.ErrInPlaceRestartUnavailable)
+	}
+	s.Info().Msg("In-place restart requested, starting new process")
+	s.PauseBackground()
+	if err := s.upgrader.Upgrade(); err != nil {
+		s.Error().Err(err).Msg("In-place restart failed, resuming operation")
+		s.ResumeBackground()
+		return err
+	}
+	s.Info().Msg("In-place restart handoff complete, new process is ready")
+	return nil
+}
+
+// defaultDrainTimeout is used only if restart.drain_timeout_secs somehow
+// resolves to zero; the embedded default config always sets it to 300s, so
+// this is a last-resort fallback, not the documented default
+const defaultDrainTimeout = 300 * time.Second
+
+// DrainTimeout returns the effective shutdown drain timeout: how long Stop
+// waits for in-flight requests and hijacked (websocket) connections to
+// finish before forcing them closed. Reads the live effective config
+// (Config(), which includes any dynamic override of restart.drain_timeout_secs
+// applied via update-config) rather than the static config captured at
+// startup, so a dynamic change actually takes effect
+func (s *Server) DrainTimeout() time.Duration {
+	if secs := s.Config().Restart.DrainTimeoutSecs; secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return defaultDrainTimeout
 }
 
 func (s *Server) GetDynamicConfig() types.DynamicConfig {
@@ -747,6 +894,37 @@ func (s *Server) Start() error {
 		return errors.New("server_uri is not set")
 	}
 
+	// The upgrader inherits the listeners from the previous process during a
+	// zero downtime in-place restart; otherwise its Listen falls through to
+	// the bind callbacks below. Created before the Chdir below: the upgrader
+	// pins the (possibly relative) invocation path to an absolute one, which
+	// must resolve against the directory the server was started from
+	s.upgrader = system.NewUpgrader(s.Logger, s.Config())
+
+	if s.upgrader.HasParent() {
+		// This process is the child of an in-place restart handoff. The
+		// previous process keeps draining in-flight requests and websockets
+		// through app containers this process may not have loaded yet (or may
+		// see as idle), so no activity-based container stop can be trusted
+		// until it has exited: pause the background jobs now and resume only
+		// once the parent is observed to have exited. Deliberately unbounded:
+		// the parent drains under the drain timeout it was started with,
+		// which a config change can make longer than this process would
+		// compute, and resuming while it still drains would stop containers
+		// beneath its live websocket/SSE connections. A warning is logged if
+		// the wait runs long; staying paused is the safe state
+		s.PauseBackground()
+		go func() {
+			warnAfter := time.AfterFunc(s.DrainTimeout()+2*time.Minute, func() {
+				s.Warn().Msg("Previous process is still draining after an in-place restart handoff; background container jobs stay paused until it exits")
+			})
+			defer warnAfter.Stop()
+			_ = s.upgrader.WaitForParent(context.Background())
+			s.Info().Msg("Previous process has exited after in-place restart handoff, resuming background jobs")
+			s.ResumeBackground()
+		}()
+	}
+
 	// Change to OPENRUN_HOME directory, helps avoid length limit on UDS file (around 104 chars)
 	clHome := os.Getenv("OPENRUN_HOME")
 	err := os.Chdir(clHome)
@@ -771,33 +949,43 @@ func (s *Server) Start() error {
 		}
 
 		udsHandler := NewUDSHandler(s.Logger, s.Config(), s)
-		socket, listenErr := net.Listen("unix", serverUri)
-		if listenErr != nil {
-			s.Debug().Err(listenErr).Msgf("Error creating socket file, trying to dial socket file %s", serverUri)
-			probeConn, errDial := net.Dial("unix", serverUri)
+		// bindUDS creates a fresh unix socket, recovering from a stale socket
+		// file left by a crashed server. Not called when the socket is
+		// inherited from the previous process during an in-place restart (the
+		// previous process legitimately holds the socket then)
+		bindUDS := func(network, addr string) (net.Listener, error) {
+			socket, listenErr := net.Listen(network, addr)
+			if listenErr == nil {
+				return socket, nil
+			}
+			s.Debug().Err(listenErr).Msgf("Error creating socket file, trying to dial socket file %s", addr)
+			probeConn, errDial := net.Dial(network, addr)
 			if errDial == nil {
 				probeConn.Close() //nolint:errcheck
+				return nil, fmt.Errorf("error creating socket, another server already running %s : %s", addr, listenErr)
 			}
-			if errDial != nil {
-				s.Debug().Err(errDial).Msg("Error dialling UDS, trying to remove socket file")
-				// Cannot dial also, so it's safe to delete the socket file
-				if removeErr := os.Remove(serverUri); removeErr != nil {
-					return fmt.Errorf("error removing socket file %s : %s. Original error %s", serverUri, removeErr, listenErr)
-				}
-				var err error
-				socket, err = net.Listen("unix", serverUri)
-				if err != nil {
-					return fmt.Errorf("error creating socket after deleting old file  %s : %s. Original error %s", serverUri, err, listenErr)
-				}
-			} else {
-				return fmt.Errorf("error creating socket, another server already running %s : %s", serverUri, listenErr)
+			s.Debug().Err(errDial).Msg("Error dialling UDS, trying to remove socket file")
+			// Cannot dial also, so it's safe to delete the socket file
+			if removeErr := os.Remove(addr); removeErr != nil {
+				return nil, fmt.Errorf("error removing socket file %s : %s. Original error %s", addr, removeErr, listenErr)
 			}
+			socket, err := net.Listen(network, addr)
+			if err != nil {
+				return nil, fmt.Errorf("error creating socket after deleting old file  %s : %s. Original error %s", addr, err, listenErr)
+			}
+			return socket, nil
 		}
+		socket, err := s.upgrader.Listen("unix", serverUri, bindUDS)
+		if err != nil {
+			return err
+		}
+		socket = s.connTracker.wrap(socket)
 
 		s.udsServer = &http.Server{
 			WriteTimeout: 180 * time.Second,
 			ReadTimeout:  180 * time.Second,
 			IdleTimeout:  30 * time.Second,
+			ConnState:    s.connTracker.connState,
 			Handler: telemetry.WrapServerHandler(udsHandler.router, telemetry.ServerHandlerOption{
 				Operation: "openrun.uds",
 				Public:    false, // UDS is admin-only, peer is authenticated by file permissions
@@ -827,6 +1015,7 @@ func (s *Server) Start() error {
 			WriteTimeout: 180 * time.Second,
 			ReadTimeout:  180 * time.Second,
 			IdleTimeout:  30 * time.Second,
+			ConnState:    s.connTracker.connState,
 			Handler: telemetry.WrapServerHandler(s.handler.router, telemetry.ServerHandlerOption{
 				Operation: "openrun.http",
 				Public:    true, // public HTTP listener; do not extract incoming traceparent
@@ -860,14 +1049,15 @@ func (s *Server) Start() error {
 
 	if s.httpServer != nil {
 		addr := fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Http.Host), s.Config().Http.Port)
-		listener, err := net.Listen("tcp", addr)
+		rawListener, err := s.upgrader.Listen("tcp", addr, net.Listen)
 		if err != nil {
 			return err
 		}
-		s.Config().Http.Port = listener.Addr().(*net.TCPAddr).Port
+		s.Config().Http.Port = rawListener.Addr().(*net.TCPAddr).Port
 		addr = fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Http.Host), s.Config().Http.Port)
 		s.Info().Str("address", addr).Msg("Starting HTTP server")
 
+		listener := s.connTracker.wrap(rawListener)
 		go func() {
 			if err := s.httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				s.Error().Err(err).Msg("HTTP server error")
@@ -884,13 +1074,18 @@ func (s *Server) Start() error {
 
 	if s.httpsServer != nil {
 		addr := fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Https.Host), s.Config().Https.Port)
-		listener, err := tls.Listen("tcp", addr, s.httpsServer.TLSConfig)
+		// The raw TCP listener is bound (or inherited across an in-place
+		// restart) separately from the TLS wrapping: the TLS state is per
+		// connection, so the restarted process applies its own TLS config to
+		// the inherited socket
+		rawListener, err := s.upgrader.Listen("tcp", addr, net.Listen)
 		if err != nil {
 			return err
 		}
-		s.Config().Https.Port = listener.Addr().(*net.TCPAddr).Port
+		s.Config().Https.Port = rawListener.Addr().(*net.TCPAddr).Port
 		addr = fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Https.Host), s.Config().Https.Port)
 		s.Info().Str("address", addr).Msg("Starting HTTPS server")
+		listener := tls.NewListener(s.connTracker.wrap(rawListener), s.httpsServer.TLSConfig)
 		go func() {
 			if err := s.httpsServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				s.Error().Err(err).Msg("HTTPS server error")
@@ -904,7 +1099,32 @@ func (s *Server) Start() error {
 			}
 		}()
 	}
+
+	if exit := s.upgrader.Exit(); exit != nil {
+		// A successful upgrade hands the listeners to the new process; drain
+		// and stop this process
+		go func() {
+			<-exit
+			s.Info().Msg("In-place restart handoff complete, stopping this process")
+			s.RequestStop()
+		}()
+	}
 	return nil
+}
+
+// Ready signals that startup has fully completed and this process can serve
+// traffic: during an in-place restart, the previous process is waiting on
+// this call and starts draining as soon as it is made. Also writes the pid
+// file. The caller must call this only after every startup step that can
+// still fail has passed (not just Start, which only binds listeners) --
+// calling it and then failing to start would leave no server running, since
+// the previous process commits to the handoff and exits once Ready returns
+func (s *Server) Ready() error {
+	if s.upgrader == nil {
+		// Start was not called (embedded server); nothing to signal
+		return nil
+	}
+	return s.upgrader.Ready()
 }
 
 func (s *Server) setupHTTPSServer() (*http.Server, error) {
@@ -1049,6 +1269,7 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 		WriteTimeout: 180 * time.Second,
 		ReadTimeout:  180 * time.Second,
 		IdleTimeout:  30 * time.Second,
+		ConnState:    s.connTracker.connState,
 		Handler: telemetry.WrapServerHandler(s.handler.router, telemetry.ServerHandlerOption{
 			Operation: "openrun.https",
 			Public:    true, // public HTTPS listener; do not extract incoming traceparent
@@ -1080,21 +1301,34 @@ func loadRootCAs(rootCertFile string) (*x509.CertPool, error) {
 	return roots, nil
 }
 
+// blockRestarts marks shutdown as requested and rejects any in-place restart
+// that has not already committed to its handoff, synchronized against
+// RequestRestart via restartMu so a restart racing a stop cannot leave a new
+// process serving while this one exits. Held only briefly (not for the rest
+// of Stop): if a restart is already mid-handoff, this blocks until it
+// resolves (bounded by upgrade_timeout_secs) instead of proceeding
+// concurrently with it, but does not hold up the rest of shutdown once that
+// resolves
+func (s *Server) blockRestarts() {
+	s.restartMu.Lock()
+	defer s.restartMu.Unlock()
+	// Signal stopRequested so goroutines selecting on it (handleAppClose,
+	// StopNotify waiters) exit even when Stop is called directly
+	s.RequestStop()
+	if s.upgrader != nil {
+		// Rejects any Upgrade() not yet past its internal handoff point, and
+		// (per tableflip's contract) unlinks any unix domain socket since no
+		// handoff has completed at this point in Stop
+		s.upgrader.Stop()
+	}
+}
+
 // Stop stops the OpenRun Server
 func (s *Server) Stop(ctx context.Context) error {
 	s.stopOnce.Do(func() {
 		s.Info().Msg("Stopping service")
-		// Signal stopRequested so goroutines selecting on it (handleAppClose,
-		// StopNotify waiters) exit even when Stop is called directly
-		s.RequestStop()
-		if s.staleContainerCleanupStop != nil {
-			close(s.staleContainerCleanupStop)
-			s.staleContainerCleanupStop = nil
-		}
-		if s.syncStop != nil {
-			s.syncTimer.Stop()
-			close(s.syncStop)
-		}
+		s.blockRestarts()
+		s.PauseBackground()
 		if s.builderManager != nil {
 			s.builderManager.Stop()
 		}
@@ -1109,6 +1343,9 @@ func (s *Server) Stop(ctx context.Context) error {
 		if s.udsServer != nil {
 			err3 = s.udsServer.Shutdown(ctx)
 		}
+		// Shutdown does not wait for hijacked (websocket) connections; wait
+		// for them to finish and force-close any left when ctx expires
+		s.connTracker.drain(ctx)
 		// Close the apps after the HTTP servers have drained: stops dev-mode
 		// child processes (tailwind watcher) which would otherwise be
 		// orphaned when this process exits

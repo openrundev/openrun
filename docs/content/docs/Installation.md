@@ -78,6 +78,18 @@ On systemd-based distros without a native package, the same setup (openrun user,
 curl -sSL https://raw.githubusercontent.com/openrundev/openrun/refs/heads/main/deploy/setup_systemd.sh | sudo sh
 ```
 
+### Zero downtime restarts and updates
+
+On Linux and macOS, the server can restart in place with no downtime and no dropped connections: a new server process takes over the listening sockets, re-reads the config and starts serving; the old process finishes its in-flight requests and websockets (up to `restart.drain_timeout_secs`, default 300) and exits. Use this to apply config file changes or to move to a new server version — for a version update, upgrade the openrun binary first (e.g. `apt upgrade openrun`), then restart in place. Any of the following triggers the restart:
+
+```shell
+sudo systemctl reload openrun   # systemd installs
+openrun server restart          # any install, uses the management API
+kill -HUP <server pid>
+```
+
+Apps are not affected: app containers keep running through the restart. In-place restart is not available on Windows or when the server runs inside a container (restart the container instead; on Kubernetes use `kubectl rollout restart`, app traffic is drained via the pod's termination grace period).
+
 ## Install On Windows
 
 To install the OpenRun application on Windows, run:

@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"time"
 
 	clserver "github.com/openrundev/openrun/internal/server"
 	"github.com/openrundev/openrun/internal/system"
@@ -51,6 +52,29 @@ func (s *Server) Start() error {
 // Stop stops the OpenRun Server
 func (s *Server) Stop(ctx context.Context) error {
 	return s.server.Stop(ctx)
+}
+
+// Restart performs a zero downtime in-place restart: the current binary is
+// re-exec'ed and the listeners are handed off to the new process. Blocks
+// until the new process is ready (StopNotify then fires so the caller can
+// drain and exit) or the restart has failed, in which case this server
+// keeps running and the error is returned
+func (s *Server) Restart() error {
+	return s.server.RequestRestart()
+}
+
+// Ready signals that startup has fully completed. See clserver.Server.Ready
+// for why the caller must not call this until every startup step that can
+// still fail (e.g. profiling setup) has passed
+func (s *Server) Ready() error {
+	return s.server.Ready()
+}
+
+// DrainTimeout returns the effective shutdown drain timeout: how long Stop
+// waits for in-flight requests and hijacked (websocket) connections to
+// finish before forcing them closed. See clserver.Server.DrainTimeout
+func (s *Server) DrainTimeout() time.Duration {
+	return s.server.DrainTimeout()
 }
 
 // StopNotify returns a channel that is closed when server shutdown is requested.

@@ -4,6 +4,10 @@
 FROM alpine:3.22.2
 ARG TARGETARCH
 ENV OPENRUN_HOME=/var/lib/openrun
+# In-place restarts are disabled in containers: the server is pid 1, so the
+# old process exiting after a listener handoff would terminate the container
+# and kill the new process. Restart the container instead
+ENV OPENRUN_IN_CONTAINER=1
 
 # Create non-root user and directories
 RUN addgroup -S openrun \

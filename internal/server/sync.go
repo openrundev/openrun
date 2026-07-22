@@ -258,14 +258,14 @@ func (s *Server) ListSyncEntries(ctx context.Context) (*types.SyncListResponse, 
 	return &ret, nil
 }
 
-func (s *Server) syncRunner() {
+func (s *Server) syncRunner(timer *time.Ticker, stop <-chan struct{}) {
 	s.Info().Msg("Starting sync runner loop")
 	for {
 		select {
-		case <-s.syncStop:
+		case <-stop:
 			s.Info().Msg("Sync runner stopped")
 			return
-		case <-s.syncTimer.C:
+		case <-timer.C:
 		}
 
 		if !s.db.IsLeader() {

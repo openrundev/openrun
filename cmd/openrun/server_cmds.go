@@ -14,7 +14,6 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -47,6 +46,14 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 					},
 				},
 				{
+					Name:  "restart",
+					Usage: "Restart the openrun server in-place with zero downtime, reloading the config and picking up a new binary",
+					Flags: flags,
+					Action: func(cCtx *cli.Context) error {
+						return restartServer(cCtx, clientConfig)
+					},
+				},
+				{
 					Name:  "show-config",
 					Usage: "Show the server dynamic config",
 					Flags: flags,
@@ -72,6 +79,10 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 }
 
 func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
+	// Zero downtime in-place restarts are only initialized for the server
+	// start command: the upgrader takes over process-wide state (re-exec,
+	// listener handoff) which embedded api users must not be subjected to
+	serverConfig.EnableInPlaceRestart = true
 	apiConfig := api.ServerConfig{ServerConfig: serverConfig}
 	server, err := api.NewServer(&apiConfig)
 	if err != nil {
@@ -94,7 +105,6 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 		addr := fmt.Sprintf("https://%s:%d", serverConfig.Https.Host, serverConfig.Https.Port)
 		fmt.Fprintf(os.Stderr, "Server listening on %s\n", addr)
 	}
-	system.NotifyServiceReady()
 
 	clHome := os.ExpandEnv("$OPENRUN_HOME")
 	switch serverConfig.ProfileMode {
@@ -125,19 +135,39 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 		fmt.Fprintf(os.Stderr, "Profiling enabled: %s\n", serverConfig.ProfileMode)
 	}
 
-	waitForShutdownSignal(server.StopNotify())
+	// Startup has fully succeeded at this point: signal the OS service
+	// manager and, if this is an in-place restart child, the previous
+	// process (which is waiting on Ready and starts draining as soon as it
+	// is called). This must come after every startup step above that can
+	// still fail (profile_mode validation and profile.Start, which can
+	// os.Exit/log.Fatal on its own) -- signaling any earlier and then
+	// failing to start would leave no server running, since the previous
+	// process commits to the handoff unconditionally once Ready returns
+	if err := server.Ready(); err != nil {
+		fmt.Printf("Error signaling readiness: %s\n", err)
+		system.NotifyServiceFailed(1)
+		os.Exit(1)
+	}
+	system.NotifyServiceReady()
+
+	waitForShutdownSignal(server)
 
 	system.NotifyServiceStopping()
 	defer system.NotifyServiceStopped()
 
-	// Create a deadline to wait for.
-	ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Create a deadline to wait for. The drain timeout also bounds how long
+	// the old process lingers for websocket connections after an in-place
+	// restart handoff. Read from the server's live effective config (not the
+	// static serverConfig captured at startup) so a restart.drain_timeout_secs
+	// change applied via update-config actually takes effect
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), server.DrainTimeout())
 	defer cancel()
 	_ = server.Stop(ctxTimeout)
 	return nil
 }
 
-func waitForShutdownSignal(serverStop <-chan struct{}) {
+func waitForShutdownSignal(server *api.Server) {
+	serverStop := server.StopNotify()
 	c := make(chan os.Signal, 1)
 	// Accept graceful shutdowns on SIGINT (Ctrl+C) and SIGTERM (kill,
 	// service managers): both must stop the apps' child processes (dev mode
@@ -145,9 +175,30 @@ func waitForShutdownSignal(serverStop <-chan struct{}) {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(c)
 
-	select {
-	case <-c:
-	case <-serverStop:
+	// SIGHUP triggers a zero downtime in-place restart (the unix daemon
+	// reload convention; also what systemd ExecReload sends). Never delivered
+	// on Windows. Run in a goroutine so shutdown signals stay responsive
+	// while the restart is in progress; concurrent requests are serialized
+	// by the server
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+
+	for {
+		select {
+		case <-c:
+			return
+		case <-serverStop:
+			// Also fires after a successful in-place restart handoff: the
+			// new process is serving and this process must drain and exit
+			return
+		case <-hup:
+			go func() {
+				if err := server.Restart(); err != nil {
+					fmt.Fprintf(os.Stderr, "In-place restart failed: %s\n", err)
+				}
+			}()
+		}
 	}
 }
 
@@ -159,6 +210,20 @@ func stopServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
+	return nil
+}
+
+func restartServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
+	client := newHttpClient(clientConfig)
+
+	// The API blocks until the new process is serving or the restart failed
+	// (the old process then keeps running)
+	var response map[string]any
+	err := client.Post("/_openrun/restart", nil, nil, &response)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Server restarted: %v\n", response["status"])
 	return nil
 }
 
