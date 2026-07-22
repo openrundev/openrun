@@ -157,8 +157,10 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	// Webhooks are always mounted, they are disabled at the app level by default
 	router.Mount(types.WEBHOOK_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveWebhooks()))
 
-	server.oAuthManager.RegisterRoutes(server.csrfMiddleware, router) // register OAuth routes
-	server.samlManager.RegisterRoutes(router)                         // register SAML routes
+	server.oAuthManager.RegisterRoutes(server.csrfMiddleware, router)    // register OAuth routes
+	server.samlManager.RegisterRoutes(router)                            // register SAML routes
+	server.formLogin.RegisterRoutes(server.csrfMiddleware, router)       // register the system/builtin login page routes
+	server.formLogin.RegisterLogoutRoutes(server.csrfMiddleware, router) // register the system/builtin logout page routes
 
 	router.HandleFunc("/*", handler.callApp)
 	router.HandleFunc(types.INTERNAL_URL_PREFIX+"/health",
@@ -268,6 +270,17 @@ func (h *Handler) callApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestDomain := system.GetHostname(r.Host)
+
+	// The auth callback domain serves only the login page (registered as
+	// specific routes matched before this catch-all). Refuse to serve or fall
+	// back to any app here, so app JavaScript is never same-origin with the
+	// credential form - independent of MatchApp's FallbackUnknownDomains, and
+	// of whether the login form is currently enabled on this node
+	if h.server.formLogin.isReservedAuthHost(requestDomain) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
 	var serveListApps = false
 	matchedApp, matchErr := h.server.MatchApp(requestDomain, r.URL.Path)
 	if matchErr != nil {

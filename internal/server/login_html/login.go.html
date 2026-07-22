@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign in - OpenRun</title>
+    {{/* The login page is served under a strict CSP
+       (default-src 'none'; style-src 'self'; ...): no inline scripts and no
+       inline styles are allowed. Light/dark follows prefers-color-scheme (the
+       generated theme CSS carries the media query); there is no theme toggle.
+       All styling comes from the two self-hosted stylesheets below. */}}
+    <link rel="stylesheet" href="{{ .Data.StyleHref }}" />
+    <link rel="stylesheet" href="{{ .Data.ExtraHref }}" />
+  </head>
+  <body class="min-h-screen bg-base-200 flex items-center justify-center p-4">
+    <main class="w-full max-w-sm">
+      <h1 class="login-title text-2xl md:text-3xl font-extrabold italic tracking-tight mb-4">
+        OpenRun
+      </h1>
+      <div class="card bg-base-100 border border-base-300">
+        <div class="card-body p-5 gap-4">
+          <div>
+            <h2 class="text-lg font-semibold">Sign in</h2>
+            <p class="text-sm text-base-content/70">
+              {{ if not .Data.State }}
+                The sign-in request has expired.
+              {{ else if eq .Data.AuthType "system" }}
+                This app uses the OpenRun system auth.
+              {{ else }}
+                This app uses OpenRun builtin auth.
+              {{ end }}
+            </p>
+          </div>
+          {{ if .Data.Error }}
+            <div role="alert" class="alert alert-error text-sm py-2">
+              <span>{{ .Data.Error }}</span>
+            </div>
+          {{ end }}
+          {{ if not .Data.State }}
+            <p class="text-sm text-base-content/70">
+              Go back to the app and reload the page to sign in again.
+            </p>
+          {{ else }}
+          {{/* The system and builtin forms present distinct identities
+             (action URL, field names/ids, autocomplete section) so browser
+             password managers keep the admin account and builtin user
+             credentials separate */}}
+          <form
+            method="post"
+            action="{{ .Data.LoginPath }}"
+            class="flex flex-col gap-4">
+            <input type="hidden" name="state" value="{{ .Data.State }}" />
+            <div>
+              <label class="block text-sm font-medium mb-1" for="{{ .Data.AuthType }}-username">
+                {{ if eq .Data.AuthType "system" }}Admin username{{ else }}Username{{ end }}
+              </label>
+              <input
+                id="{{ .Data.AuthType }}-username"
+                name="{{ .Data.AuthType }}-username"
+                type="text"
+                required
+                autofocus
+                autocomplete="section-openrun-{{ .Data.AuthType }} username"
+                autocapitalize="none"
+                spellcheck="false"
+                class="input w-full" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1" for="{{ .Data.AuthType }}-password">
+                Password
+              </label>
+              <input
+                id="{{ .Data.AuthType }}-password"
+                name="{{ .Data.AuthType }}-password"
+                type="password"
+                required
+                autocomplete="section-openrun-{{ .Data.AuthType }} current-password"
+                class="input w-full" />
+            </div>
+            <button
+              type="submit"
+              class="btn btn-primary w-full transition-transform duration-150 active:scale-95">
+              Sign in
+            </button>
+          </form>
+          {{ end }}
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

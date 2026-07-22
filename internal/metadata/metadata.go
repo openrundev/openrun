@@ -1398,6 +1398,22 @@ func (m *Metadata) DeleteKV(ctx context.Context, key string) error {
 	return nil
 }
 
+// DeleteKVIfPresent deletes the entry and reports whether a row was actually
+// removed. Used as an atomic single-consumer gate: with two concurrent deletes
+// of the same key (e.g. a double-submitted single-use login state), exactly one
+// caller sees deleted=true
+func (m *Metadata) DeleteKVIfPresent(ctx context.Context, key string) (bool, error) {
+	res, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType, `delete from keystore where key = ?`), key)
+	if err != nil {
+		return false, fmt.Errorf("error deleting value: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("error checking delete result: %w", err)
+	}
+	return n > 0, nil
+}
+
 func (m *Metadata) CleanupExpiredKV(ctx context.Context) error {
 	_, err := m.db.ExecContext(ctx, `delete from keystore where delete_at is not null and delete_at <= `+system.FuncNow(m.dbType))
 	if err != nil {

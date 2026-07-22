@@ -148,6 +148,7 @@ type Server struct {
 	builtinAuth  *BuiltinAuth
 	oAuthManager *OAuthManager
 	samlManager  *SAMLManager
+	formLogin    *FormLoginManager
 	notifyClose  chan types.AppPathDomain
 	// secretsManager is swapped when a dynamic config change modifies the
 	// [secret] config; read it through secretsMgr(), never capture the
@@ -197,11 +198,11 @@ type Server struct {
 	approvalCache    sync.Map // types.AppId -> approvalCacheEntry
 	approvalCacheGen atomic.Int64
 
-	stopRequested   chan struct{}
+	stopRequested chan struct{}
 	// providerMutex serializes binding provider installs, uninstalls and
 	// reconciles on this node: concurrent mutations of the same provider's
 	// binary and registrations must not interleave.
-	providerMutex sync.Mutex
+	providerMutex   sync.Mutex
 	stopRequestOnce sync.Once
 	stopOnce        sync.Once
 	stopErr         error
@@ -301,6 +302,17 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	if err = server.samlManager.Setup(context.Background()); err != nil {
 		return nil, err
 	}
+
+	// Setup the form login page for the system/builtin auth types. The cookie
+	// store's Secure attribute is fixed here from the startup config (shared
+	// with OAuth/SAML), so form login is given the same startup value to keep
+	// its canStartFlow decision consistent with the actual cookie behavior
+	server.formLogin, err = NewFormLoginManager(l, server.Config, server.oAuthManager.cookieStore,
+		db, server.authHandler, server.builtinAuth, config.Security.SessionHttpsOnly)
+	if err != nil {
+		return nil, err
+	}
+	server.warnIfAuthDomainOccupied()
 
 	if err = server.initAuditDB(config.Metadata.AuditDBConnection); err != nil {
 		return nil, fmt.Errorf("error initializing audit db: %w", err)
@@ -451,6 +463,13 @@ func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicCo
 	s.effectiveConfig.Store(effective)
 	if secretsManager != nil {
 		s.secretsManager.Store(secretsManager)
+	}
+
+	// If the auth callback domain changed to one that already has apps, those
+	// apps stop being served (the host is reserved for the login page, enforced
+	// in callApp). Warn so the operator knows; the reservation still holds
+	if previous.Security.AuthCallbackDomain != effective.Security.AuthCallbackDomain {
+		s.warnIfAuthDomainOccupied()
 	}
 
 	if !reflect.DeepEqual(previous.Auth, effective.Auth) {
@@ -925,6 +944,13 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 				if name == s.Config().System.DefaultDomain || name == "localhost" || name == "127.0.0.1" {
 					return nil
 				}
+				// The auth callback domain serves the login page but never has
+				// apps, so it needs its own certificate authorization
+				if s.formLogin != nil {
+					if authDomain, ok := s.formLogin.authLoginDomain(); ok && strings.EqualFold(name, authDomain) {
+						return nil
+					}
+				}
 
 				allDomains, err := s.apps.GetAllDomains()
 				if err != nil {
@@ -1325,4 +1351,5 @@ type KVStore interface {
 	UpdateKV(ctx context.Context, key string, value map[string]any) error
 	UpdateKVBlob(ctx context.Context, key string, value []byte) error
 	DeleteKV(ctx context.Context, key string) error
+	DeleteKVIfPresent(ctx context.Context, key string) (bool, error)
 }

@@ -94,6 +94,13 @@ func (s *InmemoryKVStore) DeleteKV(ctx context.Context, key string) error {
 	return nil
 }
 
+func (s *InmemoryKVStore) DeleteKVIfPresent(ctx context.Context, key string) (bool, error) {
+	_, existed := s.store[key]
+	delete(s.store, key)
+	delete(s.deleteAt, key)
+	return existed, nil
+}
+
 func (s *InmemoryKVStore) ensureMaps() {
 	if s.store == nil {
 		s.store = make(map[string][]byte)

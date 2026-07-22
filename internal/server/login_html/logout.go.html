@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign out - OpenRun</title>
+    {{/* Served on the app domain (where the session cookie lives), styled like
+       the login page and under the same strict CSP: no inline scripts or
+       styles, light/dark via prefers-color-scheme. */}}
+    <link rel="stylesheet" href="{{ .Data.StyleHref }}" />
+    <link rel="stylesheet" href="{{ .Data.ExtraHref }}" />
+  </head>
+  <body class="min-h-screen bg-base-200 flex items-center justify-center p-4">
+    <main class="w-full max-w-sm">
+      <h1 class="login-title text-2xl md:text-3xl font-extrabold italic tracking-tight mb-4">
+        OpenRun
+      </h1>
+      <div class="card bg-base-100 border border-base-300">
+        <div class="card-body p-5 gap-4">
+          {{ if eq .Data.Mode "done" }}
+            <div>
+              <h2 class="text-lg font-semibold">Signed out</h2>
+              <p class="text-sm text-base-content/70">You have been signed out.</p>
+            </div>
+            <a
+              href="{{ .Data.Redirect }}"
+              class="btn btn-primary w-full transition-transform duration-150 active:scale-95">
+              Sign in again
+            </a>
+          {{ else if eq .Data.Mode "none" }}
+            <div>
+              <h2 class="text-lg font-semibold">Sign out</h2>
+              <p class="text-sm text-base-content/70">You are not signed in.</p>
+            </div>
+            <a
+              href="{{ .Data.Redirect }}"
+              class="btn btn-primary w-full transition-transform duration-150 active:scale-95">
+              Go to the app
+            </a>
+          {{ else }}
+            <div>
+              <h2 class="text-lg font-semibold">Sign out</h2>
+              <p class="text-sm text-base-content/70">
+                {{ if .Data.User }}Signed in as {{ .Data.User }}.{{ else }}You are signed in.{{ end }}
+              </p>
+            </div>
+            <form method="post" action="{{ .Data.LogoutPath }}" class="flex flex-col gap-3">
+              <input type="hidden" name="redirect" value="{{ .Data.Redirect }}" />
+              <button
+                type="submit"
+                class="btn btn-primary w-full transition-transform duration-150 active:scale-95">
+                Sign out
+              </button>
+              <a href="{{ .Data.Redirect }}" class="btn btn-ghost w-full">Cancel</a>
+            </form>
+          {{ end }}
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

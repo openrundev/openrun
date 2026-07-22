@@ -8,6 +8,24 @@ By default, apps are created with the `none` authentication type. A `system` aut
 
 To set the auth type, add `--auth system` to the app create command. After an app is created, the auth type can be changed by running `app update auth --promote system /myapp`.
 
+## Login Page
+
+For the `system` and `builtin` auth types, browser access to an app shows an HTML login page (stating whether the app uses the system admin account or OpenRun builtin accounts) and redirects back to the original app URL after sign in. The authenticated session is stored in a cookie on the app's domain; its lifetime is `security.session_max_age`, the same as SSO sessions. Sessions are re-validated against the live config on every request: changing or removing a user's password, deleting a builtin user or changing the admin username signs the affected sessions out immediately. Signing out is done through the `/_openrun/logout` page on the app domain (see below).
+
+Non-browser clients are unaffected: requests carrying an HTTP Basic `Authorization` header (or not requesting `text/html`) authenticate with Basic auth as before, so `curl -u` and API clients keep working. Other `Authorization` schemes (e.g. an app's own `Bearer` token) are passed through to the app once the session cookie has authenticated the request.
+
+### Signing out
+
+A single sign-out page is served on the app domain at `/_openrun/logout`, and it logs the user out **regardless of how they signed in** — `system`, `builtin`, OAuth/OIDC or SAML. Every auth type stores its session as a per-provider cookie on the app domain, so the page clears whichever OpenRun session cookies the request carries without needing to know the provider. `GET` shows a confirmation ("Signed in as … · Sign out") and `POST` clears the sessions and shows a "signed out" page.
+
+Apps just link to `/_openrun/logout`, optionally with a return target — `/_openrun/logout?redirect=<app path>` (validated to be same-host, so it cannot be used as an open redirect). The signed-in identity on the confirmation comes from the session cookie the request already carries. The low-level `POST /_openrun/logout/<provider>` route remains for callers that want to target one provider.
+
+Note for SSO: clearing the local cookie ends the OpenRun session but does not perform IdP-side single logout (SAML SLO / OIDC end-session), so a subsequent login may complete silently through the IdP's own session.
+
+The login page is served only from a dedicated **auth callback domain**, so an app's own JavaScript can never be same-origin with the credential form. The domain is `security.auth_callback_domain` (default `auth.`): a trailing `.` is a prefix combined with `system.default_domain` (giving `auth.<default_domain>`), and a value without a trailing `.` is used as a full domain. No apps can be created on this domain, and the login page is served under a strict Content-Security-Policy with framing disabled. The domain must resolve to the OpenRun server (add a DNS record or wildcard alongside your app domains).
+
+Set `security.disable_login_form = true` to turn the login page off and use the plain HTTP Basic challenge for browsers too. The form is also skipped (falling back to the Basic challenge) when `security.session_https_only` is set but the app request arrives over plain HTTP, unless both the app host and the auth callback domain are local (`localhost`, loopback or `*.localhost`) — the secure session cookie could not be returned, and credentials must not be sent to a remote login page over cleartext.
+
 ## Builtin Users
 
 The `builtin` auth type provides simple username/password authentication, without requiring an OAuth/OIDC/SAML provider. Each user is a `builtin_auth` config entry with a bcrypt password hash and an optional groups list; the entry name is the username:

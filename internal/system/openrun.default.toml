@@ -62,10 +62,13 @@ disable_client_certs = true                    # disable client certs for HTTPS
 unsafe_admin_over_tcp = false    # enable admin API's over TCP (HTTP/HTTPS). Admin is over UDS only by default.
                                  # It is strongly recommended to keep this setting disabled (false).
 admin_password_bcrypt = ""       # the password bcrypt value
-session_secret = ""              # the secret key for session cookie. Auto generated on server startup if not set
-session_block_key = ""           # the block key for session cookie. Auto generated on server startup if not set
-session_max_age = 86400          # session max age in seconds
-session_https_only = true        # session cookie is HTTPS only
+session_max_age = 86400          # session max age in seconds (restart-only: applied to the shared cookie store at startup)
+session_https_only = true        # session cookie is HTTPS only (restart-only: applied to the shared cookie store at startup)
+disable_login_form = false       # if true, system/builtin auth uses the HTTP Basic challenge for browsers too
+                                 # (no HTML login page). Off by default.
+auth_callback_domain = "auth."   # domain serving the system/builtin login page; no apps can be created on it.
+                                 # A trailing "." is a prefix combined with default_domain (auth.<default_domain>);
+                                 # without a trailing "." it is used as a full domain. Ignored if disable_login_form is set.
 trusted_proxies = []             # CIDR ranges or IPs allowed to supply forwarded client IP headers
 app_default_auth_type = "none" # default auth type for apps, "system" or "none" or custom auth
 auth_required = false          # require authentication for all apps. This is verified during app access, not during metadata updates

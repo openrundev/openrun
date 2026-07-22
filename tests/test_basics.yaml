@@ -60,6 +60,65 @@ tests:
     stdout:
       exactly: "Authentication failed"
 
+  basic110: # a browser navigation (Accept text/html) is redirected to the form login page
+    command: 'curl -sS -o /dev/null -w "%{redirect_url}" -H "Accept: text/html" localhost:${BASIC_HTTP_PORT}/test1'
+    stdout: "://auth.localhost:" # 302 to the login page on the auth callback domain (port not substituted in matchers)
+    exit-code: 0
+
+  basic111: # the redirect target is the login page with a state token
+    command: 'curl -sS -o /dev/null -w "%{redirect_url}" -H "Accept: text/html" localhost:${BASIC_HTTP_PORT}/test1'
+    stdout: "/_openrun/auth/login?state="
+    exit-code: 0
+
+  basic120: # the login page is served only from the auth callback domain, not the app domain
+    command: 'curl -sS -o /dev/null -w "%{http_code}" -H "Accept: text/html" localhost:${BASIC_HTTP_PORT}/_openrun/auth/login?state=x'
+    stdout:
+      exactly: "404"
+    exit-code: 0
+
+  basic121: # the login page renders on the auth domain, showing the expired variant for a bogus state
+    command: 'curl -sS --resolve auth.localhost:${BASIC_HTTP_PORT}:127.0.0.1 -H "Accept: text/html" "http://auth.localhost:${BASIC_HTTP_PORT}/_openrun/auth/login?state=x"'
+    stdout: "The sign-in request has expired."
+    exit-code: 0
+
+  basic122: # the auth domain login page sets the locked-down CSP header (GET, headers dumped; the route is GET-only)
+    command: 'curl -sS -o /dev/null -D - --resolve auth.localhost:${BASIC_HTTP_PORT}:127.0.0.1 "http://auth.localhost:${BASIC_HTTP_PORT}/_openrun/auth/login?state=x" | grep -ci "content-security-policy: default-src .none.; style-src .self.;"'
+    stdout:
+      exactly: "1"
+    exit-code: 0
+
+  basic123: # no apps can be created on the auth callback domain
+    command: ../openrun app create ./testapp auth.localhost:/nope
+    stderr: "apps cannot be created on the auth callback domain"
+    exit-code: 1
+
+  basic124: # non-login paths on the auth callback domain are refused (no app, no fallback)
+    command: 'curl -sS -o /dev/null -w "%{http_code}" --resolve auth.localhost:${BASIC_HTTP_PORT}:127.0.0.1 "http://auth.localhost:${BASIC_HTTP_PORT}/test1"'
+    stdout:
+      exactly: "404"
+    exit-code: 0
+
+  basic130: # logout page (no session) renders the not-signed-in variant on the app domain
+    command: 'curl -sS -H "Accept: text/html" localhost:${BASIC_HTTP_PORT}/_openrun/logout'
+    stdout: "You are not signed in."
+    exit-code: 0
+
+  basic131: # logout done page renders the signed-out variant
+    command: 'curl -sS -H "Accept: text/html" "localhost:${BASIC_HTTP_PORT}/_openrun/logout?done=1"'
+    stdout: "You have been signed out."
+    exit-code: 0
+
+  basic132: # logout page carries the same locked-down CSP as the login page
+    command: 'curl -sS -o /dev/null -D - localhost:${BASIC_HTTP_PORT}/_openrun/logout | grep -ci "content-security-policy: default-src .none.; style-src .self.;"'
+    stdout:
+      exactly: "1"
+    exit-code: 0
+
+  basic133: # logout POST redirects to the signed-out page (303); an open-redirect target is dropped, landing on /_openrun/logout
+    command: 'curl -sS -o /dev/null -w "%{redirect_url}" --data-urlencode "redirect=https://evil.com/x" localhost:${BASIC_HTTP_PORT}/_openrun/logout'
+    stdout: "/_openrun/logout?done=1" # not evil.com
+    exit-code: 0
+
   basic160: ## create test2 app with authentication disabled
     command: ../openrun app create ./testapp /test2
     exit-code: 0

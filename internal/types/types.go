@@ -475,12 +475,25 @@ type HttpsConfig struct {
 
 // SecurityConfig is the security related configuration
 type SecurityConfig struct {
-	UnsafeAdminOverTCP       bool              `toml:"unsafe_admin_over_tcp"`
-	AdminPasswordBcrypt      string            `toml:"admin_password_bcrypt"`
-	AppDefaultAuthType       string            `toml:"app_default_auth_type"`
-	AuthRequired             bool              `toml:"auth_required"`
-	SessionMaxAge            int               `toml:"session_max_age"`
-	SessionHttpsOnly         bool              `toml:"session_https_only"`
+	UnsafeAdminOverTCP  bool   `toml:"unsafe_admin_over_tcp"`
+	AdminPasswordBcrypt string `toml:"admin_password_bcrypt"`
+	AppDefaultAuthType  string `toml:"app_default_auth_type"`
+	AuthRequired        bool   `toml:"auth_required"`
+	SessionMaxAge       int    `toml:"session_max_age"`
+	SessionHttpsOnly    bool   `toml:"session_https_only"`
+
+	// DisableLoginForm reverts the system/builtin auth types to the plain
+	// HTTP Basic challenge for browsers too, disabling the HTML login page.
+	// Off by default (browsers get the login page)
+	DisableLoginForm bool `toml:"disable_login_form"`
+
+	// AuthCallbackDomain is the domain that serves the system/builtin login
+	// page. No apps can be created on it, so app JavaScript is never
+	// same-origin with the credential form. A value ending in "." is a
+	// prefix combined with system.default_domain (default "auth." ->
+	// auth.<default_domain>); a value without a trailing "." is used as a
+	// full domain. Ignored when DisableLoginForm is set
+	AuthCallbackDomain       string            `toml:"auth_callback_domain"`
 	TrustedProxies           []string          `toml:"trusted_proxies"`
 	CallbackUrl              string            `toml:"callback_url"`
 	DefaultGitAuth           string            `toml:"default_git_auth"`
@@ -1439,6 +1452,7 @@ type SAMLConfig struct {
 const (
 	SAML_SESSION_KV_PREFIX      = "saml_session:"
 	OAUTH_SESSION_KV_PREFIX     = "oauth_session:"
+	FORM_LOGIN_KV_PREFIX        = "form_login:"
 	HTTP_SESSION_KV_PREFIX      = "http_session:"
 	CONSTANT_KV_PREFIX          = "constant:"
 	COOKIE_SESSION_SECRET_KV    = "cookie_session_secret"

@@ -35,10 +35,17 @@ func newRouterTestServer(adminOverTCP, redirectToHTTPS bool) (*types.ServerConfi
 		Logger:         logger,
 		staticConfig:   config,
 		authHandler:    NewAdminBasicAuth(logger, config),
+		builtinAuth:    NewBuiltinAuth(logger, func() *types.ServerConfig { return config }),
 		oAuthManager:   &OAuthManager{Logger: logger, config: config},
 		samlManager:    &SAMLManager{Logger: logger, config: config},
 		csrfMiddleware: http.NewCrossOriginProtection(),
 	}
+	formLogin, err := NewFormLoginManager(logger, func() *types.ServerConfig { return config },
+		nil, nil, server.authHandler, server.builtinAuth, config.Security.SessionHttpsOnly)
+	if err != nil {
+		panic(err)
+	}
+	server.formLogin = formLogin
 	server.apps = &AppStore{
 		Logger:     logger,
 		server:     server,

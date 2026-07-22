@@ -154,6 +154,15 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
+	// No apps may be created on the auth callback domain: it serves only the
+	// login page, so app JavaScript is never same-origin with the credential
+	// form. Reserved regardless of disable_login_form (the domain is claimed by
+	// the feature even while the form is off)
+	if authDomain, clash := s.reservedAuthDomainClash(appPathDomain.Domain); clash {
+		return nil, types.CreateRequestError(
+			fmt.Sprintf("apps cannot be created on the auth callback domain %q", authDomain), http.StatusBadRequest)
+	}
+
 	matchedApp, err := s.CheckAppValid(appPathDomain.Domain, appPathDomain.Path)
 	if err != nil {
 		return nil, types.CreateRequestError(
@@ -420,6 +429,12 @@ func (s *Server) prepareStageAppEntry(ctx context.Context, appEntry *types.AppEn
 	stagePathDomain, err := s.stageAppPathDomain(appEntry.AppPathDomain(), stageAt)
 	if err != nil {
 		return nil, err
+	}
+	// The derived stage domain (stage_at "domain" or a custom stage_at value)
+	// must also stay off the reserved auth callback domain
+	if authDomain, clash := s.reservedAuthDomainClash(stagePathDomain.Domain); clash {
+		return nil, fmt.Errorf(
+			"stage apps cannot be created on the auth callback domain %q, use stage_at to pick another stage location", authDomain)
 	}
 
 	stageAppEntry := *appEntry
@@ -714,17 +729,10 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	strippedAuth := types.AppAuthnType(strippedAuthStr)
 	groups := make([]string, 0)
 
-	if s.Config().System.FallbackUnknownDomains && usesSessionCookieAuth(strippedAuthStr) {
-		// Cookie-based auth must start on the app's configured host. Otherwise a
-		// fallback-matched unknown host would receive the auth nonce/session cookie.
-		if canonicalURL, redirectNeeded := s.canonicalAuthRedirectURL(r, app.AppPathDomain()); redirectNeeded {
-			if r.Header.Get("HX-Request") == "true" {
-				w.Header().Set("HX-Redirect", canonicalURL)
-			} else {
-				http.Redirect(w, r, canonicalURL, http.StatusFound)
-			}
-			return
-		}
+	// Cookie-based auth must start on the app's configured host. Otherwise a
+	// fallback-matched unknown host would receive the auth nonce/session cookie.
+	if usesSessionCookieAuth(strippedAuthStr) && s.redirectToCanonicalDomain(w, r, app) {
+		return
 	}
 
 	if strippedAuth == types.AppAuthnNone {
@@ -734,19 +742,41 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 		}
 		// No authentication required
 		userId = types.ANONYMOUS_USER
-	} else if strippedAuth == types.AppAuthnSystem {
-		// Use system admin user for authentication
-		authStatus := s.authHandler.authenticate(r.Header.Get("Authorization"))
-		if !authStatus {
-			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, REALM))
-			http.Error(w, "Authentication failed", http.StatusUnauthorized)
-			return
-		}
-		userId = types.ADMIN_USER // not using the actual user id, just a admin placeholder
-	} else if strippedAuth == types.AppAuthnBuiltin {
-		// Builtin user/password auth, basic auth against the [builtin_auth.*] entries
+	} else if usesFormLogin(strippedAuthStr) {
+		// System admin or builtin user/password auth. Explicit HTTP Basic
+		// credentials win (API clients, scripts). When the login form is
+		// enabled, browsers without a valid form session are sent to the HTML
+		// login page; otherwise every unauthenticated request gets the Basic
+		// challenge.
 		var authOk bool
-		userId, groups, authOk = s.builtinAuth.authenticate(r.Header.Get("Authorization"))
+		// Only treat a Basic Authorization header as login credentials. Other
+		// schemes (e.g. an app-owned Bearer token on a downstream call) must
+		// fall through to the form session so they can reach the app
+		if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Basic ") {
+			if strippedAuth == types.AppAuthnSystem {
+				if s.authHandler.authenticate(authHeader) {
+					userId = types.ADMIN_USER // not using the actual user id, just a admin placeholder
+					authOk = true
+				}
+			} else {
+				// basic auth against the [builtin_auth.*] entries
+				userId, groups, authOk = s.builtinAuth.authenticate(authHeader)
+			}
+		} else if userId, groups, authOk = s.formLogin.sessionAuth(r, strippedAuthStr); !authOk &&
+			isBrowserNavigation(r) && s.formLogin.enabled() && s.formLogin.canStartFlow(r) {
+			// Cookie-based login must start on the app's configured host, so a
+			// fallback-matched unknown host does not receive the nonce/session
+			// cookie (basic auth requests keep working on any matched host)
+			if s.redirectToCanonicalDomain(w, r, app) {
+				return
+			}
+			// beginLogin returns false (without writing a response) when it
+			// cannot start safely - an unsafe-method request with no valid
+			// landing page - so we fall through to the Basic challenge below
+			if s.formLogin.beginLogin(w, r, strippedAuthStr) {
+				return
+			}
+		}
 		if !authOk {
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, REALM))
 			http.Error(w, "Authentication failed", http.StatusUnauthorized)
@@ -870,6 +900,11 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	appHandler.ServeHTTP(w, r)
 }
 
+// usesSessionCookieAuth reports whether an auth type ALWAYS authenticates
+// through a session cookie. system/builtin stay false: browsers use the form
+// login session cookie, but basic auth API clients must keep working on any
+// matched host, so their canonical-domain redirect happens only when the
+// form login flow starts (see authenticateAndServeApp)
 func usesSessionCookieAuth(authType string) bool {
 	if authType == "" || authType == string(types.AppAuthnNone) || authType == string(types.AppAuthnSystem) ||
 		authType == string(types.AppAuthnBuiltin) {
@@ -879,6 +914,45 @@ func usesSessionCookieAuth(authType string) bool {
 		return false
 	}
 	return true
+}
+
+// hxRedirect issues a redirect that also works for HTMX requests: HTMX ajax
+// requests follow redirects internally (swapping the target), so a full page
+// navigation needs the HX-Redirect header instead of a 3xx status
+func hxRedirect(w http.ResponseWriter, r *http.Request, url string, code int) {
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", url)
+		return
+	}
+	http.Redirect(w, r, url, code)
+}
+
+// redirectToCanonicalDomain redirects a fallback-matched request on an unknown
+// host to the app's configured domain, so auth nonce/session cookies are only
+// ever set on the canonical host. Reports whether a redirect was written
+func (s *Server) redirectToCanonicalDomain(w http.ResponseWriter, r *http.Request, app *app.App) bool {
+	if !s.Config().System.FallbackUnknownDomains {
+		return false
+	}
+	canonicalURL, redirectNeeded := s.canonicalAuthRedirectURL(r, app.AppPathDomain())
+	if !redirectNeeded {
+		return false
+	}
+	hxRedirect(w, r, canonicalURL, http.StatusFound)
+	return true
+}
+
+// isBrowserNavigation reports whether the request looks like an interactive
+// browser navigation (or an HTMX request), for which an HTML login page is a
+// better response than a WWW-Authenticate basic auth challenge
+func isBrowserNavigation(r *http.Request) bool {
+	if r.Header.Get("HX-Request") == "true" {
+		return true
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
 func sameAppRequestDomain(requestDomain, appDomain string) bool {
@@ -911,6 +985,22 @@ func (s *Server) canonicalAuthRedirectURL(r *http.Request, appPathDomain types.A
 	}
 
 	return requestURL.String(), true
+}
+
+// reservedAuthDomainClash reports whether an app's effective serving domain is
+// the reserved auth callback domain, on which no apps are served (callApp 404s
+// the host, so a clashing app would be unreachable). The effective domain is
+// checked: an app with an empty domain serves on system.default_domain
+func (s *Server) reservedAuthDomainClash(domain string) (string, bool) {
+	if s.formLogin == nil {
+		return "", false
+	}
+	authDomain, ok := s.formLogin.reservedAuthDomain()
+	if !ok {
+		return "", false
+	}
+	effective := cmp.Or(domain, s.Config().System.DefaultDomain)
+	return authDomain, strings.EqualFold(effective, authDomain)
 }
 
 func isOpenRunCookieName(name string) bool {
