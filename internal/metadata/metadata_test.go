@@ -588,3 +588,162 @@ func TestToNullTime(t *testing.T) {
 		t.Fatalf("expected %s got %s", now.UTC(), nullTime.Time)
 	}
 }
+
+func TestMetadata_ConfigHistoryDraftAndAtomicDelete(t *testing.T) {
+	m, cleanup := setupTestMetadata(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	v1 := &types.DynamicConfig{VersionId: "history-v1", RBAC: types.RBACConfig{Enabled: true}}
+	v2 := &types.DynamicConfig{VersionId: "history-v2", RBAC: types.RBACConfig{Enabled: false}}
+	testutil.AssertNoError(t, m.InitConfig(ctx, "alice", v1))
+	testutil.AssertNoError(t, m.UpdateConfig(ctx, "bob", v1.VersionId, v2))
+
+	history, err := m.ListConfigHistory(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "history entries", 1, len(history))
+	testutil.AssertEqualsString(t, "history version", v2.VersionId, history[0].VersionId)
+	testutil.AssertEqualsString(t, "history user", "bob", history[0].UserId)
+
+	snapshot, err := m.GetConfigVersion(ctx, v2.VersionId)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "snapshot version", v2.VersionId, snapshot.VersionId)
+	_, err = m.GetConfigVersion(ctx, "missing")
+	testutil.AssertErrorContains(t, err, "not found in history")
+
+	if _, err := m.GetConfigDraft(ctx); !errors.Is(err, ErrNoConfigDraft) {
+		t.Fatalf("missing draft error = %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	draft := &types.ConfigDraft{
+		BaseVersion: v2.VersionId, DraftVersion: "draft-1", CreatedBy: "alice", UpdatedBy: "alice",
+		CreateTime: now, UpdateTime: now, RBAC: types.RBACConfig{Enabled: true},
+	}
+	testutil.AssertNoError(t, m.SetConfigDraft(ctx, draft))
+	gotDraft, err := m.GetConfigDraft(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "draft version", draft.DraftVersion, gotDraft.DraftVersion)
+	draft.DraftVersion = "draft-2"
+	draft.UpdatedBy = "bob"
+	testutil.AssertNoError(t, m.SetConfigDraft(ctx, draft))
+	gotDraft, err = m.GetConfigDraft(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "updated draft version", "draft-2", gotDraft.DraftVersion)
+	testutil.AssertNoError(t, m.DeleteConfigDraft(ctx))
+	if _, err := m.GetConfigDraft(ctx); !errors.Is(err, ErrNoConfigDraft) {
+		t.Fatalf("deleted draft error = %v", err)
+	}
+
+	testutil.AssertNoError(t, m.StoreKVBlob(ctx, "single-use", []byte("value"), nil))
+	deleted, err := m.DeleteKVIfPresent(ctx, "single-use")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsBool(t, "first delete", true, deleted)
+	deleted, err = m.DeleteKVIfPresent(ctx, "single-use")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsBool(t, "second delete", false, deleted)
+}
+
+func TestMetadata_ServiceAndBindingLifecycle(t *testing.T) {
+	m, cleanup := setupTestMetadata(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	primary := &types.Service{
+		Id: types.ID_PREFIX_SERVICE + "primary", Name: "primary", ServiceType: "postgres",
+		IsDefault: true, Staging: "staging", CreatedBy: "alice", Config: map[string]string{"host": "db"},
+	}
+	staging := &types.Service{
+		Id: types.ID_PREFIX_SERVICE + "staging", Name: "staging", ServiceType: "postgres",
+		CreatedBy: "alice", Config: map[string]string{"host": "stage-db"},
+	}
+	tx, err := m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, m.CreateService(ctx, tx, primary))
+	testutil.AssertNoError(t, m.CreateService(ctx, tx, staging))
+	testutil.AssertNoError(t, tx.Commit())
+
+	tx, err = m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	exists, err := m.ServiceExists(ctx, tx, "postgres", "primary")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsBool(t, "service exists", true, exists)
+	count, err := m.CountServices(ctx, tx, "postgres")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "service count", 2, count)
+	defaultService, err := m.GetDefaultService(ctx, tx, "postgres")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "default service", "primary", defaultService.Name)
+	services, err := m.ListServices(ctx, tx, "postgres", "")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "filtered services", 2, len(services))
+	services, err = m.ListServices(ctx, tx, "postgres", "staging")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "name filtered services", 1, len(services))
+	testutil.AssertNoError(t, tx.Rollback())
+
+	primary.Config["host"] = "new-db"
+	primary.Staging = ""
+	tx, err = m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, m.UpdateService(ctx, tx, primary))
+	testutil.AssertNoError(t, m.ClearServiceDefault(ctx, tx, "postgres", "staging"))
+	testutil.AssertNoError(t, m.ClearServiceStaging(ctx, tx, "postgres", "staging"))
+	testutil.AssertNoError(t, tx.Commit())
+
+	missingService := &types.Service{Name: "missing", ServiceType: "postgres", Config: map[string]string{}}
+	tx, err = m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	err = m.UpdateService(ctx, tx, missingService)
+	testutil.AssertErrorContains(t, err, "no service found")
+	testutil.AssertNoError(t, tx.Rollback())
+
+	binding := &types.Binding{
+		Id: types.ID_PREFIX_BINDING + "lifecycle", Path: "/bindings/main", Source: "postgres/primary",
+		ServiceType: "postgres", ServiceName: "primary", CreatedBy: "alice",
+		Metadata:       types.BindingMetadata{Config: map[string]string{"role": "reader"}},
+		StagedMetadata: types.BindingMetadata{Config: map[string]string{"role": "stage-reader"}},
+	}
+	tx, err = m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, m.CreateBinding(ctx, tx, binding))
+	testutil.AssertNoError(t, tx.Commit())
+
+	binding.Source = "postgres/staging"
+	binding.ServiceName = "staging"
+	binding.DerivedFrom = "/bindings/base"
+	binding.Metadata.Config["role"] = "writer"
+	tx, err = m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, m.UpdateBinding(ctx, tx, binding))
+	bindings, err := m.ListBindings(ctx, tx, binding.Source)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "source bindings", 1, len(bindings))
+	testutil.AssertEqualsString(t, "updated binding source", binding.Source, bindings[0].Source)
+	allBindings, err := m.ListBindings(ctx, tx, "")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "all bindings", 1, len(allBindings))
+	testutil.AssertNoError(t, tx.Commit())
+
+	missingBinding := *binding
+	missingBinding.Path = "/bindings/missing"
+	tx, err = m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	err = m.UpdateBinding(ctx, tx, &missingBinding)
+	testutil.AssertErrorContains(t, err, "no binding found")
+	err = m.DeleteBinding(ctx, tx, missingBinding.Path)
+	testutil.AssertErrorContains(t, err, "no binding found")
+	testutil.AssertNoError(t, tx.Rollback())
+
+	tx, err = m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, m.DeleteBinding(ctx, tx, binding.Path))
+	testutil.AssertNoError(t, m.DeleteService(ctx, tx, "primary", "postgres"))
+	testutil.AssertNoError(t, m.DeleteService(ctx, tx, "staging", "postgres"))
+	testutil.AssertNoError(t, tx.Commit())
+
+	tx, err = m.BeginTransaction(ctx)
+	testutil.AssertNoError(t, err)
+	err = m.DeleteService(ctx, tx, "missing", "postgres")
+	testutil.AssertErrorContains(t, err, "no service found")
+	testutil.AssertNoError(t, tx.Rollback())
+}

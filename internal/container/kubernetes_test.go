@@ -919,6 +919,158 @@ func TestKubernetesCMCreateDeploymentStrategy(t *testing.T) {
 	})
 }
 
+func TestKubernetesCMRunContainerAndIdentityHelpers(t *testing.T) {
+	ctx := context.Background()
+	client := k8sfake.NewSimpleClientset()
+	depPatch := captureDeploymentApply(client)
+	serviceApplyReactor(client)
+	k := &KubernetesCM{
+		Logger: newTestLogger(), appNamespace: "apps", clientSet: client, appId: "app_fallback",
+		config:    &types.ServerConfig{Registry: types.RegistryConfig{URL: "registry.example", Project: "team"}},
+		appConfig: &types.AppConfig{},
+	}
+	appEntry := &types.AppEntry{
+		Id: types.AppId("app_dev_run"), Metadata: types.AppMetadata{VersionMetadata: types.VersionMetadata{Version: 3}},
+	}
+	if err := k.RunContainer(ctx, appEntry, "", ContainerName("My_App"), ImageName("image:latest"), 8080,
+		map[string]string{"MODE": "test"}, nil, map[string]string{"kubernetes.min_replicas": "2"},
+		map[string]string{"param": "value"}, "hash-value", false, nil); err != nil {
+		t.Fatalf("RunContainer: %v", err)
+	}
+	if depPatch == nil || len(*depPatch) == 0 {
+		t.Fatal("RunContainer did not apply a deployment")
+	}
+	if ref := k.registryRef("image:latest"); ref != "registry.example/team/image:latest" {
+		t.Fatalf("project registry ref = %q", ref)
+	}
+	k.config.Registry.Project = ""
+	if ref := k.registryRef("image:latest"); ref != "registry.example/image:latest" {
+		t.Fatalf("registry ref = %q", ref)
+	}
+	if got := k.deployAppID(appEntry); got != appEntry.Id {
+		t.Fatalf("deploy app id = %q", got)
+	}
+	if got := k.deployAppID(nil); got != k.appId {
+		t.Fatalf("fallback app id = %q", got)
+	}
+
+	service := &corev1.Service{
+		ObjectMeta: meta.ObjectMeta{Name: "active", Namespace: "apps"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{VERSION_HASH_LABEL: "active-hash"}},
+	}
+	if _, err := client.CoreV1().Services("apps").Create(ctx, service, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if hash, err := k.CurrentVersionHash(ctx, "active"); err != nil || hash != "active-hash" {
+		t.Fatalf("current version hash = %q, %v", hash, err)
+	}
+	if !k.isActiveVersion(ctx, "active", "active-hash") || k.isActiveVersion(ctx, "active", "other") {
+		t.Fatal("active version detection failed")
+	}
+	if exists, err := k.serviceExists(ctx, "active"); err != nil || !exists {
+		t.Fatalf("existing service = %v, %v", exists, err)
+	}
+	if exists, err := k.serviceExists(ctx, "missing"); err != nil || exists {
+		t.Fatalf("missing service = %v, %v", exists, err)
+	}
+}
+
+func TestKubernetesCMDeployContainerReusesActiveVersion(t *testing.T) {
+	ctx := context.Background()
+	replicas := int32(1)
+	hash := "reuse-hash"
+	serviceName := "reuse-app"
+	client := k8sfake.NewSimpleClientset(
+		&corev1.Service{
+			ObjectMeta: meta.ObjectMeta{Name: serviceName, Namespace: "apps"},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": serviceName, VERSION_HASH_LABEL: TrimLabelValue(hash)},
+				Ports:    []corev1.ServicePort{{Port: 8080}},
+			},
+		},
+		&appsv1.Deployment{
+			ObjectMeta: meta.ObjectMeta{Name: workloadName(serviceName, hash, false), Namespace: "apps", Generation: 1},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Template: corev1.PodTemplateSpec{ObjectMeta: meta.ObjectMeta{
+					Labels: versionSelector(serviceName, hash),
+				}},
+			},
+			Status: appsv1.DeploymentStatus{
+				ObservedGeneration: 1, UpdatedReplicas: 1, ReadyReplicas: 1, Replicas: 1,
+			},
+		},
+		&corev1.Pod{
+			ObjectMeta: meta.ObjectMeta{Name: "reuse-pod", Namespace: "apps", Labels: versionSelector(serviceName, hash)},
+			Status: corev1.PodStatus{
+				Phase:      corev1.PodRunning,
+				Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			},
+		},
+	)
+	k := &KubernetesCM{
+		Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{},
+		appConfig: &types.AppConfig{}, clientSet: client, appId: "app_dev_reuse",
+	}
+	result, err := k.DeployContainer(ctx, DeployRequest{
+		ContainerName: ContainerName(serviceName), VersionHash: hash, SourceDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("DeployContainer: %v", err)
+	}
+	if result.HostNamePort != "reuse-app.apps.svc.cluster.local:8080" || result.VersionHash != hash {
+		t.Fatalf("deploy result = %#v", result)
+	}
+
+	pvcService := &corev1.Service{
+		ObjectMeta: meta.ObjectMeta{Name: "pvc-app", Namespace: "apps"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "pvc-app"}},
+	}
+	pvcDeployment := &appsv1.Deployment{
+		ObjectMeta: meta.ObjectMeta{Name: "pvc-app", Namespace: "apps"},
+		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{
+			ObjectMeta: meta.ObjectMeta{Labels: map[string]string{VERSION_HASH_LABEL: "pvc-hash"}},
+		}},
+	}
+	if _, err := client.CoreV1().Services("apps").Create(ctx, pvcService, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AppsV1().Deployments("apps").Create(ctx, pvcDeployment, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := k.CurrentVersionHash(ctx, "pvc-app"); err != nil || got != "pvc-hash" {
+		t.Fatalf("PVC version hash = %q, %v", got, err)
+	}
+	if _, err := k.CurrentVersionHash(ctx, "missing"); err == nil {
+		t.Fatal("missing service version lookup succeeded")
+	}
+
+	failing := &KubernetesCM{
+		Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{},
+		appConfig: &types.AppConfig{}, clientSet: k8sfake.NewSimpleClientset(), appId: "app_dev_failure",
+	}
+	sourceDir := t.TempDir()
+	_, err = failing.DeployContainer(ctx, DeployRequest{
+		ContainerName:    "new-app",
+		ImageName:        "image:latest",
+		VersionHash:      "new-hash",
+		SourceDir:        sourceDir,
+		ContainerOptions: map[string]string{"kubernetes.min_replicas": "invalid"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "error creating new version") {
+		t.Fatalf("blue-green failure = %v", err)
+	}
+	if _, statErr := os.Stat(sourceDir); !os.IsNotExist(statErr) {
+		t.Fatalf("failed deploy source directory remained: %v", statErr)
+	}
+	failing.cleanupSourceDir("", failing.appId)
+	rollbackErr := failing.failWithRollback(ctx, failing.appId, nil, errors.New("deploy failed"))
+	var deployErr *DeployRollbackError
+	if !errors.As(rollbackErr, &deployErr) || deployErr.Available {
+		t.Fatalf("rollback unavailable error = %#v", rollbackErr)
+	}
+}
+
 func TestKubernetesCMGetContainerStateExpectHashRequiresRollout(t *testing.T) {
 	ctx := context.Background()
 	replicas := int32(2)
