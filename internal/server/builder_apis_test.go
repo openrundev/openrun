@@ -6,12 +6,21 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-git/go-git/v5/plumbing"
+	app_test "github.com/openrundev/openrun/internal/app/tests"
+	"github.com/openrundev/openrun/internal/builder"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -374,5 +383,455 @@ func TestValidateProfileServices(t *testing.T) {
 		if err := validateProfileServices(invalid); err == nil {
 			t.Errorf("services %v: expected an error", invalid)
 		}
+	}
+}
+
+// TestBuilderStarlarkAPIs runs a real Starlark app which loads build.in and
+// calls every builder plugin API. Read and download calls use a persisted
+// detached session; operations requiring a live agent or preview exercise
+// their validation paths without starting external processes.
+func TestBuilderStarlarkAPIs(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	home := t.TempDir()
+	t.Setenv("OPENRUN_HOME", home)
+	workspaceRoot := filepath.Join(home, "builder-workspaces")
+	workspace := filepath.Join(workspaceRoot, "bld_ses_starlarkapi1")
+	if err := os.MkdirAll(filepath.Join(workspace, "static"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "app.star"), []byte("app = ace.app(\"fixture\")\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "static", "style.css"), []byte("body {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server.staticConfig.AppBuilder.WorkspaceDir = workspaceRoot
+	server.staticConfig.Security.UnsafeAgentWithoutSandbox = true
+	if err := server.initBuilder(); err != nil {
+		t.Fatalf("init builder: %v", err)
+	}
+	initBuilderPlugin(server)
+
+	session := &types.BuilderSession{
+		Id:           "bld_ses_starlarkapi1",
+		UserID:       "builder-user",
+		Name:         "Starlark Fixture",
+		Agent:        "opencode",
+		Status:       types.BuilderSessionDetached,
+		WorkspaceDir: workspace,
+		PublishPath:  "fixture.:/",
+	}
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateBuilderSession(ctx, tx, session); err != nil {
+		tx.Rollback() //nolint:errcheck
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	server.builderManager.LogActivity(session.Id, session.UserID, "lifecycle", "fixture ready",
+		map[string]any{"source": "test"})
+
+	source, err := os.ReadFile(filepath.Join("testdata", "builder_app", "app.star"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	methods := []string{
+		"list_sessions", "get_session", "get_messages", "session_events",
+		"list_files", "read_file", "get_source_zip", "get_publish_config",
+		"list_activity", "create_session", "send_message", "cancel_turn",
+		"stop_session", "resume_session", "delete_session", "check_publish_path",
+		"publish_app", "unpublish_app", "verify_config",
+	}
+	permissions := make([]types.Permission, 0, len(methods))
+	for _, method := range methods {
+		permissions = append(permissions, types.Permission{Plugin: "build.in", Method: method})
+	}
+	application, _, err := app_test.CreateTestAppPluginServerConfig(
+		server.Logger,
+		map[string]string{"app.star": string(source)},
+		[]string{"build.in"},
+		permissions,
+		server.Config(),
+	)
+	if err != nil {
+		t.Fatalf("create Starlark builder app: %v", err)
+	}
+	defer application.Close() //nolint:errcheck
+
+	serve := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/test"+path, nil)
+		req = req.WithContext(context.WithValue(req.Context(), types.USER_ID, session.UserID))
+		response := httptest.NewRecorder()
+		application.ServeHTTP(response, req)
+		return response
+	}
+	decode := func(response *httptest.ResponseRecorder) map[string]any {
+		t.Helper()
+		if response.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", response.Code, response.Body.String())
+		}
+		var value map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
+			t.Fatalf("decode response %q: %v", response.Body.String(), err)
+		}
+		return value
+	}
+
+	reads := decode(serve("/reads"))
+	if reads["session_count"] != float64(1) {
+		t.Fatalf("session_count = %v, want 1", reads["session_count"])
+	}
+	sessionValue := reads["session"].(map[string]any)
+	if sessionValue["id"] != session.Id || sessionValue["publish_path_resolved"] != "fixture.localhost:/" {
+		t.Fatalf("unexpected session value: %#v", sessionValue)
+	}
+	files := make([]string, 0)
+	for _, value := range reads["files"].([]any) {
+		files = append(files, value.(string))
+	}
+	if !slices.Equal(files, []string{"app.star", filepath.Join("static", "style.css")}) {
+		t.Fatalf("files = %v", files)
+	}
+	if reads["content"] != "app = ace.app(\"fixture\")\n" {
+		t.Fatalf("content = %q", reads["content"])
+	}
+	checked := reads["checked"].(map[string]any)
+	if checked["path"] != "/new-app" || checked["exists"] != false {
+		t.Fatalf("unexpected publish-path check: %#v", checked)
+	}
+	messages := reads["messages"].(map[string]any)
+	if messages["is_live"] != false || len(messages["messages"].([]any)) != 1 {
+		t.Fatalf("unexpected messages: %#v", messages)
+	}
+	if len(reads["activity"].([]any)) != 1 {
+		t.Fatalf("unexpected activity: %#v", reads["activity"])
+	}
+
+	eventResult := decode(serve("/events"))
+	if !strings.Contains(eventResult["error"].(string), "no running sandbox") {
+		t.Fatalf("unexpected event error: %#v", eventResult)
+	}
+
+	actions := decode(serve("/actions"))
+	errorChecks := map[string]string{
+		"create":    "app_builder is not enabled",
+		"send":      "no running sandbox",
+		"cancel":    "no running sandbox",
+		"stop":      "no running sandbox",
+		"resume":    "app_builder is not enabled",
+		"publish":   "no preview app",
+		"unpublish": "apps.star",
+	}
+	for name, want := range errorChecks {
+		got, _ := actions[name].(string)
+		if !strings.Contains(got, want) {
+			t.Errorf("%s error = %q, want substring %q", name, got, want)
+		}
+	}
+	checks := actions["checks"].([]any)
+	if len(checks) != 1 || checks[0].(map[string]any)["name"] != "enabled" {
+		t.Fatalf("unexpected verify checks: %#v", checks)
+	}
+
+	sourceResponse := serve("/source")
+	if sourceResponse.Code != http.StatusOK {
+		t.Fatalf("source status %d: %s", sourceResponse.Code, sourceResponse.Body.String())
+	}
+	zipReader, err := zip.NewReader(bytes.NewReader(sourceResponse.Body.Bytes()), int64(sourceResponse.Body.Len()))
+	if err != nil {
+		t.Fatalf("source response is not a zip: %v", err)
+	}
+	zipNames := make([]string, 0, len(zipReader.File))
+	for _, file := range zipReader.File {
+		zipNames = append(zipNames, file.Name)
+	}
+	if !slices.Equal(zipNames, []string{"app.star", "static/style.css"}) {
+		t.Fatalf("zip files = %v", zipNames)
+	}
+
+	deleted := decode(serve("/delete"))
+	if deleted["error"] != "" {
+		t.Fatalf("delete error = %v", deleted["error"])
+	}
+	if _, err := db.GetBuilderSession(ctx, types.Transaction{}, session.Id); err == nil {
+		t.Fatal("session still exists after Starlark delete_session")
+	}
+	if _, err := os.Stat(workspace); !os.IsNotExist(err) {
+		t.Fatalf("workspace still exists after delete: %v", err)
+	}
+}
+
+func TestBuilderCreateSessionAndVerifyConfig(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	home := t.TempDir()
+	t.Setenv("OPENRUN_HOME", home)
+	dockerfile := filepath.Join(t.TempDir(), "Dockerfile")
+	if err := os.WriteFile(dockerfile, []byte("FROM scratch\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	missingAgent := filepath.Join(t.TempDir(), "missing-agent")
+	server.staticConfig.AppBuilder.Enabled = true
+	server.staticConfig.AppBuilder.WorkspaceDir = filepath.Join(home, "workspaces")
+	server.staticConfig.Security.UnsafeAgentWithoutSandbox = true
+	server.staticConfig.BuilderAgent = map[string]types.BuilderAgentConfig{
+		"custom_coverage": {Dockerfile: dockerfile, Command: []string{missingAgent}},
+	}
+	server.staticConfig.BuilderProfile = map[string]types.BuilderProfileConfig{
+		"coverage": {
+			Agent:         "custom_coverage",
+			Spec:          "coverage",
+			PublishMode:   "invalid-mode",
+			PublishTarget: "/apps",
+		},
+	}
+	server.staticConfig.AppBuilder.DefaultBuilderProfile = "coverage"
+
+	oldSpec, hadSpec := appTypes["coverage"]
+	appTypes["coverage"] = types.SpecFiles{
+		"app.star":         "app = ace.app(\"coverage\")\n",
+		"static/style.css": "body {}\n",
+	}
+	defer func() {
+		if hadSpec {
+			appTypes["coverage"] = oldSpec
+		} else {
+			delete(appTypes, "coverage")
+		}
+	}()
+
+	if err := server.initBuilder(); err != nil {
+		t.Fatalf("init builder: %v", err)
+	}
+	if server.BuilderManager() == nil {
+		t.Fatal("BuilderManager returned nil")
+	}
+
+	session, err := server.builderCreateSession(ctx, "builder-user", "Coverage app", "Build it", "", "", nil)
+	if err != nil {
+		t.Fatalf("create builder session: %v", err)
+	}
+	if session.Spec != "coverage" || session.Profile != "coverage" || session.Agent != "custom_coverage" {
+		t.Fatalf("created session = %#v", session)
+	}
+	for _, name := range []string{"app.star", filepath.Join("static", "style.css")} {
+		if _, err := os.Stat(filepath.Join(session.WorkspaceDir, name)); err != nil {
+			t.Fatalf("seeded %s: %v", name, err)
+		}
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		persisted, getErr := server.builderManager.GetSession(ctx, session.Id)
+		if getErr == nil && persisted.Status == types.BuilderSessionError {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("agent launch did not fail: %#v, %v", persisted, getErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	checks := server.builderVerify(ctx, true)
+	checkByName := map[string]BuilderCheck{}
+	for _, check := range checks {
+		checkByName[check.Name] = check
+	}
+	if check := checkByName["config"]; !check.Ok {
+		t.Fatalf("config check = %#v", check)
+	}
+	if check := checkByName["agent custom_coverage"]; check.Ok || check.Detail == "" {
+		t.Fatalf("agent check = %#v", check)
+	}
+	if check := checkByName["builder_profile.coverage"]; check.Ok ||
+		!strings.Contains(check.Detail, "unknown publish_mode") {
+		t.Fatalf("profile check = %#v", check)
+	}
+	if check := checkByName["publish (local)"]; !check.Ok {
+		t.Fatalf("local publish check = %#v", check)
+	}
+
+	profile := server.staticConfig.BuilderProfile["coverage"]
+	profile.Spec = "missing-spec"
+	server.staticConfig.BuilderProfile["coverage"] = profile
+	if _, err := server.builderCreateSession(ctx, "builder-user", "Bad spec", "Build it", "", "", nil); err == nil ||
+		!strings.Contains(err.Error(), "unknown spec") {
+		t.Fatalf("unknown spec error = %v", err)
+	}
+
+	if err := server.builderDeleteSession(ctx, session.Id, session.UserID); err != nil {
+		t.Fatalf("delete builder session: %v", err)
+	}
+	if _, err := os.Stat(session.WorkspaceDir); !os.IsNotExist(err) {
+		t.Fatalf("workspace remained after delete: %v", err)
+	}
+}
+
+func TestBuilderSourceAndPublishHelpers(t *testing.T) {
+	oldStarlark, hadStarlark := appTypes["coverage-starlark"]
+	oldContainer, hadContainer := appTypes["coverage-container"]
+	appTypes["coverage-starlark"] = types.SpecFiles{"app.star": "app = 1\n"}
+	appTypes["coverage-container"] = types.SpecFiles{"Containerfile": "FROM scratch\n"}
+	defer func() {
+		if hadStarlark {
+			appTypes["coverage-starlark"] = oldStarlark
+		} else {
+			delete(appTypes, "coverage-starlark")
+		}
+		if hadContainer {
+			appTypes["coverage-container"] = oldContainer
+		} else {
+			delete(appTypes, "coverage-container")
+		}
+	}()
+	if got := builderSpecKind(""); got != "" {
+		t.Fatalf("empty spec kind = %q", got)
+	}
+	if got := builderSpecKind("coverage-starlark"); got != builder.SpecKindStarlark {
+		t.Fatalf("starlark spec kind = %q", got)
+	}
+	if got := builderSpecKind("coverage-container"); got != builder.SpecKindContainer {
+		t.Fatalf("container spec kind = %q", got)
+	}
+
+	src := t.TempDir()
+	write := func(name, content string) {
+		t.Helper()
+		full := filepath.Join(src, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("app.star", "app = 1\n")
+	write("static/style.css", "body {}\n")
+	write(".git/config", "ignored\n")
+	write(".codex/state", "ignored\n")
+	if err := os.Symlink(filepath.Join(src, "app.star"), filepath.Join(src, "link.star")); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "copied")
+	if err := copyAppSource(src, dest); err != nil {
+		t.Fatalf("copy source: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dest, "app.star")); err != nil || string(data) != "app = 1\n" {
+		t.Fatalf("copied app.star = %q, %v", data, err)
+	}
+	for _, excluded := range []string{".git", ".codex", "link.star"} {
+		if _, err := os.Stat(filepath.Join(dest, excluded)); !os.IsNotExist(err) {
+			t.Fatalf("excluded %s was copied: %v", excluded, err)
+		}
+	}
+
+	existing := filepath.Join(t.TempDir(), "existing")
+	if err := os.WriteFile(existing, []byte("value"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if data, exists, err := readFileIfExists(existing); err != nil || !exists || string(data) != "value" {
+		t.Fatalf("existing file = %q, %v, %v", data, exists, err)
+	}
+	if data, exists, err := readFileIfExists(existing + ".missing"); err != nil || exists || data != nil {
+		t.Fatalf("missing file = %q, %v, %v", data, exists, err)
+	}
+	if _, _, err := readFileIfExists(filepath.Dir(existing)); err == nil {
+		t.Fatal("reading directory unexpectedly succeeded")
+	}
+
+	server := &Server{staticConfig: &types.ServerConfig{
+		BuilderGit: map[string]types.BuilderGitConfig{
+			"publish": {Repo: "https://example.test/repo"},
+		},
+	}}
+	cfg, name, err := server.matchBuilderGitBySource("https://example.test/repo/apps/my-app")
+	if err != nil || name != "publish" || cfg.Branch != types.BuilderGitDefaultBranch ||
+		cfg.AppsFile != types.BuilderGitDefaultAppsFile || cfg.SourceDir != types.BuilderGitDefaultSourceDir {
+		t.Fatalf("matched git config = %#v, %q, %v", cfg, name, err)
+	}
+	if _, _, err := server.matchBuilderGitBySource("https://other.test/repo/apps/my-app"); err == nil {
+		t.Fatal("unmatched source was accepted")
+	}
+	if !server.isBuilderManaged(&types.AppEntry{Metadata: types.AppMetadata{BuilderPublished: true}}) {
+		t.Fatal("builder-published entry is not managed")
+	}
+	if !server.isBuilderManaged(&types.AppEntry{SourceUrl: "https://example.test/repo/apps/my-app"}) {
+		t.Fatal("builder git entry is not managed")
+	}
+	if server.isBuilderManaged(&types.AppEntry{SourceUrl: "https://other.test/repo/apps/my-app"}) {
+		t.Fatal("unmatched entry is managed")
+	}
+	if got := gitBranchRef("feature"); got != plumbing.NewBranchReferenceName("feature") {
+		t.Fatalf("branch ref = %q", got)
+	}
+	if version, err := server.builderPublishBaseVersion(context.Background(), &types.AppEntry{
+		IsDev: true,
+		Metadata: types.AppMetadata{
+			VersionMetadata: types.VersionMetadata{Version: 7},
+		},
+	}); err != nil || version != 7 {
+		t.Fatalf("dev base version = %d, %v", version, err)
+	}
+}
+
+func TestBuilderResolveServicesAndContainerBackends(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range []*types.Service{
+		{Id: types.ID_PREFIX_SERVICE + "postgres_default", Name: "default", ServiceType: "postgres", IsDefault: true},
+		{Id: types.ID_PREFIX_SERVICE + "postgres_reporting", Name: "reporting", ServiceType: "postgres"},
+		{Id: types.ID_PREFIX_SERVICE + "redis_default", Name: "default", ServiceType: "redis", IsDefault: true},
+	} {
+		if err := db.CreateService(ctx, tx, service); err != nil {
+			tx.Rollback() //nolint:errcheck
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := &types.BuilderProfileConfig{Services: []string{"defaults", "postgres/reporting"}}
+	services, err := server.builderResolveServices(ctx, profile, []string{" postgres ", "redis/default"})
+	if err != nil || !slices.Equal(services, []string{"postgres/default", "redis/default"}) {
+		t.Fatalf("resolved services = %v, %v", services, err)
+	}
+	if _, err := server.builderResolveServices(ctx, profile, []string{"postgres", "postgres/reporting"}); err == nil ||
+		!strings.Contains(err.Error(), "only one postgres") {
+		t.Fatalf("duplicate service type error = %v", err)
+	}
+	if _, err := server.builderResolveServices(ctx, &types.BuilderProfileConfig{},
+		[]string{"postgres"}); err == nil || !strings.Contains(err.Error(), "not offered") {
+		t.Fatalf("unoffered service error = %v", err)
+	}
+	if _, err := server.builderResolveServices(ctx, profile, []string{"missing"}); err == nil ||
+		!strings.Contains(err.Error(), "not found") {
+		t.Fatalf("missing service error = %v", err)
+	}
+	if services, err := server.builderResolveServices(ctx, profile, []string{" "}); err != nil || len(services) != 0 {
+		t.Fatalf("blank service choice = %v, %v", services, err)
+	}
+
+	server.staticConfig.System.ContainerCommand = types.CONTAINER_KUBERNETES
+	if containers, err := server.ListAgentContainers(ctx); err != nil || len(containers) != 0 {
+		t.Fatalf("Kubernetes agent containers = %v, %v", containers, err)
+	}
+	server.staticConfig.System.ContainerCommand = ""
+	if containers, err := server.ListKanikoBuildContainers(ctx); err != nil || len(containers) != 0 {
+		t.Fatalf("non-Kubernetes kaniko containers = %v, %v", containers, err)
 	}
 }
