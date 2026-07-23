@@ -255,9 +255,30 @@ error_handler () {
     exit 1
 }
 
+# Containerized apps bind-mount their source dir and run as root, so they can
+# leave root-owned files in the workspace (e.g. flaskapp/__pycache__,
+# streamlitdev/.streamlit). Plain rm fails on those for a non-root user; retry
+# survivors as root from inside a container. Never fails, so cleanup does not
+# trip the ERR trap.
+force_rm() {
+  rm -rf "$@" 2>/dev/null || true
+  local survivors=() p
+  for p in "$@"; do
+    [[ -e "$p" ]] && survivors+=("$p")
+  done
+  [[ ${#survivors[@]} -eq 0 ]] && return 0
+  if command -v "$CONTAINER_TOOL" >/dev/null 2>&1; then
+    $CONTAINER_TOOL run --rm -v "$PWD":/w -w /w busybox rm -rf "${survivors[@]}" >/dev/null 2>&1 || true
+  fi
+  for p in "${survivors[@]}"; do
+    [[ -e "$p" ]] && echo "Warning: cleanup could not remove: $p"
+  done
+  return 0
+}
+
 cleanup() {
-  rm -rf metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp sqlite_tmp verifyapp_tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
-  rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp todo_flaskapp todo_rbac.json streamlitdev stdev_started.txt
+  force_rm metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp sqlite_tmp verifyapp_tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
+  force_rm config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp todo_flaskapp todo_rbac.json streamlitdev stdev_started.txt
 
   if [[ -n "$POSTGRES_TEST_CONTAINER_ID" ]]; then
     $CONTAINER_TOOL rm -f "$POSTGRES_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
