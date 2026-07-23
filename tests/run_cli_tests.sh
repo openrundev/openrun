@@ -634,6 +634,12 @@ ca_cert_file="certs/testcerts2/ca.crt"
 
 [system]
 enable_compression = true
+# The commander suites intentionally reuse a small set of public git repos
+# across many independent CLI requests. Keep immutable checkouts for this
+# server lifetime so those cases test source handling instead of repeatedly
+# downloading identical repository history.
+git_checkout_cache_entries = 16
+git_remote_check_interval_secs = 600
 
 [client]
 default_format = "table"

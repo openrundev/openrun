@@ -386,6 +386,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		verifyRequested = verifyRequested || applyConfig[appPathDomain].Verify
 		filteredApps = append(filteredApps, appPathDomain)
 	}
+	s.prefetchApplyAppSources(applyConfig, filteredApps, repoCache, isDev)
 
 	updateResults := make([]types.AppPathDomain, 0, len(filteredApps))
 	approveResults := make([]types.ApproveResult, 0, len(filteredApps))

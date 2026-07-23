@@ -7,10 +7,48 @@ import (
 	"cmp"
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
+
+const gitPrefetchWorkers = 8
+
+// prefetchApplyAppSources checks out independent git app sources concurrently
+// before the apply loop reaches them. This is enabled with the shared checkout
+// cache: each worker publishes its immutable checkout there, and the later
+// CreateAppTx/applyAppUpdate calls become local cache hits.
+func (s *Server) prefetchApplyAppSources(applyConfig map[types.AppPathDomain]*types.CreateAppRequest,
+	appPaths []types.AppPathDomain, repoCache *RepoCache, forceDev bool) {
+	if repoCache.shared == nil {
+		return
+	}
+	var wg sync.WaitGroup
+	workers := make(chan struct{}, gitPrefetchWorkers)
+	for _, appPath := range appPaths {
+		request := applyConfig[appPath]
+		if request == nil || forceDev || request.IsDev {
+			continue
+		}
+		sourceURL := strings.Split(request.SourceUrl, "#")[0]
+		if !system.IsGit(sourceURL) {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			workers <- struct{}{}
+			defer func() { <-workers }()
+			branch := cmp.Or(request.GitBranch, "main")
+			if _, _, _, _, err := repoCache.CheckoutRepo(sourceURL, branch, request.GitCommit,
+				request.GitAuthName, false); err != nil {
+				s.Debug().Err(err).Msgf("git prefetch: error checking out apply source %s", sourceURL)
+			}
+		}()
+	}
+	wg.Wait()
+}
 
 // prefetchAppSources warms the git repo cache (latest-commit shas and
 // checkouts) for the given apps before a metadata transaction is opened. The

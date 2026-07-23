@@ -145,6 +145,8 @@ daisyui_theme_url = "https://github.com/saadeghi/daisyui/releases/download/v5.6.
 file_watcher_debounce_millis = 300
 watch_ignore_patterns = ["**/.vscode/**", "**/.idea/**", "**/.git/**", "**/.DS_Store/**", "**/.*sw*", "**/__pycache__", "**/__pycache__/**", "**/*.pyc", "**/*.pyo", "**/.venv", "**/.venv/**", "**/target", "**/target/**", "**/node_modules", "**/node_modules/**", "**/dist", "**/dist/**", "**/.next", "**/.next/**"] # patterns to ignore for file watcher
 node_path = ""                      # node module lookup paths https://esbuild.github.io/api/#node-paths
+git_checkout_cache_entries = 0      # immutable git checkouts to reuse across operations; 0 disables the cache
+git_remote_check_interval_secs = 0  # reuse checked branch heads for this many seconds; 0 always checks the remote
 container_command = "auto"          # "auto" or "docker" or "podman" or "kubernetes"
 stale_container_cleanup_interval_mins = 5 # stop stale OpenRun containers every N minutes for Docker/Podman. Set <= 0 to disable.
 default_domain = "localhost"        # default domain for apps

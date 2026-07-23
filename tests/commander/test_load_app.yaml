@@ -83,7 +83,17 @@ tests:
     stdout: "Disallow: /"
     exit-code: 0
   load0070: # Update app code
-    command: perl -pi -e 's/Disk Usage/DiskTest Usage/g' ./disk_usage/app.star && sleep 4
+    command: |
+      perl -pi -e 's/Disk Usage/DiskTest Usage/g' ./disk_usage/app.star
+      attempt=0
+      while [ "$attempt" -lt 50 ]; do
+        if curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev | grep -q "DiskTest Usage"; then
+          exit 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.1
+      done
+      exit 1
   load0080: # with --dev, changes are picked up immediately
     command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/disk_usage_dev
     stderr:

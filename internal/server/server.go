@@ -180,6 +180,8 @@ type Server struct {
 
 	forwardAuthHTTPClient *http.Client
 	builderManager        *builder.Manager
+	gitCacheMu            sync.Mutex
+	gitCache              *sharedRepoCache
 
 	staleContainerCleanupTicker *time.Ticker
 	staleContainerCleanupStop   chan struct{}
@@ -1352,6 +1354,7 @@ func (s *Server) Stop(ctx context.Context) error {
 		if s.apps != nil {
 			s.apps.CloseAll()
 		}
+		s.closeSharedRepoCache()
 
 		// Stop the audit writer after the HTTP servers have drained so queued
 		// audit events from in-flight requests are written out
