@@ -191,7 +191,7 @@ func TestOpenRunPluginManagementReads(t *testing.T) {
 	}
 	defer func() {
 		server.stopAuditWriter()
-		server.auditDB.Close()
+		_ = server.auditDB.Close()
 	}()
 	initOpenRunPlugin(server)
 	c := &openrunPlugin{server: server}
@@ -334,7 +334,7 @@ func TestOpenRunPluginAuditQueries(t *testing.T) {
 	}
 	defer func() {
 		server.stopAuditWriter()
-		server.auditDB.Close()
+		_ = server.auditDB.Close()
 	}()
 	c := &openrunPlugin{server: server}
 	thread := &starlark.Thread{Name: "openrun-audit-coverage"}

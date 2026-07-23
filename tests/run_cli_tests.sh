@@ -823,7 +823,12 @@ ENTRYPOINT ["/openrun-binding-fixture"]
 EOF
   export KUBE_BINDING_IMAGE="$KUBE_REGISTRY_URL/openrun-binding-fixture:cli-test"
   $CONTAINER_TOOL build --platform "linux/$KUBE_NODE_ARCH" -q -t "$KUBE_BINDING_IMAGE" "$KUBE_BINDINGS_DIR"
-  $CONTAINER_TOOL push "$KUBE_BINDING_IMAGE"
+  # Push through go-containerregistry instead of the Docker CLI. Docker has no
+  # per-push insecure-registry option, so using `docker push` here requires
+  # modifying the runner machine's daemon configuration for an HTTP registry.
+  KUBE_BINDING_ARCHIVE="$KUBE_BINDINGS_DIR/openrun-binding-fixture.tar"
+  $CONTAINER_TOOL save -o "$KUBE_BINDING_ARCHIVE" "$KUBE_BINDING_IMAGE"
+  go run ./registry_push --insecure --tar "$KUBE_BINDING_ARCHIVE" "$KUBE_BINDING_IMAGE"
   export KUBE_TEST_NAMESPACE
 
   cat <<EOF > config_k8s.toml
