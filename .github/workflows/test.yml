@@ -48,6 +48,16 @@ jobs:
         go-version: ["1.26.5"]
 
     steps:
+      - name: Prepare workspace
+        # Containerized test steps can leave root-owned files in the workspace.
+        # actions/checkout cannot delete those when it recreates the workspace,
+        # and the resulting half-deleted directory breaks every later run
+        # ("fatal: --local can only be used inside a git repository").
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+          if [ ! -e "$GITHUB_WORKSPACE/.git/HEAD" ]; then
+            find "$GITHUB_WORKSPACE" -mindepth 1 -delete
+          fi
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
