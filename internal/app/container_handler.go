@@ -95,15 +95,26 @@ type ContainerHandler struct {
 	cargs             map[string]string
 	proxyTracker      *Tracker // Track bytes sent and received by the proxy
 
-	envMap     map[string]string
-	envMapHash string
-	bindings   []*types.Binding
+	envMap      map[string]string
+	envMapHash  string
+	bindings    []*types.Binding
+	devSettings *types.DevSettings
 }
 
 func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	serverConfig *types.ServerConfig, configPort int32, lifetime, scheme, health, buildDir string, sourceFS appfs.ReadableFS,
 	paramMap map[string]string, containerConfig types.Container, stripAppPath bool,
-	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any, bindings []*types.Binding) (*ContainerHandler, error) {
+	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any, bindings []*types.Binding,
+	devSettings *types.DevSettings) (*ContainerHandler, error) {
+
+	if !app.IsDev {
+		// dev_settings apply to dev mode only, prod is unaffected
+		devSettings = nil
+	}
+	if devSettings != nil && devSettings.Port > 0 {
+		// The dev command can listen on a different port than the prod image
+		configPort = devSettings.Port
+	}
 
 	var containerManager container.ContainerManager
 	var isKubernetes bool
@@ -220,6 +231,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		stripAppPath:    stripAppPath,
 		cargs:           cargs_map,
 		bindings:        bindings,
+		devSettings:     devSettings,
 	}
 
 	if containerConfig.IdleShutdownSecs > 0 &&
@@ -254,6 +266,38 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 			return nil, fmt.Errorf("error parsing volume %s: %w", vol, err)
 		}
 		volumeInfo = append(volumeInfo, volInfo)
+	}
+
+	if devSettings != nil {
+		// Bind mount the app source at the dev dir; the image's copy of the
+		// source (if any) is shadowed, so source changes do not require an
+		// image rebuild
+		devMounts := []*container.VolumeInfo{{
+			SourcePath: app.SourceUrl,
+			TargetPath: devSettings.Dir,
+		}}
+		for _, mount := range devSettings.AdditionalMounts {
+			volInfo, err := h.parseVolumeString(mount)
+			if err != nil {
+				return nil, fmt.Errorf("error parsing dev_settings mount %s: %w", mount, err)
+			}
+			devMounts = append(devMounts, volInfo)
+		}
+
+		// The dev mounts replace any configured volume with the same target
+		// (e.g. a Containerfile VOLUME for the app dir); duplicate mounts for
+		// one target are rejected by the container runtime
+		devTargets := make(map[string]bool, len(devMounts))
+		for _, m := range devMounts {
+			devTargets[path.Clean(m.TargetPath)] = true
+		}
+		kept := volumeInfo[:0]
+		for _, volInfo := range volumeInfo {
+			if !devTargets[path.Clean(volInfo.TargetPath)] {
+				kept = append(kept, volInfo)
+			}
+		}
+		volumeInfo = append(kept, devMounts...)
 	}
 	h.volumeInfo = volumeInfo
 
@@ -762,6 +806,12 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 		return fmt.Errorf("remote registry is not supported in dev mode")
 	}
 
+	if h.devSettings != nil {
+		// Fast reload flow: image is built once, source is mounted, a source
+		// change restarts the container instead of rebuilding the image
+		return h.devReloadFast(ctx, devCM)
+	}
+
 	h.envMap, h.envMapHash, err = h.getEnvMapAndHash()
 	if err != nil {
 		return fmt.Errorf("error getting env map hash: %w", err)
@@ -845,7 +895,245 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 	return nil
 }
 
+// devReloadFast is the dev_settings based dev reload flow. The dev image is
+// built only when its identity hash (Containerfile, cargs, build target, env
+// files) changes; the app source is bind mounted into the container, so a
+// source change restarts the existing container instead of rebuilding.
+func (h *ContainerHandler) devReloadFast(ctx context.Context, devCM container.DevContainerManager) error {
+	var err error
+	if h.image == "" {
+		// Spec files must be on disk for the image build and at runtime (the
+		// dev command runs spec scripts from the bind-mounted source). Done
+		// on every reload, not just when building: removing them from the
+		// source dir (e.g. a git clean) changes no hash since sourceFS serves
+		// the metadata copy, so the reuse paths below would otherwise restart
+		// a container whose mounted source lacks its startup script
+		if _, err := h.createSpecFiles(); err != nil {
+			return err
+		}
+	}
+	h.envMap, h.envMapHash, err = h.getEnvMapAndHash()
+	if err != nil {
+		return fmt.Errorf("error getting env map hash: %w", err)
+	}
+
+	imageHash, err := h.devImageHash()
+	if err != nil {
+		return fmt.Errorf("error computing dev image hash: %w", err)
+	}
+	if h.image != "" {
+		h.GenImageName = container.ImageName(h.image)
+	} else {
+		h.GenImageName = container.GenImageName(h.app.Id, "dev-"+imageHash)
+	}
+	runHash, err := h.devRunHash(imageHash)
+	if err != nil {
+		return fmt.Errorf("error computing dev run hash: %w", err)
+	}
+	containerName := container.GenContainerName(h.app.Id, "", h.manager.SupportsInPlaceUpdate())
+
+	exists, matches, hostPort, running, err := devCM.GetDevContainerInfo(ctx, containerName, runHash)
+	if err != nil {
+		return fmt.Errorf("error checking dev container: %w", err)
+	}
+
+	if matches && h.devSettings.Reload != types.DEV_RELOAD_RECREATE {
+		if running && h.devSettings.Reload == types.DEV_RELOAD_NONE {
+			// The app handles source changes itself (framework hot reload),
+			// just refresh the handler state
+			return h.finishDevContainerStart(ctx, devCM, containerName, hostPort, true, false)
+		}
+
+		// Restart the existing container with no stop grace period (also starts
+		// a stopped container, e.g. after idle shutdown or server restart).
+		restartErr := devCM.RestartDevContainer(ctx, containerName)
+		if restartErr == nil {
+			return h.finishDevContainerStart(ctx, devCM, containerName, hostPort, true, true)
+		}
+		// Restart failed (e.g. image removed manually), fall back to recreate
+		h.Warn().Err(restartErr).Msgf("Error restarting dev container %s, recreating", containerName)
+	}
+
+	// (Re)create the container, building the image only if it is missing
+	if h.image == "" {
+		imageExists, err := devCM.ImageExists(ctx, h.GenImageName)
+		if err != nil {
+			return fmt.Errorf("error checking image: %w", err)
+		}
+		if !imageExists {
+			buildDir := path.Join(h.app.SourceUrl, h.buildDir)
+			if err := devCM.BuildImageTarget(ctx, h.GenImageName, buildDir, h.containerFile, h.cargs, h.devBuildTarget()); err != nil {
+				return err
+			}
+		}
+	}
+
+	if exists {
+		// Force removal avoids the container runtime's graceful-stop timeout on
+		// recreate and on runtime configuration changes.
+		if err := devCM.RemoveContainer(ctx, containerName); err != nil {
+			return fmt.Errorf("error removing dev container: %w", err)
+		}
+	}
+
+	if h.image == "" {
+		// Images built for previous image hashes are never used again; remove
+		// them (best effort) now that no container of this app references them
+		if err := devCM.RemoveSupersededImages(ctx, h.GenImageName); err != nil {
+			h.Warn().Err(err).Msg("Error removing superseded dev images")
+		}
+	}
+
+	if err = h.createVolumes(ctx); err != nil {
+		return err
+	}
+
+	if h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
+		// Command lifetime, service is not started, commands will be run with the image
+		return nil
+	}
+
+	err = devCM.RunDevContainer(ctx, h.app.AppEntry, h.app.SourceUrl, containerName,
+		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap,
+		container.DevRunOptions{RunHash: runHash, WorkDir: h.devSettings.Dir, Command: h.devSettings.Command})
+	if err != nil {
+		return fmt.Errorf("error running container: %w", err)
+	}
+
+	return h.finishDevContainerStart(ctx, devCM, containerName, "", false, true)
+}
+
+// finishDevContainerStart updates the handler state from the running dev
+// container and optionally waits for the health check to pass.
+func (h *ContainerHandler) finishDevContainerStart(ctx context.Context, devCM container.DevContainerManager,
+	containerName container.ContainerName, hostNamePort string, running, waitHealth bool) error {
+	h.stateLock.Lock()
+	defer h.stateLock.Unlock()
+
+	if hostNamePort == "" || !running {
+		var err error
+		hostNamePort, running, err = devCM.GetContainerState(ctx, containerName, "")
+		if err != nil {
+			return fmt.Errorf("error getting running containers: %w", err)
+		}
+	}
+	if hostNamePort == "" || !running {
+		logs, _ := devCM.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
+		return fmt.Errorf("container %s not running. Logs\n %s", containerName, logs)
+	}
+	h.currentState = ContainerStateRunning
+	h.activeContainerName = containerName
+	h.hostNamePort = hostNamePort
+
+	if waitHealth && h.health != "" {
+		err := h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName, "")
+		if err != nil {
+			logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
+			return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
+		}
+	}
+
+	return nil
+}
+
+// devBuildTarget returns the Containerfile stage to build for dev mode. The
+// app can supply its own Containerfile, overriding the spec's; if it does not
+// define the stage named in the dev_settings target, fall back to a full
+// image build instead of failing the build with an unknown stage error.
+func (h *ContainerHandler) devBuildTarget() string {
+	target := h.devSettings.Target
+	if target == "" {
+		return ""
+	}
+	data, err := h.sourceFS.ReadFile(h.containerFile)
+	if err != nil {
+		return target // let the build surface the read error
+	}
+	result, err := parser.Parse(bytes.NewReader(data))
+	if err != nil {
+		return target // let the build surface the parse error
+	}
+	for _, child := range result.AST.Children {
+		if !strings.EqualFold(child.Value, "FROM") {
+			continue
+		}
+		// FROM <image> [AS <stage>], stage names match case-insensitively
+		if img := child.Next; img != nil && img.Next != nil && img.Next.Next != nil &&
+			strings.EqualFold(img.Next.Value, "AS") &&
+			strings.EqualFold(img.Next.Next.Value, target) {
+			return target
+		}
+	}
+	h.Warn().Msgf("Container file %s has no stage %q, building the full image for dev mode", h.containerFile, target)
+	return ""
+}
+
+// devImageHash identifies the dev image contents: the Containerfile, build
+// args, build target/dir and the declared environment files (dependency
+// manifests like pom.xml). App source content is deliberately excluded, a
+// source change must not trigger an image rebuild.
+func (h *ContainerHandler) devImageHash() (string, error) {
+	if h.image != "" {
+		return getValuesHash(h.image)
+	}
+	data, err := h.sourceFS.ReadFile(h.containerFile)
+	if err != nil {
+		return "", fmt.Errorf("error reading container file %s: %w", h.containerFile, err)
+	}
+	cargHash, err := getMapHash(h.cargs)
+	if err != nil {
+		return "", fmt.Errorf("error getting carg hash: %w", err)
+	}
+	parts := []string{string(data), cargHash, h.devSettings.Target, h.buildDir}
+	for _, envFile := range h.devSettings.EnvFiles {
+		fdata, err := h.sourceFS.ReadFile(envFile)
+		if err != nil {
+			// Missing files are folded in by name so that adding the file
+			// later changes the hash and triggers a rebuild
+			parts = append(parts, envFile+":absent")
+		} else {
+			parts = append(parts, envFile+":"+string(fdata))
+		}
+	}
+	return getValuesHash(parts...)
+}
+
+// devRunHash identifies the full runtime config of the dev container. When
+// unchanged, the running container is reused (restarted or left alone).
+func (h *ContainerHandler) devRunHash(imageHash string) (string, error) {
+	coptHash, err := getMapHash(h.app.Metadata.ContainerOptions)
+	if err != nil {
+		return "", fmt.Errorf("error getting copt hash: %w", err)
+	}
+	mounts := make([]string, 0, len(h.volumeInfo))
+	for _, volInfo := range h.volumeInfo {
+		mounts = append(mounts, fmt.Sprintf("%+v", *volInfo))
+	}
+	mountsHash, err := getSliceHash(mounts)
+	if err != nil {
+		return "", fmt.Errorf("error getting mounts hash: %w", err)
+	}
+	return getValuesHash(imageHash, h.envMapHash, coptHash, mountsHash,
+		h.devSettings.Command, h.devSettings.Dir, strconv.Itoa(int(h.port)), h.lifetime)
+}
+
+// healthRetryBudget returns how long the original exponential-backoff health
+// loop would wait between attempts. Fast dev polling uses this as a deadline,
+// retaining the same startup tolerance while checking readiness more often.
+func healthRetryBudget(attempts int, maxSleepMillis float64) time.Duration {
+	sleepMillis := 50.0
+	totalMillis := 0.0
+	for attempt := 1; attempt < attempts; attempt++ {
+		sleepMillis = math.Min(sleepMillis*2, maxSleepMillis)
+		totalMillis += sleepMillis
+	}
+	return time.Duration(totalMillis) * time.Millisecond
+}
+
 func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.ContainerName, expectHash string) error {
+	if attempts <= 0 {
+		return fmt.Errorf("health check did not complete")
+	}
 	client := &http.Client{
 		Timeout: time.Duration(h.containerConfig.HealthTimeoutSecs) * time.Second,
 	}
@@ -855,7 +1143,38 @@ func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.C
 	var hostNamePort string
 	var running bool
 	sleepMillis := 50
-	for attempt := 1; attempt <= attempts; attempt++ {
+	maxSleepMillis := 2000.0
+	var retryDeadline time.Time
+	if h.devSettings != nil {
+		// Fast dev reload: keep polling frequent so a ready container is
+		// detected promptly instead of sleeping out a backoff step. Retain the
+		// original backoff's overall startup tolerance for slower commands.
+		maxSleepMillis = 250
+		retryDeadline = time.Now().Add(healthRetryBudget(attempts, 2000))
+	}
+	sleepBeforeRetry := func(attempt int, retryErr error) bool {
+		if attempt >= attempts && (retryDeadline.IsZero() || !time.Now().Before(retryDeadline)) {
+			return false
+		}
+		sleepMillis *= 2
+		sleepMillis = int(math.Min(float64(sleepMillis), maxSleepMillis))
+		sleepTime := time.Duration(sleepMillis) * time.Millisecond
+		if !retryDeadline.IsZero() && attempt >= attempts {
+			remaining := time.Until(retryDeadline)
+			if remaining <= 0 {
+				return false
+			}
+			if sleepTime > remaining {
+				sleepTime = remaining
+			}
+		}
+		h.Debug().Msgf("Sleeping for %s, attempt %d, err %v", sleepTime, attempt, retryErr)
+		time.Sleep(sleepTime)
+		return true
+	}
+
+	attempt := 1
+	for {
 		hostNamePort, running, err = h.manager.GetContainerState(context.Background(), containerName, expectHash)
 		if err != nil {
 			return fmt.Errorf("error getting running containers: %w", err)
@@ -887,10 +1206,10 @@ func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.C
 			if err == nil {
 				err = fmt.Errorf("could not find container proxy url")
 			}
-			sleepMillis *= 2
-			sleepMillis = int(math.Min(float64(sleepMillis), 2000))
-			h.Debug().Msgf("Sleeping for %d milliseconds, attempt %d, err %v", sleepMillis, attempt, err)
-			time.Sleep(time.Duration(sleepMillis) * time.Millisecond)
+			if !sleepBeforeRetry(attempt, err) {
+				break
+			}
+			attempt++
 			continue
 		}
 		if !h.stripAppPath {
@@ -914,15 +1233,16 @@ func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.C
 		}
 
 		h.Debug().Msgf("Attempt %d failed on %s : status %s err %v", attempt, proxyUrl, statusCode, err)
-		sleepMillis *= 2
-		sleepTimeMillis := math.Min(float64(sleepMillis), 2000)
-		time.Sleep(time.Duration(sleepTimeMillis) * time.Millisecond)
+		if !sleepBeforeRetry(attempt, err) {
+			break
+		}
+		attempt++
 	}
 
 	if err == nil {
 		err = fmt.Errorf("health check did not complete")
 	}
-	h.Error().Msgf("Health check failed for app %s after %d attempts: %v", h.app.Id, attempts, err)
+	h.Error().Msgf("Health check failed for app %s after %d attempts: %v", h.app.Id, attempt, err)
 	return err
 }
 

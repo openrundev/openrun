@@ -5,6 +5,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -13,12 +14,362 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/types"
 )
+
+type devReloadTestFS struct {
+	files fstest.MapFS
+}
+
+func (f *devReloadTestFS) Open(name string) (fs.File, error) {
+	return f.files.Open(name)
+}
+
+func (f *devReloadTestFS) ReadFile(name string) ([]byte, error) {
+	return fs.ReadFile(f.files, name)
+}
+
+func (f *devReloadTestFS) Glob(pattern string) ([]string, error) {
+	return fs.Glob(f.files, pattern)
+}
+
+func (f *devReloadTestFS) Stat(name string) (fs.FileInfo, error) {
+	return fs.Stat(f.files, name)
+}
+
+func (f *devReloadTestFS) StatNoSpec(name string) (fs.FileInfo, error) {
+	return fs.Stat(f.files, name)
+}
+
+func (f *devReloadTestFS) Reset() {}
+
+func (f *devReloadTestFS) StaticFiles() []string { return nil }
+
+func (f *devReloadTestFS) FileHash([]string) (string, error) {
+	return "", errors.New("not implemented")
+}
+
+func (f *devReloadTestFS) CreateTempSourceDir() (string, error) {
+	return "", errors.New("not implemented")
+}
+
+type devReloadTestManager struct {
+	healthTestManager
+	exists                bool
+	matches               bool
+	infoHostPort          string
+	infoCalls             int
+	getStateCalls         int
+	restartCalls          int
+	removeContainerCalls  int
+	buildCalls            int
+	runDevCalls           int
+	removeSupersededCalls int
+	restartErr            error
+}
+
+func (m *devReloadTestManager) GetContainerState(context.Context, container.ContainerName, string) (string, bool, error) {
+	m.getStateCalls++
+	return m.hostNamePort, m.running, nil
+}
+
+func (m *devReloadTestManager) RemoveImage(context.Context, container.ImageName) error { return nil }
+
+func (m *devReloadTestManager) RemoveSupersededImages(context.Context, container.ImageName) error {
+	m.removeSupersededCalls++
+	return nil
+}
+
+func (m *devReloadTestManager) RemoveContainer(context.Context, container.ContainerName) error {
+	m.removeContainerCalls++
+	m.running = false
+	return nil
+}
+
+func (m *devReloadTestManager) BuildImageTarget(context.Context, container.ImageName, string, string, map[string]string, string) error {
+	m.buildCalls++
+	m.imageExists = true
+	return nil
+}
+
+func (m *devReloadTestManager) RunDevContainer(_ context.Context, _ *types.AppEntry, _ string, _ container.ContainerName,
+	_ container.ImageName, _ int32, _ map[string]string, _ []*container.VolumeInfo, _ map[string]string, _ map[string]string,
+	_ container.DevRunOptions) error {
+	m.runDevCalls++
+	m.running = true
+	if m.hostNamePort == "" {
+		m.hostNamePort = "127.0.0.1:49152"
+	}
+	return nil
+}
+
+func (m *devReloadTestManager) GetDevContainerInfo(context.Context, container.ContainerName, string) (bool, bool, string, bool, error) {
+	m.infoCalls++
+	return m.exists, m.matches, m.infoHostPort, m.running, nil
+}
+
+func (m *devReloadTestManager) RestartDevContainer(context.Context, container.ContainerName) error {
+	m.restartCalls++
+	if m.restartErr != nil {
+		return m.restartErr
+	}
+	m.running = true
+	return nil
+}
+
+func newDevReloadTestHandler(t *testing.T, manager *devReloadTestManager, reload string) *ContainerHandler {
+	t.Helper()
+	specFiles := types.SpecFiles{}
+	serverConfig := &types.ServerConfig{}
+	appEntry := &types.AppEntry{
+		Id:        "app-dev-reload-test",
+		Path:      "/dev-reload-test",
+		SourceUrl: t.TempDir(),
+		IsDev:     true,
+		Metadata: types.AppMetadata{
+			SpecFiles:        &specFiles,
+			ContainerOptions: map[string]string{},
+		},
+	}
+	app := &App{AppEntry: appEntry, serverConfig: serverConfig}
+	return &ContainerHandler{
+		Logger:        types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		manager:       manager,
+		app:           app,
+		serverConfig:  serverConfig,
+		containerFile: "Containerfile",
+		buildDir:      ".",
+		sourceFS: &devReloadTestFS{files: fstest.MapFS{
+			"Containerfile": &fstest.MapFile{Data: []byte("FROM alpine AS builder\n")},
+		}},
+		cargs:           map[string]string{},
+		paramMap:        map[string]string{},
+		devSettings:     &types.DevSettings{Target: "builder", Dir: "/app", Reload: reload},
+		volumeInfo:      []*container.VolumeInfo{{SourcePath: appEntry.SourceUrl, TargetPath: "/app"}},
+		lifetime:        "app",
+		containerConfig: types.Container{HealthAttemptsAfterStartup: 1},
+	}
+}
+
+func TestDevReloadFastHotReloadReusesSingleContainerLookup(t *testing.T) {
+	t.Parallel()
+
+	manager := &devReloadTestManager{
+		healthTestManager: healthTestManager{running: true},
+		exists:            true,
+		matches:           true,
+		infoHostPort:      "127.0.0.1:49152",
+	}
+	h := newDevReloadTestHandler(t, manager, types.DEV_RELOAD_NONE)
+
+	if err := h.devReloadFast(context.Background(), manager); err != nil {
+		t.Fatalf("devReloadFast returned error: %v", err)
+	}
+	if manager.infoCalls != 1 || manager.getStateCalls != 0 {
+		t.Fatalf("container lookups = info:%d state:%d, want info:1 state:0", manager.infoCalls, manager.getStateCalls)
+	}
+	if manager.restartCalls != 0 || manager.runDevCalls != 0 || manager.buildCalls != 0 {
+		t.Fatalf("unexpected mutations: restart=%d run=%d build=%d", manager.restartCalls, manager.runDevCalls, manager.buildCalls)
+	}
+	if h.hostNamePort != manager.infoHostPort || h.currentState != ContainerStateRunning {
+		t.Fatalf("handler state = (%q, %q), want (%q, %q)", h.hostNamePort, h.currentState, manager.infoHostPort, ContainerStateRunning)
+	}
+}
+
+func TestDevReloadFastRestartReusesPublishedPort(t *testing.T) {
+	t.Parallel()
+
+	manager := &devReloadTestManager{
+		healthTestManager: healthTestManager{running: true},
+		exists:            true,
+		matches:           true,
+		infoHostPort:      "127.0.0.1:49152",
+	}
+	h := newDevReloadTestHandler(t, manager, types.DEV_RELOAD_RESTART)
+
+	if err := h.devReloadFast(context.Background(), manager); err != nil {
+		t.Fatalf("devReloadFast returned error: %v", err)
+	}
+	if manager.restartCalls != 1 || manager.getStateCalls != 0 {
+		t.Fatalf("restart/state calls = %d/%d, want 1/0", manager.restartCalls, manager.getStateCalls)
+	}
+	if manager.removeContainerCalls != 0 || manager.runDevCalls != 0 {
+		t.Fatalf("unexpected recreate: remove=%d run=%d", manager.removeContainerCalls, manager.runDevCalls)
+	}
+}
+
+func TestDevReloadFastRecreateUsesForceRemovalWithoutGracefulStop(t *testing.T) {
+	t.Parallel()
+
+	manager := &devReloadTestManager{
+		healthTestManager: healthTestManager{running: true, imageExists: true},
+		exists:            true,
+		matches:           true,
+		infoHostPort:      "127.0.0.1:49152",
+	}
+	h := newDevReloadTestHandler(t, manager, types.DEV_RELOAD_RECREATE)
+
+	if err := h.devReloadFast(context.Background(), manager); err != nil {
+		t.Fatalf("devReloadFast returned error: %v", err)
+	}
+	if manager.stopContainerCalls != 0 {
+		t.Fatalf("StopContainer calls = %d, want 0", manager.stopContainerCalls)
+	}
+	if manager.removeContainerCalls != 1 || manager.runDevCalls != 1 {
+		t.Fatalf("remove/run calls = %d/%d, want 1/1", manager.removeContainerCalls, manager.runDevCalls)
+	}
+	if manager.removeSupersededCalls != 1 {
+		t.Fatalf("RemoveSupersededImages calls = %d, want 1", manager.removeSupersededCalls)
+	}
+}
+
+func TestDevBuildTargetFallsBackForCustomContainerfile(t *testing.T) {
+	t.Parallel()
+
+	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
+	tests := []struct {
+		name string
+		data string
+		want string
+	}{
+		{name: "matching stage", data: "FROM alpine AS BUILDER\n", want: "builder"},
+		{name: "missing stage", data: "FROM alpine\n", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &ContainerHandler{
+				Logger:        logger,
+				containerFile: "Containerfile",
+				devSettings:   &types.DevSettings{Target: "builder"},
+				sourceFS: &devReloadTestFS{files: fstest.MapFS{
+					"Containerfile": &fstest.MapFile{Data: []byte(tt.data)},
+				}},
+			}
+			if got := h.devBuildTarget(); got != tt.want {
+				t.Fatalf("devBuildTarget() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDevImageHashTracksDependencyFiles(t *testing.T) {
+	t.Parallel()
+
+	testFS := &devReloadTestFS{files: fstest.MapFS{
+		"Containerfile":    &fstest.MapFile{Data: []byte("FROM alpine AS builder\n")},
+		"requirements.txt": &fstest.MapFile{Data: []byte("flask==1\n")},
+		"app.py":           &fstest.MapFile{Data: []byte("print('one')\n")},
+	}}
+	h := &ContainerHandler{
+		containerFile: "Containerfile",
+		buildDir:      ".",
+		sourceFS:      testFS,
+		cargs:         map[string]string{},
+		devSettings: &types.DevSettings{
+			Target:   "builder",
+			EnvFiles: []string{"requirements.txt"},
+		},
+	}
+
+	initial, err := h.devImageHash()
+	if err != nil {
+		t.Fatalf("initial devImageHash returned error: %v", err)
+	}
+	testFS.files["app.py"].Data = []byte("print('two')\n")
+	afterSource, err := h.devImageHash()
+	if err != nil {
+		t.Fatalf("source devImageHash returned error: %v", err)
+	}
+	if afterSource != initial {
+		t.Fatal("ordinary source change altered dev image hash")
+	}
+	testFS.files["requirements.txt"].Data = []byte("flask==2\n")
+	afterDependency, err := h.devImageHash()
+	if err != nil {
+		t.Fatalf("dependency devImageHash returned error: %v", err)
+	}
+	if afterDependency == initial {
+		t.Fatal("dependency change did not alter dev image hash")
+	}
+}
+
+func TestParseDevSettings(t *testing.T) {
+	t.Parallel()
+
+	settings, err := parseDevSettings(map[string]any{
+		"target":            "builder",
+		"command":           "go run .",
+		"dir":               "/app",
+		"reload":            "none",
+		"env_files":         []any{"go.mod", "go.sum"},
+		"additional_mounts": []string{"go-cache:/go/pkg/mod"},
+		"port":              int64(3000),
+	})
+	if err != nil {
+		t.Fatalf("parseDevSettings returned error: %v", err)
+	}
+	if settings.Target != "builder" || settings.Command != "go run ." || settings.Dir != "/app" ||
+		settings.Reload != types.DEV_RELOAD_NONE || settings.Port != 3000 {
+		t.Fatalf("parseDevSettings returned unexpected settings: %+v", settings)
+	}
+	if strings.Join(settings.EnvFiles, ",") != "go.mod,go.sum" ||
+		strings.Join(settings.AdditionalMounts, ",") != "go-cache:/go/pkg/mod" {
+		t.Fatalf("parseDevSettings returned unexpected lists: %+v", settings)
+	}
+
+	settings, err = parseDevSettings(map[string]any{"dir": "/app"})
+	if err != nil {
+		t.Fatalf("parseDevSettings defaults returned error: %v", err)
+	}
+	if settings.Reload != types.DEV_RELOAD_RESTART {
+		t.Fatalf("default reload = %q, want %q", settings.Reload, types.DEV_RELOAD_RESTART)
+	}
+	settings, err = parseDevSettings(nil)
+	if err != nil || settings != nil {
+		t.Fatalf("empty parseDevSettings = (%+v, %v), want (nil, nil)", settings, err)
+	}
+}
+
+func TestParseDevSettingsRejectsInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   map[string]any
+		wantErr string
+	}{
+		{name: "relative dir", input: map[string]any{"dir": "app"}, wantErr: "must be an absolute path"},
+		{name: "missing dir", input: map[string]any{"reload": "none"}, wantErr: "dir must be set"},
+		{name: "reload", input: map[string]any{"dir": "/app", "reload": "invalid"}, wantErr: "must be one of"},
+		{name: "port", input: map[string]any{"dir": "/app", "port": -1}, wantErr: "higher than or equal to zero"},
+		{name: "env files", input: map[string]any{"dir": "/app", "env_files": []any{"ok", 1}}, wantErr: "list of strings"},
+		{name: "unknown key", input: map[string]any{"dir": "/app", "envFiles": []string{"go.mod"}}, wantErr: "unsupported dev_settings key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseDevSettings(tt.input)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("parseDevSettings error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestHealthRetryBudgetPreservesOriginalStartupWindow(t *testing.T) {
+	t.Parallel()
+
+	if got, want := healthRetryBudget(10, 2000), 11_100*time.Millisecond; got != want {
+		t.Fatalf("healthRetryBudget(10) = %s, want %s", got, want)
+	}
+	if got := healthRetryBudget(1, 2000); got != 0 {
+		t.Fatalf("healthRetryBudget(1) = %s, want 0", got)
+	}
+}
 
 type healthTestManager struct {
 	hostNamePort       string

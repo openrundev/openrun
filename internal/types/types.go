@@ -110,6 +110,33 @@ const (
 )
 
 const (
+	DEV_RELOAD_NONE     = "none"
+	DEV_RELOAD_RESTART  = "restart"
+	DEV_RELOAD_RECREATE = "recreate"
+)
+
+// DevSettings enables the fast dev-mode reload flow for container apps. When
+// set, the dev image is built once (keyed on the Containerfile, cargs, target
+// and EnvFiles contents), the app source is bind mounted at Dir and a source
+// change restarts the container instead of rebuilding the image.
+type DevSettings struct {
+	Target           string   // Containerfile stage to build for dev (docker build --target)
+	Command          string   // app start command, overrides the image entrypoint/cmd
+	Dir              string   // source mount point and working dir inside the container
+	Reload           string   // none | restart | recreate, what a source change does
+	EnvFiles         []string // files whose content changes trigger a dev image rebuild
+	AdditionalMounts []string // extra volume mounts (build/dependency caches)
+	Port             int32    // container port override for dev mode
+}
+
+// DevSettingsKeys are the allowed keys of the container.config dev_settings
+// dict, one per DevSettings field. The container plugin validates dict keys
+// against this list and app.parseDevSettings rejects any key it did not
+// consume, so a key added here without parser support fails the app load
+// instead of being silently dropped.
+var DevSettingsKeys = []string{"target", "command", "dir", "reload", "env_files", "additional_mounts", "port"}
+
+const (
 	ANONYMOUS_USER                 = "anonymous"
 	ADMIN_USER                     = "admin"
 	AUTH_MODIFIER_DELIMITER string = "+"

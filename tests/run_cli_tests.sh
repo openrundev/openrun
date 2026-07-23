@@ -257,7 +257,7 @@ error_handler () {
 
 cleanup() {
   rm -rf metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp sqlite_tmp verifyapp_tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
-  rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp todo_flaskapp todo_rbac.json
+  rm -rf config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp todo_flaskapp todo_rbac.json streamlitdev stdev_started.txt
 
   if [[ -n "$POSTGRES_TEST_CONTAINER_ID" ]]; then
     $CONTAINER_TOOL rm -f "$POSTGRES_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
@@ -737,6 +737,11 @@ EOF
     wait_for_socket
 
     export HTTP_PORT=$http_port
+    # The CLI commands in the container yamls run with CL_CONFIG_FILE=openrun.toml
+    # (set in the yaml config env) and connect over the unix socket. A full run's
+    # main test block has already written openrun.toml; create an empty one for
+    # selective runs (e.g. `run_cli_tests.sh test_containers.yaml`) that skip it
+    [[ -f openrun.toml ]] || : > openrun.toml
     echo "********Testing containerized apps with $cmd*********"
     if is_selected test_containers.yaml; then
         commander test $VERBOSE test_containers.yaml

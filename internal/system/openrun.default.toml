@@ -143,7 +143,7 @@ tailwind_version = 4 # 3 uses legacy Tailwind 3/daisyUI 4 config, 4 uses Tailwin
 daisyui_url = "https://github.com/saadeghi/daisyui/releases/download/v5.6.10/daisyui.js"
 daisyui_theme_url = "https://github.com/saadeghi/daisyui/releases/download/v5.6.10/daisyui-theme.js" # used for style custom_themes
 file_watcher_debounce_millis = 300
-watch_ignore_patterns = ["**/.vscode/**", "**/.idea/**", "**/.git/**", "**/.DS_Store/**", "**/.*sw*"] # patterns to ignore for file watcher
+watch_ignore_patterns = ["**/.vscode/**", "**/.idea/**", "**/.git/**", "**/.DS_Store/**", "**/.*sw*", "**/__pycache__", "**/__pycache__/**", "**/*.pyc", "**/*.pyo", "**/.venv", "**/.venv/**", "**/target", "**/target/**", "**/node_modules", "**/node_modules/**", "**/dist", "**/dist/**", "**/.next", "**/.next/**"] # patterns to ignore for file watcher
 node_path = ""                      # node module lookup paths https://esbuild.github.io/api/#node-paths
 container_command = "auto"          # "auto" or "docker" or "podman" or "kubernetes"
 stale_container_cleanup_interval_mins = 5 # stop stale OpenRun containers every N minutes for Docker/Podman. Set <= 0 to disable.

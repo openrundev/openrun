@@ -7,6 +7,8 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/apptype"
@@ -53,10 +55,11 @@ func (c *containerPlugin) Run(thread *starlark.Thread, builtin *starlark.Builtin
 func (c *containerPlugin) Config(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var src, lifetime, scheme, health, buildDir starlark.String
 	var port starlark.Int
-	var cargs *starlark.Dict
+	var cargs, devSettings *starlark.Dict
 	var volumes *starlark.List
 	if err := starlark.UnpackArgs("config", args, kwargs, "src?", &src, "port?", &port, "scheme?", &scheme,
-		"health?", &health, "lifetime?", &lifetime, "build_dir?", &buildDir, "volumes?", &volumes, "cargs", &cargs); err != nil {
+		"health?", &health, "lifetime?", &lifetime, "build_dir?", &buildDir, "volumes?", &volumes, "cargs", &cargs,
+		"dev_settings?", &devSettings); err != nil {
 		return nil, err
 	}
 
@@ -68,18 +71,42 @@ func (c *containerPlugin) Config(thread *starlark.Thread, builtin *starlark.Buil
 		return nil, fmt.Errorf("port must be an integer higher than or equal to zero")
 	}
 
+	if devSettings == nil {
+		devSettings = starlark.NewDict(0)
+	} else {
+		if err := validateDevSettings(devSettings); err != nil {
+			return nil, err
+		}
+	}
+
 	volumes = cmp.Or(volumes, starlark.NewList([]starlark.Value{}))
 
 	fields := starlark.StringDict{
-		"source":    starlark.String(cmp.Or(string(src), "auto")),
-		"lifetime":  starlark.String(cmp.Or(string(lifetime), "app")),
-		"port":      port,
-		"scheme":    starlark.String(cmp.Or(string(scheme), "http")),
-		"health":    starlark.String(cmp.Or(string(health), "/")),
-		"build_dir": buildDir,
-		"volumes":   volumes,
-		"cargs":     cargs,
+		"source":       starlark.String(cmp.Or(string(src), "auto")),
+		"lifetime":     starlark.String(cmp.Or(string(lifetime), "app")),
+		"port":         port,
+		"scheme":       starlark.String(cmp.Or(string(scheme), "http")),
+		"health":       starlark.String(cmp.Or(string(health), "/")),
+		"build_dir":    buildDir,
+		"volumes":      volumes,
+		"cargs":        cargs,
+		"dev_settings": devSettings,
 	}
 
 	return starlarkstruct.FromStringDict(starlark.String("container_config"), fields), nil
+}
+
+// validateDevSettings checks the dev_settings dict keys at config eval time so
+// that typos fail the app load with a clear error instead of being ignored.
+func validateDevSettings(devSettings *starlark.Dict) error {
+	for _, k := range devSettings.Keys() {
+		keyStr, ok := k.(starlark.String)
+		if !ok {
+			return fmt.Errorf("dev_settings keys must be strings, got %s", k.Type())
+		}
+		if !slices.Contains(types.DevSettingsKeys, string(keyStr)) {
+			return fmt.Errorf("invalid dev_settings key %q, allowed keys are %s", string(keyStr), strings.Join(types.DevSettingsKeys, ", "))
+		}
+	}
+	return nil
 }

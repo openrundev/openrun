@@ -329,7 +329,7 @@ func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, source
 				return fmt.Errorf("no container command found, install podman or docker")
 			}
 		}
-		return buildImageCommand(ctx, k.Logger, k.config, imgName, sourceUrl, containerFile, containerArgs, containerCommand)
+		return buildImageCommand(ctx, k.Logger, k.config, imgName, sourceUrl, containerFile, containerArgs, "", containerCommand)
 	}
 
 	if k.config.Builder.Mode != "kaniko" && k.config.Builder.Mode != "auto" {

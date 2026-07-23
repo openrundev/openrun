@@ -131,9 +131,48 @@ func (m *telemetryDevContainerManager) RemoveImage(ctx context.Context, name Ima
 	return err
 }
 
+func (m *telemetryDevContainerManager) RemoveSupersededImages(ctx context.Context, keep ImageName) error {
+	start := time.Now()
+	err := m.dev.RemoveSupersededImages(ctx, keep)
+	telemetry.RecordContainerCall(ctx, m.kind, "remove_image", start, err)
+	return err
+}
+
 func (m *telemetryDevContainerManager) RemoveContainer(ctx context.Context, name ContainerName) error {
 	start := time.Now()
 	err := m.dev.RemoveContainer(ctx, name)
 	telemetry.RecordContainerCall(ctx, m.kind, "remove_container", start, err)
+	return err
+}
+
+func (m *telemetryDevContainerManager) BuildImageTarget(ctx context.Context, name ImageName, sourceUrl, containerFile string,
+	containerArgs map[string]string, buildTarget string) error {
+	start := time.Now()
+	err := m.dev.BuildImageTarget(ctx, name, sourceUrl, containerFile, containerArgs, buildTarget)
+	telemetry.RecordContainerCall(ctx, m.kind, "build_image", start, err)
+	return err
+}
+
+func (m *telemetryDevContainerManager) RunDevContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
+	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
+	containerOptions map[string]string, paramMap map[string]string, devOpts DevRunOptions) error {
+	start := time.Now()
+	err := m.dev.RunDevContainer(ctx, appEntry, sourceDir, containerName, imageName, port, envMap, volumes,
+		containerOptions, paramMap, devOpts)
+	telemetry.RecordContainerCall(ctx, m.kind, "run_container", start, err, telemetry.AppIdentityAttributes(appEntry)...)
+	return err
+}
+
+func (m *telemetryDevContainerManager) GetDevContainerInfo(ctx context.Context, name ContainerName, runHash string) (bool, bool, string, bool, error) {
+	start := time.Now()
+	exists, matches, hostPort, running, err := m.dev.GetDevContainerInfo(ctx, name, runHash)
+	telemetry.RecordContainerCall(ctx, m.kind, "get_container_state", start, err)
+	return exists, matches, hostPort, running, err
+}
+
+func (m *telemetryDevContainerManager) RestartDevContainer(ctx context.Context, name ContainerName) error {
+	start := time.Now()
+	err := m.dev.RestartDevContainer(ctx, name)
+	telemetry.RecordContainerCall(ctx, m.kind, "restart_container", start, err)
 	return err
 }

@@ -127,6 +127,34 @@ func (c *CommandCM) RemoveImage(ctx context.Context, name ImageName) error {
 	return nil
 }
 
+// RemoveSupersededImages removes the app's generated images other than keep,
+// cleaning up dev images left behind by image hash changes.
+func (c *CommandCM) RemoveSupersededImages(ctx context.Context, keep ImageName) error {
+	repo := string(GenImageName(c.appId, ""))
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "images",
+		"--filter", "reference="+repo, "--format", "{{.Repository}}:{{.Tag}}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("error listing images: %s : %s", output, err)
+	}
+
+	var errs []error
+	for _, line := range strings.Split(string(output), "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" || strings.Contains(name, "<none>") {
+			continue
+		}
+		// Podman reports local images with a localhost/ repository prefix
+		if name == string(keep) || strings.HasSuffix(name, "/"+string(keep)) {
+			continue
+		}
+		if err := c.RemoveImage(ctx, ImageName(name)); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (c *CommandCM) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
 	targetUrl, found := strings.CutPrefix(c.config.Builder.Mode, "delegate:")
 	if found {
@@ -149,11 +177,26 @@ func (c *CommandCM) BuildImage(ctx context.Context, imgName ImageName, sourceUrl
 		return fmt.Errorf("invalid builder mode for command based container manager: %s", c.config.Builder.Mode)
 	}
 
-	return buildImageCommand(ctx, c.Logger, c.config, imgName, sourceUrl, containerFile, containerArgs, c.config.System.ContainerCommand)
+	return buildImageCommand(ctx, c.Logger, c.config, imgName, sourceUrl, containerFile, containerArgs, "", c.config.System.ContainerCommand)
+}
+
+// BuildImageTarget builds the image up to the named Containerfile stage
+// (docker build --target). Used by dev mode to build the toolchain stage of a
+// multi stage Containerfile instead of the runtime stage.
+func (c *CommandCM) BuildImageTarget(ctx context.Context, imgName ImageName, sourceUrl, containerFile string,
+	containerArgs map[string]string, buildTarget string) error {
+	if strings.HasPrefix(c.config.Builder.Mode, "delegate:") {
+		return fmt.Errorf("delegated builds are not supported in dev mode")
+	}
+	if c.config.Builder.Mode != "command" && c.config.Builder.Mode != "auto" {
+		return fmt.Errorf("invalid builder mode for command based container manager: %s", c.config.Builder.Mode)
+	}
+
+	return buildImageCommand(ctx, c.Logger, c.config, imgName, sourceUrl, containerFile, containerArgs, buildTarget, c.config.System.ContainerCommand)
 }
 
 func buildImageCommand(ctx context.Context, logger *types.Logger, config *types.ServerConfig,
-	imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string, containerCommand string) error {
+	imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string, buildTarget, containerCommand string) error {
 	releaseLock, err := acquireBuildLock(ctx, &config.System, string(imgName))
 	if err != nil {
 		return fmt.Errorf("error acquiring build lock: %w", err)
@@ -162,6 +205,9 @@ func buildImageCommand(ctx context.Context, logger *types.Logger, config *types.
 
 	logger.Debug().Msgf("Building image %s from %s with %s", imgName, containerFile, sourceUrl)
 	args := []string{containerCommand, "build", "-t", string(imgName), "-f", containerFile}
+	if buildTarget != "" {
+		args = append(args, "--target", buildTarget)
+	}
 
 	for k, v := range containerArgs {
 		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", k, v))
@@ -187,11 +233,11 @@ func buildImageCommand(ctx context.Context, logger *types.Logger, config *types.
 }
 
 func (c *CommandCM) RemoveContainer(ctx context.Context, name ContainerName) error {
-	c.Debug().Msgf("Removing container %s", name)
-	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "rm", string(name))
+	c.Debug().Msgf("Force removing dev container %s", name)
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "rm", "--force", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("error removing image: %s : %s", output, err)
+		return fmt.Errorf("error removing container: %s : %s", output, err)
 	}
 
 	return nil
@@ -280,12 +326,13 @@ func (c *CommandCM) listContainers(ctx context.Context, filters []string, getAll
 		}
 
 		type ContainerPodman struct {
-			ID     string   `json:"ID"`
-			Names  []string `json:"Names"`
-			Image  string   `json:"Image"`
-			State  string   `json:"State"`
-			Status string   `json:"Status"`
-			Ports  []Port   `json:"Ports"`
+			ID     string            `json:"ID"`
+			Names  []string          `json:"Names"`
+			Image  string            `json:"Image"`
+			State  string            `json:"State"`
+			Status string            `json:"Status"`
+			Ports  []Port            `json:"Ports"`
+			Labels map[string]string `json:"Labels"`
 		}
 		result := []ContainerPodman{}
 
@@ -311,6 +358,7 @@ func (c *CommandCM) listContainers(ctx context.Context, filters []string, getAll
 				State:  c.State,
 				Status: c.Status,
 				Port:   port,
+				Labels: c.Labels,
 			})
 		}
 	} else if output[0] == '{' {
@@ -417,10 +465,65 @@ func serverHomeLabelValue() string {
 	return home
 }
 
+// DEV_HASH_LABEL is the label key (under LABEL_PREFIX) stamped on dev mode
+// containers with the run hash of their full runtime config
+const DEV_HASH_LABEL = "dev.hash"
+
 func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
 	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool,
 	_ *HealthProbe) error {
+	return c.runContainer(ctx, appEntry, sourceDir, containerName, imageName, port, envMap, volumes,
+		containerOptions, paramMap, versionHash, nil)
+}
+
+// RunDevContainer runs a dev mode container with the fast reload options
+// applied: run hash label, working dir override and app command override.
+func (c *CommandCM) RunDevContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
+	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
+	containerOptions map[string]string, paramMap map[string]string, devOpts DevRunOptions) error {
+	return c.runContainer(ctx, appEntry, sourceDir, containerName, imageName, port, envMap, volumes,
+		containerOptions, paramMap, "", &devOpts)
+}
+
+// GetDevContainerInfo reports whether a container with the given name exists,
+// whether it carries the given run hash label, its published host port and
+// whether it is currently running, using a single listing call.
+func (c *CommandCM) GetDevContainerInfo(ctx context.Context, name ContainerName, runHash string) (bool, bool, string, bool, error) {
+	containers, err := c.listContainers(ctx, []string{"name=" + string(name)}, true)
+	if err != nil {
+		return false, false, "", false, fmt.Errorf("error checking dev container: %w", err)
+	}
+	for _, cont := range containers {
+		// The name filter is a substring match, verify exact name
+		if cont.Names != string(name) {
+			continue
+		}
+		matches := cont.HasLabel(LABEL_PREFIX+DEV_HASH_LABEL, runHash)
+		hostPort := ""
+		if cont.Port > 0 {
+			hostPort = "127.0.0.1:" + strconv.Itoa(cont.Port)
+		}
+		return true, matches, hostPort, strings.EqualFold(cont.State, "running"), nil
+	}
+	return false, false, "", false, nil
+}
+
+// RestartDevContainer restarts (or starts, if stopped) a dev mode container
+// with no stop grace period, prioritizing the dev feedback loop.
+func (c *CommandCM) RestartDevContainer(ctx context.Context, name ContainerName) error {
+	c.Debug().Msgf("Restarting dev container %s", name)
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "restart", "-t", "0", string(name))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("error restarting container: %s : %s", output, err)
+	}
+	return nil
+}
+
+func (c *CommandCM) runContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
+	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
+	containerOptions map[string]string, paramMap map[string]string, versionHash string, devOpts *DevRunOptions) error {
 	c.Debug().Msgf("Running container %s from image %s with port %d env %+v mountArgs %+v",
 		containerName, imageName, port, slices.Collect(maps.Keys(envMap)), volumes)
 	publish := fmt.Sprintf("127.0.0.1::%d", port)
@@ -446,6 +549,18 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 	args = append(args, "--label", LABEL_PREFIX+"app.id="+string(appEntry.Id))
 	args = append(args, "--label", LABEL_PREFIX+"app.path="+appEntry.Path)
 	args = append(args, "--label", LABEL_PREFIX+"server.home="+serverHomeLabelValue())
+	if devOpts != nil {
+		if devOpts.RunHash != "" {
+			args = append(args, "--label", fmt.Sprintf("%s%s=%s", LABEL_PREFIX, DEV_HASH_LABEL, devOpts.RunHash))
+		}
+		if devOpts.WorkDir != "" {
+			args = append(args, "--workdir", devOpts.WorkDir)
+		}
+		if devOpts.Command != "" {
+			// Bypass the image entrypoint so the dev command runs as specified
+			args = append(args, "--entrypoint", "sh")
+		}
+	}
 	if appEntry.IsDev {
 		args = append(args, "--label", LABEL_PREFIX+"dev=true")
 	} else {
@@ -474,6 +589,9 @@ func (c *CommandCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, 
 	args = append(args, commandOptionArgs...)
 
 	args = append(args, imageUrl)
+	if devOpts != nil && devOpts.Command != "" {
+		args = append(args, "-c", devOpts.Command)
+	}
 
 	c.Debug().Msgf("Running container with args: %v", RedactEnvArgs(args))
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, args...)

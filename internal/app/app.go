@@ -13,6 +13,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -322,8 +323,12 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 		return false, nil
 	}
 
-	if requestTime.Compare(a.reloadStartTime) == -1 {
-		// Current request is older than the last reloaded request, ignore
+	if a.initialized && requestTime.Compare(a.reloadStartTime) == -1 {
+		// Current request is older than the last reloaded request, ignore.
+		// Applies to initialized apps only (coalescing file-change reloads):
+		// while the app is uninitialized, a request queued behind a reload
+		// that then FAILED would otherwise be reported as success here, and
+		// the caller would serve the app with no router built (nil panic)
 		a.Info().Msg("Ignoring reload request since it is older than the last reload request")
 		return false, nil
 	}
@@ -582,6 +587,15 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 		return fmt.Errorf("error reading cargs: %w", err)
 	}
 
+	devSettingsMap, err := apptype.GetDictAttr(configAttr, "dev_settings", true)
+	if err != nil {
+		return fmt.Errorf("error reading dev_settings: %w", err)
+	}
+	devSettings, err := parseDevSettings(devSettingsMap)
+	if err != nil {
+		return fmt.Errorf("error parsing dev_settings: %w", err)
+	}
+
 	// Parse the source file specification
 	var fileName string
 	switch src {
@@ -631,12 +645,125 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 	a.containerHandler, err = NewContainerHandler(a.Logger, a,
 		fileName, a.serverConfig, portInt, lifetime, scheme, health, buildDir,
 		a.sourceFS, a.paramValuesStr, a.AppConfig.Container, stripAppPath, volumes,
-		a.getSecretsAllowed("container.in", "config"), cargs, a.bindings)
+		a.getSecretsAllowed("container.in", "config"), cargs, a.bindings, devSettings)
 	if err != nil {
 		return fmt.Errorf("error creating container handler: %w", err)
 	}
 
 	return nil
+}
+
+// parseDevSettings converts the dev_settings dict from container.config into a
+// DevSettings struct. Returns nil when no dev_settings were specified, which
+// keeps the original dev reload behavior (full image rebuild on every change).
+func parseDevSettings(m map[string]any) (*types.DevSettings, error) {
+	if len(m) == 0 {
+		return nil, nil
+	}
+
+	// Every key must be consumed by one of the getters below; a leftover key
+	// (allowed by the plugin's validation but not parsed here) fails the load
+	// instead of being silently dropped
+	consumed := map[string]bool{}
+	getString := func(key string) (string, error) {
+		consumed[key] = true
+		v, ok := m[key]
+		if !ok {
+			return "", nil
+		}
+		s, ok := v.(string)
+		if !ok {
+			return "", fmt.Errorf("dev_settings %s must be a string", key)
+		}
+		return s, nil
+	}
+	getStringList := func(key string) ([]string, error) {
+		consumed[key] = true
+		v, ok := m[key]
+		if !ok {
+			return nil, nil
+		}
+		switch list := v.(type) {
+		case []string:
+			return list, nil
+		case []any:
+			ret := make([]string, 0, len(list))
+			for _, entry := range list {
+				s, ok := entry.(string)
+				if !ok {
+					return nil, fmt.Errorf("dev_settings %s must be a list of strings", key)
+				}
+				ret = append(ret, s)
+			}
+			return ret, nil
+		default:
+			return nil, fmt.Errorf("dev_settings %s must be a list of strings", key)
+		}
+	}
+
+	ds := &types.DevSettings{}
+	var err error
+	if ds.Target, err = getString("target"); err != nil {
+		return nil, err
+	}
+	if ds.Command, err = getString("command"); err != nil {
+		return nil, err
+	}
+	if ds.Dir, err = getString("dir"); err != nil {
+		return nil, err
+	}
+	if ds.Reload, err = getString("reload"); err != nil {
+		return nil, err
+	}
+	if ds.EnvFiles, err = getStringList("env_files"); err != nil {
+		return nil, err
+	}
+	if ds.AdditionalMounts, err = getStringList("additional_mounts"); err != nil {
+		return nil, err
+	}
+	consumed["port"] = true
+	if v, ok := m["port"]; ok {
+		var port int64
+		switch p := v.(type) {
+		case int:
+			port = int64(p)
+		case int64:
+			port = p
+		default:
+			return nil, fmt.Errorf("dev_settings port must be an integer higher than or equal to zero")
+		}
+		if port < 0 {
+			return nil, fmt.Errorf("dev_settings port must be an integer higher than or equal to zero")
+		}
+		port32, err := types.Int64ToInt32(port)
+		if err != nil {
+			return nil, fmt.Errorf("dev_settings port: %w", err)
+		}
+		ds.Port = port32
+	}
+
+	for _, key := range slices.Sorted(maps.Keys(m)) {
+		if !consumed[key] {
+			return nil, fmt.Errorf("unsupported dev_settings key %q", key)
+		}
+	}
+
+	if ds.Reload == "" {
+		ds.Reload = types.DEV_RELOAD_RESTART
+	}
+	switch ds.Reload {
+	case types.DEV_RELOAD_NONE, types.DEV_RELOAD_RESTART, types.DEV_RELOAD_RECREATE:
+	default:
+		return nil, fmt.Errorf("dev_settings reload must be one of none, restart, recreate; got %q", ds.Reload)
+	}
+	if ds.Dir == "" {
+		return nil, fmt.Errorf("dev_settings dir must be set, it is the directory where the app source is mounted in the container")
+	}
+	if !strings.HasPrefix(ds.Dir, "/") {
+		return nil, fmt.Errorf("dev_settings dir must be an absolute path inside the container")
+	}
+
+	return ds, nil
 }
 
 func (a *App) executeTemplate(w io.Writer, template, partial string, data any) error {

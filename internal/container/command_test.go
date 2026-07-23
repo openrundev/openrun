@@ -183,6 +183,127 @@ esac
 	}
 }
 
+func TestContainerHasLabelSupportsDockerAndPodmanFormats(t *testing.T) {
+	t.Parallel()
+
+	const key = LABEL_PREFIX + DEV_HASH_LABEL
+	for _, tt := range []struct {
+		name      string
+		container Container
+	}{
+		{
+			name:      "docker",
+			container: Container{LabelString: "other=value," + key + "=run-hash,third=value"},
+		},
+		{
+			name:      "podman",
+			container: Container{Labels: map[string]string{key: "run-hash"}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if !tt.container.HasLabel(key, "run-hash") {
+				t.Fatalf("HasLabel(%q, %q) = false", key, "run-hash")
+			}
+			if tt.container.HasLabel(key, "different") {
+				t.Fatalf("HasLabel(%q, %q) = true", key, "different")
+			}
+		})
+	}
+}
+
+func TestCommandCMGetDevContainerInfoDockerAndPodman(t *testing.T) {
+	const (
+		name    = "clc-dev-test"
+		runHash = "run-hash"
+	)
+
+	tests := []struct {
+		name     string
+		output   string
+		wantPort string
+	}{
+		{
+			name:     "docker",
+			output:   `{"ID":"abc","Names":"clc-dev-test","Image":"img","State":"running","Status":"Up","Ports":"127.0.0.1:49152->5000/tcp","Labels":"other=value,dev.openrun.dev.hash=run-hash"}`,
+			wantPort: "127.0.0.1:49152",
+		},
+		{
+			name:     "podman",
+			output:   `[{"ID":"abc","Names":["clc-dev-test"],"Image":"img","State":"running","Status":"Up","Ports":[{"host_port":49153}],"Labels":{"dev.openrun.dev.hash":"run-hash"}}]`,
+			wantPort: "127.0.0.1:49153",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			commandPath := filepath.Join(t.TempDir(), tt.name)
+			script := `#!/bin/sh
+if [ "$1" != "ps" ] || [ "$2" != "--format" ] || [ "$3" != "json" ] || [ "$4" != "--filter" ] || [ "$5" != "name=clc-dev-test" ] || [ "$6" != "--all" ] || [ -n "$7" ]; then
+	echo "unexpected args: $*" >&2
+	exit 64
+fi
+echo '` + tt.output + `'
+`
+			if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
+				t.Fatalf("write fake container command: %v", err)
+			}
+
+			manager := NewCommandCM(testutil.TestLogger(), &types.ServerConfig{
+				System: types.SystemConfig{ContainerCommand: commandPath},
+			}, "", "")
+
+			exists, matches, hostPort, running, err := manager.GetDevContainerInfo(context.Background(), name, runHash)
+			if err != nil {
+				t.Fatalf("GetDevContainerInfo returned error: %v", err)
+			}
+			if !exists || !matches || !running || hostPort != tt.wantPort {
+				t.Fatalf("GetDevContainerInfo = (%t, %t, %q, %t), want (true, true, %q, true)", exists, matches, hostPort, running, tt.wantPort)
+			}
+
+			exists, matches, _, _, err = manager.GetDevContainerInfo(context.Background(), name, "different")
+			if err != nil {
+				t.Fatalf("GetDevContainerInfo with different hash returned error: %v", err)
+			}
+			if !exists || matches {
+				t.Fatalf("GetDevContainerInfo with different hash = exists:%t matches:%t, want true/false", exists, matches)
+			}
+		})
+	}
+}
+
+func TestCommandCMFastDevLifecycleCommands(t *testing.T) {
+	t.Parallel()
+
+	commandPath := filepath.Join(t.TempDir(), "docker")
+	script := `#!/bin/sh
+case "$1" in
+restart)
+	[ "$2" = "-t" ] && [ "$3" = "0" ] && [ "$4" = "clc-dev-test" ] && [ -z "$5" ] || exit 64
+	;;
+rm)
+	[ "$2" = "--force" ] && [ "$3" = "clc-dev-test" ] && [ -z "$4" ] || exit 65
+	;;
+*)
+	echo "unexpected args: $*" >&2
+	exit 66
+	;;
+esac
+`
+	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake container command: %v", err)
+	}
+
+	manager := NewCommandCM(testutil.TestLogger(), &types.ServerConfig{
+		System: types.SystemConfig{ContainerCommand: commandPath},
+	}, "", "")
+	if err := manager.RestartDevContainer(context.Background(), "clc-dev-test"); err != nil {
+		t.Fatalf("RestartDevContainer returned error: %v", err)
+	}
+	if err := manager.RemoveContainer(context.Background(), "clc-dev-test"); err != nil {
+		t.Fatalf("RemoveContainer returned error: %v", err)
+	}
+}
+
 func TestCommandByOpenRunLabel(t *testing.T) {
 	// The listing must be scoped to containers started by THIS server
 	// installation (server.home ownership label) - a sweep filtered on the

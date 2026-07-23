@@ -23,13 +23,29 @@ type ImageName string
 type VolumeName string
 
 type Container struct {
-	ID         string `json:"ID"`
-	Names      string `json:"Names"`
-	Image      string `json:"Image"`
-	State      string `json:"State"`
-	Status     string `json:"Status"`
-	PortString string `json:"Ports"`
-	Port       int
+	ID          string `json:"ID"`
+	Names       string `json:"Names"`
+	Image       string `json:"Image"`
+	State       string `json:"State"`
+	Status      string `json:"Status"`
+	PortString  string `json:"Ports"`
+	LabelString string `json:"Labels"` // Docker format: "key=value,key=value"
+	Port        int
+	Labels      map[string]string `json:"-"` // Podman format, parsed from the JSON map
+}
+
+// HasLabel reports whether the container carries the given label, handling
+// both the Podman (map) and Docker (comma separated string) label formats.
+func (c *Container) HasLabel(key, value string) bool {
+	if c.Labels != nil {
+		return c.Labels[key] == value
+	}
+	for kv := range strings.SplitSeq(c.LabelString, ",") {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key && v == value {
+			return true
+		}
+	}
+	return false
 }
 
 type VolumeInfo struct {
@@ -171,11 +187,50 @@ func AsAppContainerStopper(cm ContainerManager) (AppContainerStopper, bool) {
 	return nil, false
 }
 
+// DevRunOptions carries the dev-mode fast reload options for RunDevContainer.
+type DevRunOptions struct {
+	// RunHash identifies the full runtime config of the dev container. It is
+	// stamped as a label on the container so a reload can detect that the
+	// running container is already up to date and skip the recreate.
+	RunHash string
+	// WorkDir overrides the working directory (where the app source is mounted)
+	WorkDir string
+	// Command is the app start command, run via `sh -c`, overriding the image
+	// entrypoint and cmd. Empty means use the image entrypoint/cmd as is.
+	Command string
+}
+
 // DevContainerManager is the interface for managing containers in dev mode
 type DevContainerManager interface {
 	ContainerManager
 	RemoveImage(ctx context.Context, name ImageName) error
+	// RemoveSupersededImages removes the app's generated images other than
+	// keep. A dev image hash change builds a new dev-<hash> tagged image; the
+	// previous images are never used again and would otherwise accumulate on
+	// the dev machine. Callers must remove containers using the old images
+	// first. Failure to remove an image is not fatal to a reload.
+	RemoveSupersededImages(ctx context.Context, keep ImageName) error
+	// RemoveContainer force-removes a dev container. Dev reloads prioritize a
+	// short feedback loop and must not wait for the runtime's graceful-stop
+	// timeout when replacing a container.
 	RemoveContainer(ctx context.Context, name ContainerName) error
+	// BuildImageTarget builds like BuildImage but stops at the named
+	// Containerfile stage (docker build --target). Empty target builds the
+	// full image.
+	BuildImageTarget(ctx context.Context, name ImageName, sourceUrl, containerFile string,
+		containerArgs map[string]string, buildTarget string) error
+	// RunDevContainer runs a dev mode container with the fast reload options
+	// applied (source mount workdir, command override, run hash label).
+	RunDevContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
+		imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
+		containerOptions map[string]string, paramMap map[string]string, devOpts DevRunOptions) error
+	// GetDevContainerInfo reports whether a container with the given name
+	// exists, whether it carries the given run hash label, its published host
+	// port and whether it is currently running, in one container listing call.
+	GetDevContainerInfo(ctx context.Context, name ContainerName, runHash string) (exists, matches bool, hostPort string, running bool, err error)
+	// RestartDevContainer restarts (or starts, if stopped) a dev mode
+	// container with no stop grace period, prioritizing the dev feedback loop.
+	RestartDevContainer(ctx context.Context, name ContainerName) error
 }
 
 func GenContainerName(appId types.AppId, contentHash string, supportsInPlaceUpdate bool) ContainerName {
