@@ -362,6 +362,20 @@ func TestBuilderFirstPublishConflicts(t *testing.T) {
 		t.Fatalf("expected folder conflict, got %v", err)
 	}
 
+	// A fork session (editing an app not published by the builder) targeting
+	// the original path gets the specific fork message, not the generic
+	// already-exists conflict
+	session.EditApp = "/apps/taken"
+	if _, _, err := server.builderCheckPublishPath(ctx, "/apps/taken", session); err == nil ||
+		!strings.Contains(err.Error(), "cannot be updated directly") {
+		t.Fatalf("expected the fork rejection, got %v", err)
+	}
+	// The fork publishes to a new path under the normal checks only
+	if _, _, err := server.builderCheckPublishPath(ctx, "/apps/forknew", session); err != nil {
+		t.Fatalf("fork to a new path rejected: %v", err)
+	}
+	session.EditApp = ""
+
 	// A relative-domain target is preserved in the returned path (portable
 	// apps.star declaration) while checks run against the resolved path
 	publishPath, appPathDomain, err := server.builderCheckPublishPath(ctx, "my-app.:/", session)

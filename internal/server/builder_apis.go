@@ -468,10 +468,6 @@ func (s *Server) builderPublish(ctx context.Context, sessionId, publishPath, com
 	if err != nil {
 		return nil, err
 	}
-	if forkFrom != nil && publishPath == session.EditApp {
-		return nil, fmt.Errorf("app %s was not published by the app builder and cannot be updated directly; publish to a new app path instead", session.EditApp)
-	}
-
 	appName := builderSourceName(appPathDomain)
 	gitCfg, err := config.ResolveBuilderGit(session.Profile)
 	if err != nil {
@@ -722,6 +718,18 @@ func (s *Server) builderCheckPublishPath(ctx context.Context, publishPath string
 	resolvedPathDomain := appPathDomain
 	if resolvedPathDomain.Domain, err = s.normalizeRelativeDomain(appPathDomain.Domain, "domain"); err != nil {
 		return "", types.AppPathDomain{}, err
+	}
+
+	// A session editing an app NOT published by the builder is a FORK: it
+	// publishes as a new app, never over the original. Checked here, before
+	// the generic conflict checks below, so both the publish and the Validate
+	// button report the specific reason instead of "an app already exists"
+	if session != nil && session.EditApp != "" {
+		if _, editPathDomain, err := s.builderResolvePath(session.EditApp); err == nil && editPathDomain == resolvedPathDomain {
+			if origEntry, err := s.builderEditableApp(ctx, session.EditApp); err == nil && !s.isBuilderManaged(origEntry) {
+				return "", types.AppPathDomain{}, fmt.Errorf("app %s was not published by the app builder and cannot be updated directly; publish to a new app path instead", session.EditApp)
+			}
+		}
 	}
 
 	firstPublish := session != nil && (session.PublishPath == "" || publishPath != session.PublishPath)
