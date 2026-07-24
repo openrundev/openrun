@@ -127,6 +127,9 @@ type DevSettings struct {
 	EnvFiles         []string // files whose content changes trigger a dev image rebuild
 	AdditionalMounts []string // extra volume mounts (build/dependency caches)
 	Port             int32    // container port override for dev mode
+	DevStage         string   // Containerfile stage used as the dev stage; empty means the default "dev" with auto-inference fallback
+	Disable          bool     // disable the fast dev reload flow, use the legacy rebuild-on-change flow
+	Inferred         bool     // set during resolution (not a config key) when the command was auto-inferred; used to hint on startup failures
 }
 
 // DevSettingsKeys are the allowed keys of the container.config dev_settings
@@ -134,7 +137,7 @@ type DevSettings struct {
 // against this list and app.parseDevSettings rejects any key it did not
 // consume, so a key added here without parser support fails the app load
 // instead of being silently dropped.
-var DevSettingsKeys = []string{"target", "command", "dir", "reload", "env_files", "additional_mounts", "port"}
+var DevSettingsKeys = []string{"target", "command", "dir", "reload", "env_files", "additional_mounts", "port", "dev_stage", "disable"}
 
 const (
 	ANONYMOUS_USER                 = "anonymous"

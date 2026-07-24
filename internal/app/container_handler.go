@@ -95,10 +95,11 @@ type ContainerHandler struct {
 	cargs             map[string]string
 	proxyTracker      *Tracker // Track bytes sent and received by the proxy
 
-	envMap      map[string]string
-	envMapHash  string
-	bindings    []*types.Binding
-	devSettings *types.DevSettings
+	envMap         map[string]string
+	envMapHash     string
+	bindings       []*types.Binding
+	devSettings    *types.DevSettings
+	devInferredEnv map[string]string // final stage ENV values missing from the built dev image
 }
 
 func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
@@ -107,8 +108,21 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any, bindings []*types.Binding,
 	devSettings *types.DevSettings) (*ContainerHandler, error) {
 
-	if !app.IsDev {
-		// dev_settings apply to dev mode only, prod is unaffected
+	devStageName := defaultDevStage
+	devStageExplicit := false
+	devDisabled := !app.IsDev
+	if devSettings != nil {
+		if devSettings.DevStage != "" {
+			devStageName = devSettings.DevStage
+			devStageExplicit = true
+		}
+		if devSettings.Disable {
+			devDisabled = true
+		}
+	}
+	if devDisabled {
+		// dev_settings apply to dev mode only, prod is unaffected; disable
+		// opts out of the fast reload flow
 		devSettings = nil
 	}
 	if devSettings != nil && devSettings.Port > 0 {
@@ -135,6 +149,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 
 	image := ""
 	volumes := []string{}
+	var cfParsed *parser.Result
 	if strings.HasPrefix(containerFile, types.CONTAINER_SOURCE_IMAGE_PREFIX) {
 		// Using an image
 		image = containerFile[len(types.CONTAINER_SOURCE_IMAGE_PREFIX):]
@@ -149,6 +164,8 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		if err != nil {
 			return nil, fmt.Errorf("error parsing container file %s : %w", containerFile, err)
 		}
+
+		cfParsed = result
 
 		var filePort int32
 		// Loop through the parsed result to find the EXPOSE and VOLUME instructions
@@ -210,6 +227,42 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		cargs_map[k] = val
 	}
 
+	var devInferredEnv map[string]string
+	if cfParsed != nil {
+		// The Containerfile stage info is collected after the build args are
+		// known: global ARGs (and their cargs overrides) expand in FROM values
+		cfInfo := collectContainerfileInfo(cfParsed, cargs_map)
+		if !app.IsDev {
+			if err := checkProdDevStage(cfInfo, devStageName, containerFile); err != nil {
+				return nil, err
+			}
+		} else if !devDisabled && (devSettings != nil || lifetime != types.CONTAINER_LIFETIME_COMMAND) {
+			// Resolve unset dev settings from the Containerfile. Settings are
+			// synthesized even when none were configured: the fast dev reload
+			// flow is the default, resolveDevSettings falls back to the legacy
+			// flow when it cannot infer the settings. Command lifetime apps
+			// stay on the legacy flow unless dev_settings are configured, the
+			// full image is used for running commands
+			sourceExists := func(rel string) bool {
+				_, statErr := sourceFS.Stat(rel)
+				return statErr == nil
+			}
+			devSettings, devInferredEnv, err = resolveDevSettings(logger, devSettings, devStageName, devStageExplicit,
+				cfInfo, cargs_map, containerFile, sourceExists)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else if devSettings != nil {
+		// Image based app, there is no Containerfile to infer from
+		if devStageExplicit {
+			return nil, fmt.Errorf("dev_settings dev_stage requires a Containerfile based app")
+		}
+		if devSettings.Dir == "" {
+			return nil, fmt.Errorf("dev_settings dir must be set, it is the directory where the app source is mounted in the container")
+		}
+	}
+
 	h := &ContainerHandler{
 		Logger:          logger,
 		app:             app,
@@ -232,6 +285,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		cargs:           cargs_map,
 		bindings:        bindings,
 		devSettings:     devSettings,
+		devInferredEnv:  devInferredEnv,
 	}
 
 	if containerConfig.IdleShutdownSecs > 0 &&
@@ -916,6 +970,22 @@ func (h *ContainerHandler) devReloadFast(ctx context.Context, devCM container.De
 	if err != nil {
 		return fmt.Errorf("error getting env map hash: %w", err)
 	}
+	if len(h.devInferredEnv) > 0 {
+		// The dev command was inferred from the final stage's entry command;
+		// the final stage ENV values it depends on are not present in the
+		// built dev image. App configured env wins on conflict
+		merged := make(map[string]string, len(h.envMap)+len(h.devInferredEnv))
+		for k, v := range h.devInferredEnv {
+			merged[k] = v
+		}
+		for k, v := range h.envMap {
+			merged[k] = v
+		}
+		h.envMap = merged
+		if h.envMapHash, err = getMapHash(merged); err != nil {
+			return fmt.Errorf("error getting env map hash: %w", err)
+		}
+	}
 
 	imageHash, err := h.devImageHash()
 	if err != nil {
@@ -962,7 +1032,7 @@ func (h *ContainerHandler) devReloadFast(ctx context.Context, devCM container.De
 		}
 		if !imageExists {
 			buildDir := path.Join(h.app.SourceUrl, h.buildDir)
-			if err := devCM.BuildImageTarget(ctx, h.GenImageName, buildDir, h.containerFile, h.cargs, h.devBuildTarget()); err != nil {
+			if err := devCM.BuildImageTarget(ctx, h.GenImageName, buildDir, h.containerFile, h.cargs, h.devSettings.Target); err != nil {
 				return err
 			}
 		}
@@ -997,10 +1067,22 @@ func (h *ContainerHandler) devReloadFast(ctx context.Context, devCM container.De
 		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap,
 		container.DevRunOptions{RunHash: runHash, WorkDir: h.devSettings.Dir, Command: h.devSettings.Command})
 	if err != nil {
-		return fmt.Errorf("error running container: %w", err)
+		return h.devInferredHint(fmt.Errorf("error running container: %w", err))
 	}
 
 	return h.finishDevContainerStart(ctx, devCM, containerName, "", false, true)
+}
+
+// devInferredHint annotates dev container failures with the auto-inference
+// escape hatches when the dev command was inferred from the Containerfile.
+func (h *ContainerHandler) devInferredHint(err error) error {
+	if err == nil || h.devSettings == nil || !h.devSettings.Inferred {
+		return err
+	}
+	return fmt.Errorf("%w\n(the dev mode command %q was auto-inferred from %s; if it is wrong, add a \"dev\" stage "+
+		"to the container file with the dev run command as its CMD, set dev_settings command explicitly, or opt out "+
+		"of fast dev reload with dev_settings {\"disable\": True})",
+		err, h.devSettings.Command, h.containerFile)
 }
 
 // finishDevContainerStart updates the handler state from the running dev
@@ -1019,7 +1101,7 @@ func (h *ContainerHandler) finishDevContainerStart(ctx context.Context, devCM co
 	}
 	if hostNamePort == "" || !running {
 		logs, _ := devCM.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
-		return fmt.Errorf("container %s not running. Logs\n %s", containerName, logs)
+		return h.devInferredHint(fmt.Errorf("container %s not running. Logs\n %s", containerName, logs))
 	}
 	h.currentState = ContainerStateRunning
 	h.activeContainerName = containerName
@@ -1029,43 +1111,11 @@ func (h *ContainerHandler) finishDevContainerStart(ctx context.Context, devCM co
 		err := h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName, "")
 		if err != nil {
 			logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
-			return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
+			return h.devInferredHint(fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs))
 		}
 	}
 
 	return nil
-}
-
-// devBuildTarget returns the Containerfile stage to build for dev mode. The
-// app can supply its own Containerfile, overriding the spec's; if it does not
-// define the stage named in the dev_settings target, fall back to a full
-// image build instead of failing the build with an unknown stage error.
-func (h *ContainerHandler) devBuildTarget() string {
-	target := h.devSettings.Target
-	if target == "" {
-		return ""
-	}
-	data, err := h.sourceFS.ReadFile(h.containerFile)
-	if err != nil {
-		return target // let the build surface the read error
-	}
-	result, err := parser.Parse(bytes.NewReader(data))
-	if err != nil {
-		return target // let the build surface the parse error
-	}
-	for _, child := range result.AST.Children {
-		if !strings.EqualFold(child.Value, "FROM") {
-			continue
-		}
-		// FROM <image> [AS <stage>], stage names match case-insensitively
-		if img := child.Next; img != nil && img.Next != nil && img.Next.Next != nil &&
-			strings.EqualFold(img.Next.Value, "AS") &&
-			strings.EqualFold(img.Next.Next.Value, target) {
-			return target
-		}
-	}
-	h.Warn().Msgf("Container file %s has no stage %q, building the full image for dev mode", h.containerFile, target)
-	return ""
 }
 
 // devImageHash identifies the dev image contents: the Containerfile, build

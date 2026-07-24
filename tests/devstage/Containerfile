@@ -1,0 +1,14 @@
+# Multi stage Containerfile using the dev stage convention: the "dev" stage
+# is picked up automatically in dev mode, no dev_settings config needed
+ARG PYTHON_VERSION=3.14
+FROM python:${PYTHON_VERSION}-slim-bookworm AS base
+WORKDIR /app
+COPY . .
+
+FROM base AS dev
+CMD python server.py
+
+FROM python:${PYTHON_VERSION}-slim-bookworm
+WORKDIR /app
+COPY --from=base /app /app
+ENTRYPOINT ["python", "server.py"]

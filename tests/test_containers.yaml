@@ -144,6 +144,53 @@ tests:
       retries: 5
       interval: 2s
 
+  container0240: # setup custom Containerfile app using the dev stage convention
+    command: rm -rf ./devstageapp && cp -r ./devstage ./devstageapp && rm ./devstageapp/Containerfile.single
+  container0241: # create dev app with no dev params, the dev stage is found by convention
+    command: ../openrun app create --dev --spec container --param port=8080 ./devstageapp /cont_devstage
+  container0242: # app comes up healthy (first request builds the dev stage image)
+    command: curl -sS localhost:${HTTP_PORT}/cont_devstage/
+    stdout: marker-v1
+    config:
+      retries: 10
+      interval: 5s
+  container0243: # fast dev reload flow is active (dev.hash label is set only by that flow)
+    command: bash -c 'id=$(${OPENRUN_CONTAINER_COMMAND} ps -q --filter "label=dev.openrun.app.path=/cont_devstage" --filter "label=dev.openrun.dev.hash" | head -n1); test -n "$id" && echo "$id" > devstage_id.txt && echo fastflow'
+    stdout: fastflow
+  container0244: # update the app source
+    command: perl -i -pe 's/marker-v1/marker-v2/' devstageapp/server.py
+  container0245: # source change is served after a container restart, no image rebuild
+    command: curl -sS localhost:${HTTP_PORT}/cont_devstage/
+    stdout: marker-v2
+    config:
+      retries: 5
+      interval: 2s
+  container0246: # the same container was restarted, not recreated
+    command: bash -c 'id=$(${OPENRUN_CONTAINER_COMMAND} ps -q --filter "label=dev.openrun.app.path=/cont_devstage" | head -n1); test "$id" = "$(cat devstage_id.txt)" && echo same'
+    stdout: same
+
+  container0250: # setup custom single stage Containerfile app, no dev stage
+    command: rm -rf ./inferapp && cp -r ./devstage ./inferapp && mv ./inferapp/Containerfile.single ./inferapp/Containerfile
+  container0251: # create dev app with no dev params, dev settings are auto-inferred
+    command: ../openrun app create --dev --spec container --param port=8080 ./inferapp /cont_infer
+  container0252: # app comes up healthy
+    command: curl -sS localhost:${HTTP_PORT}/cont_infer/
+    stdout: marker-v1
+    config:
+      retries: 10
+      interval: 5s
+  container0253: # fast dev reload flow is active for the inferred settings
+    command: bash -c '${OPENRUN_CONTAINER_COMMAND} ps -q --filter "label=dev.openrun.app.path=/cont_infer" --filter "label=dev.openrun.dev.hash" | head -n1 | grep -q . && echo fastflow'
+    stdout: fastflow
+  container0254: # update the app source
+    command: perl -i -pe 's/marker-v1/marker-v2/' inferapp/server.py
+  container0255: # source change is served after a container restart
+    command: curl -sS localhost:${HTTP_PORT}/cont_infer/
+    stdout: marker-v2
+    config:
+      retries: 5
+      interval: 2s
+
   container0300: # setup proxy
     command: ../openrun app create --stage-at path --spec proxy --approve --param url=https://www.google.com - /cont_proxy
   container0310: # check stage
@@ -184,4 +231,4 @@ tests:
     stdout: "Hello, Gopher!"
 
   container_cleanup: # Cleanup generated test sources
-    command: rm -rf ./flaskverify_ok ./flaskverify_fail ./cont_verify_reload.log
+    command: rm -rf ./flaskverify_ok ./flaskverify_fail ./cont_verify_reload.log ./devstageapp ./inferapp ./devstage_id.txt

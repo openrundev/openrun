@@ -228,35 +228,6 @@ func TestDevReloadFastRecreateUsesForceRemovalWithoutGracefulStop(t *testing.T) 
 	}
 }
 
-func TestDevBuildTargetFallsBackForCustomContainerfile(t *testing.T) {
-	t.Parallel()
-
-	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
-	tests := []struct {
-		name string
-		data string
-		want string
-	}{
-		{name: "matching stage", data: "FROM alpine AS BUILDER\n", want: "builder"},
-		{name: "missing stage", data: "FROM alpine\n", want: ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			h := &ContainerHandler{
-				Logger:        logger,
-				containerFile: "Containerfile",
-				devSettings:   &types.DevSettings{Target: "builder"},
-				sourceFS: &devReloadTestFS{files: fstest.MapFS{
-					"Containerfile": &fstest.MapFile{Data: []byte(tt.data)},
-				}},
-			}
-			if got := h.devBuildTarget(); got != tt.want {
-				t.Fatalf("devBuildTarget() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestDevImageHashTracksDependencyFiles(t *testing.T) {
 	t.Parallel()
 
@@ -329,6 +300,14 @@ func TestParseDevSettings(t *testing.T) {
 	if settings.Reload != types.DEV_RELOAD_RESTART {
 		t.Fatalf("default reload = %q, want %q", settings.Reload, types.DEV_RELOAD_RESTART)
 	}
+	// dir is optional at parse time, it is inferred from the Containerfile
+	settings, err = parseDevSettings(map[string]any{"dev_stage": "fastdev", "disable": true})
+	if err != nil {
+		t.Fatalf("parseDevSettings dev_stage returned error: %v", err)
+	}
+	if settings.DevStage != "fastdev" || !settings.Disable || settings.Dir != "" {
+		t.Fatalf("parseDevSettings returned unexpected settings: %+v", settings)
+	}
 	settings, err = parseDevSettings(nil)
 	if err != nil || settings != nil {
 		t.Fatalf("empty parseDevSettings = (%+v, %v), want (nil, nil)", settings, err)
@@ -344,7 +323,8 @@ func TestParseDevSettingsRejectsInvalidValues(t *testing.T) {
 		wantErr string
 	}{
 		{name: "relative dir", input: map[string]any{"dir": "app"}, wantErr: "must be an absolute path"},
-		{name: "missing dir", input: map[string]any{"reload": "none"}, wantErr: "dir must be set"},
+		{name: "empty dev_stage", input: map[string]any{"dir": "/app", "dev_stage": ""}, wantErr: "dev_stage must not be empty"},
+		{name: "disable type", input: map[string]any{"dir": "/app", "disable": "yes"}, wantErr: "disable must be a boolean"},
 		{name: "reload", input: map[string]any{"dir": "/app", "reload": "invalid"}, wantErr: "must be one of"},
 		{name: "port", input: map[string]any{"dir": "/app", "port": -1}, wantErr: "higher than or equal to zero"},
 		{name: "env files", input: map[string]any{"dir": "/app", "env_files": []any{"ok", 1}}, wantErr: "list of strings"},

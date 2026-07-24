@@ -1,0 +1,7 @@
+# Single stage Containerfile with no dev stage: dev mode auto-inference
+# builds the full image once and mounts the source at the WORKDIR
+ARG PYTHON_VERSION=3.14
+FROM python:${PYTHON_VERSION}-slim-bookworm
+WORKDIR /app
+COPY . .
+CMD ["python", "server.py"]

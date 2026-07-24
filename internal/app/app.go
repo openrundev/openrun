@@ -715,6 +715,20 @@ func parseDevSettings(m map[string]any) (*types.DevSettings, error) {
 	if ds.Reload, err = getString("reload"); err != nil {
 		return nil, err
 	}
+	if ds.DevStage, err = getString("dev_stage"); err != nil {
+		return nil, err
+	}
+	if _, ok := m["dev_stage"]; ok && ds.DevStage == "" {
+		return nil, fmt.Errorf("dev_settings dev_stage must not be empty")
+	}
+	consumed["disable"] = true
+	if v, ok := m["disable"]; ok {
+		b, ok := v.(bool)
+		if !ok {
+			return nil, fmt.Errorf("dev_settings disable must be a boolean")
+		}
+		ds.Disable = b
+	}
 	if ds.EnvFiles, err = getStringList("env_files"); err != nil {
 		return nil, err
 	}
@@ -756,10 +770,10 @@ func parseDevSettings(m map[string]any) (*types.DevSettings, error) {
 	default:
 		return nil, fmt.Errorf("dev_settings reload must be one of none, restart, recreate; got %q", ds.Reload)
 	}
-	if ds.Dir == "" {
-		return nil, fmt.Errorf("dev_settings dir must be set, it is the directory where the app source is mounted in the container")
-	}
-	if !strings.HasPrefix(ds.Dir, "/") {
+	// dir is not required here: for Containerfile based apps it defaults to
+	// the WORKDIR of the dev stage (resolveDevSettings); image based apps
+	// check it in NewContainerHandler
+	if ds.Dir != "" && !strings.HasPrefix(ds.Dir, "/") {
 		return nil, fmt.Errorf("dev_settings dir must be an absolute path inside the container")
 	}
 
