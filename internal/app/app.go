@@ -666,8 +666,9 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 }
 
 // parseDevSettings converts the dev_settings dict from container.config into a
-// DevSettings struct. Returns nil when no dev_settings were specified, which
-// keeps the original dev reload behavior (full image rebuild on every change).
+// DevSettings struct. Nil means no settings were explicitly configured;
+// Containerfile-based dev apps may still synthesize settings through
+// auto-inference.
 func parseDevSettings(m map[string]any) (*types.DevSettings, error) {
 	if len(m) == 0 {
 		return nil, nil

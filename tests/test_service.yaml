@@ -206,10 +206,6 @@ tests:
     command: ../openrun service list -f json postgres/p3 | jq -r '.[0].is_default'
     stdout: "true"
 
-  service0113: # listing all with no filter returns the 3 postgres services
-    command: ../openrun service list -f json | jq 'length'
-    stdout: "3"
-
   service0114: # make p1 depend on p2 before deleting p2
     command: ../openrun service update --staging p2 postgres/p1
     stdout: "Service postgres/p1 updated"

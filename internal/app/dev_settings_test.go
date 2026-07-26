@@ -791,29 +791,51 @@ CMD ["node", "other.js"]
 	}
 }
 
-func TestResolveEnvPropagationSkipsUnresolvable(t *testing.T) {
+func TestResolveUnreproducibleFinalPathFallsBack(t *testing.T) {
 	t.Parallel()
 
-	// PATH resolves against the final base image's PATH which is unknown, and
-	// docker env values are literal; propagating either would break the dev
-	// container (a PATH without /bin makes the sh entrypoint fail to start)
+	// The final PATH relies on both its base image and a virtualenv hidden by
+	// the source mount. Falling back preserves old Containerfiles by rebuilding
+	// their complete runtime image instead of starting a known-broken dev image.
 	data := `
-FROM golang:1.24 AS builder
+FROM python:3.14 AS builder
 WORKDIR /app
+COPY requirements.txt .
+RUN python -m venv /app/.venv
 
-FROM alpine
+FROM python:3.14-slim
+COPY --from=builder /app /app
 ENV PATH="/app/.venv/bin:$PATH"
-ENV UNRESOLVED=${SOME_BASE_VAR}/data
-ENV OK=plain
-ENTRYPOINT ["/app/app"]
+WORKDIR /app
+CMD ["python", "-m", "flask", "run"]
 `
-	_, env, err := resolveForTest(t, data, nil, "", false, nil, "app")
-	if err != nil {
-		t.Fatalf("resolveDevSettings returned error: %v", err)
+	ds, _, err := resolveForTest(t, data, nil, "", false, nil, "requirements.txt")
+	if err != nil || ds != nil {
+		t.Fatalf("resolve = (%+v, %v), want nil fallback", ds, err)
 	}
-	want := map[string]string{"OK": "plain"}
-	if !maps.Equal(env, want) {
-		t.Fatalf("inferred env = %v, want %v", env, want)
+}
+
+func TestResolveUnverifiedExternalEntrypointFallsBack(t *testing.T) {
+	t.Parallel()
+
+	// The final image installs tini, but the inferred dev image is the builder
+	// stage. An absolute executable not supplied by a traceable COPY cannot be
+	// assumed to exist in that image.
+	data := `
+FROM node:22-alpine AS builder
+WORKDIR /app
+COPY . .
+
+FROM node:22-alpine
+WORKDIR /app
+RUN apk add --no-cache tini
+COPY --from=builder /app /app
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "server.js"]
+`
+	ds, _, err := resolveForTest(t, data, nil, "", false, nil, "server.js")
+	if err != nil || ds != nil {
+		t.Fatalf("resolve = (%+v, %v), want nil fallback", ds, err)
 	}
 }
 

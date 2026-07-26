@@ -270,9 +270,16 @@ func (cf *containerfileInfo) resolveStage(idx int, cargs map[string]string) cfRe
 // stageEnvOutside collects the resolved ENV values declared on stages of the
 // final stage's chain that are not part of the excluded (build target) chain.
 // These are the runtime environment values the built dev image lacks.
-func (cf *containerfileInfo) stageEnvOutside(finalIdx int, exclude map[int]bool, cargs map[string]string) map[string]string {
+//
+// pathUnsafe reports that a final-only PATH cannot be reproduced in the dev
+// container. Docker does not expand references in runtime environment
+// overrides, and replacing the build image's PATH with a literal value such as
+// "/app/.venv/bin:$PATH" would both leave $PATH unresolved and commonly point
+// into content hidden by the source bind mount.
+func (cf *containerfileInfo) stageEnvOutside(finalIdx int, exclude map[int]bool,
+	cargs map[string]string) (out map[string]string, pathUnsafe bool) {
 	vars := map[string]string{}
-	out := map[string]string{}
+	out = map[string]string{}
 	for _, stageIdx := range cf.chain(finalIdx) {
 		for _, instr := range cf.stages[stageIdx].instrs {
 			switch instr.kind {
@@ -295,7 +302,12 @@ func (cf *containerfileInfo) stageEnvOutside(finalIdx int, exclude map[int]bool,
 					// PATH (docker env values are literal, $refs do not
 					// expand). The same applies to any value that still has
 					// unresolved references after expansion
-					if kv.key == "PATH" || strings.ContainsRune(val, '$') {
+					if kv.key == "PATH" {
+						pathUnsafe = true
+						delete(out, kv.key)
+						continue
+					}
+					if strings.ContainsRune(val, '$') {
 						delete(out, kv.key)
 						continue
 					}
@@ -304,7 +316,7 @@ func (cf *containerfileInfo) stageEnvOutside(finalIdx int, exclude map[int]bool,
 			}
 		}
 	}
-	return out
+	return out, pathUnsafe
 }
 
 // mergeMounts appends the extra volume mounts whose target path is not
@@ -628,7 +640,7 @@ func (cf *containerfileInfo) inferEntryCommand(targetIdx, finalIdx int, targetRe
 	// to use (possibly rewritten) and a non-empty reason when unsafe.
 	// shellCtx marks words from a shell command string, where assignments
 	// (JAR=/app/app.jar), quoting and trailing separators can wrap the path
-	checkWord := func(word string, shellCtx bool) (string, string) {
+	checkWord := func(word string, shellCtx, executable bool) (string, string) {
 		exp := expandVars(word, finalRes.vars)
 		// An assignment or option value (JAR=/app/x, -Dcfg=/app/x) carries
 		// the path in its value part; check and rewrite that part
@@ -725,7 +737,13 @@ func (cf *containerfileInfo) inferEntryCommand(targetIdx, finalIdx int, targetRe
 		if underMount {
 			return word, fmt.Sprintf("the entry command references %s, which is not in the app source and is not a copied build output", core)
 		}
-		// Outside the mount: assume the build stage image provides it
+		// An absolute entry executable outside the mount may have been
+		// installed only in the final image. Unless a traceable COPY above
+		// supplied it, the build target cannot be assumed to contain it.
+		if executable && path.IsAbs(core) {
+			return word, fmt.Sprintf("the entry executable %s is outside the source mount and cannot be verified in the build stage", core)
+		}
+		// Other paths outside the mount may be provided by the build image
 		return word, ""
 	}
 	// Command substitution can conceal copied paths from the word scan; when
@@ -750,7 +768,7 @@ func (cf *containerfileInfo) inferEntryCommand(targetIdx, finalIdx int, targetRe
 			for w, word := range words {
 				before := rewrote
 				rewrote = false
-				newWord, wordReason := checkWord(word, true)
+				newWord, wordReason := checkWord(word, true, w == 0 && !shellWrappers[word])
 				payloadRewrote = payloadRewrote || rewrote
 				rewrote = before || rewrote
 				if wordReason != "" {
@@ -766,7 +784,7 @@ func (cf *containerfileInfo) inferEntryCommand(targetIdx, finalIdx int, targetRe
 			}
 			continue
 		}
-		newTok, tokReason := checkWord(tok, shellForm)
+		newTok, tokReason := checkWord(tok, shellForm, i == 0 && !shellWrappers[tok])
 		if tokReason != "" {
 			return "", nil, tokReason
 		}
@@ -939,6 +957,19 @@ func resolveDevSettings(logger *types.Logger, ds *types.DevSettings, devStageNam
 				}
 				// Explicit settings: the built stage image's own entry runs
 			} else {
+				targetChain := map[int]bool{}
+				for _, i := range cf.chain(runIdx) {
+					targetChain[i] = true
+				}
+				finalEnv, pathUnsafe := cf.stageEnvOutside(finalIdx, targetChain, cargs)
+				if pathUnsafe {
+					reason := "the final stage changes PATH, which cannot be reproduced safely in the build-stage dev image"
+					if fallback("%s", reason) {
+						return nil, nil, nil
+					}
+					return nil, nil, fmt.Errorf("dev_settings: %s in %s; add a 'dev' stage with the dev run command "+
+						"or set dev_settings command", reason, containerFile)
+				}
 				cmdStr, cacheMounts, reason := cf.inferEntryCommand(runIdx, finalIdx, res, finalRes, ds.Dir, sourceExists)
 				if reason != "" {
 					// Inference is only used when it is expected to work; do
@@ -952,11 +983,7 @@ func resolveDevSettings(logger *types.Logger, ds *types.DevSettings, devStageNam
 				ds.Command = cmdStr
 				ds.Inferred = true
 				ds.AdditionalMounts = mergeMounts(ds.AdditionalMounts, cacheMounts)
-				targetChain := map[int]bool{}
-				for _, i := range cf.chain(runIdx) {
-					targetChain[i] = true
-				}
-				inferredEnv = cf.stageEnvOutside(finalIdx, targetChain, cargs)
+				inferredEnv = finalEnv
 			}
 		}
 		// Otherwise the built image's own CMD/ENTRYPOINT runs unmodified
