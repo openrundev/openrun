@@ -112,9 +112,9 @@ func (m *telemetryContainerManager) VolumeExists(ctx context.Context, name Volum
 	return exists
 }
 
-func (m *telemetryContainerManager) VolumeCreate(ctx context.Context, name VolumeName) error {
+func (m *telemetryContainerManager) VolumeCreate(ctx context.Context, name VolumeName, size string) error {
 	start := time.Now()
-	err := m.ContainerManager.VolumeCreate(ctx, name)
+	err := m.ContainerManager.VolumeCreate(ctx, name, size)
 	telemetry.RecordContainerCall(ctx, m.kind, "volume_create", start, err)
 	return err
 }

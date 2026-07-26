@@ -1,0 +1,72 @@
+config:
+  env:
+    CL_CONFIG_FILE: config_dr_k8s.toml
+    OPENRUN_HOME: ${DR_HOME}
+    HTTP_PORT: ${HTTP_PORT}
+    DR_KUBE_NS1: ${DR_KUBE_NS1}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+    HOME: ${HOME}
+
+# Phase 1 of the kubernetes disaster recovery scenario (see run_cli_tests.sh):
+# on a litestream-enabled server deploying into namespace 1, create a sqlite
+# app, write data and wait for the replicas to catch up. The runner then
+# hard-kills the server, deletes the namespace (pods, sidecar, PVC) and the
+# OPENRUN_HOME; test_dr_kubernetes_verify.yaml checks the rebuild into
+# namespace 2.
+tests:
+  drk0010:
+    command: ../openrun service create sqlite/drkmain --config litestream_config=drtest
+    stdout: "Service sqlite/drkmain created"
+    exit-code: 0
+
+  drk0011:
+    command: rm -rf ./sqlite_drk_tmp && cp -rf sqlite sqlite_drk_tmp
+    exit-code: 0
+
+  drk0020:
+    command: ../openrun app create --approve --spec python-flask --bind sqlite/drkmain ./sqlite_drk_tmp /dr_kapp
+    exit-code: 0
+
+  drk0030: # write the data that must survive the node loss (the first
+           # request deploys the prod workload: PVC, restore inits, sidecar)
+    command: curl -sS -X POST -d value=dr-k8s-value localhost:${HTTP_PORT}/dr_kapp/value
+    stdout: "dr-k8s-value"
+    config:
+      retries: 10
+      interval: 2s
+
+  drk0031: # the app's PVC landed in the first namespace's apps namespace
+    command: kubectl get pvc -n ${DR_KUBE_NS1}-apps -o name | grep -c clv-
+    stdout: "1"
+    config:
+      retries: 5
+      interval: 2s
+
+  drk0032: # sqlite pods get an fsGroup (volume group-writable on storage
+           # with ownership management)
+    command: kubectl get deploy -n ${DR_KUBE_NS1}-apps -o jsonpath='{.items[0].spec.template.spec.securityContext.fsGroup}'
+    stdout: "65532"
+
+  drk0033: # the volume permissions init container runs with the litestream
+           # image (works with distroless app images)
+    command: kubectl get deploy -n ${DR_KUBE_NS1}-apps -o jsonpath='{.items[0].spec.template.spec.initContainers[?(@.name=="sqlite-volume-perms")].image}'
+    stdout: "litestream/litestream"
+
+  drk0040: # app replication catches up (pods reach S3 via container_endpoint)
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 45
+      interval: 2s
+
+  drk0041: # metadata replication catches up
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="metadata" and .target=="metadata")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s
+
+  drk0050: # settle window: the server is hard-killed next (no final sync)
+    command: sleep 3
+    exit-code: 0

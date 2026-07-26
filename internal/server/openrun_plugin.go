@@ -34,6 +34,7 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ListOperations, app.READ, "list_operations"),
 		app.CreatePluginApiName(c.ListSync, app.READ, "list_sync"),
 		app.CreatePluginApiName(c.ListBindings, app.READ, "list_bindings"),
+		app.CreatePluginApiName(c.ReplicationStatus, app.READ, "replication_status"),
 		app.CreatePluginApiName(c.GetApp, app.READ, "get_app"),
 		app.CreatePluginApiName(c.ListSpecs, app.READ, "list_specs"),
 		app.CreatePluginApiName(c.ListVersions, app.READ, "list_versions"),
@@ -1163,6 +1164,31 @@ func (c *openrunPlugin) ListGitAuths(thread *starlark.Thread, builtin *starlark.
 	ret := starlark.List{}
 	for _, name := range names {
 		ret.Append(starlark.String(name)) //nolint:errcheck
+	}
+	return &ret, nil
+}
+
+// ReplicationStatus reports litestream replication state for the server's
+// metadata databases and litestream-enabled sqlite bindings. Read-only, no
+// credentials in the response (paths, timestamps and sizes only).
+func (c *openrunPlugin) ReplicationStatus(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("replication_status", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	entries, err := c.server.ReplicationStatus(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+
+	ret := starlark.List{}
+	for _, entry := range entries {
+		entryMap, err := starlark_type.ConvertToStarlark(&entry)
+		if err != nil {
+			return nil, err
+		}
+		ret.Append(entryMap) //nolint:errcheck
 	}
 	return &ret, nil
 }

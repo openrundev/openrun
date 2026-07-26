@@ -25,6 +25,19 @@ type Binding struct {
 	CreatedBy        string          `json:"created_by"` // user who created the binding
 	CreateTime       time.Time       `json:"create_time"`
 	UpdateTime       time.Time       `json:"update_time"`
+
+	// ServiceConfig is the live config of the binding's service, populated when
+	// the binding is loaded for app use (GetBindingWithAccount) so the container
+	// layer sees service config updates on the next app reload. Not persisted
+	// with the binding and never serialized.
+	ServiceConfig map[string]string `json:"-"`
+
+	// StagingServiceConfig is the live config of the linked staging service
+	// (service.Staging), when one is set: staged apps use it instead of
+	// ServiceConfig (e.g. a sqlite staging service replicating to a different
+	// litestream config). Nil when no staging service is linked; populated
+	// like ServiceConfig, never serialized.
+	StagingServiceConfig map[string]string `json:"-"`
 }
 
 type BindingMetadata struct {

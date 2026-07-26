@@ -262,11 +262,16 @@ func initSQLiteSelfMaintenance(logger *types.Logger, db *sql.DB, invoker, dbFile
 	// At init no other transaction is running on this pool, so a truncate
 	// checkpoint succeeds and resets a WAL that grew in a previous run while
 	// readers pinned it. busy=1 means another process/pool has the file open.
-	var busy, walFrames, checkpointed int
-	if err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
-		logger.Warn().Err(err).Str("db", invoker).Msg("sqlite startup checkpoint failed")
-	} else if busy != 0 {
-		logger.Warn().Str("db", invoker).Msg("sqlite startup checkpoint could not complete, database in use elsewhere")
+	// Skipped for litestream-replicated databases: litestream owns
+	// checkpointing for them (it holds a long-lived read transaction and runs
+	// its own passive/truncate checkpoint strategy)
+	if !isLitestreamManaged(dbFilePath) {
+		var busy, walFrames, checkpointed int
+		if err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
+			logger.Warn().Err(err).Str("db", invoker).Msg("sqlite startup checkpoint failed")
+		} else if busy != 0 {
+			logger.Warn().Str("db", invoker).Msg("sqlite startup checkpoint could not complete, database in use elsewhere")
+		}
 	}
 
 	// One-time migration to incremental auto-vacuum, so pages freed by row
@@ -330,6 +335,12 @@ func sqliteMaintenanceLoop(logger *types.Logger, db *sql.DB, invoker, dbFilePath
 				}
 				logger.Debug().Err(err).Str("db", invoker).Msg("sqlite incremental_vacuum failed")
 			}
+		}
+
+		if isLitestreamManaged(dbFilePath) {
+			// litestream owns checkpointing for replicated databases; only the
+			// incremental vacuum above runs here
+			continue
 		}
 
 		// A passive checkpoint copies whatever frames it can without blocking

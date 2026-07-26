@@ -1,0 +1,32 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    HTTP_PORT: ${HTTP_PORT}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+
+# Creates marker state, then verifies metadata replication is in sync. The
+# test runner then stops the server, wipes the metadata directory, restarts
+# and runs test_metadata_litestream_verify.yaml to check the state was
+# restored from the S3 replica.
+tests:
+  mdls0010:
+    command: ../openrun service create sqlite/mdtest
+    stdout: "Service sqlite/mdtest created"
+    exit-code: 0
+
+  mdls0011:
+    command: ../openrun binding create sqlite/mdtest /mdt/b1
+    stdout: "Binding /mdt/b1 created"
+    exit-code: 0
+
+  mdls0012: # a lightweight non-container app as restore marker
+    command: ../openrun app create --auth none ./testapp /mdt_app
+    exit-code: 0
+
+  mdls0020: # metadata replication catches up with the writes above
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="metadata" and .target=="metadata")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s

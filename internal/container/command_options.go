@@ -5,6 +5,8 @@ package container
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -43,6 +45,34 @@ func LocalhostHostGatewayArgs(containerCommand string) []string {
 		return nil
 	}
 	return []string{"--add-host", DockerLocalhostBindingHostname + ":" + dockerHostGatewayTarget}
+}
+
+// RewriteLocalhostEndpoint rewrites a localhost URL to the hostname
+// containers use to reach the OpenRun host (e.g. host.docker.internal), for
+// endpoints that must be reachable from inside app companion containers.
+// Non-localhost endpoints are returned unchanged.
+func RewriteLocalhostEndpoint(endpoint, containerCommand string) string {
+	if endpoint == "" {
+		return endpoint
+	}
+	hostname := LocalhostBindingHostname(containerCommand)
+	if hostname == "" {
+		return endpoint
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	host := u.Hostname()
+	if !strings.EqualFold(host, "localhost") && host != "127.0.0.1" && host != "::1" {
+		return endpoint
+	}
+	if port := u.Port(); port != "" {
+		u.Host = net.JoinHostPort(hostname, port)
+	} else {
+		u.Host = hostname
+	}
+	return u.String()
 }
 
 func containerCommandName(containerCommand string) string {

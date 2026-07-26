@@ -196,7 +196,12 @@ func main() {
 		Usage:                "OpenRun client and server https://openrun.dev/",
 		EnableBashCompletion: true,
 		Suggest:              true,
-		Flags:                globalFlags,
+		// Slice flag values are taken verbatim, never split on commas: values
+		// legitimately contain commas (binding params like
+		// --bind "sqlite;path=/mydata,example=val2", JSON param values). The
+		// documented way to pass multiple values is repeating the flag.
+		DisableSliceFlagSeparator: true,
+		Flags:                     globalFlags,
 		Before: func(ctx *cli.Context) error {
 			err := parseConfig(ctx, globalConfig, clientConfig, serverConfig)
 			if ctx.Command != nil && ctx.Args().Len() > 0 && ctx.Args().Get(0) == "password" {

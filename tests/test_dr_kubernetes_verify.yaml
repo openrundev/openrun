@@ -1,0 +1,56 @@
+config:
+  env:
+    CL_CONFIG_FILE: config_dr_k8s.toml
+    OPENRUN_HOME: ${DR_HOME}
+    HTTP_PORT: ${HTTP_PORT}
+    DR_KUBE_NS2: ${DR_KUBE_NS2}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+    HOME: ${HOME}
+
+# Phase 2 of the kubernetes disaster recovery scenario: a fresh OPENRUN_HOME
+# with the backed-up config pointed at namespace 2. The metadata comes back
+# from the S3 replica; the app redeploys into the new namespace with a fresh
+# PVC, and its restore init containers pull the sqlite data back.
+tests:
+  drkv0010: # the app is back in the app list
+    command: ../openrun app list -f json /dr_kapp | jq -r '.[0].path'
+    stdout: "/dr_kapp"
+    config:
+      retries: 5
+      interval: 2s
+
+  drkv0011: # the audit history survived: the original create_app event is
+            # present (phase 2 never created the app)
+    command: python3 -c 'import sqlite3,os; c=sqlite3.connect(os.environ["OPENRUN_HOME"]+"/metadata/clace_audit.db"); print(c.execute("select count(*) from audit where operation=:o and target like :t", {"o":"create_app","t":"%dr_kapp%"}).fetchone()[0] > 0)'
+    stdout: "True"
+
+  drkv0020: # the app starts on request in the NEW namespace: image pulled
+            # from the registry, PVC recreated, data restored from the
+            # replica by the restore init containers
+    command: curl -sS localhost:${HTTP_PORT}/dr_kapp/value
+    stdout: "dr-k8s-value"
+    config:
+      retries: 60
+      interval: 3s
+
+  drkv0021: # the rebuilt deployment landed in namespace 2 with its own PVC
+    command: kubectl get pvc -n ${DR_KUBE_NS2}-apps -o name | grep -c clv-
+    stdout: "1"
+    config:
+      retries: 5
+      interval: 2s
+
+  drkv0030: # metadata replication resumed on the rebuilt node
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="metadata" and .target=="metadata")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s
+
+  drkv0031: # app replication resumed too
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 45
+      interval: 2s

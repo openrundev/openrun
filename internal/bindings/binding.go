@@ -19,6 +19,17 @@ const BindingHostnameDisable = "disable"
 
 type ServiceBindingRuntime struct {
 	LocalhostBindingHostname string
+
+	// LitestreamConfigNames are the [litestream.<name>] config names defined in
+	// the server config, used by the sqlite binding to validate its
+	// litestream_config service config key.
+	LitestreamConfigNames []string
+
+	// LitestreamFileConfigNames are the subset of LitestreamConfigNames using
+	// the file replica type (a host-local directory). They are valid for
+	// metadata replication but unusable from app containers, so the sqlite
+	// binding rejects them.
+	LitestreamFileConfigNames []string
 }
 
 type ArtifactType string

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -62,6 +63,21 @@ func (s *Server) resolveAppBindings(ctx context.Context, tx types.Transaction, a
 		existing[path] = true
 	}
 
+	// Sqlite databases are single-writer files on one per-binding volume; one
+	// sqlite binding per app keeps the volume, env and replication mapping
+	// unambiguous
+	sqliteBindings := 0
+	countSqlite := func(path string) error {
+		if seen[path] {
+			return nil
+		}
+		sqliteBindings++
+		if sqliteBindings > 1 {
+			return fmt.Errorf("an app can have at most one sqlite binding")
+		}
+		return nil
+	}
+
 	for _, bindingRef := range bindingRefs {
 		if bindingRef == "" {
 			return nil, fmt.Errorf("binding path cannot be empty")
@@ -71,26 +87,45 @@ func (s *Server) resolveAppBindings(ctx context.Context, tx types.Transaction, a
 			if err != nil {
 				return nil, fmt.Errorf("binding %s not found: %w", bindingRef, err)
 			}
+			if binding.ServiceType == bindings.SqliteServiceType {
+				if err := countSqlite(bindingRef); err != nil {
+					return nil, err
+				}
+			}
 			if !existing[bindingRef] {
 				if err := s.enforceBindingPerm(ctx, types.PermissionBindingUse, binding.Path, binding.CreatedBy); err != nil {
 					return nil, err
+				}
+				if binding.ServiceType == bindings.SqliteServiceType {
+					if err := s.enforceSqliteSingleAttach(ctx, tx, appID, binding.Path); err != nil {
+						return nil, err
+					}
 				}
 			}
 			addResolved(bindingRef)
 			continue
 		}
 
-		service, err := s.serviceForBindingSource(ctx, tx, bindingRef)
+		source, bindingConfig, err := parseBindingSourceParams(bindingRef)
+		if err != nil {
+			return nil, err
+		}
+		service, err := s.serviceForBindingSource(ctx, tx, source)
 		if err != nil {
 			return nil, err
 		}
 		autoPath := autoBindingPathForAppID(appID, service.ServiceType)
+		if service.ServiceType == bindings.SqliteServiceType {
+			if err := countSqlite(autoPath); err != nil {
+				return nil, err
+			}
+		}
 		if !existing[autoPath] {
 			if err := s.enforceServiceBind(ctx, tx, service); err != nil {
 				return nil, err
 			}
 		}
-		if err := s.ensureAutoBinding(ctx, tx, autoPath, bindingRef, service, accounts); err != nil {
+		if err := s.ensureAutoBinding(ctx, tx, autoPath, source, bindingConfig, service, accounts); err != nil {
 			return nil, err
 		}
 		addResolved(autoPath)
@@ -98,12 +133,67 @@ func (s *Server) resolveAppBindings(ctx context.Context, tx types.Transaction, a
 	return resolved, nil
 }
 
-func (s *Server) ensureAutoBinding(ctx context.Context, tx types.Transaction, bindingPath, source string, service *types.Service,
-	accounts *bindingAccountManager) error {
+// parseBindingSourceParams splits an auto binding reference into the service
+// source and its optional binding config params. The syntax is generic for
+// any service type: "sqlite;path=/mydata,example=val2" creates the auto
+// binding with config {path: /mydata, example: val2}, exactly like binding
+// create --config. Values must not contain commas.
+func parseBindingSourceParams(bindingRef string) (string, map[string]string, error) {
+	source, paramStr, found := strings.Cut(bindingRef, ";")
+	if !found {
+		return source, nil, nil
+	}
+	params := map[string]string{}
+	for part := range strings.SplitSeq(paramStr, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(part, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return "", nil, fmt.Errorf("invalid binding param %q in %s: expected source;key=value,key2=value2", part, bindingRef)
+		}
+		params[key] = value
+	}
+	if len(params) == 0 {
+		return source, nil, nil
+	}
+	return source, params, nil
+}
+
+// enforceSqliteSingleAttach rejects attaching a sqlite binding to a second
+// app. Sqlite databases are single-writer files on a per-app volume
+// (ReadWriteOnce on kubernetes): a second app would either corrupt the
+// database or silently get its own empty volume. Auto bindings are per-app by
+// construction; only explicitly created base bindings can hit this.
+func (s *Server) enforceSqliteSingleAttach(ctx context.Context, tx types.Transaction, appID types.AppId, bindingPath string) error {
+	users, err := s.db.AppsUsingBinding(ctx, tx, bindingPath)
+	if err != nil {
+		return fmt.Errorf("error checking apps using binding %s: %w", bindingPath, err)
+	}
+	for _, use := range users {
+		if use.MainApp != appID {
+			return fmt.Errorf("sqlite binding %s is already attached to app %s: sqlite databases are "+
+				"single-writer, a binding can be attached to only one app", bindingPath, use.PathDomain)
+		}
+	}
+	return nil
+}
+
+func (s *Server) ensureAutoBinding(ctx context.Context, tx types.Transaction, bindingPath, source string,
+	bindingConfig map[string]string, service *types.Service, accounts *bindingAccountManager) error {
 	binding, err := s.db.GetBinding(ctx, tx, bindingPath)
 	if err == nil {
 		if binding.ServiceType != service.ServiceType || binding.ServiceName != service.Name {
 			return fmt.Errorf("auto binding %s already exists with source %s, cannot use source %s", bindingPath, binding.Source, source)
+		}
+		// The auto binding's config was applied when it was created (the
+		// account may depend on it); a differing config on a later reference
+		// is a conflict, not an update
+		if len(bindingConfig) > 0 && !equalStringMaps(binding.StagedMetadata.Config, bindingConfig) {
+			return fmt.Errorf("auto binding %s already exists with config %v, cannot change it to %v; "+
+				"delete the binding to recreate it with the new config", bindingPath, binding.StagedMetadata.Config, bindingConfig)
 		}
 		return nil
 	}
@@ -114,6 +204,7 @@ func (s *Server) ensureAutoBinding(ctx context.Context, tx types.Transaction, bi
 	createRequest := &types.CreateBindingRequest{
 		Path:   bindingPath,
 		Source: source,
+		Config: bindingConfig,
 	}
 	// The auto binding row and its service account share the operation's fate: the
 	// row is written on the operation's transaction and the account is tracked on
@@ -122,6 +213,19 @@ func (s *Server) ensureAutoBinding(ctx context.Context, tx types.Transaction, bi
 		return fmt.Errorf("error creating auto binding %s for service %s: %w", bindingPath, source, err)
 	}
 	return nil
+}
+
+// equalStringMaps compares two config maps, treating nil and empty as equal.
+func equalStringMaps(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) serviceForBindingSource(ctx context.Context, tx types.Transaction, source string) (*types.Service, error) {

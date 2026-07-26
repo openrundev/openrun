@@ -353,8 +353,13 @@ func TestOpenRunPluginAuditQueries(t *testing.T) {
 		starlark.String("operation"), starlark.String("reload_apps"),
 		starlark.String("target"), starlark.String("/apps/plugin"),
 		starlark.String("status"), starlark.String("success"),
-		starlark.String("start_date"), starlark.String(now.Add(-24*time.Hour).Format("2006-01-02")),
-		starlark.String("end_date"), starlark.String(now.Format("2006-01-02")),
+		// The audit date filters are UTC days (sqlite strftime and postgres
+		// EXTRACT both read the bare date as UTC midnight), so the filter
+		// dates must come from the UTC clock: using the local date makes the
+		// end_date filter exclude the event whenever the local date is behind
+		// the UTC date (e.g. evenings in UTC-7)
+		starlark.String("start_date"), starlark.String(now.UTC().Add(-24*time.Hour).Format("2006-01-02")),
+		starlark.String("end_date"), starlark.String(now.UTC().Format("2006-01-02")),
 		starlark.String("rid"), starlark.String("rid_plugin"),
 		starlark.String("detail"), starlark.String("coverage detail"),
 		starlark.String("limit"), starlark.MakeInt(10),

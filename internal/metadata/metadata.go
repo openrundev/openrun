@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -604,6 +605,63 @@ func (m *Metadata) getAppMetadataAndSettings(ctx context.Context, tx types.Trans
 		return nil, fmt.Errorf("error closing rows: %w", closeErr)
 	}
 	return apps, nil
+}
+
+// BindingAppUse is one app row referencing a binding: the app's own id, its
+// main app id (stage/preview rows link to their main app; dev and main apps
+// are their own main) and its path-domain string.
+type BindingAppUse struct {
+	Id         types.AppId
+	MainApp    types.AppId
+	PathDomain string
+}
+
+// AppsUsingBinding returns the app rows whose metadata references
+// bindingPath. A stage/prod pair shows up as two rows sharing one MainApp.
+func (m *Metadata) AppsUsingBinding(ctx context.Context, tx types.Transaction, bindingPath string) ([]BindingAppUse, error) {
+	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select id, path, domain, main_app, metadata from apps`))
+	if err != nil {
+		return nil, fmt.Errorf("error preparing statement: %w", err)
+	}
+	defer stmt.Close() //nolint:errcheck
+
+	rows, err := stmt.QueryContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error querying apps metadata: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var users []BindingAppUse
+	for rows.Next() {
+		var id, path, domain string
+		var mainApp, metadataStr sql.NullString
+		if err := rows.Scan(&id, &path, &domain, &mainApp, &metadataStr); err != nil {
+			return nil, fmt.Errorf("error querying next app: %w", err)
+		}
+		if !metadataStr.Valid || metadataStr.String == "" {
+			continue
+		}
+		var appMetadata types.AppMetadata
+		if err := json.Unmarshal([]byte(metadataStr.String), &appMetadata); err != nil {
+			return nil, fmt.Errorf("error unmarshalling metadata: %w", err)
+		}
+		if !slices.Contains(appMetadata.Bindings, bindingPath) {
+			continue
+		}
+		main := types.AppId(id)
+		if mainApp.Valid && mainApp.String != "" {
+			main = types.AppId(mainApp.String)
+		}
+		users = append(users, BindingAppUse{
+			Id:         types.AppId(id),
+			MainApp:    main,
+			PathDomain: types.AppPathDomain{Path: path, Domain: domain}.String(),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+	return users, nil
 }
 
 // migrateAuthSettings migrates the auth settings (app auth and git auth) from the app settings to the app metadata

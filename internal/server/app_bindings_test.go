@@ -96,3 +96,59 @@ func TestLoadApplyInfoParsesAppBindings(t *testing.T) {
 		t.Fatalf("app bindings = %#v, want [postgres /existing]", got)
 	}
 }
+
+func TestParseBindingSourceParams(t *testing.T) {
+	t.Parallel()
+
+	source, params, err := parseBindingSourceParams("sqlite")
+	if err != nil || source != "sqlite" || params != nil {
+		t.Fatalf("plain source = %q, %v, %v", source, params, err)
+	}
+
+	source, params, err = parseBindingSourceParams("postgres/main")
+	if err != nil || source != "postgres/main" || params != nil {
+		t.Fatalf("typed source = %q, %v, %v", source, params, err)
+	}
+
+	source, params, err = parseBindingSourceParams("sqlite;path=/mydata/test,example=val2")
+	if err != nil {
+		t.Fatalf("params parse: %v", err)
+	}
+	if source != "sqlite" {
+		t.Fatalf("source = %q", source)
+	}
+	if params["path"] != "/mydata/test" || params["example"] != "val2" || len(params) != 2 {
+		t.Fatalf("params = %v", params)
+	}
+
+	// key without value is an error
+	if _, _, err := parseBindingSourceParams("sqlite;path"); err == nil {
+		t.Fatal("param without value should be rejected")
+	}
+	if _, _, err := parseBindingSourceParams("sqlite;=val"); err == nil {
+		t.Fatal("param without key should be rejected")
+	}
+
+	// A trailing semicolon with no params resolves to the bare source
+	source, params, err = parseBindingSourceParams("sqlite;")
+	if err != nil || source != "sqlite" || params != nil {
+		t.Fatalf("empty params = %q, %v, %v", source, params, err)
+	}
+}
+
+func TestEqualStringMaps(t *testing.T) {
+	t.Parallel()
+
+	if !equalStringMaps(nil, map[string]string{}) {
+		t.Fatal("nil and empty should be equal")
+	}
+	if !equalStringMaps(map[string]string{"a": "1"}, map[string]string{"a": "1"}) {
+		t.Fatal("equal maps")
+	}
+	if equalStringMaps(map[string]string{"a": "1"}, map[string]string{"a": "2"}) {
+		t.Fatal("different values")
+	}
+	if equalStringMaps(map[string]string{"a": "1"}, map[string]string{"a": "1", "b": "2"}) {
+		t.Fatal("different sizes")
+	}
+}

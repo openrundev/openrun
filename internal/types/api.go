@@ -408,6 +408,52 @@ const (
 	AppReloadOptionMatched AppReloadOption = "matched"
 )
 
+// Replication status states, most severe first: misconfigured (the service
+// references an undefined litestream config), sidecar_down (the replication
+// companion container is not running), pending (no data replicated yet),
+// idle (replica is reachable but has not advanced recently; healthy for a
+// quiet app, stale for a busy one), healthy.
+const (
+	ReplicationStateHealthy       = "healthy"
+	ReplicationStateIdle          = "idle"
+	ReplicationStatePending       = "pending"
+	ReplicationStateSidecarDown   = "sidecar_down"
+	ReplicationStateMisconfigured = "misconfigured"
+	ReplicationStateSyncing       = "syncing"
+	ReplicationStateError         = "error"
+)
+
+// ReplicationFileStatus is the replica state of one database file within a
+// binding's replica location.
+type ReplicationFileStatus struct {
+	Path        string    `json:"path"` // relative to the binding data dir, e.g. data.db
+	LastSync    time.Time `json:"last_sync,omitzero"`
+	ReplicaTXID uint64    `json:"replica_txid,omitempty"`
+	Size        int64     `json:"size"`
+}
+
+// ReplicationStatusEntry is the replication state of one target: a server
+// metadata database (kind "metadata") or one sqlite binding environment
+// (kind "app", one row per binding per staged/prod environment in use).
+type ReplicationStatusEntry struct {
+	Kind             string    `json:"kind"` // metadata | app
+	Target           string    `json:"target"`
+	AppPaths         []string  `json:"app_paths,omitempty"`
+	Env              string    `json:"env,omitempty"` // prod | staged (kind app)
+	LitestreamConfig string    `json:"litestream_config"`
+	Enabled          bool      `json:"enabled"`
+	State            string    `json:"state"`
+	SidecarRunning   *bool     `json:"sidecar_running,omitempty"` // nil when not determinable (kubernetes)
+	LastSync         time.Time `json:"last_sync,omitzero"`
+	ReplicaSize      int64     `json:"replica_size,omitempty"`
+	LocalTXID        uint64    `json:"local_txid,omitempty"`   // metadata only
+	ReplicaTXID      uint64    `json:"replica_txid,omitempty"` // highest replicated TXID
+	// Files is the per-database breakdown for app targets: with directory
+	// watching a binding can replicate several database files
+	Files []ReplicationFileStatus `json:"files,omitempty"`
+	Error string                  `json:"error,omitempty"`
+}
+
 // GetHTTPHeader returns the first value of the header with the given key.
 // The key has to be a HTTP Canonical Header Key (case is important)
 func GetHTTPHeader(header http.Header, key string) string {

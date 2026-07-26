@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -322,6 +323,12 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		volumeInfo = append(volumeInfo, volInfo)
 	}
 
+	// The sqlite binding is backed by a persistent volume at its data
+	// directory, created and reused across redeploys like any other named
+	// volume
+	volumeInfo = append(volumeInfo, sqliteBindingVolumes(bindings,
+		strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_PROD))...)
+
 	if devSettings != nil {
 		// Bind mount the app source at the dev dir; the image's copy of the
 		// source (if any) is shadowed, so source changes do not require an
@@ -467,6 +474,12 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 			h.Error().Err(err).Msgf("Error stopping idle app %s", h.app.Id)
 		}
 		h.stateLock.Unlock()
+
+		// With the app stopped there are no more writes: stop the replication
+		// sidecar after its final sync. It is restarted with the app
+		if err := h.stopLitestreamSidecar(ctx); err != nil {
+			h.Error().Err(err).Msgf("Error stopping litestream sidecar for idle app %s", h.app.Id)
+		}
 		return
 	}
 }
@@ -721,13 +734,48 @@ func (h *ContainerHandler) createVolumes(ctx context.Context) error {
 		if h.manager.VolumeExists(ctx, genVolumeName) {
 			h.Warn().Msgf("Reusing existing volume %s for app %s dir %s; previous data will be mounted", genVolumeName, h.app.Id, dir)
 		} else {
-			err := h.manager.VolumeCreate(ctx, genVolumeName)
+			err := h.manager.VolumeCreate(ctx, genVolumeName, volInfo.Size)
 			if err != nil {
 				return fmt.Errorf("error creating volume %s: %w", genVolumeName, err)
+			}
+			// A fresh docker volume mount dir is root-owned; sqlite binding
+			// volumes must be writable by the app image's (possibly non-root)
+			// user. Kubernetes handles this with a pod init container instead
+			if permsImage := h.sqlitePermsImage(); volInfo.InitPerms && permsImage != "" {
+				if initializer, ok := container.AsVolumeInitializer(h.manager); ok {
+					if err := initializer.InitVolumePermissions(ctx, permsImage, genVolumeName, volInfo.TargetPath); err != nil {
+						return err
+					}
+				}
 			}
 		}
 	}
 	return nil
+}
+
+// sqliteBindingServiceConfig returns the binding's service config for the
+// app's environment: staged (and dev/preview) apps use the linked staging
+// service's config when one is set, so e.g. a staging litestream config
+// replicates staged data to its own location.
+func sqliteBindingServiceConfig(binding *types.Binding, useProdAccount bool) map[string]string {
+	if !useProdAccount && binding.StagingServiceConfig != nil {
+		return binding.StagingServiceConfig
+	}
+	return binding.ServiceConfig
+}
+
+// sqliteBindingAccountDir returns the mount directory recorded in the sqlite
+// binding's account (resolved from the binding's "path" config at create
+// time), falling back to the default for older accounts.
+func sqliteBindingAccountDir(binding *types.Binding, useProdAccount bool) string {
+	account := binding.StagedMetadata.Account
+	if useProdAccount {
+		account = binding.Metadata.Account
+	}
+	if dir := account["dir"]; dir != "" {
+		return dir
+	}
+	return bindings.SqliteDefaultDir
 }
 
 func parseBindPaths(vol string) (string, string, bool) {
@@ -1338,6 +1386,11 @@ func (h *ContainerHandler) getAppHash() (string, error) {
 	if imageDigest != "" {
 		fullHashVal += "-" + imageDigest
 	}
+	// Litestream replication config (rendered config, credentials, image) is
+	// part of the app version identity so config changes roll the containers
+	if lsSpec := h.litestreamSpec(); lsSpec != nil {
+		fullHashVal += "-ls" + lsSpec.ConfigHash
+	}
 	sha := sha256.New()
 	if _, err := sha.Write([]byte(fullHashVal)); err != nil {
 		return "", err
@@ -1622,6 +1675,12 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 			h.hostNamePort = hostNamePort
 			h.stateLock.Unlock()
 			h.Debug().Msgf("app %s already on version %s, reusing", h.app.Id, fullHash)
+			// The sidecar may be missing even when the app container is
+			// current (server restart after a manual removal, sidecar crash);
+			// the app is healthy, so a sidecar failure only warns here
+			if err := h.ensureLitestream(ctx, false); err != nil {
+				h.Warn().Err(err).Msgf("error ensuring litestream sidecar for app %s", h.app.Id)
+			}
 			// Nothing was started, so nothing to roll back; still register so
 			// superseded version containers are stopped at operation commit
 			h.registerDeployTxn(ctx, containerName, false)
@@ -1670,6 +1729,12 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 
 	if err = h.createVolumes(ctx); err != nil {
 		// Create named volumes for the container
+		return err
+	}
+
+	// Restore any replicated sqlite databases missing from the volumes and
+	// start the replication sidecar, before the app container starts
+	if err = h.ensureLitestream(ctx, true); err != nil {
 		return err
 	}
 
@@ -1768,6 +1833,13 @@ func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash st
 		return nil
 	}
 
+	litestreamSpec := h.litestreamSpec()
+	if litestreamSpec != nil {
+		if err := h.buildLitestreamRestores(ctx, litestreamSpec); err != nil {
+			return err
+		}
+	}
+
 	result, err := h.manager.DeployContainer(ctx, container.DeployRequest{
 		AppEntry:           h.app.AppEntry,
 		SourceDir:          sourceDir,
@@ -1785,6 +1857,7 @@ func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash st
 		DeployAttempts:     h.containerConfig.DeployHealthAttempts,
 		LogLinesToShow:     h.containerConfig.LogLinesToShow,
 		ShowLogsForFailure: h.containerConfig.ShowLogsForFailure,
+		Litestream:         litestreamSpec,
 	})
 	if err != nil {
 		return err
@@ -1941,4 +2014,34 @@ func (h *ContainerHandler) getBindingEnv() (map[string]string, error) {
 		}
 	}
 	return env, nil
+}
+
+// sqliteVolumeKey is the volume naming key for one sqlite binding. Keyed by
+// the binding id, not the positional mount directory: removing or reordering
+// bindings changes which binding mounts at /openrun/sqlite vs /openrun/sqlite2,
+// and a position-keyed volume would hand one binding another binding's
+// database (and replicate it under the wrong replica prefix).
+func sqliteVolumeKey(bindingId string) string {
+	return "sqlite-" + bindingId
+}
+
+// sqliteBindingVolumes synthesizes the persistent volume mount backing the
+// app's sqlite binding (at most one per app, enforced at binding attach) at
+// the data directory recorded in the binding account (the binding's "path"
+// config, default /data). The volume name follows the binding identity, so a
+// binding swap never inherits the previous binding's database.
+func sqliteBindingVolumes(appBindings []*types.Binding, useProdAccount bool) []*container.VolumeInfo {
+	var vols []*container.VolumeInfo
+	for _, binding := range appBindings {
+		if binding.ServiceType != bindings.SqliteServiceType {
+			continue
+		}
+		vols = append(vols, &container.VolumeInfo{
+			VolumeName: sqliteVolumeKey(binding.Id),
+			TargetPath: sqliteBindingAccountDir(binding, useProdAccount),
+			Size:       sqliteBindingServiceConfig(binding, useProdAccount)[bindings.SqliteConfigVolumeSize],
+			InitPerms:  true,
+		})
+	}
+	return vols
 }

@@ -4,16 +4,17 @@ weight: 500
 summary: "Managing services (like Postgres/MySQL) and providing bindings for applications"
 ---
 
-Service bindings are used to give applications access to endpoint credentials. Postgres and MySQL databases are currently supported by OpenRun. The administrator creates a service with connection information for the database. Apps can easily get access to an isolated database/schema without any manual configuration being required. OpenRun uses the admin credentials to create binding accounts for applications. Apps can share access to a schema, with support for granting limited permissions across applications.
+Service bindings are used to give applications access to endpoint credentials. Postgres, MySQL and SQLite databases are currently supported by OpenRun. For Postgres and MySQL, the administrator creates a service with connection information for the database. Apps can easily get access to an isolated database/schema without any manual configuration being required. OpenRun uses the admin credentials to create binding accounts for applications. Apps can share access to a schema, with support for granting limited permissions across applications. For SQLite, there is no external database: the binding gives the app a persistent volume holding its SQLite database files, with optional [continuous replication]({{< ref "/docs/applications/litestream" >}}) to S3-compatible storage.
 
 Service bindings are an easy way to configure one database installation properly (with backups, fault tolerance, security etc) and then safely share that database across multiple apps. This is an alternate approach as against usual deployment tooling where each app is assumed to create its own database from scratch, which ignores the challenges with ensuring that the database is properly administered.
 
 The currently supported service types are:
 
-| Service type | Purpose                           |
-| :----------- | :-------------------------------- |
-| `postgres`   | Create Postgres schemas and roles |
-| `mysql`      | Create MySQL databases and users  |
+| Service type | Purpose                                                          |
+| :----------- | :--------------------------------------------------------------- |
+| `postgres`   | Create Postgres schemas and roles                                |
+| `mysql`      | Create MySQL databases and users                                 |
+| `sqlite`     | Provide a persistent volume with SQLite database files per app   |
 
 ## Concepts
 
@@ -231,6 +232,18 @@ For example, a Postgres auto binding is stored as `/auto/app_prd_.../postgres`. 
 
 The `/auto` path is reserved for auto bindings. Users cannot create bindings under that path directly. A derived binding can use an auto binding path as its source.
 
+Binding config can be passed through the service source using `;` followed by comma separated `key=value` entries. The params become the auto binding's config, exactly like `binding create --config`:
+
+```shell
+openrun app create \
+  --bind "sqlite;path=/mydata" \
+  --approve \
+  github.com/example/notes-app \
+  /notes
+```
+
+This works for any service type. The config is used when the auto binding is first created; referencing an existing auto binding with a different config is an error (delete the auto binding to recreate it with new config).
+
 ## Declarative Apply
 
 Apply files can define bindings using the `binding` builtin.
@@ -361,3 +374,57 @@ MySQL grants work as follows:
 If a table-specific grant references a table which does not exist, OpenRun skips the grant for that run. Skipped grants are applied on the next update/apply run.
 
 MySQL DDL statements auto-commit. If binding creation fails part way through, OpenRun does best-effort cleanup for users and databases created during that operation.
+
+## SQLite Config and Behavior
+
+The `sqlite` service type has no external endpoint. A SQLite binding gives the app a persistent named volume (Docker/Podman) or PersistentVolumeClaim (Kubernetes) mounted into the app container, holding the app's SQLite database files. Creating the service and binding needs no connection information:
+
+```shell
+openrun service create sqlite/main --is-default
+openrun app create --bind sqlite --approve github.com/example/notes-app /notes
+```
+
+The app finds its database through environment variables:
+
+```text
+SQLITE_URL=file:/data/data.db
+SQLITE_DB_PATH=/data/data.db
+SQLITE_DIR=/data
+```
+
+The volume is created automatically when the app first starts and is reused across app updates and redeploys. The volume identity follows the binding, so attaching the binding to a different app later does not carry over another binding's data. On Kubernetes, apps with a SQLite binding automatically run as a single replica with the `Recreate` deploy strategy, matching SQLite's single-writer model.
+
+SQLite services support these config keys (all optional):
+
+| Key                 | Description                                                                                                          |
+| :------------------ | :------------------------------------------------------------------------------------------------------------------- |
+| `litestream_config` | Name of a `[litestream.<name>]` server config entry. Enables [continuous replication]({{< ref "/docs/applications/litestream" >}}) to S3-compatible storage for bindings of this service |
+| `path_prefix`       | Overrides the litestream config's replica key prefix for bindings of this service                                     |
+| `volume_size`       | Kubernetes PVC size (default `kubernetes.default_volume_size`, 10Gi). Ignored for Docker/Podman                       |
+
+SQLite bindings support one create-time binding config key:
+
+| Key    | Default | Description                                              |
+| :----- | :------ | :-------------------------------------------------------- |
+| `path` | `/data` | Absolute path where the volume is mounted in the container |
+
+```shell
+openrun binding create --config path=/mydata sqlite/main /apps/notes-db
+```
+
+Apps can create additional `*.db` files under `SQLITE_DIR` (for example per-tenant databases); with replication enabled, every `*.db` file in the directory is replicated.
+
+Differences from Postgres/MySQL bindings:
+
+- An app can have at most one SQLite binding, and a SQLite binding can be attached to only one app: the database is a single-writer file on a per-app volume.
+- Derived bindings and grants are not supported. SQLite has no accounts or roles to scope; bind the base binding directly.
+- `binding run-command` is not supported: the database file is only reachable inside the app container.
+- `binding show-account` shows the computed paths; there are no credentials.
+- SQLite bindings are not available for preview apps.
+- Deleting a binding or app keeps the volume and any replicated data, consistent with the other service types.
+
+A [staging service]({{< ref "/docs/applications/servicebindings/#staging-services" >}}) can be linked like any other service type. Staged apps then follow the staging service's config: its own `litestream_config` (or none), `path_prefix` and `volume_size`, so staged data can replicate to a separate location or skip replication entirely.
+
+For best results the app should open the database in WAL mode with a busy timeout, for example `file:...?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)` (driver dependent). With replication enabled, WAL mode is required, but litestream enables it automatically if the app has not.
+
+OpenRun makes the volume writable for non-root app users automatically. With replication enabled, the `chmod` runs using the Litestream image, so any app image works. For local-only SQLite bindings (no `litestream_config`), the `chmod` runs with the app's own image, so the app image must not be distroless. On Kubernetes, pods with a SQLite binding additionally get `fsGroup: 65532`, which makes the volume group-writable at mount time on storage classes with ownership management.

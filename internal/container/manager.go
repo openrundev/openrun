@@ -54,6 +54,14 @@ type VolumeInfo struct {
 	SourcePath string
 	TargetPath string
 	ReadOnly   bool
+	// Size requests a capacity for the backing volume where the manager
+	// supports it (kubernetes PVC size). Empty means the manager default;
+	// ignored for docker/podman named volumes, which are not sized.
+	Size string
+	// InitPerms marks a volume whose mount directory must be made writable
+	// for the app image's (possibly non-root) user after creation (sqlite
+	// binding volumes): a fresh named volume / PVC mount is root-owned.
+	InitPerms bool
 }
 
 // HealthProbe describes an HTTP health check that a container manager can
@@ -107,7 +115,10 @@ type ContainerManager interface {
 	DeployContainer(ctx context.Context, req DeployRequest) (DeployResult, error)
 	GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error)
 	VolumeExists(ctx context.Context, name VolumeName) bool
-	VolumeCreate(ctx context.Context, name VolumeName) error
+	// VolumeCreate creates the named volume. size is a requested capacity
+	// (kubernetes PVC size); empty means the manager default, and managers
+	// without sized volumes (docker/podman) ignore it.
+	VolumeCreate(ctx context.Context, name VolumeName, size string) error
 	SupportsInPlaceUpdate() bool
 }
 

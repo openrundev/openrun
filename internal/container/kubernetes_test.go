@@ -530,7 +530,7 @@ func TestKubernetesCMVolumeHelpers(t *testing.T) {
 			appConfig:    &types.AppConfig{Kubernetes: types.Kubernetes{DefaultVolumeSize: "1Gi"}},
 			clientSet:    client,
 		}
-		if err := k.VolumeCreate(ctx, VolumeName("vol")); err != nil {
+		if err := k.VolumeCreate(ctx, VolumeName("vol"), ""); err != nil {
 			t.Fatalf("VolumeCreate returned error: %v", err)
 		}
 	})

@@ -1,0 +1,166 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    HTTP_PORT: ${HTTP_PORT}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    OPENRUN_CONTAINER_COMMAND: ${OPENRUN_CONTAINER_COMMAND}
+    PATH: ${PATH}
+
+tests:
+  # Setup: sqlite service with litestream enabled ([litestream.s3test] is in
+  # the server config), containerized flask app with an auto sqlite binding
+  lsapp0010:
+    command: ../openrun service create sqlite/lsmain --config litestream_config=s3test
+    stdout: "Service sqlite/lsmain created"
+    exit-code: 0
+
+  lsapp0012: # a file replica type config is host-local and rejected for
+             # sqlite services (it can never replicate from an app container)
+    command: ../openrun service create sqlite/lsfile --config litestream_config=localdisk
+    exit-code: 1
+    stderr: "file replica type"
+
+  lsapp0011:
+    command: rm -rf ./sqlite_ls_tmp && cp -rf sqlite sqlite_ls_tmp
+    exit-code: 0
+
+  lsapp0020: # app create starts the app container, sidecar starts before it;
+             # the auto binding params set a custom mount path
+    command: ../openrun app create --spec python-flask --bind "sqlite/lsmain;path=/appdata" ./sqlite_ls_tmp /ls_app
+    exit-code: 0
+
+  lsapp0021: # the app sees the binding database path from the path param
+    command: curl -sS localhost:${HTTP_PORT}/ls_app/dbpath
+    stdout: "/appdata/data.db"
+    config:
+      retries: 10
+      interval: 2s
+
+  lsapp0030: # write a value into the bound sqlite database
+    command: curl -sS -X POST -d value=first-value localhost:${HTTP_PORT}/ls_app/value
+    stdout: "first-value"
+
+  lsapp0040: # replication reaches the S3 replica: prod row goes healthy
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s
+
+  lsapp0041: # the main database file is replicated
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod")][0].files[].path' | grep -c data.db
+    stdout: "1"
+
+  lsapp0042: # sidecar container is tracked as running
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod")][0].sidecar_running'
+    stdout: "true"
+
+  lsapp0050: # a second database file created at runtime is discovered by the
+             # directory watcher and replicated without a sidecar restart
+    command: curl -sS -X POST -d value=extra-value localhost:${HTTP_PORT}/ls_app/extra
+    stdout: "extra-value"
+
+  lsapp0051:
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod")][0].files[].path' | grep -c extra.db
+    stdout: "1"
+    config:
+      retries: 30
+      interval: 2s
+
+  # Sidecar failure detection: killing the sidecar flips the state, the app
+  # keeps serving
+  lsapp0060:
+    command: ${OPENRUN_CONTAINER_COMMAND} ps -q --filter label=dev.openrun.role=litestream | xargs ${OPENRUN_CONTAINER_COMMAND} rm -f
+    exit-code: 0
+
+  lsapp0061:
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod")][0].state'
+    stdout: "sidecar_down"
+    config:
+      retries: 10
+      interval: 1s
+
+  lsapp0062: # the app is unaffected by the sidecar
+    command: curl -sS localhost:${HTTP_PORT}/ls_app/value
+    stdout: "first-value"
+
+  lsapp0063: # a prod reload (promote) brings the sidecar back
+    command: ../openrun app reload --promote /ls_app
+    exit-code: 0
+
+  lsapp0064:
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s
+
+  # Disaster recovery: remove the app containers and the data volumes, then
+  # redeploy; the restore step repopulates both databases from the replica
+  lsapp0070: # remove the app, stage and sidecar containers so the volumes are free
+    command: ${OPENRUN_CONTAINER_COMMAND} ps -aq --filter name=clc- | xargs ${OPENRUN_CONTAINER_COMMAND} rm -f
+    exit-code: 0
+
+  lsapp0071:
+    command: ${OPENRUN_CONTAINER_COMMAND} volume ls -q --filter name=clv- | xargs ${OPENRUN_CONTAINER_COMMAND} volume rm -f
+    exit-code: 0
+
+  lsapp0072: # promote redeploys the prod container against the fresh volume
+    command: ../openrun app reload --promote /ls_app
+    exit-code: 0
+
+  lsapp0073: # the main database came back from the replica
+    command: curl -sS localhost:${HTTP_PORT}/ls_app/value
+    stdout: "first-value"
+    config:
+      retries: 10
+      interval: 2s
+
+  lsapp0074: # the runtime-created database came back too
+    command: curl -sS localhost:${HTTP_PORT}/ls_app/extra
+    stdout: "extra-value"
+
+  # Idle shutdown stops the replication sidecar gently (final sync) after the
+  # app container stops; starting the app again restarts replication
+  lsapp0080:
+    command: ../openrun app create --spec python-flask --conf container.idle_shutdown_secs=5 --bind sqlite/lsmain ./sqlite_ls_tmp /ls_idle
+    exit-code: 0
+
+  lsapp0081:
+    command: curl -sS -X POST -d value=idle-value localhost:${HTTP_PORT}/ls_idle/value
+    stdout: "idle-value"
+
+  lsapp0082: # replication healthy for the new app before the idle stop
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod" and ((.app_paths // []) | index("/ls_idle")))][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s
+
+  lsapp0083: # the prod app container and its sidecar stop on idle shutdown
+    command: ${OPENRUN_CONTAINER_COMMAND} ps -q --filter name=clc-app_prd --filter label=dev.openrun.app.path=/ls_idle | wc -l | tr -d ' '
+    stdout: "0"
+    config:
+      retries: 30
+      interval: 3s
+
+  lsapp0084: # status reports the stopped sidecar
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod" and ((.app_paths // []) | index("/ls_idle")))][0].state'
+    stdout: "sidecar_down"
+    config:
+      retries: 10
+      interval: 2s
+
+  lsapp0085: # a request restarts the app; the data is intact
+    command: curl -sS localhost:${HTTP_PORT}/ls_idle/value
+    stdout: "idle-value"
+    config:
+      retries: 10
+      interval: 2s
+
+  lsapp0086: # the sidecar was restarted with the app
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod" and ((.app_paths // []) | index("/ls_idle")))][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s

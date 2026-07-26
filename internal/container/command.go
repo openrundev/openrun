@@ -434,6 +434,11 @@ func (c *CommandCM) StopAppContainersExcept(ctx context.Context, appId types.App
 		if name == "" || name == keep {
 			continue
 		}
+		if cont.HasLabel(LABEL_PREFIX+litestreamRoleLabel, litestreamRoleValue) {
+			// The litestream sidecar is per app, not per version; it outlives
+			// version container swaps
+			continue
+		}
 		c.Info().Msgf("Stopping superseded container %s for app %s", name, appId)
 		errs = append(errs, c.StopContainer(ctx, name))
 	}
@@ -741,7 +746,8 @@ func (c CommandCM) VolumeExists(ctx context.Context, name VolumeName) bool {
 	return err == nil
 }
 
-func (c CommandCM) VolumeCreate(ctx context.Context, name VolumeName) error {
+func (c CommandCM) VolumeCreate(ctx context.Context, name VolumeName, size string) error {
+	// docker/podman named volumes are not sized, size is ignored
 	c.Debug().Msgf("Creating volume %s", name)
 	cmd := exec.Command(c.config.System.ContainerCommand, "volume", "create", string(name))
 	output, err := cmd.CombinedOutput()

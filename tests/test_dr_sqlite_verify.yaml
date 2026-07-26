@@ -1,0 +1,47 @@
+config:
+  env:
+    CL_CONFIG_FILE: config_dr.toml
+    OPENRUN_HOME: ${DR_HOME}
+    HTTP_PORT: ${HTTP_PORT}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+
+# Phase 2 of the disaster recovery scenario: a fresh OPENRUN_HOME with only
+# the backed-up config file. Everything below exists only if restore pulled
+# the metadata from the S3 replica, and the app's data only if the sqlite
+# volume was rebuilt from its replica on first start.
+tests:
+  drv0010: # the app is back in the app list
+    command: ../openrun app list -f json /dr_app | jq -r '.[0].path'
+    stdout: "/dr_app"
+    config:
+      retries: 5
+      interval: 2s
+
+  drv0011: # the audit history survived: the original create_app event is
+           # present (phase 2 never created the app, so this row can only
+           # come from the restored audit database)
+    command: python3 -c 'import sqlite3,os; c=sqlite3.connect(os.environ["OPENRUN_HOME"]+"/metadata/clace_audit.db"); print(c.execute("select count(*) from audit where operation=:o and target like :t", {"o":"create_app","t":"%dr_app%"}).fetchone()[0] > 0)'
+    stdout: "True"
+
+  drv0020: # the app starts on request (lazy init: volume recreated, data
+           # restored from the replica before the container starts)
+    command: curl -sS localhost:${HTTP_PORT}/dr_app/value
+    stdout: "dr-original-value"
+    config:
+      retries: 40
+      interval: 3s
+
+  drv0030: # metadata replication resumed on the rebuilt node
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="metadata" and .target=="metadata")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s
+
+  drv0031: # app replication resumed too
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s

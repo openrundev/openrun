@@ -1,0 +1,128 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+
+tests:
+  # The sqlite service has no external endpoint: create needs no config
+  sqlite0001:
+    command: ../openrun service create sqlite/cmdrmain
+    stdout: "Service sqlite/cmdrmain created"
+    exit-code: 0
+
+  sqlite0002: # unknown config keys are rejected
+    command: ../openrun service create sqlite/cmdrbad --config nope=x
+    exit-code: 1
+    stderr: "unknown config key"
+
+  sqlite0003: # litestream_config must reference a defined [litestream.<name>] entry
+    command: ../openrun service create sqlite/cmdrbad --config litestream_config=missing
+    exit-code: 1
+    stderr: 'litestream config "missing" is not defined'
+
+  sqlite0004: # volume_size must parse as a quantity
+    command: ../openrun service create sqlite/cmdrbad --config volume_size=10Gigs
+    exit-code: 1
+    stderr: "invalid volume_size"
+
+  sqlite0005: # valid volume_size accepted
+    command: ../openrun service create sqlite/cmdrsized --config volume_size=20Gi
+    stdout: "Service sqlite/cmdrsized created"
+    exit-code: 0
+
+  # Base binding: provisioning is metadata only, account computed deterministically
+  sqlite0010:
+    command: ../openrun binding create sqlite/cmdrmain /sqlite_t/b1
+    stdout: "Binding /sqlite_t/b1 created"
+    exit-code: 0
+
+  sqlite0011: # service type resolved
+    command: ../openrun binding get -f json /sqlite_t/b1 | jq -r '.[0].service_type'
+    stdout: "sqlite"
+
+  sqlite0012: # the account env names for the binding, default mount dir /data
+    command: ../openrun binding show-account /sqlite_t/b1 | jq -r '.url'
+    stdout: "file:/data/data.db"
+
+  # The path binding config key moves the mount directory
+  sqlite0013:
+    command: ../openrun binding create --config path=/mydata/test sqlite/cmdrmain /sqlite_t/bpath
+    stdout: "Binding /sqlite_t/bpath created"
+    exit-code: 0
+
+  sqlite0014:
+    command: ../openrun binding show-account /sqlite_t/bpath | jq -r '.url'
+    stdout: "file:/mydata/test/data.db"
+
+  sqlite0015: # invalid path rejected
+    command: ../openrun binding create --config path=relative sqlite/cmdrmain /sqlite_t/bbadpath
+    exit-code: 1
+    stderr: "invalid sqlite binding path"
+
+  # Derived bindings are rejected: sqlite has no accounts or grants to scope
+  sqlite0020:
+    command: ../openrun binding create /sqlite_t/b1 /sqlite_t/derived
+    exit-code: 1
+    stderr: "sqlite bindings do not support derived bindings"
+
+  # Auto binding via --bind sqlite
+  sqlite0030:
+    command: ../openrun app create --auth none --bind sqlite/cmdrmain ./testapp /sqlite_t_app
+    exit-code: 0
+
+  sqlite0031: # auto binding created under the reserved /auto path
+    command: ../openrun binding list -f json | jq -r '[.[] | select(.service_type == "sqlite" and (.path | startswith("/auto/")))] | length'
+    stdout: "1"
+
+  # Auto binding params: "source;key=value,key2=value2" become the auto
+  # binding's config (generic for any binding type)
+  sqlite0032:
+    command: ../openrun app create --auth none --bind "sqlite/cmdrmain;path=/mydata/auto,example=val2" ./testapp /sqlite_t_params
+    exit-code: 0
+
+  sqlite0033: # the auto binding carries the params as config
+    command: ../openrun binding list -f json | jq -r '[.[] | select(.service_type == "sqlite" and (.path | startswith("/auto/")) and .staged_metadata.config.example == "val2")][0].staged_metadata.config.path'
+    stdout: "/mydata/auto"
+
+  sqlite0034: # the params drove the account
+    command: ../openrun binding list -f json | jq -r '[.[] | select(.service_type == "sqlite" and .staged_metadata.config.example == "val2")][0].path' | xargs -I{} ../openrun binding show-account --staging {} | jq -r '.dir'
+    stdout: "/mydata/auto"
+
+  sqlite0035: # re-referencing the auto binding with different params conflicts
+    command: ../openrun app update bindings "sqlite/cmdrmain;path=/otherpath" /sqlite_t_params
+    exit-code: 1
+    stderr: "already exists with config"
+
+  # Single attachment: sqlite databases are single-writer, a binding can be
+  # attached to only one app
+  sqlite0040:
+    command: ../openrun app create --auth none --bind /sqlite_t/b1 ./testapp /sqlite_t_app2
+    exit-code: 0
+
+  sqlite0041:
+    command: ../openrun app create --auth none --bind /sqlite_t/b1 ./testapp /sqlite_t_app3
+    exit-code: 1
+    stderr: "single-writer, a binding can be attached to only one app"
+
+  # An app can have at most one sqlite binding
+  sqlite0042:
+    command: ../openrun binding create sqlite/cmdrmain /sqlite_t/b2
+    stdout: "Binding /sqlite_t/b2 created"
+    exit-code: 0
+
+  sqlite0043:
+    command: ../openrun app create --auth none --bind sqlite/cmdrmain --bind /sqlite_t/b2 ./testapp /sqlite_t_app4
+    exit-code: 1
+    stderr: "an app can have at most one sqlite binding"
+
+  # Run command is not supported (no server-side path to the database file)
+  sqlite0050:
+    command: ../openrun binding run-command /sqlite_t/b1 "select 1"
+    exit-code: 1
+    stderr: "not supported for sqlite bindings"
+
+  # Cleanup
+  sqlite0090:
+    command: ../openrun app delete /sqlite_t_app && ../openrun app delete /sqlite_t_app2 && ../openrun app delete /sqlite_t_params
+    exit-code: 0

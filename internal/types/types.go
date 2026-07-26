@@ -166,6 +166,7 @@ type ServerConfig struct {
 	Registry       RegistryConfig                  `toml:"registry"`
 	Builder        BuilderConfig                   `toml:"builder"`
 	Kubernetes     KubernetesConfig                `toml:"kubernetes"`
+	Litestream     map[string]LitestreamConfig     `toml:"litestream"`
 	GitAuth        map[string]GitAuthEntry         `toml:"git_auth"`
 	Plugins        map[string]PluginSettings       `toml:"plugin"`
 	Auth           map[string]AuthConfig           `toml:"auth"`
@@ -573,6 +574,12 @@ type MetadataConfig struct {
 	IgnoreHigherVersion bool   `toml:"ignore_higher_version"` // If true, ignore higher version of the metadata schema
 	FileCacheConnection string `toml:"file_cache_connection"` // The connection string for the file cache database
 
+	// LitestreamConfig names the [litestream.<name>] entry used to replicate the
+	// server's own sqlite databases (metadata and audit; the file cache is a
+	// rebuildable cache and is not replicated). Empty disables metadata
+	// replication. Only applies when the metadata DB is sqlite.
+	LitestreamConfig string `toml:"litestream_config"`
+
 	// ConfigHistoryVersions is the number of dynamic config snapshots retained
 	// in the config_history table. Every config change appends a snapshot
 	ConfigHistoryVersions int `toml:"config_history_versions"`
@@ -584,6 +591,54 @@ type MetadataConfig struct {
 	SQLiteMaintenanceIntervalSecs int   `toml:"sqlite_maintenance_interval_secs"` // background checkpoint/vacuum period, <=0 disables the maintenance loop
 	SQLiteTruncateCheckpointEvery int   `toml:"sqlite_truncate_checkpoint_every"` // maintenance passes between truncate checkpoints, <=0 disables truncate checkpoints
 	SQLiteVacuumPages             int   `toml:"sqlite_vacuum_pages"`              // max free pages returned to the OS per maintenance pass, <=0 disables incremental vacuum
+}
+
+// LitestreamConfig is one named litestream configuration ([litestream.<name>]
+// in the server config). Metadata replication references a config by name via
+// metadata.litestream_config; each sqlite service references one via its
+// litestream_config service config key. The credential values go through the
+// secret providers (e.g. "env:LITESTREAM_KEY_ID"), resolved at use time.
+type LitestreamConfig struct {
+	// Type is the litestream replica type: "s3" (default) or "file". The file
+	// type replicates to a local directory (Path) and needs no credentials;
+	// it is intended for tests and simple local-disk backup setups.
+	Type string `toml:"type"`
+
+	Endpoint string `toml:"endpoint"` // S3-compatible endpoint URL; empty for AWS S3
+	// ContainerEndpoint is the endpoint URL as seen from inside app
+	// containers/pods, when it differs from Endpoint (e.g. a host-local S3
+	// endpoint that pods reach through a different address). Used for the
+	// litestream sidecar config and restore URLs; the server keeps using
+	// Endpoint. When empty, a localhost Endpoint is rewritten automatically
+	// for docker/podman (host.docker.internal); kubernetes has no automatic
+	// rewrite, so cluster setups with a host-local endpoint must set this.
+	ContainerEndpoint string `toml:"container_endpoint"`
+	Bucket            string `toml:"bucket"`
+	Region            string `toml:"region"`
+	PathPrefix        string `toml:"path_prefix"`       // replica key prefix inside the bucket
+	Path              string `toml:"path"`              // file replica type: the local directory
+	AccessKeyId       string `toml:"access_key_id"`     // secret reference or raw value
+	SecretAccessKey   string `toml:"secret_access_key"` // secret reference or raw value
+	ForcePathStyle    bool   `toml:"force_path_style"`  // required by most S3-compatibles (Garage, MinIO)
+
+	SyncInterval     string `toml:"sync_interval"`     // litestream replica sync interval, default 1s
+	Retention        string `toml:"retention"`         // replica retention, e.g. 72h
+	SnapshotInterval string `toml:"snapshot_interval"` // snapshot interval; lower means faster restores
+
+	// Checkpoint tuning, passed through to litestream's db settings. Defaults
+	// (1m / 1000 pages / ~500MB) suit typical apps; long-running-read workloads
+	// should set truncate_page_n = 0 to avoid blocking TRUNCATE checkpoints.
+	CheckpointInterval     string `toml:"checkpoint_interval"`
+	MinCheckpointPageCount int    `toml:"min_checkpoint_page_count"`
+	TruncatePageN          *int   `toml:"truncate_page_n"` // pointer so an explicit 0 (disable) differs from unset
+
+	// SidecarImage is the litestream image used for app restore/replicate
+	// containers. Pinned per config: the 0.5 LTX replica format ties restore
+	// compatibility to the bucket contents.
+	SidecarImage string `toml:"sidecar_image"`
+
+	StorageClass string `toml:"storage_class"`  // optional S3 storage class, e.g. STANDARD_IA
+	SseKmsKeyId  string `toml:"sse_kms_key_id"` // optional S3 server-side encryption key
 }
 
 // LogConfig is the configuration for the Logger

@@ -1,0 +1,29 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    HTTP_PORT: ${HTTP_PORT}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+
+# Runs after the test runner stopped the server, wiped $OPENRUN_HOME/metadata
+# and restarted: everything below only exists if restore-on-startup pulled
+# the metadata database back from the S3 replica.
+tests:
+  mdver0010: # the service survived the wipe
+    command: ../openrun service list -f json sqlite/mdtest | jq -r '.[0].service_type + "/" + .[0].name'
+    stdout: "sqlite/mdtest"
+
+  mdver0011: # the binding survived the wipe
+    command: ../openrun binding get -f json /mdt/b1 | jq -r '.[0].path'
+    stdout: "/mdt/b1"
+
+  mdver0012: # the app survived the wipe
+    command: ../openrun app list -f json /mdt_app | jq -r '.[0].path'
+    stdout: "/mdt_app"
+
+  mdver0020: # replication resumed against the restored databases
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="metadata" and .target=="metadata")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s

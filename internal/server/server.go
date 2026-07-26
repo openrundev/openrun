@@ -158,10 +158,17 @@ type Server struct {
 	mu             sync.RWMutex
 	auditDB        *sql.DB
 	auditDbType    system.DBType
-	auditEvents    chan *types.AuditEvent
-	auditFlush     chan chan struct{}
-	auditStop      chan struct{}
-	auditDone      chan struct{}
+	litestream     *system.LitestreamManager
+
+	// replication status cache: the listing costs an S3 sweep per
+	// litestream-enabled binding environment
+	replicationStatusMu    sync.Mutex
+	replicationStatusAt    time.Time
+	replicationStatusCache []types.ReplicationStatusEntry
+	auditEvents            chan *types.AuditEvent
+	auditFlush             chan chan struct{}
+	auditStop              chan struct{}
+	auditDone              chan struct{}
 
 	// authFailureTimes tracks the last audit event time per unique auth
 	// failure, to rate limit the events inserted for repeated failures
@@ -262,6 +269,24 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		}
 	}()
 
+	// Validate every [litestream.<name>] entry up front, whether or not it is
+	// referenced yet: a sqlite service can reference any of them, and a config
+	// with an invalid duration or missing bucket must fail here rather than in
+	// a detached sidecar at app deploy time
+	for name, lsConfig := range config.Litestream {
+		if err := system.ValidateLitestreamConfig(name, lsConfig); err != nil {
+			return nil, err
+		}
+	}
+
+	// Metadata litestream replication: restore missing database files from the
+	// replica before the pools open them (disaster recovery for a wiped
+	// metadata directory); replication itself starts after the audit DB opens
+	litestreamMgr, err := setupMetadataLitestream(context.Background(), l, config)
+	if err != nil {
+		return nil, err
+	}
+
 	db, err := metadata.NewMetadata(l, config)
 	if err != nil {
 		return nil, err
@@ -333,6 +358,13 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 
 	if err = server.initAuditDB(config.Metadata.AuditDBConnection); err != nil {
 		return nil, fmt.Errorf("error initializing audit db: %w", err)
+	}
+
+	if litestreamMgr != nil {
+		if err := litestreamMgr.Start(context.Background()); err != nil {
+			return nil, err
+		}
+		server.litestream = litestreamMgr
 	}
 
 	server.initAccessLogger(config)
@@ -827,7 +859,65 @@ func updateConfigSecrets(config *types.ServerConfig, evalSecret func(string) (st
 		config.Telemetry.Headers[k] = resolved
 	}
 
+	// Litestream credentials cannot use the db secret provider: metadata
+	// replication must be resolvable before the metadata database is opened
+	for name, lsConfig := range config.Litestream {
+		if lsConfig.AccessKeyId, err = evalSecret(lsConfig.AccessKeyId); err != nil {
+			return fmt.Errorf("resolving litestream %s access_key_id: %w", name, err)
+		}
+		if lsConfig.SecretAccessKey, err = evalSecret(lsConfig.SecretAccessKey); err != nil {
+			return fmt.Errorf("resolving litestream %s secret_access_key: %w", name, err)
+		}
+		config.Litestream[name] = lsConfig
+	}
+
 	return nil
+}
+
+// setupMetadataLitestream prepares embedded litestream replication for the
+// server's own sqlite databases (metadata and audit; the file cache is a
+// rebuildable cache and is excluded) when metadata.litestream_config names a
+// [litestream.<name>] entry. Missing database files are restored from the
+// replica here, before the pools open them. Returns nil when replication is
+// not configured.
+func setupMetadataLitestream(ctx context.Context, logger *types.Logger, config *types.ServerConfig) (*system.LitestreamManager, error) {
+	configName := config.Metadata.LitestreamConfig
+	if configName == "" {
+		return nil, nil
+	}
+	lsConfig, ok := config.Litestream[configName]
+	if !ok {
+		return nil, fmt.Errorf("metadata litestream_config %q is not defined in the server config; "+
+			"add a [litestream.%s] section", configName, configName)
+	}
+
+	dbType, dbPath, err := system.CheckConnectString(config.Metadata.DBConnection, "metadata", system.DB_SQLITE_POSTGRES)
+	if err != nil {
+		return nil, err
+	}
+	if dbType != system.DB_TYPE_SQLITE {
+		return nil, fmt.Errorf("metadata litestream replication requires a sqlite metadata database, "+
+			"db_connection uses %s", dbType)
+	}
+
+	mgr, err := system.NewLitestreamManager(logger, configName, lsConfig)
+	if err != nil {
+		return nil, err
+	}
+	if err := mgr.PrepareDB(ctx, "metadata", strings.SplitN(dbPath, "?", 2)[0]); err != nil {
+		return nil, err
+	}
+
+	auditType, auditPath, err := system.CheckConnectString(config.Metadata.AuditDBConnection, "audit", system.DB_SQLITE_POSTGRES)
+	if err != nil {
+		return nil, err
+	}
+	if auditType == system.DB_TYPE_SQLITE {
+		if err := mgr.PrepareDB(ctx, "audit", strings.SplitN(auditPath, "?", 2)[0]); err != nil {
+			return nil, err
+		}
+	}
+	return mgr, nil
 }
 
 // handleAppClose listens for app close notifications and removes the app from the store
@@ -1359,6 +1449,13 @@ func (s *Server) Stop(ctx context.Context) error {
 		// Stop the audit writer after the HTTP servers have drained so queued
 		// audit events from in-flight requests are written out
 		s.stopAuditWriter()
+		// Final litestream sync while the database files are quiesced but
+		// before the pools close
+		if s.litestream != nil {
+			if err := s.litestream.Close(ctx); err != nil {
+				s.Warn().Err(err).Msg("Error closing litestream replication")
+			}
+		}
 		if s.auditDB != nil {
 			s.auditDB.Close() //nolint:errcheck
 		}

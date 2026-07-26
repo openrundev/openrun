@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -310,6 +311,13 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 			return nil, fmt.Errorf("binding source %s not found", binding.Source)
 		}
 
+		// Sqlite has no accounts or grants, so the derived binding
+		// least-privilege model cannot be enforced on it
+		if derivedFrom.ServiceType == bindings.SqliteServiceType {
+			return nil, fmt.Errorf("sqlite bindings do not support derived bindings; "+
+				"bind %s directly instead of deriving from it", derivedFrom.Path)
+		}
+
 		// Reject multi-level nesting. A derived binding must be derived from a
 		// base binding (one whose Source points at a service, not at another
 		// binding). Allowing derived-of-derived would make ALTER DEFAULT
@@ -464,11 +472,20 @@ func (s *Server) getServiceBinding(ctx context.Context, service *types.Service, 
 
 func (s *Server) serviceBindingRuntime() bindings.ServiceBindingRuntime {
 	containerCommand := ""
+	var litestreamNames, litestreamFileNames []string
 	if s.Config() != nil {
 		containerCommand = s.Config().System.ContainerCommand
+		litestreamNames = slices.Sorted(maps.Keys(s.Config().Litestream))
+		for _, name := range litestreamNames {
+			if s.Config().Litestream[name].Type == system.LitestreamReplicaTypeFile {
+				litestreamFileNames = append(litestreamFileNames, name)
+			}
+		}
 	}
 	return bindings.ServiceBindingRuntime{
-		LocalhostBindingHostname: container.LocalhostBindingHostname(containerCommand),
+		LocalhostBindingHostname:  container.LocalhostBindingHostname(containerCommand),
+		LitestreamConfigNames:     litestreamNames,
+		LitestreamFileConfigNames: litestreamFileNames,
 	}
 }
 
@@ -1089,6 +1106,14 @@ func (s *Server) GetBindingWithAccount(ctx context.Context, tx types.Transaction
 		return nil, fmt.Errorf("error getting binding service: %w", err)
 	}
 	binding.ServiceIsDefault = service.IsDefault
+	binding.ServiceConfig = service.Config
+	if service.Staging != "" {
+		// Staged apps follow the linked staging service's config; a missing
+		// staging service (deleted since) falls back to the primary config
+		if stagingService, err := s.db.GetService(ctx, tx, service.ServiceType, service.Staging); err == nil {
+			binding.StagingServiceConfig = stagingService.Config
+		}
+	}
 	return binding, nil
 }
 

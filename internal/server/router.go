@@ -1612,6 +1612,16 @@ func (h *Handler) listBindings(r *http.Request) (any, error) {
 	return results, nil
 }
 
+func (h *Handler) replicationStatus(r *http.Request) (any, error) {
+	updateOperationInContext(r, "replication_status")
+	refresh := r.URL.Query().Get("refresh") == "true"
+	entries, err := h.server.ReplicationStatus(r.Context(), refresh)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return entries, nil
+}
+
 func (h *Handler) runBindingCommand(r *http.Request) (any, error) {
 	var runRequest types.RunBindingCommandRequest
 	decoder := json.NewDecoder(r.Body)
@@ -1988,6 +1998,11 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to list bindings
 	r.Get("/bindings", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "list_bindings", h.listBindings, false)
+	}))
+
+	// API for litestream replication status (metadata databases and sqlite bindings)
+	r.Get("/replication/status", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "replication_status", h.replicationStatus, false)
 	}))
 
 	// API to show binding account info

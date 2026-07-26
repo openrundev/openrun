@@ -27,6 +27,8 @@ POSTGRES ?=
 POSTGRES_URL ?=
 MYSQL ?=
 MYSQL_URL ?=
+SEAWEEDFS ?=
+S3_URL ?=
 KUBE_REGISTRY ?=
 KUBE_NAMESPACE ?=
 SKIP_BUILD ?=
@@ -38,6 +40,8 @@ RUN_CLI_TESTS_FLAGS = --home $(OPENRUN_HOME) \
   $(if $(POSTGRES_URL),--postgres-url $(POSTGRES_URL)) \
   $(if $(MYSQL),--mysql) \
   $(if $(MYSQL_URL),--mysql-url $(MYSQL_URL)) \
+  $(if $(SEAWEEDFS),--seaweedfs) \
+  $(if $(S3_URL),--s3-url $(S3_URL)) \
   $(if $(KUBE_REGISTRY),--kube-registry $(KUBE_REGISTRY)) \
   $(if $(KUBE_NAMESPACE),--kube-namespace $(KUBE_NAMESPACE)) \
   $(if $(SKIP_BUILD),--skip-build) \

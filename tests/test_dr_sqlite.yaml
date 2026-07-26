@@ -1,0 +1,49 @@
+config:
+  env:
+    CL_CONFIG_FILE: config_dr.toml
+    OPENRUN_HOME: ${DR_HOME}
+    HTTP_PORT: ${HTTP_PORT}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+
+# Phase 1 of the disaster recovery scenario (see run_cli_tests.sh): on a
+# litestream-enabled server in a throwaway OPENRUN_HOME, create a sqlite app,
+# write data and wait for the metadata and app replicas to catch up. The test
+# runner then hard-kills the server and destroys everything except the config
+# file; test_dr_sqlite_verify.yaml checks the rebuild.
+tests:
+  dr0010:
+    command: ../openrun service create sqlite/drmain --config litestream_config=drtest
+    stdout: "Service sqlite/drmain created"
+    exit-code: 0
+
+  dr0011:
+    command: rm -rf ./sqlite_dr_tmp && cp -rf sqlite sqlite_dr_tmp
+    exit-code: 0
+
+  dr0020:
+    command: ../openrun app create --spec python-flask --bind sqlite/drmain ./sqlite_dr_tmp /dr_app
+    exit-code: 0
+
+  dr0030: # write the data that must survive the node loss
+    command: curl -sS -X POST -d value=dr-original-value localhost:${HTTP_PORT}/dr_app/value
+    stdout: "dr-original-value"
+
+  dr0040: # app replication catches up
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s
+
+  dr0041: # metadata replication catches up
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="metadata" and .target=="metadata")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s
+
+  dr0050: # settle window: the server is hard-killed next (no final sync), so
+          # give the 200ms sync interval time to ship the last writes
+    command: sleep 3
+    exit-code: 0

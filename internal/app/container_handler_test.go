@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -417,7 +418,7 @@ func (m *healthTestManager) VolumeExists(context.Context, container.VolumeName) 
 	return true
 }
 
-func (m *healthTestManager) VolumeCreate(context.Context, container.VolumeName) error {
+func (m *healthTestManager) VolumeCreate(context.Context, container.VolumeName, string) error {
 	return nil
 }
 
@@ -1139,6 +1140,73 @@ func TestGetBindingEnvUsesStagedAccountForDevApp(t *testing.T) {
 	}
 	if env["POSTGRES_URL_DIRECT"] != "postgres://stage-direct" {
 		t.Fatalf("POSTGRES_URL_DIRECT = %q", env["POSTGRES_URL_DIRECT"])
+	}
+}
+
+func TestSqliteBindingVolumesAndEnv(t *testing.T) {
+	t.Parallel()
+
+	sqliteBinding := func(id, dir, volumeSize string) *types.Binding {
+		return &types.Binding{
+			Id:             id,
+			ServiceType:    "sqlite",
+			ServiceName:    "main",
+			Metadata:       types.BindingMetadata{Account: bindings.SqliteAccountForDir(dir)},
+			StagedMetadata: types.BindingMetadata{Account: bindings.SqliteAccountForDir(dir)},
+			ServiceConfig:  map[string]string{"volume_size": volumeSize},
+		}
+	}
+	appBindings := []*types.Binding{
+		{ServiceType: "postgres", ServiceName: "main"},
+		sqliteBinding("bnd_1", "/data", "20Gi"),
+	}
+
+	vols := sqliteBindingVolumes(appBindings, true)
+	if len(vols) != 1 {
+		t.Fatalf("volumes = %d, want 1", len(vols))
+	}
+	if vols[0].TargetPath != "/data" || vols[0].VolumeName != "sqlite-bnd_1" {
+		t.Fatalf("volume = %+v", vols[0])
+	}
+	if vols[0].Size != "20Gi" || !vols[0].InitPerms {
+		t.Fatalf("volume size/perms = %+v", vols[0])
+	}
+
+	// The binding's "path" config (baked into the account) moves the mount
+	custom := sqliteBindingVolumes([]*types.Binding{sqliteBinding("bnd_3", "/mydata/test", "")}, true)
+	if len(custom) != 1 || custom[0].TargetPath != "/mydata/test" {
+		t.Fatalf("custom path volume = %+v", custom[0])
+	}
+
+	// The volume follows the binding identity, not the mount position: a
+	// binding swap on the app gets its own (fresh) volume, never the previous
+	// binding's database
+	swapped := sqliteBindingVolumes([]*types.Binding{sqliteBinding("bnd_2", "/data", "")}, true)
+	if len(swapped) != 1 || swapped[0].VolumeName != "sqlite-bnd_2" ||
+		swapped[0].TargetPath != "/data" {
+		t.Fatalf("swapped volume = %+v", swapped[0])
+	}
+
+	h := &ContainerHandler{
+		app: &App{AppEntry: &types.AppEntry{
+			Id:   types.AppId(types.ID_PREFIX_APP_PROD + "sqlite_env_test"),
+			Path: "/sqlite-env",
+		}},
+		serverConfig: &types.ServerConfig{},
+		bindings:     appBindings,
+	}
+	env, err := h.getBindingEnv()
+	if err != nil {
+		t.Fatalf("getBindingEnv: %v", err)
+	}
+	if env["SQLITE_URL"] != "file:/data/data.db" {
+		t.Fatalf("SQLITE_URL = %q", env["SQLITE_URL"])
+	}
+	if env["SQLITE_DIR"] != "/data" {
+		t.Fatalf("SQLITE_DIR = %q", env["SQLITE_DIR"])
+	}
+	if env["SQLITE_DB_PATH"] != "/data/data.db" {
+		t.Fatalf("SQLITE_DB_PATH = %q", env["SQLITE_DB_PATH"])
 	}
 }
 

@@ -21,7 +21,9 @@ layout: hextra-home
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Auto-Pause Idle apps" link="/docs/container/config/" subtitle="Idle apps are paused, scale down to zero."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Service bindings support" link="/docs/applications/servicebindings" subtitle="Easily provision Postgres/MySQL database access for applications"  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Service bindings support" link="/docs/applications/servicebindings" subtitle="Easily provision Postgres/MySQL/SQLite database access for applications"  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
+
+<!-- prettier-ignore --> {{< hextra/feature-card title="SQLite Replication" link="/docs/applications/litestream/" subtitle="Continuous Litestream backup of app SQLite data and server metadata to S3, with automatic restore."  icon="cloud-upload" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Autogen Actions" link="/docs/actions/" subtitle="Auto-generated UI for backend actions, no UI to develop."  icon="binary-off" class="openrun-feature-card openrun-feature-card-light" >}}
 

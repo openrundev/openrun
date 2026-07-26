@@ -101,6 +101,9 @@ type DeployRequest struct {
 	DeployAttempts     int
 	LogLinesToShow     int
 	ShowLogsForFailure bool
+	// Litestream, when set, adds the app's replication companion to the pod:
+	// per-database restore init containers and the replicate native sidecar.
+	Litestream *LitestreamAppSpec
 }
 
 type DeployResult struct {
@@ -146,6 +149,10 @@ type KubernetesCM struct {
 	appConfig    *types.AppConfig
 	appRunDir    string
 	appId        types.AppId
+	// litestream is the app's replication companion spec for the current
+	// deploy, stashed by DeployContainer for createDeployment (reached through
+	// RunContainer's fixed signature); the manager instance is per app handler
+	litestream *LitestreamAppSpec
 }
 
 func sanitizeContainerName(name string) string {
@@ -609,10 +616,14 @@ func (k *KubernetesCM) VolumeExists(ctx context.Context, name VolumeName) bool {
 	return true
 }
 
-func (k *KubernetesCM) VolumeCreate(ctx context.Context, name VolumeName) error {
-	size, err := resource.ParseQuantity(k.appConfig.Kubernetes.DefaultVolumeSize)
+func (k *KubernetesCM) VolumeCreate(ctx context.Context, name VolumeName, requestedSize string) error {
+	sizeStr := requestedSize
+	if sizeStr == "" {
+		sizeStr = k.appConfig.Kubernetes.DefaultVolumeSize
+	}
+	size, err := resource.ParseQuantity(sizeStr)
 	if err != nil {
-		return fmt.Errorf("error parsing default volume size %s: %w", k.appConfig.Kubernetes.DefaultVolumeSize, err)
+		return fmt.Errorf("error parsing volume size %s: %w", sizeStr, err)
 	}
 	pvcName := sanitizeContainerName(string(name))
 	pvc := corev1apply.PersistentVolumeClaim(pvcName, k.appNamespace).
@@ -940,8 +951,54 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 		containerConfig = containerConfig.WithResources(resources)
 	}
 
+	// Init container order: litestream restores first (as root), then the
+	// volume permissions chmod (restored files must be writable by the app
+	// user), then the replication native sidecar, then the app container
+	var initContainers []*corev1apply.ContainerApplyConfiguration
+	var litestreamSidecar *corev1apply.ContainerApplyConfiguration
+	if k.litestream != nil {
+		// The config hash annotation rolls the pod when the litestream config
+		// (or credentials/image) changes without an app version change
+		annotations[LABEL_PREFIX+"litestream.hash"] = k.litestream.ConfigHash
+		objName, err := k.applyLitestreamObjects(ctx, wlName, k.litestream)
+		if err != nil {
+			return "", err
+		}
+		var lsVolumes []*corev1apply.VolumeApplyConfiguration
+		lsVolumes, initContainers, litestreamSidecar = k.litestreamPodAdditions(objName, k.litestream)
+		podVolumes = append(podVolumes, lsVolumes...)
+	}
+	// With replication enabled the litestream image runs the permissions
+	// chmod (always has a chmod binary), so distroless app images work;
+	// local-only sqlite bindings fall back to the app image
+	permsImage := image
+	if k.litestream != nil {
+		permsImage = k.litestream.Image
+	}
+	permsInit := k.sqliteVolumePermsInitContainer(permsImage, volumes)
+	if permsInit != nil {
+		initContainers = append(initContainers, permsInit)
+	}
+	if litestreamSidecar != nil {
+		initContainers = append(initContainers, litestreamSidecar)
+	}
+
 	podSpec := corev1apply.PodSpec().
 		WithContainers(containerConfig)
+	if permsInit != nil {
+		// fsGroup makes the sqlite volume group-writable at mount time on
+		// storage classes with kubernetes ownership management (most CSI
+		// drivers), and the group is added to every container process. On
+		// storage without it (hostPath-backed local-path) the chmod init
+		// container above remains the fallback; it also covers files written
+		// by the root restore init containers after the mount-time pass
+		podSpec = podSpec.WithSecurityContext(corev1apply.PodSecurityContext().
+			WithFSGroup(sqliteVolumeFSGroup).
+			WithFSGroupChangePolicy(core.FSGroupChangeOnRootMismatch))
+	}
+	if len(initContainers) > 0 {
+		podSpec = podSpec.WithInitContainers(initContainers...)
+	}
 	if len(podVolumes) > 0 {
 		podSpec = podSpec.WithVolumes(podVolumes...)
 	}
@@ -1091,6 +1148,9 @@ func (k *KubernetesCM) deployAppID(appEntry *types.AppEntry) types.AppId {
 }
 
 func (k *KubernetesCM) DeployContainer(ctx context.Context, req DeployRequest) (DeployResult, error) {
+	// Stash the litestream spec for createDeployment, which is reached through
+	// RunContainer's fixed signature. The manager instance is per app handler.
+	k.litestream = req.Litestream
 	appID := k.deployAppID(req.AppEntry)
 	if hostNamePort, running, err := k.GetContainerState(ctx, req.ContainerName, req.VersionHash); err != nil {
 		k.cleanupSourceDir(req.SourceDir, appID)

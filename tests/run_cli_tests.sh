@@ -43,10 +43,19 @@ Containers:
                                need one
   --mysql-url URL               Use an already-running MySQL instead of
                                starting a container (implies --mysql)
+  --seaweedfs                  Start a SeaweedFS test container (S3 API) for
+                               the litestream replication suites
+  --s3-url URL                  Use an already-running S3-compatible endpoint
+                               instead (implies --seaweedfs); requires
+                               TEST_S3_BUCKET, TEST_S3_ACCESS_KEY and
+                               TEST_S3_SECRET_KEY to be set in the environment
 
 Kubernetes (only runs when --kube-registry is set):
   --kube-registry URL      Container registry the Kubernetes suite pushes to
   --kube-namespace NAME     Namespace to use (default: openrun-cli-test-$$)
+  --kube-s3-endpoint URL    S3 endpoint as reachable FROM CLUSTER PODS, for the
+                             kubernetes disaster recovery scenario (default:
+                             the SeaweedFS port on the --kube-registry host)
 
 Git auth secrets stay as environment variables, not flags, so they don't show
 up in the process list:
@@ -64,10 +73,19 @@ CONTAINER_COMMANDS="docker"
 CONTAINER_TOOL="docker"
 ENABLE_POSTGRES=""
 ENABLE_MYSQL=""
+ENABLE_SEAWEEDFS=""
 POSTGRES_URL_ARG=""
 MYSQL_URL_ARG=""
+S3_URL_ARG=""
 KUBE_REGISTRY_URL=""
 KUBE_TEST_NAMESPACE=""
+KUBE_S3_ENDPOINT_ARG=""
+SEAWEEDFS_TEST_CONTAINER_ID=""
+DR_SERVER_PID=""
+DR_HOME1=""
+DR_HOME2=""
+DR_KUBE_NS1=""
+DR_KUBE_NS2=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -81,8 +99,11 @@ while [[ $# -gt 0 ]]; do
     --postgres-url) ENABLE_POSTGRES=1; POSTGRES_URL_ARG="$2"; shift 2 ;;
     --mysql) ENABLE_MYSQL=1; shift ;;
     --mysql-url) ENABLE_MYSQL=1; MYSQL_URL_ARG="$2"; shift 2 ;;
+    --seaweedfs) ENABLE_SEAWEEDFS=1; shift ;;
+    --s3-url) ENABLE_SEAWEEDFS=1; S3_URL_ARG="$2"; shift 2 ;;
     --kube-registry) KUBE_REGISTRY_URL="$2"; shift 2 ;;
     --kube-namespace) KUBE_TEST_NAMESPACE="$2"; shift 2 ;;
+    --kube-s3-endpoint) KUBE_S3_ENDPOINT_ARG="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
     -*) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
@@ -97,6 +118,20 @@ MATCHED_TESTS=()
 is_selected() {
   if [[ ${#TESTS[@]} -eq 0 ]]; then
     return 0
+  fi
+  local t
+  for t in "${TESTS[@]}"; do
+    [[ "$t" == "$1" ]] && return 0
+  done
+  return 1
+}
+
+# is_explicitly_selected NAME: true only if NAME was passed as a test-file
+# argument. Never true for full runs: used for suites that are disabled by
+# default (e.g. the disaster recovery scenario).
+is_explicitly_selected() {
+  if [[ ${#TESTS[@]} -eq 0 ]]; then
+    return 1
   fi
   local t
   for t in "${TESTS[@]}"; do
@@ -234,6 +269,26 @@ wait_for_http() {
 # server_uri; the socket listener can come up slightly after the TCP listener
 # that wait_for_http checks, and on a loaded machine the first CLI call of a
 # test suite can land in that gap and fail with connection refused.
+# start_dr_server HOME CONFIG: start a server for the disaster recovery
+# scenarios in its own OPENRUN_HOME (the socket lives under it, unlike the
+# other phases which use the tests directory)
+start_dr_server() {
+  wait_port_free "$SERVER_HTTP_PORT" && wait_port_free "$SERVER_HTTPS_PORT"
+  OPENRUN_HOME="$1" CL_CONFIG_FILE="$2" GOCOVERDIR=$GOCOVERDIR ../openrun server start &
+  DR_SERVER_PID=$!
+  wait_for_http "$SERVER_HTTP_PORT"
+  local attempt=0
+  while [[ $attempt -lt 100 ]]; do
+    if curl -sS --connect-timeout 0.1 --max-time 0.5 --unix-socket "$1/run/openrun.sock" -o /dev/null "http://openrun/" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+    attempt=$((attempt + 1))
+  done
+  echo "DR server socket did not become ready in $1"
+  return 1
+}
+
 wait_for_socket() {
   local max_attempts=100
   local attempt=0
@@ -289,6 +344,26 @@ cleanup() {
     $CONTAINER_TOOL rm -f "$MYSQL_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
     MYSQL_TEST_CONTAINER_ID=""
   fi
+
+  if [[ -n "$SEAWEEDFS_TEST_CONTAINER_ID" ]]; then
+    $CONTAINER_TOOL rm -f "$SEAWEEDFS_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
+    SEAWEEDFS_TEST_CONTAINER_ID=""
+  fi
+  force_rm config_litestream.toml seaweed_s3.json sqlite_ls_tmp
+
+  # Disaster recovery scenario leftovers
+  if [[ -n "$DR_SERVER_PID" ]]; then
+    kill -9 "$DR_SERVER_PID" >/dev/null 2>&1 || true
+    DR_SERVER_PID=""
+  fi
+  [[ -n "$DR_HOME1" ]] && rm -rf "$DR_HOME1"
+  [[ -n "$DR_HOME2" ]] && rm -rf "$DR_HOME2"
+  if [[ -n "$DR_KUBE_NS1" || -n "$DR_KUBE_NS2" ]]; then
+    kubectl delete namespace $DR_KUBE_NS1 ${DR_KUBE_NS1:+$DR_KUBE_NS1-apps} $DR_KUBE_NS2 ${DR_KUBE_NS2:+$DR_KUBE_NS2-apps} --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    DR_KUBE_NS1=""
+    DR_KUBE_NS2=""
+  fi
+  force_rm config_dr.toml dr_config_backup.toml sqlite_dr_tmp config_dr_k8s.toml sqlite_drk_tmp
 
   if [[ -n "$FORWARD_AUTH_CONTAINER_ID" ]]; then
     $FORWARD_AUTH_CONTAINER_COMMAND rm -f "$FORWARD_AUTH_CONTAINER_ID" >/dev/null 2>&1 || true
@@ -408,6 +483,107 @@ start_postgres_testcontainer() {
 
   export TEST_POSTGRES_URL="postgres://postgres:postgres@127.0.0.1:${port}/openrun_cli?sslmode=disable"
   echo "TEST_POSTGRES_URL=$TEST_POSTGRES_URL"
+}
+
+# start_seaweedfs_testcontainer starts a throwaway SeaweedFS instance (single
+# container, S3 API on a published port) for the litestream replication
+# suites, creates the test bucket and exports TEST_S3_*. With --s3-url the
+# caller supplies an endpoint (plus TEST_S3_BUCKET/TEST_S3_ACCESS_KEY/
+# TEST_S3_SECRET_KEY in the environment) instead.
+start_seaweedfs_testcontainer() {
+  if [[ -n "$TEST_S3_ENDPOINT" ]]; then
+    return # already started (litestream phase and DR phase share the instance)
+  fi
+  if [[ -n "$S3_URL_ARG" ]]; then
+    export TEST_S3_ENDPOINT="$S3_URL_ARG"
+    if [[ -z "$TEST_S3_BUCKET" || -z "$TEST_S3_ACCESS_KEY" || -z "$TEST_S3_SECRET_KEY" ]]; then
+      echo "--s3-url requires TEST_S3_BUCKET, TEST_S3_ACCESS_KEY and TEST_S3_SECRET_KEY to be set"
+      return 1
+    fi
+    echo "Using externally supplied TEST_S3_ENDPOINT=$TEST_S3_ENDPOINT"
+    return
+  fi
+
+  export TEST_S3_BUCKET="openrun-test"
+  export TEST_S3_ACCESS_KEY="openrun_test_key"
+  export TEST_S3_SECRET_KEY="openrun_test_secret"
+
+  cat <<EOF > seaweed_s3.json
+{
+  "identities": [
+    {
+      "name": "openrun",
+      "credentials": [
+        {"accessKey": "$TEST_S3_ACCESS_KEY", "secretKey": "$TEST_S3_SECRET_KEY"}
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}
+EOF
+
+  echo "Starting SeaweedFS test container with $CONTAINER_TOOL"
+  # Publish on all interfaces: the litestream sidecar containers reach the
+  # endpoint through the host gateway alias (host.docker.internal). The fixed
+  # container name gives the kubernetes DR scenario a pod-resolvable OrbStack
+  # domain (openrun-seaweedfs-test.orb.local:8333)
+  $CONTAINER_TOOL rm -f openrun-seaweedfs-test >/dev/null 2>&1 || true
+  SEAWEEDFS_TEST_CONTAINER_ID=$($CONTAINER_TOOL run \
+    --detach \
+    --rm \
+    --name openrun-seaweedfs-test \
+    --publish "0.0.0.0::8333" \
+    --volume "$PWD/seaweed_s3.json":/etc/seaweedfs/s3.json:ro \
+    chrislusf/seaweedfs \
+    server -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json)
+
+  local port=""
+  for _ in {1..75}; do
+    port=$($CONTAINER_TOOL inspect \
+      --format '{{with index .NetworkSettings.Ports "8333/tcp"}}{{(index . 0).HostPort}}{{end}}' \
+      "$SEAWEEDFS_TEST_CONTAINER_ID" 2>/dev/null || true)
+    if [[ -n "$port" ]]; then
+      break
+    fi
+    sleep 0.2
+  done
+  if [[ -z "$port" ]]; then
+    echo "SeaweedFS test container port was not published"
+    return 1
+  fi
+
+  local ready=""
+  for _ in {1..300}; do
+    # Any HTTP response (typically an S3 error document) means the S3 API is up
+    if curl -s -o /dev/null "http://127.0.0.1:${port}/"; then
+      ready="true"
+      break
+    fi
+    sleep 0.2
+  done
+  if [[ -z "$ready" ]]; then
+    echo "SeaweedFS test container did not become ready"
+    $CONTAINER_TOOL logs "$SEAWEEDFS_TEST_CONTAINER_ID" || true
+    return 1
+  fi
+
+  local created=""
+  for _ in {1..60}; do
+    if $CONTAINER_TOOL exec "$SEAWEEDFS_TEST_CONTAINER_ID" \
+        sh -c "echo 's3.bucket.create -name $TEST_S3_BUCKET' | weed shell" 2>/dev/null | grep -qv "error"; then
+      created="true"
+      break
+    fi
+    sleep 0.5
+  done
+  if [[ -z "$created" ]]; then
+    echo "SeaweedFS test bucket could not be created"
+    $CONTAINER_TOOL logs "$SEAWEEDFS_TEST_CONTAINER_ID" || true
+    return 1
+  fi
+
+  export TEST_S3_ENDPOINT="http://127.0.0.1:${port}"
+  echo "TEST_S3_ENDPOINT=$TEST_S3_ENDPOINT bucket=$TEST_S3_BUCKET"
 }
 
 start_mysql_testcontainer() {
@@ -549,6 +725,7 @@ done
 POSTGRES_FILES="test_service.yaml test_bindings.yaml test_app_update_bindings.yaml test_postgres.yaml test_postgres_container.yaml test_todo_flow.yaml"
 MYSQL_FILES="test_mysql.yaml"
 CONTAINER_FILES="test_containers.yaml test_postgres_container.yaml test_todo_flow.yaml"
+LITESTREAM_FILES="test_sqlite_litestream.yaml test_replication_status.yaml test_metadata_litestream.yaml test_metadata_litestream_verify.yaml"
 
 if [[ -n "$ENABLE_POSTGRES" ]] && contains_any "$POSTGRES_FILES"; then
   if contains_any "test_postgres_container.yaml test_todo_flow.yaml"; then
@@ -707,6 +884,10 @@ EOF
 fi
 
 # Test containerized apps
+ORIG_CONTAINER_COMMANDS="$CONTAINER_COMMANDS"
+if [[ "$ORIG_CONTAINER_COMMANDS" = "disable" ]]; then
+  ORIG_CONTAINER_COMMANDS=""
+fi
 if ! contains_any "$CONTAINER_FILES"; then
   CONTAINER_COMMANDS=""
 elif [[ "$CONTAINER_COMMANDS" = "disable" ]]; then
@@ -793,6 +974,332 @@ EOF
     CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
     stop_forward_auth_testcontainer
 done
+
+# Litestream replication suites: need an S3 endpoint (--seaweedfs) and a
+# container command for the app + sidecar containers
+LITESTREAM_CONTAINER_CMD="${ORIG_CONTAINER_COMMANDS%% *}"
+if [[ -n "$ENABLE_SEAWEEDFS" && -n "$LITESTREAM_CONTAINER_CMD" ]] && contains_any "$LITESTREAM_FILES"; then
+  start_seaweedfs_testcontainer
+
+  ls_http_port=$SERVER_HTTP_PORT
+  ls_https_port=$SERVER_HTTPS_PORT
+  cat <<EOF > config_litestream.toml
+[http]
+port = $ls_http_port
+[https]
+port = $ls_https_port
+
+[security]
+admin_password_bcrypt = "\$2a\$10\$PMaPsOVMBfKuDG04RsqJbeKIOJjlYi1Ie1KQbPCZRQx38bqYfernm"
+
+[system]
+container_command="$LITESTREAM_CONTAINER_CMD"
+
+[app_config]
+container.health_attempts_after_startup = 10
+container.health_timeout_secs = 2
+
+# Short sync interval so the suites see replication advance quickly
+[litestream.s3test]
+endpoint = "$TEST_S3_ENDPOINT"
+bucket = "$TEST_S3_BUCKET"
+region = "us-east-1"
+path_prefix = "openrun-int"
+access_key_id = "$TEST_S3_ACCESS_KEY"
+secret_access_key = "$TEST_S3_SECRET_KEY"
+force_path_style = true
+sync_interval = "200ms"
+snapshot_interval = "10m"
+
+# File replica type: valid for metadata, rejected for sqlite services
+[litestream.localdisk]
+type = "file"
+path = "/tmp/openrun-litestream-test"
+
+[metadata]
+litestream_config = "s3test"
+EOF
+
+  start_litestream_test_server() {
+    rm -f run/openrun.sock
+    wait_port_free "$ls_http_port" && wait_port_free "$ls_https_port"
+    CL_CONFIG_FILE=config_litestream.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
+    wait_for_http "$ls_http_port"
+    wait_for_socket
+  }
+
+  rm -rf metadata
+  start_litestream_test_server
+  export HTTP_PORT=$ls_http_port
+  export OPENRUN_CONTAINER_COMMAND="$LITESTREAM_CONTAINER_CMD"
+  [[ -f openrun.toml ]] || : > openrun.toml
+  echo "********Testing litestream replication with $LITESTREAM_CONTAINER_CMD*********"
+
+  if is_selected test_sqlite_litestream.yaml; then
+    commander test $VERBOSE test_sqlite_litestream.yaml
+    MATCHED_TESTS+=(test_sqlite_litestream.yaml)
+  fi
+  if is_selected test_replication_status.yaml; then
+    commander test $VERBOSE test_replication_status.yaml
+    MATCHED_TESTS+=(test_replication_status.yaml)
+  fi
+  if is_selected test_metadata_litestream.yaml; then
+    commander test $VERBOSE test_metadata_litestream.yaml
+    MATCHED_TESTS+=(test_metadata_litestream.yaml)
+
+    # Metadata disaster recovery: stop the server (final litestream sync),
+    # wipe the metadata directory, restart and verify the state was restored
+    # from the S3 replica
+    CL_CONFIG_FILE=config_litestream.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+    rm -rf metadata
+    start_litestream_test_server
+    commander test $VERBOSE test_metadata_litestream_verify.yaml
+    MATCHED_TESTS+=(test_metadata_litestream_verify.yaml)
+  fi
+
+  CL_CONFIG_FILE=config_litestream.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+  rm -rf metadata run/openrun.sock
+fi
+
+# Disaster recovery scenario: full node loss and rebuild from the S3 replica.
+# A server in a throwaway OPENRUN_HOME replicates its metadata and a sqlite
+# app to SeaweedFS; the server is then hard-killed and everything except the
+# config file is destroyed (home directory with the metadata databases, app
+# container, litestream sidecar, data volume). A second server in a fresh
+# OPENRUN_HOME with the backed-up config must restore the metadata (app list,
+# audit history) and the app's sqlite data from the replica alone.
+#
+# Disabled by default (it is slow and hard-kills a server): runs only when
+# explicitly requested, e.g. ./tests/run_cli_tests.sh --seaweedfs test_dr_sqlite.yaml
+if [[ -n "$ENABLE_SEAWEEDFS" && -n "$LITESTREAM_CONTAINER_CMD" ]] && is_explicitly_selected test_dr_sqlite.yaml; then
+  start_seaweedfs_testcontainer
+
+  # Unique replica prefix per run so a rerun never restores a previous run's data
+  DR_PATH_PREFIX="dr-$(date +%s)-$$"
+  dr_http_port=$SERVER_HTTP_PORT
+  dr_https_port=$SERVER_HTTPS_PORT
+  cat <<EOF > config_dr.toml
+[http]
+port = $dr_http_port
+[https]
+port = $dr_https_port
+
+[security]
+admin_password_bcrypt = "\$2a\$10\$PMaPsOVMBfKuDG04RsqJbeKIOJjlYi1Ie1KQbPCZRQx38bqYfernm"
+
+[system]
+container_command="$LITESTREAM_CONTAINER_CMD"
+
+[app_config]
+container.health_attempts_after_startup = 10
+container.health_timeout_secs = 2
+
+[litestream.drtest]
+endpoint = "$TEST_S3_ENDPOINT"
+bucket = "$TEST_S3_BUCKET"
+region = "us-east-1"
+path_prefix = "$DR_PATH_PREFIX"
+access_key_id = "$TEST_S3_ACCESS_KEY"
+secret_access_key = "$TEST_S3_SECRET_KEY"
+force_path_style = true
+sync_interval = "200ms"
+snapshot_interval = "10m"
+
+[metadata]
+litestream_config = "drtest"
+EOF
+
+  echo "********Testing disaster recovery with $LITESTREAM_CONTAINER_CMD*********"
+  export HTTP_PORT=$dr_http_port
+  export OPENRUN_CONTAINER_COMMAND="$LITESTREAM_CONTAINER_CMD"
+
+  # Phase 1: fresh home, litestream-enabled server, app with sqlite data
+  DR_HOME1=$(mktemp -d)
+  start_dr_server "$DR_HOME1" config_dr.toml
+  DR_HOME="$DR_HOME1" commander test $VERBOSE test_dr_sqlite.yaml
+  MATCHED_TESTS+=(test_dr_sqlite.yaml)
+
+  # Backup the config, then destroy the node: hard-kill the server (no final
+  # sync; the suite waited for replication to catch up), remove the app/stage
+  # containers, the sidecars, their data volumes and the whole home directory
+  # including the metadata database files
+  cp config_dr.toml dr_config_backup.toml
+  kill -9 "$DR_SERVER_PID" 2>/dev/null || true
+  DR_SERVER_PID=""
+  sleep 1
+  DR_CONTAINERS=$($LITESTREAM_CONTAINER_CMD ps -aq --filter label=dev.openrun.app.path=/dr_app)
+  DR_VOLUMES=""
+  if [[ -n "$DR_CONTAINERS" ]]; then
+    DR_VOLUMES=$($LITESTREAM_CONTAINER_CMD inspect --format '{{range .Mounts}}{{.Name}} {{end}}' $DR_CONTAINERS 2>/dev/null | tr ' ' '\n' | grep '^clv-' | sort -u || true)
+    $LITESTREAM_CONTAINER_CMD rm -f $DR_CONTAINERS >/dev/null
+  fi
+  if [[ -n "$DR_VOLUMES" ]]; then
+    $LITESTREAM_CONTAINER_CMD volume rm -f $DR_VOLUMES >/dev/null
+  fi
+  rm -rf "$DR_HOME1"
+  DR_HOME1=""
+
+  # Phase 2: fresh home, the backed-up config, everything restored from S3
+  DR_HOME2=$(mktemp -d)
+  cp dr_config_backup.toml config_dr.toml
+  start_dr_server "$DR_HOME2" config_dr.toml
+  DR_HOME="$DR_HOME2" commander test $VERBOSE test_dr_sqlite_verify.yaml
+  MATCHED_TESTS+=(test_dr_sqlite_verify.yaml)
+
+  OPENRUN_HOME="$DR_HOME2" CL_CONFIG_FILE=config_dr.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+  DR_SERVER_PID=""
+  rm -rf "$DR_HOME2"
+  DR_HOME2=""
+
+  # Remove the containers and volumes the rebuilt server created (containers
+  # normally outlive the server; this scenario's server homes are gone)
+  DR_CONTAINERS=$($LITESTREAM_CONTAINER_CMD ps -aq --filter label=dev.openrun.app.path=/dr_app)
+  if [[ -n "$DR_CONTAINERS" ]]; then
+    DR_VOLUMES=$($LITESTREAM_CONTAINER_CMD inspect --format '{{range .Mounts}}{{.Name}} {{end}}' $DR_CONTAINERS 2>/dev/null | tr ' ' '\n' | grep '^clv-' | sort -u || true)
+    $LITESTREAM_CONTAINER_CMD rm -f $DR_CONTAINERS >/dev/null
+    if [[ -n "$DR_VOLUMES" ]]; then
+      $LITESTREAM_CONTAINER_CMD volume rm -f $DR_VOLUMES >/dev/null
+    fi
+  fi
+  rm -f config_dr.toml dr_config_backup.toml
+  rm -rf sqlite_dr_tmp
+fi
+
+# Kubernetes disaster recovery scenario: like the docker scenario above, but
+# the app runs on the kubernetes container manager. The original deployment
+# lands in one namespace; after the node loss (hard-killed server, deleted
+# namespace with its PVC, wiped OPENRUN_HOME) the rebuilt server deploys into
+# a SECOND namespace, restoring the metadata from S3 and the app data into a
+# fresh PVC via the restore init containers.
+#
+# Disabled by default: needs --seaweedfs and --kube-registry, and runs only
+# when explicitly requested, e.g.
+#   ./tests/run_cli_tests.sh --seaweedfs --kube-registry registry.orb.local:5000 test_dr_kubernetes.yaml
+if [[ -n "$ENABLE_SEAWEEDFS" && -n "$KUBE_REGISTRY_URL" ]] && is_explicitly_selected test_dr_kubernetes.yaml; then
+  start_seaweedfs_testcontainer
+
+  # Pods cannot reach the host's 127.0.0.1 SeaweedFS endpoint. Default the
+  # pod-visible endpoint (litestream container_endpoint) per setup: for an
+  # OrbStack registry the SeaweedFS container's own orb.local domain; else
+  # the SeaweedFS published port on the registry host (which the cluster
+  # already reaches for image pulls). Override with --kube-s3-endpoint.
+  KUBE_S3_ENDPOINT="$KUBE_S3_ENDPOINT_ARG"
+  if [[ -z "$KUBE_S3_ENDPOINT" ]]; then
+    if [[ -n "$S3_URL_ARG" ]]; then
+      echo "--s3-url with the kubernetes DR scenario requires --kube-s3-endpoint (pod-visible endpoint)"
+      exit 1
+    fi
+    if [[ "$KUBE_REGISTRY_URL" == *".orb.local"* ]]; then
+      KUBE_S3_ENDPOINT="http://openrun-seaweedfs-test.orb.local:8333"
+    else
+      registry_host="${KUBE_REGISTRY_URL#http://}"
+      registry_host="${registry_host#https://}"
+      registry_host="${registry_host%%/*}"
+      registry_host="${registry_host%%:*}"
+      KUBE_S3_ENDPOINT="http://${registry_host}:${TEST_S3_ENDPOINT##*:}"
+    fi
+  fi
+  echo "Kubernetes pod-visible S3 endpoint: $KUBE_S3_ENDPOINT"
+
+  DR_KUBE_NS1="openrun-dr1-$$"
+  DR_KUBE_NS2="openrun-dr2-$$"
+  # The kubernetes manager deploys apps into "<namespace>-apps"
+  for ns in "$DR_KUBE_NS1" "$DR_KUBE_NS1-apps" "$DR_KUBE_NS2" "$DR_KUBE_NS2-apps"; do
+    kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+  done
+
+  # Unique replica prefix per run so a rerun never restores a previous run's data
+  DRK_PATH_PREFIX="drk-$(date +%s)-$$"
+  write_dr_k8s_config() { # $1 = kubernetes namespace
+    cat <<EOF > config_dr_k8s.toml
+[http]
+port = $SERVER_HTTP_PORT
+[https]
+port = $SERVER_HTTPS_PORT
+
+[security]
+admin_password_bcrypt = "\$2a\$10\$PMaPsOVMBfKuDG04RsqJbeKIOJjlYi1Ie1KQbPCZRQx38bqYfernm"
+
+[secret.env]
+
+[system]
+container_command="kubernetes"
+
+[kubernetes]
+namespace = "$1"
+use_node_port = true
+
+[registry]
+url="$KUBE_REGISTRY_URL"
+insecure = true
+
+[app_config]
+container.health_attempts_after_startup = 20
+container.health_timeout_secs = 1
+container.deploy_probe_period_secs = 1
+container.deploy_health_attempts = 30
+container.deploy_progress_deadline_secs = 20
+container.status_health_attempts = 3
+container.idle_shutdown_secs = 900
+container.status_check_interval_secs = 60
+
+[litestream.drtest]
+endpoint = "$TEST_S3_ENDPOINT"
+container_endpoint = "$KUBE_S3_ENDPOINT"
+bucket = "$TEST_S3_BUCKET"
+region = "us-east-1"
+path_prefix = "$DRK_PATH_PREFIX"
+access_key_id = "$TEST_S3_ACCESS_KEY"
+secret_access_key = "$TEST_S3_SECRET_KEY"
+force_path_style = true
+sync_interval = "200ms"
+snapshot_interval = "10m"
+
+[metadata]
+litestream_config = "drtest"
+EOF
+  }
+
+  echo "********Testing kubernetes disaster recovery (namespaces $DR_KUBE_NS1 -> $DR_KUBE_NS2)*********"
+  export HTTP_PORT=$SERVER_HTTP_PORT
+  export DR_KUBE_NS1 DR_KUBE_NS2
+  [[ -f openrun.toml ]] || : > openrun.toml
+
+  # Phase 1: fresh home, kubernetes server deploying into namespace 1
+  write_dr_k8s_config "$DR_KUBE_NS1"
+  DR_HOME1=$(mktemp -d)
+  start_dr_server "$DR_HOME1" config_dr_k8s.toml
+  DR_HOME="$DR_HOME1" commander test $VERBOSE test_dr_kubernetes.yaml
+  MATCHED_TESTS+=(test_dr_kubernetes.yaml)
+
+  # Backup the config, then destroy the node: hard-kill the server, delete
+  # the whole first namespace (deployment, pods with the sidecar, PVC with
+  # the app data) and the home directory with the metadata databases
+  cp config_dr_k8s.toml dr_config_backup.toml
+  kill -9 "$DR_SERVER_PID" 2>/dev/null || true
+  DR_SERVER_PID=""
+  sleep 1
+  kubectl delete namespace "$DR_KUBE_NS1" "$DR_KUBE_NS1-apps" --wait=false >/dev/null
+  rm -rf "$DR_HOME1"
+  DR_HOME1=""
+
+  # Phase 2: fresh home, the backed-up config pointed at namespace 2
+  DR_HOME2=$(mktemp -d)
+  sed "s/namespace = \"$DR_KUBE_NS1\"/namespace = \"$DR_KUBE_NS2\"/" dr_config_backup.toml > config_dr_k8s.toml
+  start_dr_server "$DR_HOME2" config_dr_k8s.toml
+  DR_HOME="$DR_HOME2" commander test $VERBOSE test_dr_kubernetes_verify.yaml
+  MATCHED_TESTS+=(test_dr_kubernetes_verify.yaml)
+
+  OPENRUN_HOME="$DR_HOME2" CL_CONFIG_FILE=config_dr_k8s.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+  DR_SERVER_PID=""
+  rm -rf "$DR_HOME2"
+  DR_HOME2=""
+  kubectl delete namespace "$DR_KUBE_NS2" "$DR_KUBE_NS2-apps" --wait=false >/dev/null
+  DR_KUBE_NS1=""
+  DR_KUBE_NS2=""
+  rm -f config_dr_k8s.toml dr_config_backup.toml
+  rm -rf sqlite_drk_tmp
+fi
 
 if [[ -n "$KUBE_REGISTRY_URL" ]] && contains_any "test_kubernetes.yaml"; then
   # test kubernetes container manager

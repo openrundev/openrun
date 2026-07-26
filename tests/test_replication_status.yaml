@@ -1,0 +1,59 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    HTTP_PORT: ${HTTP_PORT}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+
+# Runs after test_sqlite_litestream.yaml on the same server: the /ls_app
+# sqlite binding rows are still present, and metadata replication is enabled
+# via metadata.litestream_config.
+tests:
+  repl0010: # metadata database row reports healthy (in sync)
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="metadata" and .target=="metadata")][0].state'
+    stdout: "healthy"
+    config:
+      retries: 30
+      interval: 2s
+
+  repl0011: # audit database is replicated too (and the file cache is not)
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="metadata")] | map(.target) | sort | join(",")'
+    stdout: "audit,metadata"
+
+  repl0012: # metadata rows carry the config name
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="metadata")][0].litestream_config'
+    stdout: "s3test"
+
+  repl0020: # app rows exist for both environments
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app")] | map(.env) | unique | join(",")'
+    stdout: "prod,staged"
+
+  repl0021: # the staged environment reports a valid state (it replicates to
+            # its own location; exact state depends on the stage app
+            # lifecycle). The staged row lists the stage app entry only
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="staged" and ((.app_paths // []) | map(contains("/ls_app")) | any))][0].state' | grep -cE "healthy|idle|pending|sidecar_down"
+    stdout: "1"
+
+  repl0025: # each environment row lists only its own side's app entries
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod" and ((.app_paths // []) | index("/ls_app")))][0].app_paths | join(",")'
+    stdout: "/ls_app"
+
+  repl0026:
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="staged" and ((.app_paths // []) | map(contains("/ls_app")) | any))][0].app_paths | join(",")'
+    stdout: "stage."
+
+  repl0022: # prod row reports the replicated databases with sizes
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod" and ((.app_paths // []) | index("/ls_app")))][0].files | length'
+    stdout: "2"
+
+  repl0023: # replica txid is reported
+    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod" and ((.app_paths // []) | index("/ls_app")))][0].replica_txid > 0'
+    stdout: "true"
+
+  repl0024: # no credentials anywhere in the response
+    command: ../openrun replication status -f json | grep -c openrun_test_secret || true
+    stdout: "0"
+
+  repl0030: # table format renders
+    command: ../openrun replication status | grep -c "metadata"
+    exit-code: 0

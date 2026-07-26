@@ -282,6 +282,18 @@ func (a *App) ActiveContainerName() (container.ContainerName, bool) {
 	return a.activeContainerName, true
 }
 
+// LitestreamSidecarName returns the app's litestream replication sidecar
+// container name when one applies (docker/podman with a litestream-enabled
+// sqlite binding), so the stale container cleanup treats it as active.
+func (a *App) LitestreamSidecarName() (container.ContainerName, bool) {
+	a.initMutex.Lock()
+	defer a.initMutex.Unlock()
+	if a.containerHandler == nil {
+		return "", false
+	}
+	return a.containerHandler.LitestreamSidecarName()
+}
+
 func (a *App) updateActiveContainerNameLocked() {
 	a.activeContainerName = ""
 	if a.containerHandler == nil {

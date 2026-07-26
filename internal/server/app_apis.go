@@ -22,6 +22,7 @@ import (
 
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
@@ -1707,6 +1708,18 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	// bindings, and it runs a caller-selected commit with those credentials:
 	// each copied binding is authorized like any new attach (binding:use)
 	for _, bindingPath := range mainAppEntry.Metadata.Bindings {
+		binding, err := s.db.GetBinding(ctx, tx, bindingPath)
+		if err != nil {
+			return nil, fmt.Errorf("binding %s not found: %w", bindingPath, err)
+		}
+		// A sqlite binding cannot be shared with a preview: the database is a
+		// single-writer file, and with litestream the preview would replicate
+		// its own (empty) history into the staged replica location, corrupting
+		// it for the real staging app
+		if binding.ServiceType == bindings.SqliteServiceType {
+			return nil, fmt.Errorf("cannot create a preview of app %s: sqlite binding %s cannot be "+
+				"shared with a preview app", mainAppPath, bindingPath)
+		}
 		if err := s.enforceBindingSource(ctx, tx, bindingPath); err != nil {
 			return nil, err
 		}
