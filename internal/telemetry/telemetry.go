@@ -240,15 +240,17 @@ func WrapServerHandler(handler http.Handler, opt ServerHandlerOption) http.Handl
 			}
 			return true
 		}),
-		otelhttp.WithMetricAttributesFn(func(r *http.Request) []attribute.KeyValue {
-			return []attribute.KeyValue{attribute.String("openrun.route_class", routeClass(r))}
-		}),
 	}
 	if opt.Public {
 		// Do not let untrusted clients become the parent of our spans.
 		otelOpts = append(otelOpts, otelhttp.WithPropagators(emptyPropagator))
 	}
-	return otelhttp.NewHandler(handler, opt.Operation, otelOpts...)
+	labeledHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		labeler, _ := otelhttp.LabelerFromContext(r.Context())
+		labeler.Add(attribute.String("openrun.route_class", routeClass(r)))
+		handler.ServeHTTP(w, r)
+	})
+	return otelhttp.NewHandler(labeledHandler, opt.Operation, otelOpts...)
 }
 
 // WrapTransport wraps an outbound RoundTripper with otelhttp instrumentation,

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/openrundev/openrun/internal/types"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -244,6 +245,30 @@ func TestTraceOnlyPrefixesSkipAppTraffic(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServerHandlerAddsRouteClassMetricAttribute(t *testing.T) {
+	providers, err := Setup(context.Background(), &types.ServerConfig{
+		Telemetry: types.TelemetryConfig{Enabled: true, Traces: false, Metrics: false},
+	}, nil)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	defer providers.Shutdown(context.Background()) //nolint:errcheck
+
+	var attrs map[string]attribute.Value
+	handler := WrapServerHandler(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		labeler, ok := otelhttp.LabelerFromContext(r.Context())
+		if !ok {
+			t.Fatal("expected request context to contain an otelhttp labeler")
+		}
+		attrs = attrSet(labeler.Get())
+	}), ServerHandlerOption{Operation: "test"})
+
+	req := httptest.NewRequest(http.MethodGet, types.INTERNAL_URL_PREFIX+"/apps", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	assertAttrString(t, attrs, "openrun.route_class", types.INTERNAL_URL_PREFIX+"/*")
 }
 
 // TestShutdownResetsGlobals verifies F5: after Shutdown, callers that re-grab
