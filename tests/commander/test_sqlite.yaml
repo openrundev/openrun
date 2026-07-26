@@ -126,3 +126,11 @@ tests:
   sqlite0090:
     command: ../openrun app delete /sqlite_t_app && ../openrun app delete /sqlite_t_app2 && ../openrun app delete /sqlite_t_params
     exit-code: 0
+
+  sqlite0091:
+    command: ../openrun binding list -f json --source sqlite/cmdrmain | jq -r '.[].path' | while IFS= read -r path; do ../openrun binding delete "$path"; done
+    exit-code: 0
+
+  sqlite0092:
+    command: ../openrun service delete sqlite/cmdrmain && ../openrun service delete sqlite/cmdrsized
+    exit-code: 0
