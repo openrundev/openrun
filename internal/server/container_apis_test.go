@@ -188,7 +188,10 @@ esac
 		streamed = append(streamed, value.(string))
 		return true
 	})
-	if len(streamed) != 1 || !strings.Contains(streamed[0], "first log line\nsecond log line") {
+	// Pipe reads may coalesce both lines or deliver them separately. Each
+	// yielded chunk is newline-delimited by the response writer, so compare
+	// the reconstructed stream rather than depending on OS read boundaries.
+	if got := strings.Join(streamed, "\n"); got != "first log line\nsecond log line" {
 		t.Fatalf("streamed logs = %v", streamed)
 	}
 

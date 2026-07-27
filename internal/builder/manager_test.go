@@ -367,12 +367,23 @@ func TestManagerCreateSessionValidationAndFailureLifecycle(t *testing.T) {
 	}
 	waitForStatus(types.BuilderSessionError)
 
-	if err := manager.ResumeSession(ctx, session.Id, session.UserID); err != nil {
-		t.Fatalf("resume failed session: %v", err)
-	}
+	// Exercise duplicate-resume rejection while the session is definitely
+	// live. Using an immediate second ResumeSession call here is racy: this
+	// fixture's agent executable is intentionally missing, so the launch
+	// goroutine can fail and remove the live entry before the second call.
+	manager.mu.Lock()
+	manager.live[session.Id] = newLiveSession(session.Id, session.UserID)
+	manager.mu.Unlock()
 	if err := manager.ResumeSession(ctx, session.Id, session.UserID); err == nil ||
 		!strings.Contains(err.Error(), "already live") {
 		t.Fatalf("duplicate resume error = %v", err)
+	}
+	manager.mu.Lock()
+	delete(manager.live, session.Id)
+	manager.mu.Unlock()
+
+	if err := manager.ResumeSession(ctx, session.Id, session.UserID); err != nil {
+		t.Fatalf("resume failed session: %v", err)
 	}
 	waitForStatus(types.BuilderSessionError)
 
@@ -439,5 +450,68 @@ func TestManagerFileAndStatusErrorBranches(t *testing.T) {
 	}
 	if err := manager.CancelTurn("missing"); err == nil || !strings.Contains(err.Error(), "no running sandbox") {
 		t.Fatalf("missing cancel error = %v", err)
+	}
+}
+
+func TestTurnDonePostProcessingPrecedesReady(t *testing.T) {
+	manager, db, _ := newManagerTestStore(t)
+	ctx := context.Background()
+	session := &types.BuilderSession{
+		Id:     "bld_ses_turn_done_order",
+		UserID: "user",
+		Status: types.BuilderSessionRunning,
+	}
+	createManagerTestSession(t, db, session)
+
+	ls := newLiveSession(session.Id, session.UserID)
+	events, cancel := ls.subscribe()
+	defer cancel()
+	hookStarted := make(chan struct{})
+	releaseHook := make(chan struct{})
+	manager.OnTurnDone = func(id string) {
+		if id != session.Id {
+			t.Errorf("turn-done session = %q, want %q", id, session.Id)
+		}
+		close(hookStarted)
+		<-releaseHook
+	}
+
+	done := make(chan struct{})
+	go func() {
+		manager.finishSuccessfulTurn(ls, "end_turn")
+		close(done)
+	}()
+
+	select {
+	case <-hookStarted:
+	case <-time.After(time.Second):
+		t.Fatal("turn-done hook did not start")
+	}
+	persisted, err := manager.GetSession(ctx, session.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != types.BuilderSessionRunning {
+		t.Fatalf("status while turn-done hook is running = %q, want running", persisted.Status)
+	}
+
+	close(releaseHook)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("turn completion did not finish")
+	}
+	persisted, err = manager.GetSession(ctx, session.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != types.BuilderSessionReady {
+		t.Fatalf("status after turn-done hook = %q, want ready", persisted.Status)
+	}
+	if event := <-events; event.Kind != "status" || event.Status != string(types.BuilderSessionReady) {
+		t.Fatalf("first completion event = %#v, want ready status", event)
+	}
+	if event := <-events; event.Kind != "turn_done" || event.StopReason != "end_turn" {
+		t.Fatalf("second completion event = %#v, want turn_done", event)
 	}
 }

@@ -34,6 +34,8 @@ func NewLogger(config *LogConfig) *Logger {
 	level := strings.ToUpper(config.Level)
 	var logLevel zerolog.Level
 	switch level {
+	case "ERROR":
+		logLevel = zerolog.ErrorLevel
 	case "WARN":
 		logLevel = zerolog.WarnLevel
 	case "INFO":

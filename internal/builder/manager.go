@@ -36,8 +36,9 @@ type Manager struct {
 	db         *metadata.Metadata
 	evalSecret func(string) (string, error)
 
-	// OnTurnDone is called (on its own goroutine) after each completed
-	// prompt turn; the server uses it to create/refresh the preview app
+	// OnTurnDone is called from the per-turn goroutine after each completed
+	// prompt turn and before the session becomes ready; the server uses it
+	// to create/refresh the preview app
 	OnTurnDone func(sessionId string)
 
 	mu     sync.Mutex
@@ -693,12 +694,21 @@ func (m *Manager) runTurn(ls *liveSession, text string, claimed bool) {
 	if message = strings.TrimSpace(message); message != "" {
 		m.appendActivity(ls.id, ls.userID, "agent_message", message, metadata)
 	}
-	m.setStatus(ls, types.BuilderSessionReady)
-	ls.emit(Event{Kind: "turn_done", StopReason: string(response.StopReason)})
+	m.finishSuccessfulTurn(ls, string(response.StopReason))
+}
 
+// finishSuccessfulTurn completes server-side turn processing before exposing
+// the ready state. In particular, preview app creation runs here: publishing
+// is available as soon as the console observes "ready", so setting the status
+// first creates a race where an immediate publish sees no preview path yet.
+// runTurn already runs on a dedicated goroutine, so the hook does not block
+// message handling or the caller that started the turn.
+func (m *Manager) finishSuccessfulTurn(ls *liveSession, stopReason string) {
 	if m.OnTurnDone != nil {
-		go m.OnTurnDone(ls.id)
+		m.OnTurnDone(ls.id)
 	}
+	m.setStatus(ls, types.BuilderSessionReady)
+	ls.emit(Event{Kind: "turn_done", StopReason: stopReason})
 }
 
 // CancelTurn sends the ACP cancel notification for the in-flight turn
