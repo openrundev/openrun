@@ -214,11 +214,16 @@ wait_port_free() {
 # will listen on (http, https, forward auth) is currently free, so concurrent
 # invocations of this script (e.g. from different --home worktrees) or
 # unrelated processes on the host don't fight over the same TCP ports. The
-# block is regenerated (not just retried) on any hit.
+# block is regenerated (not just retried) on any hit. The range stays below
+# 32768: ports inside the OS ephemeral range (Linux 32768+, macOS 49152+) can
+# be grabbed as the local port of an unrelated OUTBOUND connection at any
+# moment — port_free cannot see those (a connect test only detects listeners),
+# and a later bind (e.g. docker-proxy publishing the forward-auth port) fails
+# with "address already in use".
 pick_port_base() {
   local base attempt
   for attempt in {1..30}; do
-    base=$(( 20000 + (RANDOM % 380) * 100 ))
+    base=$(( 20000 + (RANDOM % 127) * 100 ))
     if port_free "$base" && port_free "$((base + 1))" && port_free "$((base + 2))"; then
       echo "$base"
       return 0
