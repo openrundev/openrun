@@ -902,7 +902,7 @@ func setupMetadataLitestream(ctx context.Context, logger *types.Logger, config *
 			"db_connection uses %s", dbType)
 	}
 
-	mgr, err := system.NewLitestreamManager(logger, configName, lsConfig)
+	mgr, err := system.NewLitestreamManager(logger, config.Log.EffectiveLitestreamLevel(), configName, lsConfig)
 	if err != nil {
 		return nil, err
 	}

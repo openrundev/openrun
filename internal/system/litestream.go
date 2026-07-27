@@ -150,6 +150,7 @@ type LitestreamDBStatus struct {
 // replica), Start once all databases are open, Close on server shutdown.
 type LitestreamManager struct {
 	logger     *types.Logger
+	slog       *slog.Logger // litestream's own logs, at the litestream log level
 	configName string
 	config     types.LitestreamConfig
 
@@ -159,12 +160,17 @@ type LitestreamManager struct {
 	store *litestream.Store
 }
 
-func NewLitestreamManager(logger *types.Logger, configName string, config types.LitestreamConfig) (*LitestreamManager, error) {
+// NewLitestreamManager builds the manager. logLevel is the level for
+// litestream's own logs (logging.litestream_log_level, defaulted to
+// logging.level by the caller); they are written to the openrun log sinks
+// through the logger's slog bridge.
+func NewLitestreamManager(logger *types.Logger, logLevel string, configName string, config types.LitestreamConfig) (*LitestreamManager, error) {
 	if err := ValidateLitestreamConfig(configName, config); err != nil {
 		return nil, err
 	}
 	return &LitestreamManager{
 		logger:     logger,
+		slog:       logger.SlogAt(logLevel),
 		configName: configName,
 		config:     config,
 		names:      map[*litestream.DB]string{},
@@ -187,7 +193,7 @@ func (m *LitestreamManager) PrepareDB(ctx context.Context, name, dbFilePath stri
 	}
 
 	db := litestream.NewDB(dbFilePath)
-	db.Logger = slog.Default().With("litestream_db", name)
+	db.Logger = m.slog.With("litestream_db", name)
 	db.Replica = litestream.NewReplicaWithClient(db, client)
 	db.Replica.SyncInterval = litestreamDuration(m.config.SyncInterval, litestream.DefaultSyncInterval)
 	db.CheckpointInterval = litestreamDuration(m.config.CheckpointInterval, litestream.DefaultCheckpointInterval)
@@ -238,6 +244,13 @@ func (m *LitestreamManager) Start(ctx context.Context) error {
 	store := litestream.NewStore(m.dbs, litestream.DefaultCompactionLevels)
 	store.SnapshotInterval = litestreamDuration(m.config.SnapshotInterval, litestream.DefaultSnapshotInterval)
 	store.SnapshotRetention = litestreamDuration(m.config.Retention, litestream.DefaultSnapshotRetention)
+	// NewStore replaced each db's logger with one derived from slog.Default;
+	// re-point the store and dbs at the litestream-level bridge before Open
+	// starts the monitors
+	store.Logger = m.slog.With("litestream_system", "store")
+	for _, db := range m.dbs {
+		db.SetLogger(m.slog.With("litestream_db", m.names[db]))
+	}
 	if err := store.Open(ctx); err != nil {
 		return fmt.Errorf("error starting litestream replication: %w", err)
 	}

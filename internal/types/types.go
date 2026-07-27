@@ -649,6 +649,10 @@ type LogConfig struct {
 	Console       bool   `toml:"console"`
 	File          bool   `toml:"file"`
 	AccessLogging bool   `toml:"access_logging"`
+	// LitestreamLogLevel is the level for litestream replication logs, both
+	// the embedded metadata replication (written to the openrun logs) and
+	// the app sidecar containers (their own container logs). Empty = Level.
+	LitestreamLogLevel string `toml:"litestream_log_level"`
 }
 
 // TelemetryConfig is the OpenTelemetry configuration.

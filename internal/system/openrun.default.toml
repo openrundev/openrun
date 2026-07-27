@@ -102,6 +102,9 @@ max_size_mb = 50
 console = false
 file = true
 access_logging = true
+# Level for litestream replication logs (embedded metadata replication and
+# app sidecar containers); empty means use the main level above
+litestream_log_level = ""
 
 # OpenTelemetry related Config. Disabled by default.
 # When enabled, endpoint and headers are optional; the standard OTEL_EXPORTER_OTLP_*

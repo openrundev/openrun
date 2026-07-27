@@ -103,9 +103,14 @@ func (h *ContainerHandler) litestreamDBs() []litestreamDB {
 // LITESTREAM_ACCESS_KEY_ID / LITESTREAM_SECRET_ACCESS_KEY from the
 // environment. Every *.db file under each binding's directory is discovered
 // and replicated via the directory watcher; litestream's local bookkeeping
-// goes to a dot-directory that the *.db pattern ignores.
-func renderLitestreamConfig(dbs []litestreamDB) string {
+// goes to a dot-directory that the *.db pattern ignores. logLevel sets the
+// sidecar's own log level (logging.litestream_log_level, defaulting to the
+// server's logging.level).
+func renderLitestreamConfig(dbs []litestreamDB, logLevel string) string {
 	var b strings.Builder
+	if logLevel != "" {
+		fmt.Fprintf(&b, "logging:\n  level: %s\n", strings.ToLower(logLevel))
+	}
 	first := dbs[0].config
 	if first.SnapshotInterval != "" || first.Retention != "" {
 		b.WriteString("snapshot:\n")
@@ -190,7 +195,7 @@ func (h *ContainerHandler) litestreamSpec() *container.LitestreamAppSpec {
 		})
 	}
 
-	configYAML := renderLitestreamConfig(dbs)
+	configYAML := renderLitestreamConfig(dbs, h.serverConfig.Log.EffectiveLitestreamLevel())
 	configHash, err := getValuesHash(configYAML, image, env["LITESTREAM_ACCESS_KEY_ID"], env["LITESTREAM_SECRET_ACCESS_KEY"])
 	if err != nil {
 		// getValuesHash only fails on hash writer errors, which do not happen

@@ -52,7 +52,7 @@ func TestLitestreamManagerReplicateAndRestore(t *testing.T) {
 	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
 	lsConfig := types.LitestreamConfig{Type: LitestreamReplicaTypeFile, Path: replicaDir, SyncInterval: "100ms"}
 
-	mgr, err := NewLitestreamManager(logger, "test", lsConfig)
+	mgr, err := NewLitestreamManager(logger, "", "test", lsConfig)
 	if err != nil {
 		t.Fatalf("NewLitestreamManager: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestLitestreamManagerReplicateAndRestore(t *testing.T) {
 		os.Remove(dbPath + suffix) //nolint:errcheck
 	}
 
-	mgr2, err := NewLitestreamManager(logger, "test", lsConfig)
+	mgr2, err := NewLitestreamManager(logger, "", "test", lsConfig)
 	if err != nil {
 		t.Fatalf("NewLitestreamManager restore: %v", err)
 	}
