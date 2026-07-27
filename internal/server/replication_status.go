@@ -96,7 +96,7 @@ func (s *Server) filterReplicationEntries(ctx context.Context, entries []types.R
 	}
 	appByPath := map[string]types.AppInfo{}
 	for _, app := range apps {
-		appByPath[app.AppPathDomain.String()] = app
+		appByPath[app.String()] = app
 	}
 	canRead := func(pathStr string) bool {
 		app, ok := appByPath[pathStr]
