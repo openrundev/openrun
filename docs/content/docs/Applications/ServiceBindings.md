@@ -402,17 +402,19 @@ SQLite services support these config keys (all optional):
 | `path_prefix`       | Overrides the litestream config's replica key prefix for bindings of this service                                     |
 | `volume_size`       | Kubernetes PVC size (default `kubernetes.default_volume_size`, 10Gi). Ignored for Docker/Podman                       |
 
-SQLite bindings support one create-time binding config key:
+SQLite bindings support these create-time binding config keys:
 
-| Key    | Default | Description                                              |
-| :----- | :------ | :-------------------------------------------------------- |
-| `path` | `/data` | Absolute path where the volume is mounted in the container |
+| Key       | Default | Description                                                                                             |
+| :-------- | :------ | :------------------------------------------------------------------------------------------------------ |
+| `path`    | `/data` | Absolute path where the volume is mounted in the container                                               |
+| `pattern` | `*.db`  | File glob (relative to the binding directory) selecting which files are replicated when replication is enabled |
 
 ```shell
 openrun binding create --config path=/mydata sqlite/main /apps/notes-db
+openrun binding create --config "pattern=*.sqlite3" sqlite/main /apps/notes-db
 ```
 
-Apps can create additional `*.db` files under `SQLITE_DIR` (for example per-tenant databases); with replication enabled, every `*.db` file in the directory is replicated.
+Apps can create additional database files under `SQLITE_DIR` (for example per-tenant databases); with replication enabled, every file matching the binding's `pattern` (default `*.db`) in the directory is replicated. The default database file the binding's environment variables point at is `data.db`, so a custom `pattern` should either match `data.db` or the app should use its own file names.
 
 Differences from Postgres/MySQL bindings:
 

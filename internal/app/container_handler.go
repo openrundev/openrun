@@ -325,9 +325,13 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 
 	// The sqlite binding is backed by a persistent volume at its data
 	// directory, created and reused across redeploys like any other named
-	// volume
-	volumeInfo = append(volumeInfo, sqliteBindingVolumes(bindings,
-		strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_PROD))...)
+	// volume. An app-declared volume (Containerfile VOLUME or
+	// container.volumes) at the same target is replaced by the binding's
+	// volume - two mounts for one target are rejected by the container
+	// runtime, and the binding's named volume is the one litestream
+	// replication is wired to
+	volumeInfo = mergeSqliteVolumes(volumeInfo, sqliteBindingVolumes(bindings,
+		strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_PROD)))
 
 	if devSettings != nil {
 		// Bind mount the app source at the dev dir; the image's copy of the
@@ -2023,6 +2027,28 @@ func (h *ContainerHandler) getBindingEnv() (map[string]string, error) {
 // database (and replicate it under the wrong replica prefix).
 func sqliteVolumeKey(bindingId string) string {
 	return "sqlite-" + bindingId
+}
+
+// mergeSqliteVolumes appends the sqlite binding volumes to the app's volume
+// list, dropping any app-declared volume whose target path collides with a
+// binding's data directory: the container runtime rejects duplicate mount
+// targets, and the binding's named volume must win so the data lands on the
+// volume litestream replication is configured for.
+func mergeSqliteVolumes(volumeInfo, sqliteVols []*container.VolumeInfo) []*container.VolumeInfo {
+	if len(sqliteVols) == 0 {
+		return volumeInfo
+	}
+	sqliteTargets := make(map[string]bool, len(sqliteVols))
+	for _, vol := range sqliteVols {
+		sqliteTargets[path.Clean(vol.TargetPath)] = true
+	}
+	kept := volumeInfo[:0]
+	for _, vol := range volumeInfo {
+		if !sqliteTargets[path.Clean(vol.TargetPath)] {
+			kept = append(kept, vol)
+		}
+	}
+	return append(kept, sqliteVols...)
 }
 
 // sqliteBindingVolumes synthesizes the persistent volume mount backing the

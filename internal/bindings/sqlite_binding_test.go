@@ -53,6 +53,22 @@ func TestSqliteBindingDir(t *testing.T) {
 	}
 }
 
+func TestSqliteBindingPattern(t *testing.T) {
+	t.Parallel()
+
+	if p, err := SqliteBindingPattern(nil); err != nil || p != SqliteDefaultPattern {
+		t.Fatalf("default pattern = %q, %v", p, err)
+	}
+	if p, err := SqliteBindingPattern(map[string]string{"pattern": "*.sqlite3"}); err != nil || p != "*.sqlite3" {
+		t.Fatalf("custom pattern = %q, %v", p, err)
+	}
+	for _, bad := range []string{"/abs/*.db", "[unclosed"} {
+		if _, err := SqliteBindingPattern(map[string]string{"pattern": bad}); err == nil {
+			t.Fatalf("pattern %q should be rejected", bad)
+		}
+	}
+}
+
 func TestSqliteGetAccountEnv(t *testing.T) {
 	t.Parallel()
 

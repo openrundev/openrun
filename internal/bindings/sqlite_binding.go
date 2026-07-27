@@ -27,9 +27,13 @@ const (
 	// overridable per binding with the "path" binding config key.
 	SqliteDefaultDir = "/data"
 	// SqliteDBFile is the default database file inside the binding directory.
-	// With litestream enabled every *.db file in the directory is replicated,
-	// this is just the conventional main database name.
+	// With litestream enabled every file matching the replication pattern
+	// (default *.db, overridable with the "pattern" binding config key) is
+	// replicated; this is just the conventional main database name.
 	SqliteDBFile = "data.db"
+	// SqliteDefaultPattern is the default litestream replication file pattern
+	// for the binding directory.
+	SqliteDefaultPattern = "*.db"
 )
 
 // Sqlite service config keys
@@ -43,6 +47,11 @@ const (
 // directory, e.g. binding create --config path=/mydata sqlite /apps/b1 or an
 // auto binding source "sqlite;path=/mydata".
 const SqliteBindingConfigPath = "path"
+
+// SqliteBindingConfigPattern is the binding config key overriding the
+// litestream replication file pattern (default SqliteDefaultPattern), e.g.
+// binding create --config pattern=*.sqlite3 sqlite /apps/b1.
+const SqliteBindingConfigPattern = "pattern"
 
 type SqliteServiceBinding struct {
 	*types.Logger
@@ -111,6 +120,24 @@ func SqliteBindingDir(bindingConfig map[string]string) (string, error) {
 	return dir, nil
 }
 
+// SqliteBindingPattern resolves the litestream replication file pattern for a
+// sqlite binding from its binding config: the "pattern" key when set
+// (validated as a file glob relative to the binding directory),
+// SqliteDefaultPattern otherwise.
+func SqliteBindingPattern(bindingConfig map[string]string) (string, error) {
+	pattern := bindingConfig[SqliteBindingConfigPattern]
+	if pattern == "" {
+		return SqliteDefaultPattern, nil
+	}
+	if strings.HasPrefix(pattern, "/") {
+		return "", fmt.Errorf("invalid sqlite binding pattern %q: must be relative to the binding directory", pattern)
+	}
+	if _, err := path.Match(pattern, "probe"); err != nil {
+		return "", fmt.Errorf("invalid sqlite binding pattern %q: %w", pattern, err)
+	}
+	return pattern, nil
+}
+
 // SqliteAccountForDir returns the account map for a sqlite binding mounted at
 // dir: the directory the volume is mounted at, the default database path in
 // it and the file url. The values are deterministic; the volume itself is
@@ -131,6 +158,11 @@ func (b *SqliteServiceBinding) GenerateAccount(ctx context.Context, bindingId, b
 	}
 	dir, err := SqliteBindingDir(bindingMetadata.Config)
 	if err != nil {
+		return nil, nil, err
+	}
+	// Validate the replication pattern at create time; it is read from the
+	// binding config by the container layer when rendering the sidecar config
+	if _, err := SqliteBindingPattern(bindingMetadata.Config); err != nil {
 		return nil, nil, err
 	}
 	// No external side effects: the account is computed, the backing volume is

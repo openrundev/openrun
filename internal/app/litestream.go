@@ -36,6 +36,7 @@ type litestreamDB struct {
 	// replica listings keep the original endpoint
 	containerConfig types.LitestreamConfig
 	targetDir       string // the binding's volume mount dir
+	pattern         string // replication file pattern within targetDir
 	replicaPrefix   string // key prefix for this binding's databases
 }
 
@@ -85,12 +86,25 @@ func (h *ContainerHandler) litestreamDBs() []litestreamDB {
 			containerConfig.Endpoint = container.RewriteLocalhostEndpoint(lsConfig.Endpoint,
 				h.serverConfig.System.ContainerCommand)
 		}
+		bindingConfig := binding.StagedMetadata.Config
+		if useProdAccount {
+			bindingConfig = binding.Metadata.Config
+		}
+		pattern, err := bindings.SqliteBindingPattern(bindingConfig)
+		if err != nil {
+			// The pattern is validated at binding create; a bad stored value
+			// falls back to the default instead of dropping replication
+			h.Warn().Err(err).Msgf("sqlite binding %s has an invalid replication pattern, using %q for app %s",
+				binding.Path, bindings.SqliteDefaultPattern, h.app.Id)
+			pattern = bindings.SqliteDefaultPattern
+		}
 		ret = append(ret, litestreamDB{
 			binding:         binding,
 			config:          lsConfig,
 			configName:      configName,
 			containerConfig: containerConfig,
 			targetDir:       sqliteBindingAccountDir(binding, useProdAccount),
+			pattern:         pattern,
 			replicaPrefix: system.LitestreamBindingPrefix(lsConfig,
 				serviceConfig[bindings.SqliteConfigPathPrefix], binding.Id, env),
 		})
@@ -101,9 +115,10 @@ func (h *ContainerHandler) litestreamDBs() []litestreamDB {
 // renderLitestreamConfig renders the sidecar's litestream.yml for the app's
 // replicated bindings. Credentials are never in the file: litestream reads
 // LITESTREAM_ACCESS_KEY_ID / LITESTREAM_SECRET_ACCESS_KEY from the
-// environment. Every *.db file under each binding's directory is discovered
+// environment. Every file matching the binding's pattern (default *.db,
+// "pattern" binding config key) under each binding's directory is discovered
 // and replicated via the directory watcher; litestream's local bookkeeping
-// goes to a dot-directory that the *.db pattern ignores. logLevel sets the
+// goes to a dot-directory that the default pattern ignores. logLevel sets the
 // sidecar's own log level (logging.litestream_log_level, defaulting to the
 // server's logging.level).
 func renderLitestreamConfig(dbs []litestreamDB, logLevel string) string {
@@ -124,7 +139,7 @@ func renderLitestreamConfig(dbs []litestreamDB, logLevel string) string {
 	b.WriteString("dbs:\n")
 	for _, db := range dbs {
 		fmt.Fprintf(&b, "  - dir: %s\n", db.targetDir)
-		b.WriteString("    pattern: \"*.db\"\n")
+		fmt.Fprintf(&b, "    pattern: %q\n", db.pattern)
 		b.WriteString("    watch: true\n")
 		b.WriteString("    recursive: true\n")
 		fmt.Fprintf(&b, "    meta-dir: %s/.litestream\n", db.targetDir)

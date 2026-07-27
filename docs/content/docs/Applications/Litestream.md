@@ -69,7 +69,7 @@ openrun service create sqlite/main --config litestream_config=mainbackup
 openrun app create --bind sqlite/main --approve github.com/example/notes-app /notes
 ```
 
-Every `*.db` file the app creates in its binding directory is replicated, including files created while the app is running (Litestream's directory watcher discovers them within seconds).
+Every `*.db` file the app creates in its binding directory is replicated, including files created while the app is running (Litestream's directory watcher discovers them within seconds). The file selection can be changed per binding with the `pattern` [binding config key]({{< ref "/docs/applications/servicebindings/#sqlite-config-and-behavior" >}}), e.g. `--config "pattern=*.sqlite3"`.
 
 How it runs:
 
