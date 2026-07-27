@@ -126,9 +126,13 @@ tests:
     command: ../openrun app create --spec python-flask --conf container.idle_shutdown_secs=5 --bind sqlite/lsmain ./sqlite_ls_tmp /ls_idle
     exit-code: 0
 
-  lsapp0081:
+  lsapp0081: # coverage overhead can let the 5s idle timer fire before this
+             # first write; retrying the idempotent POST restarts the app
     command: curl -sS -X POST -d value=idle-value localhost:${HTTP_PORT}/ls_idle/value
     stdout: "idle-value"
+    config:
+      retries: 10
+      interval: 2s
 
   lsapp0082: # replication healthy for the new app before the idle stop
     command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod" and ((.app_paths // []) | index("/ls_idle")))][0].state'

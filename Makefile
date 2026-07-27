@@ -104,15 +104,21 @@ int: ## Run integration tests
 testui: ## Run the console app integration tests (ui/console_tests, own module)
 > cd ui/console_tests && go test -count=1 ./...
 
-docs-screenshots: ## Copy the console walkthrough screenshots (light/dark pairs) into the public docs; generate first with: cd ui/console_tests && make todoflow
+docs-screenshots: ## Copy the console walkthrough screenshots (light/dark pairs) and walkthrough.html pages into the public docs; generate first with: cd ui/console_tests && make todoflow rbacflow
 > @if ! ls ui/console_tests/browser/walkthrough/*.png > /dev/null 2>&1; then \
->    echo "Error: no screenshots found, generate them with: cd ui/console_tests && make todoflow"; \
+>    echo "Error: no todo flow screenshots found, generate them with: cd ui/console_tests && make todoflow"; \
 >    exit 1; \
 > fi
-> mkdir -p docs/static/images/console
-> rm -f docs/static/images/console/*.png
-> cp ui/console_tests/browser/walkthrough/*.png docs/static/images/console/
-> @echo "Copied `ls docs/static/images/console/*.png | wc -l | tr -d ' '` screenshots to docs/static/images/console/"
+> @if ! ls ui/console_tests/browser/rbac_walkthrough/*.png > /dev/null 2>&1; then \
+>    echo "Error: no rbac flow screenshots found, generate them with: cd ui/console_tests && make rbacflow"; \
+>    exit 1; \
+> fi
+> mkdir -p docs/static/images/console docs/static/images/console_rbac
+> rm -f docs/static/images/console/*.png docs/static/images/console/walkthrough.html
+> rm -f docs/static/images/console_rbac/*.png docs/static/images/console_rbac/walkthrough.html
+> cp ui/console_tests/browser/walkthrough/*.png ui/console_tests/browser/walkthrough/walkthrough.html docs/static/images/console/
+> cp ui/console_tests/browser/rbac_walkthrough/*.png ui/console_tests/browser/rbac_walkthrough/walkthrough.html docs/static/images/console_rbac/
+> @echo "Copied `ls docs/static/images/console/*.png | wc -l | tr -d ' '` todo + `ls docs/static/images/console_rbac/*.png | wc -l | tr -d ' '` rbac screenshots and both walkthrough.html pages into docs/static/images/"
 
 int_single: ## Run one integration test; args: <test-file.yaml>
 > ./tests/run_cli_tests.sh $(RUN_CLI_TESTS_FLAGS) ${INPUT}

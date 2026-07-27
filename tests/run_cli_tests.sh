@@ -81,11 +81,21 @@ KUBE_REGISTRY_URL=""
 KUBE_TEST_NAMESPACE=""
 KUBE_S3_ENDPOINT_ARG=""
 SEAWEEDFS_TEST_CONTAINER_ID=""
+FORWARD_AUTH_CONTAINER_ID=""
+FORWARD_AUTH_CONTAINER_COMMAND=""
+POSTGRES_TEST_CONTAINER_ID=""
+MYSQL_TEST_CONTAINER_ID=""
+SERVER_PID=""
 DR_SERVER_PID=""
 DR_HOME1=""
 DR_HOME2=""
 DR_KUBE_NS1=""
 DR_KUBE_NS2=""
+CLEANUP_DONE=""
+# Directly-started helper containers get a per-invocation label. App and
+# Litestream containers already carry dev.openrun.server.home.
+TEST_SESSION_ID="openrun-cli-tests-$$-$RANDOM"
+SEAWEEDFS_TEST_CONTAINER_NAME="$TEST_SESSION_ID-seaweedfs"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -112,6 +122,7 @@ while [[ $# -gt 0 ]]; do
 done
 TESTS=("$@")
 MATCHED_TESTS=()
+TEST_CONTAINER_RUNTIMES="$CONTAINER_COMMANDS"
 
 # is_selected NAME: true if no test-file args were given (run everything) or
 # NAME is one of them.
@@ -185,10 +196,9 @@ cd tests
 rm -rf metadata
 
 export OPENRUN_HOME=.
+TEST_SERVER_HOMES=("$(pwd -P)")
 unset CL_CONFIG_FILE
 unset SSH_AUTH_SOCK
-
-trap "error_handler" ERR
 
 # port_free checks whether something is already listening on 127.0.0.1:PORT.
 port_free() {
@@ -279,6 +289,7 @@ wait_for_http() {
 # other phases which use the tests directory)
 start_dr_server() {
   wait_port_free "$SERVER_HTTP_PORT" && wait_port_free "$SERVER_HTTPS_PORT"
+  TEST_SERVER_HOMES+=("$1")
   OPENRUN_HOME="$1" CL_CONFIG_FILE="$2" GOCOVERDIR=$GOCOVERDIR ../openrun server start &
   DR_SERVER_PID=$!
   wait_for_http "$SERVER_HTTP_PORT"
@@ -328,7 +339,9 @@ force_rm() {
   done
   [[ ${#survivors[@]} -eq 0 ]] && return 0
   if command -v "$CONTAINER_TOOL" >/dev/null 2>&1; then
-    $CONTAINER_TOOL run --rm -v "$PWD":/w -w /w busybox rm -rf "${survivors[@]}" >/dev/null 2>&1 || true
+    $CONTAINER_TOOL run --rm \
+      --label "dev.openrun.test.session=$TEST_SESSION_ID" \
+      -v "$PWD":/w -w /w busybox rm -rf "${survivors[@]}" >/dev/null 2>&1 || true
   fi
   for p in "${survivors[@]}"; do
     [[ -e "$p" ]] && echo "Warning: cleanup could not remove: $p"
@@ -336,7 +349,58 @@ force_rm() {
   return 0
 }
 
+# remove_session_containers removes helper containers carrying this
+# invocation's unique label and OpenRun-managed app/sidecar containers owned
+# by any OPENRUN_HOME used during the invocation. Container engines are
+# deduplicated because --container-tool and --container-commands commonly both
+# contain docker.
+remove_session_containers() {
+  local runtime candidate home id seen
+  local runtimes=()
+  for candidate in "$CONTAINER_TOOL" $TEST_CONTAINER_RUNTIMES "$FORWARD_AUTH_CONTAINER_COMMAND"; do
+    [[ -z "$candidate" || "$candidate" == "disable" ]] && continue
+    seen=""
+    for runtime in "${runtimes[@]}"; do
+      [[ "$runtime" == "$candidate" ]] && seen=1
+    done
+    [[ -z "$seen" ]] && runtimes+=("$candidate")
+  done
+
+  for runtime in "${runtimes[@]}"; do
+    command -v "$runtime" >/dev/null 2>&1 || continue
+
+    while IFS= read -r id; do
+      [[ -n "$id" ]] && "$runtime" rm -f "$id" >/dev/null 2>&1 || true
+    done < <("$runtime" ps -aq \
+      --filter "label=dev.openrun.test.session=$TEST_SESSION_ID" 2>/dev/null || true)
+
+    for home in "${TEST_SERVER_HOMES[@]}"; do
+      while IFS= read -r id; do
+        [[ -n "$id" ]] && "$runtime" rm -f "$id" >/dev/null 2>&1 || true
+      done < <("$runtime" ps -aq \
+        --filter "label=dev.openrun.server.home=$home" 2>/dev/null || true)
+    done
+  done
+}
+
 cleanup() {
+  [[ -n "$CLEANUP_DONE" ]] && return 0
+  CLEANUP_DONE=1
+  set +e
+
+  # Stop only server processes started by this invocation. Stopping servers
+  # before containers prevents health/status loops from racing cleanup.
+  if [[ -n "$SERVER_PID" ]]; then
+    kill -9 "$SERVER_PID" >/dev/null 2>&1 || true
+    SERVER_PID=""
+  fi
+  if [[ -n "$DR_SERVER_PID" ]]; then
+    kill -9 "$DR_SERVER_PID" >/dev/null 2>&1 || true
+    DR_SERVER_PID=""
+  fi
+
+  remove_session_containers
+
   force_rm metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp sqlite_tmp verifyapp_tmp disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
   force_rm config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp todo_flaskapp todo_rbac.json streamlitdev stdev_started.txt
 
@@ -357,10 +421,6 @@ cleanup() {
   force_rm config_litestream.toml seaweed_s3.json sqlite_ls_tmp
 
   # Disaster recovery scenario leftovers
-  if [[ -n "$DR_SERVER_PID" ]]; then
-    kill -9 "$DR_SERVER_PID" >/dev/null 2>&1 || true
-    DR_SERVER_PID=""
-  fi
   [[ -n "$DR_HOME1" ]] && rm -rf "$DR_HOME1"
   [[ -n "$DR_HOME2" ]] && rm -rf "$DR_HOME2"
   if [[ -n "$DR_KUBE_NS1" || -n "$DR_KUBE_NS2" ]]; then
@@ -384,15 +444,20 @@ cleanup() {
     kubectl delete namespace "$KUBE_TEST_NAMESPACE" "${KUBE_TEST_NAMESPACE}-apps" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   fi
 
-  set +e
-  server_pids=$(ps -ax | grep "openrun server start" | grep -v grep | awk '{print $1}')
-  if [[ -n "$server_pids" ]]; then
-    kill -9 $server_pids
-  fi
+  # force_rm can use a short-lived labeled helper container for root-owned
+  # files, so finish with one last session sweep as well.
+  remove_session_containers
 
   # Github Actions does not seem to allow kill, the last echo is to allow the exit code to be zero
   echo "Done with cleanup"
 }
+
+# ERR covers command failures; EXIT also runs cleanup for normal completion and
+# for INT/TERM exits (for example a local Ctrl-C or CI timeout).
+trap error_handler ERR
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 start_forward_auth_testcontainer() {
   local container_command="$1"
@@ -410,6 +475,7 @@ start_forward_auth_testcontainer() {
   FORWARD_AUTH_CONTAINER_ID=$($container_command run \
     --detach \
     --rm \
+    --label "dev.openrun.test.session=$TEST_SESSION_ID" \
     --publish 127.0.0.1:$port:5000 \
     --env EXPECTED_FORWARD_HOST="$expected_forward_host" \
     "$image_name")
@@ -445,6 +511,7 @@ start_postgres_testcontainer() {
   POSTGRES_TEST_CONTAINER_ID=$($CONTAINER_TOOL run \
     --detach \
     --rm \
+    --label "dev.openrun.test.session=$TEST_SESSION_ID" \
     --publish "${publish_addr}::5432" \
     --env POSTGRES_DB=openrun_cli \
     --env POSTGRES_USER=postgres \
@@ -529,14 +596,15 @@ EOF
 
   echo "Starting SeaweedFS test container with $CONTAINER_TOOL"
   # Publish on all interfaces: the litestream sidecar containers reach the
-  # endpoint through the host gateway alias (host.docker.internal). The fixed
+  # endpoint through the host gateway alias (host.docker.internal). The
   # container name gives the kubernetes DR scenario a pod-resolvable OrbStack
-  # domain (openrun-seaweedfs-test.orb.local:8333)
-  $CONTAINER_TOOL rm -f openrun-seaweedfs-test >/dev/null 2>&1 || true
+  # domain. It is unique so concurrent test invocations cannot replace each
+  # other's SeaweedFS container.
   SEAWEEDFS_TEST_CONTAINER_ID=$($CONTAINER_TOOL run \
     --detach \
     --rm \
-    --name openrun-seaweedfs-test \
+    --name "$SEAWEEDFS_TEST_CONTAINER_NAME" \
+    --label "dev.openrun.test.session=$TEST_SESSION_ID" \
     --publish "0.0.0.0::8333" \
     --volume "$PWD/seaweed_s3.json":/etc/seaweedfs/s3.json:ro \
     chrislusf/seaweedfs \
@@ -603,6 +671,7 @@ start_mysql_testcontainer() {
   MYSQL_TEST_CONTAINER_ID=$($CONTAINER_TOOL run \
     --detach \
     --rm \
+    --label "dev.openrun.test.session=$TEST_SESSION_ID" \
     --publish "${publish_addr}::3306" \
     --env MYSQL_DATABASE=openrun_cli \
     --env MYSQL_ROOT_PASSWORD=mysql \
@@ -671,6 +740,7 @@ EOF
 
   wait_port_free "$SERVER_HTTP_PORT" && wait_port_free "$SERVER_HTTPS_PORT"
   CL_CONFIG_FILE=config_basic_test.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
+  SERVER_PID=$!
   wait_for_http "$BASIC_HTTP_PORT"
 
   cat <<EOF > config_basic_client_np.toml
@@ -699,6 +769,7 @@ EOF
   commander test $VERBOSE test_basics.yaml
   MATCHED_TESTS+=(test_basics.yaml)
   CL_CONFIG_FILE=config_basic_test.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+  SERVER_PID=""
   rm -rf metadata run/openrun.sock config_basic_*.toml
 fi
 
@@ -713,9 +784,11 @@ EOF
   # Test server prints a password when started without config
   wait_port_free "$SERVER_HTTP_PORT" && wait_port_free "$SERVER_HTTPS_PORT"
   CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start > server.stdout &
+  SERVER_PID=$!
   wait_for_http "$SERVER_HTTP_PORT"
   grep "Admin password" server.stdout
   CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+  SERVER_PID=""
   rm -f run/openrun.sock config_np.toml
 fi
 
@@ -831,6 +904,7 @@ EOF
   export c1c2_c3=xyz
   wait_port_free "$SERVER_HTTP_PORT" && wait_port_free "$SERVER_HTTPS_PORT"
   GOCOVERDIR=$GOCOVERDIR ../openrun server start &
+  SERVER_PID=$!
   wait_for_http "$MAIN_HTTP_PORT"
   wait_for_socket
 
@@ -886,6 +960,7 @@ EOF
   fi
 
   GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+  SERVER_PID=""
 fi
 
 # Test containerized apps
@@ -946,6 +1021,7 @@ EOF
     rm -rf metadata run/openrun.sock
     wait_port_free "$http_port" && wait_port_free "$https_port"
     CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
+    SERVER_PID=$!
     wait_for_http $http_port
     wait_for_socket
 
@@ -977,6 +1053,7 @@ EOF
         MATCHED_TESTS+=(test_todo_flow.yaml)
     fi
     CL_CONFIG_FILE=config_container.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+    SERVER_PID=""
     stop_forward_auth_testcontainer
 done
 
@@ -1029,6 +1106,7 @@ EOF
     rm -f run/openrun.sock
     wait_port_free "$ls_http_port" && wait_port_free "$ls_https_port"
     CL_CONFIG_FILE=config_litestream.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
+    SERVER_PID=$!
     wait_for_http "$ls_http_port"
     wait_for_socket
   }
@@ -1056,6 +1134,7 @@ EOF
     # wipe the metadata directory, restart and verify the state was restored
     # from the S3 replica
     CL_CONFIG_FILE=config_litestream.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+    SERVER_PID=""
     rm -rf metadata
     start_litestream_test_server
     commander test $VERBOSE test_metadata_litestream_verify.yaml
@@ -1063,6 +1142,7 @@ EOF
   fi
 
   CL_CONFIG_FILE=config_litestream.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+  SERVER_PID=""
   rm -rf metadata run/openrun.sock
 fi
 
@@ -1195,7 +1275,7 @@ if [[ -n "$ENABLE_SEAWEEDFS" && -n "$KUBE_REGISTRY_URL" ]] && is_explicitly_sele
       exit 1
     fi
     if [[ "$KUBE_REGISTRY_URL" == *".orb.local"* ]]; then
-      KUBE_S3_ENDPOINT="http://openrun-seaweedfs-test.orb.local:8333"
+      KUBE_S3_ENDPOINT="http://${SEAWEEDFS_TEST_CONTAINER_NAME}.orb.local:8333"
     else
       registry_host="${KUBE_REGISTRY_URL#http://}"
       registry_host="${registry_host#https://}"
@@ -1380,6 +1460,7 @@ EOF
     [[ -f openrun.toml ]] || : > openrun.toml
     wait_port_free "$SERVER_HTTP_PORT" && wait_port_free "$SERVER_HTTPS_PORT"
     CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR ../openrun server start &
+    SERVER_PID=$!
     wait_for_http "$SERVER_HTTP_PORT"
     wait_for_socket
 
@@ -1388,6 +1469,7 @@ EOF
     commander test $VERBOSE test_kubernetes.yaml
     MATCHED_TESTS+=(test_kubernetes.yaml)
     CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+    SERVER_PID=""
 fi
 
 cleanup
