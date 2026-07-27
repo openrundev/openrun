@@ -55,6 +55,7 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.GetContainerLogsStream, app.READ, "container_logs_stream"),
 		app.CreatePluginApiName(c.GetPermissions, app.READ, "get_permissions"),
 		app.CreatePluginApiName(c.SystemPluginsAllowed, app.READ, "system_plugins_allowed"),
+		app.CreatePluginApiName(c.ServerInfo, app.READ, "server_info"),
 		app.CreatePluginApiName(c.ListRBACPermissions, app.READ, "list_rbac_permissions"),
 		app.CreatePluginApiName(c.ListAuths, app.READ, "list_auths"),
 		app.CreatePluginApiName(c.ListGitAuths, app.READ, "list_git_auths"),
@@ -1127,6 +1128,47 @@ func (c *openrunPlugin) SystemPluginsAllowed(thread *starlark.Thread, builtin *s
 	return starlark.Bool(app.SystemPluginsAllowed(c.server.Config(), userId)), nil
 }
 
+// ServerInfo reports identity and runtime facts about this server: version,
+// commit, uptime, database types, container runtime, leader flag and the
+// metadata replication state. Everything is read from memory (the metadata
+// replication entries come from the in-process litestream manager), so the
+// API is safe to call on every page render. Per-binding replication state
+// needs the full replication_status API
+func (c *openrunPlugin) ServerInfo(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("server_info", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	if err := c.server.enforceGlobalPerm(ctx, types.PermissionConfigBasicRead, ""); err != nil {
+		return nil, err
+	}
+
+	s := c.server
+	runtime := s.containerRuntime()
+	if runtime != "" && runtime != types.CONTAINER_KUBERNETES {
+		// FindExec resolution can return a full executable path
+		runtime = path.Base(runtime)
+	}
+	mdRepl := s.metadataReplicationStatus(ctx)
+	if mdRepl == nil {
+		mdRepl = []types.ReplicationStatusEntry{}
+	}
+	info := types.ServerInfo{
+		Version:             types.GetVersion(),
+		Commit:              types.GetCommit(),
+		StartTime:           s.startTime,
+		UptimeSecs:          int64(time.Since(s.startTime).Seconds()),
+		MetadataDBType:      string(s.db.DBType()),
+		AuditDBType:         string(s.auditDbType),
+		ContainerCommand:    strings.TrimSpace(s.Config().System.ContainerCommand),
+		ContainerRuntime:    runtime,
+		IsLeader:            s.db.IsLeader(),
+		MetadataReplication: mdRepl,
+	}
+	return starlark_type.ConvertToStarlark(&info)
+}
+
 // ListAuths returns the auth types an app can be configured with: the
 // built-ins (default/system/none) plus the oauth, saml and client cert auth
 // entries configured on this server
@@ -1177,6 +1219,9 @@ func (c *openrunPlugin) ReplicationStatus(thread *starlark.Thread, builtin *star
 	}
 
 	ctx := system.GetRequestContext(thread)
+	// Visibility is filtered per caller inside ReplicationStatus: metadata
+	// rows need config:basic_read, app rows are trimmed to the apps the
+	// caller holds app:read on
 	entries, err := c.server.ReplicationStatus(ctx, false)
 	if err != nil {
 		return nil, err

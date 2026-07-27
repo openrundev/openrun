@@ -54,7 +54,7 @@ func (s *Server) ReplicationStatus(ctx context.Context, refresh bool) ([]types.R
 	if !refresh && time.Since(s.replicationStatusAt) < replicationStatusCacheTTL && s.replicationStatusCache != nil {
 		cached := s.replicationStatusCache
 		s.replicationStatusMu.Unlock()
-		return cached, nil
+		return s.filterReplicationEntries(ctx, cached)
 	}
 	s.replicationStatusMu.Unlock()
 
@@ -71,7 +71,65 @@ func (s *Server) ReplicationStatus(ctx context.Context, refresh bool) ([]types.R
 	s.replicationStatusCache = entries
 	s.replicationStatusAt = time.Now()
 	s.replicationStatusMu.Unlock()
-	return entries, nil
+	return s.filterReplicationEntries(ctx, entries)
+}
+
+// filterReplicationEntries applies the caller's visibility to the (shared,
+// cached) replication listing: metadata rows need config:basic_read, app
+// rows are trimmed to the apps the caller holds app:read on (same rule as
+// list_apps - stage/preview grants check the main app path, owners pass
+// through the owner rule). App rows whose using-app list filters to empty
+// are dropped. Entries are copied before trimming; the cache is shared
+// across callers
+func (s *Server) filterReplicationEntries(ctx context.Context, entries []types.ReplicationStatusEntry) ([]types.ReplicationStatusEntry, error) {
+	if !s.rbacManager.APIEnforced(ctx) {
+		return entries, nil
+	}
+	metadataOK, err := s.rbacManager.AuthorizeGlobalAPI(ctx, types.PermissionConfigBasicRead, "")
+	if err != nil {
+		return nil, err
+	}
+
+	apps, err := s.apps.GetAllAppsInfo()
+	if err != nil {
+		return nil, err
+	}
+	appByPath := map[string]types.AppInfo{}
+	for _, app := range apps {
+		appByPath[app.AppPathDomain.String()] = app
+	}
+	canRead := func(pathStr string) bool {
+		app, ok := appByPath[pathStr]
+		if !ok {
+			return false
+		}
+		grantPathDomain := mainAppPathDomain(app.AppPathDomain, app.MainApp, app.LinkedAppPath)
+		authorized, err := s.rbacManager.AuthorizeAPI(ctx, types.PermissionRead, grantPathDomain, app.UserID)
+		return err == nil && authorized
+	}
+
+	filtered := []types.ReplicationStatusEntry{}
+	for _, entry := range entries {
+		if entry.Kind == "metadata" {
+			if metadataOK {
+				filtered = append(filtered, entry)
+			}
+			continue
+		}
+		visible := []string{}
+		for _, path := range entry.AppPaths {
+			if canRead(path) {
+				visible = append(visible, path)
+			}
+		}
+		if len(visible) == 0 {
+			continue
+		}
+		trimmed := entry
+		trimmed.AppPaths = visible
+		filtered = append(filtered, trimmed)
+	}
+	return filtered, nil
 }
 
 func (s *Server) metadataReplicationStatus(ctx context.Context) []types.ReplicationStatusEntry {

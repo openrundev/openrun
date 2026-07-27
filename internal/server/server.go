@@ -215,6 +215,7 @@ type Server struct {
 	approvalCacheGen atomic.Int64
 
 	stopRequested chan struct{}
+	startTime     time.Time
 	// providerMutex serializes binding provider installs, uninstalls and
 	// reconciles on this node: concurrent mutations of the same provider's
 	// binary and registrations must not interleave.
@@ -303,6 +304,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		db:            db,
 		telemetry:     telemetryProviders,
 		stopRequested: make(chan struct{}),
+		startTime:     time.Now(),
 	}
 	server.secretsManager.Store(secretsManager)
 	server.forwardAuthHTTPClient = newForwardAuthHTTPClient(config)

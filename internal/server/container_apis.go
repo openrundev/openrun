@@ -72,6 +72,10 @@ type ContainerDetail struct {
 	PortBindings []string         `json:"port_bindings"` // host->container port mappings
 	Mounts       []ContainerMount `json:"mounts"`
 	Stats        *ContainerStats  `json:"stats"`
+	// BuilderSession is the owning builder session id for agent sandbox
+	// containers; their AppPath is the session's published app (resolved),
+	// empty when the session has not published
+	BuilderSession string `json:"builder_session"`
 }
 
 // containerCmdTimeout bounds the one-shot container CLI calls (ps, inspect,
@@ -315,18 +319,12 @@ func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats b
 		command = strings.TrimSpace(command + " " + cmd)
 	}
 
-	// Builder sandboxes have no app; surface the owning session id where
-	// the app path goes
-	appPath := labels[containerAppPathLabel]
-	if appPath == "" {
-		appPath = labels[builder.SandboxSessionLabel]
-	}
 	detail := &ContainerDetail{
 		ContainerInfo: ContainerInfo{
 			Id:      entryString(entry, "Id", "ID"),
 			Name:    strings.TrimPrefix(entryString(entry, "Name"), "/"),
 			AppId:   labels[containerAppIdLabel],
-			AppPath: appPath,
+			AppPath: labels[containerAppPathLabel],
 			Image:   entryString(config, "Image"),
 			State:   entryString(state, "Status"),
 			Runtime: filepath.Base(runtime),
@@ -340,6 +338,27 @@ func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats b
 		AppVersion:   labels[containerAppVersionLabel],
 		SizeRw:       int64(entryFloat(entry, "SizeRw")),
 		SizeRootFs:   int64(entryFloat(entry, "SizeRootFs")),
+	}
+
+	if detail.AppId != "" {
+		// Resolve the app path/env like the listing does (the raw path
+		// label loses the domain and points at the staging app when
+		// staged) - covers app containers and the litestream sidecars,
+		// which carry the same labels
+		single := []ContainerInfo{detail.ContainerInfo}
+		s.resolveContainerApps(single)
+		detail.ContainerInfo = single[0]
+	} else if sessionId := labels[builder.SandboxSessionLabel]; sessionId != "" {
+		// Builder sandboxes have no app labels: expose the owning session,
+		// and the session's published app (resolved) as the app path -
+		// empty until the session publishes
+		detail.BuilderSession = sessionId
+		if session, err := s.builderManager.GetSession(ctx, sessionId); err == nil &&
+			session.PublishPath != "" {
+			if resolved, _, err := s.builderResolvePath(session.PublishPath); err == nil {
+				detail.AppPath = resolved
+			}
+		}
 	}
 
 	// Network port bindings: NetworkSettings.Ports maps the container port

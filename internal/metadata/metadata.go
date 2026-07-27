@@ -175,6 +175,11 @@ func (m *Metadata) IsLeader() bool {
 	return m.leaderElection.IsLeader()
 }
 
+// DBType returns the metadata database type (sqlite or postgres)
+func (m *Metadata) DBType() system.DBType {
+	return m.dbType
+}
+
 // Close stops background goroutines owned by Metadata (leader election and
 // the postgres listener) and closes the database connection pools.
 func (m *Metadata) Close() {

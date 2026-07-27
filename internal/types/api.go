@@ -454,6 +454,25 @@ type ReplicationStatusEntry struct {
 	Error string                  `json:"error,omitempty"`
 }
 
+// ServerInfo is the openrun.in server_info API response: identity and
+// runtime facts about this server. Everything here is readable from memory
+// (no DB or external calls), so the API is safe on hot paths. The metadata
+// replication entries come from the in-process litestream manager (kind
+// "metadata" only); per-binding replication needs the full
+// replication_status API.
+type ServerInfo struct {
+	Version             string                   `json:"version"`
+	Commit              string                   `json:"commit"`
+	StartTime           time.Time                `json:"start_time"`
+	UptimeSecs          int64                    `json:"uptime_secs"`
+	MetadataDBType      string                   `json:"metadata_db_type"` // sqlite | postgres
+	AuditDBType         string                   `json:"audit_db_type"`
+	ContainerCommand    string                   `json:"container_command"` // configured value: "", auto, docker, ...
+	ContainerRuntime    string                   `json:"container_runtime"` // resolved: docker | podman | kubernetes | ""
+	IsLeader            bool                     `json:"is_leader"`
+	MetadataReplication []ReplicationStatusEntry `json:"metadata_replication"`
+}
+
 // GetHTTPHeader returns the first value of the header with the given key.
 // The key has to be a HTTP Canonical Header Key (case is important)
 func GetHTTPHeader(header http.Header, key string) string {

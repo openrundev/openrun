@@ -27,6 +27,19 @@ tests:
         - "app:approve"
         - "server:stop"
     exit-code: 0
+  rbac0042: # RBAC disabled - server_info reports the in-memory server facts
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/server_info
+    stdout:
+      contains:
+        - "SERVERINFO: db=sqlite"
+        - "leader=True"
+        - "uptime_ok=True"
+        - "repl=0"
+    exit-code: 0
+  rbac0044: # RBAC disabled - replication_status works (no litestream configured)
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/replication
+    stdout: "REPLSTATUS: 0"
+    exit-code: 0
   rbac0050: # write the RBAC enabled dynamic config: anonymous can view /rbacapp and create/approve /anonapp*
     command: |
       cat > rbac_config1.json <<EOF
@@ -89,6 +102,19 @@ tests:
         - "approve"
         - "app:delete"
         - "server:stop"
+    exit-code: 0
+  rbac0092: # server_info needs config:basic_read, the viewer role has no config perms
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/server_info
+    stdout:
+      contains:
+        - "ERROR"
+        - "config:basic_read"
+    exit-code: 0
+  rbac0094: # replication_status filters per caller: app rows to the caller's
+    # app:read apps, metadata rows to config:basic_read. The viewer role has
+    # app:read but no litestream bindings exist, and no basic_read - empty, no error
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/replication
+    stdout: "REPLSTATUS: 0"
     exit-code: 0
   rbac0100: # create works, anonymous has app:create on /anonapp*
     command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/create
@@ -172,6 +198,49 @@ tests:
     command: curl -s -o /dev/null -w "%{http_code}" localhost:${MAIN_HTTP_PORT}/protected/
     stdout: "403"
     exit-code: 0
+  rbac0184: # grant config:basic_read (server_info) but NOT config:read
+    command: |
+      cat > rbac_config2.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "enabled": true,
+          "groups": {},
+          "roles": {
+            "viewer": ["app:access", "app:read"],
+            "sysviewer": ["config:basic_read"]
+          },
+          "grants": [
+            {
+              "description": "anonymous views rbacapp",
+              "users": ["anonymous"],
+              "roles": ["viewer"],
+              "targets": ["/rbacapp"]
+            },
+            {
+              "description": "anonymous reads basic server info",
+              "users": ["anonymous"],
+              "roles": ["sysviewer"],
+              "targets": ["all"]
+            }
+          ]
+        }
+      }
+      EOF
+      ../openrun server update-config --force rbac_config2.json
+    exit-code: 0
+  rbac0185: # config:basic_read unlocks server_info
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/server_info
+    stdout:
+      contains:
+        - "SERVERINFO: db=sqlite"
+        - "leader=True"
+    exit-code: 0
+  rbac0186: # replication_status with config:basic_read only: metadata rows
+    # would be visible (none configured here), app rows need app:read per app - no error
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/replication
+    stdout: "REPLSTATUS: 0"
+    exit-code: 0
   rbac0190: # disable RBAC again
     command: |
       cat > rbac_config1.json <<EOF
@@ -198,5 +267,5 @@ tests:
     command: |
       ../openrun app delete /rbacapp
       ../openrun app delete /protected
-      rm -f rbac_config1.json
+      rm -f rbac_config1.json rbac_config2.json
     exit-code: 0

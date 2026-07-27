@@ -98,6 +98,26 @@ def approve_other_handler(req):
     return "APPROVED"
 
 
+def server_info_handler(req):
+    # server_info is gated on config:basic_read when RBAC is enabled
+    ret = openrun.server_info()
+    if ret.error:
+        return "ERROR: " + ret.error
+    info = ret.value
+    return "SERVERINFO: db=%s leader=%s uptime_ok=%s repl=%d" % (
+        info["metadata_db_type"], info["is_leader"],
+        int(info["uptime_secs"]) >= 0, len(info["metadata_replication"]))
+
+
+def replication_handler(req):
+    # replication_status is gated on config:read when RBAC is enabled (it
+    # lists binding names and using-app paths unfiltered)
+    ret = openrun.replication_status()
+    if ret.error:
+        return "ERROR: " + ret.error
+    return "REPLSTATUS: %d" % len(ret.value)
+
+
 app = ace.app("rbac test app",
               custom_layout=True,
               routes=[
@@ -113,10 +133,14 @@ app = ace.app("rbac test app",
                   ace.api("/reload_ok", reload_ok_handler, type=ace.TEXT),
                   ace.api("/reload_promote", reload_promote_handler, type=ace.TEXT),
                   ace.api("/approve_other", approve_other_handler, type=ace.TEXT),
+                  ace.api("/server_info", server_info_handler, type=ace.TEXT),
+                  ace.api("/replication", replication_handler, type=ace.TEXT),
               ],
               permissions=[
                   ace.permission("openrun.in", "list_apps"),
                   ace.permission("openrun.in", "get_permissions"),
+                  ace.permission("openrun.in", "server_info"),
+                  ace.permission("openrun.in", "replication_status"),
                   ace.permission("openrun_admin.in", "create_app"),
                   ace.permission("openrun_admin.in", "delete_apps"),
                   ace.permission("openrun_admin.in", "reload_apps"),
