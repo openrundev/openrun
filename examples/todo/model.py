@@ -12,7 +12,7 @@ def db_url():
     """
     pg = os.getenv("POSTGRES_URL")
     if pg:
-        return pg.replace("postgres://", "postgresql+psycopg://", 1)
+        return pg.replace("postgres://", "postgresql+psycopg://", 1).replace("postgresql://", "postgresql+psycopg://", 1)
     my = os.getenv("MYSQL_URL")
     if my:
         parts = urlsplit(my)
