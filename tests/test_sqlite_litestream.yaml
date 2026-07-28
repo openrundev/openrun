@@ -134,8 +134,13 @@ tests:
       retries: 10
       interval: 2s
 
-  lsapp0082: # replication healthy for the new app before the idle stop
-    command: ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod" and ((.app_paths // []) | index("/ls_idle")))][0].state'
+  lsapp0082: # replication healthy while the app is being served. Each retry
+             # pings the app first: the 5s idle timer can beat a slow status
+             # sweep (CLI + replica listing + docker inspect under load), and
+             # once the sidecar is gently stopped no amount of status-only
+             # retries would ever see healthy again - the ping restarts the
+             # app (and sidecar) instead
+    command: curl -sS -m 30 localhost:${HTTP_PORT}/ls_idle/value > /dev/null; ../openrun replication status -f json | jq -r '[.[] | select(.kind=="app" and .env=="prod" and ((.app_paths // []) | index("/ls_idle")))][0].state'
     stdout: "healthy"
     config:
       retries: 30
