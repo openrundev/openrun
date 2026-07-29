@@ -9,7 +9,10 @@ a secret, binding an app to it, deploying a containerized app from a git
 repo, and the operational pages. Then the RBAC flow: enabling role based
 access control from the console and working with team-scoped grants.
 The screenshots follow the site theme - toggle light/dark to see the
-console in the other theme.
+console in the other theme. A live [demo](https://utils.demo.clace.io/console/)
+of the console is available. See
+[console install]({{< ref "docs/installation/#install-the-console-app" >}})
+for installing the console on your own server.
 
 ## Overview
 

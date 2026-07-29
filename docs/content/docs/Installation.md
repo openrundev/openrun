@@ -205,3 +205,35 @@ This will create an app at /disk_usage with the example disk_usage app. The disk
 To access the app, go to [https://localhost:25223/disk_usage](https://localhost:25223/disk_usage). Use `admin` as the username and use the password previously generated.
 
 The code for the disk usage app is in [GitHub](https://github.com/openrundev/openrun/tree/main/examples/disk_usage/app.star). app.star is the Starlark config and app.go.html is the html template. The other files are generated files and are created during app development.
+
+## Install the Console App
+
+The [management console]({{< ref "/console-tour" >}}) is a web UI for managing the OpenRun server: apps, syncs, service bindings, containers, audit logs, server configuration and the AI app builder. A live [demo](https://utils.demo.clace.io/console/) of the console is available. The console is itself an OpenRun app, installed from the [openrundev/console](https://github.com/openrundev/console) repo:
+
+```shell
+openrun app create --approve --auth system \
+    --param enable_all_features=true --param enable_updates=true \
+    github.com/openrundev/console /console
+```
+
+Open https://localhost:25223/console and log in as `admin`, using the password printed during the OpenRun installation.
+
+Since the console performs management operations, it should always run with an auth type that requires login. Using `system` auth is recommended: it needs no additional setup, the `admin` account with the password printed during installation is used to login. `system` is the server's default auth type, the `--auth system` option makes the choice explicit. OAuth/OIDC/SAML based [authentication]({{< ref "configuration/authentication" >}}) can also be used. Do not use `none` auth for the console: management operations are blocked for anonymous users.
+
+The console features are controlled through app params, set with `--param name=value` during create:
+
+| Param                 | Default | Description                                                                             |
+| --------------------- | ------- | --------------------------------------------------------------------------------------- |
+| `enable_updates`      | `false` | Enable write operations (create/update/delete). Without this, the console is read-only. |
+| `enable_container`    | `false` | Enable the containers area                                                              |
+| `enable_config`       | `false` | Enable the server configuration area                                                    |
+| `enable_builder`      | `false` | Enable the AI app builder area                                                          |
+| `enable_all_features` | `false` | Enable all the areas above; write operations still need `enable_updates`                |
+
+The default install (no params) is a read-only console covering apps, syncs, bindings, the overview and audit logs. A disabled area registers no routes and requests no plugin permissions.
+
+Params can be changed after install. Enabling a new area adds plugin permissions, which require re-approval; the change is staged and goes live on promotion:
+
+```shell
+openrun param update --promote enable_builder true /console
+```

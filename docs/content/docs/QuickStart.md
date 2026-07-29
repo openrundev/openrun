@@ -77,7 +77,19 @@ openrun app create --approve github.com/openrundev/apps/utils/bookmarks /book
 
 Open https://localhost:25223 to see the app listing. The bookmark manager is available at https://localhost:25223/book.
 
-## Application Types
+### Install the Console App
+
+The [management console]({{< ref "/console-tour" >}}) is a web UI for managing the OpenRun server: apps, syncs, service bindings, containers, audit logs, server configuration and the AI app builder. A live [demo](https://utils.demo.clace.io/console/) of the console is available. The console is itself an OpenRun app; to install it, run
+
+```shell
+openrun app create --approve --auth system \
+    --param enable_all_features=true --param enable_updates=true \
+    github.com/openrundev/console /console
+```
+
+The console is available at https://localhost:25223/console. Log in as `admin`, using the password printed during the OpenRun installation. Using `system` auth (the server default) is recommended for the console; management operations are blocked for anonymous users, so do not use `none` auth. The `enable_*` params control which feature areas are enabled — the default install is a read-only console. See [console install]({{< ref "installation/#install-the-console-app" >}}) for the full param list.
+
+## App Types
 
 OpenRun allows easy management of multiple apps on one OpenRun server installation. There are three main types of OpenRun apps:
 
@@ -114,41 +126,6 @@ openrun app create --spec container --approve \
 ```
 
 See [containerized apps]({{< ref "container/overview/" >}}) for details.
-
-## Action Apps
-
-For use cases where an existing CLI application or API needs to be exposed as a web app, actions provide an easy solution. First, define the parameters to be exposed in the form UI. Create a `params.star` file with the params. For example,
-
-```python {filename="params.star"}
-param("repo", description="The GitHub repository to look up", default="openrundev/openrun")
-```
-
-The app defines a run handler which calls the GitHub API for the specified repository, using the [http plugin]({{< ref "docs/plugins/overview" >}}), and returns the stats as text.
-
-```python {filename="app.star"}
-load ("http.in", "http")
-
-def run(dry_run, args):
-   repo = http.get("https://api.github.com/repos/" + args.repo).value.json()
-   out = ["Stars: %d" % repo["stargazers_count"], "Forks: %d" % repo["forks_count"],
-          "Open Issues: %d" % repo["open_issues_count"]]
-   return ace.result("Repo info for " + args.repo, out)
-
-app = ace.app("Repo Info",
-   actions=[ace.action("Repo Info", "/", run, description="Show the GitHub stats for the specified repository")],
-   permissions=[
-     ace.permission("http.in", "get", ["regex:^https://api\\.github\\.com/.*"]),
-   ],
-)
-```
-
-The app, when accessed, shows a form for the params, with the action output displayed below it:
-
-<picture  class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
-  <source media="(prefers-color-scheme: dark)" srcset="/images/action_dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="/images/action_light.png">
-  <img alt="Repo info action app" src="/images/action_light.png">
-</picture>
 
 ## Managing Applications
 
