@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.18.15] - 2026-07-29
+
 ### Added
 
 - Added the `sqlite` service binding type: an app bound to a sqlite service gets a persistent volume (Docker/Podman named volume or Kubernetes PVC, `ReadWriteOnce` with single replica and `Recreate` strategy) holding its SQLite database files, surfaced through the `SQLITE_URL`/`SQLITE_DB_PATH`/`SQLITE_DIR` env variables. The mount directory defaults to `/data` and is configurable per binding with the `path` binding config key. An app can have one sqlite binding and a binding can be attached to one app (single-writer database); derived bindings and grants are not supported.
