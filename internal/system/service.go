@@ -181,6 +181,13 @@ func notifyServiceExit(exitCode uint32) {
 	}
 }
 
+// IsRunningAsService reports whether the process was started by the OS
+// service control manager. Always false on platforms without OS service
+// integration. Only valid after MaybeRunAsService has been called.
+func IsRunningAsService() bool {
+	return serviceMgr != nil
+}
+
 // ServiceStopNotify returns a channel that is closed when the OS requests a
 // service stop or shutdown. Returns nil when not running as a service.
 func ServiceStopNotify() <-chan struct{} {

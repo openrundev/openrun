@@ -74,8 +74,9 @@ func globalFlags(globalConfig *types.GlobalConfig, clientConfig *types.ClientCon
 // Uses OPENRUN_HOME env if set. Otherwise uses binaries parent path. Setting OPENRUN_HOME is
 // the easiest way to configure. Uses some extra heuristics to help avoid having to setup
 // OPENRUN_HOME in the env, by using the binaries parent folder as the default.
-// On mac, looks for brew install locations also.
-func getConfigPath(cCtx *cli.Context) (string, string, bool, error) {
+// On mac, looks for brew install locations also. When nothing is found, falls back to
+// $HOME/openrun (the install script default), with homeDefaulted set to true.
+func getConfigPath(cCtx *cli.Context) (clHomeRet, configFileRet string, clHomeEnvSet, homeDefaulted bool, errRet error) {
 	configFile := cCtx.String(configFileFlagName)
 	clHome := os.Getenv(types.OPENRUN_HOME)
 	if configFile == "" {
@@ -86,21 +87,21 @@ func getConfigPath(cCtx *cli.Context) (string, string, bool, error) {
 	}
 	if clHome != "" {
 		// Found OPENRUN_HOME
-		return clHome, configFile, true, nil
+		return clHome, configFile, true, false, nil
 	}
 	if configFile != "" {
 		// OPENRUN_HOME not set and config file is set, use config dir path as OPENRUN_HOME
 		clHome = filepath.Dir(configFile)
-		return clHome, configFile, false, nil
+		return clHome, configFile, false, false, nil
 	}
 
 	binFile, err := os.Executable()
 	if err != nil {
-		return "", "", false, fmt.Errorf("unable to find executable path: %w", err)
+		return "", "", false, false, fmt.Errorf("unable to find executable path: %w", err)
 	}
 	binAbsolute, err := filepath.EvalSymlinks(binFile)
 	if err != nil {
-		return "", "", false, fmt.Errorf("unable to resolve symlink: %w", err)
+		return "", "", false, false, fmt.Errorf("unable to resolve symlink: %w", err)
 	}
 
 	binParent := filepath.Dir(binAbsolute)
@@ -112,34 +113,43 @@ func getConfigPath(cCtx *cli.Context) (string, string, bool, error) {
 	if system.FileExists(binParentConfig) && (strings.Contains(binParent, "openrun") || strings.Contains(binParent, "clhome")) {
 		// Config file found in parent directory of the executable, use that as path
 		// To avoid clobbering /usr, check if the path contains the string openrun/clhome
-		return binParent, binParentConfig, false, nil
+		return binParent, binParentConfig, false, false, nil
 	}
 
 	// Running `brew --prefix` would be another option
 	if runtime.GOOS == "darwin" { //nolint:staticcheck
 		// brew OSX specific checks
 		if system.FileExists("/opt/homebrew/etc/openrun.toml") {
-			return "/opt/homebrew/var/openrun", "/opt/homebrew/etc/openrun.toml", false, nil
+			return "/opt/homebrew/var/openrun", "/opt/homebrew/etc/openrun.toml", false, false, nil
 		} else if system.FileExists("/usr/local/etc/openrun.toml") {
-			return "/usr/local/var/openrun", "/usr/local/etc/openrun.toml", false, nil
+			return "/usr/local/var/openrun", "/usr/local/etc/openrun.toml", false, false, nil
 		}
 	} else if runtime.GOOS == "linux" {
 		// brew linux specific checks
 		if system.FileExists("/home/linuxbrew/.linuxbrew/etc/openrun.toml") {
-			return "/home/linuxbrew/.linuxbrew/var/openrun", "/home/linuxbrew/.linuxbrew/etc/openrun.toml", false, nil
+			return "/home/linuxbrew/.linuxbrew/var/openrun", "/home/linuxbrew/.linuxbrew/etc/openrun.toml", false, false, nil
 		} else if system.FileExists("/usr/local/etc/openrun.toml") {
-			return "/usr/local/var/openrun", "/usr/local/etc/openrun.toml", false, nil
+			return "/usr/local/var/openrun", "/usr/local/etc/openrun.toml", false, false, nil
 		} else if system.FileExists("/var/lib/openrun/openrun.toml") {
 			// Linux system level installation
-			return "/var/lib/openrun", "/var/lib/openrun/openrun.toml", false, nil
+			return "/var/lib/openrun", "/var/lib/openrun/openrun.toml", false, false, nil
 		}
 	}
-	return "", "", false, fmt.Errorf("unable to find OPENRUN_HOME or config file")
+
+	// Nothing configured or discovered: default to $HOME/openrun, the same
+	// location the install scripts use. Package managers like winget cannot
+	// run an install script, so this is the normal path for such installs
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", false, false, fmt.Errorf("unable to find OPENRUN_HOME or config file: %w", err)
+	}
+	defaultHome := filepath.Join(homeDir, "openrun")
+	return defaultHome, filepath.Join(defaultHome, "openrun.toml"), false, true, nil
 }
 
 func parseConfig(cCtx *cli.Context, globalConfig *types.GlobalConfig, clientConfig *types.ClientConfig, serverConfig *types.ServerConfig) error {
 	// Find OPENRUN_HOME and config file, update OPENRUN_HOME in env
-	clHome, filePath, clHomeEnvSet, err := getConfigPath(cCtx)
+	clHome, filePath, clHomeEnvSet, homeDefaulted, err := getConfigPath(cCtx)
 	if err != nil {
 		return err
 	}
@@ -149,11 +159,35 @@ func parseConfig(cCtx *cli.Context, globalConfig *types.GlobalConfig, clientConf
 	}
 	os.Setenv(types.OPENRUN_HOME, clHome) //nolint:errcheck
 
+	if homeDefaulted && !system.FileExists(filePath) {
+		if system.IsRunningAsService() {
+			// The default home resolves to the service account profile (e.g.
+			// C:\Windows\System32\config\systemprofile), not the installing
+			// user's home, and a bootstrapped admin password would be printed
+			// where nobody can see it. Fail fast instead of silently creating
+			// a second config under the service profile
+			return fmt.Errorf("no config file found (looked for %s): when running as an OS service, set OPENRUN_HOME in the service environment or register the service with --config-file", filePath)
+		}
+		if cCtx.Args().Get(0) == "server" && cCtx.Args().Get(1) == "start" {
+			// First server start with no config setup (e.g. installed through
+			// winget, which cannot run the install script): initialize the
+			// config with a generated admin password, like the install scripts do
+			if err := bootstrapConfigFile(clHome, filePath); err != nil {
+				return err
+			}
+		}
+	}
+
 	//fmt.Fprintf(os.Stderr, "Loading config file: %s, clHome %s\n", filePath, clHome)
 	buf, err := os.ReadFile(filePath)
 	if err != nil {
 		if clHomeEnvSet {
 			fmt.Fprintf(os.Stderr, "Warning: unable to read config file %s, using default config\n", err)
+			return nil
+		}
+		if homeDefaulted {
+			// No install setup found anywhere; run with the default config so
+			// commands like help and version work without any setup
 			return nil
 		}
 		return err

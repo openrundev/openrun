@@ -38,12 +38,13 @@ type HttpClient struct {
 func NewHttpClient(serverUri, user, password string, skipCertCheck bool) *HttpClient {
 	serverUri = os.ExpandEnv(serverUri)
 
-	// Change to OPENRUN_HOME directory, helps avoid length limit on UDS file (around 104 chars)
+	// Change to OPENRUN_HOME directory, helps avoid length limit on UDS file (around 104 chars).
+	// If the directory does not exist (server never started), skip the chdir and
+	// use the absolute socket path; the connection failure is reported by the caller
 	clHome := os.Getenv("OPENRUN_HOME")
 	if clHome != "" {
-		err := os.Chdir(clHome)
-		if err != nil {
-			return nil
+		if err := os.Chdir(clHome); err != nil {
+			clHome = ""
 		}
 	}
 

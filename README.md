@@ -229,10 +229,16 @@ brew services start openrun
 To install on Windows, run
 
 ```
+winget install OpenRunDev.OpenRun
+```
+
+or use the install script:
+
+```
 powershell -Command "irm https://openrun.dev/install.ps1 | iex"
 ```
 
-Start a new command window (to get the updated env) and run `openrun server start` to start the OpenRun service.
+Start a new command window (to get the updated env) and run `openrun server start` to start the OpenRun service. On the first start, OpenRun generates an admin password and prints it; note it down.
 
 ### Kubernetes Install
 

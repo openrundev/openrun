@@ -92,7 +92,21 @@ Apps are not affected: app containers keep running through the restart. In-place
 
 ## Install On Windows
 
-To install the OpenRun application on Windows, run:
+To install OpenRun using [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/), run:
+
+```powershell
+winget install OpenRunDev.OpenRun
+```
+
+Open a new terminal so `openrun` is on the PATH, then run:
+
+```powershell
+openrun server start
+```
+
+On the first server start, OpenRun creates its config file under `$HOME\openrun` (or `$env:OPENRUN_HOME` if set) and generates an admin password. Note down the password printed.
+
+Alternatively, install using the install script:
 
 ```powershell
 powershell -Command "irm https://openrun.dev/install.ps1 | iex"
@@ -115,11 +129,47 @@ sc.exe failure openrun reset= 86400 actions= restart/5000/restart/30000//
 sc.exe start openrun
 ```
 
-The paths from `$env:OPENRUN_HOME` are expanded when the service is created; re-create the service if the install location changes. The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`.
+The paths from `$env:OPENRUN_HOME` are expanded when the service is created; re-create the service if the install location changes. For winget installs, see [Winget Service Install](#winget-service-install) below. The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`.
 
 When started this way, OpenRun reports service status to Windows and handles service stop, shutdown and pre-shutdown requests as graceful server shutdowns.
 
 Open https://localhost:25223 to access the app listing UI.
+
+### Winget Service Install
+
+To run OpenRun as a Windows service on a machine where it was installed with winget, the recommended approach is a machine scoped install with the service registered against an explicit config file. From an elevated shell:
+
+```powershell
+winget install --scope machine OpenRunDev.OpenRun
+```
+
+Machine scope installs the binary under `Program Files\WinGet` instead of the installing user's profile, which is preferable for a service. Open a new elevated terminal so `openrun` is on the PATH, then create the config file with a generated admin password:
+
+```powershell
+New-Item -ItemType Directory -Force C:\ProgramData\openrun | Out-Null
+openrun password | Out-File -Encoding utf8 C:\ProgramData\openrun\openrun.toml
+```
+
+Note down the password printed. Then register and start the service:
+
+```powershell
+$OpenRunExe = (Get-Command openrun.exe).Source
+$OpenRunConfig = 'C:\ProgramData\openrun\openrun.toml'
+sc.exe create openrun start= auto DisplayName= "OpenRun" binPath= "`"$OpenRunExe`" --config-file `"$OpenRunConfig`" server start"
+sc.exe description openrun "OpenRun application server https://openrun.dev/"
+sc.exe failure openrun reset= 86400 actions= restart/5000/restart/30000//
+sc.exe start openrun
+```
+
+Passing `--config-file` pins the server home directory to the config file's directory (`C:\ProgramData\openrun` here), keeping the service independent of any user profile. Without it, a service would resolve its home under the service account profile (for LocalSystem, `C:\Windows\System32\config\systemprofile`), and OpenRun refuses to auto-create a config there. To use the `openrun` CLI against this server from a regular shell, set the env variable at machine scope so the CLI resolves the same home:
+
+```powershell
+[Environment]::SetEnvironmentVariable('OPENRUN_HOME', 'C:\ProgramData\openrun', 'Machine')
+```
+
+For a default user scoped winget install, keep everything under the user profile instead: run `openrun server start` once interactively to create `$HOME\openrun\openrun.toml` (note down the generated admin password), stop it with Ctrl+C, then register the service with `$OpenRunConfig = Join-Path $HOME 'openrun\openrun.toml'` in the `sc.exe create` command above. No env variable is needed in this setup: the CLI defaults to the same `$HOME\openrun` home.
+
+In both flows, `(Get-Command openrun.exe).Source` resolves to the winget links shim, which stays valid across `winget upgrade`; after an upgrade, run `sc.exe stop openrun` and `sc.exe start openrun` to switch to the new binary.
 
 ## Brew Install
 
