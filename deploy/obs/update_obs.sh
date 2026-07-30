@@ -54,11 +54,13 @@ mv "$WORK/embed.go" internal/server/list_apps/embed.go
 rm -rf apps
 
 # Distro toolchains lag behind Go patch releases; the minor version is what
-# actually gates the language level, so drop the patch from the main module and
-# local module dependencies before creating vendor metadata.
+# actually gates the language level, so relax the patch to .0 in the main
+# module and local module dependencies before creating vendor metadata. The
+# .0 form (not a bare major.minor) is required: go mod vendor rejects a go.mod
+# whose go directive is not in the canonical three-part form.
 echo "==> Relaxing go.mod patch version and vendoring modules"
 for mod_file in go.mod pkg/binding/go.mod; do
-    sed -E 's/^go ([0-9]+\.[0-9]+)\.[0-9]+$/go \1/' "$mod_file" > "$mod_file.new"
+    sed -E 's/^go ([0-9]+\.[0-9]+)\.[0-9]+$/go \1.0/' "$mod_file" > "$mod_file.new"
     mv "$mod_file.new" "$mod_file"
 done
 GOTOOLCHAIN=local go mod vendor

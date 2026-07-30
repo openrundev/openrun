@@ -95,7 +95,7 @@ covunit: ## Run unit tests with coverage and the race detector
 > rm -rf $(OPENRUN_HOME)/coverage/unit && mkdir -p $(OPENRUN_HOME)/coverage/unit
 > packages="$(GO_PACKAGES)"
 > cover_packages="$(GO_COVER_PACKAGES)"
-> go test -race -coverpkg "$$cover_packages" $$packages -args -test.gocoverdir="$(OPENRUN_HOME)/coverage/unit"
+> go test -race -covermode=atomic -coverpkg "$$cover_packages" $$packages -args -test.gocoverdir="$(OPENRUN_HOME)/coverage/unit"
 > go tool covdata percent -i=$(OPENRUN_HOME)/coverage/unit
 > go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/unit -o $(OPENRUN_HOME)/coverage/profile
 > go tool cover -func coverage/profile | grep '^total:'

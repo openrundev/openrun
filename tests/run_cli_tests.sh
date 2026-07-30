@@ -197,7 +197,10 @@ else
   fi
 
   if [[ -n "$GOCOVERDIR" ]]; then
-      go build -cover ./cmd/openrun
+      # atomic, not the default set: covtest merges this binary's coverage
+      # data with the unit test data, which is atomic mode (covunit runs with
+      # -race), and covdata rejects mixed counter modes
+      go build -cover -covermode=atomic ./cmd/openrun
   else
       go build ./cmd/openrun
   fi
