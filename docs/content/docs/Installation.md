@@ -123,13 +123,13 @@ To run OpenRun as a Windows service, register `openrun server start` with the Wi
 ```powershell
 $OpenRunExe = Join-Path $env:OPENRUN_HOME 'bin\openrun.exe'
 $OpenRunConfig = Join-Path $env:OPENRUN_HOME 'openrun.toml'
-sc.exe create openrun start= auto DisplayName= "OpenRun" binPath= "`"$OpenRunExe`" --config-file `"$OpenRunConfig`" server start"
-sc.exe description openrun "OpenRun application server https://openrun.dev/"
+$BinPath = "`"$OpenRunExe`" --config-file `"$OpenRunConfig`" server start"
+New-Service -Name openrun -DisplayName OpenRun -StartupType Automatic -BinaryPathName $BinPath -Description "OpenRun application server https://openrun.dev/"
 sc.exe failure openrun reset= 86400 actions= restart/5000/restart/30000//
-sc.exe start openrun
+Start-Service openrun
 ```
 
-The paths from `$env:OPENRUN_HOME` are expanded when the service is created; re-create the service if the install location changes. For winget installs, see [Winget Service Install](#winget-service-install) below. The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`.
+For winget installs, see [Winget Service Install](#winget-service-install) below. The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`.
 
 When started this way, OpenRun reports service status to Windows and handles service stop, shutdown and pre-shutdown requests as graceful server shutdowns.
 
@@ -155,10 +155,10 @@ Note down the password printed. Then register and start the service:
 ```powershell
 $OpenRunExe = (Get-Command openrun.exe).Source
 $OpenRunConfig = 'C:\ProgramData\openrun\openrun.toml'
-sc.exe create openrun start= auto DisplayName= "OpenRun" binPath= "`"$OpenRunExe`" --config-file `"$OpenRunConfig`" server start"
-sc.exe description openrun "OpenRun application server https://openrun.dev/"
+$BinPath = "`"$OpenRunExe`" --config-file `"$OpenRunConfig`" server start"
+New-Service -Name openrun -DisplayName OpenRun -StartupType Automatic -BinaryPathName $BinPath -Description "OpenRun application server https://openrun.dev/"
 sc.exe failure openrun reset= 86400 actions= restart/5000/restart/30000//
-sc.exe start openrun
+Start-Service openrun
 ```
 
 Passing `--config-file` pins the server home directory to the config file's directory (`C:\ProgramData\openrun` here), keeping the service independent of any user profile. Without it, a service would resolve its home under the service account profile (for LocalSystem, `C:\Windows\System32\config\systemprofile`), and OpenRun refuses to auto-create a config there. To use the `openrun` CLI against this server from a regular shell, set the env variable at machine scope so the CLI resolves the same home:
@@ -167,7 +167,7 @@ Passing `--config-file` pins the server home directory to the config file's dire
 [Environment]::SetEnvironmentVariable('OPENRUN_HOME', 'C:\ProgramData\openrun', 'Machine')
 ```
 
-For a default user scoped winget install, keep everything under the user profile instead: run `openrun server start` once interactively to create `$HOME\openrun\openrun.toml` (note down the generated admin password), stop it with Ctrl+C, then register the service with `$OpenRunConfig = Join-Path $HOME 'openrun\openrun.toml'` in the `sc.exe create` command above. No env variable is needed in this setup: the CLI defaults to the same `$HOME\openrun` home.
+For a default user scoped winget install, keep everything under the user profile instead: run `openrun server start` once interactively to create `$HOME\openrun\openrun.toml` (note down the generated admin password), stop it with Ctrl+C, then register the service with `$OpenRunConfig = Join-Path $HOME 'openrun\openrun.toml'` in the `New-Service` command above. No env variable is needed in this setup: the CLI defaults to the same `$HOME\openrun` home.
 
 In both flows, `(Get-Command openrun.exe).Source` resolves to the winget links shim, which stays valid across `winget upgrade`; after an upgrade, run `sc.exe stop openrun` and `sc.exe start openrun` to switch to the new binary.
 
