@@ -310,6 +310,25 @@ type ConfigResponse struct {
 	DynamicConfig DynamicConfig `json:"dynamic_config"`
 }
 
+// ServerStopResponse is the response of the server stop API. The PID lets a
+// local client wait for the process to fully exit: the API responds when
+// shutdown starts, and cleanup (final litestream sync) runs as the process
+// exits, after the listeners are already closed
+type ServerStopResponse struct {
+	PID int `json:"pid"`
+}
+
+// ServerStatusResponse is the response of the server status API
+type ServerStatusResponse struct {
+	Status string `json:"status"`
+}
+
+// ServerVersionResponse is the response of the server version API
+type ServerVersionResponse struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+}
+
 // CreateSecretRequest is the request body for storing a secret in a writable
 // secret provider. Either Name (explicit name) or Prefix (a unique name is
 // generated with the prefix) must be set. Encoding "base64" is used to pass

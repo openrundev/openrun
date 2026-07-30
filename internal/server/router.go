@@ -756,7 +756,21 @@ func (h *Handler) stopServer(r *http.Request) (any, error) {
 	updateOperationInContext(r, "stop_server")
 	h.server.RequestStop()
 
-	return map[string]any{}, nil
+	return types.ServerStopResponse{PID: os.Getpid()}, nil
+}
+
+// serverStatus reports "ok": reaching this handler means the connection and
+// authentication both worked
+func (h *Handler) serverStatus(_ *http.Request) (any, error) {
+	return types.ServerStatusResponse{Status: "ok"}, nil
+}
+
+// serverVersion reports the server's build version and commit
+func (h *Handler) serverVersion(r *http.Request) (any, error) {
+	if err := h.server.enforceGlobalPerm(r.Context(), types.PermissionConfigBasicRead, ""); err != nil {
+		return nil, err
+	}
+	return types.ServerVersionResponse{Version: types.GetVersion(), Commit: types.GetCommit()}, nil
 }
 
 // restartServer performs a zero downtime in-place restart: a new server
@@ -1813,6 +1827,16 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// Zero downtime in-place restart
 	r.Post("/restart", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "restart_server", h.restartServer, false)
+	}))
+
+	// Server status: lightweight connectivity check
+	r.Get("/server_status", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "server_status", h.serverStatus, false)
+	}))
+
+	// Server version
+	r.Get("/server_version", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "server_version", h.serverVersion, false)
 	}))
 
 	// Get apps

@@ -788,7 +788,9 @@ EOF
 
   commander test $VERBOSE test_basics.yaml
   MATCHED_TESTS+=(test_basics.yaml)
-  CL_CONFIG_FILE=config_basic_test.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+  # --wait exercises the wait-for-exit path (stop returns when shutdown
+  # starts; --wait polls the server pid until the process is gone)
+  CL_CONFIG_FILE=config_basic_test.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop --wait
   SERVER_PID=""
   rm -rf metadata run/openrun.sock config_basic_*.toml
 fi

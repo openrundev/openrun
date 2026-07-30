@@ -37,6 +37,25 @@ tests:
       line-count: 0
     exit-code: 1
 
+  basic052: # server status reports ok over UDS
+    command: ../openrun server status
+    stdout:
+      exactly: "ok"
+    exit-code: 0
+
+  basic053: # server status fails over http, admin api's are disabled there
+    command: CL_CONFIG_FILE=config_basic_client_np.toml ../openrun server status
+    stderr: "error: 404 page not found"
+    stdout:
+      line-count: 0
+    exit-code: 1
+
+  basic054: # server version reports the server build version
+    command: ../openrun server version
+    stdout:
+      exactly: "dev (commit dev_build)" # test binary is built without version ldflags
+    exit-code: 0
+
   basic060: ## create test1 app with default of authentication enabled
     command: ../openrun app create ./testapp /test1
     exit-code: 0

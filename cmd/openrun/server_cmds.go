@@ -9,11 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -40,9 +43,25 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 				{
 					Name:  "stop",
 					Usage: "Stop the openrun server",
-					Flags: flags,
+					Flags: []cli.Flag{newBoolFlag("wait", "w", "Wait for the server process to exit instead of returning as soon as shutdown starts", false)},
 					Action: func(cCtx *cli.Context) error {
 						return stopServer(cCtx, clientConfig)
+					},
+				},
+				{
+					Name:  "status",
+					Usage: "Report ok if the server connection works",
+					Flags: flags,
+					Action: func(cCtx *cli.Context) error {
+						return serverStatus(cCtx, clientConfig)
+					},
+				},
+				{
+					Name:  "version",
+					Usage: "Report the server version",
+					Flags: flags,
+					Action: func(cCtx *cli.Context) error {
+						return serverVersion(cCtx, clientConfig)
 					},
 				},
 				{
@@ -202,14 +221,90 @@ func waitForShutdownSignal(server *api.Server) {
 	}
 }
 
-func stopServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
+func stopServer(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
 
-	var response types.AppVersionListResponse
+	var response types.ServerStopResponse
 	err := client.Post("/_openrun/stop", nil, nil, &response)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
+	if cCtx.Bool("wait") {
+		return waitForServerExit(clientConfig, response.PID)
+	}
+	return nil
+}
+
+// waitForServerExit blocks until the stopped server has fully exited: the
+// stop API responds when shutdown starts, and cleanup (final litestream
+// sync) runs as the process exits, after the listeners are already closed.
+// Over the unix domain socket the server's pid is polled; over http(s) the
+// listener port is polled instead, a best effort signal for remote servers
+func waitForServerExit(clientConfig *types.ClientConfig, pid int) error {
+	serverUri := os.ExpandEnv(clientConfig.ServerUri)
+	overTCP := strings.HasPrefix(serverUri, "http://") || strings.HasPrefix(serverUri, "https://")
+	var addr string
+	if overTCP {
+		parsed, err := url.Parse(serverUri)
+		if err != nil {
+			return fmt.Errorf("error parsing server_uri for --wait: %w", err)
+		}
+		addr = parsed.Host
+		if parsed.Port() == "" {
+			if parsed.Scheme == "https" {
+				addr += ":443"
+			} else {
+				addr += ":80"
+			}
+		}
+	}
+
+	running := func() bool {
+		if !overTCP && pid > 0 {
+			return system.ProcessExists(pid)
+		}
+		network, target := "tcp", addr
+		if !overTCP {
+			network, target = "unix", serverUri
+		}
+		conn, err := net.DialTimeout(network, target, time.Second)
+		if err != nil {
+			return false
+		}
+		conn.Close() //nolint:errcheck
+		return true
+	}
+
+	for deadline := time.Now().Add(120 * time.Second); time.Now().Before(deadline); {
+		if !running() {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for the server to exit")
+}
+
+func serverStatus(_ *cli.Context, clientConfig *types.ClientConfig) error {
+	client := newHttpClient(clientConfig)
+
+	var response types.ServerStatusResponse
+	err := client.Get("/_openrun/server_status", nil, &response)
+	if err != nil {
+		return err
+	}
+	fmt.Println(response.Status)
+	return nil
+}
+
+func serverVersion(_ *cli.Context, clientConfig *types.ClientConfig) error {
+	client := newHttpClient(clientConfig)
+
+	var response types.ServerVersionResponse
+	err := client.Get("/_openrun/server_version", nil, &response)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s (commit %s)\n", response.Version, response.Commit)
 	return nil
 }
 

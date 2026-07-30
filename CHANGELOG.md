@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added `openrun server stop --wait`: waits for the server process to fully exit instead of returning as soon as shutdown starts (the final litestream sync runs as the process exits, so scripts that move or restore data directories after a stop need this). Over the unix domain socket the server's pid (now returned by the stop API) is polled; over http(s) the listener port is polled as a best effort signal. Also added `openrun server status` (prints `ok` when the server connection works) and `openrun server version` (reports the server's build version and commit).
+
 ### Fixed
 
 - The `openrun` CLI now discovers a machine scoped Windows service install: when `OPENRUN_HOME` is not set and no config is found relative to the executable (a winget binary is a links shim, so executable-relative discovery finds nothing), it checks `%ProgramData%\openrun\openrun.toml` and connects to the server's unix domain socket under that home, like `/var/lib/openrun` on Linux. Previously the CLI fell back to `$HOME\openrun` and failed to find the service's socket unless `OPENRUN_HOME` was set machine-wide.

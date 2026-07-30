@@ -28,3 +28,14 @@ func KillGroup(process *os.Process) error {
 	}
 	return nil
 }
+
+// ProcessExists reports whether a process with the given pid is running. On
+// Windows FindProcess opens a process handle, which fails if the pid is gone
+func ProcessExists(pid int) bool {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	process.Release() //nolint:errcheck
+	return true
+}
