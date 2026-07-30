@@ -1152,8 +1152,12 @@ EOF
 
     # Metadata disaster recovery: stop the server (final litestream sync),
     # wipe the metadata directory, restart and verify the state was restored
-    # from the S3 replica
+    # from the S3 replica. `server stop` returns when shutdown STARTS; the
+    # final sync that carries the just-created entries runs as the process
+    # exits, so wait for the exit or the wipe below races the sync and the
+    # restore comes back stale
     CL_CONFIG_FILE=config_litestream.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+    wait "$SERVER_PID" 2>/dev/null || true
     SERVER_PID=""
     rm -rf metadata
     start_litestream_test_server
@@ -1162,6 +1166,9 @@ EOF
   fi
 
   CL_CONFIG_FILE=config_litestream.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
+  # Wait for the process exit before deleting the metadata directory, so the
+  # shutdown's final litestream sync does not race the deletion
+  wait "$SERVER_PID" 2>/dev/null || true
   SERVER_PID=""
   rm -rf metadata run/openrun.sock
 fi
