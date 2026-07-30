@@ -134,6 +134,18 @@ func getConfigPath(cCtx *cli.Context) (clHomeRet, configFileRet string, clHomeEn
 			// Linux system level installation
 			return "/var/lib/openrun", "/var/lib/openrun/openrun.toml", false, false, nil
 		}
+	} else if runtime.GOOS == "windows" {
+		// Windows system level installation (machine scoped winget install with
+		// the service registered against C:\ProgramData\openrun\openrun.toml).
+		// The winget binary is a links shim, so the executable-relative check
+		// above cannot discover this home
+		if programData := os.Getenv("ProgramData"); programData != "" {
+			systemHome := filepath.Join(programData, "openrun")
+			systemConfig := filepath.Join(systemHome, "openrun.toml")
+			if system.FileExists(systemConfig) {
+				return systemHome, systemConfig, false, false, nil
+			}
+		}
 	}
 
 	// Nothing configured or discovered: default to $HOME/openrun, the same

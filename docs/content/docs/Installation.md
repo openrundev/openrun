@@ -146,26 +146,29 @@ winget install --scope machine OpenRunDev.OpenRun
 Machine scope installs the binary under `Program Files\WinGet` instead of the installing user's profile, which is preferable for a service. Open a new elevated terminal so `openrun` is on the PATH, then create the config file with a generated admin password:
 
 ```powershell
-New-Item -ItemType Directory -Force C:\ProgramData\openrun | Out-Null
-openrun password | Out-File -Encoding utf8 C:\ProgramData\openrun\openrun.toml
+$OpenRunHome = Join-Path $env:ProgramData 'openrun'
+New-Item -ItemType Directory -Force $OpenRunHome | Out-Null
+openrun password | Out-File -Encoding utf8 (Join-Path $OpenRunHome 'openrun.toml')
 ```
 
 Note down the password printed. Then register and start the service:
 
 ```powershell
 $OpenRunExe = (Get-Command openrun.exe).Source
-$OpenRunConfig = 'C:\ProgramData\openrun\openrun.toml'
+$OpenRunConfig = Join-Path $env:ProgramData 'openrun\openrun.toml'
 $BinPath = "`"$OpenRunExe`" --config-file `"$OpenRunConfig`" server start"
 New-Service -Name openrun -DisplayName OpenRun -StartupType Automatic -BinaryPathName $BinPath -Description "OpenRun application server https://openrun.dev/"
 sc.exe failure openrun reset= 86400 actions= restart/5000/restart/30000//
 Start-Service openrun
 ```
 
-Passing `--config-file` pins the server home directory to the config file's directory (`C:\ProgramData\openrun` here), keeping the service independent of any user profile. Without it, a service would resolve its home under the service account profile (for LocalSystem, `C:\Windows\System32\config\systemprofile`), and OpenRun refuses to auto-create a config there. To use the `openrun` CLI against this server from a regular shell, set the env variable at machine scope so the CLI resolves the same home:
+Passing `--config-file` pins the server home directory to the config file's directory (`%ProgramData%\openrun` here), keeping the service independent of any user profile. Without it, a service would resolve its home under the service account profile (for LocalSystem, `C:\Windows\System32\config\systemprofile`), and OpenRun refuses to auto-create a config there. The `openrun` CLI finds this server automatically: a winget binary is a links shim, so the CLI cannot locate the server home relative to the executable like it does for script installs; when `OPENRUN_HOME` is not set it checks `%ProgramData%\openrun\openrun.toml` and connects over the unix domain socket under that home. On OpenRun releases before this discovery was added, set the env variable at machine scope instead:
 
 ```powershell
-[Environment]::SetEnvironmentVariable('OPENRUN_HOME', 'C:\ProgramData\openrun', 'Machine')
+[Environment]::SetEnvironmentVariable('OPENRUN_HOME', (Join-Path $env:ProgramData 'openrun'), 'Machine')
 ```
+
+Env changes apply to shells opened after the change, not existing ones.
 
 For a default user scoped winget install, keep everything under the user profile instead: run `openrun server start` once interactively to create `$HOME\openrun\openrun.toml` (note down the generated admin password), stop it with Ctrl+C, then register the service with `$OpenRunConfig = Join-Path $HOME 'openrun\openrun.toml'` in the `New-Service` command above. No env variable is needed in this setup: the CLI defaults to the same `$HOME\openrun` home.
 

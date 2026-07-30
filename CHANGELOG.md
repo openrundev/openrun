@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The `openrun` CLI now discovers a machine scoped Windows service install: when `OPENRUN_HOME` is not set and no config is found relative to the executable (a winget binary is a links shim, so executable-relative discovery finds nothing), it checks `%ProgramData%\openrun\openrun.toml` and connects to the server's unix domain socket under that home, like `/var/lib/openrun` on Linux. Previously the CLI fell back to `$HOME\openrun` and failed to find the service's socket unless `OPENRUN_HOME` was set machine-wide.
+
 ## [v0.18.15] - 2026-07-29
 
 ### Added
