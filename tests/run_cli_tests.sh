@@ -27,6 +27,11 @@ General:
   --skip-build             Reuse the existing tests/../openrun binary instead
                            of rebuilding it (faster edit/run loops)
   --verbose                Pass --verbose to commander
+  --dr                     Also run the disaster recovery scenarios in a full
+                           run (they are skipped by default: slow, hard-kill a
+                           server). The docker scenario needs --seaweedfs and a
+                           container command; the kubernetes scenario needs
+                           --seaweedfs and --kube-registry
   -h, --help               Show this help
 
 Containers:
@@ -69,6 +74,7 @@ HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COVERDIR=""
 SKIP_BUILD=""
 VERBOSE=""
+ENABLE_DR=""
 CONTAINER_COMMANDS="docker"
 CONTAINER_TOOL="docker"
 ENABLE_POSTGRES=""
@@ -103,6 +109,7 @@ while [[ $# -gt 0 ]]; do
     --coverdir) COVERDIR="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     --verbose) VERBOSE="--verbose"; shift ;;
+    --dr) ENABLE_DR=1; shift ;;
     --container-commands) CONTAINER_COMMANDS="$2"; shift 2 ;;
     --container-tool) CONTAINER_TOOL="$2"; shift 2 ;;
     --postgres) ENABLE_POSTGRES=1; shift ;;
@@ -149,6 +156,16 @@ is_explicitly_selected() {
     [[ "$t" == "$1" ]] && return 0
   done
   return 1
+}
+
+# dr_selected NAME: the disaster recovery suites are skipped in default full
+# runs (slow, hard-kill a server). They run when requested by name, or as part
+# of a full run with --dr (e.g. the weekly verify job).
+dr_selected() {
+  if [[ -n "$ENABLE_DR" && ${#TESTS[@]} -eq 0 ]]; then
+    return 0
+  fi
+  is_explicitly_selected "$1"
 }
 
 # contains_any "a b c": true if no test-file args were given or one of them
@@ -1154,9 +1171,10 @@ fi
 # OPENRUN_HOME with the backed-up config must restore the metadata (app list,
 # audit history) and the app's sqlite data from the replica alone.
 #
-# Disabled by default (it is slow and hard-kills a server): runs only when
-# explicitly requested, e.g. ./tests/run_cli_tests.sh --seaweedfs test_dr_sqlite.yaml
-if [[ -n "$ENABLE_SEAWEEDFS" && -n "$LITESTREAM_CONTAINER_CMD" ]] && is_explicitly_selected test_dr_sqlite.yaml; then
+# Disabled by default (it is slow and hard-kills a server): runs when
+# explicitly requested, e.g. ./tests/run_cli_tests.sh --seaweedfs test_dr_sqlite.yaml,
+# or in a full run with --dr
+if [[ -n "$ENABLE_SEAWEEDFS" && -n "$LITESTREAM_CONTAINER_CMD" ]] && dr_selected test_dr_sqlite.yaml; then
   start_seaweedfs_testcontainer
 
   # Unique replica prefix per run so a rerun never restores a previous run's data
@@ -1257,10 +1275,13 @@ fi
 # a SECOND namespace, restoring the metadata from S3 and the app data into a
 # fresh PVC via the restore init containers.
 #
-# Disabled by default: needs --seaweedfs and --kube-registry, and runs only
-# when explicitly requested, e.g.
+# Disabled by default: needs --seaweedfs and --kube-registry, and runs when
+# explicitly requested, e.g.
 #   ./tests/run_cli_tests.sh --seaweedfs --kube-registry registry.orb.local:5000 test_dr_kubernetes.yaml
-if [[ -n "$ENABLE_SEAWEEDFS" && -n "$KUBE_REGISTRY_URL" ]] && is_explicitly_selected test_dr_kubernetes.yaml; then
+# or in a full run with --dr. This block must stay ahead of the
+# test_kubernetes.yaml block below: the DR scenario runs before the full
+# kubernetes suite.
+if [[ -n "$ENABLE_SEAWEEDFS" && -n "$KUBE_REGISTRY_URL" ]] && dr_selected test_dr_kubernetes.yaml; then
   start_seaweedfs_testcontainer
 
   # Pods cannot reach the host's 127.0.0.1 SeaweedFS endpoint. Default the
@@ -1281,6 +1302,13 @@ if [[ -n "$ENABLE_SEAWEEDFS" && -n "$KUBE_REGISTRY_URL" ]] && is_explicitly_sele
       registry_host="${registry_host#https://}"
       registry_host="${registry_host%%/*}"
       registry_host="${registry_host%%:*}"
+      if [[ "$registry_host" == *.svc.cluster.local ]]; then
+        # The registry is a cluster-internal service (e.g. the k3s CI runner):
+        # its DNS name resolves to a ClusterIP that only serves the registry
+        # port. SeaweedFS publishes on all host interfaces, so pods reach it
+        # through the node IP instead.
+        registry_host=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+      fi
       KUBE_S3_ENDPOINT="http://${registry_host}:${TEST_S3_ENDPOINT##*:}"
     fi
   fi

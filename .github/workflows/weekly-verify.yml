@@ -25,6 +25,7 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       enable_kubernetes_tests: true
+      enable_dr_tests: true
     secrets:
       CL_INFOCLACE_SSH: ${{ secrets.CL_INFOCLACE_SSH }}
       CL_GITHUB_SECRET: ${{ secrets.CL_GITHUB_SECRET }}

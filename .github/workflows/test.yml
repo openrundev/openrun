@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      enable_dr_tests:
+        description: "Also run the docker and kubernetes disaster recovery scenarios"
+        required: false
+        default: false
+        type: boolean
     secrets:
       CL_INFOCLACE_SSH:
         required: false
@@ -82,6 +87,12 @@ jobs:
           go install github.com/commander-cli/commander/v2/cmd/commander@v2.5.0
           # Using a self-hosted runner, use Docker for container tests
           MAKE_TEST_ARGS=(CONTAINER_COMMANDS=docker POSTGRES=1 MYSQL=1 SEAWEEDFS=1)
+
+          if [[ "${{ inputs.enable_dr_tests }}" == "true" ]]; then
+            # Run the docker and kubernetes disaster recovery scenarios too
+            # (the kubernetes one needs enable_kubernetes_tests as well)
+            MAKE_TEST_ARGS+=(DR=1)
+          fi
 
           RUN_KUBERNETES_TESTS=false
           if [[ "${{ inputs.enable_kubernetes_tests }}" == "true" ]]; then
