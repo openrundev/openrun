@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/openrundev/openrun/internal/metadata"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -192,6 +193,67 @@ func TestServiceBindingRBAC(t *testing.T) {
 	}
 	if len(internal) != 2 {
 		t.Fatalf("internal listing should see all 2 bindings, got %d", len(internal))
+	}
+}
+
+// TestServiceConfigSecretRefRBAC verifies that introducing a {{secret}}
+// reference into a service config requires secret:read: the referenced
+// value flows resolved to the service's binding provider, so service:manage
+// alone must not let a caller point a service at arbitrary secrets
+func TestServiceConfigSecretRefRBAC(t *testing.T) {
+	server, db, ctx := newSyncRBACTestServer(t)
+	defer db.Close()
+	registerApplyTestBinding(t, db, ctx)
+
+	secretsManager, err := system.NewSecretManager(ctx, map[string]types.SecretConfig{"env": {}},
+		"", server.staticConfig)
+	if err != nil {
+		t.Fatalf("new secret manager: %v", err)
+	}
+	server.secretsManager.Store(secretsManager)
+	t.Setenv("CL_TEST_RBAC_SECRET", "resolved-value")
+
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
+		Enabled: true,
+		Roles: map[string][]types.RBACPermission{
+			"dbops":     {types.PermissionServiceManage},
+			"secretops": {types.PermissionServiceManage, types.PermissionSecretRead},
+		},
+		Grants: []types.RBACGrant{
+			{Description: "dbops", Users: []string{"dbops"}, Roles: []string{"dbops"}, Targets: []string{"all"}},
+			{Description: "secretops", Users: []string{"secretops"}, Roles: []string{"secretops"}, Targets: []string{"all"}},
+		},
+	}); err != nil {
+		t.Fatalf("rbac config update: %v", err)
+	}
+	dbopsCtx := rbacEnforcedCtx(ctx, "dbops")
+	refConfig := map[string]string{"password": `{{secret_from "env" "CL_TEST_RBAC_SECRET"}}`}
+
+	// service:manage without secret:read cannot introduce a secret reference
+	err = server.CreateService(dbopsCtx, &types.Service{Name: "withref", ServiceType: "applytest",
+		Config: refConfig}, false)
+	if err == nil || !strings.Contains(err.Error(), string(types.PermissionSecretRead)) {
+		t.Fatalf("expected secret:read denial on create with secret ref, got %v", err)
+	}
+
+	// plain config values need no secret permission
+	plainService := &types.Service{Name: "plain", ServiceType: "applytest",
+		Config: map[string]string{"plain": "value with {{ braces }}"}}
+	if err := server.CreateService(dbopsCtx, plainService, false); err != nil {
+		t.Fatalf("create service with plain config: %v", err)
+	}
+
+	// nor can a reference be introduced through an update
+	plainService.Config = refConfig
+	err = server.UpdateService(dbopsCtx, plainService, false)
+	if err == nil || !strings.Contains(err.Error(), string(types.PermissionSecretRead)) {
+		t.Fatalf("expected secret:read denial on update with secret ref, got %v", err)
+	}
+
+	// with secret:read the reference is accepted
+	if err := server.CreateService(rbacEnforcedCtx(ctx, "secretops"), &types.Service{Name: "allowed",
+		ServiceType: "applytest", Config: refConfig}, false); err != nil {
+		t.Fatalf("create service with secret ref and secret:read: %v", err)
 	}
 }
 

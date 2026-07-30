@@ -42,6 +42,17 @@ openrun service create mysql/main \
 
 The first service of a type is automatically marked as default. Use `--is-default` to explicitly mark a service as the default. When creating a binding, the source can be the full service id like `postgres/main`, or just the service type like `postgres`. If only the service type is specified, OpenRun uses the default service for that type.
 
+Service config values can reference [secrets](/docs/configuration/secrets/) with `{{secret ...}}` or `{{secret_from ...}}` template references, so credentials do not have to be stored in the metadata database:
+
+```shell
+openrun service create postgres/main \
+  --config 'url={{secret_from "asm" "prod_db_admin_url"}}'
+```
+
+The reference is stored as is and resolved through the secret provider each time the service connection is used, so a rotated secret value takes effect on the next operation without a service update.
+
+Under [RBAC]({{< ref "/docs/configuration/rbac" >}}), creating or updating a service whose config references a secret additionally requires the `secret:read` permission: the referenced value flows resolved to the service's binding provider, so selecting which secrets a service uses is restricted to users allowed to use the secret store, rather than implied by `service:manage` alone.
+
 ```shell
 openrun binding create postgres /apps/reporting-db
 ```

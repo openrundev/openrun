@@ -74,6 +74,9 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 		serviceRBACId(service.ServiceType, service.Name), ""); err != nil {
 		return err
 	}
+	if err := s.enforceServiceSecretRefs(ctx, service.Config); err != nil {
+		return err
+	}
 
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
@@ -92,8 +95,12 @@ func (s *Server) CreateService(ctx context.Context, service *types.Service, dryR
 		return err
 	}
 
+	resolvedConfig, err := s.resolveServiceConfig(service.Config)
+	if err != nil {
+		return err
+	}
 	serviceBinding := builder()
-	if err := serviceBinding.InitializeService(ctx, s.Logger, service.Config, s.serviceBindingRuntime()); err != nil {
+	if err := serviceBinding.InitializeService(ctx, s.Logger, resolvedConfig, s.serviceBindingRuntime()); err != nil {
 		return fmt.Errorf("error initializing service binding: %w", err)
 	}
 	defer serviceBinding.CloseService(ctx) //nolint:errcheck
@@ -142,6 +149,9 @@ func (s *Server) UpdateService(ctx context.Context, service *types.Service, dryR
 	}
 	if err := s.enforceServicePerm(ctx, types.PermissionServiceUpdate,
 		serviceRBACId(service.ServiceType, service.Name), existing.CreatedBy); err != nil {
+		return err
+	}
+	if err := s.enforceServiceSecretRefs(ctx, service.Config); err != nil {
 		return err
 	}
 
@@ -462,12 +472,62 @@ func (s *Server) getServiceBinding(ctx context.Context, service *types.Service, 
 		return nil, err
 	}
 
+	resolvedConfig, err := s.resolveServiceConfig(service.Config)
+	if err != nil {
+		return nil, err
+	}
 	serviceBinding := builder()
-	if err = serviceBinding.InitializeService(ctx, s.Logger, service.Config, s.serviceBindingRuntime()); err != nil {
+	if err = serviceBinding.InitializeService(ctx, s.Logger, resolvedConfig, s.serviceBindingRuntime()); err != nil {
 		return nil, fmt.Errorf("error initializing service: %w", err)
 	}
 
 	return serviceBinding, nil
+}
+
+// enforceServiceSecretRefs requires the secret:read permission when a
+// service config value references a secret. Referenced values flow resolved
+// to the service's binding provider, so selecting which secrets a service
+// uses must be limited to callers who are allowed to use the secret store,
+// not implied by service:manage alone
+func (s *Server) enforceServiceSecretRefs(ctx context.Context, config map[string]string) error {
+	mgr := s.secretsMgr()
+	if mgr == nil {
+		return nil
+	}
+	for key, value := range config {
+		if mgr.ReferencesSecrets(value) {
+			if err := s.enforceGlobalPerm(ctx, types.PermissionSecretRead, ""); err != nil {
+				return fmt.Errorf("service config key %s references a secret: %w", key, err)
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+// resolveServiceConfig returns a copy of the service config with {{secret}}
+// and {{secret_from}} references resolved through the current secrets
+// manager. The stored service config keeps the references; resolution happens
+// each time the config is handed to a binding or an app, so a rotated secret
+// value is picked up on the next operation without a service update. Values
+// that do not reference secrets pass through unchanged
+func (s *Server) resolveServiceConfig(config map[string]string) (map[string]string, error) {
+	if len(config) == 0 {
+		return config, nil
+	}
+	mgr := s.secretsMgr()
+	if mgr == nil {
+		return config, nil
+	}
+	resolved := make(map[string]string, len(config))
+	for key, value := range config {
+		evaled, err := mgr.ServiceEvalTemplate(value)
+		if err != nil {
+			return nil, fmt.Errorf("error resolving secret reference in service config key %s: %w", key, err)
+		}
+		resolved[key] = evaled
+	}
+	return resolved, nil
 }
 
 func (s *Server) serviceBindingRuntime() bindings.ServiceBindingRuntime {
@@ -1106,12 +1166,18 @@ func (s *Server) GetBindingWithAccount(ctx context.Context, tx types.Transaction
 		return nil, fmt.Errorf("error getting binding service: %w", err)
 	}
 	binding.ServiceIsDefault = service.IsDefault
-	binding.ServiceConfig = service.Config
+	binding.ServiceConfig, err = s.resolveServiceConfig(service.Config)
+	if err != nil {
+		return nil, err
+	}
 	if service.Staging != "" {
 		// Staged apps follow the linked staging service's config; a missing
 		// staging service (deleted since) falls back to the primary config
 		if stagingService, err := s.db.GetService(ctx, tx, service.ServiceType, service.Staging); err == nil {
-			binding.StagingServiceConfig = stagingService.Config
+			binding.StagingServiceConfig, err = s.resolveServiceConfig(stagingService.Config)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return binding, nil

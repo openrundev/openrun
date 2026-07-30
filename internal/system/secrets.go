@@ -196,6 +196,50 @@ func (s *SecretManager) EvalTemplate(input string) (string, error) {
 	return doc.String(), nil
 }
 
+// ServiceEvalTemplate resolves {{secret}}/{{secret_from}} references in a
+// service config value. Unlike EvalTemplate, values that do not parse as a
+// template or that parse without referencing a secret pass through literally:
+// service config values are arbitrary strings (connection urls, passwords,
+// PEM keys) that may contain "{{" without being templates
+func (s *SecretManager) ServiceEvalTemplate(input string) (string, error) {
+	tmpl := s.parseSecretRefTemplate(input)
+	if tmpl == nil {
+		return input, nil
+	}
+	var doc bytes.Buffer
+	if err := tmpl.Execute(&doc, nil); err != nil {
+		return "", err
+	}
+	return doc.String(), nil
+}
+
+// ReferencesSecrets reports whether the value is a template that calls the
+// secret or secret_from function. Values that do not parse as a template are
+// not references
+func (s *SecretManager) ReferencesSecrets(input string) bool {
+	return s.parseSecretRefTemplate(input) != nil
+}
+
+// parseSecretRefTemplate parses the value as a template and returns it when
+// it references secrets, nil otherwise (including parse failures: such values
+// are treated as literals)
+func (s *SecretManager) parseSecretRefTemplate(input string) *template.Template {
+	if len(input) < 4 {
+		return nil
+	}
+	if !strings.Contains(input, "{{") || !strings.Contains(input, "}}") {
+		return nil
+	}
+	tmpl, err := template.New("secret template").Funcs(s.funcMap).Parse(input)
+	if err != nil {
+		return nil
+	}
+	if !templateReferencesSecrets(tmpl) {
+		return nil
+	}
+	return tmpl
+}
+
 // EvalTemplate evaluates the input string and replaces any secret placeholders with the actual secret value
 func (s *SecretManager) AppEvalTemplate(appSecrets [][]string, defaultProvider, input string) (string, error) {
 	if len(input) < 4 {
