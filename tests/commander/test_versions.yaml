@@ -203,5 +203,6 @@ tests:
     stdout:
       line-count: 0
 
-  versions99999: # Cleanup
-    command: (rm -rf ./versionstest; ../openrun app delete "*:versions**"; ../openrun app delete "versions*:**") || true
+  versions99999: # Cleanup. Delete the apps before removing the source dir, the
+    # dev app recreates it with a config_gen.lock file while it is registered
+    command: (../openrun app delete "*:versions**"; ../openrun app delete "versions*:**"; rm -rf ./versionstest) || true

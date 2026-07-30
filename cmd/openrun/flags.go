@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/openrundev/openrun/internal/system"
@@ -22,13 +23,54 @@ const (
 	FORMAT_JSONL_PRETTY = "jsonl_pretty"
 	FORMAT_CSV          = "csv"
 )
-const (
-	//Terminal colors
-	RESET  = "\033[0m"
-	RED    = "\033[31m"
-	GREEN  = "\033[32m"
-	YELLOW = "\033[33m"
-)
+
+var validFormats = []string{FORMAT_TABLE, FORMAT_BASIC, FORMAT_CSV, FORMAT_JSON, FORMAT_JSONL, FORMAT_JSONL_PRETTY}
+
+// newFormatFlag creates the output format flag, validating the value at parse
+// time so an invalid format is reported as an error instead of a panic
+func newFormatFlag() *cli.StringFlag {
+	return &cli.StringFlag{
+		Name:    "format",
+		Aliases: []string{"f"},
+		Usage:   "The display format. Valid options are table, basic, csv, json, jsonl and jsonl_pretty",
+		Action: func(_ *cli.Context, value string) error {
+			if !slices.Contains(validFormats, value) {
+				return fmt.Errorf("invalid format %q: valid options are %s", value, strings.Join(validFormats, ", "))
+			}
+			return nil
+		},
+	}
+}
+// Terminal colors, empty strings when the terminal does not support ANSI escape sequences
+var RESET, RED, GREEN, YELLOW = initColors()
+
+func initColors() (string, string, string, string) {
+	if colorsSupported() {
+		return "\033[0m", "\033[31m", "\033[32m", "\033[33m"
+	}
+	return "", "", "", ""
+}
+
+// colorsSupported reports whether colored output should be used: disabled if
+// NO_COLOR is set, TERM is dumb, stdout/stderr are not terminals, or the
+// platform cannot process ANSI escape sequences
+func colorsSupported() bool {
+	if _, ok := os.LookupEnv("NO_COLOR"); ok {
+		return false
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	return isTerminal(os.Stdout) && isTerminal(os.Stderr) && enableVirtualTerminal()
+}
+
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
 
 func newStringFlag(name, alias, usage, value string) *cli.StringFlag {
 	var aliases []string

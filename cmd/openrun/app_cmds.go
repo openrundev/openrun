@@ -16,11 +16,12 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+var DRY_RUN_MESSAGE = "\n" + YELLOW + "*** dry-run mode, changes have NOT been committed. ***" + RESET + "\n"
+
 const (
-	DRY_RUN_FLAG    = "dry-run"
-	DRY_RUN_ARG     = "dryRun"
-	DRY_RUN_MESSAGE = "\n" + YELLOW + "*** dry-run mode, changes have NOT been committed. ***" + RESET + "\n"
-	PATH_SPEC_HELP  = `The (optional) domain and path are separated by a ":". appPathGlob supports a glob pattern.
+	DRY_RUN_FLAG   = "dry-run"
+	DRY_RUN_ARG    = "dryRun"
+	PATH_SPEC_HELP = `The (optional) domain and path are separated by a ":". appPathGlob supports a glob pattern.
 In the glob, * matches any number of characters, ** matches any number of characters including /.
 all is a shortcut for "*:**", which matches all apps across all domains, including no domain.
 To prevent shell expansion for *, placing the path in quotes is recommended.
@@ -259,7 +260,7 @@ func appListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 	flags := make([]cli.Flag, 0, len(commonFlags)+2)
 	flags = append(flags, commonFlags...)
 	flags = append(flags, newBoolFlag("internal", "i", "Include internal apps", false))
-	flags = append(flags, newStringFlag("format", "f", "The display format. Valid options are table, basic, csv, json, jsonl and jsonl_pretty", ""))
+	flags = append(flags, newFormatFlag())
 
 	return &cli.Command{
 		Name:      "list",

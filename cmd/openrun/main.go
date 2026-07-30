@@ -5,11 +5,11 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/urfave/cli/v2"
@@ -199,11 +199,48 @@ func parseConfig(cCtx *cli.Context, globalConfig *types.GlobalConfig, clientConf
 	if err := system.LoadClientConfig(string(buf), clientConfig); err != nil {
 		return err
 	}
+	if !slices.Contains(validFormats, clientConfig.Client.DefaultFormat) {
+		return fmt.Errorf("invalid client.default_format %q in config: valid options are %s",
+			clientConfig.Client.DefaultFormat, strings.Join(validFormats, ", "))
+	}
 	if err := system.LoadServerConfig(string(buf), serverConfig); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// fatalError prints the error to stderr and exits
+func fatalError(err error) {
+	fmt.Fprintf(os.Stderr, RED+"error: %s"+RESET+"\n", err) //nolint:errcheck
+	system.NotifyServiceFailed(1)
+	os.Exit(1)
+}
+
+// setUsageErrorHandlers routes flag parsing errors through the app
+// ExitErrHandler so they are printed to stderr instead of the urfave/cli
+// default of printing usage errors on stdout
+func setUsageErrorHandlers(commands []*cli.Command, helpPath string) {
+	for _, command := range commands {
+		commandPath := helpPath + " " + command.Name
+		if command.OnUsageError == nil {
+			command.OnUsageError = func(_ *cli.Context, err error, _ bool) error {
+				return usageError(command.Flags, commandPath, err)
+			}
+		}
+		setUsageErrorHandlers(command.Subcommands, commandPath)
+	}
+}
+
+// usageError adds a did-you-mean suggestion for unknown flags and a --help
+// hint to flag parsing errors
+func usageError(flags []cli.Flag, helpPath string, err error) error {
+	if flagName, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: -"); ok && cli.SuggestFlag != nil {
+		if suggestion := cli.SuggestFlag(flags, flagName, false); suggestion != "" {
+			return fmt.Errorf("%w (did you mean %q?)\nrun '%s --help' for usage", err, suggestion, helpPath)
+		}
+	}
+	return fmt.Errorf("%w\nrun '%s --help' for usage", err, helpPath)
 }
 
 func main() {
@@ -214,16 +251,17 @@ func main() {
 
 	globalConfig, clientConfig, serverConfig, err := system.GetDefaultConfigs()
 	if err != nil {
-		log.Fatal(err)
+		fatalError(err)
 	}
 	globalFlags, err := globalFlags(globalConfig, clientConfig)
 	if err != nil {
-		log.Fatal(err)
+		fatalError(err)
 	}
 	allCommands, err := getAllCommands(clientConfig, serverConfig)
 	if err != nil {
-		log.Fatal(err)
+		fatalError(err)
 	}
+	setUsageErrorHandlers(allCommands, "openrun")
 
 	app := &cli.App{
 		Name:                 "openrun",
@@ -249,9 +287,7 @@ func main() {
 		},
 		ExitErrHandler: func(c *cli.Context, err error) {
 			if err != nil {
-				fmt.Fprintf(cli.ErrWriter, RED+"error: %s\n"+RESET, err) //nolint:errcheck
-				system.NotifyServiceFailed(1)
-				os.Exit(1)
+				fatalError(err)
 			}
 		},
 		Commands: allCommands,
@@ -262,14 +298,26 @@ func main() {
 				os.Exit(0)
 				return nil
 			}
+			if ctx.Args().Present() {
+				// An unknown command should fail instead of showing the help and exiting 0
+				arg := ctx.Args().First()
+				if cli.SuggestCommand != nil {
+					if suggestion := cli.SuggestCommand(ctx.App.Commands, arg); suggestion != "" {
+						return fmt.Errorf("unknown command %q. %s\nrun 'openrun --help' for usage", arg, suggestion)
+					}
+				}
+				return fmt.Errorf("unknown command %q\nrun 'openrun --help' for usage", arg)
+			}
 			return cli.ShowAppHelp(ctx)
 		},
 	}
 
+	app.OnUsageError = func(_ *cli.Context, err error, _ bool) error {
+		return usageError(app.Flags, "openrun", err)
+	}
+
 	if err := app.Run(normalizeInterspersedFlags(app, os.Args)); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s", err) //nolint:errcheck
-		system.NotifyServiceFailed(1)
-		os.Exit(1)
+		fatalError(err)
 	}
 }
 

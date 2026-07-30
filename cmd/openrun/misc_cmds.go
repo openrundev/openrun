@@ -101,17 +101,19 @@ func bootstrapConfigFile(clHome, configFile string) error {
 	return nil
 }
 
+// promptPassword prompts on stderr so the command output can be redirected
 func promptPassword(prompt string) (string, error) {
-	fmt.Print(prompt)
+	fmt.Fprint(os.Stderr, prompt)
 	password, err := readPassword()
 	if err != nil {
 		return "", err
 	}
-	fmt.Print("\nConfirm password: ")
+	fmt.Fprint(os.Stderr, "\nConfirm password: ")
 	confirmPassword, err := readPassword()
 	if err != nil {
 		return "", err
 	}
+	fmt.Fprintln(os.Stderr)
 	if password != confirmPassword {
 		return "", fmt.Errorf("passwords do not match")
 	}

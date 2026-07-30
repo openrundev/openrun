@@ -28,7 +28,7 @@ func initReplicationCommand(commonFlags []cli.Flag, clientConfig *types.ClientCo
 func replicationStatusCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+1)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newStringFlag("format", "f", "The display format. Valid options are table, basic, csv, json, jsonl and jsonl_pretty", ""))
+	flags = append(flags, newFormatFlag())
 
 	return &cli.Command{
 		Name:  "status",

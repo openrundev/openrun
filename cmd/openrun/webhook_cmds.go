@@ -29,7 +29,7 @@ func initWebhookCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 func webhookListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+2)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newStringFlag("format", "f", "The display format. Valid options are table, basic, csv, json, jsonl and jsonl_pretty", ""))
+	flags = append(flags, newFormatFlag())
 
 	return &cli.Command{
 		Name:      "list",
