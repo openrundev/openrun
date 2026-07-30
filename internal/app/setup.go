@@ -472,9 +472,12 @@ func (a *App) initRouter() error {
 		return err
 	}
 
-	a.appRouter = chi.NewRouter()
+	// Stage the new router; Reload publishes it to appRouter (under renderMu)
+	// only after the whole reload has succeeded, together with the parsed
+	// templates, so concurrent requests never see a half-built app
+	a.newAppRouter = chi.NewRouter()
 	a.Trace().Msgf("Mounting app %s at %s", a.Name, a.Path)
-	a.appRouter.Mount(a.Path, router)
+	a.newAppRouter.Mount(a.Path, router)
 
 	return nil
 }

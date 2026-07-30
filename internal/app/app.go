@@ -78,7 +78,15 @@ type App struct {
 	appDef       *starlarkstruct.Struct // app starlark definition
 	errorHandler starlark.Callable      // error handler function
 	appRouter    *chi.Mux               // router for the app
+	newAppRouter *chi.Mux               // router built by the reload in progress, published to appRouter under renderMu
 	actions      []*action.Action       // actions defined for the app
+
+	// renderMu guards appRouter and the parsed templates: a reload (dev
+	// watcher or API triggered) publishes them while request handlers on
+	// other goroutines read them. Reload builds the new values off to the
+	// side and publishes them together at the end, so requests are served
+	// from the previous app state until the reload has fully succeeded
+	renderMu sync.RWMutex
 
 	usesHtmlTemplate bool                          // Whether the app uses HTML templates, false if only JSON APIs
 	template         *template.Template            // unstructured templates, no base_templates defined
@@ -443,7 +451,12 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 		}
 	}
 
-	// Parse HTML templates if there are HTML routes or action uses HTML templates
+	// Parse HTML templates if there are HTML routes or action uses HTML templates.
+	// Built into locals and published under renderMu below: request handlers
+	// read the template fields while the dev watcher runs Reload
+	newTemplate := a.template
+	newTemplateBase := a.templateBase
+	newTemplateMap := a.templateMap
 	baseFiles, err := a.sourceFS.Glob(path.Join(a.codeConfig.Routing.BaseTemplates, "*.go.html"))
 	if err != nil {
 		return false, err
@@ -451,7 +464,7 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 
 	if len(baseFiles) == 0 {
 		// No base templates found, use the default unstructured templates
-		if a.template, err = a.sourceFS.ParseFS(a.funcMap, a.codeConfig.Routing.TemplateLocations...); err != nil {
+		if newTemplate, err = a.sourceFS.ParseFS(a.funcMap, a.codeConfig.Routing.TemplateLocations...); err != nil {
 			if strings.Contains(err.Error(), "pattern matches no files") {
 				if a.usesHtmlTemplate {
 					// No html templates found, but app has html routes
@@ -469,9 +482,9 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 		if err != nil {
 			return false, err
 		}
-		a.templateBase = base
+		newTemplateBase = base
 
-		a.templateMap = make(map[string]*template.Template)
+		newTemplateMap = make(map[string]*template.Template)
 		for _, paths := range a.codeConfig.Routing.TemplateLocations {
 			files, err := a.sourceFS.Glob(paths)
 			if err != nil {
@@ -484,7 +497,7 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 					return false, err
 				}
 
-				a.templateMap[file], err = tmpl.ParseFS(a.sourceFS.ReadableFS, file)
+				newTemplateMap[file], err = tmpl.ParseFS(a.sourceFS.ReadableFS, file)
 				if err != nil {
 					return false, err
 				}
@@ -492,12 +505,25 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 		}
 	}
 	for _, action := range a.actions {
-		// structured templates are not supported for actions currently
-		action.AppTemplate = a.template
+		// structured templates are not supported for actions currently.
+		// The actions are not reachable by requests yet: they are mounted on
+		// newAppRouter, which is published below
+		action.AppTemplate = newTemplate
 		action.StyleType = a.appStyle.GetStyleType()
 		action.LightTheme = cmp.Or(a.appStyle.Light, apptype.DEFAULT_DAISYUI_LIGHT_THEME)
 		action.DarkTheme = cmp.Or(a.appStyle.Dark, apptype.DEFAULT_DAISYUI_DARK_THEME)
 	}
+
+	// Publish the new router and templates together; until here concurrent
+	// requests were served from the previous app state
+	a.renderMu.Lock()
+	a.appRouter = a.newAppRouter
+	a.template = newTemplate
+	a.templateBase = newTemplateBase
+	a.templateMap = newTemplateMap
+	a.renderMu.Unlock()
+	a.newAppRouter = nil
+
 	a.initialized = true
 	a.updateActiveContainerNameLocked()
 
@@ -794,38 +820,44 @@ func parseDevSettings(m map[string]any) (*types.DevSettings, error) {
 }
 
 func (a *App) executeTemplate(w io.Writer, template, partial string, data any) error {
+	// Snapshot under renderMu: a reload can publish new templates while this
+	// request renders
+	a.renderMu.RLock()
+	appTemplate, templateMap, templateBase := a.template, a.templateMap, a.templateBase
+	a.renderMu.RUnlock()
+
 	var err error
-	if a.template != nil {
+	if appTemplate != nil {
 		exec := partial
 		if partial == "" {
 			exec = template
 		}
-		if err = a.template.ExecuteTemplate(w, exec, data); err != nil {
+		if err = appTemplate.ExecuteTemplate(w, exec, data); err != nil {
 			return err
 		}
 	} else {
 		if template == "" {
-			if _, ok := a.templateMap[partial]; ok {
+			if _, ok := templateMap[partial]; ok {
 				template = partial
-			} else if a.templateBase != nil && a.templateBase.Lookup(partial) != nil {
+			} else if templateBase != nil && templateBase.Lookup(partial) != nil {
 				// The block is a base-template define; render it directly
 				// (block-only responses, no page file involved)
-				return a.templateBase.ExecuteTemplate(w, partial, data)
+				return templateBase.ExecuteTemplate(w, partial, data)
 			} else {
 				template = "index.go.html"
 			}
 		}
 
-		t, ok := a.templateMap[template]
+		t, ok := templateMap[template]
 		if !ok {
 			// The route's template may name a base-template define instead
 			// of a template file
-			if a.templateBase != nil && a.templateBase.Lookup(template) != nil {
+			if templateBase != nil && templateBase.Lookup(template) != nil {
 				exec := partial
 				if partial == "" {
 					exec = template
 				}
-				return a.templateBase.ExecuteTemplate(w, exec, data)
+				return templateBase.ExecuteTemplate(w, exec, data)
 			}
 			return fmt.Errorf("template %s not found", template)
 		}
@@ -1065,7 +1097,10 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer span.End()
 		r = r.WithContext(ctx)
 	}
-	a.appRouter.ServeHTTP(wrapper, r)
+	a.renderMu.RLock()
+	appRouter := a.appRouter
+	a.renderMu.RUnlock()
+	appRouter.ServeHTTP(wrapper, r)
 }
 
 func (a *App) startWatcher() error {
