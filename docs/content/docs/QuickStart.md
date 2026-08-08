@@ -4,7 +4,7 @@ weight: 50
 summary: "Quick Start guide on using OpenRun"
 ---
 
-OpenRun is an Apache-2.0 licensed web app deployment platform for internal tools. OpenRun is distributed as a single binary and runs natively on Linux, macOS and Windows, using Docker/Podman on a single-node or working with Kubernetes for a distributed setup.
+OpenRun is an Apache-2.0 licensed web app deployment platform for teams to deploy internal tools. OpenRun is distributed as a single binary and runs natively on Linux, macOS and Windows, using Docker/Podman on a single-node or working with Kubernetes for a distributed setup.
 
 ## Installation
 
