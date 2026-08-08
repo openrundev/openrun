@@ -1,3 +1,23 @@
+{{- with .Keywords }}
+  <meta name="keywords" content="{{ delimit . ", " }}" />
+{{- end }}
+{{- if .IsHome }}
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "OpenRun",
+      "url": {{ .Site.BaseURL }},
+      "description": {{ partial "utils/page-description.html" . }},
+      "keywords": {{ delimit (.Keywords | default slice) ", " }},
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Linux, macOS, Windows",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "sameAs": ["https://github.com/openrundev/openrun"]
+    }
+  </script>
+{{- end }}
+
 <script
   defer
   data-domain="openrun.dev"

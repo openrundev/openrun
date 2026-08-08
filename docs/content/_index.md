@@ -1,19 +1,46 @@
 ---
 title: OpenRun
 layout: hextra-home
+description: "OpenRun is an open-source deployment platform for internal tools. Deploy Streamlit apps, Gradio apps, FastAPI apps, FastHTML apps etc. - with GitOps, RBAC, SSO auth and audit logs."
+keywords:
+  [
+    "internal tools",
+    "Streamlit apps",
+    "FastAPI apps",
+    "Gradio apps",
+    "FastHTML apps",
+    "NiceGUI apps",
+    "operational scripts",
+    "deployment platform",
+    "GitOps",
+    "self-hosted",
+    "AI generated apps",
+  ]
 cascade:
   images: ["/openrun_small.png"]
 ---
 
-<div class="hx:mb-4" style="background: #277A9F; background: linear-gradient(180deg, #277A9F, #359ece); color: transparent; background-clip: text; -webkit-background-clip: text;">
-{{< hextra/hero-headline >}}
-  The deployment layer for internal tools
-{{< /hextra/hero-headline >}}
+<style>
+.word-wheel { display: inline-block; position: relative; width: 6.4em; height: 2.6em; perspective: 600px; transition: width 0.6s cubic-bezier(0.22, 0.61, 0.36, 1); -webkit-mask-image: linear-gradient(to bottom, transparent, #000 16%, #000 84%, transparent); mask-image: linear-gradient(to bottom, transparent, #000 16%, #000 84%, transparent); }
+.word-wheel::before { content: "\200B"; line-height: 2.6em; }
+.ww-word { position: absolute; top: 50%; left: 50%; white-space: nowrap; transition: transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.6s ease; background: linear-gradient(180deg, #00C200, #007700); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ww-c { transform: translate(-50%, -50%); opacity: 1; }
+.ww-m1 { transform: translate(-50%, -50%) translateY(-0.95em) rotateX(38deg) scale(0.62); opacity: 0.5; }
+.ww-p1 { transform: translate(-50%, -50%) translateY(0.95em) rotateX(-38deg) scale(0.62); opacity: 0.5; }
+.ww-m2 { transform: translate(-50%, -50%) translateY(-1.5em) rotateX(60deg) scale(0.45); opacity: 0; }
+.ww-p2 { transform: translate(-50%, -50%) translateY(1.5em) rotateX(-60deg) scale(0.45); opacity: 0; }
+.ww-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .ww-word { transition: none; } .ww-word:not(.ww-c) { visibility: hidden; } }
+@media (max-width: 767px) { #hero-headline { text-align: center; } .word-wheel { display: block; width: auto !important; margin: 0 auto; } }
+</style>
+
+<div class="hx:mb-4">
+<h1 id="hero-headline" class="not-prose hx:text-4xl hx:font-bold hx:leading-none hx:tracking-tighter hx:md:text-5xl hx:py-2"><span class="hx:bg-clip-text hx:text-transparent hx:bg-gradient-to-r hx:from-gray-900 hx:to-gray-600 hx:dark:from-gray-100 hx:dark:to-gray-400">Deployment platform for</span><span class="ww-sr">&nbsp;internal tools</span> <span id="word-wheel" class="word-wheel" aria-hidden="true"><span class="ww-word ww-m2">Hypermedia apps</span><span class="ww-word ww-m1">automation scripts</span><span class="ww-word ww-c">internal tools</span><span class="ww-word ww-p1">AI apps</span><span class="ww-word ww-p2">Streamlit apps</span></span></h1>
 </div>
 
 <div class="hx:mb-6">
 {{< hextra/hero-subtitle >}}
-  Deployment platform for code-first internal tools.&nbsp;<br class="hx:sm:block hx:hidden"/>Turn generated code into secure internal tools with GitOps, RBAC, and auditing.
+  Deployment platform for teams to deploy internal tools.&nbsp;<br class="hx:sm:block hx:hidden"/>Deploy internal tools securely with GitOps, RBAC, and auditing.
 {{< /hextra/hero-subtitle >}}
 </div>
 
@@ -97,6 +124,33 @@ app(path=<span style="color: #22863a;">&quot;fasthtml.:&quot;</span>, source=<sp
 </div>
 
 <script>
+(function () {
+    const wheel = document.getElementById('word-wheel');
+    if (!wheel) return;
+    const words = ['internal tools', 'AI apps', 'Streamlit apps', 'FastAPI apps', 'Gradio apps', 'FastHTML apps', 'NiceGUI apps', 'Hypermedia apps', 'operational tools', 'runbook automation'];
+    const posCls = ['ww-m2', 'ww-m1', 'ww-c', 'ww-p1', 'ww-p2'];
+    const spans = Array.from(wheel.children);
+    const measure = document.createElement('span');
+    measure.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;';
+    wheel.appendChild(measure);
+    let cur = 0;
+    const setWidth = () => { measure.textContent = words[cur]; wheel.style.width = measure.offsetWidth + 'px'; };
+    spans.forEach((s, i) => { s.textContent = words[(i - 2 + words.length) % words.length]; });
+    setWidth();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(setWidth);
+    window.addEventListener('resize', setWidth);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    setInterval(() => {
+        if (document.hidden) return;
+        cur = (cur + 1) % words.length;
+        const top = spans.shift();
+        top.textContent = words[(cur + 2) % words.length];
+        spans.push(top);
+        spans.forEach((s, i) => { s.className = 'ww-word ' + posCls[i]; });
+        setWidth();
+    }, 2600);
+})();
+
 function copyCode(codeId, buttonElem) {
     const code = document.getElementById(codeId).textContent;
     navigator.clipboard.writeText(code).then(() => {

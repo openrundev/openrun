@@ -29,8 +29,8 @@ noClasses = false
 
 # Default Page Parameters
 [params]
-title = "OpenRun - The deployment layer for internal tools"
-description = "Deployment platform for code-first internal tools. Turn generated code into secure internal tools with GitOps, RBAC, and auditing."
+title = "OpenRun - Deployment platform for internal tools"
+description = "OpenRun is an open-source deployment platform for internal tools. Deploy Streamlit apps, Gradio apps, FastAPI apps, FastHTML apps, operational scripts etc. - with GitOps, RBAC, SSO auth and audit logs."
 
 [params.navbar]
 displayTitle = false
