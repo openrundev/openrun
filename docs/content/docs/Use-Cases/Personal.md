@@ -1,14 +1,17 @@
 ---
-title: "Family and Friends"
+title: "Self-Hosted Web Apps on a VPS"
 weight: 100
-summary: "Deploying apps for personal use and for sharing with family and friends"
+description: "Deploy self-hosted web apps on a Linux VPS with GitOps, automatic TLS, Google OAuth and role-based access control."
+summary: "Turn a Linux VPS into a secure platform for personal web apps shared with family and friends."
 ---
+
+This guide turns a Linux VPS (virtual private server) into a self-hosted platform for personal web apps. OpenRun manages application deployment, GitOps updates, HTTPS certificates and authenticated access while Docker or Podman runs each application.
 
 ## Scenario
 
 This use-case documents the scenario where you want to:
 
-- Set up an instance on the public internet to host web apps for use by yourself and for family and friends
+- Set up OpenRun on a Linux VPS or server to host web apps for yourself, family and friends
 - Use an OAuth provider like Google for login
 - Set up an automated GitOps workflow for app updates and new app creation
 
@@ -18,7 +21,7 @@ For this use case, we will use a Google OAuth account for authentication and a G
 
 To get OpenRun running, the initial setup involves:
 
-- Create a Linux machine, publicly accessible on port 443.
+- Create a Linux VPS or server that is publicly accessible on port 443.
 - Create a DNS entry pointing to the machine's IP address, for example an `A` record for `apps.example.com`. A wildcard DNS entry `*.apps.example.com` will make it easier to install apps at the domain level.
 - Create a Google OAuth by visiting [Google Console](https://console.cloud.google.com/auth/clients). The callback URL would be `https://apps.example.com/_openrun/auth/google/callback`. Note the client ID and secret.
 - Create a GitHub Personal Access Token in [GitHub settings](https://github.com/settings/personal-access-tokens). Set the scope to the repositories you want to use for your apps. Note the token.

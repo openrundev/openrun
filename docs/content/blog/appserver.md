@@ -1,12 +1,16 @@
 ---
-title: "Missed Connections: AppServers in the Containerized Landscape"
-summary: "Application Servers can make deployments easier, but they have not kept up with the times."
+title: "Self-Hosted PaaS vs. Application Servers"
+description: "Compare self-hosted PaaS platforms with application servers and learn how OpenRun simplifies containerized web app deployment on your infrastructure."
+summary: "Why a focused, self-hosted PaaS alternative can simplify containerized web app deployment."
 date: 2024-11-07
+lastmod: 2026-08-09
 ---
 
 {{< openrun-intro >}}
 
-Application Servers can make application deployment easy. AppServers do not support all the features of a PaaS solution, but that comes with the benefit of zero-config deployments. Especially for internal tools, AppServers are a great alternative to building a deployment solution on top of Kubernetes. OpenRun is the first AppServer built for use with containers.
+OpenRun is an open-source, self-hosted PaaS alternative for deploying containerized web apps on a VPS, private server or Kubernetes. It combines the focused deployment model of an application server with GitOps, routing, authentication, RBAC, auditing and scale-to-zero.
+
+Application servers can make deployment easy. They do not support every service offered by a general-purpose Platform as a Service (PaaS), but their narrower scope enables simpler configuration. Especially for internal tools, application servers can replace a complex platform assembled from multiple Kubernetes components.
 
 ## What is an Application Server
 
@@ -30,7 +34,7 @@ Since the initial release of Docker in 2013, containers have become very popular
 
 No application server currently supports running apps within containers. App servers are missing from the crowded cloud native [landscape](https://landscape.cncf.io/) (possibly the only infrastructure software component missing there).
 
-## PaaS vs AppServers
+## Self-Hosted PaaS vs. Application Servers
 
 Most of the recent innovation in the container orchestration space has focused on providing support for hosting the complete software stack. This includes deploying stateless applications, stateful databases, object stores and any other type of application. The goal has been to build Platform-As-A-Service solutions (PaaS). Kubernetes is built as a [platform for building platforms](https://www.opensourcerers.org/2021/12/06/kubernetes-is-a-platform-for-building-platforms/). Even beyond Kubernetes, most container deployment platforms focus on trying to provide a complete PaaS solution. Since the scope of applicable use cases is large, even the simplest use case requires complex configuration with a PaaS solution.
 
@@ -50,7 +54,7 @@ A cloud-native application server would include the following features:
 
 The AppServer is not replacing the language-specific services. For example, with Python, Gunicorn/Uvicorn would provide the WSGI/ASGI functionality within the container.
 
-## AppServer Features of OpenRun
+## OpenRun as a Self-Hosted PaaS Alternative
 
 OpenRun is built as a platform for teams to deploy internal tools. As part of that, OpenRun implements an AppServer to deploy containerized apps. The goal is to make it easy for teams to deploy and manage Streamlit/Gradio type apps for internal users. OpenRun provides blue-green staged deployment, GitOps, OAuth access control, secrets management etc. for the apps.
 
@@ -76,7 +80,7 @@ Each app has a dedicated URL, domain-based or path-based. OpenRun ensures that n
   <img alt="OpenRun AppServer" src="/AppServerLight.png">
 </picture>
 
-For use cases where teams are deploying internal tools, OpenRun can provide a much simpler solution as against using a general purpose PaaS solution.
+For teams deploying web apps and internal tools, OpenRun provides a focused self-hosted PaaS alternative. It can run on a single VPS with Docker or Podman or use Kubernetes, keeping application deployment and data on infrastructure controlled by the operator.
 
 {{<callout >}}
 Update (Jan 2025): OpenRun is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=app-definition-and-development--application-definition-image-build--openrun).

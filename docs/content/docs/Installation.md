@@ -1,8 +1,17 @@
 ---
 title: "Installation"
 weight: 100
-summary: "How to install OpenRun and do initial setup"
+description: "Install OpenRun as a self-hosted web app platform on a Linux VPS, macOS, Windows or Kubernetes infrastructure."
+summary: "Install OpenRun on a VPS, local machine, private server or Kubernetes cluster."
 ---
+
+OpenRun can run as a self-hosted web app platform on a Linux VPS, private server, local workstation or Kubernetes cluster.
+
+## Self-Hosted VPS Deployment
+
+A single-node VPS installation uses Docker or Podman to run application containers and requires no external control plane. OpenRun provides a PaaS-style workflow with Git-based deployments, application routing, automatic TLS, authentication and scale-to-zero on infrastructure you control.
+
+For a complete public VPS setup with DNS, TLS and OAuth, follow the [self-hosted web apps on a VPS guide]({{< ref "/docs/use-cases/personal" >}}).
 
 ## Install Release Build
 

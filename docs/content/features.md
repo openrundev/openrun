@@ -1,7 +1,7 @@
 ---
 title: "Features"
-description: "OpenRun features include GitOps, RBAC, SSO, managed PostgreSQL and MySQL service bindings, and SQLite replication to S3 with Litestream."
-summary: "GitOps, RBAC, SSO, managed PostgreSQL and MySQL access, and SQLite + Litestream replication."
+description: "Explore OpenRun's self-hosted PaaS features for VPS and Kubernetes deployments, including GitOps, RBAC, SSO, service bindings and SQLite replication."
+summary: "Self-hosted web app deployment with GitOps, RBAC, SSO, managed database access and SQLite replication."
 layout: hextra-home
 ---
 
@@ -26,6 +26,8 @@ layout: hextra-home
 <!-- prettier-ignore --> {{< hextra/feature-card title="OpenTelemetry" link="/docs/configuration/telemetry/" subtitle="Export detailed application requests, container lifecycle activity, distributed traces and platform metrics through OpenTelemetry-compatible OTLP endpoints."  icon="chart-bar" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Container management" link="/docs/container/overview/" subtitle="Build and deploy containerized applications automatically across Docker, Podman or Kubernetes using the same declarative configuration."  icon="docker" class="openrun-feature-card openrun-feature-card-light" >}}
+
+<!-- prettier-ignore --> {{< hextra/feature-card title="Self-hosted PaaS alternative" link="/docs/use-cases/personal/" subtitle="Run web apps on your own VPS or Kubernetes cluster with GitOps and no proprietary cloud platform dependency." icon="server" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Cross-platform support" link="/docs/quickstart/#installation" subtitle="Run OpenRun consistently on Linux, Windows and macOS with Docker, Podman or Kubernetes as the container backend."  icon="globe-alt" class="openrun-feature-card openrun-feature-card-light" >}}
 

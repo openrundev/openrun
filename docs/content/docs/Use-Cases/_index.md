@@ -1,12 +1,13 @@
 ---
 title: Use Cases
 weight: 250
-summary: "Details about configuring OpenRun for specific use-cases"
+description: "Deploy OpenRun as a self-hosted web app platform on a VPS or private infrastructure for personal and team use."
+summary: "Self-hosted deployment guides for VPS installations, personal web apps and secure internal team platforms."
 ---
 
-How-To guides which describe the complete OpenRun configuration for specific use-cases.
+Complete guides for configuring OpenRun as a self-hosted web app platform on your own VPS, server or private infrastructure.
 
 {{< cards >}}
-{{< card link="personal" title="Personal App Deployment" subtitle="Deploy personal web applications securely for private use or controlled sharing" icon="sparkles">}}
-{{< card link="team" title="Internal Tools for Teams" subtitle="Deploy internal tools with centralized authentication, RBAC, auditing, GitOps and scalable management" icon="shield-check">}}
+{{< card link="personal" title="Self-Hosted Web Apps on a VPS" subtitle="Deploy personal web apps on a Linux VPS with GitOps and automatic TLS" icon="sparkles">}}
+{{< card link="team" title="Self-Hosted Internal Tools" subtitle="Deploy team applications with SSO, RBAC, auditing and private infrastructure controls" icon="shield-check">}}
 {{< /cards >}}

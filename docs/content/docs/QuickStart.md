@@ -1,10 +1,11 @@
 ---
-title: "Quick Start"
+title: "Self-Hosted Web App Deployment Quick Start"
 weight: 50
-summary: "Quick Start guide on using OpenRun"
+description: "Deploy web apps with an open-source self-hosted PaaS alternative running on your VPS, private server or Kubernetes cluster."
+summary: "Quick start for self-hosted web app deployment on a VPS or Kubernetes."
 ---
 
-OpenRun is an Apache-2.0 licensed web app deployment platform for teams to deploy internal tools. OpenRun is distributed as a single binary and runs natively on Linux, macOS and Windows, using Docker/Podman on a single-node or working with Kubernetes for a distributed setup.
+OpenRun is an Apache-2.0 licensed, self-hosted PaaS alternative for teams deploying web apps and internal tools. Run the single binary on Linux, macOS or Windows, use Docker/Podman on a VPS or private server, or deploy applications to Kubernetes for a distributed setup.
 
 ## Installation
 

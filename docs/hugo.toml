@@ -1,6 +1,6 @@
 baseURL = "https://openrun.dev/"
 languageCode = "en-us"
-title = "OpenRun - Internal Tools Deployment Platform"
+title = "OpenRun - Self-Hosted PaaS Alternative"
 canonifyURLs = false
 relativeURLs = false
 pluralizeListTitles = false
@@ -29,8 +29,8 @@ noClasses = false
 
 # Default Page Parameters
 [params]
-title = "OpenRun - Deployment platform for internal tools"
-description = "OpenRun is an open-source deployment platform for internal tools. Deploy Streamlit apps, Gradio apps, FastAPI apps, FastHTML apps, operational scripts etc. - with GitOps, RBAC, SSO auth and audit logs."
+title = "OpenRun - Self-Hosted PaaS Alternative"
+description = "OpenRun is an open-source self-hosted PaaS alternative for deploying web apps and internal tools on a VPS, private server or Kubernetes."
 
 [params.navbar]
 displayTitle = false

@@ -1,7 +1,7 @@
 ---
 title: OpenRun
 layout: hextra-home
-description: "OpenRun is an open-source web app deployment platform with GitOps, RBAC, SSO, service bindings, and managed SQLite + Litestream replication to S3."
+description: "OpenRun is an open-source self-hosted PaaS alternative for teams deploying internal tools and web apps declaratively on a VPS or Kubernetes with GitOps, RBAC and SSO."
 keywords:
   [
     "internal tools",
@@ -35,23 +35,30 @@ cascade:
 </style>
 
 <div class="hx:mb-4">
-<h1 id="hero-headline" class="not-prose hx:text-4xl hx:font-bold hx:leading-none hx:tracking-tighter hx:md:text-5xl hx:py-2"><span class="hx:bg-clip-text hx:text-transparent hx:bg-gradient-to-r hx:from-gray-900 hx:to-gray-600 hx:dark:from-gray-100 hx:dark:to-gray-400">Deployment platform for</span><span class="ww-sr">&nbsp;internal tools</span> <span id="word-wheel" class="word-wheel" aria-hidden="true"><span class="ww-word ww-m2">Hypermedia apps</span><span class="ww-word ww-m1">automation scripts</span><span class="ww-word ww-c">internal tools</span><span class="ww-word ww-p1">AI apps</span><span class="ww-word ww-p2">Streamlit apps</span></span></h1>
+<h1 id="hero-headline" class="not-prose hx:text-4xl hx:font-bold hx:leading-none hx:tracking-tighter hx:md:text-5xl hx:py-2"><span class="hx:bg-clip-text hx:text-transparent hx:bg-gradient-to-r hx:from-gray-900 hx:to-gray-600 hx:dark:from-gray-100 hx:dark:to-gray-400">Self-hosted platform for</span><span class="ww-sr">&nbsp;internal tools</span> <span id="word-wheel" class="word-wheel" aria-hidden="true"><span class="ww-word ww-m2">Hypermedia apps</span><span class="ww-word ww-m1">automation scripts</span><span class="ww-word ww-c">internal tools</span><span class="ww-word ww-p1">AI apps</span><span class="ww-word ww-p2">Streamlit apps</span></span></h1>
 </div>
 
 <div class="hx:mb-6">
 {{< hextra/hero-subtitle >}}
-  Deployment platform for teams to deploy internal tools.&nbsp;<br class="hx:sm:block hx:hidden"/>Deploy internal tools securely with GitOps, RBAC, and auditing.
+  Deploy internal tools and team web apps on infrastructure you control.&nbsp;<br class="hx:sm:block hx:hidden"/>Run on a VPS or Kubernetes with GitOps, RBAC, SSO, and audit logs built in.
 {{< /hextra/hero-subtitle >}}
 </div>
 
-<div class="hx:mb-4 hx:flex hx:flex-wrap hx:gap-2">
-{{< hextra/hero-button style="border-radius: 8px;" text="Get Started" link="docs/quickstart" >}}
-{{< hextra/hero-button style="border-radius: 8px; padding: 12px 40px;" text="Console Demo" link="https://utils.demo.clace.io/console" >}}
+<div class="hx:mb-2 hx:flex hx:flex-wrap hx:gap-1">
+{{< hextra/hero-button style="border-radius: 8px;" text="QuickStart" link="docs/quickstart" >}}
+{{< hextra/hero-button style="border-radius: 8px;" text="Teams" link="docs/use-cases/team" >}}
+{{< hextra/hero-button style="border-radius: 8px;" text="Demo" link="https://utils.demo.clace.io/console" >}}
+</div>
+
+<div class="hx:mt-8 hx:mb-8 hx:max-w-4xl">
+<h2 class="hx:text-2xl hx:font-bold hx:tracking-tight">Self-Hosted PaaS Alternative for Internal Tools</h2>
+<p class="hx:mt-2 hx:text-gray-600 hx:dark:text-gray-400">OpenRun is built for teams that deploy and operate internal tools, dashboards, automation interfaces and business web apps. It provides a Platform-as-a-Service (PaaS) style workflow while keeping application code, data and infrastructure under your organization's control.</p>
+<p class="hx:mt-2 hx:text-gray-600 hx:dark:text-gray-400">Start on a Linux VPS or private server with Docker or Podman, then move the same declarative applications to Kubernetes when your team needs a distributed deployment. GitOps, SSO, RBAC, audit logs, service bindings, automatic TLS and scale-to-zero are built in.</p>
 </div>
 
 {{< hextra/feature-grid >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="What is OpenRun?" icon="information-circle" subtitle="<br>OpenRun is a web app deployment platform for deploying internal tools. OpenRun is the easiest way to declaratively deploy web apps with GitOps, on a single-node or onto a Kubernetes cluster.<br><br>OpenRun adds the authn, authz and auditing features required by enterprises. OpenRun gives code-first apps the platform features usually found in low-code tools like Retool." class="openrun-feature-card openrun-feature-card-dark" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="What is OpenRun?" icon="information-circle" subtitle="<br>OpenRun is an open-source, self-hosted PaaS alternative for teams deploying internal tools and web apps. Run it on a VPS or private server with Docker/Podman, or on a Kubernetes cluster.<br><br>OpenRun adds the authentication, authorization and auditing features required for team use. Code-first apps get the platform capabilities usually found in enterprise low-code tools like Retool." class="openrun-feature-card openrun-feature-card-dark" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Motivation" icon="flag" subtitle="<br>OpenRun is built with these goals:<br><br>➣ Declarative deployments made simple<br>➣ Start on single-node, scale to Kubernetes if needed<br>➣ Make auth and RBAC easy for internal tools<br>➣ Easy SAML support without paying the SSO tax<br>➣ Run thousands of apps - zero idle resource usage" class="openrun-feature-card openrun-feature-card-dark" >}}
 
@@ -200,7 +207,7 @@ function copyCode(codeId, buttonElem) {
 {{< hextra/feature-grid >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Comparison with other self-hosted solutions" icon="scale" subtitle="Compared to solutions like Coolify, Kamal, Dokku etc, OpenRun has:<br />➣ **Declarative GitOps** interface, for code and for config. New apps can be added through config updates in git. **No ClickOps, No manual deployments**<br/>➣ Scale idle apps down to zero <br />➣ Single binary, Docker/Podman or Kubernetes is only dependency, does not depend on a third party webserver like Traefik/Nginx<br/><br/>OpenRun supports enterprise features needed by teams, like OAuth/OIDC/SAML with RBAC and audit logs. OpenRun is built as a self-hosted Google Cloud Run/AWS App Runner alternative as against full PaaS solution. OpenRun does not support deploying auxiliary services like databases and there is no Docker Compose support. " class="openrun-feature-card openrun-feature-card-dark" >}}
+{{< hextra/feature-card title="Comparison with self-hosted PaaS platforms" icon="scale" subtitle="Compared with self-hosted PaaS platforms like Coolify, Kamal and Dokku, OpenRun provides:<br />➣ A **declarative GitOps** interface for application code and configuration<br/>➣ Scale-to-zero for idle web apps<br/>➣ Single-binary deployment to a VPS with Docker/Podman, or to Kubernetes<br/>➣ Built-in OAuth/OIDC/SAML, RBAC and audit logs. Auth is done for apps also, not just the OpenRun console<br/><br/>OpenRun is a self-hosted PaaS alternative focused on web apps and internal tools. It does not deploy arbitrary databases or Docker Compose stacks like a full general-purpose PaaS. OpenRun instead supports service bindings which allows your apps to get easy access to a externally managed database/service." class="openrun-feature-card openrun-feature-card-dark" >}}
 
 <!-- prettier-ignore -->
 {{< hextra/feature-card title="Comparison with DIY on Kubernetes" icon="cog" subtitle="Running OpenRun on Kubernetes gives you the benefits of Kubernetes without the pain. OpenRun provides:<br/>➣ Unified interface as against glueing together services like Jenkins for builds, ArgoCD/FluxCD for CD, IDP for app management etc.<br/>➣ Simple declarative config, **no YAML files, no webserver DSLs**.<br/>➣ Support for setting up auth policies using RBAC.<br/><br/>Compared to **Knative**, OpenRun has a much simpler config without requiring YAML files. Resource usage is lower with OpenRun since apps are loaded lazily, on the first API call. OpenRun app versions are maintained in the metadata database, reducing Kubernetes resources created. Knative requires an external build system and does not support auth for apps." class="openrun-feature-card openrun-feature-card-dark" >}}

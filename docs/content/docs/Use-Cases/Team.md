@@ -1,8 +1,11 @@
 ---
-title: "Internal Tools for Teams"
+title: "Self-Hosted Internal Tools for Teams"
 weight: 200
-summary: "Deploying apps for use by teams across an enterprise"
+description: "Deploy a self-hosted internal tools platform with GitOps, SSO, RBAC and auditing on private team infrastructure."
+summary: "Run secure internal web apps for teams on infrastructure controlled by your organization."
 ---
+
+OpenRun provides a self-hosted PaaS-style workflow for internal tools without moving application code or data to a proprietary deployment service. Teams can deploy web apps to a private server or Kubernetes cluster with GitOps, SSO, RBAC and audit logging built in.
 
 ## Scenario
 
