@@ -179,7 +179,7 @@ For apps created from GitHub source, `app reload` will pick up the [latest chang
 
 Service bindings are an easy way to configure one database installation properly (with backups, fault tolerance, security etc) and then safely share that database across multiple apps. This is an alternate approach as against usual deployment tooling where each app is assumed to create its own database from scratch, which ignores the challenges with ensuring that the database is properly administered.
 
-Service bindings are supported for Postgres and MySQL currently. See details in [service bindings]({{< ref "applications/servicebindings/" >}})
+OpenRun supports [PostgreSQL, MySQL and SQLite service bindings]({{< ref "applications/servicebindings/" >}}). PostgreSQL bindings create isolated schemas and roles, MySQL bindings create databases and users, and SQLite bindings provide persistent app storage with optional Litestream replication.
 
 ## Staged Deployments
 

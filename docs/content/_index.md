@@ -1,7 +1,7 @@
 ---
 title: OpenRun
 layout: hextra-home
-description: "OpenRun is an open-source deployment platform for internal tools. Deploy Streamlit apps, Gradio apps, FastAPI apps, FastHTML apps etc. - with GitOps, RBAC, SSO auth and audit logs."
+description: "OpenRun is an open-source web app deployment platform with GitOps, RBAC, SSO, service bindings, and managed SQLite + Litestream replication to S3."
 keywords:
   [
     "internal tools",
@@ -55,7 +55,7 @@ cascade:
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Motivation" icon="flag" subtitle="<br>OpenRun is built with these goals:<br><br>➣ Declarative deployments made simple<br>➣ Start on single-node, scale to Kubernetes if needed<br>➣ Make auth and RBAC easy for internal tools<br>➣ Easy SAML support without paying the SSO tax<br>➣ Run thousands of apps - zero idle resource usage" class="openrun-feature-card openrun-feature-card-dark" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="OpenRun Features" icon="light-bulb" subtitle="<br>Some of the unique features of OpenRun are:<br>➣ Create and manage apps declaratively<br>➣ Easily upgrade from single-node to K8S <br>➣ Domain based or path based routing, with auto-TLS<br>➣ OAuth/OpenID/SAML/Cert auth, with RBAC<br>➣ Scales idle apps down to zero<br>➣ Staged deployment, for code and config changes<br>➣ Atomic (all or nothing) updates across apps<br>➣ Auto SQLite data replication using Litestream" class="openrun-feature-card openrun-feature-card-dark" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="OpenRun Features" icon="light-bulb" subtitle="<br>Some of the unique features of OpenRun are:<br>➣ Create and manage apps declaratively<br>➣ Easily upgrade from single-node to K8S <br>➣ Domain based or path based routing, with auto-TLS<br>➣ OAuth/OpenID/SAML/Cert auth, with RBAC<br>➣ Scales idle apps down to zero<br>➣ Staged deployment, for code and config changes<br>➣ Atomic (all or nothing) updates across apps<br>➣ Managed SQLite + Litestream replication to S3" class="openrun-feature-card openrun-feature-card-dark" >}}
 
 {{< /hextra/feature-grid >}}
 
@@ -188,7 +188,10 @@ function copyCode(codeId, buttonElem) {
 {{< hextra/feature-card title="Scale down to zero" link="/docs/container/overview/" subtitle="Apps are initialized lazily, on demand and scale down to zero when idle."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Service bindings support" link="/docs/applications/servicebindings" subtitle="Easily provision Postgres/MySQL database access for applications"  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="PostgreSQL + MySQL Service Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated database accounts and inject app credentials for PostgreSQL and MySQL."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
+
+<!-- prettier-ignore -->
+{{< hextra/feature-card title="SQLite + Litestream" link="/docs/applications/litestream/" subtitle="Persistent SQLite app storage with continuous S3 replication and automatic disaster recovery." icon="cloud-upload" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
 {{< hextra/feature-card title="Flexible Auth" link="/docs/configuration/authentication/" subtitle="OAuth/OpenID/SAML/Client-cert based auth, with full RBAC support"  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}

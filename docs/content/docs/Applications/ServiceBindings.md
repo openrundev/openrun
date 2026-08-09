@@ -1,12 +1,15 @@
 ---
-title: "Service Bindings"
+title: "PostgreSQL, MySQL and SQLite Service Bindings"
 weight: 500
-summary: "Managing services (like Postgres/MySQL) and providing bindings for applications"
+description: "Provision isolated PostgreSQL schemas and roles, MySQL databases and users, and persistent SQLite storage for web apps with automatic credential injection."
+summary: "Managed PostgreSQL, MySQL and SQLite database access for deployed web apps."
 ---
 
-Service bindings are used to give applications access to endpoint credentials. Postgres, MySQL and SQLite databases are currently supported by OpenRun. For Postgres and MySQL, the administrator creates a service with connection information for the database. Apps can easily get access to an isolated database/schema without any manual configuration being required. OpenRun uses the admin credentials to create binding accounts for applications. Apps can share access to a schema, with support for granting limited permissions across applications. For SQLite, there is no external database: the binding gives the app a persistent volume holding its SQLite database files, with optional [continuous replication]({{< ref "/docs/applications/litestream" >}}) to S3-compatible storage.
+OpenRun is an open-source web app deployment platform with built-in PostgreSQL, MySQL and SQLite service bindings. A service binding automatically provisions isolated database access for an application and injects the generated connection information into its environment.
 
-Service bindings are an easy way to configure one database installation properly (with backups, fault tolerance, security etc) and then safely share that database across multiple apps. This is an alternate approach as against usual deployment tooling where each app is assumed to create its own database from scratch, which ignores the challenges with ensuring that the database is properly administered.
+For PostgreSQL, OpenRun creates an application-specific schema and login role. For MySQL, it creates a database and user. SQLite bindings provide a persistent volume for database files, with optional [continuous SQLite replication to S3 with Litestream]({{< ref "/docs/applications/litestream" >}}). Applications never need the PostgreSQL or MySQL administrator credentials.
+
+Service bindings let teams configure a managed or self-hosted database once—with its backups, monitoring, fault tolerance and capacity management—and safely share that installation across multiple apps. Production and staging environments get separate accounts, while derived bindings allow multiple apps to share a schema or database with distinct least-privilege credentials.
 
 The currently supported service types are:
 
@@ -15,6 +18,18 @@ The currently supported service types are:
 | `postgres`   | Create Postgres schemas and roles                                |
 | `mysql`      | Create MySQL databases and users                                 |
 | `sqlite`     | Provide a persistent volume with SQLite database files per app   |
+
+## Managed PostgreSQL and MySQL Database Access
+
+OpenRun automates the database provisioning work normally performed for each web app:
+
+- Create an isolated PostgreSQL schema and role or MySQL database and user.
+- Generate a unique password and application connection URL.
+- Inject database connection information into the app environment.
+- Maintain separate production and staging database accounts.
+- Create derived accounts with read-only, table-specific or full-access grants.
+
+The database server remains under the operator's control and can be self-hosted or provided by a managed database service. OpenRun connects with the configured administrator URL only when it needs to create accounts, apply grants or inspect a binding.
 
 ## Concepts
 
@@ -297,9 +312,11 @@ openrun apply --promote --reload=none apps.ace /reporting
 
 With `--promote`, apply promotes binding metadata after updating staged metadata.
 
-## Postgres Config and Behavior
+<span id="postgres-config-and-behavior"></span>
 
-Postgres services require `url`. They also support `binding_hostname`.
+## PostgreSQL (Postgres) Service Bindings
+
+PostgreSQL service bindings automatically create a schema and login role for each base binding. PostgreSQL services require an administrator `url` and also support `binding_hostname`.
 
 | Key                | Required | Description                                                                                                                                                                                                                                                                                                                 |
 | :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -349,9 +366,11 @@ Postgres grants work as follows:
 If a table-specific grant references a table which does not exist, OpenRun skips
 the grant for that run. Skipped grants are applied on the next update/apply run.
 
-## MySQL Config and Behavior
+<span id="mysql-config-and-behavior"></span>
 
-MySQL services require `url`. They also support `host_pattern` and `binding_hostname`.
+## MySQL Service Bindings
+
+MySQL service bindings automatically create a database and user for each base binding. MySQL services require an administrator `url` and also support `host_pattern` and `binding_hostname`.
 
 | Key                | Required | Description                                                                                                                                                                                                                                                                                                                 |
 | :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -405,6 +424,8 @@ SQLITE_DIR=/data
 
 The volume is created automatically when the app first starts and is reused across app updates and redeploys. The volume identity follows the binding, so attaching the binding to a different app later does not carry over another binding's data. On Kubernetes, apps with a SQLite binding automatically run as a single replica with the `Recreate` deploy strategy, matching SQLite's single-writer model.
 
+For disaster recovery, enable [continuous SQLite replication to S3 with Litestream]({{< ref "/docs/applications/litestream" >}}). OpenRun continuously replicates the binding's database files to S3-compatible storage and automatically restores them before the app starts after volume or node loss.
+
 SQLite services support these config keys (all optional):
 
 | Key                 | Description                                                                                                          |
@@ -441,3 +462,25 @@ A [staging service]({{< ref "/docs/applications/servicebindings/#staging-service
 For best results the app should open the database in WAL mode with a busy timeout, for example `file:...?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)` (driver dependent). With replication enabled, WAL mode is required, but litestream enables it automatically if the app has not.
 
 OpenRun makes the volume writable for non-root app users automatically. With replication enabled, the `chmod` runs using the Litestream image, so any app image works. For local-only SQLite bindings (no `litestream_config`), the `chmod` runs with the app's own image, so the app image must not be distroless. On Kubernetes, pods with a SQLite binding additionally get `fsGroup: 65532`, which makes the volume group-writable at mount time on storage classes with ownership management.
+
+## Frequently Asked Questions
+
+### How do I connect a web app to PostgreSQL with OpenRun?
+
+Create a PostgreSQL service with an administrator connection URL, then create or automatically attach a binding from that service. OpenRun creates an isolated schema and login role and supplies the generated PostgreSQL connection information to the app environment.
+
+### How do MySQL service bindings work?
+
+Create a MySQL service that points to an existing managed or self-hosted MySQL server. For each base binding, OpenRun creates a dedicated database and user, then makes the generated connection URL available to the application.
+
+### Does each app get a separate PostgreSQL schema or MySQL database?
+
+Yes. A PostgreSQL base binding owns its own schema and role, while a MySQL base binding owns its own database and user. Staging and production also use separate accounts and separate schemas or databases.
+
+### Can multiple apps securely share a PostgreSQL schema or MySQL database?
+
+Yes. Derived bindings create a separate role or user for each app while sharing the base binding's schema or database. Grants can provide read-only, table-specific, create or full access without sharing credentials between apps.
+
+### Are database administrator credentials exposed to applications?
+
+No. OpenRun uses the administrator URL to provision and manage binding accounts, but applications receive only their generated binding credentials. The administrator URL can reference OpenRun's supported secret providers instead of being stored directly.

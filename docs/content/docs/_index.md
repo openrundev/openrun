@@ -1,5 +1,7 @@
 ---
 title: Docs
+description: "OpenRun documentation for deploying web apps with GitOps, PostgreSQL and MySQL service bindings, managed SQLite + Litestream replication, RBAC and SSO."
+summary: "Deploy web apps with GitOps, managed database access, SQLite replication, RBAC and SSO."
 sidebar:
   open: true
 ---
@@ -12,6 +14,8 @@ OpenRun is an open-source Apache-2.0 licensed project for easy declarative deplo
 {{< card link="configuration" title="Configuration" subtitle="OpenRun server configuration details" icon="adjustments" >}}
 {{< card link="use-cases" title="Use-Cases" subtitle="How to configure OpenRun for specific use-cases" icon="map" >}}
 {{< card link="applications" title="Managing apps" subtitle="Working with OpenRun apps" icon="document-duplicate" >}}
+{{< card link="applications/servicebindings" title="PostgreSQL + MySQL Service Bindings" subtitle="Automatically provision isolated database accounts and credentials for web apps" icon="database" >}}
+{{< card link="applications/litestream" title="SQLite + Litestream" subtitle="Deploy stateful SQLite applications with persistent storage, continuous S3 replication and automatic restore" icon="cloud-upload" >}}
 {{< card link="app" title="Developing apps" subtitle="Developing OpenRun apps" icon="sparkles" >}}
 {{< card link="actions" title="Action apps" subtitle="Auto-generated UI for simple backend actions" icon="terminal" >}}
 {{< card link="container" title="Containerized apps" subtitle="Managing containerized apps" icon="docker_plain" >}}

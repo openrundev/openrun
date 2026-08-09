@@ -1,10 +1,13 @@
 ---
-title: "Service Bindings: Automated Database Access for Apps"
-summary: "Service Bindings make it easy to provide isolated databases for each app without manual provisioning."
+title: "PostgreSQL and MySQL Service Bindings for Web Apps"
+description: "Automatically provision isolated PostgreSQL schemas and roles or MySQL databases and users for web apps with OpenRun service bindings."
+summary: "Automated PostgreSQL and MySQL database accounts, credentials and least-privilege access for web apps."
 date: 2026-06-10
 ---
 
 {{< openrun-intro  >}}
+
+OpenRun automatically provisions isolated PostgreSQL schemas and roles or MySQL databases and users for deployed web apps. Applications receive generated connection credentials without requiring direct access to the database administrator account.
 
 ## Background
 
@@ -12,7 +15,9 @@ Most applications require a database for data persistence. Deployment platforms 
 
 The alternative, in larger companies, is you work with your database team (the "DBAs") and request new database accounts to use with your app. After you provide the reasoning and the performance requirements and other details, you may or may not hear back in a few weeks with the credentials to use.
 
-## Service Bindings
+<span id="service-bindings"></span>
+
+## PostgreSQL and MySQL Service Bindings
 
 There is no single standard definition of Service Binding. Generally, it is a specification to indicate that your application needs to use a particular service. The credentials for using the service are provided by the service provider through an API.
 
@@ -20,7 +25,7 @@ There is no single standard definition of Service Binding. Generally, it is a sp
 
 ## How it Works
 
-OpenRun implements a [Service Binding]({{< ref "/docs/applications/servicebindings/" >}}) feature. The way this works is:
+OpenRun implements [PostgreSQL and MySQL service bindings]({{< ref "/docs/applications/servicebindings/" >}}) for automated database access. The way this works is:
 
 - You create a service in OpenRun, and specify the admin credentials for the service. The service installation and management is outside the scope of OpenRun. It could be a managed RDS database, an instance managed by your database team, etc.
 - Each app can request a service binding. If requested, during app installation, OpenRun connects to the service using the admin credentials and creates the app-specific account. This would be a schema and role for Postgres, database and user for MySQL, etc. For derived bindings, database/schema is shared but role/user is unique.

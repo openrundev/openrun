@@ -1,6 +1,7 @@
 ---
 title: "Features"
-summary: "OpenRun Features"
+description: "OpenRun features include GitOps, RBAC, SSO, managed PostgreSQL and MySQL service bindings, and SQLite replication to S3 with Litestream."
+summary: "GitOps, RBAC, SSO, managed PostgreSQL and MySQL access, and SQLite + Litestream replication."
 layout: hextra-home
 ---
 
@@ -21,9 +22,9 @@ layout: hextra-home
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Auto-Pause Idle apps" link="/docs/container/config/" subtitle="Idle apps are paused, scale down to zero."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Service bindings support" link="/docs/applications/servicebindings" subtitle="Easily provision Postgres/MySQL/SQLite database access for applications"  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="PostgreSQL, MySQL + SQLite Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated PostgreSQL schemas and roles, MySQL databases and users, and persistent SQLite storage for apps."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="SQLite Replication" link="/docs/applications/litestream/" subtitle="Continuous Litestream backup of app SQLite data and server metadata to S3, with automatic restore."  icon="cloud-upload" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Managed SQLite + Litestream" link="/docs/applications/litestream/" subtitle="Deploy SQLite apps with continuous Litestream replication to S3-compatible storage and automatic restore after volume or node loss."  icon="cloud-upload" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Autogen Actions" link="/docs/actions/" subtitle="Auto-generated UI for backend actions, no UI to develop."  icon="binary-off" class="openrun-feature-card openrun-feature-card-light" >}}
 

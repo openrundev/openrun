@@ -34,7 +34,7 @@ The uncompressed content SHA256 hash is used as the primary key to store the fil
 
 - **De-duplication Across Apps** : Each production app in OpenRun has an [staging app]({{< ref "/docs/applications/lifecycle/#application-types" >}}). Apps can have multiple [previews apps]({{< ref "/docs/applications/lifecycle/#preview-apps" >}}). This can lead to lots of duplication of files. Using the database helps avoid all the duplication. Even across apps, there are files which have the same contents. Files are de-duplicated across apps also.
 
-- **Easy Backups**: Using SQLite means that backups are easy. The state of the whole system, metadata and files can be backed up easily using SQLite backup tools like [Litestream](https://litestream.io/).
+- **Automatic Replication and Recovery**: OpenRun now has [built-in Litestream support]({{< ref "/docs/applications/litestream" >}}) for continuously replicating application SQLite databases to S3-compatible object storage and automatically restoring them after volume or node loss.
 
 - **Content Hashing**: For content caching on the browser, web servers return a [ETag](https://en.wikipedia.org/wiki/HTTP_ETag) header. Using the database for files makes it easy to save the content SHA once during file upload without having to recompute it later.
 
