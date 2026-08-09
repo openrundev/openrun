@@ -5,51 +5,49 @@ summary: "GitOps, RBAC, SSO, managed PostgreSQL and MySQL access, and SQLite + L
 layout: hextra-home
 ---
 
-<iframe
-  src="/intro.html"
-  style="width:100%; height:80vh; border:0;"
-></iframe>
-
-<div style="height: 20px;"></div>
-
 {{< hextra/feature-grid >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="GitOps Workflow" link="/docs/quickstart/#lifecycle-with-git" subtitle="Blue-green (staged) deployments, versioning and preview environments with no infra to manage."  icon="github" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="GitOps Workflow" link="/docs/quickstart/#lifecycle-with-git" subtitle="Manage blue-green deployments, versioned releases and preview environments through declarative Git workflows without maintaining separate deployment infrastructure."  icon="github" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Hypermedia web apps" link="/docs/app/routing/#html-route" subtitle="Easily build fast and lightweight backend driven apps, with minimal frontend complexity."  icon="html5" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Hypermedia web apps" link="/docs/app/routing/#html-route" subtitle="Build fast, lightweight hypermedia web apps with server-driven HTML, minimal JavaScript and substantially less frontend complexity."  icon="html5" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Secrets Management" link="/docs/configuration/secrets/" subtitle="Manage secrets with AWS Secrets Manager and Vault."  icon="shield-exclamation" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Secrets Management" link="/docs/configuration/secrets/" subtitle="Securely provide application secrets through AWS Secrets Manager, HashiCorp Vault and other configured secret providers."  icon="shield-exclamation" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Auto-Pause Idle apps" link="/docs/container/config/" subtitle="Idle apps are paused, scale down to zero."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Auto-Pause Idle apps" link="/docs/container/config/" subtitle="Automatically pause idle applications and scale their resource usage down to zero until the next incoming request."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="PostgreSQL, MySQL + SQLite Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated PostgreSQL schemas and roles, MySQL databases and users, and persistent SQLite storage for apps."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Managed SQLite + Litestream" link="/docs/applications/litestream/" subtitle="Deploy SQLite apps with continuous Litestream replication to S3-compatible storage and automatic restore after volume or node loss."  icon="cloud-upload" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Autogen Actions" link="/docs/actions/" subtitle="Auto-generated UI for backend actions, no UI to develop."  icon="binary-off" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Autogen Actions" link="/docs/actions/" subtitle="Generate secure form-based interfaces for backend operations automatically, eliminating custom frontend development for routine administrative actions."  icon="binary-off" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Audit Events" link="/docs/applications/audit/" subtitle="Auto-audit logging for all events, plus custom events."  icon="view-list" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Audit Events" link="/docs/applications/audit/" subtitle="Capture application operations and API activity automatically, with searchable audit events plus support for custom business events."  icon="view-list" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="OpenTelemetry" link="/docs/configuration/telemetry/" subtitle="Export traces and metrics for app requests, containers and database calls over OTLP HTTP."  icon="chart-bar" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="OpenTelemetry" link="/docs/configuration/telemetry/" subtitle="Export detailed application requests, container lifecycle activity, distributed traces and platform metrics through OpenTelemetry-compatible OTLP endpoints."  icon="chart-bar" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Cross-language AppServer" link="/docs/quickstart/#containerized-applications" subtitle="Application Server which supports all languages."  icon="support" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Container management" link="/docs/container/overview/" subtitle="Build and deploy containerized applications automatically across Docker, Podman or Kubernetes using the same declarative configuration."  icon="docker" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Container management" link="/docs/container/overview/" subtitle="Automatically build and deploy containers, with Docker/Podman or Kubernetes."  icon="docker" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Cross-platform support" link="/docs/quickstart/#installation" subtitle="Run OpenRun consistently on Linux, Windows and macOS with Docker, Podman or Kubernetes as the container backend."  icon="globe-alt" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Cross-platform support" link="/docs/quickstart/#installation" subtitle="OpenRun runs on Linux, Windows and OSX, works with Docker/Podman or Kubernetes"  icon="globe-alt" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Auto TLS Certificates" link="/docs/configuration/networking/#enable-automatic-signed-certificate" subtitle="Generate and renew trusted TLS certificates automatically for applications served across multiple domains, subdomains and custom hostnames."  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Auto TLS Certificates" link="/docs/configuration/networking/#enable-automatic-signed-certificate" subtitle="Automatically generate TLS certificates, for multiple domains"  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Powerful access controls" link="/docs/configuration/authentication" subtitle="Protect applications with OAuth, OpenID Connect, SAML or client certificates, backed by flexible role-based access controls."  icon="globe-alt" icon="shield-check"  class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Powerful access controls" link="/docs/configuration/authentication" subtitle="OAuth/OpenID/SAML/Client-cert based auth, with full RBAC support"  icon="globe-alt" icon="shield-check"  class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Domain-based and path-based routing" link="/docs/applications/routing/#request-routing" subtitle="Route applications by domain, subdomain or URL path while OpenRun manages ingress, proxying and deployment changes automatically."  icon="map" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Domain-based and path-based routing" link="/docs/applications/routing/#request-routing" subtitle="Install apps at a domain, subdomain or at path level"  icon="map" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Zero-config dev env setup" link="/docs/applications/overview/#apply-command" subtitle="Create reproducible local development environments automatically from application configuration, with minimal manual setup or infrastructure knowledge."  icon="check" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Zero-config dev env setup" link="/docs/applications/overview/#apply-command" subtitle="Easily setup dev environment with zero config required"  icon="check" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Blue-green Deployment" link="/docs/applications/lifecycle/#staging-apps" subtitle="Stage application code and configuration changes in an isolated environment before promoting the verified release into production."  icon="chevron-double-up" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Blue-green Deployment" link="/docs/applications/lifecycle/#staging-apps" subtitle="Staged deployment, for code changes and for config changes"  icon="chevron-double-up" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Security Sandbox" link="/docs/applications/appsecurity/#security-model" subtitle="Run Starlark-based application code inside a permission-controlled security sandbox with explicit allowlists for sensitive platform operations."  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Security Sandbox" link="/docs/applications/appsecurity/#security-model" subtitle="Apps built in Starlark based micro-framework use sandboxing for security"  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
-
-<!-- prettier-ignore --> {{< hextra/feature-card title="Management Console" link="/console-tour/" subtitle="Console - Web management console for OpenRun"  icon="desktop-computer" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Management Console" link="/console-tour/" subtitle="Manage applications, deployments, service bindings, containers, audit events and server configuration through OpenRun’s browser-based administration console."  icon="desktop-computer" class="openrun-feature-card openrun-feature-card-light" >}}
 
 {{< /hextra/feature-grid >}}
+
+<div style="height: 20px;"></div>
+
+<iframe
+  src="/intro.html?v=20260808-storage"
+  style="width:100%; height:80vh; border:0;"
+></iframe>

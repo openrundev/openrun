@@ -9,11 +9,11 @@ Most configuration options specified in the following sections are for the OpenR
 For complete configuration examples, see [use-cases]({{< ref "docs/use-cases/" >}}), which documents the complete setup for a few scenarios.
 
 {{< cards >}}
-{{< card link="overview" title="Overview" subtitle="Configuration overview, OPENRUN_HOME env" icon="information-circle" >}}
-{{< card link="networking" title="Ports and Certificates" subtitle="Setting up ports, TLS certs, certificate signing " icon="adjustments" >}}
-{{< card link="security" title="Security" subtitle="Admin account, admin API access, github repo security" icon="shield-check" >}}
-{{< card link="authentication" title="App authentication" subtitle="App authentication using admin account, OAuth account config" icon="badge-check" >}}
-{{< card link="rbac" title="RBAC" subtitle="Role-based access controls" icon="view-list" >}}
-{{< card link="secrets" title="Secrets Management" subtitle="Secrets management, with AWS secrets manager, env, vault and properties file" icon="lock-closed" >}}
-{{< card link="telemetry" title="Telemetry" subtitle="OpenTelemetry traces and metrics using OTLP HTTP" icon="chart-bar" >}}
+{{< card link="overview" title="Overview" subtitle="Understand server configuration files, environment overrides, OPENRUN_HOME and deployment settings" icon="information-circle" >}}
+{{< card link="networking" title="Ports and Certificates" subtitle="Configure ports, domains, automatic TLS certificates, authorities and application networking" icon="adjustments" >}}
+{{< card link="security" title="Security" subtitle="Secure administrator accounts, API access, source repositories and sensitive server operations" icon="shield-check" >}}
+{{< card link="authentication" title="App authentication" subtitle="Protect applications with administrator, OAuth, OpenID Connect, SAML and client-certificate authentication" icon="badge-check" >}}
+{{< card link="rbac" title="RBAC" subtitle="Define resource-scoped role-based permissions for users, teams, applications, services and operations" icon="view-list" >}}
+{{< card link="secrets" title="Secrets Management" subtitle="Manage secrets through AWS Secrets Manager, Vault, environment variables and properties files" icon="lock-closed" >}}
+{{< card link="telemetry" title="Telemetry" subtitle="Export application, container, database and server telemetry through OpenTelemetry OTLP endpoints" icon="chart-bar" >}}
 {{< /cards >}}

@@ -176,25 +176,22 @@ function copyCode(codeId, buttonElem) {
 {{< hextra/feature-grid >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Container management" link="docs/quickstart/#containerized-applications" subtitle="Declaratively build and deploy containerized web apps, with Docker/Podman or Kubernetes."  icon="docker" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="Container management" link="docs/quickstart/#containerized-applications" subtitle="Build and deploy containerized web applications declaratively across Docker, Podman or Kubernetes using one consistent platform configuration."  icon="docker" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Declarative GitOps" link="docs/quickstart/#lifecycle-with-git" subtitle="Staged deployments and preview environments; GitOps With GitHub/GitLab, cloud or on-prem"  icon="github" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="Declarative GitOps" link="docs/quickstart/#lifecycle-with-git" subtitle="Manage staged deployments, versioned releases and preview environments through declarative GitOps workflows connected to GitHub or GitLab."  icon="github" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Secrets Management" link="/docs/configuration/secrets/" subtitle="Manage secrets with AWS Secrets Manager, Vault or Kubernetes."  icon="shield-exclamation" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="Scale down to zero" link="/docs/container/overview/" subtitle="Initialize applications lazily on their first request, then automatically pause idle containers and reduce resource usage to zero."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Scale down to zero" link="/docs/container/overview/" subtitle="Apps are initialized lazily, on demand and scale down to zero when idle."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="PostgreSQL + MySQL Service Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated PostgreSQL schemas and roles or MySQL databases and users, then inject unique application credentials securely."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="PostgreSQL + MySQL Service Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated database accounts and inject app credentials for PostgreSQL and MySQL."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="SQLite + Litestream" link="/docs/applications/litestream/" subtitle="Run stateful SQLite applications with persistent volumes, continuous Litestream replication to S3-compatible storage and automatic disaster recovery." icon="cloud-upload" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="SQLite + Litestream" link="/docs/applications/litestream/" subtitle="Persistent SQLite app storage with continuous S3 replication and automatic disaster recovery." icon="cloud-upload" class="openrun-feature-card openrun-feature-card-light" >}}
-
-<!-- prettier-ignore -->
-{{< hextra/feature-card title="Flexible Auth" link="/docs/configuration/authentication/" subtitle="OAuth/OpenID/SAML/Client-cert based auth, with full RBAC support"  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="Flexible Auth" link="/docs/configuration/authentication/" subtitle="Protect every application with OAuth, OpenID Connect, SAML or client-certificate authentication plus flexible role-based access controls."  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
 
 {{< /hextra/feature-grid >}}
 

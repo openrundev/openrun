@@ -8,11 +8,11 @@ summary: "App routing, lifecycle, security, database service bindings and SQLite
 Details on how to install and manage OpenRun apps.
 
 {{< cards >}}
-{{< card link="overview" title="Overview" subtitle="Overview of how OpenRun apps are installed and managed" icon="zoom-in" >}}
-{{< card link="routing" title="Routing" subtitle="Details about how API routing is done for an OpenRun app" icon="map" >}}
-{{< card link="lifecycle" title="App Lifecycle" subtitle="Various types of apps: dev, prod, staging and preview; app promotion" icon="selector" >}}
-{{< card link="appsecurity" title="App Security" subtitle="App security and sandboxing details" icon="badge-check" >}}
-{{< card link="audit" title="Audit Events" subtitle="Auditing and viewing events" icon="view-list" >}}
-{{< card link="servicebindings" title="PostgreSQL, MySQL + SQLite Bindings" subtitle="Automatically provision isolated database access and credentials for apps" icon="table" >}}
-{{< card link="litestream" title="SQLite + Litestream" subtitle="Continuously replicate SQLite app data to S3-compatible storage with automatic restore" icon="cloud-upload" >}}
+{{< card link="overview" title="Overview" subtitle="Learn how OpenRun manages applications across development, staging, production and preview environments" icon="zoom-in" >}}
+{{< card link="routing" title="Routing" subtitle="Configure domain, subdomain and path-based routing, generated routes and reverse proxy behavior" icon="map" >}}
+{{< card link="lifecycle" title="App Lifecycle" subtitle="Understand application lifecycles, including development, staging, previews, reloads, promotions and versioning" icon="selector" >}}
+{{< card link="appsecurity" title="App Security" subtitle="Protect applications with sandboxing, explicit permissions, source approvals and sensitive-operation controls" icon="badge-check" >}}
+{{< card link="audit" title="Audit Events" subtitle="Capture and review application operations, API calls and custom business events automatically" icon="view-list" >}}
+{{< card link="servicebindings" title="PostgreSQL, MySQL + SQLite Bindings" subtitle="Provision isolated PostgreSQL schemas or MySQL databases with unique application credentials" icon="table" >}}
+{{< card link="litestream" title="SQLite + Litestream" subtitle="Deploy persistent SQLite applications with Litestream replication and automatic recovery from S3" icon="cloud-upload" >}}
 {{< /cards >}}

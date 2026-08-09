@@ -150,6 +150,7 @@
 
     const baseWidth = 1280;
     const baseHeight = 720;
+    const slideVersion = "20260808-storage";
 
     const frame = document.getElementById("slideFrame");
     const viewport = document.getElementById("viewport");
@@ -160,7 +161,7 @@
     let index = 0;
 
     function updateFrame() {
-      frame.src = `intro_slides/${slides[index]}.html`;
+      frame.src = `intro_slides/${slides[index]}.html?v=${slideVersion}`;
       counter.textContent = `${index + 1} / ${slides.length}`;
       prevBtn.disabled = index === 0;
       nextBtn.disabled = index === slides.length - 1;
