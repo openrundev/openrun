@@ -6,6 +6,10 @@ date: 2024-10-25
 
 {{< openrun-intro  >}}
 
+{{<callout emoji="ℹ️" >}}
+This post is about how OpenRun uses SQLite internally, to store the static files it serves. If you are instead looking to deploy web apps that use SQLite as their application database, see the [SQLite web app hosting use case]({{< ref "docs/use-cases/sqliteapps" >}}).
+{{</callout>}}
+
 ## Background
 
 OpenRun is built to serve web applications, primarily for internal tools. OpenRun provides functionality usually handled separately by a web server and an application server. When the development of OpenRun was started last year, one of the first decisions was how to store the application data (files) and metadata. The app metadata obviously made sense to store in a database, since apps are created dynamically. The app data (static files, app code, config files etc) is usually stored on the file system by most web servers.

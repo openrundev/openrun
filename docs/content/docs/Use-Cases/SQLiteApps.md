@@ -46,7 +46,22 @@ openrun binding create --config path=/var/lib/app sqlite/main /apps/notes-db
 
 The environment variables follow the configured path, so the app itself needs no change.
 
-For best results, the app should open the database in WAL mode with a busy timeout, for example `file:...?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)` (driver dependent). With replication enabled, WAL mode is required; Litestream enables it automatically if the app has not.
+How the app opens and uses the database matters for reliability; see [App Best Practices](#app-best-practices) below.
+
+## App Best Practices
+
+OpenRun handles volumes, updates and backups outside the container. Inside the container, a few practices keep SQLite reliable under this setup:
+
+- **Read the database path from the environment**: open the database at `SQLITE_DB_PATH`, or build file paths under `SQLITE_DIR`, instead of hardcoding a location. Binding config changes (like a custom `path`) then require no app change.
+- **Enable WAL mode**: [write-ahead logging](https://www.sqlite.org/wal.html) lets reads proceed concurrently with writes and is required for replication. Litestream enables it automatically if the app has not, but setting it in the app avoids a journal mode change on a live database.
+- **Set a busy timeout**: with a [busy timeout](https://www.sqlite.org/pragma.html#pragma_busy_timeout) (for example 5000 ms), a connection waits for a competing write to finish instead of failing immediately with `SQLITE_BUSY`.
+- **Use `synchronous=NORMAL`**: in WAL mode, [`PRAGMA synchronous=NORMAL`](https://www.sqlite.org/pragma.html#pragma_synchronous) is significantly faster than the default `FULL` and cannot corrupt the database; it is the setting [recommended by Litestream](https://litestream.io/tips/).
+- **Keep write transactions short**: a long-running write transaction blocks WAL checkpointing, which grows the WAL file and delays replication.
+- **Serialize writes in the app**: SQLite allows a single writer at a time. Most drivers behave best with one write connection (for example, a Go `database/sql` pool limited to one connection, or a separate read pool alongside a dedicated writer).
+- **Do not delete, rename or replace the database file while running**: replication tracks the file itself, so patterns like `VACUUM INTO` a new file followed by a rename break it. Run [`VACUUM`](https://www.sqlite.org/lang_vacuum.html) in place if needed, and let restores come from the replica rather than copying database files around.
+- **Close the database on shutdown**: the container receives a stop signal when the app idles out or a new version deploys. Handling `SIGTERM` and closing connections lets SQLite flush the WAL cleanly before the final replication sync.
+
+As a combined example, Go SQLite drivers accept these settings in the DSN: `file:...?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)`. The exact syntax is driver dependent; see [Litestream's tips page](https://litestream.io/tips/) for equivalents in other languages.
 
 ## How Volumes Are Handled
 
