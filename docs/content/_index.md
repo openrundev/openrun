@@ -1,20 +1,26 @@
 ---
-title: OpenRun
+title: "OpenRun - Self-Hosted GitOps Platform for Docker and Kubernetes"
 layout: hextra-home
-description: "OpenRun is an open-source self-hosted PaaS alternative for teams deploying internal tools and web apps declaratively on a VPS or Kubernetes with GitOps, RBAC and SSO."
+description: "Open-source, self-hosted GitOps platform for deploying web apps and internal tools to Docker or Kubernetes. A self-hosted PaaS alternative with declarative deployments, SSO, RBAC, TLS, secrets, staged releases and scale-to-zero."
 keywords:
   [
-    "internal tools",
-    "Streamlit apps",
-    "FastAPI apps",
-    "Gradio apps",
-    "FastHTML apps",
-    "NiceGUI apps",
-    "operational scripts",
-    "deployment platform",
     "GitOps",
-    "self-hosted",
-    "AI generated apps",
+    "self-hosted GitOps platform",
+    "internal tools platform",
+    "self-hosted PaaS",
+    "self-hosted PaaS alternative",
+    "deploy web apps",
+    "Docker deployment",
+    "Kubernetes deployment",
+    "VPS deployment",
+    "scale to zero",
+    "SSO for internal tools",
+    "RBAC",
+    "Coolify alternative",
+    "Cloud Run alternative",
+    "Streamlit apps",
+    "Gradio apps",
+    "FastAPI apps",
   ]
 cascade:
   images: ["/openrun_small.png"]
@@ -35,32 +41,72 @@ cascade:
 </style>
 
 <div class="hx:mb-4">
-<h1 id="hero-headline" class="not-prose hx:text-4xl hx:font-bold hx:leading-none hx:tracking-tighter hx:md:text-5xl hx:py-2"><span class="hx:bg-clip-text hx:text-transparent hx:bg-gradient-to-r hx:from-gray-900 hx:to-gray-600 hx:dark:from-gray-100 hx:dark:to-gray-400">Self-hosted platform for</span><span class="ww-sr">&nbsp;internal tools</span> <span id="word-wheel" class="word-wheel" aria-hidden="true"><span class="ww-word ww-m2">Hypermedia apps</span><span class="ww-word ww-m1">automation scripts</span><span class="ww-word ww-c">internal tools</span><span class="ww-word ww-p1">AI apps</span><span class="ww-word ww-p2">Streamlit apps</span></span></h1>
+<h1 id="hero-headline" class="not-prose hx:text-4xl hx:font-bold hx:leading-none hx:tracking-tighter hx:md:text-5xl hx:py-2"><span class="hx:bg-clip-text hx:text-transparent hx:bg-gradient-to-r hx:from-gray-900 hx:to-gray-600 hx:dark:from-gray-100 hx:dark:to-gray-400">Self-Hosted GitOps Platform for</span><span class="ww-sr">&nbsp;Docker and Kubernetes</span> <span id="word-wheel" class="word-wheel" aria-hidden="true"><span class="ww-word ww-m2">Hypermedia apps</span><span class="ww-word ww-m1">automation scripts</span><span class="ww-word ww-c">Docker and Kubernetes</span><span class="ww-word ww-p1">internal tools</span><span class="ww-word ww-p2">Streamlit apps</span></span></h1>
 </div>
 
 <div class="hx:mb-6">
 {{< hextra/hero-subtitle >}}
-  Deploy internal tools and team web apps on infrastructure you control.&nbsp;<br class="hx:sm:block hx:hidden"/>Run on a VPS or Kubernetes with GitOps, RBAC, SSO, and audit logs built in.
+  Open-source, self-hosted GitOps platform for deploying web apps and internal tools to Docker or Kubernetes.&nbsp;<br class="hx:sm:block hx:hidden"/>Declarative deployments, SSO, RBAC, TLS, secrets, staged releases, and scale-to-zero.
 {{< /hextra/hero-subtitle >}}
 </div>
 
 <div class="hx:mb-2 hx:flex hx:flex-wrap hx:gap-1">
 {{< hextra/hero-button style="border-radius: 8px;" text="QuickStart" link="docs/quickstart" >}}
-{{< hextra/hero-button style="border-radius: 8px;" text="Teams" link="docs/use-cases/team" >}}
+{{< hextra/hero-button style="border-radius: 8px;" text="Compare" link="compare" >}}
 {{< hextra/hero-button style="border-radius: 8px;" text="Demo" link="https://utils.demo.clace.io/console" >}}
 </div>
 
 <div class="hx:mt-8 hx:mb-8 hx:max-w-4xl">
-<h2 class="hx:text-2xl hx:font-bold hx:tracking-tight">Self-Hosted PaaS Alternative for Internal Tools</h2>
-<p class="hx:mt-2 hx:text-gray-600 hx:dark:text-gray-400">OpenRun is built for teams that deploy and operate internal tools, dashboards, automation interfaces and business web apps. It provides a Platform-as-a-Service (PaaS) style workflow while keeping application code, data and infrastructure under your organization's control.</p>
-<p class="hx:mt-2 hx:text-gray-600 hx:dark:text-gray-400">Start on a Linux VPS or private server with Docker or Podman, then move the same declarative applications to Kubernetes when your team needs a distributed deployment. GitOps, SSO, RBAC, audit logs, service bindings, automatic TLS and scale-to-zero are built in.</p>
+<h2 class="hx:text-2xl hx:font-bold hx:tracking-tight">True GitOps, Not Just Git Push</h2>
+<p class="hx:mt-2 hx:text-gray-600 hx:dark:text-gray-400">Most tools only update app code from Git; creating and configuring apps still needs a UI or CLI. With OpenRun, apps are created, configured and promoted by editing one declarative config file in Git, with staged deployments and atomic updates. See how this differs from <a href="{{< ref "compare/coolify-caprover-kamal" >}}" class="hx:underline" style="color: #00A200;">Coolify, CapRover, Kamal and Dokku</a>.</p>
 </div>
+
+<div class="hx:mt-6 hx:mb-6 hx:max-w-4xl">
+<h2 class="hx:text-2xl hx:font-bold hx:tracking-tight">Built for Internal Tools and Team Web Apps</h2>
+<p class="hx:mt-2 hx:text-gray-600 hx:dark:text-gray-400">A self-hosted PaaS alternative for internal tools: every app gets OAuth/OIDC/SAML login, RBAC and audit logs, not just the admin console. Start on a single server with Docker or Podman, move to Kubernetes with the same config. Compare with <a href="{{< ref "compare/cloud-run-app-runner" >}}" class="hx:underline" style="color: #00A200;">Cloud Run and App Runner</a> or <a href="{{< ref "compare/diy-kubernetes" >}}" class="hx:underline" style="color: #00A200;">DIY Kubernetes</a>.</p>
+</div>
+
+<style>
+  .persona-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 24px; }
+  @media (max-width: 767px) { .persona-cards { grid-template-columns: 1fr; } }
+  .persona-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 24px; border-radius: 14px; border: 1px solid rgba(0, 194, 0, 0.28); background: radial-gradient(ellipse at 50% 0%, rgba(0, 194, 0, 0.10), rgba(0, 194, 0, 0.02)); text-decoration: none; color: inherit; transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
+  .persona-card:hover { transform: translateY(-3px); border-color: rgba(0, 194, 0, 0.55); box-shadow: 0 10px 24px rgba(0, 120, 0, 0.18); }
+  .persona-icon { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #00C200, #007700); color: #ffffff; box-shadow: 0 4px 10px rgba(0, 120, 0, 0.35); }
+  .persona-icon svg { width: 24px; height: 24px; }
+  .persona-title { font-size: 1.05rem; font-weight: 700; }
+  .persona-sub { font-size: 0.9rem; color: #6b7280; line-height: 1.5; flex-grow: 1; }
+  .persona-more { font-size: 0.85rem; font-weight: 600; background: linear-gradient(135deg, #00C200, #007700); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .persona-card:hover .persona-title { background: linear-gradient(135deg, #00C200, #007700); -webkit-background-clip: text; background-clip: text; color: transparent; }
+</style>
+
+<div class="persona-cards not-prose">
+<a class="persona-card" href="{{< ref "solutions/developers" >}}">
+<span class="persona-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg></span>
+<span class="persona-title">For Developers</span>
+<span class="persona-sub">Full GitOps (including creating new apps) without managing infrastructure - on Linux, Windows and macOS.</span>
+<span class="persona-more">Learn more →</span>
+</a>
+<a class="persona-card" href="{{< ref "solutions/platform-teams" >}}">
+<span class="persona-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg></span>
+<span class="persona-title">For Platform Teams</span>
+<span class="persona-sub">Give teams a standardized internal application platform, on a single machine or on Kubernetes.</span>
+<span class="persona-more">Learn more →</span>
+</a>
+<a class="persona-card" href="{{< ref "solutions/organizations" >}}">
+<span class="persona-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg></span>
+<span class="persona-title">For Organizations</span>
+<span class="persona-sub">Authentication, authorization, auditing and GitOps deployment for internal tools.</span>
+<span class="persona-more">Learn more →</span>
+</a>
+</div>
+
+<div style="height: 20px;"></div>
 
 {{< hextra/feature-grid >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="What is OpenRun?" icon="information-circle" subtitle="<br>OpenRun is an open-source, self-hosted PaaS alternative for teams deploying internal tools and web apps. Run it on a VPS or private server with Docker/Podman, or on a Kubernetes cluster.<br><br>OpenRun adds the authentication, authorization and auditing features required for team use. Code-first apps get the platform capabilities usually found in enterprise low-code tools like Retool." class="openrun-feature-card openrun-feature-card-dark" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="What is OpenRun?" icon="information-circle" subtitle="<br>OpenRun is an open-source, self-hosted GitOps platform for deploying web apps and internal tools. Run the single binary on a single server or node with Docker/Podman, or deploy apps onto a Kubernetes cluster with the same declarative config.<br><br>OpenRun adds the authentication, authorization and auditing features required for team use. Code-first apps get the platform capabilities usually found in enterprise low-code tools like Retool." class="openrun-feature-card openrun-feature-card-dark" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Motivation" icon="flag" subtitle="<br>OpenRun is built with these goals:<br><br>➣ Declarative deployments made simple<br>➣ Start on single-node, scale to Kubernetes if needed<br>➣ Make auth and RBAC easy for internal tools<br>➣ Easy SAML support without paying the SSO tax<br>➣ Run thousands of apps - zero idle resource usage" class="openrun-feature-card openrun-feature-card-dark" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Motivation" icon="flag" subtitle="<br>OpenRun is built with these goals:<br><br>➣ True GitOps: create and configure apps through Git, not just update code<br>➣ Start on single-node, scale to Kubernetes if needed<br>➣ Make auth and RBAC easy for internal tools<br>➣ Easy SAML support without paying the SSO tax<br>➣ Run thousands of apps - zero idle resource usage" class="openrun-feature-card openrun-feature-card-dark" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="OpenRun Features" icon="light-bulb" subtitle="<br>Some of the unique features of OpenRun are:<br>➣ Create and manage apps declaratively<br>➣ Easily upgrade from single-node to K8S <br>➣ Domain based or path based routing, with auto-TLS<br>➣ OAuth/OpenID/SAML/Cert auth, with RBAC<br>➣ Scales idle apps down to zero<br>➣ Staged deployment, for code and config changes<br>➣ Atomic (all or nothing) updates across apps<br>➣ Managed SQLite + Litestream replication to S3" class="openrun-feature-card openrun-feature-card-dark" >}}
 
@@ -134,7 +180,7 @@ app(path=<span style="color: #22863a;">&quot;fasthtml.:&quot;</span>, source=<sp
 (function () {
     const wheel = document.getElementById('word-wheel');
     if (!wheel) return;
-    const words = ['internal tools', 'AI apps', 'Streamlit apps', 'FastAPI apps', 'Gradio apps', 'FastHTML apps', 'NiceGUI apps', 'Hypermedia apps', 'operational tools', 'runbook automation'];
+    const words = ['internal tools', 'AI generated apps', 'Hypermedia apps', 'operational tools', 'runbook automation', 'Streamlit apps', 'FastAPI apps', 'Gradio apps', 'FastHTML apps', 'NiceGUI apps'];
     const posCls = ['ww-m2', 'ww-m1', 'ww-c', 'ww-p1', 'ww-p2'];
     const spans = Array.from(wheel.children);
     const measure = document.createElement('span');
@@ -172,12 +218,6 @@ function copyCode(codeId, buttonElem) {
 }
 </script>
 
-<!--div style="height: 20px;"></div>
-
-<div  style="position:relative; width:100%; max-width:560px; padding-bottom:5%; margin:0 auto; overflow:hidden;">
-<iframe width="560" height="315" src="https://www.youtube-nocookie.com/embed/YrWNz4JQ6p0?si=tnjma2uqBp2OrE7m" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-</div-->
-
 <div style="height: 20px;"></div>
 
 {{< hextra/feature-grid >}}
@@ -189,7 +229,7 @@ function copyCode(codeId, buttonElem) {
 {{< hextra/feature-card title="Declarative GitOps" link="docs/quickstart/#lifecycle-with-git" subtitle="Manage staged deployments, versioned releases and preview environments through declarative GitOps workflows connected to GitHub or GitLab."  icon="github" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Scale down to zero" link="/docs/container/overview/" subtitle="Initialize applications lazily on their first request, then automatically pause idle containers and reduce resource usage to zero."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="Scale down to zero" link="/docs/container/overview/" subtitle="Initialize applications lazily on their first request, then automatically stop idle containers and reduce resource usage to zero."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
 {{< hextra/feature-card title="PostgreSQL + MySQL Service Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated PostgreSQL schemas and roles or MySQL databases and users, then inject unique application credentials securely."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
@@ -207,12 +247,13 @@ function copyCode(codeId, buttonElem) {
 {{< hextra/feature-grid >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Comparison with self-hosted PaaS platforms" icon="scale" subtitle="Compared with self-hosted PaaS platforms like Coolify, Kamal and Dokku, OpenRun provides:<br />➣ A **declarative GitOps** interface for application code and configuration<br/>➣ Scale-to-zero for idle web apps<br/>➣ Single-binary deployment to a VPS with Docker/Podman, or to Kubernetes<br/>➣ Built-in OAuth/OIDC/SAML, RBAC and audit logs. Auth is done for apps also, not just the OpenRun console<br/><br/>OpenRun is a self-hosted PaaS alternative focused on web apps and internal tools. It does not deploy arbitrary databases or Docker Compose stacks like a full general-purpose PaaS. OpenRun instead supports service bindings which allows your apps to get easy access to a externally managed database/service." class="openrun-feature-card openrun-feature-card-dark" >}}
+{{< hextra/feature-card title="OpenRun vs Coolify, CapRover and Kamal" link="/compare/coolify-caprover-kamal/" icon="scale" subtitle="Compared with self-hosted PaaS platforms like Coolify, CapRover, Kamal and Dokku, OpenRun provides:<br />➣ **True GitOps**: apps are created and configured through Git, not just code updates<br/>➣ SSO for every deployed app, not just the admin console<br/>➣ Scale-to-zero for idle web apps<br/>➣ RBAC, audit logs and service bindings for databases<br/>➣ The same declarative config on a VPS with Docker/Podman or on Kubernetes<br/><br/>OpenRun focuses on web apps and internal tools. It does not deploy Docker Compose stacks; apps connect to externally managed databases through service bindings. Read the full comparison." class="openrun-feature-card openrun-feature-card-dark" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Comparison with DIY on Kubernetes" icon="cog" subtitle="Running OpenRun on Kubernetes gives you the benefits of Kubernetes without the pain. OpenRun provides:<br/>➣ Unified interface as against glueing together services like Jenkins for builds, ArgoCD/FluxCD for CD, IDP for app management etc.<br/>➣ Simple declarative config, **no YAML files, no webserver DSLs**.<br/>➣ Support for setting up auth policies using RBAC.<br/><br/>Compared to **Knative**, OpenRun has a much simpler config without requiring YAML files. Resource usage is lower with OpenRun since apps are loaded lazily, on the first API call. OpenRun app versions are maintained in the metadata database, reducing Kubernetes resources created. Knative requires an external build system and does not support auth for apps." class="openrun-feature-card openrun-feature-card-dark" >}}
+{{< hextra/feature-card title="OpenRun vs Cloud Run and App Runner" link="/compare/cloud-run-app-runner/" icon="cloud" subtitle="Google Cloud Run and AWS App Runner provide managed serverless containers, but apps run on cloud infrastructure with usage-based pricing and vendor lock-in. App Runner is closed to new customers since March 2026.<br/><br/>OpenRun brings container deployment to infrastructure you control:<br/>➣ Scale-to-zero on your own server or Kubernetes cluster<br/>➣ SSO and RBAC configured once, covering every app<br/>➣ Declarative GitOps instead of imperative CLI deploys<br/>➣ Runs behind a VPN with no public cloud dependency" class="openrun-feature-card openrun-feature-card-dark" >}}
 
-{{< hextra/feature-card title="Common use cases" icon="users" subtitle="OpenRun can be used by teams to:<br/>➣ For operations teams to provide an easy on-ramp to Kubernetes for dev teams<br/>➣  Deploy web apps with zero config required for most common frameworks like **Streamlit/Gradio/FastHTML/NiceGUI** etc.<br />➣ Replace Jenkins/Rundeck jobs, using OpenRun Actions for **automating operational scripts**<br/>➣ Expose web apps for internal REST APIs, replacing manual curl commands<br><br>While the auth and auditing features of OpenRun are built for use by teams, OpenRun can also be used by individuals for:<br/>➣ Zero-config dev env setup locally<br/>➣ Host web apps shared with friends and family, using OAuth" class="openrun-feature-card openrun-feature-card-dark" >}}
+<!-- prettier-ignore -->
+{{< hextra/feature-card title="OpenRun vs DIY on Kubernetes" link="/compare/diy-kubernetes/" icon="cog" subtitle="Running OpenRun on Kubernetes gives you the benefits of Kubernetes without the pain:<br/>➣ One system instead of gluing together Jenkins for builds, ArgoCD/FluxCD for CD and an IDP for app management<br/>➣ Simple declarative config, **no YAML files, no webserver DSLs**<br/>➣ Auth policies with RBAC, audit logs built in<br/><br/>Compared to **Knative**, OpenRun has a much simpler config, loads apps lazily on first request and keeps app versions in its metadata database, reducing the Kubernetes resources created." class="openrun-feature-card openrun-feature-card-dark" >}}
 
 {{< /hextra/feature-grid >}}
 

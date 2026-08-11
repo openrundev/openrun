@@ -1,6 +1,6 @@
 baseURL = "https://openrun.dev/"
 languageCode = "en-us"
-title = "OpenRun - Self-Hosted PaaS Alternative"
+title = "OpenRun - Self-Hosted GitOps Platform for Docker and Kubernetes"
 canonifyURLs = false
 relativeURLs = false
 pluralizeListTitles = false
@@ -29,8 +29,10 @@ noClasses = false
 
 # Default Page Parameters
 [params]
-title = "OpenRun - Self-Hosted PaaS Alternative"
-description = "OpenRun is an open-source self-hosted PaaS alternative for deploying web apps and internal tools on a VPS, private server or Kubernetes."
+title = "OpenRun - Self-Hosted GitOps Platform for Docker and Kubernetes"
+# Short suffix used in <title> of inner pages instead of the full site title
+titleSuffix = "OpenRun"
+description = "Open-source, self-hosted GitOps platform for deploying web apps and internal tools to Docker or Kubernetes. A self-hosted PaaS alternative with SSO, RBAC and scale-to-zero."
 
 [params.navbar]
 displayTitle = false
@@ -84,32 +86,38 @@ identifier = "features"
 weight = 3
 
 [[menu.main]]
+name = "Compare"
+url = "/compare/"
+identifier = "compare"
+weight = 4
+
+[[menu.main]]
 name = "Blog"
 url = "/blog/"
 identifier = "blog"
-weight = 4
+weight = 5
 
 [[menu.main]]
 name = "About"
 url = "/about/"
-weight = 5
+weight = 6
 
 [[menu.main]]
 name = "Search"
-weight = 6
+weight = 7
 [menu.main.params]
 type = "search"
 
 [[menu.main]]
 name = "Discord"
-weight = 7
+weight = 8
 url = "https://discord.gg/t2P8pJFsd7"
 [menu.main.params]
 icon = "discord"
 
 [[menu.main]]
 name = "GitHub"
-weight = 8
+weight = 9
 url = "https://github.com/openrundev/openrun"
 
 [menu.main.params]

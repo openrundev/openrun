@@ -1,11 +1,11 @@
 ---
 title: "Self-Hosted Web App Deployment Quick Start"
 weight: 50
-description: "Deploy web apps with an open-source self-hosted PaaS alternative running on your VPS, private server or Kubernetes cluster."
-summary: "Quick start for self-hosted web app deployment on a VPS or Kubernetes."
+description: "Deploy web apps with an open-source, self-hosted PaaS alternative with GitOps, running on a VPS, single server or Kubernetes cluster."
+summary: "Quick start for self-hosted web app deployment on a VPS, single server or Kubernetes."
 ---
 
-OpenRun is an Apache-2.0 licensed, self-hosted PaaS alternative for teams deploying web apps and internal tools. Run the single binary on Linux, macOS or Windows, use Docker/Podman on a VPS or private server, or deploy applications to Kubernetes for a distributed setup.
+OpenRun is an Apache-2.0 licensed, self-hosted GitOps platform and PaaS alternative for teams deploying web apps and internal tools. Run the single binary on Linux, macOS or Windows, use Docker/Podman on a single server or VPS, or deploy applications to Kubernetes for a distributed setup. See how OpenRun [compares]({{< ref "compare" >}}) with self-hosted PaaS platforms, managed container services and DIY Kubernetes setups.
 
 ## Installation
 
@@ -90,11 +90,11 @@ The [management console]({{< ref "/console-tour" >}}) is a web UI for managing t
 
 ```shell
 openrun app create --approve --auth system \
-    --param enable_all_features=true --param enable_updates=true \
+    --param enable_all_features=true --param enable_updates=false \
     github.com/openrundev/console /console
 ```
 
-The console is available at https://localhost:25223/console. Log in as `admin`, using the password printed during the OpenRun installation. Using `system` auth (the server default) is recommended for the console; management operations are blocked for anonymous users, so do not use `none` auth. The `enable_*` params control which feature areas are enabled — the default install is a read-only console. See [console install]({{< ref "installation/#install-the-console-app" >}}) for the full param list.
+The console is available at https://localhost:25223/console. Log in as `admin`, using the password printed during the OpenRun installation. Using `system` auth (the server default) is recommended for the console; management operations are blocked for anonymous users, so do not use `none` auth. The `enable_*` params control which feature areas are enabled; the default install is a read-only console. See [console install]({{< ref "installation/#install-the-console-app" >}}) for the full param list.
 
 ## App Types
 

@@ -1,109 +1,139 @@
 ---
 title: "About"
+description: "What OpenRun is, why it was built and answers to common questions about GitOps, authentication, databases, scale-to-zero, Kubernetes and how OpenRun compares with alternatives."
 summary: "About OpenRun"
 ---
 
-### What is OpenRun?
+## What is OpenRun?
 
-OpenRun (previously called Clace) is a web app deployment platform, with a focus on deploying internal tools. OpenRun makes it easy to declaratively deploy containerized web apps. OpenRun can deploy apps on a single-node or onto a Kubernetes cluster.
+OpenRun (previously called Clace) is an open-source, self-hosted GitOps platform for deploying web apps to Docker, Podman or Kubernetes, with a focus on deploying internal tools for teams. Apps are declared in a config file in Git; OpenRun builds the containers, routes requests and keeps the running platform in sync with what Git describes.
 
-OpenRun provides declarative GitOps based blue-green deployment, OAuth/OIDC/SAML access controls, TLS certs & secrets management. OpenRun has RBAC and auditing features for teams to securely deploy internal tools.
+OpenRun provides declarative GitOps based blue-green deployment, OAuth/OIDC/SAML access controls for every app, automatic TLS certs, secrets management, RBAC and audit logs. Idle apps scale down to zero. The same declarative config works on a single server and on a Kubernetes cluster.
 
-### Project Goals
+## Project Goals
 
-The goal of this project is to make it easy for individuals and teams to develop and deploy web applications declaratively, with minimal operational overhead. Easy integrations to enable SSO/SAML based authentication and authorization controls, audit logs and integration with secrets manager for managing credentials are goals. Deploying on a single machine or deploying across on a cluster on Kubernetes should use the same config.
+The goal of this project is to make it easy for individuals and teams to develop and deploy web applications declaratively, with minimal operational overhead. Easy integrations to enable SSO/SAML based authentication and authorization controls, audit logs and integration with secrets managers are goals. Deploying on a single machine or deploying across a cluster on Kubernetes should use the same config.
 
-Application deployments should support a GitOps approach. It should be easy, for the original developer or a new one, to make application code changes and deploy - after six months or after six years.
+Application deployments should support a true GitOps approach: not just code updates, but app creation and configuration managed through Git. It should be easy, for the original developer or a new one, to make application code changes and deploy - after six months or after six years.
 
-### FAQ
+## FAQ
 
-<details open>
-  <summary><b>How does OpenRun compare to other deployment solutions like Coolify/Dokku etc?</b></summary>
+### How does OpenRun compare to Coolify, CapRover, Kamal and Dokku?
 
-> The main differences are:
->
-> - OpenRun is declarative. After initial OpenRun setup. Instead of using CLI commands or UI operations, all operations including creating new app and updating config for existing apps can be doing by updating a config file in Git. With most other solution, app creation/update is through CLI or UI. Only app source code update can be done through Git.
-> - OpenRun is implemented as a web server, it does not depend on external web server like Nginx/Traefik. This simplifies end-user usage and allows OpenRun to implement features like scale down to zero (for app containers) and OAuth/SAML/Cert based auth with RBAC.
-> - OpenRun implements features like staged deployment and automatic dev env setup which are not available in other solutions.
-> - OpenRun supports deploying apps to a single machine or onto Kubernetes.
+The main differences are:
 
-</details>
+- OpenRun is declarative. All operations, including creating new apps and updating config for existing apps, are done by updating a config file in Git. With most other solutions, app creation and config changes go through a UI or CLI; only app source code updates flow through Git.
+- OpenRun provides SSO (OAuth/OIDC/SAML) and RBAC for every deployed app, not just for the admin interface.
+- OpenRun is implemented as a web server and does not depend on an external proxy like Nginx or Traefik. This allows OpenRun to scale idle app containers down to zero and to enforce auth on every request.
+- OpenRun supports staged (blue-green) deployment for both code and config changes, and atomic updates across apps.
+- OpenRun deploys apps to a single machine or onto Kubernetes with the same config.
 
-<details>
-  <summary><b>Why is declarative configuration useful?</b></summary>
+The tradeoff: OpenRun does not deploy Docker Compose stacks; apps run in a single container and connect to externally managed databases through service bindings. See the full [comparison with Coolify, CapRover, Kamal and Dokku]({{< ref "compare/coolify-caprover-kamal" >}}).
 
-> Imperative CLI or UI operation are easy to start with, but they make it difficult to track changes and rollback updates. With a declarative config, all changes are version controlled. It is easy to create a new environment, since everything is in Git. If multiple folks are making config changes in a team, declarative systems are easier to manage.
->
-> Declarative configuration is what makes Kubernetes and Terraform useful. OpenRun brings declarative configuration to web app deployment. Instead of writing pages of YAML, each app is specified as a few lines of Starlark (python-like) config. For example, see [utils.star](https://github.com/openrundev/openrun/blob/main/examples/utils.star).
+### How does OpenRun compare to Google Cloud Run and AWS App Runner?
 
-</details>
+Cloud Run is a managed serverless container platform with scale-to-zero, running on Google's infrastructure with per-request pricing. App Runner is AWS's equivalent, though it keeps at least one provisioned instance billed while running and was closed to new AWS customers in March 2026. OpenRun provides the same deployment model, containers that scale to zero and start on demand, on your own server, node or Kubernetes cluster. OpenRun's SSO and RBAC are configured once and cover every app, including SAML providers, and it runs fully behind a VPN. The managed platforms are better for public services needing large elastic scale. See the full [comparison with Cloud Run and App Runner]({{< ref "compare/cloud-run-app-runner" >}}).
 
-<details>
-  <summary><b>What types of apps can be deployed with OpenRun?</b></summary>
+### How does OpenRun compare to building my own platform on Kubernetes?
 
-> OpenRun can deploy any web app which runs in a single container. OpenRun supports [AppSpecs](https://openrun.dev/docs/container/overview/#app-specs) which allow zero-config deployment of frameworks like Streamlit/Gradio/FastHTML/NiceGUI/Shiny/Reflex based apps. For frameworks which have a AppSpec, no Dockerfile is required, no code changes are required in the app source code. For frameworks which do not have an AppSpec defined, a Dockerfile needs to be present in the app source repo.
->
-> OpenRun does NOT support apps which require multiple containers using Docker Compose. The target use case is internal tools talking to existing API endpoints and web apps where the database is externally managed.
+A typical DIY stack combines Jenkins or GitHub Actions for builds, ArgoCD or Flux for CD, an ingress controller with cert-manager, an OAuth proxy for auth, Knative for scale-to-zero and Backstage as a portal. OpenRun provides the web app deployment slice of that stack as one system, with a few lines of config per app instead of YAML across many tools. Compared to Knative, OpenRun needs no external build system, loads apps lazily and supports auth for apps. See the full [comparison with DIY on Kubernetes]({{< ref "compare/diy-kubernetes" >}}).
 
-</details>
+### What makes OpenRun "true GitOps"?
 
-<details>
-  <summary><b>Does OpenRun support deployment of internal tools by teams?</b></summary>
+Most platforms call it GitOps when a git push triggers a rebuild of one app's source code. App creation, domains, env vars, resource limits and database access still happen through a UI or CLI, outside version control. With OpenRun, the [declarative config]({{< ref "docs/applications/overview/#declarative-app-management" >}}) in Git covers the full app lifecycle: a scheduled sync creates newly declared apps, applies config changes to existing apps and deploys code updates. Config changes get pull request review, history and rollback, exactly like code.
 
-> Yes, deployment of internal tools by teams is a target [use case](https://openrun.dev/docs/use-cases/team/). Features which are built for this use case include:
->
-> - **Declarative Config**: Manage apps by [declaratively](https://openrun.dev/docs/applications/overview/#declarative-app-management) in git, allowing team to do follow regular SDLC for config
-> - **OAuth/OIDC/SAML with RBAC**: Manage who can access which app using [RBAC](https://openrun.dev/docs/configuration/rbac/)
-> - **Audit Logs**: All operations and API calls are automatically logged in [audit trail](https://openrun.dev/docs/applications/audit/)
->
-> If not used for internal tools, the auth and auditing features can be disabled, in which case OpenRun is suitable for deploying any web application.
+### Why is declarative configuration useful?
 
-</details>
+Imperative CLI or UI operations are easy to start with, but they make it difficult to track changes and roll back updates. With a declarative config, all changes are version controlled. It is easy to create a new environment, since everything is in Git. If multiple people are making config changes in a team, declarative systems are easier to manage.
 
-<details>
-  <summary><b>How is OpenRun deployed?</b></summary>
+Declarative configuration is what makes Kubernetes and Terraform useful. OpenRun brings declarative configuration to web app deployment. Instead of writing pages of YAML, each app is specified as a few lines of Starlark (python-like) config. For example, see [utils.star](https://github.com/openrundev/openrun/blob/main/examples/utils.star).
 
-> OpenRun can be deployed on a single node easily (Linux, Windows or OSX), using a SQLite database for storing metadata. Docker/Podman is the only dependency. OpenRun can be deployed across multiple machines, using an external Postgres database for storing metadata.
->
-> OpenRun can also be deployed on Kubernetes using a Helm chart. On Kubernetes, OpenRun will avoid the need to setup a build system like Jenkins, CD with ArgoCD and an IDP like BackStage. Apps deployed using OpenRun are deployed as Kubernetes services, with OpenRun running as the api server/request router.
+### What types of apps can be deployed with OpenRun?
 
-</details>
+OpenRun can deploy any web app which runs in a single container. OpenRun supports [AppSpecs]({{< ref "docs/container/appspecs" >}}) which allow zero-config deployment of frameworks like Streamlit/Gradio/FastHTML/NiceGUI/Shiny/Reflex based apps. For frameworks which have an AppSpec, no Dockerfile is required and no code changes are required in the app source. For frameworks which do not have an AppSpec defined, a Dockerfile needs to be present in the app source repo.
 
-### How is OpenRun implemented?
+OpenRun does NOT support apps which require multiple containers using Docker Compose. The target use case is internal tools talking to existing API endpoints and web apps where the database is externally managed. OpenRun support service bindings, which is a better abstraction for managing endpoints.
 
-- Single binary web application server (in golang), with a set of plugins built in (also in golang) which allow access to external endpoints. The server is statically configured using a TOML file.
-- Applications are configured using [Starlark](https://github.com/google/starlark-go), which is a subset of Python. Python is an ideal glue language, Starlark is used to configure the application backend logic
-- Multiple applications can be dynamically installed, an embedded SQLite database is used to store application metadata (Postgres support is in the roadmap).
-- For applications using the container plugin, OpenRun works with Docker/Podman using CLI to build and run the containers. On Kubernetes, OpenRun uses the Kubernetes server side apply (SSA) APIs to create app resources.
-- Path based routing, each app identified by a unique path. Also, domain based routing, which allows multiple domains to point to the same OpenRun instance, with path based routing being done independently for each domain.
-- Automatic TLS certificate management for each domain to simplify deployments.
-- A sandboxing layer is implemented at the Starlark(python) to Golang boundary, allowing the implementation of security and access control policies. Go code is trusted, Starlark code is untrusted.
-- For Starlark based apps, the application UI is implemented using Go HTML templates, with [HTMX](https://htmx.org/) for interactivity. Go templates support [context aware templating](https://pkg.go.dev/html/template#hdr-Contexts) which prevents encoding related security issues. They also work well with the HTML fragments required for HTMX.
-- No need to install any additional components like Python or NodeJS/NPM on the host machine. Integration with [tailwindcss-cli](https://tailwindcss.com/blog/standalone-cli) is supported. [esbuild](https://esbuild.github.io/) (using the esbuild go library) is supported out of the box for importing ESM modules.
+### Does OpenRun support deployment of internal tools by teams?
 
-### Current Status
+Yes, deployment of internal tools by teams is the primary [use case]({{< ref "docs/use-cases/team" >}}). Features built for this use case include:
+
+- **Declarative Config**: Manage apps [declaratively]({{< ref "docs/applications/overview/#declarative-app-management" >}}) in Git, allowing teams to follow regular SDLC for config
+- **OAuth/OIDC/SAML with RBAC**: Manage who can access which app using [RBAC]({{< ref "docs/configuration/rbac" >}})
+- **Audit Logs**: All operations and API calls are automatically logged in the [audit trail]({{< ref "docs/applications/audit" >}})
+
+If not used for internal tools, the auth and auditing features can be disabled, in which case OpenRun is suitable for deploying any web application.
+
+### Is SSO only for the admin console, or for apps too?
+
+For every app. Configure [OAuth, OpenID Connect, SAML or client certificate auth]({{< ref "docs/configuration/authentication" >}}) once at the server level and any app can require login, with no code changes in the app. Group information from the IdP feeds [RBAC]({{< ref "docs/configuration/rbac" >}}) grants that control which users can access which apps. Setting `auth_required = true` ensures no app can be served without authentication. Most deployment platforms authenticate only their own dashboard; with them, each deployed app must implement login itself.
+
+### How do apps get access to a database?
+
+Through [service bindings]({{< ref "docs/applications/servicebindings" >}}). A PostgreSQL or MySQL service is registered once with admin credentials. Each app that requests a binding automatically gets an isolated schema and role (Postgres) or database and user (MySQL), with generated credentials injected into the app environment. Operational work like backups, monitoring and capacity planning needs to be set up only once, for the shared service, instead of once per app database. The [service bindings blog post]({{< ref "/blog/service-binding" >}}) describes the design.
+
+For lighter apps, OpenRun manages [SQLite with Litestream]({{< ref "docs/applications/litestream" >}}): persistent volumes, continuous replication to S3-compatible storage and automatic restore.
+
+### How does scale-to-zero work?
+
+OpenRun is itself the web server, so it sees every request. App containers are started lazily on the first request to the app, and [idle containers are stopped automatically]({{< ref "docs/container/config" >}}); on Kubernetes, the app deployment is scaled down to zero. The next request starts the container again. Since internal tools are idle most of the time, a single server can host hundreds of apps with only the active ones consuming CPU and memory.
+
+### How is OpenRun deployed?
+
+OpenRun can be deployed on a single node easily (Linux, Windows or macOS), using a SQLite database for storing metadata. Docker or Podman is the only dependency. OpenRun can also be deployed across multiple machines, using an external Postgres database for storing metadata.
+
+OpenRun can also be deployed on Kubernetes using a Helm chart. On Kubernetes, OpenRun avoids the need to set up a build system like Jenkins, CD with ArgoCD and an IDP like Backstage. Apps deployed using OpenRun run as Kubernetes services, with OpenRun acting as the API server and request router.
+
+### Can OpenRun run behind a VPN with no public Internet access?
+
+Yes. OpenRun serves apps fully on private infrastructure, with no dependency on a public cloud service. The [team use case guide]({{< ref "docs/use-cases/team" >}}) walks through a setup behind a VPN, including OIDC/SAML auth, manually managed TLS certs and a GitOps sync from a private repo. Note that installs and container builds download packages from the Internet by default; fully air-gapped setups need local mirrors and registries.
+
+### How do I move from a single server to Kubernetes?
+
+The same declarative app config works on both. Start with OpenRun on a single server using Docker or Podman. When a distributed deployment is needed, install OpenRun on a [Kubernetes cluster]({{< ref "docs/container/kubernetes" >}}) with the Helm chart and point it at the same config repo. The apps, auth setup and GitOps pipeline carry over unchanged.
+
+### Does OpenRun replace my CI/CD system?
+
+For web app deployment, OpenRun covers the pipeline end to end: it builds app containers from source and continuously syncs apps from Git, so no separate Jenkins job or ArgoCD application is needed per app. Test suites and other CI checks still run in your existing CI system before changes merge; OpenRun takes over once changes land in the branch it syncs from.
+
+### Is OpenRun free and open source?
+
+Yes. OpenRun is Apache-2.0 licensed, developed at [github.com/openrundev/openrun](https://github.com/openrundev/openrun). There is no per-seat or per-app pricing; the only cost is the infrastructure it runs on.
+
+## How is OpenRun implemented?
+
+- OpenRun is a single binary web application server written in Go, with a set of built-in plugins that provide access to external endpoints. The server is statically configured using a TOML file.
+- Applications are configured using [Starlark](https://github.com/google/starlark-go), a subset of Python. Starlark works well as a glue language and is used to configure the application backend logic.
+- Multiple applications can be installed dynamically. An embedded SQLite database stores application metadata; an external Postgres database can be used instead for multi-node deployments.
+- For applications using the container plugin, OpenRun builds and runs containers through the Docker or Podman CLI. On Kubernetes, OpenRun creates app resources using the server-side apply (SSA) APIs.
+- Each app is identified by a unique path. Domain-based routing allows multiple domains to point to the same OpenRun instance, with path-based routing done independently for each domain.
+- TLS certificates are created and renewed automatically for each domain.
+- A sandboxing layer at the Starlark to Go boundary enforces security and access control policies. Go code is trusted, Starlark code is untrusted.
+- For Starlark based apps, the application UI is built with Go HTML templates and [HTMX](https://htmx.org/) for interactivity. Go templates support [context aware templating](https://pkg.go.dev/html/template#hdr-Contexts), which prevents encoding related security issues, and they work well with the HTML fragments HTMX requires.
+- No additional components like Python or Node.js need to be installed on the host machine. The standalone [tailwindcss-cli](https://tailwindcss.com/blog/standalone-cli) is supported for styling, and [esbuild](https://esbuild.github.io/) (through the esbuild Go library) is supported out of the box for importing ESM modules.
+
+## Current Status
 
 The current status is:
 
-- Client and server (in a single binary) for service management and configuration.
-- Support for application development with Starlark based configuration.
-- Container management support with Docker/Podman or Kubernetes.
-- Auto-idling of containers to reduce resource usage
+- Client and server in a single binary, for service management and configuration.
+- Application development with Starlark based configuration.
+- Container management with Docker, Podman or Kubernetes.
+- Auto-idling of containers to reduce resource usage.
 - Go HTML template loading and caching for request processing.
-- HTTP plugin for communicating with REST endpoints.
-- Exec plugin for running system commands.
-- Built in admin account for local development.
-- Auto-sync (file system watcher) and Auto-reload using SSE (automatic UI refresh) for speeding up the application development cycle.
-- Admin functionality using unix domain sockets for security.
-- Application sandboxing checks to ensure only audited operations are allowed.
-- Staged deployment support, preview app creations support.
-- App data persistence to sqlite with managed tables.
+- HTTP plugin for calling REST endpoints and an exec plugin for running system commands.
+- Built-in admin account for local development.
+- Auto-sync (file system watcher) and auto-reload using SSE to speed up the application development cycle.
+- Admin functionality over unix domain sockets for security.
+- Application sandboxing checks so that only audited operations are allowed.
+- Staged deployments and preview app creation.
+- App data persistence to SQLite with managed tables.
 
-### Who is behind this project?
+## Who is behind this project?
 
 The project was started by [Ajay Kidave](https://www.linkedin.com/in/ajayvk/). Ajay's background has been in database systems and enterprise integration tools. OpenRun was started to find ways to reduce the development and operational complexity in tooling for internal applications.
 
-### How to stay in touch?
+## How to stay in touch?
 
 - Star the repo at [github.com/openrundev/openrun](https://github.com/openrundev/openrun)
 - Email at [contact@openrun.dev](mailto:contact@openrun.dev)

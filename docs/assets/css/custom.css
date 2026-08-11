@@ -56,6 +56,29 @@ h2, h3, h4, h5, h6 {
   --openrun-card-alpha: 0.2;
 }
 
+/* Feature card icons rendered as green gradient badges, matching the
+   persona card icons on the home page */
+.openrun-feature-card h3 > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  margin-right: 12px;
+  padding: 0 !important;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #00c200, #007700);
+  color: #ffffff;
+  box-shadow: 0 4px 10px rgb(0 120 0 / 0.35);
+}
+
+.openrun-feature-card h3 > span:first-child svg {
+  width: 24px;
+  height: 24px;
+  stroke: #ffffff;
+}
+
 /* theme-image shortcode (layouts/shortcodes/theme-image.html): a light/dark
    screenshot pair where only the variant matching the site theme shows.
    Hextra sets the `dark` class on <html> for both the manual toggle and the

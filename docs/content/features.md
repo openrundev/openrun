@@ -1,6 +1,6 @@
 ---
 title: "Features"
-description: "Explore OpenRun's self-hosted PaaS features for VPS and Kubernetes deployments, including GitOps, RBAC, SSO, service bindings and SQLite replication."
+description: "Explore OpenRun's self-hosted PaaS alternative features for VPS, single server and Kubernetes deployments, including GitOps, RBAC, SSO, service bindings and SQLite replication."
 summary: "Self-hosted web app deployment with GitOps, RBAC, SSO, managed database access and SQLite replication."
 layout: hextra-home
 ---
@@ -13,7 +13,7 @@ layout: hextra-home
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Secrets Management" link="/docs/configuration/secrets/" subtitle="Securely provide application secrets through AWS Secrets Manager, HashiCorp Vault and other configured secret providers."  icon="shield-exclamation" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Auto-Pause Idle apps" link="/docs/container/config/" subtitle="Automatically pause idle applications and scale their resource usage down to zero until the next incoming request."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Auto-Stop Idle Apps" link="/docs/container/config/" subtitle="Automatically stop idle application containers and scale their resource usage down to zero until the next incoming request."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="PostgreSQL, MySQL + SQLite Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated PostgreSQL schemas and roles, MySQL databases and users, and persistent SQLite storage for apps."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
 
@@ -44,6 +44,8 @@ layout: hextra-home
 <!-- prettier-ignore --> {{< hextra/feature-card title="Security Sandbox" link="/docs/applications/appsecurity/#security-model" subtitle="Run Starlark-based application code inside a permission-controlled security sandbox with explicit allowlists for sensitive platform operations."  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Management Console" link="/console-tour/" subtitle="Manage applications, deployments, service bindings, containers, audit events and server configuration through OpenRun’s browser-based administration console."  icon="desktop-computer" class="openrun-feature-card openrun-feature-card-light" >}}
+
+<!-- prettier-ignore --> {{< hextra/feature-card title="Compare OpenRun" link="/compare/" subtitle="See how OpenRun compares with Coolify, CapRover, Kamal, Dokku, Google Cloud Run, AWS App Runner and DIY Kubernetes platforms."  icon="scale" class="openrun-feature-card openrun-feature-card-light" >}}
 
 {{< /hextra/feature-grid >}}
 
