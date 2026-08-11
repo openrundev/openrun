@@ -50,10 +50,9 @@ cascade:
 {{< /hextra/hero-subtitle >}}
 </div>
 
-<div class="hx:mb-2 hx:flex hx:flex-wrap hx:gap-1">
-{{< hextra/hero-button style="border-radius: 8px;" text="QuickStart" link="docs/quickstart" >}}
-{{< hextra/hero-button style="border-radius: 8px;" text="Compare" link="compare" >}}
-{{< hextra/hero-button style="border-radius: 8px;" text="Demo" link="https://utils.demo.clace.io/console" >}}
+<div class="hx:mb-2 hx:flex hx:flex-wrap hx:gap-2">
+{{< hextra/hero-button style="border-radius: 8px;" text="Quick Start" link="docs/quickstart" >}}
+{{< hextra/hero-button style="border-radius: 8px;  padding: 12px 40px;" text="Demo" link="https://utils.demo.clace.io/console" >}}
 </div>
 
 <div class="hx:mt-8 hx:mb-8 hx:max-w-4xl">
