@@ -5,15 +5,48 @@
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      "name": "OpenRun",
-      "url": {{ .Site.BaseURL }},
-      "description": {{ partial "utils/page-description.html" . }},
-      "keywords": {{ delimit (.Keywords | default slice) ", " }},
-      "applicationCategory": "DeveloperApplication",
-      "operatingSystem": "Linux, macOS, Windows",
-      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-      "sameAs": ["https://github.com/openrundev/openrun"]
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://openrun.dev/#organization",
+          "name": "OpenRun",
+          "url": "https://openrun.dev/",
+          "logo": "https://openrun.dev/openrun_small.png",
+          "sameAs": [
+            "https://github.com/openrundev",
+            "https://github.com/openrundev/openrun",
+            "https://twitter.com/ajay_kidave",
+            "https://discord.gg/t2P8pJFsd7"
+          ]
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://openrun.dev/#website",
+          "url": "https://openrun.dev/",
+          "name": "OpenRun",
+          "alternateName": "OpenRun GitOps Platform",
+          "publisher": { "@id": "https://openrun.dev/#organization" }
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://openrun.dev/#software",
+          "name": "OpenRun",
+          "url": {{ .Site.BaseURL }},
+          "description": {{ partial "utils/page-description.html" . }},
+          "keywords": {{ delimit (.Keywords | default slice) ", " }},
+          "applicationCategory": "DeveloperApplication",
+          "applicationSubCategory": "Deployment platform",
+          "operatingSystem": "Linux, macOS, Windows",
+          "license": "https://www.apache.org/licenses/LICENSE-2.0",
+          "isAccessibleForFree": true,
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+          "downloadUrl": "https://github.com/openrundev/openrun/releases",
+          "softwareHelp": "https://openrun.dev/docs/",
+          "releaseNotes": "https://github.com/openrundev/openrun/blob/main/CHANGELOG.md",
+          "publisher": { "@id": "https://openrun.dev/#organization" },
+          "sameAs": ["https://github.com/openrundev/openrun"]
+        }
+      ]
     }
   </script>
 {{- end }}
