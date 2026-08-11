@@ -1350,11 +1350,34 @@ func (a *App) loadStarlark(thread *starlark.Thread, module string, cache map[str
 			return nil, err
 		}
 		globals, err := starlark.ExecFileOptions(AppFileOptions(), thread, module, buf, builtin)
+		if err == nil {
+			addModuleStruct(globals, module)
+		}
 		cacheEntry = &starlarkCacheEntry{globals, err}
 		// Update the cache.
 		cache[module] = cacheEntry
 	}
 	return cacheEntry.globals, cacheEntry.err
+}
+
+// addModuleStruct adds a binding named after the loaded file's basename
+// (handler.star -> handler) holding a struct of the file's exported globals,
+// so apps can do load("handler.star", "handler") and reference
+// handler.overview_data instead of listing every symbol. The flat globals stay
+// in place, so load("handler.star", "overview_data") continues to work. A
+// global the file itself defines with the module's name wins over the struct.
+func addModuleStruct(globals starlark.StringDict, module string) {
+	moduleName := strings.TrimSuffix(path.Base(module), apptype.STARLARK_FILE_SUFFIX)
+	if _, present := globals[moduleName]; present || moduleName == "" {
+		return
+	}
+	exported := make(starlark.StringDict, len(globals))
+	for name, value := range globals {
+		if !strings.HasPrefix(name, "_") {
+			exported[name] = value
+		}
+	}
+	globals[moduleName] = starlarkstruct.FromStringDict(starlarkstruct.Default, exported)
 }
 
 func AppFileOptions() *syntax.FileOptions {

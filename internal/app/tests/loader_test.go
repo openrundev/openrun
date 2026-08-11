@@ -34,6 +34,67 @@ app = ace.app("testApp", custom_layout=True, routes = testpage)`,
 	testutil.AssertStringContains(t, response.Body.String(), "Template contents testApp.")
 }
 
+func TestLoadStarlarkModuleStruct(t *testing.T) {
+	// load("test.star", "test") binds a struct of test.star's globals; flat
+	// symbol loads keep working alongside it
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `load("test.star", "test", "app_name")
+app = ace.app(test.name_func(app_name), custom_layout=True, routes = test.testpage)`,
+		"index.go.html": `Template contents {{.AppName}}.`,
+		"test.star": `app_name = "testApp"
+def name_func(name):
+    return name
+testpage = [ace.html("/")]`,
+	}
+	a, _, err := CreateTestAppRoot(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertStringContains(t, response.Body.String(), "Template contents testApp.")
+}
+
+func TestLoadStarlarkModuleStructPrivate(t *testing.T) {
+	// underscore-prefixed globals are not exported through the module struct
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `load("test.star", "test")
+app = ace.app(test._name, custom_layout=True, routes = [ace.html("/")])`,
+		"index.go.html": `Template contents {{.AppName}}.`,
+		"test.star":     `_name = "testApp"`,
+	}
+	_, _, err := CreateTestAppRoot(logger, fileData)
+	testutil.AssertErrorContains(t, err, "struct has no ._name attribute")
+}
+
+func TestLoadStarlarkModuleStructCollision(t *testing.T) {
+	// a global the file defines with its own basename wins over the module struct
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `load("test.star", "test")
+app = ace.app(test, custom_layout=True, routes = [ace.html("/")])`,
+		"index.go.html": `Template contents {{.AppName}}.`,
+		"test.star":     `test = "testApp"`,
+	}
+	a, _, err := CreateTestAppRoot(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertStringContains(t, response.Body.String(), "Template contents testApp.")
+}
+
 func TestLoadStarlarkMulti(t *testing.T) {
 	logger := testutil.TestLogger()
 	fileData := map[string]string{
