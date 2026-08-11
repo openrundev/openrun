@@ -65,40 +65,6 @@ cascade:
 <p class="hx:mt-2 hx:text-gray-600 hx:dark:text-gray-400">A self-hosted PaaS alternative for internal tools: every app gets OAuth/OIDC/SAML login, RBAC and audit logs, not just the admin console. Start on a single server with Docker or Podman, move to Kubernetes with the same config. Compare with <a href="{{< ref "compare/cloud-run-app-runner" >}}" class="hx:underline" style="color: #00A200;">Cloud Run and App Runner</a> or <a href="{{< ref "compare/diy-kubernetes" >}}" class="hx:underline" style="color: #00A200;">DIY Kubernetes</a>.</p>
 </div>
 
-<style>
-  .persona-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 24px; }
-  @media (max-width: 767px) { .persona-cards { grid-template-columns: 1fr; } }
-  .persona-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 24px; border-radius: 14px; border: 1px solid rgba(0, 194, 0, 0.28); background: radial-gradient(ellipse at 50% 0%, rgba(0, 194, 0, 0.10), rgba(0, 194, 0, 0.02)); text-decoration: none; color: inherit; transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
-  .persona-card:hover { transform: translateY(-3px); border-color: rgba(0, 194, 0, 0.55); box-shadow: 0 10px 24px rgba(0, 120, 0, 0.18); }
-  .persona-icon { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #00C200, #007700); color: #ffffff; box-shadow: 0 4px 10px rgba(0, 120, 0, 0.35); }
-  .persona-icon svg { width: 24px; height: 24px; }
-  .persona-title { font-size: 1.05rem; font-weight: 700; }
-  .persona-sub { font-size: 0.9rem; color: #6b7280; line-height: 1.5; flex-grow: 1; }
-  .persona-more { font-size: 0.85rem; font-weight: 600; background: linear-gradient(135deg, #00C200, #007700); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .persona-card:hover .persona-title { background: linear-gradient(135deg, #00C200, #007700); -webkit-background-clip: text; background-clip: text; color: transparent; }
-</style>
-
-<div class="persona-cards not-prose">
-<a class="persona-card" href="{{< ref "solutions/developers" >}}">
-<span class="persona-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg></span>
-<span class="persona-title">For Developers</span>
-<span class="persona-sub">Full GitOps (including creating new apps) without managing infrastructure - on Linux, Windows and macOS.</span>
-<span class="persona-more">Learn more →</span>
-</a>
-<a class="persona-card" href="{{< ref "solutions/platform-teams" >}}">
-<span class="persona-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg></span>
-<span class="persona-title">For Platform Teams</span>
-<span class="persona-sub">Give teams a standardized internal application platform, on a single machine or on Kubernetes.</span>
-<span class="persona-more">Learn more →</span>
-</a>
-<a class="persona-card" href="{{< ref "solutions/organizations" >}}">
-<span class="persona-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg></span>
-<span class="persona-title">For Organizations</span>
-<span class="persona-sub">Authentication, authorization, auditing and GitOps deployment for internal tools.</span>
-<span class="persona-more">Learn more →</span>
-</a>
-</div>
-
 <div style="height: 20px;"></div>
 
 {{< hextra/feature-grid >}}
@@ -257,6 +223,40 @@ function copyCode(codeId, buttonElem) {
 {{< /hextra/feature-grid >}}
 
 <div style="height: 20px;"></div>
+
+<style>
+  .persona-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 24px; }
+  @media (max-width: 767px) { .persona-cards { grid-template-columns: 1fr; } }
+  .persona-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 24px; border-radius: 14px; border: 1px solid rgba(0, 194, 0, 0.28); background: radial-gradient(ellipse at 50% 0%, rgba(0, 194, 0, 0.10), rgba(0, 194, 0, 0.02)); text-decoration: none; color: inherit; transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
+  .persona-card:hover { transform: translateY(-3px); border-color: rgba(0, 194, 0, 0.55); box-shadow: 0 10px 24px rgba(0, 120, 0, 0.18); }
+  .persona-icon { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #00C200, #007700); color: #ffffff; box-shadow: 0 4px 10px rgba(0, 120, 0, 0.35); }
+  .persona-icon svg { width: 24px; height: 24px; }
+  .persona-title { font-size: 1.05rem; font-weight: 700; }
+  .persona-sub { font-size: 0.9rem; color: #6b7280; line-height: 1.5; flex-grow: 1; }
+  .persona-more { font-size: 0.85rem; font-weight: 600; background: linear-gradient(135deg, #00C200, #007700); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .persona-card:hover .persona-title { background: linear-gradient(135deg, #00C200, #007700); -webkit-background-clip: text; background-clip: text; color: transparent; }
+</style>
+
+<div class="persona-cards not-prose">
+<a class="persona-card" href="{{< ref "solutions/developers" >}}">
+<span class="persona-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg></span>
+<span class="persona-title">For Developers</span>
+<span class="persona-sub">Full GitOps (including creating new apps) without managing infrastructure - on Linux, Windows and macOS.</span>
+<span class="persona-more">Learn more →</span>
+</a>
+<a class="persona-card" href="{{< ref "solutions/platform-teams" >}}">
+<span class="persona-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg></span>
+<span class="persona-title">For Platform Teams</span>
+<span class="persona-sub">Give teams a standardized internal application platform, on a single machine or on Kubernetes.</span>
+<span class="persona-more">Learn more →</span>
+</a>
+<a class="persona-card" href="{{< ref "solutions/organizations" >}}">
+<span class="persona-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg></span>
+<span class="persona-title">For Organizations</span>
+<span class="persona-sub">Authentication, authorization, auditing and GitOps deployment for internal tools.</span>
+<span class="persona-more">Learn more →</span>
+</a>
+</div>
 
 <style>
   @media screen and (min-width: 768px) {
