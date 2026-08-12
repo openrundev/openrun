@@ -27,24 +27,24 @@ func TestProviderSourceURL(t *testing.T) {
 	s := &Server{staticConfig: &types.ServerConfig{}}
 
 	// Explicit source url wins
-	url, err := s.providerSourceURL(&types.ProviderInstallRequest{Name: "redis", SourceURL: "/tmp/openrun-binding-redis"})
-	if err != nil || url != "/tmp/openrun-binding-redis" {
+	url, err := s.providerSourceURL(&types.ProviderInstallRequest{Name: "sqlserver", SourceURL: "/tmp/openrun-binding-sqlserver"})
+	if err != nil || url != "/tmp/openrun-binding-sqlserver" {
 		t.Fatalf("url = %q err = %v", url, err)
 	}
 
 	// Defaulted source requires a version
-	if _, err := s.providerSourceURL(&types.ProviderInstallRequest{Name: "redis"}); err == nil ||
+	if _, err := s.providerSourceURL(&types.ProviderInstallRequest{Name: "sqlserver"}); err == nil ||
 		!strings.Contains(err.Error(), "either source_url or version is required") {
 		t.Fatalf("expected version-required error, got %v", err)
 	}
 
 	// Default template with {provider} substituted; {version}/{os}/{arch} kept
 	// for per-fetch expansion
-	url, err = s.providerSourceURL(&types.ProviderInstallRequest{Name: "redis", Version: "v0.1.0"})
+	url, err = s.providerSourceURL(&types.ProviderInstallRequest{Name: "sqlserver", Version: "v0.1.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "https://github.com/openrundev/bindings/releases/download/redis%2F{version}/openrun-binding-redis-{os}-{arch}{ext}"
+	want := "https://github.com/openrundev/bindings/releases/download/sqlserver%2F{version}/openrun-binding-sqlserver-{os}-{arch}{ext}"
 	if url != want {
 		t.Fatalf("url = %q, want %q", url, want)
 	}
@@ -72,12 +72,12 @@ func TestExpandProviderSourceURL(t *testing.T) {
 
 func TestProviderModifyError(t *testing.T) {
 	s := &Server{staticConfig: &types.ServerConfig{}}
-	if err := s.providerModifyError("redis", "install"); err != nil {
+	if err := s.providerModifyError("sqlserver", "install"); err != nil {
 		t.Fatalf("expected install allowed, got %v", err)
 	}
 
-	s.staticConfig.Bindings.Install = map[string]string{"redis": "v0.1.0"}
-	if err := s.providerModifyError("redis", "install"); err == nil ||
+	s.staticConfig.Bindings.Install = map[string]string{"sqlserver": "v0.1.0"}
+	if err := s.providerModifyError("sqlserver", "install"); err == nil ||
 		!strings.Contains(err.Error(), "[bindings.install]") {
 		t.Fatalf("expected config-managed error, got %v", err)
 	}

@@ -41,8 +41,8 @@ openrun_lets_encrypt_use_staging = false
 # at server startup, provider name to version. Append @sha256:<hex> to a version to
 # pin the binary digest (comma-separated digests for multi-arch node groups).
 # openrun_binding_providers = {
-#   redis   = "v0.1.0"
-#   mongodb = "v0.1.0"
+#   mongodb   = "v0.1.0"
+#   sqlserver = "v0.1.0"
 # }
 
 # Mirror url template for provider downloads when the cluster restricts egress.

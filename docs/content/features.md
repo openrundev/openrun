@@ -1,7 +1,21 @@
 ---
 title: "Features"
-description: "Explore OpenRun's self-hosted PaaS alternative features for VPS, single server and Kubernetes deployments, including GitOps, RBAC, SSO, service bindings and SQLite replication."
+description: "Explore OpenRun's self-hosted PaaS alternative features for VPS, single server and Kubernetes deployments, including GitOps, RBAC, SSO, SQLite replication and service bindings for PostgreSQL, MySQL, SQLite, Redis, SQL Server, Oracle, MongoDB, Snowflake and ClickHouse."
 summary: "Self-hosted web app deployment with GitOps, RBAC, SSO, managed database access and SQLite replication."
+keywords:
+  [
+    "PostgreSQL service binding",
+    "MySQL service binding",
+    "SQLite hosting",
+    "Redis service binding",
+    "SQL Server provisioning",
+    "Oracle database binding",
+    "MongoDB provisioning",
+    "Snowflake provisioning",
+    "ClickHouse provisioning",
+    "GitOps deployment",
+    "self-hosted PaaS features",
+  ]
 layout: hextra-home
 ---
 
@@ -15,7 +29,7 @@ layout: hextra-home
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Auto-Stop Idle Apps" link="/docs/container/config/" subtitle="Automatically stop idle application containers and scale their resource usage down to zero until the next incoming request."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="PostgreSQL, MySQL + SQLite Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated PostgreSQL schemas and roles, MySQL databases and users, and persistent SQLite storage for apps."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Database Service Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated database accounts for PostgreSQL, MySQL, SQLite and Redis/Valkey (built in), plus SQL Server, Oracle, MongoDB, Snowflake and ClickHouse via installable binding providers."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Managed SQLite + Litestream" link="/docs/applications/litestream/" subtitle="Deploy SQLite apps with continuous Litestream replication to S3-compatible storage and automatic restore after volume or node loss."  icon="cloud-upload" class="openrun-feature-card openrun-feature-card-light" >}}
 

@@ -101,26 +101,26 @@ OpenRun service and Kaniko jobs run in the main namespace (default `openrun`). A
 
 ## Binding Providers
 
-Out-of-process [binding providers](https://github.com/openrundev/bindings) (mongodb, redis, sqlserver, oracle) work on Kubernetes without any special setup: installed providers are registered in the metadata database (Postgres, required for Kubernetes installs), which is the source of truth. Each server replica materializes the provider executables into a node-local cache directory at startup, before serving traffic, and re-downloads them (with checksum verification) whenever a pod starts on a fresh node. Installs and uninstalls propagate to all replicas through Postgres notifications, so `openrun provider install` works on multi-replica deployments exactly as on a single server.
+Out-of-process [binding providers](https://github.com/openrundev/bindings) (sqlserver, oracle, mongodb, snowflake, clickhouse) work on Kubernetes without any special setup: installed providers are registered in the metadata database (Postgres, required for Kubernetes installs), which is the source of truth. Each server replica materializes the provider executables into a node-local cache directory at startup, before serving traffic, and re-downloads them (with checksum verification) whenever a pod starts on a fresh node. Installs and uninstalls propagate to all replicas through Postgres notifications, so `openrun provider install` works on multi-replica deployments exactly as on a single server.
 
 For declarative, config-managed deployments, declare the providers in the Helm values instead of using the CLI:
 
 ```yaml {filename="values.yaml"}
 bindings:
   install:
-    redis: v0.1.0
     mongodb: v0.1.0
+    sqlserver: v0.1.0
   # Optional mirror for clusters with restricted egress; {provider}, {version},
   # {os} and {arch} are replaced.
   # releaseUrlTemplate: "https://mirror.internal/{provider}/{version}/openrun-binding-{provider}-{os}-{arch}"
 ```
 
-or with `--set bindings.install.redis=v0.1.0` on the Helm command line. For Terraform-managed EKS installs, set the `openrun_binding_providers` variable in `terraform.tfvars`:
+or with `--set bindings.install.mongodb=v0.1.0` on the Helm command line. For Terraform-managed EKS installs, set the `openrun_binding_providers` variable in `terraform.tfvars`:
 
 ```hcl {filename="terraform.tfvars"}
 openrun_binding_providers = {
-  redis   = "v0.1.0"
-  mongodb = "v0.1.0"
+  mongodb   = "v0.1.0"
+  sqlserver = "v0.1.0"
 }
 ```
 
@@ -128,8 +128,8 @@ The chart renders these into the `[bindings.install]` section of the generated s
 
 ```toml {filename="openrun.toml"}
 [bindings.install]
-redis = "v0.1.0"
 mongodb = "v0.1.0"
+sqlserver = "v0.1.0"
 ```
 
 Every replica installs the declared providers at startup, downloading them from `bindings.release_url_template` (the openrundev/bindings GitHub releases by default; point it at an internal mirror when the cluster restricts egress). Append `@sha256:<hex>` to a version to pin the binary digest, GitOps-style; the install fails before anything is written or executed if the download does not match. For mixed-architecture clusters, list one digest per platform separated by commas (`v0.1.0@sha256:<amd64-hex>,<arm64-hex>`); each replica's download must match one of them. Providers declared this way cannot be modified with the provider CLI; version upgrades are config changes followed by a rollout. Removing an entry does not uninstall the provider: it stays installed and becomes manageable with the provider CLI (`openrun provider uninstall`). Providers installed imperatively with `openrun provider install` can be used alongside config-declared ones.
@@ -145,8 +145,8 @@ Providers are also published as minimal OCI images (`ghcr.io/openrundev/openrun-
 ```yaml {filename="values.yaml"}
 bindings:
   images:
-    redis: ghcr.io/openrundev/openrun-binding-redis:v0.1.0
-    mongodb: ghcr.io/openrundev/openrun-binding-mongodb@sha256:8f4e...
+    mongodb: ghcr.io/openrundev/openrun-binding-mongodb:v0.1.0
+    sqlserver: ghcr.io/openrundev/openrun-binding-sqlserver@sha256:8f4e...
 ```
 
 The Helm chart renders one init container per provider, which copies the binary from its image into a shared volume (`export` subcommand of the provider binary); the server registers the pre-placed providers at startup, with no downloads and no database registration. Integrity comes from the image digests that placed the binaries — reference images by digest where policy requires it — and the server pins the discovered binary's checksum so every provider launch verifies the file has not changed. Images are pulled by the container runtime, so `imagePullSecrets` and registry mirrors apply as for any other image.

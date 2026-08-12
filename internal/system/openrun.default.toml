@@ -40,7 +40,7 @@ disable_install = false
 # deployments). Removing an entry does not uninstall the provider; it stays
 # installed and becomes manageable with the provider CLI.
 # [bindings.install]
-# redis = "v0.1.0"
+# sqlserver = "v0.1.0"
 # mongodb = "v0.1.0@sha256:8f4e..."
 # Development override, registers a provider executable directly from a local path:
 # [bindings.dev_providers.mongodb]

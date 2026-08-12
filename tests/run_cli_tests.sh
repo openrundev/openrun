@@ -48,6 +48,11 @@ Containers:
                                need one
   --mysql-url URL               Use an already-running MySQL instead of
                                starting a container (implies --mysql)
+  --redis                      Start a Redis test container for suites that
+                               need one (set OPENRUN_TEST_REDIS_IMAGE to e.g.
+                               valkey/valkey:8-alpine to test against Valkey)
+  --redis-url URL               Use an already-running Redis/Valkey instead of
+                               starting a container (implies --redis)
   --seaweedfs                  Start a SeaweedFS test container (S3 API) for
                                the litestream replication suites
   --s3-url URL                  Use an already-running S3-compatible endpoint
@@ -79,9 +84,11 @@ CONTAINER_COMMANDS="docker"
 CONTAINER_TOOL="docker"
 ENABLE_POSTGRES=""
 ENABLE_MYSQL=""
+ENABLE_REDIS=""
 ENABLE_SEAWEEDFS=""
 POSTGRES_URL_ARG=""
 MYSQL_URL_ARG=""
+REDIS_URL_ARG=""
 S3_URL_ARG=""
 KUBE_REGISTRY_URL=""
 KUBE_TEST_NAMESPACE=""
@@ -91,6 +98,7 @@ FORWARD_AUTH_CONTAINER_ID=""
 FORWARD_AUTH_CONTAINER_COMMAND=""
 POSTGRES_TEST_CONTAINER_ID=""
 MYSQL_TEST_CONTAINER_ID=""
+REDIS_TEST_CONTAINER_ID=""
 SERVER_PID=""
 DR_SERVER_PID=""
 DR_HOME1=""
@@ -116,6 +124,8 @@ while [[ $# -gt 0 ]]; do
     --postgres-url) ENABLE_POSTGRES=1; POSTGRES_URL_ARG="$2"; shift 2 ;;
     --mysql) ENABLE_MYSQL=1; shift ;;
     --mysql-url) ENABLE_MYSQL=1; MYSQL_URL_ARG="$2"; shift 2 ;;
+    --redis) ENABLE_REDIS=1; shift ;;
+    --redis-url) ENABLE_REDIS=1; REDIS_URL_ARG="$2"; shift 2 ;;
     --seaweedfs) ENABLE_SEAWEEDFS=1; shift ;;
     --s3-url) ENABLE_SEAWEEDFS=1; S3_URL_ARG="$2"; shift 2 ;;
     --kube-registry) KUBE_REGISTRY_URL="$2"; shift 2 ;;
@@ -434,6 +444,11 @@ cleanup() {
     MYSQL_TEST_CONTAINER_ID=""
   fi
 
+  if [[ -n "$REDIS_TEST_CONTAINER_ID" ]]; then
+    $CONTAINER_TOOL rm -f "$REDIS_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
+    REDIS_TEST_CONTAINER_ID=""
+  fi
+
   if [[ -n "$SEAWEEDFS_TEST_CONTAINER_ID" ]]; then
     $CONTAINER_TOOL rm -f "$SEAWEEDFS_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
     SEAWEEDFS_TEST_CONTAINER_ID=""
@@ -736,6 +751,63 @@ start_mysql_testcontainer() {
   echo "TEST_MYSQL_URL=$TEST_MYSQL_URL"
 }
 
+start_redis_testcontainer() {
+  if [[ -n "$REDIS_URL_ARG" ]]; then
+    export TEST_REDIS_URL="$REDIS_URL_ARG"
+    echo "Using externally supplied TEST_REDIS_URL=$TEST_REDIS_URL"
+    return
+  fi
+
+  # Set OPENRUN_TEST_REDIS_IMAGE=valkey/valkey:8-alpine to run against Valkey
+  local image="${OPENRUN_TEST_REDIS_IMAGE:-redis:8-alpine}"
+  echo "Starting redis test container $image with $CONTAINER_TOOL"
+  REDIS_TEST_CONTAINER_ID=$($CONTAINER_TOOL run \
+    --detach \
+    --rm \
+    --label "dev.openrun.test.session=$TEST_SESSION_ID" \
+    --publish "127.0.0.1::6379" \
+    "$image")
+  export REDIS_TEST_CONTAINER_ID
+  # Tool for suites that exec into the container (e.g. out-of-band ACL DELUSER
+  # in test_redis.yaml)
+  export REDIS_TEST_CONTAINER_COMMAND="$CONTAINER_TOOL"
+
+  local port=""
+  for _ in {1..75}; do
+    port=$($CONTAINER_TOOL inspect \
+      --format '{{with index .NetworkSettings.Ports "6379/tcp"}}{{(index . 0).HostPort}}{{end}}' \
+      "$REDIS_TEST_CONTAINER_ID" 2>/dev/null || true)
+    if [[ -n "$port" ]]; then
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ -z "$port" ]]; then
+    echo "Redis test container port was not published"
+    return 1
+  fi
+
+  local ready=""
+  for _ in {1..300}; do
+    if $CONTAINER_TOOL exec "$REDIS_TEST_CONTAINER_ID" \
+        sh -c "redis-cli ping 2>/dev/null || valkey-cli ping" 2>/dev/null | grep -q PONG; then
+      ready="true"
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ -z "$ready" ]]; then
+    echo "Redis test container did not become ready"
+    $CONTAINER_TOOL logs "$REDIS_TEST_CONTAINER_ID" || true
+    return 1
+  fi
+
+  export TEST_REDIS_URL="redis://127.0.0.1:${port}"
+  echo "TEST_REDIS_URL=$TEST_REDIS_URL"
+}
+
 # Test basic functionality
 if is_selected test_basics.yaml; then
   rm -f run/openrun.sock
@@ -817,13 +889,14 @@ fi
 # Test files that run against the main server (commander/*.yaml plus these
 # top-level suites). Computed as an array so contains_any can tell whether
 # any requested test needs the main server at all.
-MAIN_PHASE_FILES=(test_service.yaml test_bindings.yaml test_app_update_bindings.yaml test_postgres.yaml test_mysql.yaml test_oauth.yaml test_github_auth.yaml)
+MAIN_PHASE_FILES=(test_service.yaml test_bindings.yaml test_app_update_bindings.yaml test_postgres.yaml test_mysql.yaml test_redis.yaml test_oauth.yaml test_github_auth.yaml)
 for f in commander/*.yaml; do
   MAIN_PHASE_FILES+=("$(basename "$f")")
 done
 
 POSTGRES_FILES="test_service.yaml test_bindings.yaml test_app_update_bindings.yaml test_postgres.yaml test_postgres_container.yaml test_todo_flow.yaml"
 MYSQL_FILES="test_mysql.yaml"
+REDIS_FILES="test_redis.yaml"
 CONTAINER_FILES="test_containers.yaml test_postgres_container.yaml test_todo_flow.yaml"
 LITESTREAM_FILES="test_sqlite_litestream.yaml test_replication_status.yaml test_metadata_litestream.yaml test_metadata_litestream_verify.yaml"
 
@@ -838,6 +911,9 @@ if [[ -n "$ENABLE_POSTGRES" ]] && contains_any "$POSTGRES_FILES"; then
 fi
 if [[ -n "$ENABLE_MYSQL" ]] && contains_any "$MYSQL_FILES"; then
   start_mysql_testcontainer
+fi
+if [[ -n "$ENABLE_REDIS" ]] && contains_any "$REDIS_FILES"; then
+  start_redis_testcontainer
 fi
 
 if contains_any "${MAIN_PHASE_FILES[*]}"; then
@@ -945,6 +1021,11 @@ EOF
       else
           echo "Skipping mysql service and binding tests; TEST_MYSQL_URL is not set"
       fi
+      if [[ -n "$TEST_REDIS_URL" ]]; then
+          commander test $VERBOSE test_redis.yaml
+      else
+          echo "Skipping redis service and binding tests; TEST_REDIS_URL is not set"
+      fi
   else
       for name in "${TESTS[@]}"; do
         if [[ -f "commander/$name" ]]; then
@@ -962,6 +1043,13 @@ EOF
                 commander test $VERBOSE "./$name"
             else
                 echo "Skipping $name; TEST_MYSQL_URL is not set"
+            fi
+            MATCHED_TESTS+=("$name")
+        elif [[ "$name" = "test_redis.yaml" ]]; then
+            if [[ -n "$TEST_REDIS_URL" ]]; then
+                commander test $VERBOSE "./$name"
+            else
+                echo "Skipping $name; TEST_REDIS_URL is not set"
             fi
             MATCHED_TESTS+=("$name")
         fi

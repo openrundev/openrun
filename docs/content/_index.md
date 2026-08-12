@@ -16,6 +16,16 @@ keywords:
     "scale to zero",
     "SSO for internal tools",
     "RBAC",
+    "database service bindings",
+    "PostgreSQL provisioning",
+    "MySQL provisioning",
+    "SQLite hosting",
+    "Redis bindings",
+    "SQL Server bindings",
+    "Oracle bindings",
+    "MongoDB bindings",
+    "Snowflake bindings",
+    "ClickHouse bindings",
     "Coolify alternative",
     "Cloud Run alternative",
     "Streamlit apps",
@@ -197,7 +207,7 @@ function copyCode(codeId, buttonElem) {
 {{< hextra/feature-card title="Scale down to zero" link="/docs/container/overview/" subtitle="Initialize applications lazily on their first request, then automatically stop idle containers and reduce resource usage to zero."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="PostgreSQL + MySQL Service Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated PostgreSQL schemas and roles or MySQL databases and users, then inject unique application credentials securely."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="Database Service Bindings" link="/docs/applications/servicebindings" subtitle="Automatically provision isolated PostgreSQL, MySQL, SQLite and Redis access with unique app credentials, plus SQL Server, Oracle, MongoDB, Snowflake and ClickHouse via binding providers."  icon="database" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
 {{< hextra/feature-card title="SQLite + Litestream" link="/docs/applications/litestream/" subtitle="Run stateful SQLite applications with persistent volumes, continuous Litestream replication to S3-compatible storage and automatic disaster recovery." icon="cloud-upload" class="openrun-feature-card openrun-feature-card-light" >}}

@@ -1,0 +1,261 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    PATH: ${PATH}
+    REDIS_TEST_CONTAINER_COMMAND: ${REDIS_TEST_CONTAINER_COMMAND}
+    REDIS_TEST_CONTAINER_ID: ${REDIS_TEST_CONTAINER_ID}
+    TEST_REDIS_URL: ${TEST_REDIS_URL}
+
+tests:
+  redis0001:
+    command: ../openrun service create --config url=${TEST_REDIS_URL} redis/r1
+    stdout: "Service redis/r1 created"
+    exit-code: 0
+
+  redis0002: # the valkey service type uses the same implementation
+    command: ../openrun service create --config url=${TEST_REDIS_URL} valkey/v1
+    stdout: "Service valkey/v1 created"
+
+  redis0010:
+    command: ../openrun binding create redis/r1 /apps/r1
+    stdout: "Binding /apps/r1 created"
+
+  redis0010a: # account url automatically maps localhost to a container hostname
+    command: ../openrun binding show-account /apps/r1 | jq -r '.url | startswith("redis://") and (contains("@host.docker.internal") or contains("@host.containers.internal"))'
+    stdout: "true"
+
+  redis0010b: # direct account url keeps the service hostname
+    command: ../openrun binding show-account /apps/r1 | jq -r '.url != .url_direct'
+    stdout: "true"
+
+  redis0010c: # prod account gets a prod key prefix tied to the binding id
+    command: ../openrun binding show-account /apps/r1 | jq -r '.key_prefix | startswith("cl:prd:bnd_")'
+    stdout: "true"
+
+  redis0010d: # staging account gets a separate staging key prefix
+    command: ../openrun binding show-account --staging /apps/r1 | jq -r '.key_prefix | startswith("cl:stg:bnd_")'
+    stdout: "true"
+
+  redis0011: # prod and staging accounts use different ACL users
+    command: bash -c 'prod=$(../openrun binding run-command /apps/r1 "acl whoami" | jq -r ".result"); stage=$(../openrun binding run-command --staging /apps/r1 "acl whoami" | jq -r ".result"); [[ "$prod" != "$stage" && "$prod" == cl_usr_prd_* && "$stage" == cl_usr_stg_* ]] && echo true'
+    stdout: "true"
+
+  redis0020: # base account can write keys under its prefix
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1 "set ${p}k1 v1" | jq -r ".result"'
+    stdout: "OK"
+
+  redis0021:
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1 "get ${p}k1" | jq -r ".result"'
+    stdout: "v1"
+
+  redis0022: # keys outside the binding prefix are rejected by the server
+    command: ../openrun binding run-command /apps/r1 "set outside_key v1"
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0023: # wholesale flush is denied
+    command: ../openrun binding run-command /apps/r1 "flushall"
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0024: # keyspace-wide key listing is denied
+    command: ../openrun binding run-command /apps/r1 "keys *"
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0025: # server configuration commands are denied
+    command: ../openrun binding run-command /apps/r1 "config get maxmemory"
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0026: # ACL administration is denied for binding accounts
+    command: ../openrun binding run-command /apps/r1 "acl setuser hacker on"
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0027: # scan is allowed so apps can enumerate their own keys
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1 "scan 0 match ${p}* count 100" | jq -r ".result[1] | length"'
+    stdout: "1"
+
+  redis0028: # quoted arguments are passed through as single values
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1 "set ${p}q1 \"hello world\"" > /dev/null && ../openrun binding run-command /apps/r1 "get ${p}q1" | jq -r ".result"'
+    stdout: "hello world"
+
+  redis0029: # prod keys are not visible under the staging prefix
+    command: bash -c 'sp=$(../openrun binding show-account --staging /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command --staging /apps/r1 "get ${sp}k1" | jq -r ".result"'
+    stdout: "null"
+
+  redis0030:
+    command: ../openrun binding create /apps/r1 /apps/r1none
+    stdout: "Binding /apps/r1none created"
+
+  redis0031: # derived binding with no grants cannot access any keys
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1none "get ${p}k1"'
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0040:
+    command: ../openrun binding create --grant "read:*" /apps/r1 /apps/r1read
+    stdout: "Binding /apps/r1read created"
+
+  redis0041: # read grant can read base keys
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1read "get ${p}k1" | jq -r ".result"'
+    stdout: "v1"
+
+  redis0042: # read grant cannot write, enforced per key by the server
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1read "set ${p}k1 v2"'
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0043: # read grant gets no pub/sub channel access
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1read "publish ${p}events hello"'
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0050: # targeted grants scope access to a key sub-pattern
+    command: ../openrun binding create --grant "read:sess" /apps/r1 /apps/r1sess
+    stdout: "Binding /apps/r1sess created"
+
+  redis0051:
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1 "set ${p}sess:1 sval" | jq -r ".result"'
+    stdout: "OK"
+
+  redis0052:
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1sess "get ${p}sess:1" | jq -r ".result"'
+    stdout: "sval"
+
+  redis0053: # targeted grant does not leak to other keys under the prefix
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1sess "get ${p}k1"'
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0055: # create grants are not supported for redis
+    command: ../openrun binding create --grant "create:*" /apps/r1 /apps/r1create
+    stderr: "unsupported grant type"
+    exit-code: 1
+
+  redis0056: # glob characters in grant targets are rejected
+    command: ../openrun binding create --grant "read:a*b" /apps/r1 /apps/r1glob
+    stderr: "invalid grant target"
+    exit-code: 1
+
+  redis0060:
+    command: ../openrun binding create --grant "full:*" /apps/r1 /apps/r1full
+    stdout: "Binding /apps/r1full created"
+
+  redis0061:
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1full "set ${p}f1 fv1" | jq -r ".result"'
+    stdout: "OK"
+
+  redis0062:
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1full "get ${p}k1" | jq -r ".result"'
+    stdout: "v1"
+
+  redis0063: # full grant includes pub/sub on prefix channels
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1full "publish ${p}events hello" | jq -r ".result"'
+    stdout: "0"
+
+  redis0064: # full grant is still limited to the binding prefix
+    command: ../openrun binding run-command /apps/r1full "set outside_key v1"
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0065:
+    command: ../openrun binding run-command /apps/r1full "flushall"
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0070: # grant updates apply to staging before production
+    command: ../openrun binding create /apps/r1 /apps/r1stage
+    stdout: "Binding /apps/r1stage created"
+
+  redis0071: # seed a staging key using the base staging account
+    command: bash -c 'sp=$(../openrun binding show-account --staging /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command --staging /apps/r1 "set ${sp}sk1 sv1" | jq -r ".result"'
+    stdout: "OK"
+
+  redis0072:
+    command: bash -c 'sp=$(../openrun binding show-account --staging /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command --staging /apps/r1stage "get ${sp}sk1"'
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0073:
+    command: ../openrun binding update --add-grant "read:*" /apps/r1stage
+    stdout: "Binding /apps/r1stage updated"
+
+  redis0074:
+    command: bash -c 'sp=$(../openrun binding show-account --staging /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command --staging /apps/r1stage "get ${sp}sk1" | jq -r ".result"'
+    stdout: "sv1"
+
+  redis0075: # prod remains unchanged until promote
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1stage "get ${p}k1"'
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0076:
+    command: ../openrun binding update --promote /apps/r1stage
+    stdout: "Binding /apps/r1stage updated"
+
+  redis0077:
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1stage "get ${p}k1" | jq -r ".result"'
+    stdout: "v1"
+
+  redis0078: # delete-grant revokes staged access before prod
+    command: ../openrun binding update --delete-grant "read:*" /apps/r1stage
+    stdout: "Binding /apps/r1stage updated"
+
+  redis0079:
+    command: bash -c 'sp=$(../openrun binding show-account --staging /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command --staging /apps/r1stage "get ${sp}sk1"'
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0079a: # prod grant remains until promote
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1stage "get ${p}k1" | jq -r ".result"'
+    stdout: "v1"
+
+  redis0079b:
+    command: ../openrun binding update --promote /apps/r1stage
+    stdout: "Binding /apps/r1stage updated"
+
+  redis0079c:
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1stage "get ${p}k1"'
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis0080: # simulate an ACL user lost to a server restart without an aclfile
+    command: "bash -c 'user=$(../openrun binding show-account /apps/r1read | jq -r \".username\"); \"$REDIS_TEST_CONTAINER_COMMAND\" exec \"$REDIS_TEST_CONTAINER_ID\" sh -c \"redis-cli acl deluser $user 2>/dev/null || valkey-cli acl deluser $user\"'"
+    stdout: "1"
+
+  redis0081:
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1read "get ${p}k1"'
+    stderr: "WRONGPASS"
+    exit-code: 1
+
+  redis0082: # reapply-all recreates the ACL user with its recorded grants
+    command: ../openrun binding update --reapply-all --promote /apps/r1read
+    stdout: "Binding /apps/r1read updated"
+
+  redis0083:
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1read "get ${p}k1" | jq -r ".result"'
+    stdout: "v1"
+
+  redis0084: # narrow read:* to read:sess in one update; overlapping revoke keeps the target readable
+    command: ../openrun binding update --delete-grant "read:*" --add-grant "read:sess" --promote /apps/r1read
+    stdout: "Binding /apps/r1read updated"
+
+  redis0085:
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1read "get ${p}sess:1" | jq -r ".result"'
+    stdout: "sval"
+
+  redis0086: # the revoked wildcard grant no longer covers other keys
+    command: bash -c 'p=$(../openrun binding show-account /apps/r1 | jq -r ".key_prefix"); ../openrun binding run-command /apps/r1read "get ${p}k1"'
+    stderr: "NOPERM"
+    exit-code: 1
+
+  redis9990: # unknown service types are still rejected
+    command: ../openrun service create --config url=${TEST_REDIS_URL} unknowntype/u1
+    stderr: "unknown service type"
+    exit-code: 1
+
+  redis9999: # delete the bindings and services so reruns against an external server start clean
+    command: (../openrun binding delete /apps/r1stage; ../openrun binding delete /apps/r1full; ../openrun binding delete /apps/r1sess; ../openrun binding delete /apps/r1read; ../openrun binding delete /apps/r1none; ../openrun binding delete /apps/r1; ../openrun service delete redis/r1; ../openrun service delete valkey/v1) || true

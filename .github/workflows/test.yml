@@ -86,7 +86,7 @@ jobs:
 
           go install github.com/commander-cli/commander/v2/cmd/commander@v2.5.0
           # Using a self-hosted runner, use Docker for container tests
-          MAKE_TEST_ARGS=(CONTAINER_COMMANDS=docker POSTGRES=1 MYSQL=1 SEAWEEDFS=1)
+          MAKE_TEST_ARGS=(CONTAINER_COMMANDS=docker POSTGRES=1 MYSQL=1 REDIS=1 SEAWEEDFS=1)
 
           if [[ "${{ inputs.enable_dr_tests }}" == "true" ]]; then
             # Run the docker and kubernetes disaster recovery scenarios too

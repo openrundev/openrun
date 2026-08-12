@@ -250,7 +250,7 @@ variable "openrun_enable_nlb_eips" {
 }
 
 variable "openrun_binding_providers" {
-  description = "Out-of-process binding providers installed at server startup, provider name to version (e.g. { redis = \"v0.1.0\" }). Append @sha256:<hex> to a version to pin the binary digest (comma-separated digests for multi-arch). Providers declared here cannot be modified with the openrun provider CLI."
+  description = "Out-of-process binding providers installed at server startup, provider name to version (e.g. { mongodb = \"v0.1.0\" }). Append @sha256:<hex> to a version to pin the binary digest (comma-separated digests for multi-arch). Providers declared here cannot be modified with the openrun provider CLI."
   type        = map(string)
   default     = {}
 }

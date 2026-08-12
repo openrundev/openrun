@@ -24,7 +24,7 @@ page.
 
 ## Create a service
 
-Services are named backing resources (Postgres, MySQL) that apps connect
+Services are named backing resources (Postgres, MySQL, Redis) that apps connect
 to through bindings. The lock button encrypts the connection url into the
 secrets store; the service config keeps only the secret reference, so
 credentials never appear in config listings.

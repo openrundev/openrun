@@ -27,6 +27,8 @@ POSTGRES ?=
 POSTGRES_URL ?=
 MYSQL ?=
 MYSQL_URL ?=
+REDIS ?=
+REDIS_URL ?=
 SEAWEEDFS ?=
 S3_URL ?=
 KUBE_REGISTRY ?=
@@ -41,6 +43,8 @@ RUN_CLI_TESTS_FLAGS = --home $(OPENRUN_HOME) \
   $(if $(POSTGRES_URL),--postgres-url $(POSTGRES_URL)) \
   $(if $(MYSQL),--mysql) \
   $(if $(MYSQL_URL),--mysql-url $(MYSQL_URL)) \
+  $(if $(REDIS),--redis) \
+  $(if $(REDIS_URL),--redis-url $(REDIS_URL)) \
   $(if $(SEAWEEDFS),--seaweedfs) \
   $(if $(S3_URL),--s3-url $(S3_URL)) \
   $(if $(KUBE_REGISTRY),--kube-registry $(KUBE_REGISTRY)) \

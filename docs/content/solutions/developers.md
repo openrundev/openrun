@@ -24,7 +24,7 @@ That is the complete build and deployment config. OpenRun checks out the source,
 
 ## Databases Without Tickets
 
-Apps usually need a database, and getting credentials is usually a ticket to another team. With [service bindings]({{< ref "docs/applications/servicebindings/" >}}), each app automatically gets an isolated PostgreSQL schema and role or a MySQL database and user, created at install time. The generated credentials are injected into the app environment. Your app reads the environment variables and connects as usual.
+Apps usually need a database, and getting credentials is usually a ticket to another team. With [service bindings]({{< ref "docs/applications/servicebindings/" >}}), each app automatically gets an isolated PostgreSQL schema and role, a MySQL database and user, or a key-prefix scoped Redis account, created at install time — with SQL Server, Oracle, MongoDB, Snowflake and ClickHouse available through binding providers. The generated credentials are injected into the app environment. Your app reads the environment variables and connects as usual.
 
 The database service itself is operated centrally, so backups, monitoring and scaling are set up once for the shared service by the team running it, not once per app; your app just gets working credentials. The [service bindings blog post]({{< ref "/blog/service-binding" >}}) explains how this works.
 

@@ -1,33 +1,64 @@
 ---
-title: "PostgreSQL, MySQL and SQLite Service Bindings"
+title: "Service Bindings: PostgreSQL, MySQL, SQLite, Redis and More"
 weight: 500
-description: "Provision isolated PostgreSQL schemas and roles, MySQL databases and users, and persistent SQLite storage for web apps with automatic credential injection."
-summary: "Managed PostgreSQL, MySQL and SQLite database access for deployed web apps."
+description: "Provision isolated PostgreSQL schemas, MySQL databases, Redis/Valkey ACL accounts and persistent SQLite storage for web apps, plus SQL Server, Oracle, MongoDB, Snowflake and ClickHouse through installable binding providers."
+summary: "Managed PostgreSQL, MySQL, SQLite and Redis database access for deployed web apps, extensible to SQL Server, Oracle, MongoDB, Snowflake and ClickHouse."
+keywords:
+  [
+    "PostgreSQL service binding",
+    "MySQL service binding",
+    "SQLite persistent volume",
+    "Redis service binding",
+    "Valkey ACL isolation",
+    "SQL Server binding provider",
+    "Oracle database binding",
+    "MongoDB service binding",
+    "MongoDB Atlas provisioning",
+    "Snowflake service binding",
+    "ClickHouse service binding",
+    "managed database access",
+    "database provisioning for web apps",
+    "least-privilege database credentials",
+  ]
 ---
 
-OpenRun is an open-source web app deployment platform with built-in PostgreSQL, MySQL and SQLite service bindings. A service binding automatically provisions isolated database access for an application and injects the generated connection information into its environment.
+OpenRun is an open-source web app deployment platform with built-in PostgreSQL, MySQL, SQLite and Redis/Valkey service bindings, plus installable binding providers for SQL Server, Oracle, MongoDB (including Atlas), Snowflake and ClickHouse. A service binding automatically provisions isolated database access for an application and injects the generated connection information into its environment.
 
-For PostgreSQL, OpenRun creates an application-specific schema and login role. For MySQL, it creates a database and user. SQLite bindings provide a persistent volume for database files, with optional [continuous SQLite replication to S3 with Litestream]({{< ref "/docs/applications/litestream" >}}). Applications never need the PostgreSQL or MySQL administrator credentials.
+For PostgreSQL, OpenRun creates an application-specific schema and login role. For MySQL, it creates a database and user. For Redis and Valkey, it creates a server-enforced ACL user restricted to an app-specific key prefix. SQLite bindings provide a persistent volume for database files, with optional [continuous SQLite replication to S3 with Litestream]({{< ref "/docs/applications/litestream" >}}). Applications never need the administrator credentials of any bound service.
 
 Service bindings let teams configure a managed or self-hosted database once—with its backups, monitoring, fault tolerance and capacity management—and safely share that installation across multiple apps. Production and staging environments get separate accounts, while derived bindings allow multiple apps to share a schema or database with distinct least-privilege credentials.
 
-The currently supported service types are:
+The service types compiled into the server are:
 
 | Service type | Purpose                                                          |
 | :----------- | :--------------------------------------------------------------- |
 | `postgres`   | Create Postgres schemas and roles                                |
 | `mysql`      | Create MySQL databases and users                                 |
 | `sqlite`     | Provide a persistent volume with SQLite database files per app   |
+| `redis`      | Create Redis ACL users isolated by key prefix (Redis 7+)         |
+| `valkey`     | Valkey servers, same ACL-based implementation as `redis`         |
 
-## Managed PostgreSQL and MySQL Database Access
+Additional service types come from out-of-process [binding providers]({{< ref "/docs/applications/servicebindings/#binding-providers-sql-server-oracle-mongodb-snowflake-clickhouse" >}}), installed with `openrun provider install`:
+
+| Provider     | Service types      | Purpose                                                    |
+| :----------- | :----------------- | :--------------------------------------------------------- |
+| `sqlserver`  | `sqlserver`        | Create SQL Server schemas and users (SQL Server 2019+)     |
+| `oracle`     | `oracle`           | Create Oracle users and schemas (pure-Go driver)           |
+| `mongodb`    | `mongodb`, `atlas` | Create MongoDB databases and users, self-hosted or Atlas   |
+| `snowflake`  | `snowflake`        | Create Snowflake roles and schemas with key-pair accounts  |
+| `clickhouse` | `clickhouse`       | Create ClickHouse users, self-hosted or ClickHouse Cloud   |
+
+All service types share the same workflow: services, base and derived bindings, staging/prod accounts, grants and promotes work identically whether the binding is built in or provider-installed.
+
+## Managed PostgreSQL, MySQL and Redis Access
 
 OpenRun automates the database provisioning work normally performed for each web app:
 
-- Create an isolated PostgreSQL schema and role or MySQL database and user.
+- Create an isolated PostgreSQL schema and role, MySQL database and user, or key-prefix scoped Redis ACL user.
 - Generate a unique password and application connection URL.
 - Inject database connection information into the app environment.
 - Maintain separate production and staging database accounts.
-- Create derived accounts with read-only, table-specific or full-access grants.
+- Create derived accounts with read-only, scoped or full-access grants.
 
 The database server remains under the operator's control and can be self-hosted or provided by a managed database service. OpenRun connects with the configured administrator URL only when it needs to create accounts, apply grants or inspect a binding.
 
@@ -405,6 +436,40 @@ If a table-specific grant references a table which does not exist, OpenRun skips
 
 MySQL DDL statements auto-commit. If binding creation fails part way through, OpenRun does best-effort cleanup for users and databases created during that operation.
 
+## Redis and Valkey Service Bindings
+
+Redis service bindings automatically create a dedicated ACL user for each base binding, restricted to a unique key prefix with server-enforced ACLs. The same implementation serves the `valkey` service type; `valkey://` and `valkeys://` service URLs are normalized to `redis://`/`rediss://` in generated account URLs. Redis 7 or newer (or any Valkey release) is required, running as a standalone server (cluster mode is not supported).
+
+| Key                | Required | Description                                                                                                                                                                                                                                                                                                                 |
+| :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`              | Yes      | Admin Redis/Valkey connection URL (`redis://`, `rediss://`, `valkey://` or `valkeys://`)                                                                                                                                                                                                                                    |
+| `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs. `url_direct` keeps the original service URL hostname. If omitted for a `localhost` or `127.0.0.1` service URL outside Kubernetes, OpenRun automatically uses a container-reachable host name. Set to `disable` to keep `url` unchanged and skip automatic mapping |
+
+For example:
+
+```shell
+openrun service create redis/main \
+  --config url=redis://admin:secret@localhost:6379
+```
+
+Unlike SQL databases, Redis has no schema to scope: isolation comes from a generated key prefix. The account exposes `url`, `url_direct`, `username`, `password` and `key_prefix` (as `REDIS_URL`, `REDIS_KEY_PREFIX` and so on in the app environment). Apps must prepend `key_prefix` to every key they use; access outside the prefix fails with a Redis `NOPERM` error, so a misconfigured app fails loudly instead of silently reading or clobbering another app's keys. Production and staging accounts get separate ACL users and separate key prefixes.
+
+The base binding user gets full access to its key prefix and to pub/sub channels under the same prefix. Administrative and cross-keyspace commands (`CONFIG`, `ACL`, `FLUSHALL`, `KEYS`, `RANDOMKEY`, `PUBSUB` introspection and similar) are denied for binding accounts; `SCAN` is allowed so apps can enumerate and clear their own keys.
+
+For a derived binding, OpenRun creates a separate ACL user that shares the base binding's key prefix, with no access until grants are applied. Redis grants work as follows:
+
+- `read:*` grants server-enforced read-only access to all keys under the base
+  prefix. Writes fail with `NOPERM`. Read grants include no pub/sub access.
+- `full:*` grants read-write access to all keys under the base prefix, plus
+  pub/sub channels under the prefix.
+- `read:<target>` and `full:<target>` scope the grant to keys starting with
+  `<key_prefix><target>`. Targets may use letters, digits and `_ . : -`; glob
+  characters are rejected. `create` grants are not supported.
+
+ACL changes only modify the server's in-memory state. Configure an `aclfile` on the Redis/Valkey server so binding users survive a server restart (OpenRun runs `ACL SAVE` after every change when an aclfile is configured, and logs a warning at service creation when none is). Without an aclfile, a derived user lost to a restart can be recreated with `binding update --reapply-all`; base users need the aclfile.
+
+Deleting a binding deletes its ACL users. Keys under the binding's prefix are not touched: like the other service types, data outlives the account.
+
 ## SQLite Config and Behavior
 
 The `sqlite` service type has no external endpoint. A SQLite binding gives the app a persistent named volume (Docker/Podman) or PersistentVolumeClaim (Kubernetes) mounted into the app container, holding the app's SQLite database files. Creating the service and binding needs no connection information:
@@ -463,6 +528,27 @@ For best results the app should open the database in WAL mode with a busy timeou
 
 OpenRun makes the volume writable for non-root app users automatically. With replication enabled, the `chmod` runs using the Litestream image, so any app image works. For local-only SQLite bindings (no `litestream_config`), the `chmod` runs with the app's own image, so the app image must not be distroless. On Kubernetes, pods with a SQLite binding additionally get `fsGroup: 65532`, which makes the volume group-writable at mount time on storage classes with ownership management.
 
+## Binding Providers (SQL Server, Oracle, MongoDB, Snowflake, ClickHouse)
+
+Beyond the built-in service types, OpenRun supports out-of-process binding providers: standalone executables from the [openrundev/bindings](https://github.com/openrundev/bindings) repository that add more service types. Providers exist for Microsoft SQL Server (schema-based isolation, SQL Server 2019+), Oracle Database (pure-Go driver, no Oracle client needed), MongoDB (self-hosted servers and MongoDB Atlas, via the `mongodb` and `atlas` service types), Snowflake (role/schema isolation with key-pair authentication) and ClickHouse (self-hosted and ClickHouse Cloud).
+
+Install a provider by name and version; the binary is downloaded from the provider releases (or a configured mirror), checksum-verified and registered:
+
+```shell
+openrun provider install sqlserver --version v0.1.0
+openrun provider list
+```
+
+The provider's service types then work exactly like the built-in ones:
+
+```shell
+openrun service create sqlserver/main \
+  --config url=sqlserver://admin:secret@db.example.com:1433
+openrun binding create sqlserver/main /apps/reporting-db
+```
+
+Provider processes are launched on demand when a service connection is needed and stopped when it is closed. `openrun provider uninstall <name>` removes a provider once no services of its types exist. For declarative, config-managed deployments, providers can instead be declared in the `[bindings.install]` server config section (or the equivalent [Helm values / Terraform variables for Kubernetes]({{< ref "/docs/container/kubernetes/#binding-providers" >}})), with optional `@sha256:<hex>` digest pinning. Per-provider configuration details (service config keys, grant semantics) are documented in the [bindings repository](https://github.com/openrundev/bindings).
+
 ## Frequently Asked Questions
 
 ### How do I connect a web app to PostgreSQL with OpenRun?
@@ -480,6 +566,14 @@ Yes. A PostgreSQL base binding owns its own schema and role, while a MySQL base 
 ### Can multiple apps securely share a PostgreSQL schema or MySQL database?
 
 Yes. Derived bindings create a separate role or user for each app while sharing the base binding's schema or database. Grants can provide read-only, table-specific, create or full access without sharing credentials between apps.
+
+### How do Redis service bindings keep apps isolated?
+
+Each base binding gets a dedicated Redis ACL user restricted to a unique key prefix (and matching pub/sub channel prefix), enforced by the server: any access outside the prefix fails with `NOPERM`. Derived bindings share the base prefix with separate ACL users whose access is controlled by grants. Redis 7+ or Valkey is required.
+
+### Can OpenRun provision SQL Server, Oracle, MongoDB, Snowflake or ClickHouse access?
+
+Yes. Install the matching binding provider with `openrun provider install <name>` and the provider's service types (`sqlserver`, `oracle`, `mongodb`/`atlas`, `snowflake`, `clickhouse`) become available for `service create`, with the same binding, grant and staging workflow as the built-in types.
 
 ### Are database administrator credentials exposed to applications?
 

@@ -53,9 +53,9 @@ Without --source-url, the binary is downloaded from the openrundev/bindings
 GitHub releases (or the configured bindings.release_url_template).
 
 Examples:
-  openrun provider install redis --version v0.1.0
+  openrun provider install sqlserver --version v0.1.0
   openrun provider install mongodb --source-url https://github.com/openrundev/bindings/releases/download/mongodb%2F{version}/openrun-binding-mongodb-{os}-{arch} --version v0.1.0
-  openrun provider install redis --source-url /tmp/openrun-binding-redis
+  openrun provider install sqlserver --source-url /tmp/openrun-binding-sqlserver
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
