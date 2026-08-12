@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"slices"
 	"strings"
 
@@ -212,9 +213,39 @@ func (a *AppDev) GenerateHTML() error {
 		}
 	}
 
-	openrunGenData, err := a.sourceFS.ReadFile(apptype.CLACE_GEN_FILE)
+	// When the app has base templates (structured mode), the base template set
+	// is parsed only from the base_templates folder, so the generated file must
+	// live there for its definitions to be usable from the base and page
+	// templates. Otherwise it lives at the app root, where the unstructured
+	// template glob picks it up. The mode check ignores the generated file
+	// itself, so a leftover copy in base_templates does not keep the app in
+	// structured mode; the copy at the location for the other mode is removed.
+	baseDir := "base_templates"
+	if a.Config.Routing.BaseTemplates != "" {
+		baseDir = a.Config.Routing.BaseTemplates
+	}
+	baseGenFile := path.Join(baseDir, apptype.CLACE_GEN_FILE)
+	baseFiles, err := a.sourceFS.Glob(path.Join(baseDir, "*.go.html"))
+	if err != nil {
+		return err
+	}
+	structured := slices.ContainsFunc(baseFiles, func(file string) bool {
+		return file != baseGenFile
+	})
+
+	genFile, staleGenFile := apptype.CLACE_GEN_FILE, baseGenFile
+	if structured {
+		genFile, staleGenFile = baseGenFile, apptype.CLACE_GEN_FILE
+	}
+
+	openrunGenData, err := a.sourceFS.ReadFile(genFile)
 	if err != nil || !bytes.Equal(openrunGenData, openrunGenEmbed) {
-		if err := a.sourceFS.Write(apptype.CLACE_GEN_FILE, openrunGenEmbed); err != nil {
+		if err := a.sourceFS.Write(genFile, openrunGenEmbed); err != nil {
+			return err
+		}
+	}
+	if _, err := a.sourceFS.Stat(staleGenFile); err == nil {
+		if err := a.sourceFS.Remove(staleGenFile); err != nil {
 			return err
 		}
 	}

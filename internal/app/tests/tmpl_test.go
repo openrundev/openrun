@@ -132,3 +132,76 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "body", "frag respvalue", response.Body.String())
 }
+
+func TestBaseTemplateDevGenFile(t *testing.T) {
+	// In dev mode with base templates (structured mode), the generated
+	// openrun_gen.go.html must be written into the base_templates folder (the
+	// base template set is parsed only from there), so base templates can use
+	// the openrun_gen_import block. No copy should be left at the app root.
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
+
+def handler(req):
+	return {"key": "myvalue"}`,
+		"index.go.html":              `ABC {{.Data.key}} {{- template "base" . -}}`,
+		"base_templates/aaa.go.html": `{{define "base"}} aaa{{template "openrun_gen_import" .}}{{end}}`,
+	}
+	a, _, err := CreateDevModeTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	if _, ok := fileData["base_templates/openrun_gen.go.html"]; !ok {
+		t.Fatal("openrun_gen.go.html was not generated in the base_templates folder")
+	}
+	if _, ok := fileData["openrun_gen.go.html"]; ok {
+		t.Fatal("openrun_gen.go.html was left at the app root in base templates mode")
+	}
+
+	request := httptest.NewRequest("GET", "/test", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertStringContains(t, response.Body.String(), "ABC myvalue aaa")
+	// The import block emits the htmx script and the dev live-reload listener
+	testutil.AssertStringContains(t, response.Body.String(), "htmx")
+	testutil.AssertStringContains(t, response.Body.String(), "cl_reload_listener")
+}
+
+func TestUnstructuredDevGenFileCleanup(t *testing.T) {
+	// Without base templates (unstructured mode), the generated file stays at
+	// the app root; a stale generated copy inside base_templates (e.g. left
+	// over after the app's base templates were removed) is cleaned up and does
+	// not force the app into structured mode.
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
+
+def handler(req):
+	return {"key": "myvalue"}`,
+		"index.go.html":                      `ABC {{.Data.key}} {{- template "openrun_gen_import" . -}}`,
+		"base_templates/openrun_gen.go.html": `stale generated copy`,
+	}
+	a, _, err := CreateDevModeTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	if _, ok := fileData["openrun_gen.go.html"]; !ok {
+		t.Fatal("openrun_gen.go.html was not generated at the app root")
+	}
+	if _, ok := fileData["base_templates/openrun_gen.go.html"]; ok {
+		t.Fatal("stale openrun_gen.go.html was not removed from base_templates")
+	}
+
+	request := httptest.NewRequest("GET", "/test", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertStringContains(t, response.Body.String(), "ABC myvalue")
+}
