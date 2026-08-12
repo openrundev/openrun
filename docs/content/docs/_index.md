@@ -15,7 +15,7 @@ OpenRun is an Apache-2.0 licensed, self-hosted PaaS alternative for declarative 
 {{< card link="use-cases" title="Use-Cases" subtitle="Explore OpenRun deployment patterns for personal applications and secure internal team platforms" icon="map" >}}
 {{< card link="use-cases/personal" title="Run OpenRun on a VPS" subtitle="Deploy self-hosted web apps on a Linux VPS with GitOps and automatic TLS" icon="server" >}}
 {{< card link="applications" title="Managing apps" subtitle="Install, route, secure and manage applications across development, staging and production" icon="document-duplicate" >}}
-{{< card link="applications/servicebindings" title="PostgreSQL + MySQL Service Bindings" subtitle="Provision isolated PostgreSQL schemas or MySQL databases with unique application credentials" icon="database" >}}
+{{< card link="applications/servicebindings" title="Database Service Bindings" subtitle="Provision isolated PostgreSQL, MySQL, SQLite and Redis access with unique app credentials; SQL Server, Oracle, MongoDB, Snowflake and ClickHouse via binding providers" icon="database_plain" >}}
 {{< card link="applications/litestream" title="SQLite + Litestream" subtitle="Deploy persistent SQLite applications with Litestream replication and automatic recovery from S3" icon="cloud-upload" >}}
 {{< card link="app" title="Developing apps" subtitle="Build secure hypermedia applications with routes, templates, styling and reusable JavaScript components" icon="sparkles" >}}
 {{< card link="actions" title="Action apps" subtitle="Generate secure interfaces for backend functions and operational scripts without custom frontend development" icon="terminal" >}}
