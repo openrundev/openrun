@@ -108,6 +108,10 @@ type App struct {
 	// It is important that this property is used instead of reading from app metadata config, so that toml
 	// config defaults are applied.
 	AppConfig types.AppConfig
+	// baseAppConfig is the server config level app config, before the app.star
+	// app_config settings and the app metadata overrides are applied. Kept so
+	// reloads can rebuild AppConfig without stale values from a previous app.star
+	baseAppConfig types.AppConfig
 
 	lastRequestTime atomic.Int64
 	secretEvalFunc  func([][]string, string, string) (string, error)
@@ -164,6 +168,7 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 	}
 	newApp.appUrlLocal = newApp.appUrl // pre-box once for the thread-local hot path
 	newApp.plugins = NewAppPlugins(newApp, plugins, appEntry.Metadata.Accounts)
+	newApp.baseAppConfig = appConfig
 	newApp.AppConfig = appConfig
 	if err := newApp.updateAppConfig(); err != nil {
 		return nil, err
@@ -1401,6 +1406,43 @@ func (a *App) updateAppConfig() error {
 
 	_, err := toml.Decode(buf.String(), &a.AppConfig)
 	return err
+}
+
+// applyAppConfigSettings applies the app_config section of the ace.app
+// settings dict onto the app config. AppConfig is rebuilt from the server
+// config baseline on every load so removed settings do not linger, with the
+// precedence server config -> app.star settings -> app metadata config
+func (a *App) applyAppConfigSettings(settingsMap map[string]any) error {
+	acSettings, ok := settingsMap["app_config"]
+	if !ok {
+		if len(a.Metadata.AppConfig) == 0 {
+			return nil // AppConfig already matches baseline plus metadata from NewApp
+		}
+		a.AppConfig = a.baseAppConfig
+		return a.updateAppConfig()
+	}
+
+	a.AppConfig = a.baseAppConfig
+	tomlBuf := strings.Builder{}
+	if err := toml.NewEncoder(&tomlBuf).Encode(acSettings); err != nil {
+		return fmt.Errorf("error encoding app_config settings: %w", err)
+	}
+	if _, err := toml.Decode(tomlBuf.String(), &a.AppConfig); err != nil {
+		return fmt.Errorf("error applying app_config settings: %w", err)
+	}
+	// App metadata config entries override the app.star settings
+	if err := a.updateAppConfig(); err != nil {
+		return err
+	}
+
+	if !a.IsDev && a.AppConfig.StaticFromDisk && a.sourceFS.Root == "" {
+		// The server decides at create/reload time whether files are copied into
+		// the metadata database, before app.star is evaluated, so the setting
+		// cannot take effect from here for an app already loaded from the database
+		return fmt.Errorf("app sets static_from_disk in app_config settings but the app source is not served from disk; " +
+			"create the app with --conf static_from_disk=true (requires a local disk source directory)")
+	}
+	return nil
 }
 
 func (a *App) getSecretsAllowed(plugin, function string) [][]string {

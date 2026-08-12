@@ -41,6 +41,15 @@ sets the redact property to true for all apps. The property can be further confi
 openrun app update conf --promote 'audit.redact_url=true' /myapp
 ```
 
+App config properties can also be declared in the app definition, using the `app_config` section of the `ace.app` settings dict:
+
+```python {filename="app.star"}
+app = ace.app("My App",
+    settings={"app_config": {"audit": {"redact_url": True}}})
+```
+
+When the same property is set in multiple places, the server `[app_config]` value is applied first, then the `app.star` settings, then the app metadata value set with `--conf`.
+
 Version retention is also configured under `[app_config]`. By default, OpenRun keeps the current version plus 5 older versions for each app. Older versions are cleaned up automatically after operations which create or promote app versions.
 
 To change the default for all apps, set `fs.retain_versions` in `openrun.toml`:

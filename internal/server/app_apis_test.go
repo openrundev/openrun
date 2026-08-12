@@ -317,6 +317,12 @@ func TestStaticDiskSpecServesFromDiskWithoutPersistingSourceFiles(t *testing.T) 
 	}
 	defer application.Close() //nolint:errcheck
 
+	// The static_disk spec app.star declares static_from_disk in its app_config
+	// settings; verify the settings reach the app config
+	if !application.AppConfig.StaticFromDisk {
+		t.Fatal("AppConfig.StaticFromDisk = false, want true from spec app_config settings")
+	}
+
 	req := httptest.NewRequest(http.MethodGet, "/diskstatic", nil)
 	rec := httptest.NewRecorder()
 	application.ServeHTTP(rec, req)

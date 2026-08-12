@@ -125,6 +125,10 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 		return err
 	}
 
+	if err = a.applyAppConfigSettings(settingsMap); err != nil {
+		return err
+	}
+
 	var stripAppPath bool
 	if stripAppPath, err = a.checkAppPathStripping(); err != nil {
 		return err

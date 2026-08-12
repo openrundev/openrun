@@ -9,6 +9,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Serving app files directly from the local disk source directory is now driven by the `static_from_disk` app config property instead of being hardcoded to the `static_disk` spec name.
+
+- The `ace.app` settings dict now supports an `app_config` section which sets app config properties from `app.star`, e.g. `settings={"app_config": {"fs": {"retain_versions": 3}}}`.
+
 - The `redis`/`valkey` service binding is now compiled into the server as a built-in binding type; it no longer needs `openrun provider install redis`. Each base binding gets a dedicated ACL user restricted to a unique key prefix (and matching pub/sub channel prefix); derived bindings share the base prefix with grant-controlled patterns. Requires Redis 7+ or Valkey, standalone mode.
 
 - Added `openrun server stop --wait`: waits for the server process to fully exit instead of returning as soon as shutdown starts (the final litestream sync runs as the process exits, so scripts that move or restore data directories after a stop need this). Over the unix domain socket the server's pid (now returned by the stop API) is polled; over http(s) the listener port is polled as a best effort signal. Also added `openrun server status` (prints `ok` when the server connection works) and `openrun server version` (reports the server's build version and commit).
