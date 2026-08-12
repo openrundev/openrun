@@ -397,3 +397,56 @@ tests:
   basic800: # Clean up static_disk source
     command: rm -rf static_disk_src
     exit-code: 0
+
+  basic810: # Create custom app source for static_from_disk app config (no spec)
+    command: |
+      rm -rf static_conf_src
+      mkdir -p static_conf_src/static_root
+      cat > static_conf_src/app.star <<'EOF'
+      def handler(req):
+          return {"key": param.key}
+
+      app = ace.app("diskconf", routes=[ace.html("/mypath", full="index.go.html")])
+      EOF
+      cat > static_conf_src/params.star <<'EOF'
+      param("key", description="The secret key")
+      EOF
+      cat > static_conf_src/index.go.html <<'EOF'
+      key is {{ .Data.key }}
+      EOF
+      printf "conf static v1" > static_conf_src/static_root/data.txt
+    exit-code: 0
+
+  basic820: # Create app with static_from_disk app config instead of static_disk spec
+    command: ../openrun app create --approve --stage-at path --conf static_from_disk=true --param key=topsecret ./static_conf_src /static_conf
+    exit-code: 0
+
+  basic830: # HTML template route renders the param value
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/static_conf/mypath
+    stdout: "key is topsecret"
+    exit-code: 0
+
+  basic840: # static_root files are served from disk
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/static_conf/data.txt
+    stdout:
+      exactly: "conf static v1"
+    exit-code: 0
+
+  basic850: # Update static_root file on disk
+    command: bash -c 'printf "conf static v2" > static_conf_src/static_root/data.txt'
+    exit-code: 0
+
+  basic860: # static_root disk changes are served without app reload
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/static_conf/data.txt
+    stdout:
+      exactly: "conf static v2"
+    exit-code: 0
+
+  basic870: # static_from_disk app config requires a local disk source
+    command: ../openrun app create --approve --conf static_from_disk=true - /static_conf_bad
+    stderr: "require source_url to be a local disk directory"
+    exit-code: 1
+
+  basic880: # Clean up static_from_disk source
+    command: rm -rf static_conf_src
+    exit-code: 0

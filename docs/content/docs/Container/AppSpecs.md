@@ -35,6 +35,15 @@ openrun app create --spec static_disk --approve \
   --param index=index.html /srv/sites/my-static-site /site
 ```
 
+Serving from disk is driven by the `static_from_disk` [app config]({{< ref "/docs/configuration/overview/#app-config" >}}) property; the `static_disk` spec name implies it. Any app with a local disk source can enable the same behavior, including apps with a custom `app.star`, by setting the property at create time:
+
+```shell
+openrun app create --approve --conf static_from_disk=true \
+  /srv/sites/my-custom-site /site
+```
+
+It can also be enabled for all apps with `static_from_disk = true` under `[app_config]` in `openrun.toml`.
+
 On Kubernetes, a network mounted disk path should be used for the `static_disk` source path so that files are visible from all pods.
 
 By default, staging and production apps generated from the same source share the same generated container image when the build inputs match. App specs should keep app path and domain values out of image builds when possible, and read runtime values such as `CL_APP_PATH` and `CL_APP_URL` from the container environment instead. If a spec must embed staging or production URL information into the image during build, set `container.separate_stage_prod_images` in the spec's `app.star`:

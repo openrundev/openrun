@@ -341,6 +341,111 @@ func TestStaticDiskSpecServesFromDiskWithoutPersistingSourceFiles(t *testing.T) 
 	}
 }
 
+func TestStaticFromDiskConfigServesFromDiskWithoutSpec(t *testing.T) {
+	t.Parallel()
+
+	server, db, ctx := newAppAPIMetadataTestServer(t)
+	defer db.Close()
+
+	sourceDir := t.TempDir()
+	appStar := `app = ace.app("disk conf app", static_only=True, index="index.html")`
+	if err := os.WriteFile(filepath.Join(sourceDir, "app.star"), []byte(appStar), 0o600); err != nil {
+		t.Fatalf("write app.star: %v", err)
+	}
+	indexPath := filepath.Join(sourceDir, "index.html")
+	if err := os.WriteFile(indexPath, []byte("conf version one"), 0o600); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+
+	tx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	_, err = server.CreateAppTx(ctx, tx, "/diskconf", true, false, &types.CreateAppRequest{
+		SourceUrl: sourceDir,
+		AppConfig: map[string]string{"static_from_disk": "true"},
+		StageAt:   "path",
+	}, nil, server.newBindingAccountManager(false))
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("create static_from_disk app: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	prod, err := db.GetAppEntry(ctx, types.AppPathDomain{Path: "/diskconf"})
+	if err != nil {
+		t.Fatalf("get prod app: %v", err)
+	}
+
+	tx, err = db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("begin query transaction: %v", err)
+	}
+	var fileCount int
+	err = tx.QueryRowContext(ctx, `select count(*) from app_files where appid = ?`, prod.Id).Scan(&fileCount)
+	if err != nil {
+		t.Fatalf("query app files: %v", err)
+	}
+	if fileCount != 0 {
+		t.Fatalf("app_files count = %d, want 0", fileCount)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback query transaction: %v", err)
+	}
+
+	application, err := server.setupApp(ctx, prod, types.Transaction{})
+	if err != nil {
+		t.Fatalf("setup app: %v", err)
+	}
+	if err := application.Initialize(ctx, types.DryRunFalse); err != nil {
+		t.Fatalf("initialize app: %v", err)
+	}
+	defer application.Close() //nolint:errcheck
+
+	req := httptest.NewRequest(http.MethodGet, "/diskconf", nil)
+	rec := httptest.NewRecorder()
+	application.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "conf version one" {
+		t.Fatalf("body = %q, want disk content", got)
+	}
+
+	if err := os.WriteFile(indexPath, []byte("conf version two"), 0o600); err != nil {
+		t.Fatalf("rewrite index: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/diskconf", nil)
+	rec = httptest.NewRecorder()
+	application.ServeHTTP(rec, req)
+	if got := rec.Body.String(); got != "conf version two" {
+		t.Fatalf("body after rewrite = %q, want updated disk content", got)
+	}
+}
+
+func TestStaticFromDiskConfigRejectsNonDiskSource(t *testing.T) {
+	t.Parallel()
+
+	server, db, ctx := newAppAPIMetadataTestServer(t)
+	defer db.Close()
+
+	for _, sourceUrl := range []string{"github.com/openrundev/openrun/examples/disk_usage", types.NO_SOURCE} {
+		_, err := server.CreateAppTx(ctx, types.Transaction{}, "/diskconfbad", true, false, &types.CreateAppRequest{
+			SourceUrl: sourceUrl,
+			AppConfig: map[string]string{"static_from_disk": "true"},
+			StageAt:   "path",
+		}, nil, server.newBindingAccountManager(false))
+		if err == nil {
+			t.Fatalf("expected error for source %q", sourceUrl)
+		}
+		if !strings.Contains(err.Error(), "require source_url to be a local disk directory") {
+			t.Fatalf("error for source %q = %q, want local disk requirement", sourceUrl, err.Error())
+		}
+	}
+}
+
 func TestCreateAppRejectsStageDomainRouteOverlap(t *testing.T) {
 	t.Parallel()
 

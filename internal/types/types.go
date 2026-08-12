@@ -416,6 +416,10 @@ type AppConfig struct {
 	Audit      Audit        `toml:"audit"`
 	Security   Security     `toml:"security"`
 	StarBase   string       `toml:"star_base"` // The base directory for starlark config files
+	// StaticFromDisk serves the app files directly from the local disk source
+	// directory instead of copying them into the metadata database. Requires a
+	// local disk source. The static_disk spec name enables the same behavior
+	StaticFromDisk bool `toml:"static_from_disk"`
 }
 
 type ActionConfig struct {

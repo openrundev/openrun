@@ -18,6 +18,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/openrundev/openrun/internal/app"
@@ -283,10 +284,41 @@ func (s *Server) ListAppAuths() []string {
 	return append(auths, certs...)
 }
 
+// staticServeFromDisk reports whether the app's files are served directly from
+// the local disk source directory instead of being copied into the metadata
+// database. The behavior is driven by the static_from_disk app config
+// ([app_config] server config default, per-app `--conf static_from_disk=true`
+// override); the static_disk spec name implies it for backward compatibility.
+func (s *Server) staticServeFromDisk(appEntry *types.AppEntry) bool {
+	if appEntry.Metadata.Spec == types.StaticDiskSpec {
+		return true
+	}
+	fromDisk := s.Config().AppConfig.StaticFromDisk
+	if value, ok := appEntry.Metadata.AppConfig["static_from_disk"]; ok {
+		// Metadata values are TOML encoded; app load errors on non-bool values
+		if parsed, err := strconv.ParseBool(strings.TrimSpace(value)); err == nil {
+			fromDisk = parsed
+		}
+	}
+	return fromDisk
+}
+
+// validateStaticFromDisk verifies that an app serving static files from disk
+// has a local disk directory as its source
+func (s *Server) validateStaticFromDisk(appEntry *types.AppEntry) error {
+	if !s.staticServeFromDisk(appEntry) {
+		return nil
+	}
+	if system.IsGit(appEntry.SourceUrl) || appEntry.SourceUrl == types.NO_SOURCE {
+		return fmt.Errorf("static_from_disk apps (--spec static_disk or --conf static_from_disk=true) require source_url to be a local disk directory")
+	}
+	return nil
+}
+
 func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	appEntry *types.AppEntry, approve, dryRun bool, branch, commit, gitAuth string, applyInfo *types.CreateAppRequest, repoCache *RepoCache) (*types.AppCreateResponse, error) {
-	if appEntry.Metadata.Spec == types.StaticDiskSpec && (system.IsGit(appEntry.SourceUrl) || appEntry.SourceUrl == types.NO_SOURCE) {
-		return nil, fmt.Errorf("static_disk spec requires source_url to be a local disk directory")
+	if err := s.validateStaticFromDisk(appEntry); err != nil {
+		return nil, err
 	}
 
 	if !system.IsGit(appEntry.SourceUrl) {
@@ -491,7 +523,7 @@ func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx type
 	subLogger := s.With().Str("id", string(appEntry.Id)).Str("path", appEntry.Path).Logger()
 	appLogger := types.Logger{Logger: &subLogger}
 	var sourceFS *appfs.SourceFs
-	if !appEntry.IsDev && appEntry.Metadata.Spec == types.StaticDiskSpec {
+	if !appEntry.IsDev && s.staticServeFromDisk(appEntry) {
 		var err error
 		sourceFS, err = appfs.NewSourceFs(appEntry.SourceUrl,
 			appfs.NewDiskReadFS(&appLogger, appEntry.SourceUrl, *appEntry.Metadata.SpecFiles),
@@ -1548,7 +1580,7 @@ func (s *Server) loadSourceFromDisk(ctx context.Context, tx types.Transaction, a
 	appEntry.Metadata.VersionMetadata.Version = highestVersion + 1
 	// Walk the local directory and add all files to the database
 	checkoutDir := appEntry.SourceUrl
-	if appEntry.Metadata.Spec == types.StaticDiskSpec {
+	if s.staticServeFromDisk(appEntry) {
 		if err := validateStaticDiskSource(appEntry.SourceUrl); err != nil {
 			return err
 		}
@@ -1563,10 +1595,10 @@ func (s *Server) loadSourceFromDisk(ctx context.Context, tx types.Transaction, a
 func validateStaticDiskSource(sourceUrl string) error {
 	fi, err := os.Stat(sourceUrl)
 	if err != nil {
-		return fmt.Errorf("error reading static_disk source %s: %w", sourceUrl, err)
+		return fmt.Errorf("error reading static_from_disk source %s: %w", sourceUrl, err)
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("static_disk source %s is not a directory", sourceUrl)
+		return fmt.Errorf("static_from_disk source %s is not a directory", sourceUrl)
 	}
 	return nil
 }

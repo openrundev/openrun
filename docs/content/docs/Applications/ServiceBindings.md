@@ -47,6 +47,7 @@ Additional service types come from out-of-process [binding providers]({{< ref "/
 | `mongodb`    | `mongodb`, `atlas` | Create MongoDB databases and users, self-hosted or Atlas   |
 | `snowflake`  | `snowflake`        | Create Snowflake roles and schemas with key-pair accounts  |
 | `clickhouse` | `clickhouse`       | Create ClickHouse users, self-hosted or ClickHouse Cloud   |
+| `databricks` | `databricks`       | Databricks SQL warehouses, Unity Catalog schema isolation  |
 
 All service types share the same workflow: services, base and derived bindings, staging/prod accounts, grants and promotes work identically whether the binding is built in or provider-installed.
 
@@ -530,7 +531,7 @@ OpenRun makes the volume writable for non-root app users automatically. With rep
 
 ## Binding Providers (SQL Server, Oracle, MongoDB, Snowflake, ClickHouse)
 
-Beyond the built-in service types, OpenRun supports out-of-process binding providers: standalone executables from the [openrundev/bindings](https://github.com/openrundev/bindings) repository that add more service types. Providers exist for Microsoft SQL Server (schema-based isolation, SQL Server 2019+), Oracle Database (pure-Go driver, no Oracle client needed), MongoDB (self-hosted servers and MongoDB Atlas, via the `mongodb` and `atlas` service types), Snowflake (role/schema isolation with key-pair authentication) and ClickHouse (self-hosted and ClickHouse Cloud).
+Beyond the built-in service types, OpenRun supports out-of-process binding providers: standalone executables from the [openrundev/bindings](https://github.com/openrundev/bindings) repository that add more service types. Providers exist for Microsoft SQL Server (schema-based isolation, SQL Server 2019+), Oracle Database (pure-Go driver, no Oracle client needed), MongoDB (self-hosted servers and MongoDB Atlas, via the `mongodb` and `atlas` service types), Snowflake (role/schema isolation with key-pair authentication), ClickHouse (self-hosted and ClickHouse Cloud) and Databricks (SQL warehouses with Unity Catalog schema isolation; Databricks Lakebase needs no provider — it speaks the Postgres protocol and works with the built-in `postgres` binding).
 
 Install a provider by name and version; the binary is downloaded from the provider releases (or a configured mirror), checksum-verified and registered:
 
@@ -573,7 +574,7 @@ Each base binding gets a dedicated Redis ACL user restricted to a unique key pre
 
 ### Can OpenRun provision SQL Server, Oracle, MongoDB, Snowflake or ClickHouse access?
 
-Yes. Install the matching binding provider with `openrun provider install <name>` and the provider's service types (`sqlserver`, `oracle`, `mongodb`/`atlas`, `snowflake`, `clickhouse`) become available for `service create`, with the same binding, grant and staging workflow as the built-in types.
+Yes. Install the matching binding provider with `openrun provider install <name>` and the provider's service types (`sqlserver`, `oracle`, `mongodb`/`atlas`, `snowflake`, `clickhouse`, `databricks`) become available for `service create`, with the same binding, grant and staging workflow as the built-in types.
 
 ### Are database administrator credentials exposed to applications?
 

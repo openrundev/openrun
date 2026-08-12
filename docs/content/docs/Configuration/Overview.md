@@ -58,6 +58,8 @@ openrun app update conf --promote fs.retain_versions=10 /myapp
 
 Setting `fs.retain_versions = 0` keeps only the current version for that app.
 
+The `static_from_disk` property makes an app with a local disk source serve its files directly from the source directory instead of copying them into the metadata database, as done by the [static_disk spec]({{< ref "/docs/container/appspecs" >}}). It can be set for one app with `openrun app create --conf static_from_disk=true <source_dir> <app_path>`, and requires the app source to be a local disk directory.
+
 ## Config Access from Code
 
 [App Params]({{< ref "docs/develop/#app-parameters" >}}) are the primary user configurable properties for apps. For cases where properties need to be read from `openrun.toml` config file or from env, the config builtin can be used. This is available as `config` in app definitions and in `params.star`. In app declaration (like `app.star`), this is available as `ace.config`.

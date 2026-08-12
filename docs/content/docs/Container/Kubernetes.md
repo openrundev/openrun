@@ -101,7 +101,7 @@ OpenRun service and Kaniko jobs run in the main namespace (default `openrun`). A
 
 ## Binding Providers
 
-Out-of-process [binding providers](https://github.com/openrundev/bindings) (sqlserver, oracle, mongodb, snowflake, clickhouse) work on Kubernetes without any special setup: installed providers are registered in the metadata database (Postgres, required for Kubernetes installs), which is the source of truth. Each server replica materializes the provider executables into a node-local cache directory at startup, before serving traffic, and re-downloads them (with checksum verification) whenever a pod starts on a fresh node. Installs and uninstalls propagate to all replicas through Postgres notifications, so `openrun provider install` works on multi-replica deployments exactly as on a single server.
+Out-of-process [binding providers](https://github.com/openrundev/bindings) (sqlserver, oracle, mongodb, snowflake, clickhouse, databricks) work on Kubernetes without any special setup: installed providers are registered in the metadata database (Postgres, required for Kubernetes installs), which is the source of truth. Each server replica materializes the provider executables into a node-local cache directory at startup, before serving traffic, and re-downloads them (with checksum verification) whenever a pod starts on a fresh node. Installs and uninstalls propagate to all replicas through Postgres notifications, so `openrun provider install` works on multi-replica deployments exactly as on a single server.
 
 For declarative, config-managed deployments, declare the providers in the Helm values instead of using the CLI:
 

@@ -827,6 +827,12 @@ func (s *Server) updateMetadataHandler(ctx context.Context, tx types.Transaction
 		}
 	}
 
+	// A spec change to static_disk or an app config change enabling
+	// static_from_disk requires a local disk source to serve from
+	if err := s.validateStaticFromDisk(appEntry); err != nil {
+		return nil, appEntry.AppPathDomain(), err
+	}
+
 	appPathDomain := appEntry.AppPathDomain()
 	return appPathDomain, appPathDomain, nil
 }

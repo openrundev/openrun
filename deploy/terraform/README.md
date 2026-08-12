@@ -107,7 +107,7 @@ Set `openrun_auth_mode` to `oidc` or `saml` and provide the matching variables. 
 
 ## Binding providers (optional)
 
-Out-of-process [binding providers](https://github.com/openrundev/bindings) (sqlserver, oracle, mongodb, snowflake, clickhouse) can be installed declaratively:
+Out-of-process [binding providers](https://github.com/openrundev/bindings) (sqlserver, oracle, mongodb, snowflake, clickhouse, databricks) can be installed declaratively:
 
 ```hcl
 openrun_binding_providers = {
