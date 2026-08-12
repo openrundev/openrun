@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.18.18] - 2026-08-12
+
 ### Added
 
 - Serving app files directly from the local disk source directory is now driven by the `static_from_disk` app config property instead of being hardcoded to the `static_disk` spec name.
