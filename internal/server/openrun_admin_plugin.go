@@ -56,6 +56,7 @@ func initAdminPlugin(server *Server) {
 		app.CreatePluginApiName(c.DeleteSecret, app.WRITE, "delete_secret"),
 		app.CreatePluginApiName(c.ListSecrets, app.READ, "list_secrets"),
 		app.CreatePluginApiName(c.GetSecret, app.READ, "get_secret"),
+		app.CreatePluginApiName(c.SecretReveal, app.READ, "secret_reveal"),
 		app.CreatePluginApiName(c.RekeySecrets, app.WRITE, "rekey_secrets"),
 	}
 
@@ -552,6 +553,35 @@ func (c *openrunAdminPlugin) GetSecret(thread *starlark.Thread, builtin *starlar
 		return nil, err
 	}
 	return starlark_type.ConvertToStarlark(result)
+}
+
+// SecretReveal returns the clear text value of a secret reference, for the app
+// to pass into an HTML template explicitly. The value argument is a
+// `{{secret_from "provider" "name"}}` reference (typically from an app param);
+// the plugin framework resolves secret references in call arguments before the
+// method runs, gated by the secrets patterns of the app's approved permission
+// for this call, so the method body only has to echo the argument back.
+// Unlike GetSecret with reveal=True, authority comes from the app's approved
+// `ace.permission("openrun_admin.in", "secret_reveal", secrets=[[...]])` entry
+// (the audit/approve flow), not from the request caller's RBAC permissions,
+// so this deliberately does not call a server API gated by enforceGlobalPerm.
+// The caller must still be an authenticated user (system plugin auth check)
+func (c *openrunAdminPlugin) SecretReveal(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var value starlark.String
+	if err := starlark.UnpackArgs("secret_reveal", args, kwargs, "value", &value); err != nil {
+		return nil, err
+	}
+
+	// A well formed reference matching the approved secrets patterns has been
+	// replaced with the clear text value by now. A leftover reference means the
+	// reference was malformed (unparseable templates pass through as-is), so
+	// fail with a pointer instead of serving the reference text to the page
+	if strings.Contains(value.GoString(), "{{") && strings.Contains(value.GoString(), "secret") {
+		return nil, fmt.Errorf("secret_reveal value still contains an unresolved secret reference; " +
+			"check the {{secret_from ...}} syntax and that the app permission for openrun_admin.in " +
+			"secret_reveal has matching secrets patterns")
+	}
+	return value, nil
 }
 
 // RekeySecrets re-encrypts stored secrets with the active master key

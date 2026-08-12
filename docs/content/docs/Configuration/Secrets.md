@@ -128,17 +128,18 @@ When [RBAC]({{< ref "/docs/configuration/rbac" >}}) API enforcement is enabled, 
 
 ## Secrets Usage
 
-Secrets can be accessed using the syntax `{{secret_from "PROVIDER_NAME" "KEY_NAME"}}`. To read from the default provider, use `{{secret "KEY_NAME"}}`. The three contexts in which secrets can be accessed are:
+Secrets can be accessed using the syntax `{{secret_from "PROVIDER_NAME" "KEY_NAME"}}`. To read from the default provider, use `{{secret "KEY_NAME"}}`. The contexts in which secrets can be accessed are:
 
 - **App Params**: Param values in `params.star` or in the [app metadata definition]({{< ref "/docs/container/overview/#app-environment-params" >}}) can access the secrets.
 - **Plugin arguments**: Secrets can be passed as string arguments in calls to [plugin functions]({{< ref "plugins" >}}).
+- **HTML templates**: An app can reveal a secret into its handler response with `openrun_admin.secret_reveal`, see [below](#revealing-secrets-to-html-templates).
 - **Config file**: Secrets are supported in `openrun.toml` config for:
   - For client key and secret in [auth config]({{< ref "/docs/configuration/authentication/#oauth-authentication" >}})
   - For password in [git_auth config]({{< ref "/docs/configuration/security/#private-repository-access" >}})
   - For string values in [plugin config]({{< ref "/docs/plugins/overview/#account-linking" >}})
   - For OTLP exporter headers in [telemetry config]({{< ref "/docs/configuration/telemetry/#collector-headers-and-secrets" >}})
 
-Secrets are always resolved late. The Starlark code does not get access to the plain text secrets. The secret lookup happens when the call to the plugin API is done. In case of params, the lookup happens when the param is passed to the container.
+Secrets are always resolved late. Starlark code does not get access to the plain text secrets, except through an explicitly approved `secret_reveal` permission as described below. The secret lookup happens when the call to the plugin API is done. In case of params, the lookup happens when the param is passed to the container.
 
 For git_auth config, an example secret usage is
 
@@ -175,6 +176,42 @@ ace.permission("container.in", "config", [container.AUTO], secrets=[["DB_PASSWOR
 ```
 
 The app must then be approved with that permission before `{{secret "DB_PASSWORD"}}` can be resolved for the container.
+
+## Revealing Secrets to HTML Templates
+
+Apps that serve HTML sometimes need to materialize a secret into a served page, for example an API key for a third party browser widget, so that the value lives only in the secret store and never in the app source files or git history. The `openrun_admin.secret_reveal` function returns the clear text value of a secret reference, for the handler to pass into a Go HTML template explicitly:
+
+```python {filename="app.star"}
+load("openrun_admin.in", "openrun_admin")
+
+def handler(req):
+    return {"key": openrun_admin.secret_reveal(param.key).value}
+
+app = ace.app("myapp",
+              routes=[ace.html("/mypath", full="index.go.html")],
+              permissions=[
+                  ace.permission("openrun_admin.in", "secret_reveal", secrets=[["myapp_api_key"]])
+              ])
+```
+
+```python {filename="params.star"}
+param("key", description="The secret reference for the page API key")
+```
+
+with `index.go.html` referencing `{{ .Data.key }}`, and the app created with
+
+```shell
+openrun app create --approve --param key='{{secret_from "db" "myapp_api_key"}}' ./mysite /mysite
+```
+
+This is disabled by default and is gated like any other plugin secret access:
+
+- The `ace.permission("openrun_admin.in", "secret_reveal", secrets=[[...]])` entry must be declared in the app definition and approved (`openrun app approve`). The audit output shows the exact secret patterns being exposed. Without a matching approved pattern, the request fails and the reference is not resolved.
+- `openrun_admin` is a privileged system plugin, so the page request must come from an authenticated user: an anonymous viewer can never trigger the reveal (unless `security.unsafe_allow_system_plugins_anon` is set).
+- The call can be blocked for all apps with a server config [permissions.disallow]({{< ref "/docs/configuration/security" >}}) entry for `openrun_admin.in` / `secret_reveal`.
+- The `permit=` field of `ace.permission` optionally restricts the reveal to request users holding a specific RBAC permission.
+
+Note that unlike `openrun_admin.get_secret(name, reveal=True)`, which enforces the `secret:reveal` RBAC permission against the request caller, the authority for `secret_reveal` is the app's approved permission: any authenticated viewer of an approved app receives the page with the secret materialized. The value is part of the served response, so use this only where viewers are trusted with the value, and consider setting `Cache-Control: no-store` on the page response.
 
 ## Multiple Keys
 

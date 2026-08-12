@@ -450,3 +450,93 @@ tests:
   basic880: # Clean up static_from_disk source
     command: rm -rf static_conf_src
     exit-code: 0
+
+  basic890: # Create a secret in the db provider for secret_reveal tests
+    command: ../openrun secret create --name reveal_key --value cleartext_widget_key_1
+    exit-code: 0
+
+  basic900: # Create app source using openrun_admin.secret_reveal
+    command: |
+      rm -rf secret_reveal_src
+      mkdir -p secret_reveal_src
+      cat > secret_reveal_src/app.star <<'EOF'
+      load("openrun_admin.in", "openrun_admin")
+
+      def handler(req):
+          return {"key": openrun_admin.secret_reveal(param.key).value}
+
+      app = ace.app("revealapp",
+                    routes=[ace.html("/mypath", full="index.go.html")],
+                    permissions=[
+                        ace.permission("openrun_admin.in", "secret_reveal", secrets=[["reveal_key"]])
+                    ])
+      EOF
+      cat > secret_reveal_src/params.star <<'EOF'
+      param("key", description="The secret reference to reveal")
+      EOF
+      cat > secret_reveal_src/index.go.html <<'EOF'
+      key is {{ .Data.key }}
+      EOF
+    exit-code: 0
+
+  basic910: # Create app without approving the secret_reveal permission
+    command: ../openrun app create --stage-at path --param key='{{secret_from "db" "reveal_key"}}' ./secret_reveal_src /revealapp
+    exit-code: 0
+
+  basic913: # Unapproved secret_reveal permission fails the request
+    command: curl -sS -o /dev/null -w "%{http_code}" -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/revealapp/mypath
+    stdout: "500"
+    exit-code: 0
+
+  basic916: # Unapproved app does not leak the secret
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/revealapp/mypath
+    stdout:
+      not-contains:
+        - "cleartext_widget_key_1"
+    exit-code: 0
+
+  basic920: # Approve the secret_reveal permission
+    command: ../openrun app approve --promote /revealapp
+    exit-code: 0
+
+  basic930: # secret_reveal resolves the secret into the template
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/revealapp/mypath
+    stdout: "key is cleartext_widget_key_1"
+    exit-code: 0
+
+  basic940: # Create app source where the approved secrets pattern does not match
+    command: |
+      cp -r secret_reveal_src secret_reveal_badsrc
+      cat > secret_reveal_badsrc/app.star <<'EOF'
+      load("openrun_admin.in", "openrun_admin")
+
+      def handler(req):
+          return {"key": openrun_admin.secret_reveal(param.key).value}
+
+      app = ace.app("revealappbad",
+                    routes=[ace.html("/mypath", full="index.go.html")],
+                    permissions=[
+                        ace.permission("openrun_admin.in", "secret_reveal", secrets=[["other_key"]])
+                    ])
+      EOF
+    exit-code: 0
+
+  basic950: # Approved pattern mismatch app is created (patterns checked at call time)
+    command: ../openrun app create --approve --stage-at path --param key='{{secret_from "db" "reveal_key"}}' ./secret_reveal_badsrc /revealapp_bad
+    exit-code: 0
+
+  basic960: # secret_reveal fails when the secret does not match the approved patterns
+    command: curl -sS -o /dev/null -w "%{http_code}" -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/revealapp_bad/mypath
+    stdout: "500"
+    exit-code: 0
+
+  basic970: # The secret value is not leaked by the failing app
+    command: curl -sS -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/revealapp_bad/mypath
+    stdout:
+      not-contains:
+        - "cleartext_widget_key_1"
+    exit-code: 0
+
+  basic980: # Clean up secret_reveal sources and secret
+    command: bash -c 'rm -rf secret_reveal_src secret_reveal_badsrc && ../openrun secret delete reveal_key'
+    exit-code: 0
