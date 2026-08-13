@@ -1189,8 +1189,9 @@ func (c *openrunPlugin) ListAuths(thread *starlark.Thread, builtin *starlark.Bui
 	return &ret, nil
 }
 
-// ListGitAuths returns the git_auth entry names configured on this server,
-// usable for private repo access in app create and sync setup
+// ListGitAuths returns the git_auth entry names configured on this server
+// plus the security.default_git_auth entry name (the auth used when an app
+// or sync does not name one), usable in app create and sync setup
 func (c *openrunPlugin) ListGitAuths(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	if err := starlark.UnpackArgs("list_git_auths", args, kwargs); err != nil {
 		return nil, err
@@ -1203,11 +1204,13 @@ func (c *openrunPlugin) ListGitAuths(thread *starlark.Thread, builtin *starlark.
 
 	names := slices.Collect(maps.Keys(c.server.Config().GitAuth))
 	slices.Sort(names)
-	ret := starlark.List{}
-	for _, name := range names {
-		ret.Append(starlark.String(name)) //nolint:errcheck
+	if names == nil {
+		names = []string{}
 	}
-	return &ret, nil
+	return starlark_type.ConvertToStarlark(map[string]any{
+		"entries": names,
+		"default": c.server.Config().Security.DefaultGitAuth,
+	})
 }
 
 // ReplicationStatus reports litestream replication state for the server's

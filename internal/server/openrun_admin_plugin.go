@@ -131,16 +131,16 @@ func (c *openrunAdminPlugin) DeleteApps(thread *starlark.Thread, builtin *starla
 // ReloadApps reloads apps matching the glob from their source (git or disk)
 func (c *openrunAdminPlugin) ReloadApps(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var pathGlob starlark.String
-	var dryRun, forceReload starlark.Bool
+	var dryRun, forceReload, verify starlark.Bool
 	approve := starlark.Bool(true)
 	promote := starlark.Bool(true)
 	if err := starlark.UnpackArgs("reload_apps", args, kwargs, "path_glob", &pathGlob,
-		"approve?", &approve, "promote?", &promote, "force_reload?", &forceReload, "dry_run?", &dryRun); err != nil {
+		"approve?", &approve, "promote?", &promote, "force_reload?", &forceReload, "verify?", &verify, "dry_run?", &dryRun); err != nil {
 		return nil, err
 	}
 
 	result, err := c.server.ReloadApps(system.GetRequestContext(thread), pathGlob.GoString(), bool(approve), bool(dryRun), bool(promote),
-		"", "", "", bool(forceReload), false)
+		"", "", "", bool(forceReload), bool(verify))
 	if err != nil {
 		return nil, err
 	}
@@ -600,10 +600,11 @@ func (c *openrunAdminPlugin) RekeySecrets(thread *starlark.Thread, builtin *star
 
 func (c *openrunAdminPlugin) CreateSync(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var path, gitBranch, gitAuth starlark.String
-	var dryRun, promote, approve starlark.Bool
+	var dryRun, promote, approve, verify starlark.Bool
 	var minutes starlark.Int
 	if err := starlark.UnpackArgs("create_sync", args, kwargs, "path", &path, "git_branch?", &gitBranch,
-		"git_auth?", &gitAuth, "minutes?", &minutes, "dry_run?", &dryRun, "promote?", &promote, "approve?", &approve); err != nil {
+		"git_auth?", &gitAuth, "minutes?", &minutes, "dry_run?", &dryRun, "promote?", &promote, "approve?", &approve,
+		"verify?", &verify); err != nil {
 		return nil, err
 	}
 
@@ -617,6 +618,7 @@ func (c *openrunAdminPlugin) CreateSync(thread *starlark.Thread, builtin *starla
 		GitAuth:           gitAuth.GoString(),
 		Promote:           bool(promote),
 		Approve:           bool(approve),
+		Verify:            bool(verify),
 		ScheduleFrequency: int(minutesInt),
 	}
 
