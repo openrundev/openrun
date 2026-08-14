@@ -300,8 +300,17 @@ func TestOpenRunPluginManagementReads(t *testing.T) {
 	if value, err := c.ListAuths(thread, nil, nil, nil); err != nil || value.(*starlark.List).Len() < 6 {
 		t.Fatalf("list auths = %v, %v", value, err)
 	}
-	if value, err := c.ListGitAuths(thread, nil, nil, nil); err != nil || value.(*starlark.List).Len() != 2 {
+	// list_git_auths returns the sorted entry names plus the default entry
+	server.staticConfig.Security.DefaultGitAuth = "alpha"
+	if value, err := c.ListGitAuths(thread, nil, nil, nil); err != nil {
 		t.Fatalf("list git auths = %v, %v", value, err)
+	} else {
+		gitAuths := value.(*starlark.Dict)
+		entries, _, _ := gitAuths.Get(starlark.String("entries"))
+		defaultAuth, _, _ := gitAuths.Get(starlark.String("default"))
+		if entries.String() != `["alpha", "zeta"]` || defaultAuth.String() != `"alpha"` {
+			t.Fatalf("list git auths entries = %v, default = %v", entries, defaultAuth)
+		}
 	}
 
 	server.staticConfig.System.ContainerCommand = types.CONTAINER_KUBERNETES

@@ -6,6 +6,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -90,6 +91,35 @@ func (b *exportBuilder) serviceRef(binding *types.Binding) string {
 		return binding.ServiceType + "/" + binding.ServiceName
 	}
 	return binding.ServiceType
+}
+
+// autoBindingRef returns the app bindings entry for an auto binding: the
+// service ref plus the binding's config as the ";key=val,key2=val2" suffix
+// parsed by parseBindingSourceParams, so the config survives a re-apply
+func (b *exportBuilder) autoBindingRef(binding *types.Binding, appPath string) string {
+	ref := b.serviceRef(binding)
+	config := binding.Metadata.Config
+	if isDevAutoBindingPath(binding.Path) {
+		// Dev apps run against the auto binding's staged metadata
+		config = binding.StagedMetadata.Config
+	}
+	if len(config) == 0 {
+		return ref
+	}
+	params := make([]string, 0, len(config))
+	for _, key := range sortedKeys(config) {
+		value := config[key]
+		if strings.ContainsAny(key, ";,=") || strings.Contains(value, ",") {
+			b.warnf("app %s auto binding %s config %s=%s cannot be represented in the "+
+				"source;key=value,... syntax; entry dropped from the export", appPath, binding.Path, key, value)
+			continue
+		}
+		params = append(params, key+"="+value)
+	}
+	if len(params) == 0 {
+		return ref
+	}
+	return ref + ";" + strings.Join(params, ",")
 }
 
 // header renders the collected prerequisites and warnings as comment lines
@@ -338,7 +368,19 @@ func (s *Server) exportApp(ctx context.Context, tx types.Transaction, appEntry *
 			builder.warnf("app %s references auto binding %s which no longer exists; reference dropped", req.Path, bindingRef)
 			continue
 		}
-		req.Bindings = append(req.Bindings, builder.serviceRef(autoBinding))
+		req.Bindings = append(req.Bindings, builder.autoBindingRef(autoBinding, req.Path))
+	}
+
+	// Verify is not part of the app state proper, but a declarative app's
+	// stored declaration carries it and later applies honor it, so it is
+	// reproduced from the ApplyInfo
+	if len(metadata.VersionMetadata.ApplyInfo) > 0 {
+		var applyInfo types.CreateAppRequest
+		if err := json.Unmarshal(metadata.VersionMetadata.ApplyInfo, &applyInfo); err == nil {
+			req.Verify = applyInfo.Verify
+		} else {
+			builder.warnf("app %s has unreadable apply info, verify flag not exported: %s", req.Path, err)
+		}
 	}
 
 	req.StageAt = s.deriveStageAt(ctx, tx, appEntry, builder)

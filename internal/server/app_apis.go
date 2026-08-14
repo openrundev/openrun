@@ -1644,6 +1644,23 @@ func (s *Server) FilterApps(appappPathGlob string, includeInternal bool) ([]type
 	return result, nil
 }
 
+// GetInternalApp returns the app at exactly path, including internal
+// (staging/preview) apps: the glob filter in GetApps matches main app paths
+// only, so an internal app's path (e.g. stage.localhost:/x) would match
+// nothing there. Authorization is enforced per app by GetApps
+func (s *Server) GetInternalApp(ctx context.Context, path string) (*types.AppResponse, error) {
+	all, err := s.GetApps(ctx, "all", true)
+	if err != nil {
+		return nil, err
+	}
+	for _, app := range all {
+		if app.AppPathDomain().String() == path {
+			return &app, nil
+		}
+	}
+	return nil, fmt.Errorf("app %s not found", path)
+}
+
 func (s *Server) GetApps(ctx context.Context, appPathGlob string, internal bool) ([]types.AppResponse, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {

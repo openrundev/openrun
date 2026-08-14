@@ -40,6 +40,9 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ListVersions, app.READ, "list_versions"),
 		app.CreatePluginApiName(c.ListVersionFiles, app.READ, "list_version_files"),
 		app.CreatePluginApiName(c.GetVersionZip, app.READ, "get_version_zip"),
+		app.CreatePluginApiName(c.GetVersionFile, app.READ, "get_version_file"),
+		app.CreatePluginApiName(c.ExportApp, app.READ, "export_app"),
+		app.CreatePluginApiName(c.ExportAppDiff, app.READ, "export_app_diff"),
 		app.CreatePluginApiName(c.AuditApp, app.READ, "audit_app"),
 		app.CreatePluginApiName(c.ListServices, app.READ, "list_services"),
 		app.CreatePluginApiName(c.GetRBACConfig, app.READ, "get_rbac_config"),
@@ -314,7 +317,7 @@ func (c *openrunPlugin) listAppsImpl(thread *starlark.Thread, _ *starlark.Builti
 		v.SetKey(starlark.String("git_sha"), starlark.String(app.GitSha))
 		v.SetKey(starlark.String("git_message"), starlark.String(app.GitMessage))
 		v.SetKey(starlark.String("git_branch"), starlark.String(app.Branch))
-		v.SetKey(starlark.String("update_age"), starlark.String(system.HumanDuration(time.Since(app.UpdateTime))))
+		v.SetKey(starlark.String("update_age"), starlark.String(system.HumanDuration(time.Since(app.UpdateTime), 0)))
 		v.SetKey(starlark.String("update_time"), starlark.String(app.UpdateTime.UTC().Format(time.RFC3339)))
 		// Who performed the last update: the active version's creator, with
 		// the app creator as the fallback (dev apps have no versions)
@@ -661,20 +664,30 @@ func (c *openrunPlugin) ListSync(thread *starlark.Thread, builtin *starlark.Buil
 // for displaying/updating the app. Settings (webhook tokens) are not included.
 func (c *openrunPlugin) GetApp(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var path starlark.String
-	if err := starlark.UnpackArgs("get_app", args, kwargs, "path", &path); err != nil {
+	var includeInternal starlark.Bool
+	if err := starlark.UnpackArgs("get_app", args, kwargs, "path", &path, "include_internal?", &includeInternal); err != nil {
 		return nil, err
 	}
 
 	ctx := system.GetRequestContext(thread)
-	apps, err := c.server.GetApps(ctx, path.GoString(), false)
-	if err != nil {
-		return nil, err
+	var entry types.AppResponse
+	if bool(includeInternal) {
+		// Internal (staging/preview) app paths need the exact-path lookup
+		found, err := c.server.GetInternalApp(ctx, path.GoString())
+		if err != nil {
+			return nil, err
+		}
+		entry = *found
+	} else {
+		apps, err := c.server.GetApps(ctx, path.GoString(), false)
+		if err != nil {
+			return nil, err
+		}
+		if len(apps) != 1 {
+			return nil, fmt.Errorf("app %s not found", path.GoString())
+		}
+		entry = apps[0]
 	}
-	if len(apps) != 1 {
-		return nil, fmt.Errorf("app %s not found", path.GoString())
-	}
-
-	entry := apps[0]
 	params := starlark.Dict{}
 	for k, val := range entry.Metadata.ParamValues {
 		params.SetKey(starlark.String(k), starlark.String(val)) //nolint:errcheck
@@ -706,7 +719,7 @@ func (c *openrunPlugin) GetApp(thread *starlark.Thread, builtin *starlark.Builti
 	v.SetKey(starlark.String("builder_published"), starlark.Bool(c.server.isBuilderManaged(&entry.AppEntry))) //nolint:errcheck
 	v.SetKey(starlark.String("params"), &params)                                                              //nolint:errcheck
 	v.SetKey(starlark.String("bindings"), &bindings)                                                          //nolint:errcheck
-	v.SetKey(starlark.String("staged_changes"), starlark.Bool(apps[0].StagedChanges))                         //nolint:errcheck
+	v.SetKey(starlark.String("staged_changes"), starlark.Bool(entry.StagedChanges))                           //nolint:errcheck
 	if entry.UpdateTime != nil {
 		v.SetKey(starlark.String("update_time"), starlark.String(entry.UpdateTime.Format(time.RFC3339))) //nolint:errcheck
 	} else {
@@ -758,6 +771,58 @@ func (c *openrunPlugin) ListVersionFiles(thread *starlark.Thread, builtin *starl
 		return nil, err
 	}
 	return starlark_type.ConvertToStarlark(result)
+}
+
+// ExportApp returns the declarative config for one app as a formatted app()
+// call. env selects prod (default) or stage; version a specific version of
+// that environment (empty = active). Param values are masked without
+// app:update on the app
+func (c *openrunPlugin) ExportApp(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var path, env, version starlark.String
+	if err := starlark.UnpackArgs("export_app", args, kwargs, "path", &path, "env?", &env, "version?", &version); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	exported, err := c.server.ExportAppVersion(ctx, path.GoString(), env.GoString(), version.GoString())
+	if err != nil {
+		return nil, err
+	}
+	return starlark.String(exported), nil
+}
+
+// ExportAppDiff compares two versions of an app as their export outputs,
+// aligned line by line. from/to are "env:version" specs ("prod:14",
+// "stage:" = staging active)
+func (c *openrunPlugin) ExportAppDiff(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var path, from, to starlark.String
+	if err := starlark.UnpackArgs("export_app_diff", args, kwargs, "path", &path, "from", &from, "to", &to); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	diff, err := c.server.ExportAppDiff(ctx, path.GoString(), from.GoString(), to.GoString())
+	if err != nil {
+		return nil, err
+	}
+	return starlark_type.ConvertToStarlark(diff)
+}
+
+// GetVersionFile returns one file's content from an app version, for the
+// version files viewer. Use the stage path for staging versions. Binary and
+// over-1MB files error with a message pointing at the zip download
+func (c *openrunPlugin) GetVersionFile(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var path, version, name starlark.String
+	if err := starlark.UnpackArgs("get_version_file", args, kwargs, "path", &path, "version?", &version, "name", &name); err != nil {
+		return nil, err
+	}
+
+	ctx := system.GetRequestContext(thread)
+	content, err := c.server.VersionFileContent(ctx, path.GoString(), version.GoString(), name.GoString())
+	if err != nil {
+		return nil, err
+	}
+	return starlark.String(content), nil
 }
 
 // GetVersionZip returns a download value whose content is a lazily produced

@@ -411,6 +411,98 @@ app("/apps/declared", %q, bindings=["/apps/derived"], stage_at="path", params={"
 	}
 }
 
+// TestApplyExportRoundTrip is the full-fidelity contract behind export: a
+// complex apply file (base + derived bindings with grants and config, auto
+// bindings with config params, params, app_config, container settings,
+// stage_at, verify, dev and domain apps) is applied on a fresh server, the
+// state is exported, and the export must be BYTE IDENTICAL to the canonical
+// formatting (PrettyPrint) of the original file - nothing may be lost or
+// reshaped on the apply -> export path. The file is written in export's
+// canonical order (bindings sorted by path, apps sorted by domain then path)
+// and uses bare service refs, matching the default export options
+func TestApplyExportRoundTrip(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+	registerExportTestService(t, db, ctx, "primary")
+
+	appSourceDir := writeExportTestAppSource(t)
+
+	applyPath := filepath.Join(t.TempDir(), "roundtrip.ace")
+	applyData := fmt.Sprintf(`binding("/apps/base", "applytest", config={"opt1": "val1", "opt2": "val2"})
+binding("/apps/derived", "/apps/base", grants=["read:*", "create:tbl"])
+
+app("/apps/complex", %q,
+    auth="none",
+    params={"p1": "v1", "p2": "5"},
+    app_config={"str": "abc", "count": 11, "flag": True},
+    container_opts={"co": "1"},
+    container_args={"ca": "x y"},
+    container_vols=["v1:/abc", "v2"],
+    bindings=["/apps/derived", "applytest;pkey=pval,zkey=zval"],
+    stage_at="path",
+    verify=True)
+
+app("/apps/devone", %q, dev=True, bindings=["applytest;dkey=dval"])
+
+app("/apps/plain", %q)
+
+app("example.com:/apps/domain", %q, params={"dp": "dv"})
+`, appSourceDir, appSourceDir, appSourceDir, appSourceDir)
+	if err := os.WriteFile(applyPath, []byte(applyData), 0600); err != nil {
+		t.Fatalf("write apply file: %v", err)
+	}
+
+	if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
+		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	exported, err := server.Export(ctx, "all", types.ExportOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	formatted, err := server.PrettyPrint(ctx, applyPath)
+	if err != nil {
+		t.Fatalf("pretty print: %v", err)
+	}
+
+	// A warning in either output means something did not survive the trip
+	for name, out := range map[string]string{"export": exported, "pretty print": formatted} {
+		if strings.Contains(out, "WARNING") {
+			t.Errorf("%s output has warnings:\n%s", name, out)
+		}
+	}
+
+	stripComments := func(s string) string {
+		lines := strings.Split(s, "\n")
+		kept := make([]string, 0, len(lines))
+		for _, line := range lines {
+			if strings.HasPrefix(line, "#") {
+				continue
+			}
+			kept = append(kept, line)
+		}
+		return strings.TrimLeft(strings.Join(kept, "\n"), "\n")
+	}
+	exportBody := stripComments(exported)
+	formattedBody := stripComments(formatted)
+	if exportBody != formattedBody {
+		t.Errorf("export does not reproduce the applied config.\nformatted original:\n%s\nexport:\n%s\nfirst difference at byte %d",
+			formattedBody, exportBody, firstDiff(formattedBody, exportBody))
+	}
+}
+
+// firstDiff returns the index of the first differing byte, for pinpointing
+// round-trip mismatches
+func firstDiff(a, b string) int {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return min(len(a), len(b))
+}
+
 // TestExportStageAtDefault verifies stage_at is omitted when the stage app is
 // at this server's default stage location
 func TestExportStageAtDefault(t *testing.T) {
