@@ -72,6 +72,58 @@ func TestMetadata_InitializationAndNotifications(t *testing.T) {
 	testutil.AssertNoError(t, m.RollbackTransaction(tx))
 }
 
+func TestMetadataHealthSQLite(t *testing.T) {
+	m, cleanup := setupTestMetadata(t)
+	defer cleanup()
+	// The pool registered maintenance under the path portion of this DSN.
+	// Health must normalize supported query parameters the same way.
+	m.config.Metadata.DBConnection += "?_pragma=foreign_keys(1)"
+
+	health := m.Health(context.Background())
+	if health.Status != "ok" || health.DatabaseType != "sqlite" {
+		t.Fatalf("unexpected metadata health: status=%q database_type=%q", health.Status, health.DatabaseType)
+	}
+	if health.SQLite == nil {
+		t.Fatal("sqlite metadata health metrics are missing")
+	}
+	if health.SQLite.DatabasePath == "" || health.SQLite.DatabaseBytes == 0 {
+		t.Fatalf("sqlite file metrics are missing: %+v", health.SQLite)
+	}
+	if health.SQLite.CheckpointRuns == 0 || health.SQLite.LastCheckpointAt == "" {
+		t.Fatalf("sqlite checkpoint metrics are missing: %+v", health.SQLite)
+	}
+	if health.Pool.OpenConnections == 0 {
+		t.Fatalf("expected an open metadata connection: %+v", health.Pool)
+	}
+}
+
+func TestMetadataHealthKeepsOpenTimeSQLitePathAfterChdir(t *testing.T) {
+	startDir := t.TempDir()
+	t.Chdir(startDir)
+	config := &types.ServerConfig{Metadata: types.MetadataConfig{
+		DBConnection: "sqlite:relative-metadata.db?_pragma=foreign_keys(1)",
+		AutoUpgrade:  true,
+	}}
+	logger := types.NewLogger(&types.LogConfig{Level: "INFO"})
+	m, err := NewMetadata(logger, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close() //nolint:errcheck
+
+	// Server.Start changes the process working directory after NewMetadata.
+	// Health must retain the identity used when the pool was opened.
+	t.Chdir(t.TempDir())
+	health := m.Health(t.Context())
+	if health.SQLite == nil {
+		t.Fatal("sqlite maintenance metrics disappeared after chdir")
+	}
+	wantPath := filepath.Join(startDir, "relative-metadata.db")
+	if health.SQLite.DatabasePath != wantPath {
+		t.Fatalf("database path = %q, want open-time path %q", health.SQLite.DatabasePath, wantPath)
+	}
+}
+
 func TestMetadata_MigrateLinkedAppPathsBackfillsInternalApps(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "metadata.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -91,6 +143,10 @@ func TestMetadata_MigrateLinkedAppPathsBackfillsInternalApps(t *testing.T) {
 	_, err = db.Exec(`create table bindings (id text not null, path text, source text, service_type text not null default '', ` +
 		`service_name text not null default '', base_binding text not null default '', metadata json, staged_metadata json, ` +
 		`create_time datetime, update_time datetime, PRIMARY KEY(path), UNIQUE(id))`)
+	testutil.AssertNoError(t, err)
+	_, err = db.Exec(`create table keystore(key text, value blob, create_time datetime, delete_at datetime, primary key(key))`)
+	testutil.AssertNoError(t, err)
+	_, err = db.Exec(`create table app_files(appid text, version int, name text, sha text, uncompressed_size int, create_time datetime, primary key(appid, version, name))`)
 	testutil.AssertNoError(t, err)
 	_, err = db.Exec(`insert into apps(id, path, domain, source_url, is_dev, main_app, user_id, create_time, update_time, settings, metadata) values
 		('app_prd_1', '/prod', '', 'https://example.com/repo.git', false, '', 'u1', datetime('now'), datetime('now'), '{}', '{}'),
@@ -575,6 +631,68 @@ func TestMetadata_ConfigAndKV(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	_, err = m.FetchKVBlob(ctx, "expired-cleanup")
 	testutil.AssertErrorContains(t, err, "error querying keystore")
+}
+
+func TestMetadataUpgradeAddsLoadIndexes(t *testing.T) {
+	m, cleanup := setupTestMetadata(t)
+	defer cleanup()
+
+	for _, name := range []string{
+		"idx_keystore_delete_at",
+		"idx_apps_domain_path",
+		"idx_apps_main_app_create_time",
+		"idx_app_files_sha",
+	} {
+		_, err := m.db.Exec(`drop index ` + name)
+		testutil.AssertNoError(t, err)
+	}
+	_, err := m.db.Exec(`update version set version=20`)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, m.VersionUpgrade(m.config))
+
+	var version int
+	testutil.AssertNoError(t, m.db.QueryRow(`select version from version`).Scan(&version))
+	testutil.AssertEqualsInt(t, "db version", 21, version)
+
+	indexDefinitions := map[string]string{
+		"idx_keystore_delete_at":        "where delete_at is not null",
+		"idx_apps_domain_path":          "apps(domain, path)",
+		"idx_apps_main_app_create_time": "apps(main_app, create_time desc)",
+		"idx_app_files_sha":             "app_files(sha)",
+	}
+	for name, want := range indexDefinitions {
+		var indexSQL string
+		err = m.db.QueryRow(`select sql from sqlite_master where type='index' and name=?`, name).Scan(&indexSQL)
+		testutil.AssertNoError(t, err)
+		if !strings.Contains(strings.ToLower(indexSQL), want) {
+			t.Fatalf("index %s does not contain %q: %s", name, want, indexSQL)
+		}
+	}
+
+	assertPlanUsesIndex := func(query, indexName string) {
+		t.Helper()
+		rows, err := m.db.Query(`explain query plan ` + query)
+		testutil.AssertNoError(t, err)
+		defer rows.Close() //nolint:errcheck
+		usedIndex := false
+		for rows.Next() {
+			var id, parent, notUsed int
+			var detail string
+			testutil.AssertNoError(t, rows.Scan(&id, &parent, &notUsed, &detail))
+			if strings.Contains(detail, indexName) {
+				usedIndex = true
+			}
+		}
+		testutil.AssertNoError(t, rows.Err())
+		if !usedIndex {
+			t.Fatalf("query does not use %s: %s", indexName, query)
+		}
+	}
+
+	assertPlanUsesIndex(`delete from keystore where delete_at is not null and delete_at <= datetime('now')`, "idx_keystore_delete_at")
+	assertPlanUsesIndex(`select path from apps where domain = 'example.com'`, "idx_apps_domain_path")
+	assertPlanUsesIndex(`select id from apps where main_app = 'app_prd_1' order by create_time desc`, "idx_apps_main_app_create_time")
+	assertPlanUsesIndex(`delete from files where sha not in (select distinct sha from app_files)`, "idx_app_files_sha")
 }
 
 func TestToNullTime(t *testing.T) {

@@ -71,6 +71,7 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsInt(t, "file workers", 4, c.System.FileWorkers)
 	testutil.AssertEqualsBool(t, "fallback unknown domains", false, c.System.FallbackUnknownDomains)
 	testutil.AssertEqualsInt(t, "forward auth timeout", 30, c.System.ForwardAuthTimeoutSecs)
+	testutil.AssertEqualsInt(t, "git operation timeout", 600, c.System.GitOperationTimeoutSecs)
 
 	// Global Settings
 	testutil.AssertEqualsString(t, "server uri", "$OPENRUN_HOME/run/openrun.sock", c.ServerUri)

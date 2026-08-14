@@ -26,7 +26,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 20
+const CURRENT_DB_VERSION = 21
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -39,6 +39,7 @@ type Metadata struct {
 	config             *types.ServerConfig
 	db                 *sql.DB
 	dbType             system.DBType
+	sqliteDBPath       string
 	pgListener         *pgxlisten.Listener
 	pgListenerCancel   context.CancelFunc
 	AppNotifyFunc      func(types.AppUpdatePayload)
@@ -61,12 +62,21 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 	if err != nil {
 		return nil, fmt.Errorf("error initializing db: %w", err)
 	}
+	sqliteDBPath := ""
+	if dbType == system.DB_TYPE_SQLITE {
+		sqliteDBPath, err = system.SQLiteFilePath(config.Metadata.DBConnection, "metadata")
+		if err != nil {
+			db.Close() //nolint:errcheck
+			return nil, fmt.Errorf("error resolving metadata sqlite path: %w", err)
+		}
+	}
 
 	m := &Metadata{
-		Logger: logger,
-		config: config,
-		db:     db,
-		dbType: dbType,
+		Logger:       logger,
+		config:       config,
+		db:           db,
+		dbType:       dbType,
+		sqliteDBPath: sqliteDBPath,
 	}
 
 	hostname, err := os.Hostname()
@@ -168,6 +178,44 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 	}
 
 	return m, nil
+}
+
+// Health returns a point-in-time view of metadata connectivity and the
+// database/sql pool. SQLite additionally exposes file sizes and the latest
+// background checkpoint/vacuum measurements.
+func (m *Metadata) Health(ctx context.Context) types.MetadataHealthResponse {
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	started := time.Now()
+	pingErr := m.db.PingContext(pingCtx)
+	stats := m.db.Stats()
+	response := types.MetadataHealthResponse{
+		Status:            "ok",
+		DatabaseType:      string(m.dbType),
+		PingLatencyMillis: time.Since(started).Milliseconds(),
+		Pool: types.DatabasePoolMetrics{
+			MaxOpenConnections: stats.MaxOpenConnections,
+			OpenConnections:    stats.OpenConnections,
+			InUse:              stats.InUse,
+			Idle:               stats.Idle,
+			WaitCount:          stats.WaitCount,
+			WaitDurationMillis: stats.WaitDuration.Milliseconds(),
+			MaxIdleClosed:      stats.MaxIdleClosed,
+			MaxIdleTimeClosed:  stats.MaxIdleTimeClosed,
+			MaxLifetimeClosed:  stats.MaxLifetimeClosed,
+		},
+	}
+	if pingErr != nil {
+		response.Status = "unhealthy"
+		response.PingError = pingErr.Error()
+	}
+
+	if m.dbType == system.DB_TYPE_SQLITE {
+		if status, ok := system.GetSQLiteMaintenanceStatus(m.sqliteDBPath); ok {
+			response.SQLite = &status
+		}
+	}
+	return response
 }
 
 // IsLeader returns true if the current server is the leader
@@ -526,6 +574,35 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=20, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 21 {
+		m.Info().Msg("Upgrading to version 21")
+		// Most keystore rows are sessions and short-lived authentication state.
+		// Keep the index partial so permanent KV entries do not consume index
+		// space while the periodic expiry DELETE remains a range scan.
+		if _, err := tx.ExecContext(ctx, `create index idx_keystore_delete_at on keystore(delete_at) where delete_at is not null`); err != nil {
+			return err
+		}
+		// Authentication resolves all apps for a domain. The existing unique
+		// index is ordered (path, domain), so it cannot seek by domain alone.
+		if _, err := tx.ExecContext(ctx, `create index idx_apps_domain_path on apps(domain, path)`); err != nil {
+			return err
+		}
+		// Linked-app lookups filter by main_app, while the main app listing also
+		// orders those rows by creation time.
+		if _, err := tx.ExecContext(ctx, `create index idx_apps_main_app_create_time on apps(main_app, create_time desc)`); err != nil {
+			return err
+		}
+		// Orphan file cleanup needs the set of referenced hashes. Without this
+		// index SQLite scans app_files and builds a temporary DISTINCT B-tree.
+		if _, err := tx.ExecContext(ctx, `create index idx_app_files_sha on app_files(sha)`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=21, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}

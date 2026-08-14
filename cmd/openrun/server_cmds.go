@@ -65,6 +65,15 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 					},
 				},
 				{
+					Name:    "metadata-status",
+					Aliases: []string{"metadata_status"},
+					Usage:   "Report metadata database connection and maintenance metrics",
+					Flags:   flags,
+					Action: func(cCtx *cli.Context) error {
+						return metadataStatus(cCtx, clientConfig)
+					},
+				},
+				{
 					Name:  "restart",
 					Usage: "Restart the openrun server in-place with zero downtime, reloading the config and picking up a new binary",
 					Flags: flags,
@@ -305,6 +314,34 @@ func serverVersion(_ *cli.Context, clientConfig *types.ClientConfig) error {
 		return err
 	}
 	fmt.Printf("%s (commit %s)\n", response.Version, response.Commit)
+	return nil
+}
+
+func metadataStatus(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
+	client := newHttpClient(clientConfig)
+
+	var response types.MetadataHealthResponse
+	if err := client.Get("/_openrun/metadata_health", nil, &response); err != nil {
+		return err
+	}
+	return printMetadataStatus(cCtx, response)
+}
+
+func printMetadataStatus(cCtx *cli.Context, response types.MetadataHealthResponse) error {
+	output, err := json.MarshalIndent(response, "", "  ")
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(cCtx.App.Writer, string(output)); err != nil {
+		return err
+	}
+	if response.Status != "ok" {
+		message := "metadata database is unhealthy"
+		if response.PingError != "" {
+			message += ": " + response.PingError
+		}
+		return cli.Exit(message, 1)
+	}
 	return nil
 }
 

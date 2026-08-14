@@ -773,6 +773,17 @@ func (h *Handler) serverVersion(r *http.Request) (any, error) {
 	return types.ServerVersionResponse{Version: types.GetVersion(), Commit: types.GetCommit()}, nil
 }
 
+// metadataHealth reports operational connection and SQLite maintenance
+// metrics. The database path and pool details are administrative metadata, so
+// this requires full config read permission rather than the public status
+// check or basic version permission.
+func (h *Handler) metadataHealth(r *http.Request) (any, error) {
+	if err := h.server.enforceGlobalPerm(r.Context(), types.PermissionConfigRead, ""); err != nil {
+		return nil, err
+	}
+	return h.server.db.Health(r.Context()), nil
+}
+
 // restartServer performs a zero downtime in-place restart: a new server
 // process takes over the listeners and this process drains. Blocks until the
 // new process is ready or the restart has failed (in which case this process
@@ -1837,6 +1848,11 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// Server version
 	r.Get("/server_version", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "server_version", h.serverVersion, false)
+	}))
+
+	// Metadata database connection and maintenance health
+	r.Get("/metadata_health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "metadata_health", h.metadataHealth, false)
 	}))
 
 	// Get apps

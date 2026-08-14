@@ -47,9 +47,7 @@ func InitFileStore(connectString string) error {
 		return err
 	}
 
-	if _, err := db.Exec(`create table IF NOT EXISTS user_files (id text, appid text, file_path text, file_name text, ` +
-		`mime_type text, create_time ` + system.MapDataType(dbType, "datetime") + `, expire_at ` + system.MapDataType(dbType,
-		"datetime") + `, created_by text, single_access bool, visibility text, metadata json, PRIMARY KEY(id))`); err != nil {
+	if err := initFileStoreSchema(db, dbType); err != nil {
 		db.Close() //nolint:errcheck
 		return err
 	}
@@ -60,6 +58,22 @@ func InitFileStore(connectString string) error {
 	// cleanup queries once the request that initialized the store completes
 	cleanupTicker := time.NewTicker(5 * time.Minute)
 	go backgroundCleanup(context.Background(), cleanupTicker)
+
+	return nil
+}
+
+func initFileStoreSchema(db *sql.DB, dbType system.DBType) error {
+	if _, err := db.Exec(`create table IF NOT EXISTS user_files (id text, appid text, file_path text, file_name text, ` +
+		`mime_type text, create_time ` + system.MapDataType(dbType, "datetime") + `, expire_at ` + system.MapDataType(dbType,
+		"datetime") + `, created_by text, single_access bool, visibility text, metadata json, PRIMARY KEY(id))`); err != nil {
+		return err
+	}
+
+	// File cleanup first lists and then deletes expired rows every five minutes.
+	// IF NOT EXISTS upgrades file-store databases created by older releases.
+	if _, err := db.Exec(`create index IF NOT EXISTS idx_user_files_expire_at on user_files(expire_at)`); err != nil {
+		return err
+	}
 
 	return nil
 }

@@ -1152,13 +1152,15 @@ func (s *Server) builderPublishGit(ctx context.Context, session *types.BuilderSe
 		repoUrl = "https://" + repoUrl
 	}
 	branch := gitCfg.Branch
-	repo, err := git.PlainCloneContext(ctx, cloneDir, false, &git.CloneOptions{
+	cloneCtx, cloneCancel := repoCache.gitOperationContext(ctx)
+	repo, err := git.PlainCloneContext(cloneCtx, cloneDir, false, &git.CloneOptions{
 		URL:           repoUrl,
 		Auth:          auth,
 		ReferenceName: gitBranchRef(branch),
 		SingleBranch:  true,
 		Depth:         1,
 	})
+	cloneCancel()
 	if err != nil {
 		if errors.Is(err, transport.ErrEmptyRemoteRepository) && session != nil {
 			// First publish into a brand-new (empty) repo: initialize it
@@ -1229,7 +1231,10 @@ func (s *Server) builderPublishGit(ctx context.Context, session *types.BuilderSe
 		return "", err
 	}
 
-	if err := repo.PushContext(ctx, &git.PushOptions{Auth: auth}); err != nil {
+	pushCtx, pushCancel := repoCache.gitOperationContext(ctx)
+	err = repo.PushContext(pushCtx, &git.PushOptions{Auth: auth})
+	pushCancel()
+	if err != nil {
 		if !isRetry {
 			// the remote may have moved (concurrent publish); retry once from a fresh clone
 			s.Warn().Err(err).Msg("Builder publish push rejected, retrying once")
@@ -1640,7 +1645,9 @@ func (s *Server) builderVerify(ctx context.Context, testPrompt bool) []BuilderCh
 			if !strings.Contains(repoUrl, "://") && !strings.HasPrefix(repoUrl, "git@") {
 				repoUrl = "https://" + repoUrl
 			}
-			_, err = latestCommitSHA(repoUrl, gitCfg.Branch, auth)
+			opCtx, cancel := repoCache.gitOperationContext(ctx)
+			defer cancel()
+			_, err = latestCommitSHA(opCtx, repoUrl, gitCfg.Branch, auth)
 			return err
 		}()
 		appendCheck("publish (git "+name+")", checkErr,

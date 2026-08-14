@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestValidGitCommit(t *testing.T) {
@@ -32,6 +34,68 @@ func TestValidGitCommit(t *testing.T) {
 				t.Fatalf("validGitCommit(%q) = %t, want %t", tc.commit, got, tc.valid)
 			}
 		})
+	}
+}
+
+func TestGitOperationContextTimeout(t *testing.T) {
+	tests := []struct {
+		name         string
+		configured   int
+		want         time.Duration
+		wantDeadline bool
+	}{
+		{name: "disabled", configured: 0, wantDeadline: false},
+		{name: "configured", configured: 2, want: 2 * time.Second, wantDeadline: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := &Server{staticConfig: &types.ServerConfig{System: types.SystemConfig{
+				GitOperationTimeoutSecs: tc.configured,
+			}}}
+			cache := &RepoCache{server: server}
+			ctx, cancel := cache.gitOperationContext(context.Background())
+			defer cancel()
+			deadline, ok := ctx.Deadline()
+			if ok != tc.wantDeadline {
+				t.Fatalf("deadline present = %t, want %t", ok, tc.wantDeadline)
+			}
+			if !ok {
+				return
+			}
+			remaining := time.Until(deadline)
+			if remaining > tc.want || remaining < tc.want-time.Second {
+				t.Fatalf("timeout = %s, want approximately %s", remaining, tc.want)
+			}
+		})
+	}
+}
+
+func TestSharedGitCloneDetachesFromLeaderRequest(t *testing.T) {
+	server := &Server{stopRequested: make(chan struct{})}
+	cache := &RepoCache{server: server}
+	parent, cancelParent := context.WithCancel(context.Background())
+
+	sharedParent, cancelShared := cache.gitCloneOperationParent(parent, true)
+	defer cancelShared()
+	cancelParent()
+	select {
+	case <-sharedParent.Done():
+		t.Fatal("shared clone inherited leader request cancellation")
+	default:
+	}
+	requestParent, cancelRequest := cache.gitCloneOperationParent(parent, false)
+	defer cancelRequest()
+	select {
+	case <-requestParent.Done():
+	default:
+		t.Fatal("non-shared clone did not inherit request cancellation")
+	}
+
+	server.RequestStop()
+	select {
+	case <-sharedParent.Done():
+	case <-time.After(time.Second):
+		t.Fatal("shared clone did not inherit server shutdown cancellation")
 	}
 }
 

@@ -189,13 +189,13 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	}, nil
 }
 
-func (s *Server) setupSource(applyPath, branch, commit, gitAuth string, repoCache *RepoCache, isDev bool) (string, string, error) {
+func (s *Server) setupSource(ctx context.Context, applyPath, branch, commit, gitAuth string, repoCache *RepoCache, isDev bool) (string, string, error) {
 	if !system.IsGit(applyPath) {
 		return filepath.Dir(applyPath), filepath.Base(applyPath), nil
 	}
 
 	branch = cmp.Or(branch, "main")
-	repo, applyFile, _, _, err := repoCache.CheckoutRepo(applyPath, branch, commit, gitAuth, isDev)
+	repo, applyFile, _, _, err := repoCache.CheckoutRepo(ctx, applyPath, branch, commit, gitAuth, isDev)
 	if err != nil {
 		return "", "", err
 	}
@@ -215,11 +215,11 @@ func (s *Server) setupSource(applyPath, branch, commit, gitAuth string, repoCach
 // Callers that later run Apply under a database transaction call this first,
 // before opening the transaction, so the git network operations never run
 // while a transaction is held; Apply's own calls then hit the cache.
-func (s *Server) checkoutApplySource(applyPath, branch, commit, gitAuth, lastRunCommitId string,
+func (s *Server) checkoutApplySource(ctx context.Context, applyPath, branch, commit, gitAuth, lastRunCommitId string,
 	forceReload bool, reload types.AppReloadOption, repoCache *RepoCache, isDev bool) (newSha, dir, file string, skipped bool, err error) {
 	if system.IsGit(applyPath) {
 		branch = cmp.Or(branch, "main")
-		newSha, err = repoCache.GetSha(applyPath, branch, gitAuth)
+		newSha, err = repoCache.GetSha(ctx, applyPath, branch, gitAuth)
 		if err != nil {
 			return "", "", "", false, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
 		}
@@ -232,7 +232,7 @@ func (s *Server) checkoutApplySource(applyPath, branch, commit, gitAuth, lastRun
 		}
 	}
 
-	dir, file, err = s.setupSource(applyPath, branch, commit, gitAuth, repoCache, isDev)
+	dir, file, err = s.setupSource(ctx, applyPath, branch, commit, gitAuth, repoCache, isDev)
 	if err != nil {
 		return "", "", "", false, err
 	}
@@ -268,7 +268,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	} else {
 		branch = ""
 	}
-	newSha, dir, file, skipped, err := s.checkoutApplySource(applyPath, branch, commit, gitAuth,
+	newSha, dir, file, skipped, err := s.checkoutApplySource(ctx, applyPath, branch, commit, gitAuth,
 		lastRunCommitId, forceReload, reload, repoCache, isDev)
 	if err != nil {
 		return nil, nil, err
@@ -386,7 +386,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		verifyRequested = verifyRequested || applyConfig[appPathDomain].Verify
 		filteredApps = append(filteredApps, appPathDomain)
 	}
-	s.prefetchApplyAppSources(applyConfig, filteredApps, repoCache, isDev)
+	s.prefetchApplyAppSources(ctx, applyConfig, filteredApps, repoCache, isDev)
 
 	updateResults := make([]types.AppPathDomain, 0, len(filteredApps))
 	approveResults := make([]types.ApproveResult, 0, len(filteredApps))

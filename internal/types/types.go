@@ -760,6 +760,7 @@ type SystemConfig struct {
 	BuilderAuthToken                    string   `toml:"builder_auth_token"`                      // the token for the builder auth
 	GitCheckoutCacheEntries             int      `toml:"git_checkout_cache_entries"`              // number of immutable git checkouts reused across operations; 0 disables the cache
 	GitRemoteCheckIntervalSecs          int      `toml:"git_remote_check_interval_secs"`          // reuse a checked branch head for this many seconds; 0 checks every operation
+	GitOperationTimeoutSecs             int      `toml:"git_operation_timeout_secs"`              // timeout for each remote git operation; <=0 disables the timeout
 	// StageAt is the default staging mode for new prod apps. "domain" stages at domain level,
 	// "path" stages at path level, and any other value is treated as the staging domain.
 	// Defaults to "domain".

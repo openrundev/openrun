@@ -19,7 +19,7 @@ const gitPrefetchWorkers = 8
 // before the apply loop reaches them. This is enabled with the shared checkout
 // cache: each worker publishes its immutable checkout there, and the later
 // CreateAppTx/applyAppUpdate calls become local cache hits.
-func (s *Server) prefetchApplyAppSources(applyConfig map[types.AppPathDomain]*types.CreateAppRequest,
+func (s *Server) prefetchApplyAppSources(ctx context.Context, applyConfig map[types.AppPathDomain]*types.CreateAppRequest,
 	appPaths []types.AppPathDomain, repoCache *RepoCache, forceDev bool) {
 	if repoCache.shared == nil {
 		return
@@ -41,7 +41,7 @@ func (s *Server) prefetchApplyAppSources(applyConfig map[types.AppPathDomain]*ty
 			workers <- struct{}{}
 			defer func() { <-workers }()
 			branch := cmp.Or(request.GitBranch, "main")
-			if _, _, _, _, err := repoCache.CheckoutRepo(sourceURL, branch, request.GitCommit,
+			if _, _, _, _, err := repoCache.CheckoutRepo(ctx, sourceURL, branch, request.GitCommit,
 				request.GitAuthName, false); err != nil {
 				s.Debug().Err(err).Msgf("git prefetch: error checking out apply source %s", sourceURL)
 			}
@@ -81,14 +81,14 @@ func (s *Server) prefetchAppSources(ctx context.Context, appPaths []types.AppPat
 				continue
 			}
 		}
-		s.prefetchAppSource(appEntry, branch, commit, gitAuth, repoCache, forceReload)
+		s.prefetchAppSource(ctx, appEntry, branch, commit, gitAuth, repoCache, forceReload)
 	}
 }
 
 // prefetchAppSource warms the repo cache for one app entry, mirroring the
 // branch/auth resolution and the up-to-date skip checks of loadAppCode so the
 // cache keys match and no checkout happens when the reload would skip anyway.
-func (s *Server) prefetchAppSource(appEntry *types.AppEntry, branch, commit, gitAuth string,
+func (s *Server) prefetchAppSource(ctx context.Context, appEntry *types.AppEntry, branch, commit, gitAuth string,
 	repoCache *RepoCache, forceReload bool) {
 	if !system.IsGit(appEntry.SourceUrl) {
 		return
@@ -99,7 +99,7 @@ func (s *Server) prefetchAppSource(appEntry *types.AppEntry, branch, commit, git
 	}
 	branch = cmp.Or(branch, appEntry.Metadata.VersionMetadata.GitBranch, "main")
 	gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
-	newSha, err := repoCache.GetSha(appEntry.SourceUrl, branch, gitAuth)
+	newSha, err := repoCache.GetSha(ctx, appEntry.SourceUrl, branch, gitAuth)
 	if err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error getting sha for %s", appEntry.SourceUrl)
 		return
@@ -107,7 +107,7 @@ func (s *Server) prefetchAppSource(appEntry *types.AppEntry, branch, commit, git
 	if !forceReload && currentSha != "" && newSha == currentSha && (commit == "" || commit == currentSha) {
 		return // already at the latest commit, the reload will skip without a checkout
 	}
-	if _, _, _, _, err := repoCache.CheckoutRepo(appEntry.SourceUrl, branch, commit, gitAuth, appEntry.IsDev); err != nil {
+	if _, _, _, _, err := repoCache.CheckoutRepo(ctx, appEntry.SourceUrl, branch, commit, gitAuth, appEntry.IsDev); err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error checking out %s", appEntry.SourceUrl)
 	}
 }

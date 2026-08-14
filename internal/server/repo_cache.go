@@ -5,6 +5,7 @@ package server
 
 import (
 	"cmp"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -344,7 +345,7 @@ func (s *Server) closeSharedRepoCache() {
 	}
 }
 
-func (r *RepoCache) GetSha(sourceUrl, branch, gitAuth string) (string, error) {
+func (r *RepoCache) GetSha(ctx context.Context, sourceUrl, branch, gitAuth string) (string, error) {
 	gitAuth = cmp.Or(gitAuth, r.server.Config().Security.DefaultGitAuth)
 	authEntry, err := r.server.loadGitKey(gitAuth)
 	if err != nil {
@@ -380,7 +381,9 @@ func (r *RepoCache) GetSha(sourceUrl, branch, gitAuth string) (string, error) {
 		}
 	}
 
-	sha, err := latestCommitSHA(repo, branch, auth)
+	opCtx, cancel := r.gitOperationContext(ctx)
+	defer cancel()
+	sha, err := latestCommitSHA(opCtx, repo, branch, auth)
 	if err != nil {
 		return "", err
 	}
@@ -409,14 +412,14 @@ func (r *RepoCache) createAuthMethod(gitAuth string) (transport.AuthMethod, erro
 	}
 }
 
-func latestCommitSHA(repoURL, branch string, auth transport.AuthMethod) (string, error) {
+func latestCommitSHA(ctx context.Context, repoURL, branch string, auth transport.AuthMethod) (string, error) {
 	remoteCfg := &config.RemoteConfig{
 		Name: "origin",
 		URLs: []string{repoURL},
 	}
 	remote := git.NewRemote(memory.NewStorage(), remoteCfg)
 
-	refs, err := remote.List(&git.ListOptions{
+	refs, err := remote.ListContext(ctx, &git.ListOptions{
 		Auth: auth,
 	})
 	if err != nil {
@@ -433,7 +436,7 @@ func latestCommitSHA(repoURL, branch string, auth transport.AuthMethod) (string,
 	return "", fmt.Errorf("branch %q not found", branch)
 }
 
-func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDev bool) (_ string, _ string, _ string, _ string, retErr error) {
+func (r *RepoCache) CheckoutRepo(ctx context.Context, sourceUrl, branch, commit, gitAuth string, isDev bool) (_ string, _ string, _ string, _ string, retErr error) {
 	gitAuth = cmp.Or(gitAuth, r.server.Config().Security.DefaultGitAuth)
 	authEntry, err := r.server.loadGitKey(gitAuth)
 	if err != nil {
@@ -466,7 +469,7 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 	if r.shared != nil && !isDev {
 		hash := commit
 		if commit == "" {
-			hash, err = r.GetSha(sourceUrl, branch, gitAuth)
+			hash, err = r.GetSha(ctx, sourceUrl, branch, gitAuth)
 			if err != nil {
 				return "", "", "", "", fmt.Errorf("find remote ref %q: %w",
 					plumbing.NewBranchReferenceName(branch), err)
@@ -489,7 +492,11 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 				sharedLeader = true
 				break
 			}
-			<-flight.done
+			select {
+			case <-flight.done:
+			case <-ctx.Done():
+				return "", "", "", "", ctx.Err()
+			}
 			if flight.err != nil {
 				return "", "", "", "", flight.err
 			}
@@ -556,7 +563,11 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 			Str("branch", branch).Str("commit", commit).Str("git_auth", gitAuth).Bool("is_dev", isDev).
 			Bool("single_branch", options.SingleBranch).Int("depth", options.Depth).
 			Str("target_path", targetPath).Msg("Starting git clone for app source")
-		gitRepo, cloneErr := git.PlainClone(targetPath, false, &options)
+		operationParent, cancelOperationParent := r.gitCloneOperationParent(ctx, sharedLeader)
+		defer cancelOperationParent()
+		opCtx, cancel := r.gitOperationContext(operationParent)
+		defer cancel()
+		gitRepo, cloneErr := git.PlainCloneContext(opCtx, targetPath, false, &options)
 		if cloneErr != nil {
 			return nil, fmt.Errorf("error checking out branch %s: %w", branch, cloneErr)
 		}
@@ -654,6 +665,35 @@ func (r *RepoCache) CheckoutRepo(sourceUrl, branch, commit, gitAuth string, isDe
 	}
 
 	return targetPath, folder, newCommit.Message, newCommit.Hash.String(), nil
+}
+
+func (r *RepoCache) gitCloneOperationParent(parent context.Context, sharedLeader bool) (context.Context, context.CancelFunc) {
+	if !sharedLeader {
+		return parent, func() {}
+	}
+	// A shared checkout flight belongs to the cache, not to whichever request
+	// happened to become its leader. Followers may still abandon their wait
+	// through their request context without canceling work for everyone. It is
+	// still owned by the server lifecycle: even with the operation deadline
+	// explicitly disabled, shutdown must cancel a hung remote operation rather
+	// than leave the shared flight wedged forever.
+	flightCtx, cancel := context.WithCancel(context.WithoutCancel(parent))
+	go func() {
+		select {
+		case <-r.server.StopNotify():
+			cancel()
+		case <-flightCtx.Done():
+		}
+	}()
+	return flightCtx, cancel
+}
+
+func (r *RepoCache) gitOperationContext(parent context.Context) (context.Context, context.CancelFunc) {
+	configured := r.server.Config().System.GitOperationTimeoutSecs
+	if configured <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, time.Duration(configured)*time.Second)
 }
 
 func validGitCommit(commit string) bool {

@@ -51,7 +51,7 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 		return nil, err
 	}
 	defer repoCache.Cleanup()
-	if _, _, _, _, err := s.checkoutApplySource(path, sync.GitBranch, "", sync.GitAuth, "",
+	if _, _, _, _, err := s.checkoutApplySource(ctx, path, sync.GitBranch, "", sync.GitAuth, "",
 		sync.ForceReload, types.AppReloadOption(sync.Reload), repoCache, false); err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error warming apply source for sync create %s", path)
 	}
@@ -151,7 +151,7 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.
 		return nil, err
 	}
 	defer repoCache.Cleanup()
-	if _, _, _, _, err := s.checkoutApplySource(syncEntry.Path, syncEntry.Metadata.GitBranch, "", syncEntry.Metadata.GitAuth, "",
+	if _, _, _, _, err := s.checkoutApplySource(ctx, syncEntry.Path, syncEntry.Metadata.GitBranch, "", syncEntry.Metadata.GitAuth, "",
 		syncEntry.Metadata.ForceReload, types.AppReloadOption(syncEntry.Metadata.Reload), repoCache, false); err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error warming apply source for sync run %s", id)
 	}
@@ -414,7 +414,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		// (and a possible reload=matched pass) run no network git operations
 		// while holding a database transaction. Best-effort: errors are left
 		// for the apply itself to report through the failure count/backoff
-		if _, _, _, _, err := s.checkoutApplySource(entry.Path, entry.Metadata.GitBranch, "", entry.Metadata.GitAuth,
+		if _, _, _, _, err := s.checkoutApplySource(ctx, entry.Path, entry.Metadata.GitBranch, "", entry.Metadata.GitAuth,
 			lastRunCommitId, entry.Metadata.ForceReload, types.AppReloadOption(entry.Metadata.Reload), repoCache, false); err != nil {
 			s.Debug().Err(err).Msgf("git prefetch: error warming apply source for sync %s", entry.Id)
 		}

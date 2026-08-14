@@ -103,7 +103,7 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 	// left for CreateAppTx to report
 	if sourceUrl := strings.Split(appRequest.SourceUrl, "#")[0]; system.IsGit(sourceUrl) {
 		branch := cmp.Or(appRequest.GitBranch, "main")
-		if _, _, _, _, err := repoCache.CheckoutRepo(sourceUrl, branch, appRequest.GitCommit,
+		if _, _, _, _, err := repoCache.CheckoutRepo(ctx, sourceUrl, branch, appRequest.GitCommit,
 			appRequest.GitAuthName, appRequest.IsDev); err != nil {
 			s.Debug().Err(err).Msgf("git prefetch: error checking out %s", sourceUrl)
 		}
@@ -1499,7 +1499,7 @@ func (s *Server) loadSourceFromGit(ctx context.Context, tx types.Transaction, ap
 	gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
 	branch = cmp.Or(branch, appEntry.Metadata.VersionMetadata.GitBranch, "main")
 
-	repo, folder, message, hash, err := repoCache.CheckoutRepo(appEntry.SourceUrl, branch, commit, gitAuth, appEntry.IsDev)
+	repo, folder, message, hash, err := repoCache.CheckoutRepo(ctx, appEntry.SourceUrl, branch, commit, gitAuth, appEntry.IsDev)
 	if err != nil {
 		return err
 	}
@@ -1729,7 +1729,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 			Path: prefetchEntry.Path + types.PREVIEW_SUFFIX + "_" + commitId}
 		if _, err := s.db.GetAppEntry(ctx, previewPath); err != nil {
 			if err := s.enforceAppPermEntry(ctx, types.PermissionPreview, prefetchEntry); err == nil {
-				s.prefetchAppSource(prefetchEntry, "", commitId, prefetchEntry.Metadata.GitAuthName, repoCache, true)
+				s.prefetchAppSource(ctx, prefetchEntry, "", commitId, prefetchEntry.Metadata.GitAuthName, repoCache, true)
 			}
 		}
 	}

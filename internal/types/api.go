@@ -329,6 +329,57 @@ type ServerVersionResponse struct {
 	Commit  string `json:"commit"`
 }
 
+// DatabasePoolMetrics is the database/sql connection pool snapshot returned
+// by the metadata health API. Durations are milliseconds.
+type DatabasePoolMetrics struct {
+	MaxOpenConnections int   `json:"max_open_connections"`
+	OpenConnections    int   `json:"open_connections"`
+	InUse              int   `json:"in_use"`
+	Idle               int   `json:"idle"`
+	WaitCount          int64 `json:"wait_count"`
+	WaitDurationMillis int64 `json:"wait_duration_ms"`
+	MaxIdleClosed      int64 `json:"max_idle_closed"`
+	MaxIdleTimeClosed  int64 `json:"max_idle_time_closed"`
+	MaxLifetimeClosed  int64 `json:"max_lifetime_closed"`
+}
+
+// SQLiteMetadataMetrics contains sqlite file and maintenance measurements.
+type SQLiteMetadataMetrics struct {
+	DatabasePath           string `json:"database_path"`
+	DatabaseBytes          int64  `json:"database_bytes"`
+	WALBytes               int64  `json:"wal_bytes"`
+	SHMBytes               int64  `json:"shm_bytes"`
+	MaintenanceEnabled     bool   `json:"maintenance_enabled"`
+	LitestreamManaged      bool   `json:"litestream_managed"`
+	CheckpointRuns         uint64 `json:"checkpoint_runs"`
+	CheckpointErrors       uint64 `json:"checkpoint_errors"`
+	TruncateRuns           uint64 `json:"truncate_runs"`
+	TruncateBlocked        uint64 `json:"truncate_blocked"`
+	VacuumRuns             uint64 `json:"vacuum_runs"`
+	VacuumSkippedRuns      uint64 `json:"vacuum_skipped_runs"`
+	LastCheckpointAt       string `json:"last_checkpoint_at,omitempty"`
+	LastCheckpointMode     string `json:"last_checkpoint_mode,omitempty"`
+	LastCheckpointBusy     int    `json:"last_checkpoint_busy"`
+	LastWALFrames          int    `json:"last_wal_frames"`
+	LastCheckpointedFrames int    `json:"last_checkpointed_frames"`
+	LastCheckpointBacklog  int    `json:"last_checkpoint_backlog_frames"`
+	LastCheckpointError    string `json:"last_checkpoint_error,omitempty"`
+	LastVacuumAt           string `json:"last_vacuum_at,omitempty"`
+	LastVacuumError        string `json:"last_vacuum_error,omitempty"`
+}
+
+// MetadataHealthResponse reports metadata connectivity and pool metrics. The
+// SQLite section is present only for sqlite; postgres uses the common pool and
+// ping measurements.
+type MetadataHealthResponse struct {
+	Status            string                 `json:"status"`
+	DatabaseType      string                 `json:"database_type"`
+	PingLatencyMillis int64                  `json:"ping_latency_ms"`
+	PingError         string                 `json:"ping_error,omitempty"`
+	Pool              DatabasePoolMetrics    `json:"pool"`
+	SQLite            *SQLiteMetadataMetrics `json:"sqlite,omitempty"`
+}
+
 // CreateSecretRequest is the request body for storing a secret in a writable
 // secret provider. Either Name (explicit name) or Prefix (a unique name is
 // generated with the prefix) must be set. Encoding "base64" is used to pass

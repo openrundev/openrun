@@ -6,6 +6,7 @@ package system
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"os"
@@ -45,8 +46,22 @@ const (
 	sqliteTruncateEvery = 10
 
 	// sqliteVacuumPages is the max free-list pages returned to the OS per
-	// maintenance pass, bounding the write work done in one step
+	// maintenance pass. Vacuum only runs after the WAL is fully checkpointed.
 	sqliteVacuumPages = 2000
+
+	// Maintenance uses its own connection with a short busy timeout. A
+	// checkpoint is best-effort housekeeping and must not stall application
+	// writers for the normal 10 second sqlite busy timeout.
+	sqliteMaintenanceBusyTimeoutMillis = 100
+	sqliteCheckpointCatchUpAttempts    = 3
+	sqliteCheckpointCatchUpDelay       = 25 * time.Millisecond
+	// Do not defer incremental vacuum forever behind a continuously moving WAL
+	// tail. Nine dirty passes are deferred; the tenth still runs the configured,
+	// bounded vacuum batch.
+	sqliteVacuumMaxDeferredPasses = 9
+
+	sqliteConnMaxIdleTime   = 30 * time.Minute
+	postgresConnMaxIdleTime = 30 * time.Minute
 )
 
 // sqliteMaintenanceSettings are the resolved self-maintenance values for one
@@ -206,16 +221,20 @@ func InitDBConnection(logger *types.Logger, connectString string, invoker string
 		// sqlite connections are file opens plus pragma execs, and connection churn
 		// under concurrent reads costs more than the idle handles
 		db.SetMaxIdleConns(10)
-		initSQLiteSelfMaintenance(logger, db, invoker, dbFilePath, maint)
+		db.SetConnMaxIdleTime(sqliteConnMaxIdleTime)
+		initSQLiteSelfMaintenance(logger, db, invoker, dbFilePath, maint, driver, connectString)
 	} else if dbType == DB_TYPE_POSTGRES {
 		// Configure connection pool settings for Postgres. The server opens
 		// multiple pools (metadata, audit, file store, per-app stores), so the
 		// per-pool cap is kept well below the postgres default max_connections
 		// of 100 to avoid exhausting the server connection limit
-		db.SetMaxOpenConns(50)                  // Maximum number of open connections
-		db.SetMaxIdleConns(10)                  // Maximum number of idle connections
-		db.SetConnMaxIdleTime(5 * time.Minute)  // Maximum time a connection can be idle
-		db.SetConnMaxLifetime(15 * time.Minute) // Maximum lifetime of a connection
+		db.SetMaxOpenConns(50) // Maximum number of open connections
+		db.SetMaxIdleConns(10) // Maximum number of idle connections
+		// Keep the explicitly configured 30-minute idle window separate from the
+		// SQLite setting so future tuning of one pool type cannot silently affect
+		// the other.
+		db.SetConnMaxIdleTime(postgresConnMaxIdleTime) // Maximum time a connection can be idle
+		db.SetConnMaxLifetime(15 * time.Minute)        // Maximum lifetime of a connection
 
 		// Test the connection
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -228,33 +247,168 @@ func InitDBConnection(logger *types.Logger, connectString string, invoker string
 	return db, dbType, nil
 }
 
-// sqliteMaintFiles tracks the database files that already have a maintenance
-// owner in this process. Multiple pools can open the same file (every app's
-// store.in plugin shares one app store database, and those pools are never
-// closed on app reload), so maintenance is deduplicated per file: the first
-// open runs the startup recovery/migration and owns the background loop,
-// later opens skip both.
+// sqliteMaintFiles tracks the database files already maintained by this
+// process. Multiple application pools can open the same file, especially as
+// apps reload, so the maintenance loop never retains one of those pools. The
+// first open creates one dedicated, process-lifetime maintenance pool per file;
+// later opens do not add owners or standby references.
 var (
 	sqliteMaintMu    sync.Mutex
-	sqliteMaintFiles = map[string]bool{}
+	sqliteMaintFiles = map[string]*sqliteMaintenanceState{}
 )
+
+type sqliteMaintenanceState struct {
+	mu                   sync.RWMutex
+	status               types.SQLiteMetadataMetrics
+	vacuumDeferredPasses int
+	maintenanceDB        *sql.DB            // guarded by sqliteMaintMu
+	maintenanceCancel    context.CancelFunc // guarded by sqliteMaintMu
+}
+
+func sqliteMaintenanceKey(dbFilePath string) string {
+	if dbFilePath == ":memory:" || strings.HasPrefix(dbFilePath, "file:") {
+		return dbFilePath
+	}
+	if abs, err := filepath.Abs(dbFilePath); err == nil {
+		return abs
+	}
+	return dbFilePath
+}
+
+func sqliteDSNWithCanonicalPath(connectString, canonicalPath string) string {
+	pathPart, queryPart, found := strings.Cut(connectString, "?")
+	if pathPart == ":memory:" || strings.HasPrefix(pathPart, "file:") {
+		return connectString
+	}
+	if !found {
+		return canonicalPath
+	}
+	return canonicalPath + "?" + queryPart
+}
+
+// SQLiteFilePath resolves the canonical file identity used by SQLite
+// maintenance. Callers should resolve it while opening the database; relative
+// paths must not be interpreted again after a later process-wide chdir.
+func SQLiteFilePath(connectString, invoker string) (string, error) {
+	dbType, dbPath, err := CheckConnectString(connectString, invoker, DB_SQLITE_POSTGRES)
+	if err != nil {
+		return "", err
+	}
+	if dbType != DB_TYPE_SQLITE {
+		return "", nil
+	}
+	dbPath = strings.SplitN(dbPath, "?", 2)[0]
+	return sqliteMaintenanceKey(dbPath), nil
+}
+
+// GetSQLiteMaintenanceStatus returns the latest maintenance counters plus
+// current sqlite file sizes. false means this process has not opened the file.
+func GetSQLiteMaintenanceStatus(dbFilePath string) (types.SQLiteMetadataMetrics, bool) {
+	key := sqliteMaintenanceKey(dbFilePath)
+	sqliteMaintMu.Lock()
+	state, ok := sqliteMaintFiles[key]
+	sqliteMaintMu.Unlock()
+	if !ok {
+		return types.SQLiteMetadataMetrics{}, false
+	}
+	state.mu.RLock()
+	status := state.status
+	state.mu.RUnlock()
+	status.DatabaseBytes = fileSize(status.DatabasePath)
+	status.WALBytes = fileSize(status.DatabasePath + "-wal")
+	status.SHMBytes = fileSize(status.DatabasePath + "-shm")
+	status.LastCheckpointBacklog = max(0, status.LastWALFrames-status.LastCheckpointedFrames)
+	return status, true
+}
+
+func fileSize(path string) int64 {
+	if path == "" {
+		return 0
+	}
+	if fi, err := os.Stat(path); err == nil {
+		return fi.Size()
+	}
+	return 0
+}
+
+func (s *sqliteMaintenanceState) recordCheckpoint(mode string, busy, walFrames, checkpointed int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err != nil {
+		s.status.CheckpointErrors++
+		s.status.LastCheckpointError = err.Error()
+		// Scan does not populate the three PRAGMA result columns on failure.
+		// Preserve the last successful measurements instead of reporting a
+		// misleading zero backlog while checkpointing is broken.
+		return
+	}
+
+	s.status.CheckpointRuns++
+	s.status.LastCheckpointAt = time.Now().UTC().Format(time.RFC3339Nano)
+	s.status.LastCheckpointMode = mode
+	s.status.LastCheckpointBusy = busy
+	s.status.LastWALFrames = walFrames
+	s.status.LastCheckpointedFrames = checkpointed
+	s.status.LastCheckpointError = ""
+	if mode == "TRUNCATE" {
+		s.status.TruncateRuns++
+		if busy != 0 {
+			s.status.TruncateBlocked++
+		}
+	}
+}
+
+func (s *sqliteMaintenanceState) recordVacuum(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.vacuumDeferredPasses = 0
+	s.status.VacuumRuns++
+	s.status.LastVacuumAt = time.Now().UTC().Format(time.RFC3339Nano)
+	s.status.LastVacuumError = ""
+	if err != nil {
+		s.status.LastVacuumError = err.Error()
+	}
+}
+
+// deferVacuum records a dirty checkpoint pass. It returns false while vacuum
+// should remain deferred and true once the bounded deferral limit is reached.
+func (s *sqliteMaintenanceState) deferVacuum() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.vacuumDeferredPasses >= sqliteVacuumMaxDeferredPasses {
+		s.vacuumDeferredPasses = 0
+		return true
+	}
+	s.vacuumDeferredPasses++
+	s.status.VacuumSkippedRuns++
+	return false
+}
+
+func (s *sqliteMaintenanceState) recordVacuumSkipped() {
+	s.mu.Lock()
+	s.status.VacuumSkippedRuns++
+	s.mu.Unlock()
+}
 
 // initSQLiteSelfMaintenance makes a sqlite database self-maintaining: it
 // recovers any WAL left over from the previous run, migrates the file to
 // incremental auto-vacuum (one time), and starts a background loop that keeps
 // the WAL checkpointed and returns freed pages to the OS. Everything here is
 // best-effort: a failure is logged and normal operation continues.
-func initSQLiteSelfMaintenance(logger *types.Logger, db *sql.DB, invoker, dbFilePath string, maint sqliteMaintenanceSettings) {
-	maintKey := dbFilePath
-	if abs, err := filepath.Abs(dbFilePath); err == nil {
-		maintKey = abs
-	}
+func initSQLiteSelfMaintenance(logger *types.Logger, db *sql.DB, invoker, dbFilePath string, maint sqliteMaintenanceSettings,
+	driverName, connectString string) {
+	maintKey := sqliteMaintenanceKey(dbFilePath)
+	state := &sqliteMaintenanceState{status: types.SQLiteMetadataMetrics{
+		DatabasePath:       maintKey,
+		MaintenanceEnabled: maint.interval > 0,
+		LitestreamManaged:  isLitestreamManaged(dbFilePath),
+	}}
 	sqliteMaintMu.Lock()
-	if sqliteMaintFiles[maintKey] {
+	if _, exists := sqliteMaintFiles[maintKey]; exists {
 		sqliteMaintMu.Unlock()
-		return // another open pool already maintains this database file
+		return // one dedicated pool already maintains this database file
 	}
-	sqliteMaintFiles[maintKey] = true
+	sqliteMaintFiles[maintKey] = state
 	sqliteMaintMu.Unlock()
 
 	ctx := context.Background()
@@ -267,7 +421,9 @@ func initSQLiteSelfMaintenance(logger *types.Logger, db *sql.DB, invoker, dbFile
 	// its own passive/truncate checkpoint strategy)
 	if !isLitestreamManaged(dbFilePath) {
 		var busy, walFrames, checkpointed int
-		if err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
+		err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed)
+		state.recordCheckpoint("TRUNCATE", busy, walFrames, checkpointed, err)
+		if err != nil {
 			logger.Warn().Err(err).Str("db", invoker).Msg("sqlite startup checkpoint failed")
 		} else if busy != 0 {
 			logger.Warn().Str("db", invoker).Msg("sqlite startup checkpoint could not complete, database in use elsewhere")
@@ -301,24 +457,40 @@ func initSQLiteSelfMaintenance(logger *types.Logger, db *sql.DB, invoker, dbFile
 		conn.Close() //nolint:errcheck
 	}
 
-	if maint.interval > 0 {
-		go sqliteMaintenanceLoop(logger, db, invoker, dbFilePath, maintKey, maint)
+	if maint.interval <= 0 {
+		return
 	}
+
+	// Never tie file-wide maintenance to an application pool. App reloads can
+	// create many pools for the same SQLite file, and retaining them as fallback
+	// owners prevents garbage collection and grows without bound. A single
+	// dedicated pool is stable for the process lifetime and needs no handoff.
+	maintenanceDB, err := sql.Open(driverName, sqliteDSNWithCanonicalPath(connectString, maintKey))
+	if err != nil {
+		logger.Warn().Err(err).Str("db", invoker).Msg("sqlite dedicated maintenance pool failed")
+		return
+	}
+	maintenanceDB.SetMaxOpenConns(1)
+	maintenanceDB.SetMaxIdleConns(1)
+	maintenanceCtx, maintenanceCancel := context.WithCancel(context.Background())
+	sqliteMaintMu.Lock()
+	state.maintenanceDB = maintenanceDB
+	state.maintenanceCancel = maintenanceCancel
+	sqliteMaintMu.Unlock()
+	go sqliteMaintenanceLoop(maintenanceCtx, logger, maintenanceDB, invoker, maintKey, maint, state)
 }
 
 // sqliteMaintenanceLoop periodically reclaims freed pages and checkpoints the
 // WAL so neither the database file nor the WAL grows without bound. The loop
-// exits when the database pool is closed, releasing the file's maintenance
-// ownership so a later reopen can take over.
-func sqliteMaintenanceLoop(logger *types.Logger, db *sql.DB, invoker, dbFilePath, maintKey string, maint sqliteMaintenanceSettings) {
-	ctx := context.Background()
+// owns a dedicated pool, so closing or reloading any application pool
+// cannot interrupt file-wide maintenance.
+func sqliteMaintenanceLoop(ctx context.Context, logger *types.Logger, db *sql.DB, invoker, dbFilePath string,
+	maint sqliteMaintenanceSettings, state *sqliteMaintenanceState) {
 	ticker := time.NewTicker(maint.interval)
 	defer ticker.Stop()
-	defer func() {
-		sqliteMaintMu.Lock()
-		delete(sqliteMaintFiles, maintKey)
-		sqliteMaintMu.Unlock()
-	}()
+	if err := db.PingContext(ctx); err != nil {
+		logger.Warn().Err(err).Str("db", invoker).Msg("sqlite dedicated maintenance connection failed")
+	}
 
 	// walWarnBytes is the WAL size above which a warning is logged; based on
 	// the configured size limit, with the default limit as floor so a disabled
@@ -326,59 +498,177 @@ func sqliteMaintenanceLoop(logger *types.Logger, db *sql.DB, invoker, dbFilePath
 	walWarnBytes := max(8*maint.journalSizeLimit, 8*sqliteJournalSizeLimit)
 
 	runCount := 0
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 		runCount++
-		if maint.vacuumPages > 0 {
-			if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA incremental_vacuum(%d)", maint.vacuumPages)); err != nil {
-				if isDBClosedErr(err) {
-					return
-				}
-				logger.Debug().Err(err).Str("db", invoker).Msg("sqlite incremental_vacuum failed")
+		truncatePass := maint.truncateEvery > 0 && runCount%maint.truncateEvery == 0
+		checkpointClean := false
+		if truncatePass && !isLitestreamManaged(dbFilePath) {
+			// TRUNCATE is the infrequent recovery pass that is allowed to wait for
+			// readers under the connection's normal busy_timeout (10 seconds by
+			// default). Attempt it even when a passive pass would report backlog;
+			// waiting for that reader is precisely what TRUNCATE is for.
+			busy, walFrames, checkpointed, err := runSQLiteCheckpoint(ctx, db, "TRUNCATE", state)
+			warnLargeSQLiteWAL(logger, invoker, dbFilePath, walWarnBytes, walFrames, checkpointed)
+			if err != nil {
+				logger.Debug().Err(err).Str("db", invoker).Msg("sqlite truncate checkpoint failed")
+			} else if busy != 0 {
+				logger.Debug().Str("db", invoker).Msg("sqlite truncate checkpoint blocked by a long-lived transaction")
+			} else {
+				checkpointClean = true
 			}
 		}
-
-		if isLitestreamManaged(dbFilePath) {
-			// litestream owns checkpointing for replicated databases; only the
-			// incremental vacuum above runs here
-			continue
-		}
-
-		// A passive checkpoint copies whatever frames it can without blocking
-		// anyone; it keeps the WAL checkpointed even when the commit-time
-		// autocheckpoint keeps losing the race with new readers. The periodic
-		// truncate checkpoint additionally resets the WAL file so
-		// journal_size_limit can bound its size
-		mode := "PASSIVE"
-		truncatePass := maint.truncateEvery > 0 && runCount%maint.truncateEvery == 0
-		if truncatePass {
-			mode = "TRUNCATE"
-		}
-		var busy, walFrames, checkpointed int
-		if err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint("+mode+")").Scan(&busy, &walFrames, &checkpointed); err != nil {
+		conn, err := db.Conn(ctx)
+		if err != nil {
 			if isDBClosedErr(err) {
 				return
 			}
-			logger.Debug().Err(err).Str("db", invoker).Msg("sqlite checkpoint failed")
+			logger.Debug().Err(err).Str("db", invoker).Msg("sqlite maintenance connection failed")
 			continue
 		}
-
-		if truncatePass {
-			if busy != 0 {
-				logger.Debug().Str("db", invoker).Msg("sqlite truncate checkpoint blocked by a long-lived transaction")
+		priorBusyTimeout, err := setSQLiteMaintenanceBusyTimeout(ctx, conn)
+		if err != nil {
+			closeSQLiteMaintenanceConn(ctx, logger, conn, invoker, priorBusyTimeout)
+			if isDBClosedErr(err) {
+				return
 			}
-			// Surface runaway WAL growth so operators can alert on the logs
-			// well before the disk fills
-			if dbFilePath != "" {
-				if fi, err := os.Stat(dbFilePath + "-wal"); err == nil && fi.Size() > walWarnBytes {
-					logger.Warn().Int64("wal_bytes", fi.Size()).Str("db", invoker).
-						Msg("sqlite WAL is not checkpointing, a long-lived transaction may be pinning it")
-				}
-			}
+			logger.Debug().Err(err).Str("db", invoker).Msg("sqlite maintenance busy timeout failed")
+			continue
 		}
+		runSQLiteMaintenancePass(ctx, logger, conn, invoker, dbFilePath, maint, state, checkpointClean)
+		closeSQLiteMaintenanceConn(ctx, logger, conn, invoker, priorBusyTimeout)
 	}
 }
 
+func setSQLiteMaintenanceBusyTimeout(ctx context.Context, conn *sql.Conn) (int, error) {
+	var prior int
+	if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&prior); err != nil {
+		return -1, err
+	}
+	_, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout=%d", sqliteMaintenanceBusyTimeoutMillis))
+	return prior, err
+}
+
+func closeSQLiteMaintenanceConn(ctx context.Context, logger *types.Logger, conn *sql.Conn, invoker string, timeout int) {
+	var restoreErr error
+	if timeout >= 0 {
+		_, restoreErr = conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout=%d", timeout))
+	}
+	if timeout < 0 || restoreErr != nil {
+		if restoreErr != nil {
+			logger.Warn().Err(restoreErr).Str("db", invoker).Msg("sqlite maintenance busy timeout restore failed; discarding connection")
+		}
+		// Returning driver.ErrBadConn from Raw tells database/sql not to put
+		// this connection—with an unknown or 100ms timeout—back in the pool.
+		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+	}
+	conn.Close() //nolint:errcheck
+}
+
+// runSQLiteMaintenancePass uses short-timeout passive checkpoints around a
+// bounded incremental vacuum. A dirty WAL normally defers vacuum to avoid
+// amplifying a pinned WAL, but a bounded catch-up pass prevents vacuum from
+// being starved indefinitely by continuous traffic.
+func runSQLiteMaintenancePass(ctx context.Context, logger *types.Logger, conn *sql.Conn, invoker, dbFilePath string,
+	maint sqliteMaintenanceSettings, state *sqliteMaintenanceState, checkpointClean bool) {
+	if isLitestreamManaged(dbFilePath) {
+		// Litestream owns checkpointing. Preserve incremental vacuum behavior;
+		// its checkpoint loop will consume the bounded batch of resulting frames.
+		runSQLiteIncrementalVacuum(ctx, logger, conn, invoker, maint, state)
+		return
+	}
+
+	if !checkpointClean {
+		busy, walFrames, checkpointed, err := runSQLiteCheckpoint(ctx, conn, "PASSIVE", state)
+		if err != nil {
+			logger.Debug().Err(err).Str("db", invoker).Msg("sqlite passive checkpoint failed")
+			if maint.vacuumPages > 0 {
+				state.recordVacuumSkipped()
+			}
+			return
+		}
+		// Reader turnover can leave a momentary tail after the first passive
+		// checkpoint. Retry briefly before treating it as a pinned or constantly
+		// moving WAL.
+		for attempt := 1; (busy != 0 || walFrames != checkpointed) && attempt < sqliteCheckpointCatchUpAttempts; attempt++ {
+			timer := time.NewTimer(sqliteCheckpointCatchUpDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			busy, walFrames, checkpointed, err = runSQLiteCheckpoint(ctx, conn, "PASSIVE", state)
+			if err != nil {
+				logger.Debug().Err(err).Str("db", invoker).Msg("sqlite passive checkpoint catch-up failed")
+				if maint.vacuumPages > 0 {
+					state.recordVacuumSkipped()
+				}
+				return
+			}
+		}
+		if busy != 0 || walFrames != checkpointed {
+			if maint.vacuumPages <= 0 || !state.deferVacuum() {
+				return
+			}
+			logger.Debug().Str("db", invoker).Msg("sqlite forcing bounded incremental vacuum after repeated checkpoint backlog")
+		}
+	}
+
+	if !runSQLiteIncrementalVacuum(ctx, logger, conn, invoker, maint, state) {
+		return
+	}
+	// Vacuum itself writes WAL frames. Checkpoint them immediately while the
+	// batch is small instead of leaving them for the next periodic pass.
+	if _, _, _, err := runSQLiteCheckpoint(ctx, conn, "PASSIVE", state); err != nil {
+		logger.Debug().Err(err).Str("db", invoker).Msg("sqlite post-vacuum checkpoint failed")
+	}
+}
+
+func warnLargeSQLiteWAL(logger *types.Logger, invoker, dbFilePath string, walWarnBytes int64,
+	walFrames, checkpointed int) {
+	walBytes := fileSize(dbFilePath + "-wal")
+	if walBytes > walWarnBytes {
+		logger.Warn().Int64("wal_bytes", walBytes).Int("wal_frames", walFrames).
+			Int("checkpointed_frames", checkpointed).Str("db", invoker).
+			Msg("sqlite WAL is not checkpointing, a long-lived transaction may be pinning it")
+	}
+}
+
+type sqliteCheckpointQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func runSQLiteCheckpoint(ctx context.Context, conn sqliteCheckpointQuerier, mode string, state *sqliteMaintenanceState) (int, int, int, error) {
+	var busy, walFrames, checkpointed int
+	err := conn.QueryRowContext(ctx, "PRAGMA wal_checkpoint("+mode+")").Scan(&busy, &walFrames, &checkpointed)
+	state.recordCheckpoint(mode, busy, walFrames, checkpointed, err)
+	return busy, walFrames, checkpointed, err
+}
+
+// runSQLiteIncrementalVacuum returns true when a vacuum statement ran, even
+// if it failed, so the caller can checkpoint any frames written before error.
+func runSQLiteIncrementalVacuum(ctx context.Context, logger *types.Logger, conn *sql.Conn, invoker string,
+	maint sqliteMaintenanceSettings, state *sqliteMaintenanceState) bool {
+	if maint.vacuumPages <= 0 {
+		return false
+	}
+	_, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA incremental_vacuum(%d)", maint.vacuumPages))
+	state.recordVacuum(err)
+	if err != nil {
+		logger.Debug().Err(err).Str("db", invoker).Msg("sqlite incremental_vacuum failed")
+	}
+	return true
+}
+
 func isDBClosedErr(err error) bool {
+	if err == nil {
+		return false
+	}
 	return errors.Is(err, sql.ErrConnDone) || strings.Contains(err.Error(), "database is closed")
 }
 
