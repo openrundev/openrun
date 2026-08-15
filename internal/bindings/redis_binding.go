@@ -436,6 +436,33 @@ func (b *RedisServiceBinding) persistAcls(ctx context.Context) {
 	}
 }
 
+// CheckHealth verifies the admin connection with a PING.
+func (b *RedisServiceBinding) CheckHealth(ctx context.Context) error {
+	if b.adminClient == nil {
+		return fmt.Errorf("service is not initialized")
+	}
+	if err := b.adminClient.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("error pinging redis: %w", err)
+	}
+	return nil
+}
+
+// CheckBindingHealth connects as the binding's ACL user and runs a PING
+// (allowed by the binding command rules), verifying the user still exists and
+// its password works.
+func (b *RedisServiceBinding) CheckBindingHealth(ctx context.Context, bindingMetadata types.BindingMetadata) error {
+	opts, err := redisParseURL(bindingMetadata.Account["url_direct"])
+	if err != nil {
+		return fmt.Errorf("error parsing account url: %w", err)
+	}
+	client := redis.NewClient(opts)
+	defer client.Close() //nolint:errcheck
+	if err := client.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("error pinging redis as binding account: %w", err)
+	}
+	return nil
+}
+
 func (b *RedisServiceBinding) RunCommand(ctx context.Context, bindingMetadata types.BindingMetadata, command string) (map[string]any, error) {
 	args, err := tokenizeRedisCommand(command)
 	if err != nil {

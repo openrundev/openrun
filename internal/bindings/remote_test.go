@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/types"
@@ -139,6 +140,19 @@ func TestRemoteBindingE2E(t *testing.T) {
 	result, err = serviceBinding.RunCommand(ctx, types.BindingMetadata{}, "echo:back")
 	if err != nil || result["echo"] != "back" {
 		t.Fatalf("post-recovery result = %v err = %v", result, err)
+	}
+
+	// Health RPCs round-trip through the adapter; application-level failures
+	// surface with their message.
+	if err := serviceBinding.CheckHealth(ctx); err != nil {
+		t.Fatalf("CheckHealth: %v", err)
+	}
+	if err := serviceBinding.CheckBindingHealth(ctx, types.BindingMetadata{Account: map[string]string{"user": "u1"}}); err != nil {
+		t.Fatalf("CheckBindingHealth: %v", err)
+	}
+	err = serviceBinding.CheckBindingHealth(ctx, types.BindingMetadata{Account: map[string]string{"fail_health": "account gone"}})
+	if err == nil || !strings.Contains(err.Error(), "account gone") {
+		t.Fatalf("expected unhealthy binding error, got %v", err)
 	}
 
 	if err := serviceBinding.CloseService(ctx); err != nil {

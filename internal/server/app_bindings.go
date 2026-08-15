@@ -83,6 +83,13 @@ func (s *Server) resolveAppBindings(ctx context.Context, tx types.Transaction, a
 			return nil, fmt.Errorf("binding path cannot be empty")
 		}
 		if strings.HasPrefix(bindingRef, "/") {
+			// Auto bindings are owned by one app and deleted with it, so
+			// another app may not attach them (an app's own auto binding
+			// paths pass, e.g. when stored refs are re-resolved on update)
+			if strings.HasPrefix(bindingRef, autoBindingPathPrefix+"/") &&
+				!strings.HasPrefix(bindingRef, autoBindingPathForAppID(appID, "")) {
+				return nil, fmt.Errorf("binding %s is an auto binding owned by another app and cannot be attached", bindingRef)
+			}
 			binding, err := s.db.GetBinding(ctx, tx, bindingRef)
 			if err != nil {
 				return nil, fmt.Errorf("binding %s not found: %w", bindingRef, err)

@@ -17,6 +17,8 @@ import (
 	"github.com/hashicorp/go-plugin"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/openrundev/openrun/pkg/binding"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // remoteOwners maps service types registered by out-of-process providers to
@@ -328,6 +330,28 @@ func (b *remoteServiceBinding) RunCommand(ctx context.Context, bindingMetadata t
 		return err
 	})
 	return result, err
+}
+
+// Health checks are read-only no-ops, so they are safe to retry on a provider
+// crash. A provider built with an SDK that predates the health RPCs answers
+// with codes.Unimplemented, surfaced as a clear upgrade hint.
+func (b *remoteServiceBinding) CheckHealth(ctx context.Context) error {
+	return mapUnimplemented(b.call(ctx, true, func(p *binding.Provider) error {
+		return p.CheckHealth(ctx)
+	}))
+}
+
+func (b *remoteServiceBinding) CheckBindingHealth(ctx context.Context, bindingMetadata types.BindingMetadata) error {
+	return mapUnimplemented(b.call(ctx, true, func(p *binding.Provider) error {
+		return p.CheckBindingHealth(ctx, metadataToSDK(bindingMetadata))
+	}))
+}
+
+func mapUnimplemented(err error) error {
+	if status.Code(err) == codes.Unimplemented {
+		return fmt.Errorf("the installed provider does not support health checks; update the provider to a newer version")
+	}
+	return err
 }
 
 // Conversions between the server's internal types and the SDK's. The structs

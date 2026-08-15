@@ -10,6 +10,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/container"
@@ -197,6 +198,35 @@ func (s *Server) DeleteService(ctx context.Context, name, serviceType string, dr
 		return err
 	}
 
+	// A service cannot be deleted while bindings provisioned from it exist;
+	// nothing is changed on the backend service itself
+	bindingPathList, err := s.db.GetBindingPathsForService(ctx, tx, serviceType, name)
+	if err != nil {
+		return err
+	}
+	if len(bindingPathList) > 0 {
+		return fmt.Errorf("service %s/%s is used by bindings (%s), delete the bindings first",
+			serviceType, name, strings.Join(bindingPathList, ", "))
+	}
+
+	// The service may be the staging service of other services: their bindings'
+	// staged accounts are provisioned on it, so those bindings block the delete
+	// too. Staging links from services without bindings are cleared below.
+	stagingUsers, err := s.db.GetServiceNamesUsingStaging(ctx, tx, serviceType, name)
+	if err != nil {
+		return err
+	}
+	for _, stagingUser := range stagingUsers {
+		userBindingPaths, err := s.db.GetBindingPathsForService(ctx, tx, serviceType, stagingUser)
+		if err != nil {
+			return err
+		}
+		if len(userBindingPaths) > 0 {
+			return fmt.Errorf("service %s/%s is the staging service for %s/%s which has bindings (%s), delete the bindings first",
+				serviceType, name, serviceType, stagingUser, strings.Join(userBindingPaths, ", "))
+		}
+	}
+
 	if err := s.db.DeleteService(ctx, tx, name, serviceType); err != nil {
 		return err
 	}
@@ -328,6 +358,14 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 				"bind %s directly instead of deriving from it", derivedFrom.Path)
 		}
 
+		// Auto bindings are owned by their app and are deleted (with their
+		// backend accounts) when the app is deleted, so nothing may derive
+		// from them
+		if strings.HasPrefix(derivedFrom.Path, autoBindingPathPrefix+"/") {
+			return nil, fmt.Errorf("cannot derive binding %s from %s: auto bindings are owned by their app and cannot be shared",
+				binding.Path, derivedFrom.Path)
+		}
+
 		// Reject multi-level nesting. A derived binding must be derived from a
 		// base binding (one whose Source points at a service, not at another
 		// binding). Allowing derived-of-derived would make ALTER DEFAULT
@@ -388,14 +426,15 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 
 	// Generate the staging account info, either against the staging service if set or against the main service.
 	// The account artifacts are persisted on the service immediately (outside the metadata transaction);
-	// the account manager deletes them if the operation is rolled back. Skipped on dry run.
-	binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, err = accounts.generateAccount(ctx, stagingService, &binding, derivedFrom, true, true)
+	// the account manager deletes them if the operation is rolled back. The artifacts are also recorded in
+	// the binding metadata, so deleting the binding later can drop them. Skipped on dry run.
+	binding.StagedMetadata.Account, binding.StagedMetadata.GrantsApplied, binding.StagedMetadata.Artifacts, err = accounts.generateAccount(ctx, stagingService, &binding, derivedFrom, true, true)
 	if err != nil {
 		return nil, fmt.Errorf("error generating staging account: %w", err)
 	}
 
 	// Generate the production account info
-	binding.Metadata.Account, binding.Metadata.GrantsApplied, err = accounts.generateAccount(ctx, service, &binding, derivedFrom, false, true)
+	binding.Metadata.Account, binding.Metadata.GrantsApplied, binding.Metadata.Artifacts, err = accounts.generateAccount(ctx, service, &binding, derivedFrom, false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -466,7 +505,7 @@ func (s *Server) enforceServiceBind(ctx context.Context, tx types.Transaction, s
 		serviceRBACId(stagingService.ServiceType, stagingService.Name), stagingService.CreatedBy)
 }
 
-func (s *Server) getServiceBinding(ctx context.Context, service *types.Service, binding *types.Binding) (bindings.ServiceBinding, error) {
+func (s *Server) getServiceBinding(ctx context.Context, service *types.Service) (bindings.ServiceBinding, error) {
 	builder, err := s.resolveServiceBinding(ctx, service.ServiceType)
 	if err != nil {
 		return nil, err
@@ -557,6 +596,9 @@ func (s *Server) serviceBindingRuntime() bindings.ServiceBindingRuntime {
 // are never executed while the operation is in flight: they are queued as pending
 // revokes and run by finalizeRevokes only after the metadata transaction commits, so
 // a running app never loses a grant because of an operation that is rolled back.
+// Deleting a binding's artifacts is deferred the same way: the drops are recorded as
+// pending deletes and run by finalizeDeletes after the commit, so the metadata
+// transaction is never held open across a call to the backend service.
 // If the metadata transaction is rolled back, rollbackAndClose revokes the grants
 // applied and deletes the artifacts created since the last commit. Only side effects
 // recorded during this manager's lifetime are ever undone; pre-existing objects and
@@ -576,11 +618,25 @@ type bindingAccountManager struct {
 	// pendingRevokes are grant removals computed by ApplyGrants but not executed;
 	// finalizeRevokes runs them after the metadata transaction has committed.
 	pendingRevokes []grantDelta
+	// pendingDeletes are the backend objects of deleted bindings, recorded while
+	// the metadata transaction is open and dropped by finalizeDeletes after it
+	// has committed.
+	pendingDeletes []artifactDelete
 }
 
 type createdArtifact struct {
 	serviceBinding bindings.ServiceBinding
 	artifact       bindings.Artifact
+}
+
+// artifactDelete is the set of recorded artifacts to drop for one deleted
+// binding on one service. The service is the row read inside the metadata
+// transaction; the connection to it is opened only when the delete is executed,
+// so recording a delete does no network work.
+type artifactDelete struct {
+	service     *types.Service
+	bindingPath string
+	artifacts   []types.BindingArtifact
 }
 
 // grantDelta is a set of grant changes for one binding account on one service.
@@ -609,13 +665,13 @@ func bindingServiceKey(service *types.Service) string {
 	return service.ServiceType + "/" + service.Name
 }
 
-func (m *bindingAccountManager) getServiceBinding(ctx context.Context, service *types.Service, binding *types.Binding) (bindings.ServiceBinding, error) {
+func (m *bindingAccountManager) getServiceBinding(ctx context.Context, service *types.Service) (bindings.ServiceBinding, error) {
 	key := bindingServiceKey(service)
 	if serviceBinding, ok := m.services[key]; ok {
 		return serviceBinding, nil
 	}
 
-	serviceBinding, err := m.server.getServiceBinding(ctx, service, binding)
+	serviceBinding, err := m.server.getServiceBinding(ctx, service)
 	if err != nil {
 		return nil, err
 	}
@@ -625,19 +681,21 @@ func (m *bindingAccountManager) getServiceBinding(ctx context.Context, service *
 
 // generateAccount creates the binding account on the service and applies the grants for
 // derived bindings. The created account is tracked so rollbackAndClose can delete it.
+// The created artifacts are also returned, in creation order, so the caller can record
+// them in the binding metadata for deletion when the binding is deleted.
 // On dry run nothing is created and an empty account is returned.
 func (m *bindingAccountManager) generateAccount(ctx context.Context, service *types.Service, binding *types.Binding, derivedFrom *types.Binding,
-	isStaging, reapplyAll bool) (map[string]string, []types.BindingGrant, error) {
+	isStaging, reapplyAll bool) (map[string]string, []types.BindingGrant, []types.BindingArtifact, error) {
 	if _, err := m.server.resolveServiceBinding(ctx, service.ServiceType); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if m.dryRun {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
-	serviceBinding, err := m.getServiceBinding(ctx, service, binding)
+	serviceBinding, err := m.getServiceBinding(ctx, service)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	metadata := binding.Metadata
@@ -661,7 +719,7 @@ func (m *bindingAccountManager) generateAccount(ctx context.Context, service *ty
 		m.created = append(m.created, createdArtifact{serviceBinding: serviceBinding, artifact: artifact})
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("error generating account: %w", err)
+		return nil, nil, nil, fmt.Errorf("error generating account: %w", err)
 	}
 
 	grantsApplied := []types.BindingGrant{}
@@ -671,12 +729,25 @@ func (m *bindingAccountManager) generateAccount(ctx context.Context, service *ty
 		// A new account has no applied grants yet, so there are no revokes either.
 		result, err := serviceBinding.ApplyGrants(ctx, account, metadata, *derivedFromMetadata, reapplyAll)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error applying grants: %w", err)
+			return nil, nil, nil, fmt.Errorf("error applying grants: %w", err)
 		}
 		grantsApplied = result.GrantsApplied
 	}
 
-	return account, grantsApplied, nil
+	return account, grantsApplied, artifactRecords(createdArtifacts), nil
+}
+
+// artifactRecords converts service binding artifacts to the form stored in the
+// binding metadata.
+func artifactRecords(artifacts []bindings.Artifact) []types.BindingArtifact {
+	if len(artifacts) == 0 {
+		return nil
+	}
+	records := make([]types.BindingArtifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		records = append(records, types.BindingArtifact{Type: string(artifact.Type), Name: artifact.Name})
+	}
+	return records
 }
 
 // applyGrants applies the grant changes for a derived binding. New grants are
@@ -700,7 +771,7 @@ func (m *bindingAccountManager) applyGrants(ctx context.Context, service *types.
 		return metadata.GrantsApplied, nil
 	}
 
-	serviceBinding, err := m.getServiceBinding(ctx, service, binding)
+	serviceBinding, err := m.getServiceBinding(ctx, service)
 	if err != nil {
 		return nil, err
 	}
@@ -777,7 +848,8 @@ func (m *bindingAccountManager) recordPendingRevokes(delta grantDelta) {
 // commit keeps the created artifacts and applied grants. operationScope.commit calls
 // this after the metadata transaction has committed; the artifacts and grants are
 // already persisted on the services, this just stops rollbackAndClose from undoing
-// them. The pending revokes are kept: finalizeRevokes executes them afterwards.
+// them. The pending revokes and deletes are kept: finalizeRevokes and finalizeDeletes
+// execute them afterwards.
 func (m *bindingAccountManager) commit() {
 	if m == nil {
 		return
@@ -844,6 +916,68 @@ func (m *bindingAccountManager) finalizeRevokes(ctx context.Context) error {
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("bindings were updated, but deferred grant revokes did not complete: %w", errors.Join(errs...))
+	}
+	return nil
+}
+
+// recordArtifactDeletes queues the recorded artifacts of a deleted binding for
+// dropping on the service. Nothing is contacted on the service here: the service
+// row is read from the caller's metadata transaction and the drops run in
+// finalizeDeletes, after that transaction has committed.
+func (m *bindingAccountManager) recordArtifactDeletes(service *types.Service, binding *types.Binding, artifacts []types.BindingArtifact) {
+	if m == nil || m.dryRun || len(artifacts) == 0 {
+		return
+	}
+	m.pendingDeletes = append(m.pendingDeletes, artifactDelete{
+		service:     service,
+		bindingPath: binding.Path,
+		artifacts:   artifacts,
+	})
+}
+
+// finalizeDeletes drops the backend objects of the bindings deleted by the
+// operation, after the metadata transaction that removed the binding rows has
+// committed. Deferring the drops keeps the metadata transaction off the network:
+// a slow or unavailable service cannot hold it open. The cost is that a failed
+// drop leaves the objects on the service after the binding row is gone; the
+// failure is logged and returned so the objects can be dropped manually (the
+// artifact names are derived from the binding id, so a binding recreated at the
+// same path never collides with them). Call only after commit, with a context
+// detached from the request cancellation and bounded by a timeout.
+func (m *bindingAccountManager) finalizeDeletes(ctx context.Context) error {
+	if m == nil || m.dryRun || len(m.pendingDeletes) == 0 {
+		return nil
+	}
+	pending := m.pendingDeletes
+	m.pendingDeletes = nil
+
+	var errs []error
+	for _, pendingDelete := range pending {
+		if err := m.deleteArtifacts(ctx, pendingDelete); err != nil {
+			m.server.Warn().Err(err).Str("binding", pendingDelete.bindingPath).
+				Msg("error dropping the backend objects of a deleted binding; drop them on the service manually")
+			errs = append(errs, fmt.Errorf("binding %s: %w", pendingDelete.bindingPath, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("bindings were deleted, but their objects on the backend services were not all dropped: %w", errors.Join(errs...))
+	}
+	return nil
+}
+
+// deleteArtifacts drops one binding's recorded artifacts on its service, in
+// reverse creation order.
+func (m *bindingAccountManager) deleteArtifacts(ctx context.Context, pendingDelete artifactDelete) error {
+	serviceBinding, err := m.getServiceBinding(ctx, pendingDelete.service)
+	if err != nil {
+		return err
+	}
+	artifacts := pendingDelete.artifacts
+	for i := len(artifacts) - 1; i >= 0; i-- {
+		artifact := bindings.Artifact{Type: bindings.ArtifactType(artifacts[i].Type), Name: artifacts[i].Name}
+		if err := serviceBinding.DeleteArtifact(ctx, artifact); err != nil {
+			return fmt.Errorf("error deleting %s %s: %w", artifacts[i].Type, artifacts[i].Name, err)
+		}
 	}
 	return nil
 }
@@ -948,9 +1082,11 @@ func (s *Server) removeRevokedGrants(ctx context.Context, revoked []grantDelta) 
 // and created artifacts are deleted (in reverse creation order). Each compensation
 // is rechecked against the currently committed binding state first: a grant that a
 // concurrent operation committed as applied while this one was in flight is owned
-// by that operation and must not be revoked. Pending revokes are dropped without
-// being executed, so a rolled-back operation never removes a grant a running app
-// may depend on. Undo is best-effort; failures are logged. The caller passes a
+// by that operation and must not be revoked. Pending revokes and pending artifact
+// deletes are dropped without being executed, so a rolled-back operation never
+// removes a grant a running app may depend on, and never drops the backend objects
+// of a binding whose row survived the rollback.
+// Undo is best-effort; failures are logged. The caller passes a
 // context that is detached from the request cancellation and bounded by the
 // operation timeout (operationScope.finish passes one), so cleanup runs even when
 // rolling back due to cancellation but cannot block the cluster rollback
@@ -979,6 +1115,9 @@ func (m *bindingAccountManager) rollbackAndClose(ctx context.Context) {
 	}
 	m.granted = nil
 	m.pendingRevokes = nil
+	// The binding rows the deletes were computed for are still there, since the
+	// metadata transaction was rolled back; their backend objects must stay too
+	m.pendingDeletes = nil
 
 	for i := len(m.created) - 1; i >= 0; i-- {
 		created := m.created[i]
@@ -1124,7 +1263,28 @@ func (s *Server) DeleteBinding(ctx context.Context, path string, dryRun bool) er
 		return err
 	}
 
+	// A base binding cannot be deleted while bindings derived from it exist:
+	// their accounts live in the base binding's schema/database
+	derived, err := s.db.ListBindings(ctx, tx, path)
+	if err != nil {
+		return err
+	}
+	if len(derived) > 0 {
+		return fmt.Errorf("binding %s has derived bindings (%s), delete the derived bindings first",
+			path, strings.Join(bindingPaths(derived), ", "))
+	}
+
+	accounts := s.newBindingAccountManager(dryRun)
+	cleanupCtx, cancel := bindingCleanupContext(ctx)
+	defer cancel()
+	defer accounts.closeServices(cleanupCtx)
+
 	if err := s.db.DeleteBinding(ctx, tx, path); err != nil {
+		return err
+	}
+	// Only record what to drop on the backend service here; the drops run after
+	// the metadata commit, so the transaction is not held open across them
+	if err := s.recordBindingArtifactDeletes(ctx, tx, accounts, binding); err != nil {
 		return err
 	}
 
@@ -1135,6 +1295,70 @@ func (s *Server) DeleteBinding(ctx context.Context, path string, dryRun bool) er
 		return err
 	}
 	s.approvalCacheGen.Add(1)
+
+	// The binding is deleted; a failure here only means its backend objects were
+	// left behind, which is reported to the caller
+	return accounts.finalizeDeletes(cleanupCtx)
+}
+
+// bindingCleanupTimeout bounds the post-commit work on the backend services
+// (dropping the objects of deleted bindings) so an unresponsive service cannot
+// block the request indefinitely.
+const bindingCleanupTimeout = 2 * time.Minute
+
+// bindingCleanupContext returns the context for post-commit backend cleanup: it
+// is detached from the request cancellation, so the drops still run when the
+// client goes away after the metadata commit, and is bounded by
+// bindingCleanupTimeout.
+func bindingCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), bindingCleanupTimeout)
+}
+
+func bindingPaths(bindingList []*types.Binding) []string {
+	paths := make([]string, 0, len(bindingList))
+	for _, binding := range bindingList {
+		paths = append(paths, binding.Path)
+	}
+	return paths
+}
+
+// recordBindingArtifactDeletes records the backend service objects to drop for a
+// binding being deleted: the artifacts noted when its accounts were generated,
+// the staged ones on the staging service (when the binding's service has one
+// linked) and the production ones on the main service. Only the service rows are
+// read here, from the caller's transaction; accounts.finalizeDeletes drops the
+// objects once that transaction has committed.
+// Bindings without recorded artifacts (created by an older version or a dry
+// run) leave their backend objects in place with a warning. No-op on dry run.
+func (s *Server) recordBindingArtifactDeletes(ctx context.Context, tx types.Transaction, accounts *bindingAccountManager, binding *types.Binding) error {
+	if accounts.dryRun {
+		return nil
+	}
+	if len(binding.StagedMetadata.Artifacts) == 0 && len(binding.Metadata.Artifacts) == 0 {
+		// Sqlite accounts are computed, not provisioned: no artifacts is the
+		// normal state, not a sign of a legacy binding
+		if binding.ServiceType != bindings.SqliteServiceType &&
+			(len(binding.StagedMetadata.Account) > 0 || len(binding.Metadata.Account) > 0) {
+			s.Warn().Str("binding", binding.Path).
+				Msg("binding has no recorded artifacts; backend service objects are not dropped")
+		}
+		return nil
+	}
+
+	service, err := s.db.GetService(ctx, tx, binding.ServiceType, binding.ServiceName)
+	if err != nil {
+		return fmt.Errorf("error getting binding service: %w", err)
+	}
+	stagingService := service
+	if service.Staging != "" {
+		stagingService, err = s.db.GetService(ctx, tx, service.ServiceType, service.Staging)
+		if err != nil {
+			return fmt.Errorf("error getting staging service: %w", err)
+		}
+	}
+
+	accounts.recordArtifactDeletes(stagingService, binding, binding.StagedMetadata.Artifacts)
+	accounts.recordArtifactDeletes(service, binding, binding.Metadata.Artifacts)
 	return nil
 }
 
@@ -1269,23 +1493,114 @@ func (s *Server) RunBindingCommand(ctx context.Context, bindingName string, useS
 		return nil, fmt.Errorf("sql is required")
 	}
 
+	// The metadata transaction is released before the backend is contacted: the
+	// command runs as the binding account and can take arbitrarily long, which
+	// must not hold a metadata transaction open
+	service, metadata, err := s.bindingBackendTarget(ctx, bindingName, useStaging, types.PermissionBindingRunCommand)
+	if err != nil {
+		return nil, err
+	}
+
+	serviceBinding, err := s.getServiceBinding(ctx, service)
+	if err != nil {
+		return nil, fmt.Errorf("error getting service binding: %w", err)
+	}
+
+	defer serviceBinding.CloseService(ctx) //nolint:errcheck
+
+	return serviceBinding.RunCommand(ctx, metadata, command)
+}
+
+// ServiceHealth verifies the service is healthy: the admin connection is
+// established from the (secret-resolved) service config and a no-op operation
+// runs on the backend. A nil return means healthy.
+func (s *Server) ServiceHealth(ctx context.Context, serviceType, name string) error {
+	// The metadata transaction is released before the backend is contacted: a
+	// slow or unavailable service must not hold one open for the length of the
+	// health check
+	service, err := s.serviceBackendTarget(ctx, serviceType, name)
+	if err != nil {
+		return err
+	}
+
+	serviceBinding, err := s.getServiceBinding(ctx, service)
+	if err != nil {
+		return fmt.Errorf("error connecting to service: %w", err)
+	}
+	defer serviceBinding.CloseService(ctx) //nolint:errcheck
+
+	return serviceBinding.CheckHealth(ctx)
+}
+
+// BindingHealth verifies the binding account is healthy: the backend is
+// contacted AS the binding account (staged account and staging service with
+// useStaging) and a no-op operation runs. A nil return means healthy.
+func (s *Server) BindingHealth(ctx context.Context, bindingName string, useStaging bool) error {
+	// The metadata transaction is released before the backend is contacted: a
+	// slow or unavailable service must not hold one open for the length of the
+	// health check
+	service, metadata, err := s.bindingBackendTarget(ctx, bindingName, useStaging, types.PermissionBindingRead)
+	if err != nil {
+		return err
+	}
+
+	serviceBinding, err := s.getServiceBinding(ctx, service)
+	if err != nil {
+		return fmt.Errorf("error connecting to service: %w", err)
+	}
+	defer serviceBinding.CloseService(ctx) //nolint:errcheck
+
+	return serviceBinding.CheckBindingHealth(ctx, metadata)
+}
+
+// serviceBackendTarget loads the service to connect to and enforces the caller's
+// permission on it, in a read-only transaction that is released before
+// returning, so the caller contacts the backend with no metadata transaction
+// open.
+func (s *Server) serviceBackendTarget(ctx context.Context, serviceType, name string) (*types.Service, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	binding, err := s.db.GetBinding(ctx, tx, bindingName)
+	service, err := s.db.GetService(ctx, tx, serviceType, name)
 	if err != nil {
+		return nil, fmt.Errorf("no service found with name %s and service_type %s", name, serviceType)
+	}
+	if err := s.enforceServicePerm(ctx, types.PermissionServiceRead,
+		serviceRBACId(service.ServiceType, service.Name), service.CreatedBy); err != nil {
 		return nil, err
 	}
-	if err := s.enforceBindingPerm(ctx, types.PermissionBindingRunCommand, binding.Path, binding.CreatedBy); err != nil {
-		return nil, err
+	return service, nil
+}
+
+// bindingBackendTarget loads the service to connect to and the account metadata
+// to act as for a binding (the staged account on the staging service with
+// useStaging), and enforces the given permission on the binding. Like
+// serviceBackendTarget, the transaction is released before returning.
+func (s *Server) bindingBackendTarget(ctx context.Context, bindingName string, useStaging bool,
+	perm types.RBACPermission) (*types.Service, types.BindingMetadata, error) {
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return nil, types.BindingMetadata{}, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	binding, err := s.db.GetBinding(ctx, tx, bindingName)
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "binding not found with path: ") {
+			return nil, types.BindingMetadata{}, fmt.Errorf("no binding found with path %s", bindingName)
+		}
+		return nil, types.BindingMetadata{}, err
+	}
+	if err := s.enforceBindingPerm(ctx, perm, binding.Path, binding.CreatedBy); err != nil {
+		return nil, types.BindingMetadata{}, err
 	}
 
 	service, err := s.db.GetService(ctx, tx, binding.ServiceType, binding.ServiceName)
 	if err != nil {
-		return nil, fmt.Errorf("error getting binding service: %w", err)
+		return nil, types.BindingMetadata{}, fmt.Errorf("error getting binding service: %w", err)
 	}
 
 	metadata := binding.Metadata
@@ -1294,17 +1609,9 @@ func (s *Server) RunBindingCommand(ctx context.Context, bindingName string, useS
 		if service.Staging != "" {
 			service, err = s.db.GetService(ctx, tx, service.ServiceType, service.Staging)
 			if err != nil {
-				return nil, fmt.Errorf("error getting staging service: %w", err)
+				return nil, types.BindingMetadata{}, fmt.Errorf("error getting staging service: %w", err)
 			}
 		}
 	}
-
-	serviceBinding, err := s.getServiceBinding(ctx, service, binding)
-	if err != nil {
-		return nil, fmt.Errorf("error getting service binding: %w", err)
-	}
-
-	defer serviceBinding.CloseService(ctx) //nolint:errcheck
-
-	return serviceBinding.RunCommand(ctx, metadata, command)
+	return service, metadata, nil
 }

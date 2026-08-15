@@ -80,6 +80,20 @@ func (f *fakeBinding) RevokeGrants(ctx context.Context, account map[string]strin
 	return nil
 }
 
+func (f *fakeBinding) CheckHealth(ctx context.Context) error {
+	if f.initConfig["fail_health"] != "" {
+		return errors.New(f.initConfig["fail_health"])
+	}
+	return nil
+}
+
+func (f *fakeBinding) CheckBindingHealth(ctx context.Context, bindingMetadata BindingMetadata) error {
+	if bindingMetadata.Account["fail_health"] != "" {
+		return errors.New(bindingMetadata.Account["fail_health"])
+	}
+	return nil
+}
+
 func (f *fakeBinding) RunCommand(ctx context.Context, bindingMetadata BindingMetadata, command string) (map[string]any, error) {
 	if command == "fail" {
 		return nil, errors.New("command failed")
@@ -271,5 +285,41 @@ func TestRoundTripRunCommand(t *testing.T) {
 	}
 	if !reflect.DeepEqual(result, want) {
 		t.Fatalf("typed result = %#v, want %#v", result, want)
+	}
+}
+
+func TestRoundTripHealth(t *testing.T) {
+	client := newTestClient(t, testServeConfig())
+	ctx := context.Background()
+
+	// Method call before initialize is a protocol violation: transport error.
+	var providerError *ProviderError
+	if err := client.CheckHealth(ctx); err == nil || errors.As(err, &providerError) {
+		t.Fatalf("expected transport error before init, got %v", err)
+	}
+
+	if err := client.InitializeService(ctx, "fake", map[string]string{"url": "fake://x"}, ServiceBindingRuntime{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CheckHealth(ctx); err != nil {
+		t.Fatalf("healthy service reported error: %v", err)
+	}
+	if err := client.CheckBindingHealth(ctx, BindingMetadata{Account: map[string]string{"user": "u1"}}); err != nil {
+		t.Fatalf("healthy binding reported error: %v", err)
+	}
+
+	// Application-level failures are ProviderErrors, not transport errors.
+	err := client.CheckBindingHealth(ctx, BindingMetadata{Account: map[string]string{"fail_health": "account dropped"}})
+	if !errors.As(err, &providerError) || providerError.Message != "account dropped" {
+		t.Fatalf("expected ProviderError(account dropped), got %v", err)
+	}
+
+	unhealthy := newTestClient(t, testServeConfig())
+	if err := unhealthy.InitializeService(ctx, "fake", map[string]string{"fail_health": "endpoint down"}, ServiceBindingRuntime{}); err != nil {
+		t.Fatal(err)
+	}
+	err = unhealthy.CheckHealth(ctx)
+	if !errors.As(err, &providerError) || providerError.Message != "endpoint down" {
+		t.Fatalf("expected ProviderError(endpoint down), got %v", err)
 	}
 }

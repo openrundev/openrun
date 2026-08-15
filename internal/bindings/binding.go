@@ -93,8 +93,11 @@ type ServiceBinding interface {
 	GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata,
 		derivedFromMetadata *types.BindingMetadata, isStaging bool) (map[string]string, []Artifact, error)
 
-	// Delete one artifact previously reported as created by GenerateAccount. The caller only passes back artifacts
-	// created during the current operation; the implementation must delete only the named artifact.
+	// Delete one artifact previously reported as created by GenerateAccount. Called to undo a creation when an
+	// operation is rolled back, and when the binding is deleted (with the artifacts recorded at creation time,
+	// in reverse creation order). The implementation must delete only the named artifact, but a container
+	// artifact (schema/database) may have accumulated objects since it was created and must be dropped along
+	// with its contents. Deleting an artifact that no longer exists must be harmless.
 	DeleteArtifact(ctx context.Context, artifact Artifact) error
 
 	// Apply the grants to the account. This is called when the binding is created, after the account is generated.
@@ -115,6 +118,16 @@ type ServiceBinding interface {
 
 	// Run a command on the endpoint specified in the service config as the binding account.
 	RunCommand(ctx context.Context, bindingMetadata types.BindingMetadata, command string) (map[string]any, error)
+
+	// CheckHealth verifies the service is healthy: connect to the endpoint with the admin credentials
+	// from the service config and run a no-op operation (ping / select 1). A nil return means the
+	// service is reachable and accepting the admin credentials; any failure is returned as the error.
+	CheckHealth(ctx context.Context) error
+
+	// CheckBindingHealth verifies the binding account is healthy: connect to the endpoint AS the
+	// binding account (bindingMetadata.Account) and run a no-op operation. This proves the generated
+	// credentials still work, e.g. that the account was not dropped or disabled out-of-band.
+	CheckBindingHealth(ctx context.Context, bindingMetadata types.BindingMetadata) error
 }
 
 type ServiceBindingBuilder func() ServiceBinding

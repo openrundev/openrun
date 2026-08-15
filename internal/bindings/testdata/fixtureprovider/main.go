@@ -86,6 +86,20 @@ func (f *fixtureBinding) RunCommand(ctx context.Context, bindingMetadata binding
 	return map[string]any{}, nil
 }
 
+func (f *fixtureBinding) CheckHealth(ctx context.Context) error {
+	if f.serviceConfig["fail_health"] != "" {
+		return errors.New(f.serviceConfig["fail_health"])
+	}
+	return nil
+}
+
+func (f *fixtureBinding) CheckBindingHealth(ctx context.Context, bindingMetadata binding.BindingMetadata) error {
+	if bindingMetadata.Account["fail_health"] != "" {
+		return errors.New(bindingMetadata.Account["fail_health"])
+	}
+	return nil
+}
+
 func main() {
 	binding.Serve(&binding.ServeConfig{
 		ProviderVersion: "v0.0.0-fixture",

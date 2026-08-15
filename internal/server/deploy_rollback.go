@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -21,7 +22,8 @@ import (
 // If the operation fails (or its DB transaction is not committed), finish
 // reverts both so the cluster and the external services match the rolled-back
 // DB state. On success commit keeps the binding side effects, runs the deferred
-// blue-green traffic switches and finally executes the deferred grant revokes.
+// blue-green traffic switches and finally executes the deferred grant revokes
+// and the deferred drops of deleted bindings' objects.
 //
 // Ownership follows the DB transaction: the function that begins and commits
 // the DB transaction owns the scope and calls commit only after
@@ -89,11 +91,12 @@ func (d *operationScope) opTimeout() time.Duration {
 // no-op) and, for the owning scope, runs the post-commit work in order: the
 // binding artifacts and grants created on external services are kept, the
 // deferred blue-green traffic switches and cleanup of superseded versions run,
-// and finally the deferred grant revokes execute (last, so no running app
-// loses a grant before its traffic has switched). Call it only after
+// and finally the deferred grant revokes and artifact drops execute (last, so no
+// running app loses a grant before its traffic has switched). Call it only after
 // CompleteTransaction succeeds. A failure is returned (not only logged): a
-// failed traffic switch can mean an app still serves its previous version, and
-// a failed revoke leaves extra grants applied until a later apply retries them.
+// failed traffic switch can mean an app still serves its previous version, a
+// failed revoke leaves extra grants applied until a later apply retries them,
+// and a failed drop leaves a deleted binding's objects on the service.
 func (d *operationScope) commit(ctx context.Context) error {
 	d.committed = true
 	if !d.own {
@@ -112,7 +115,11 @@ func (d *operationScope) commit(ctx context.Context) error {
 		d.s.Error().Err(err).Msg("post-commit deployment actions failed; an app may still be serving its previous version")
 		return fmt.Errorf("apps were updated, but post-commit deployment actions failed (a traffic switch may not have completed; reload with --force-reload to retry): %w", err)
 	}
-	return d.accounts.finalizeRevokes(gcCtx)
+	// Revoke before dropping artifacts, as in the rollback path: a grant to
+	// revoke can be on a schema or role that a pending delete is about to drop.
+	// Both run even if the other fails, so one failure does not leave more
+	// objects behind than necessary.
+	return errors.Join(d.accounts.finalizeRevokes(gcCtx), d.accounts.finalizeDeletes(gcCtx))
 }
 
 // finish rolls back the operation's side effects if this scope owns them and

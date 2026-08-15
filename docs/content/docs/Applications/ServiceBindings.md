@@ -124,6 +124,8 @@ Delete a service with:
 openrun service delete postgres/main
 ```
 
+A service cannot be deleted while bindings created from it exist; delete the bindings first. A service that is linked as the staging service of another service is likewise blocked while that other service has bindings, since their staged accounts are provisioned on the staging service. Deleting a service removes only OpenRun's record of the admin connection — nothing is changed on the backend database itself.
+
 ## Hostname Mapping Basics
 
 Service connection URLs are used in two different places: OpenRun uses the admin URL to create and manage binding accounts, and app containers use generated account URLs to connect at runtime. These hostnames can be different.
@@ -243,6 +245,43 @@ openrun binding update --reapply-all --promote /apps/reporting-read
 
 Binding promotion is separate from app promotion. `app promote` promotes the app version and app metadata, including the list of binding paths attached to the app. It does not promote staged grant changes inside a binding. Use `binding update --promote` or `apply --promote` for that.
 
+## Health Checks
+
+Verify a service or a binding account end to end — the server actually connects to the backend and runs a no-op operation (`select 1` / ping), so the checks catch unreachable endpoints, rotated or expired admin credentials, and binding accounts dropped or disabled outside OpenRun:
+
+```shell
+openrun service health postgres/main
+openrun binding health /apps/reporting-db
+openrun binding health --staging /apps/reporting-db
+```
+
+`service health` connects with the service's admin credentials (secret references resolved the same way as other operations). `binding health` connects **as** the binding's generated account — the production account by default, the staged account (against the linked staging service, when one is configured) with `--staging`. A healthy check exits 0; any failure exits non-zero with the backend error.
+
+The checks work uniformly for the built-in service types and installed provider service types (a provider built with an SDK that predates health checks reports that the provider needs an update). SQLite bindings have no endpoint or accounts to probe; their checks validate the binding configuration and otherwise always report healthy.
+
+Under [RBAC]({{< ref "/docs/configuration/rbac" >}}), `service health` requires `service:read` on the service and `binding health` requires `binding:read` on the binding path.
+
+## Delete Bindings
+
+```shell
+openrun binding delete /apps/reporting-read
+openrun binding delete --dry-run /apps/reporting-db
+```
+
+Deleting a binding also deletes the account objects that were created for it on the backend service, for both the production and staging accounts (using the linked staging service when one is configured). The objects recorded when the binding account was generated are dropped in reverse creation order:
+
+- **Postgres**: the binding's role and schema are dropped, including everything in the schema (`CASCADE`) and any objects the role still owns elsewhere.
+- **MySQL**: the binding's user and database are dropped, including the database contents.
+- **Redis/Valkey**: the binding's ACL users are removed. Keys under the binding's prefix are not touched.
+- **SQLite**: the volume and any replicated data are kept ([details]({{< ref "/docs/applications/servicebindings/#sqlite-config-and-behavior" >}})).
+- **Providers**: provider service types drop the users/schemas/databases the binding created, per the provider's documentation.
+
+For Postgres and MySQL this means deleting a base binding deletes the schema or database **data**; there is no separate confirmation, so treat `binding delete` of a base binding like a `DROP` statement. Deleting a derived binding drops only that binding's role or user (plus objects it still owns, such as tables it created in the shared schema); the base binding's schema/database and data are untouched.
+
+A base binding cannot be deleted while bindings derived from it exist — their accounts live in the base binding's schema/database — so the derived bindings must be deleted first.
+
+`--dry-run` validates the delete without removing anything, on the backend or in the metadata. If dropping a backend object fails, the whole delete is rolled back and can be retried; the drops are idempotent, so a partially completed delete retries cleanly. Bindings created by OpenRun versions that did not record their created objects are deleted from the metadata only: a warning is logged and the backend objects are left in place for manual cleanup.
+
 ## Attach Bindings to Apps
 
 Attach existing bindings when creating an app:
@@ -288,7 +327,9 @@ The generated binding is stored under:
 
 For example, a Postgres auto binding is stored as `/auto/app_prd_.../postgres`. Duplicate service references in the same command resolve to one auto binding.
 
-The `/auto` path is reserved for auto bindings. Users cannot create bindings under that path directly. A derived binding can use an auto binding path as its source.
+The `/auto` path is reserved for auto bindings. Users cannot create bindings under that path directly. Auto bindings are owned by their app and cannot be shared: they cannot be used as the source for a derived binding, and another app cannot attach them with `--bind`. Use a regular base binding when multiple apps or derived accounts need to share a schema or database.
+
+Deleting the app deletes its auto bindings along with it, dropping their backend account objects the same way as [`binding delete`]({{< ref "/docs/applications/servicebindings/#delete-bindings" >}}) — for Postgres/MySQL auto bindings this drops the schema or database including its data. An auto binding that (from an older OpenRun version) still has derived bindings blocks the app delete until the derived bindings are deleted.
 
 Binding config can be passed through the service source using `;` followed by comma separated `key=value` entries. The params become the auto binding's config, exactly like `binding create --config`:
 
@@ -469,7 +510,7 @@ For a derived binding, OpenRun creates a separate ACL user that shares the base 
 
 ACL changes only modify the server's in-memory state. Configure an `aclfile` on the Redis/Valkey server so binding users survive a server restart (OpenRun runs `ACL SAVE` after every change when an aclfile is configured, and logs a warning at service creation when none is). Without an aclfile, a derived user lost to a restart can be recreated with `binding update --reapply-all`; base users need the aclfile.
 
-Deleting a binding deletes its ACL users. Keys under the binding's prefix are not touched: like the other service types, data outlives the account.
+Deleting a binding deletes its ACL users (production and staging). Keys under the binding's prefix are not touched — unlike Postgres/MySQL, where deleting a base binding drops the schema or database with its data — so have the app clear its keys first if the data should go too.
 
 ## SQLite Config and Behavior
 
@@ -521,7 +562,7 @@ Differences from Postgres/MySQL bindings:
 - `binding run-command` is not supported: the database file is only reachable inside the app container.
 - `binding show-account` shows the computed paths; there are no credentials.
 - SQLite bindings are not available for preview apps.
-- Deleting a binding or app keeps the volume and any replicated data, consistent with the other service types.
+- Deleting a binding or app keeps the volume and any replicated data. SQLite bindings have no backend accounts to remove, so unlike Postgres/MySQL nothing is dropped on delete.
 
 A [staging service]({{< ref "/docs/applications/servicebindings/#staging-services" >}}) can be linked like any other service type. Staged apps then follow the staging service's config: its own `litestream_config` (or none), `path_prefix` and `volume_size`, so staged data can replicate to a separate location or skip replication entirely.
 

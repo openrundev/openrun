@@ -1919,6 +1919,66 @@ func (m *Metadata) GetBinding(ctx context.Context, tx types.Transaction, path st
 	return &binding, nil
 }
 
+// GetServiceNamesUsingStaging returns the names of the services of the given
+// type that use the named service as their staging service, ordered by name.
+func (m *Metadata) GetServiceNamesUsingStaging(ctx context.Context, tx types.Transaction, serviceType, staging string) ([]string, error) {
+	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType,
+		`select name from services where service_type = ? and staging = ? order by name`))
+	if err != nil {
+		return nil, fmt.Errorf("error preparing statement: %w", err)
+	}
+	defer stmt.Close() //nolint:errcheck
+
+	rows, err := stmt.Query(serviceType, staging)
+	if err != nil {
+		return nil, fmt.Errorf("error querying staging service users: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	names := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("error scanning service name: %w", err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+	return names, nil
+}
+
+// GetBindingPathsForService returns the paths of the bindings provisioned from
+// the given service, ordered by path.
+func (m *Metadata) GetBindingPathsForService(ctx context.Context, tx types.Transaction, serviceType, serviceName string) ([]string, error) {
+	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType,
+		`select path from bindings where service_type = ? and service_name = ? order by path`))
+	if err != nil {
+		return nil, fmt.Errorf("error preparing statement: %w", err)
+	}
+	defer stmt.Close() //nolint:errcheck
+
+	rows, err := stmt.Query(serviceType, serviceName)
+	if err != nil {
+		return nil, fmt.Errorf("error querying service bindings: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	paths := make([]string, 0)
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("error scanning binding path: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+	return paths, nil
+}
+
 // ListBindings returns bindings filtered by the optional source. Empty string means no filter.
 func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, source string) ([]*types.Binding, error) {
 	query := `select id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, created_by, create_time, update_time from bindings`

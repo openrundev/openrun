@@ -45,7 +45,17 @@ type BindingMetadata struct {
 	GrantsApplied []BindingGrant    `json:"grants_applied"`
 	Config        map[string]string `json:"config"`
 	Account       map[string]string `json:"account,omitempty"`
+	Artifacts     []BindingArtifact `json:"artifacts,omitempty"`
 	ApplyInfo     []byte            `json:"apply_info"`
+}
+
+// BindingArtifact records one object created on the backend service for the
+// binding account (a role/schema, user/database, ...), in creation order.
+// Recorded when the account is generated so the objects can be dropped when
+// the binding is deleted.
+type BindingArtifact struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
 }
 
 type GrantType string

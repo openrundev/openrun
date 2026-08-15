@@ -187,3 +187,23 @@ func (b *SqliteServiceBinding) RevokeGrants(ctx context.Context, account map[str
 func (b *SqliteServiceBinding) RunCommand(ctx context.Context, bindingMetadata types.BindingMetadata, command string) (map[string]any, error) {
 	return nil, fmt.Errorf("run command is not supported for sqlite bindings: the database file is only reachable inside the app container")
 }
+
+// CheckHealth is a no-op success: sqlite has no external endpoint to probe.
+// The backing volume is owned by the container layer and only exists while an
+// app uses the binding.
+func (b *SqliteServiceBinding) CheckHealth(ctx context.Context) error {
+	return nil
+}
+
+// CheckBindingHealth validates the binding's computed configuration (mount
+// path and replication pattern); there is no account or endpoint to connect
+// to.
+func (b *SqliteServiceBinding) CheckBindingHealth(ctx context.Context, bindingMetadata types.BindingMetadata) error {
+	if _, err := SqliteBindingDir(bindingMetadata.Config); err != nil {
+		return err
+	}
+	if _, err := SqliteBindingPattern(bindingMetadata.Config); err != nil {
+		return err
+	}
+	return nil
+}

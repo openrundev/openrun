@@ -252,6 +252,39 @@ tests:
     stderr: "NOPERM"
     exit-code: 1
 
+  redis0250: # deleting a binding drops its prod and staging ACL users on the server; keys under the prefix survive
+    command: |
+      ../openrun binding create redis/r1 /apps/rdel >/dev/null
+      prod_user=$(../openrun binding show-account /apps/rdel | jq -r '.username')
+      stg_user=$(../openrun binding show-account --staging /apps/rdel | jq -r '.username')
+      p=$(../openrun binding show-account /apps/rdel | jq -r '.key_prefix')
+      ../openrun binding run-command /apps/rdel "set ${p}keep v1" >/dev/null
+      ../openrun binding delete /apps/rdel >/dev/null
+      users=$("$REDIS_TEST_CONTAINER_COMMAND" exec "$REDIS_TEST_CONTAINER_ID" sh -c "redis-cli acl users 2>/dev/null || valkey-cli acl users" | grep -c -e "$prod_user" -e "$stg_user")
+      val=$("$REDIS_TEST_CONTAINER_COMMAND" exec "$REDIS_TEST_CONTAINER_ID" sh -c "redis-cli get ${p}keep 2>/dev/null || valkey-cli get ${p}keep")
+      echo "${users}/${val}"
+    stdout: "0/v1"
+
+  redis0260: # service and binding health checks connect and run a PING
+    command: |
+      ../openrun service health redis/r1 >/dev/null
+      ../openrun binding health /apps/r1 >/dev/null
+      ../openrun binding health --staging /apps/r1 >/dev/null && echo healthy_all
+    stdout: "healthy_all"
+
+  redis0261: # binding health fails after the ACL user is deleted out-of-band; the staging account is unaffected
+    command: |
+      ../openrun binding create redis/r1 /apps/rhealth >/dev/null
+      user=$(../openrun binding show-account /apps/rhealth | jq -r '.username')
+      "$REDIS_TEST_CONTAINER_COMMAND" exec "$REDIS_TEST_CONTAINER_ID" sh -c "redis-cli acl deluser $user 2>/dev/null || valkey-cli acl deluser $user" >/dev/null
+      if ../openrun binding health /apps/rhealth >/dev/null 2>&1; then prod=healthy; else prod=unhealthy; fi
+      ../openrun binding health --staging /apps/rhealth >/dev/null && echo "prod_${prod}/staging_healthy"
+    stdout: "prod_unhealthy/staging_healthy"
+
+  redis0262: # the binding still deletes cleanly (deleting a missing ACL user is harmless)
+    command: ../openrun binding delete /apps/rhealth
+    stdout: "Binding /apps/rhealth deleted"
+
   redis9990: # unknown service types are still rejected
     command: ../openrun service create --config url=${TEST_REDIS_URL} unknowntype/u1
     stderr: "unknown service type"

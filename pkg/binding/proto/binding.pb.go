@@ -1239,6 +1239,174 @@ func (x *RunCommandResponse) GetError() string {
 	return ""
 }
 
+type CheckHealthRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckHealthRequest) Reset() {
+	*x = CheckHealthRequest{}
+	mi := &file_binding_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckHealthRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckHealthRequest) ProtoMessage() {}
+
+func (x *CheckHealthRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_binding_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckHealthRequest.ProtoReflect.Descriptor instead.
+func (*CheckHealthRequest) Descriptor() ([]byte, []int) {
+	return file_binding_proto_rawDescGZIP(), []int{22}
+}
+
+type CheckHealthResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Error         string                 `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckHealthResponse) Reset() {
+	*x = CheckHealthResponse{}
+	mi := &file_binding_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckHealthResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckHealthResponse) ProtoMessage() {}
+
+func (x *CheckHealthResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_binding_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckHealthResponse.ProtoReflect.Descriptor instead.
+func (*CheckHealthResponse) Descriptor() ([]byte, []int) {
+	return file_binding_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *CheckHealthResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type CheckBindingHealthRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	BindingMetadata *BindingMetadata       `protobuf:"bytes,1,opt,name=binding_metadata,json=bindingMetadata,proto3" json:"binding_metadata,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *CheckBindingHealthRequest) Reset() {
+	*x = CheckBindingHealthRequest{}
+	mi := &file_binding_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckBindingHealthRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckBindingHealthRequest) ProtoMessage() {}
+
+func (x *CheckBindingHealthRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_binding_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckBindingHealthRequest.ProtoReflect.Descriptor instead.
+func (*CheckBindingHealthRequest) Descriptor() ([]byte, []int) {
+	return file_binding_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *CheckBindingHealthRequest) GetBindingMetadata() *BindingMetadata {
+	if x != nil {
+		return x.BindingMetadata
+	}
+	return nil
+}
+
+type CheckBindingHealthResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Error         string                 `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckBindingHealthResponse) Reset() {
+	*x = CheckBindingHealthResponse{}
+	mi := &file_binding_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckBindingHealthResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckBindingHealthResponse) ProtoMessage() {}
+
+func (x *CheckBindingHealthResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_binding_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckBindingHealthResponse.ProtoReflect.Descriptor instead.
+func (*CheckBindingHealthResponse) Descriptor() ([]byte, []int) {
+	return file_binding_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *CheckBindingHealthResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_binding_proto protoreflect.FileDescriptor
 
 const file_binding_proto_rawDesc = "" +
@@ -1340,7 +1508,14 @@ const file_binding_proto_rawDesc = "" +
 	"\acommand\x18\x02 \x01(\tR\acommand\"[\n" +
 	"\x12RunCommandResponse\x12/\n" +
 	"\x06result\x18\x01 \x01(\v2\x17.google.protobuf.StructR\x06result\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error2\x98\a\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\x14\n" +
+	"\x12CheckHealthRequest\"+\n" +
+	"\x13CheckHealthResponse\x12\x14\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error\"k\n" +
+	"\x19CheckBindingHealthRequest\x12N\n" +
+	"\x10binding_metadata\x18\x01 \x01(\v2#.openrun.binding.v1.BindingMetadataR\x0fbindingMetadata\"2\n" +
+	"\x1aCheckBindingHealthResponse\x12\x14\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error2\xed\b\n" +
 	"\x0fBindingProvider\x12U\n" +
 	"\bDescribe\x12#.openrun.binding.v1.DescribeRequest\x1a$.openrun.binding.v1.DescribeResponse\x12d\n" +
 	"\rGetAccountEnv\x12(.openrun.binding.v1.GetAccountEnvRequest\x1a).openrun.binding.v1.GetAccountEnvResponse\x12p\n" +
@@ -1351,7 +1526,9 @@ const file_binding_proto_rawDesc = "" +
 	"\vApplyGrants\x12&.openrun.binding.v1.ApplyGrantsRequest\x1a'.openrun.binding.v1.ApplyGrantsResponse\x12a\n" +
 	"\fRevokeGrants\x12'.openrun.binding.v1.RevokeGrantsRequest\x1a(.openrun.binding.v1.RevokeGrantsResponse\x12[\n" +
 	"\n" +
-	"RunCommand\x12%.openrun.binding.v1.RunCommandRequest\x1a&.openrun.binding.v1.RunCommandResponseB1Z/github.com/openrundev/openrun/pkg/binding/protob\x06proto3"
+	"RunCommand\x12%.openrun.binding.v1.RunCommandRequest\x1a&.openrun.binding.v1.RunCommandResponse\x12^\n" +
+	"\vCheckHealth\x12&.openrun.binding.v1.CheckHealthRequest\x1a'.openrun.binding.v1.CheckHealthResponse\x12s\n" +
+	"\x12CheckBindingHealth\x12-.openrun.binding.v1.CheckBindingHealthRequest\x1a..openrun.binding.v1.CheckBindingHealthResponseB1Z/github.com/openrundev/openrun/pkg/binding/protob\x06proto3"
 
 var (
 	file_binding_proto_rawDescOnce sync.Once
@@ -1365,84 +1542,93 @@ func file_binding_proto_rawDescGZIP() []byte {
 	return file_binding_proto_rawDescData
 }
 
-var file_binding_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_binding_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_binding_proto_goTypes = []any{
-	(*BindingMetadata)(nil),           // 0: openrun.binding.v1.BindingMetadata
-	(*BindingGrant)(nil),              // 1: openrun.binding.v1.BindingGrant
-	(*Artifact)(nil),                  // 2: openrun.binding.v1.Artifact
-	(*DescribeRequest)(nil),           // 3: openrun.binding.v1.DescribeRequest
-	(*DescribeResponse)(nil),          // 4: openrun.binding.v1.DescribeResponse
-	(*ServiceTypeInfo)(nil),           // 5: openrun.binding.v1.ServiceTypeInfo
-	(*GetAccountEnvRequest)(nil),      // 6: openrun.binding.v1.GetAccountEnvRequest
-	(*GetAccountEnvResponse)(nil),     // 7: openrun.binding.v1.GetAccountEnvResponse
-	(*InitializeServiceRequest)(nil),  // 8: openrun.binding.v1.InitializeServiceRequest
-	(*InitializeServiceResponse)(nil), // 9: openrun.binding.v1.InitializeServiceResponse
-	(*CloseServiceRequest)(nil),       // 10: openrun.binding.v1.CloseServiceRequest
-	(*CloseServiceResponse)(nil),      // 11: openrun.binding.v1.CloseServiceResponse
-	(*GenerateAccountRequest)(nil),    // 12: openrun.binding.v1.GenerateAccountRequest
-	(*GenerateAccountResponse)(nil),   // 13: openrun.binding.v1.GenerateAccountResponse
-	(*DeleteArtifactRequest)(nil),     // 14: openrun.binding.v1.DeleteArtifactRequest
-	(*DeleteArtifactResponse)(nil),    // 15: openrun.binding.v1.DeleteArtifactResponse
-	(*ApplyGrantsRequest)(nil),        // 16: openrun.binding.v1.ApplyGrantsRequest
-	(*ApplyGrantsResponse)(nil),       // 17: openrun.binding.v1.ApplyGrantsResponse
-	(*RevokeGrantsRequest)(nil),       // 18: openrun.binding.v1.RevokeGrantsRequest
-	(*RevokeGrantsResponse)(nil),      // 19: openrun.binding.v1.RevokeGrantsResponse
-	(*RunCommandRequest)(nil),         // 20: openrun.binding.v1.RunCommandRequest
-	(*RunCommandResponse)(nil),        // 21: openrun.binding.v1.RunCommandResponse
-	nil,                               // 22: openrun.binding.v1.BindingMetadata.ConfigEntry
-	nil,                               // 23: openrun.binding.v1.BindingMetadata.AccountEntry
-	nil,                               // 24: openrun.binding.v1.InitializeServiceRequest.ServiceConfigEntry
-	nil,                               // 25: openrun.binding.v1.GenerateAccountResponse.AccountEntry
-	nil,                               // 26: openrun.binding.v1.ApplyGrantsRequest.AccountEntry
-	nil,                               // 27: openrun.binding.v1.RevokeGrantsRequest.AccountEntry
-	(*structpb.Struct)(nil),           // 28: google.protobuf.Struct
+	(*BindingMetadata)(nil),            // 0: openrun.binding.v1.BindingMetadata
+	(*BindingGrant)(nil),               // 1: openrun.binding.v1.BindingGrant
+	(*Artifact)(nil),                   // 2: openrun.binding.v1.Artifact
+	(*DescribeRequest)(nil),            // 3: openrun.binding.v1.DescribeRequest
+	(*DescribeResponse)(nil),           // 4: openrun.binding.v1.DescribeResponse
+	(*ServiceTypeInfo)(nil),            // 5: openrun.binding.v1.ServiceTypeInfo
+	(*GetAccountEnvRequest)(nil),       // 6: openrun.binding.v1.GetAccountEnvRequest
+	(*GetAccountEnvResponse)(nil),      // 7: openrun.binding.v1.GetAccountEnvResponse
+	(*InitializeServiceRequest)(nil),   // 8: openrun.binding.v1.InitializeServiceRequest
+	(*InitializeServiceResponse)(nil),  // 9: openrun.binding.v1.InitializeServiceResponse
+	(*CloseServiceRequest)(nil),        // 10: openrun.binding.v1.CloseServiceRequest
+	(*CloseServiceResponse)(nil),       // 11: openrun.binding.v1.CloseServiceResponse
+	(*GenerateAccountRequest)(nil),     // 12: openrun.binding.v1.GenerateAccountRequest
+	(*GenerateAccountResponse)(nil),    // 13: openrun.binding.v1.GenerateAccountResponse
+	(*DeleteArtifactRequest)(nil),      // 14: openrun.binding.v1.DeleteArtifactRequest
+	(*DeleteArtifactResponse)(nil),     // 15: openrun.binding.v1.DeleteArtifactResponse
+	(*ApplyGrantsRequest)(nil),         // 16: openrun.binding.v1.ApplyGrantsRequest
+	(*ApplyGrantsResponse)(nil),        // 17: openrun.binding.v1.ApplyGrantsResponse
+	(*RevokeGrantsRequest)(nil),        // 18: openrun.binding.v1.RevokeGrantsRequest
+	(*RevokeGrantsResponse)(nil),       // 19: openrun.binding.v1.RevokeGrantsResponse
+	(*RunCommandRequest)(nil),          // 20: openrun.binding.v1.RunCommandRequest
+	(*RunCommandResponse)(nil),         // 21: openrun.binding.v1.RunCommandResponse
+	(*CheckHealthRequest)(nil),         // 22: openrun.binding.v1.CheckHealthRequest
+	(*CheckHealthResponse)(nil),        // 23: openrun.binding.v1.CheckHealthResponse
+	(*CheckBindingHealthRequest)(nil),  // 24: openrun.binding.v1.CheckBindingHealthRequest
+	(*CheckBindingHealthResponse)(nil), // 25: openrun.binding.v1.CheckBindingHealthResponse
+	nil,                                // 26: openrun.binding.v1.BindingMetadata.ConfigEntry
+	nil,                                // 27: openrun.binding.v1.BindingMetadata.AccountEntry
+	nil,                                // 28: openrun.binding.v1.InitializeServiceRequest.ServiceConfigEntry
+	nil,                                // 29: openrun.binding.v1.GenerateAccountResponse.AccountEntry
+	nil,                                // 30: openrun.binding.v1.ApplyGrantsRequest.AccountEntry
+	nil,                                // 31: openrun.binding.v1.RevokeGrantsRequest.AccountEntry
+	(*structpb.Struct)(nil),            // 32: google.protobuf.Struct
 }
 var file_binding_proto_depIdxs = []int32{
 	1,  // 0: openrun.binding.v1.BindingMetadata.grants_applied:type_name -> openrun.binding.v1.BindingGrant
-	22, // 1: openrun.binding.v1.BindingMetadata.config:type_name -> openrun.binding.v1.BindingMetadata.ConfigEntry
-	23, // 2: openrun.binding.v1.BindingMetadata.account:type_name -> openrun.binding.v1.BindingMetadata.AccountEntry
+	26, // 1: openrun.binding.v1.BindingMetadata.config:type_name -> openrun.binding.v1.BindingMetadata.ConfigEntry
+	27, // 2: openrun.binding.v1.BindingMetadata.account:type_name -> openrun.binding.v1.BindingMetadata.AccountEntry
 	5,  // 3: openrun.binding.v1.DescribeResponse.service_types:type_name -> openrun.binding.v1.ServiceTypeInfo
-	24, // 4: openrun.binding.v1.InitializeServiceRequest.service_config:type_name -> openrun.binding.v1.InitializeServiceRequest.ServiceConfigEntry
+	28, // 4: openrun.binding.v1.InitializeServiceRequest.service_config:type_name -> openrun.binding.v1.InitializeServiceRequest.ServiceConfigEntry
 	0,  // 5: openrun.binding.v1.GenerateAccountRequest.binding_metadata:type_name -> openrun.binding.v1.BindingMetadata
 	0,  // 6: openrun.binding.v1.GenerateAccountRequest.derived_from_metadata:type_name -> openrun.binding.v1.BindingMetadata
-	25, // 7: openrun.binding.v1.GenerateAccountResponse.account:type_name -> openrun.binding.v1.GenerateAccountResponse.AccountEntry
+	29, // 7: openrun.binding.v1.GenerateAccountResponse.account:type_name -> openrun.binding.v1.GenerateAccountResponse.AccountEntry
 	2,  // 8: openrun.binding.v1.GenerateAccountResponse.created_artifacts:type_name -> openrun.binding.v1.Artifact
 	2,  // 9: openrun.binding.v1.DeleteArtifactRequest.artifact:type_name -> openrun.binding.v1.Artifact
-	26, // 10: openrun.binding.v1.ApplyGrantsRequest.account:type_name -> openrun.binding.v1.ApplyGrantsRequest.AccountEntry
+	30, // 10: openrun.binding.v1.ApplyGrantsRequest.account:type_name -> openrun.binding.v1.ApplyGrantsRequest.AccountEntry
 	0,  // 11: openrun.binding.v1.ApplyGrantsRequest.binding_metadata:type_name -> openrun.binding.v1.BindingMetadata
 	0,  // 12: openrun.binding.v1.ApplyGrantsRequest.derived_from_metadata:type_name -> openrun.binding.v1.BindingMetadata
 	1,  // 13: openrun.binding.v1.ApplyGrantsResponse.grants_applied:type_name -> openrun.binding.v1.BindingGrant
 	1,  // 14: openrun.binding.v1.ApplyGrantsResponse.granted:type_name -> openrun.binding.v1.BindingGrant
 	1,  // 15: openrun.binding.v1.ApplyGrantsResponse.pending_revokes:type_name -> openrun.binding.v1.BindingGrant
-	27, // 16: openrun.binding.v1.RevokeGrantsRequest.account:type_name -> openrun.binding.v1.RevokeGrantsRequest.AccountEntry
+	31, // 16: openrun.binding.v1.RevokeGrantsRequest.account:type_name -> openrun.binding.v1.RevokeGrantsRequest.AccountEntry
 	0,  // 17: openrun.binding.v1.RevokeGrantsRequest.derived_from_metadata:type_name -> openrun.binding.v1.BindingMetadata
 	1,  // 18: openrun.binding.v1.RevokeGrantsRequest.revokes:type_name -> openrun.binding.v1.BindingGrant
 	1,  // 19: openrun.binding.v1.RevokeGrantsRequest.regrants:type_name -> openrun.binding.v1.BindingGrant
 	0,  // 20: openrun.binding.v1.RunCommandRequest.binding_metadata:type_name -> openrun.binding.v1.BindingMetadata
-	28, // 21: openrun.binding.v1.RunCommandResponse.result:type_name -> google.protobuf.Struct
-	3,  // 22: openrun.binding.v1.BindingProvider.Describe:input_type -> openrun.binding.v1.DescribeRequest
-	6,  // 23: openrun.binding.v1.BindingProvider.GetAccountEnv:input_type -> openrun.binding.v1.GetAccountEnvRequest
-	8,  // 24: openrun.binding.v1.BindingProvider.InitializeService:input_type -> openrun.binding.v1.InitializeServiceRequest
-	10, // 25: openrun.binding.v1.BindingProvider.CloseService:input_type -> openrun.binding.v1.CloseServiceRequest
-	12, // 26: openrun.binding.v1.BindingProvider.GenerateAccount:input_type -> openrun.binding.v1.GenerateAccountRequest
-	14, // 27: openrun.binding.v1.BindingProvider.DeleteArtifact:input_type -> openrun.binding.v1.DeleteArtifactRequest
-	16, // 28: openrun.binding.v1.BindingProvider.ApplyGrants:input_type -> openrun.binding.v1.ApplyGrantsRequest
-	18, // 29: openrun.binding.v1.BindingProvider.RevokeGrants:input_type -> openrun.binding.v1.RevokeGrantsRequest
-	20, // 30: openrun.binding.v1.BindingProvider.RunCommand:input_type -> openrun.binding.v1.RunCommandRequest
-	4,  // 31: openrun.binding.v1.BindingProvider.Describe:output_type -> openrun.binding.v1.DescribeResponse
-	7,  // 32: openrun.binding.v1.BindingProvider.GetAccountEnv:output_type -> openrun.binding.v1.GetAccountEnvResponse
-	9,  // 33: openrun.binding.v1.BindingProvider.InitializeService:output_type -> openrun.binding.v1.InitializeServiceResponse
-	11, // 34: openrun.binding.v1.BindingProvider.CloseService:output_type -> openrun.binding.v1.CloseServiceResponse
-	13, // 35: openrun.binding.v1.BindingProvider.GenerateAccount:output_type -> openrun.binding.v1.GenerateAccountResponse
-	15, // 36: openrun.binding.v1.BindingProvider.DeleteArtifact:output_type -> openrun.binding.v1.DeleteArtifactResponse
-	17, // 37: openrun.binding.v1.BindingProvider.ApplyGrants:output_type -> openrun.binding.v1.ApplyGrantsResponse
-	19, // 38: openrun.binding.v1.BindingProvider.RevokeGrants:output_type -> openrun.binding.v1.RevokeGrantsResponse
-	21, // 39: openrun.binding.v1.BindingProvider.RunCommand:output_type -> openrun.binding.v1.RunCommandResponse
-	31, // [31:40] is the sub-list for method output_type
-	22, // [22:31] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	32, // 21: openrun.binding.v1.RunCommandResponse.result:type_name -> google.protobuf.Struct
+	0,  // 22: openrun.binding.v1.CheckBindingHealthRequest.binding_metadata:type_name -> openrun.binding.v1.BindingMetadata
+	3,  // 23: openrun.binding.v1.BindingProvider.Describe:input_type -> openrun.binding.v1.DescribeRequest
+	6,  // 24: openrun.binding.v1.BindingProvider.GetAccountEnv:input_type -> openrun.binding.v1.GetAccountEnvRequest
+	8,  // 25: openrun.binding.v1.BindingProvider.InitializeService:input_type -> openrun.binding.v1.InitializeServiceRequest
+	10, // 26: openrun.binding.v1.BindingProvider.CloseService:input_type -> openrun.binding.v1.CloseServiceRequest
+	12, // 27: openrun.binding.v1.BindingProvider.GenerateAccount:input_type -> openrun.binding.v1.GenerateAccountRequest
+	14, // 28: openrun.binding.v1.BindingProvider.DeleteArtifact:input_type -> openrun.binding.v1.DeleteArtifactRequest
+	16, // 29: openrun.binding.v1.BindingProvider.ApplyGrants:input_type -> openrun.binding.v1.ApplyGrantsRequest
+	18, // 30: openrun.binding.v1.BindingProvider.RevokeGrants:input_type -> openrun.binding.v1.RevokeGrantsRequest
+	20, // 31: openrun.binding.v1.BindingProvider.RunCommand:input_type -> openrun.binding.v1.RunCommandRequest
+	22, // 32: openrun.binding.v1.BindingProvider.CheckHealth:input_type -> openrun.binding.v1.CheckHealthRequest
+	24, // 33: openrun.binding.v1.BindingProvider.CheckBindingHealth:input_type -> openrun.binding.v1.CheckBindingHealthRequest
+	4,  // 34: openrun.binding.v1.BindingProvider.Describe:output_type -> openrun.binding.v1.DescribeResponse
+	7,  // 35: openrun.binding.v1.BindingProvider.GetAccountEnv:output_type -> openrun.binding.v1.GetAccountEnvResponse
+	9,  // 36: openrun.binding.v1.BindingProvider.InitializeService:output_type -> openrun.binding.v1.InitializeServiceResponse
+	11, // 37: openrun.binding.v1.BindingProvider.CloseService:output_type -> openrun.binding.v1.CloseServiceResponse
+	13, // 38: openrun.binding.v1.BindingProvider.GenerateAccount:output_type -> openrun.binding.v1.GenerateAccountResponse
+	15, // 39: openrun.binding.v1.BindingProvider.DeleteArtifact:output_type -> openrun.binding.v1.DeleteArtifactResponse
+	17, // 40: openrun.binding.v1.BindingProvider.ApplyGrants:output_type -> openrun.binding.v1.ApplyGrantsResponse
+	19, // 41: openrun.binding.v1.BindingProvider.RevokeGrants:output_type -> openrun.binding.v1.RevokeGrantsResponse
+	21, // 42: openrun.binding.v1.BindingProvider.RunCommand:output_type -> openrun.binding.v1.RunCommandResponse
+	23, // 43: openrun.binding.v1.BindingProvider.CheckHealth:output_type -> openrun.binding.v1.CheckHealthResponse
+	25, // 44: openrun.binding.v1.BindingProvider.CheckBindingHealth:output_type -> openrun.binding.v1.CheckBindingHealthResponse
+	34, // [34:45] is the sub-list for method output_type
+	23, // [23:34] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_binding_proto_init() }
@@ -1457,7 +1643,7 @@ func file_binding_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_binding_proto_rawDesc), len(file_binding_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   28,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

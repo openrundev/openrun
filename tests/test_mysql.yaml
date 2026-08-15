@@ -342,5 +342,52 @@ tests:
     stderr: "CREATE command denied"
     exit-code: 1
 
+  mysql0200: # deleting a derived binding drops its prod and staging users on the backend
+    command: |
+      prod_user=$(../openrun binding show-account /apps/my1read | jq -r '.user')
+      stg_user=$(../openrun binding show-account --staging /apps/my1read | jq -r '.user')
+      ../openrun binding delete /apps/my1read >/dev/null
+      "$MYSQL_TEST_CONTAINER_COMMAND" exec "$MYSQL_TEST_CONTAINER_ID" mysql -uroot -pmysql -N -e "SELECT COUNT(*) FROM mysql.user WHERE User IN ('$prod_user', '$stg_user')" 2>/dev/null
+    stdout: "0"
+
+  mysql0201: # deleting a derived binding leaves the base binding's database and data intact
+    command: ../openrun binding run-command /apps/my1 "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "3"
+
+  mysql0210: # deleting a base binding drops its databases and users, including tables created later
+    command: |
+      ../openrun binding create mysql/my1 /apps/mydelbase >/dev/null
+      prod_user=$(../openrun binding show-account /apps/mydelbase | jq -r '.user')
+      prod_db=$(../openrun binding show-account /apps/mydelbase | jq -r '.database')
+      stg_user=$(../openrun binding show-account --staging /apps/mydelbase | jq -r '.user')
+      stg_db=$(../openrun binding show-account --staging /apps/mydelbase | jq -r '.database')
+      ../openrun binding run-command /apps/mydelbase "create table del_data (id integer primary key)" >/dev/null
+      ../openrun binding delete /apps/mydelbase >/dev/null
+      users=$("$MYSQL_TEST_CONTAINER_COMMAND" exec "$MYSQL_TEST_CONTAINER_ID" mysql -uroot -pmysql -N -e "SELECT COUNT(*) FROM mysql.user WHERE User IN ('$prod_user', '$stg_user')" 2>/dev/null)
+      dbs=$("$MYSQL_TEST_CONTAINER_COMMAND" exec "$MYSQL_TEST_CONTAINER_ID" mysql -uroot -pmysql -N -e "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME IN ('$prod_db', '$stg_db')" 2>/dev/null)
+      echo "${users}/${dbs}"
+    stdout: "0/0"
+
+  mysql0220: # service and binding health checks connect and run a noop
+    command: |
+      ../openrun service health mysql/my1 >/dev/null
+      ../openrun binding health /apps/my1 >/dev/null
+      ../openrun binding health --staging /apps/my1 >/dev/null && echo healthy_all
+    stdout: "healthy_all"
+
+  mysql0221: # binding health fails after the backend user is dropped out-of-band; the staging account is unaffected
+    command: |
+      ../openrun binding create mysql/my1 /apps/myhealth >/dev/null
+      user=$(../openrun binding show-account /apps/myhealth | jq -r '.user')
+      host=$(../openrun binding show-account /apps/myhealth | jq -r '.host')
+      "$MYSQL_TEST_CONTAINER_COMMAND" exec "$MYSQL_TEST_CONTAINER_ID" mysql -uroot -pmysql -e "DROP USER '$user'@'$host'" 2>/dev/null
+      if ../openrun binding health /apps/myhealth >/dev/null 2>&1; then prod=healthy; else prod=unhealthy; fi
+      ../openrun binding health --staging /apps/myhealth >/dev/null && echo "prod_${prod}/staging_healthy"
+    stdout: "prod_unhealthy/staging_healthy"
+
+  mysql0222: # the binding still deletes cleanly (artifact drops are idempotent)
+    command: ../openrun binding delete /apps/myhealth
+    stdout: "Binding /apps/myhealth deleted"
+
   mysql9999:
     command: (../openrun binding delete /apps/my1multi; ../openrun binding delete /apps/my1fulltest1; ../openrun binding delete /apps/my1full; ../openrun binding delete /apps/my1stage; ../openrun binding delete /apps/my1create; ../openrun binding delete /apps/my1read; ../openrun binding delete /apps/my1partialread; ../openrun binding delete /apps/my1; ../openrun service delete mysql/my1) || true

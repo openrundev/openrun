@@ -95,17 +95,30 @@ func (b *applyTestServiceBinding) RunCommand(context.Context, types.BindingMetad
 	return nil, nil
 }
 
+func (b *applyTestServiceBinding) CheckHealth(context.Context) error {
+	return nil
+}
+
+func (b *applyTestServiceBinding) CheckBindingHealth(context.Context, types.BindingMetadata) error {
+	return nil
+}
+
 type applyPendingGrantServiceBinding struct {
+	applyTestServiceBinding
 	grantAvailable    *bool
 	pendingApplyCalls *int
 	reapplyAllCalls   *int
 }
 
 type applyAccountTrackingServiceBinding struct {
+	applyTestServiceBinding
 	generateCalls    *int
 	failAfterCreate  *bool
 	deletedArtifacts *[]bindings.Artifact
 	closed           *int
+	// deleteHook, when set to a non-nil func, runs on each DeleteArtifact call:
+	// tests use it to observe the metadata state at drop time or to fail a drop
+	deleteHook *func(bindings.Artifact) error
 }
 
 func (b *applyAccountTrackingServiceBinding) InitializeService(context.Context, *types.Logger, map[string]string, bindings.ServiceBindingRuntime) error {
@@ -138,6 +151,11 @@ func (b *applyAccountTrackingServiceBinding) GenerateAccount(_ context.Context, 
 }
 
 func (b *applyAccountTrackingServiceBinding) DeleteArtifact(_ context.Context, artifact bindings.Artifact) error {
+	if b.deleteHook != nil && *b.deleteHook != nil {
+		if err := (*b.deleteHook)(artifact); err != nil {
+			return err
+		}
+	}
 	*b.deletedArtifacts = append(*b.deletedArtifacts, artifact)
 	return nil
 }
@@ -442,10 +460,10 @@ func TestBindingAccountManagerRollbackDeletesUncommittedArtifacts(t *testing.T) 
 
 	// Artifacts created without a commit are deleted on rollback, in reverse creation order
 	accounts := server.newBindingAccountManager(false)
-	if _, _, err := accounts.generateAccount(ctx, service, binding, nil, true, true); err != nil {
+	if _, _, _, err := accounts.generateAccount(ctx, service, binding, nil, true, true); err != nil {
 		t.Fatalf("generate staging account: %v", err)
 	}
-	if _, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true); err != nil {
+	if _, _, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true); err != nil {
 		t.Fatalf("generate prod account: %v", err)
 	}
 	accounts.rollbackAndClose(ctx)
@@ -465,7 +483,7 @@ func TestBindingAccountManagerRollbackDeletesUncommittedArtifacts(t *testing.T) 
 	// Committed artifacts are kept on rollback
 	deletedArtifacts = nil
 	accounts = server.newBindingAccountManager(false)
-	if _, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true); err != nil {
+	if _, _, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true); err != nil {
 		t.Fatalf("generate account: %v", err)
 	}
 	accounts.commit()
@@ -478,7 +496,7 @@ func TestBindingAccountManagerRollbackDeletesUncommittedArtifacts(t *testing.T) 
 	deletedArtifacts = nil
 	failAfterCreate = true
 	accounts = server.newBindingAccountManager(false)
-	if _, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true); err == nil {
+	if _, _, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true); err == nil {
 		t.Fatal("generate account did not return the partial failure")
 	}
 	accounts.rollbackAndClose(ctx)
@@ -491,7 +509,7 @@ func TestBindingAccountManagerRollbackDeletesUncommittedArtifacts(t *testing.T) 
 	// Dry run creates no artifacts
 	generateCalls = 0
 	accounts = server.newBindingAccountManager(true)
-	account, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true)
+	account, _, _, err := accounts.generateAccount(ctx, service, binding, nil, false, true)
 	if err != nil {
 		t.Fatalf("dry run generate account: %v", err)
 	}
@@ -738,6 +756,7 @@ func TestReapplyPendingBindingGrantsAppliesOnlyCurrentPendingGrants(t *testing.T
 // diff behavior: ApplyGrants executes only the additive diff and reports the
 // no-longer-desired grants as pending revokes, like the real service bindings.
 type grantLifecycleServiceBinding struct {
+	applyTestServiceBinding
 	grantCalls   *[]string
 	revokeCalls  *[]string
 	regrantCalls *[]string

@@ -230,9 +230,9 @@ func (b *MysqlServiceBinding) GenerateAccount(ctx context.Context, bindingId, bi
 }
 
 // DeleteArtifact drops one user or database previously reported as created by
-// GenerateAccount. The caller only passes back artifacts created during the current
-// operation; pre-existing databases are never reported as created and so are never
-// dropped here.
+// GenerateAccount, either to undo a rolled-back operation or when the binding is
+// deleted. The database is dropped with its contents; a derived binding's base
+// database is never reported as created and so is never dropped here.
 func (b *MysqlServiceBinding) DeleteArtifact(ctx context.Context, artifact Artifact) error {
 	if artifact.Name == "" {
 		return fmt.Errorf("artifact name is required")
@@ -580,6 +580,37 @@ func buildMysqlAccountURL(adminURL, user, password, database, bindingHostname st
 	setURLHostname(u, bindingHostname)
 	u.Path = "/" + database
 	return u.String(), nil
+}
+
+// CheckHealth verifies the admin connection with a no-op query.
+func (b *MysqlServiceBinding) CheckHealth(ctx context.Context) error {
+	if b.adminConn == nil {
+		return fmt.Errorf("service is not initialized")
+	}
+	var one int
+	if err := b.adminConn.QueryRowContext(ctx, "select 1").Scan(&one); err != nil {
+		return fmt.Errorf("error running mysql health query: %w", err)
+	}
+	return nil
+}
+
+// CheckBindingHealth connects as the binding account and runs a no-op query,
+// verifying the generated user still exists and its credentials work.
+func (b *MysqlServiceBinding) CheckBindingHealth(ctx context.Context, bindingMetadata types.BindingMetadata) error {
+	dsn, err := mysqlURLToDSN(bindingMetadata.Account["url_direct"], "")
+	if err != nil {
+		return fmt.Errorf("error parsing account url: %w", err)
+	}
+	conn, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fmt.Errorf("error opening connection: %w", err)
+	}
+	defer conn.Close() //nolint:errcheck
+	var one int
+	if err := conn.QueryRowContext(ctx, "select 1").Scan(&one); err != nil {
+		return fmt.Errorf("error running mysql binding health query: %w", err)
+	}
+	return nil
 }
 
 func (b *MysqlServiceBinding) RunCommand(ctx context.Context, bindingMetadata types.BindingMetadata, command string) (map[string]any, error) {

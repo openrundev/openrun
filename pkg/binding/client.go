@@ -121,6 +121,14 @@ func (p *Provider) RunCommand(ctx context.Context, bindingMetadata BindingMetada
 	return p.rpc.RunCommand(ctx, bindingMetadata, command)
 }
 
+func (p *Provider) CheckHealth(ctx context.Context) error {
+	return p.rpc.CheckHealth(ctx)
+}
+
+func (p *Provider) CheckBindingHealth(ctx context.Context, bindingMetadata BindingMetadata) error {
+	return p.rpc.CheckBindingHealth(ctx, bindingMetadata)
+}
+
 // Client is the typed gRPC client for the provider protocol, dispensed by
 // go-plugin. Server code uses Provider, which wraps process lifecycle around it.
 type Client struct {
@@ -259,4 +267,22 @@ func (c *Client) RunCommand(ctx context.Context, bindingMetadata BindingMetadata
 		result = resp.GetResult().AsMap()
 	}
 	return result, nil
+}
+
+func (c *Client) CheckHealth(ctx context.Context) error {
+	resp, err := c.pc.CheckHealth(ctx, &pb.CheckHealthRequest{})
+	if err != nil {
+		return err
+	}
+	return providerErr(resp.GetError())
+}
+
+func (c *Client) CheckBindingHealth(ctx context.Context, bindingMetadata BindingMetadata) error {
+	resp, err := c.pc.CheckBindingHealth(ctx, &pb.CheckBindingHealthRequest{
+		BindingMetadata: metadataToProto(bindingMetadata),
+	})
+	if err != nil {
+		return err
+	}
+	return providerErr(resp.GetError())
 }

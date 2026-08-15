@@ -35,6 +35,14 @@ service BindingProvider {
   rpc ApplyGrants(ApplyGrantsRequest) returns (ApplyGrantsResponse);
   rpc RevokeGrants(RevokeGrantsRequest) returns (RevokeGrantsResponse);
   rpc RunCommand(RunCommandRequest) returns (RunCommandResponse);
+
+  // CheckHealth verifies the service is healthy: the provider connects to the
+  // backend with the admin credentials and runs a no-op operation.
+  rpc CheckHealth(CheckHealthRequest) returns (CheckHealthResponse);
+
+  // CheckBindingHealth verifies the binding account is healthy: the provider
+  // connects to the backend as the binding account and runs a no-op operation.
+  rpc CheckBindingHealth(CheckBindingHealthRequest) returns (CheckBindingHealthResponse);
 }
 
 message BindingMetadata {
@@ -154,4 +162,18 @@ message RunCommandRequest {
 message RunCommandResponse {
   google.protobuf.Struct result = 1;
   string error = 2;
+}
+
+message CheckHealthRequest {}
+
+message CheckHealthResponse {
+  string error = 1;
+}
+
+message CheckBindingHealthRequest {
+  BindingMetadata binding_metadata = 1;
+}
+
+message CheckBindingHealthResponse {
+  string error = 1;
 }

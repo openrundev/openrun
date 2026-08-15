@@ -183,9 +183,10 @@ func (b *PostgresServiceBinding) GenerateAccount(ctx context.Context, bindingId,
 }
 
 // DeleteArtifact drops one role or schema previously reported as created by
-// GenerateAccount. The caller only passes back artifacts created during the current
-// operation, so a newly created role cannot own pre-existing objects and a schema
-// drop only removes objects created since the schema itself was created.
+// GenerateAccount, either to undo a rolled-back operation or when the binding is
+// deleted. The schema is dropped with its contents (CASCADE); dropping a role also
+// drops the objects it still owns (DROP OWNED), such as tables a derived binding's
+// role created in the base binding's schema.
 func (b *PostgresServiceBinding) DeleteArtifact(ctx context.Context, artifact Artifact) error {
 	if artifact.Name == "" {
 		return fmt.Errorf("artifact name is required")
@@ -499,6 +500,37 @@ func buildAccountURL(adminURL, user, password, bindingHostname string) (string, 
 	u.User = url.UserPassword(user, password)
 	setURLHostname(u, bindingHostname)
 	return u.String(), nil
+}
+
+// CheckHealth verifies the admin connection with a no-op query.
+func (b *PostgresServiceBinding) CheckHealth(ctx context.Context) error {
+	if b.adminConn == nil {
+		return fmt.Errorf("service is not initialized")
+	}
+	var one int
+	if err := b.adminConn.QueryRowContext(ctx, "select 1").Scan(&one); err != nil {
+		return fmt.Errorf("error running postgres health query: %w", err)
+	}
+	return nil
+}
+
+// CheckBindingHealth connects as the binding account and runs a no-op query,
+// verifying the generated role still exists and its credentials work.
+func (b *PostgresServiceBinding) CheckBindingHealth(ctx context.Context, bindingMetadata types.BindingMetadata) error {
+	accountURL := bindingMetadata.Account["url_direct"]
+	if accountURL == "" {
+		return fmt.Errorf("binding account has no connection url")
+	}
+	conn, err := pgx.Connect(ctx, accountURL)
+	if err != nil {
+		return fmt.Errorf("error connecting as binding account: %w", err)
+	}
+	defer conn.Close(ctx) //nolint:errcheck
+	var one int
+	if err := conn.QueryRow(ctx, "select 1").Scan(&one); err != nil {
+		return fmt.Errorf("error running postgres binding health query: %w", err)
+	}
+	return nil
 }
 
 func (b *PostgresServiceBinding) RunCommand(ctx context.Context, bindingMetadata types.BindingMetadata, command string) (map[string]any, error) {

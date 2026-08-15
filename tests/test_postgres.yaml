@@ -530,5 +530,87 @@ tests:
     stderr: "permission denied for table t2conc"
     exit-code: 1
 
+  postgres0200: # deleting a base binding with derived bindings fails
+    command: ../openrun binding delete /apps/b1
+    exit-code: 1
+    stderr: "binding /apps/b1 has derived bindings"
+
+  postgres0201: # deleting a service with bindings fails
+    command: ../openrun service delete postgres/pg1
+    exit-code: 1
+    stderr: "service postgres/pg1 is used by bindings"
+
+  postgres0202: # dry-run delete keeps the binding and its backend account working
+    command: |
+      ../openrun binding delete --dry-run /apps/b1partialread >/dev/null
+      ../openrun binding run-command /apps/b1partialread "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "3"
+
+  postgres0210: # deleting a derived binding drops its prod and staging roles on the backend
+    command: |
+      prod_role=$(../openrun binding show-account /apps/b1read | jq -r '.role')
+      stg_role=$(../openrun binding show-account --staging /apps/b1read | jq -r '.role')
+      ../openrun binding delete /apps/b1read >/dev/null
+      ../openrun binding list | grep b1read && echo "binding unexpectedly persisted"
+      ../openrun binding run-command /apps/b1 "select count(*) as n from pg_roles where rolname in ('$prod_role', '$stg_role')" | jq -r '.rows[0].n'
+    stdout: "0"
+
+  postgres0211: # deleting a derived binding leaves the base binding's schema and data intact
+    command: ../openrun binding run-command /apps/b1 "select count(*) as n from test1" | jq -r '.rows[0].n'
+    stdout: "3"
+
+  postgres0220: # deleting a base binding drops its schema and roles, including tables created later
+    command: |
+      ../openrun binding create postgres/pg1 /apps/delbase >/dev/null
+      prod_role=$(../openrun binding show-account /apps/delbase | jq -r '.role')
+      prod_schema=$(../openrun binding show-account /apps/delbase | jq -r '.schema')
+      stg_role=$(../openrun binding show-account --staging /apps/delbase | jq -r '.role')
+      stg_schema=$(../openrun binding show-account --staging /apps/delbase | jq -r '.schema')
+      ../openrun binding run-command /apps/delbase "create table del_data (id integer primary key)" >/dev/null
+      ../openrun binding delete /apps/delbase >/dev/null
+      ../openrun binding run-command /apps/b1 "select (select count(*) from pg_roles where rolname in ('$prod_role', '$stg_role')) as roles, (select count(*) from pg_namespace where nspname in ('$prod_schema', '$stg_schema')) as schemas" | jq -r '"\(.rows[0].roles)/\(.rows[0].schemas)"'
+    stdout: "0/0"
+
+  postgres0230: # app delete removes its auto binding and drops the backend artifacts
+    command: |
+      ../openrun app create --bind postgres/pg1 ./testapp /pg_auto_app >/dev/null
+      id=$(../openrun app list -i -f json /pg_auto_app | jq -r 'map(select(.path == "/pg_auto_app"))[0].id')
+      prod_role=$(../openrun binding show-account "/auto/${id}/postgres" | jq -r '.role')
+      stg_role=$(../openrun binding show-account --staging "/auto/${id}/postgres" | jq -r '.role')
+      ../openrun app delete /pg_auto_app >/dev/null
+      remaining=$(../openrun binding list -f json | jq -r "[.[].path | select(. == \"/auto/${id}/postgres\")] | length")
+      roles=$(../openrun binding run-command /apps/b1 "select count(*) as n from pg_roles where rolname in ('$prod_role', '$stg_role')" | jq -r '.rows[0].n')
+      echo "${remaining}/${roles}"
+    stdout: "0/0"
+
+  postgres0240: # auto bindings cannot be shared: no deriving from them, no cross-app attach
+    command: |
+      ../openrun app create --bind postgres/pg1 ./testapp /pg_auto_app2 >/dev/null
+      id=$(../openrun app list -i -f json /pg_auto_app2 | jq -r 'map(select(.path == "/pg_auto_app2"))[0].id')
+      ../openrun binding create "/auto/${id}/postgres" /apps/fromauto && echo "derive unexpectedly succeeded"
+      ../openrun app create --bind "/auto/${id}/postgres" ./testapp /pg_auto_app3 && echo "attach unexpectedly succeeded"
+      ../openrun app delete /pg_auto_app2 >/dev/null && echo "auto_binding_share_blocked"
+    stdout: "auto_binding_share_blocked"
+
+  postgres0250: # a staging service cannot be deleted while bindings host staged accounts on it
+    command: |
+      ../openrun service create --config url=${TEST_POSTGRES_URL} postgres/stgsvc >/dev/null
+      ../openrun service create --staging stgsvc --config url=${TEST_POSTGRES_URL} postgres/mainsvc >/dev/null
+      ../openrun binding create postgres/mainsvc /apps/stagedbind >/dev/null
+      ../openrun service delete postgres/stgsvc && echo "staging delete unexpectedly succeeded"
+      stg_role=$(../openrun binding show-account --staging /apps/stagedbind | jq -r '.role')
+      ../openrun binding delete /apps/stagedbind >/dev/null
+      roles=$(../openrun binding run-command /apps/b1 "select count(*) as n from pg_roles where rolname = '$stg_role'" | jq -r '.rows[0].n')
+      ../openrun service delete postgres/stgsvc >/dev/null
+      ../openrun service delete postgres/mainsvc >/dev/null && echo "staging_flow_ok/${roles}"
+    stdout: "staging_flow_ok/0"
+
+  postgres0260: # service and binding health checks connect and run a noop query
+    command: |
+      ../openrun service health postgres/pg1 >/dev/null
+      ../openrun binding health /apps/b1 >/dev/null
+      ../openrun binding health --staging /apps/b1 >/dev/null && echo healthy_all
+    stdout: "healthy_all"
+
   postgres9999:
     command: (../openrun app delete /pg_verify_app; ../openrun binding delete /apps/bverify; ../openrun binding delete /apps/bconc; ../openrun binding delete /apps/b1multi; ../openrun binding delete /apps/b1fulltest1; ../openrun binding delete /apps/b1full; ../openrun binding delete /apps/b1stage; ../openrun binding delete /apps/b1create; ../openrun binding delete /apps/b1read; ../openrun binding delete /apps/b1partialread; ../openrun binding delete /apps/b1; ../openrun service delete postgres/pg1; rm -rf ./pg_verifyapp ./pg_verify.star ./pg_failapp ./pg_failverify.star ./pg_conc.star ./pg_conc_fail.star ./pg_conc_v2.star ./pg_conc_v3.star ./pg_conc_v4.star ./conc_stop ./conc_errors ./conc_count) || true

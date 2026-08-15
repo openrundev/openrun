@@ -1451,6 +1451,41 @@ func (h *Handler) deleteService(r *http.Request) (any, error) {
 	return map[string]any{"name": name, "service_type": serviceType, "dry_run": dryRun}, nil
 }
 
+func (h *Handler) serviceHealth(r *http.Request) (any, error) {
+	name := r.URL.Query().Get("name")
+	serviceType := r.URL.Query().Get("service_type")
+	if name == "" || serviceType == "" {
+		return nil, types.CreateRequestError("name and service_type are required", http.StatusBadRequest)
+	}
+
+	updateTargetInContext(r, serviceType+"/"+name, false)
+	updateOperationInContext(r, "service_health")
+
+	if err := h.server.ServiceHealth(r.Context(), serviceType, name); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return map[string]any{"name": name, "service_type": serviceType, "status": "healthy"}, nil
+}
+
+func (h *Handler) bindingHealth(r *http.Request) (any, error) {
+	bindingName := r.URL.Query().Get("name")
+	if bindingName == "" {
+		return nil, types.CreateRequestError("name is required", http.StatusBadRequest)
+	}
+	useStaging, err := parseBoolArg(r.URL.Query().Get("staging"), false)
+	if err != nil {
+		return nil, err
+	}
+
+	updateTargetInContext(r, bindingName, false)
+	updateOperationInContext(r, "binding_health")
+
+	if err := h.server.BindingHealth(r.Context(), bindingName, useStaging); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	return map[string]any{"name": bindingName, "staging": useStaging, "status": "healthy"}, nil
+}
+
 func (h *Handler) listServices(r *http.Request) (any, error) {
 	updateOperationInContext(r, "list_services")
 	serviceType := r.URL.Query().Get("service_type")
@@ -2000,6 +2035,11 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 		h.apiHandler(w, r, enableBasicAuth, "list_services", h.listServices, false)
 	}))
 
+	// API to check service health (admin connection + no-op operation)
+	r.Get("/service/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "service_health", h.serviceHealth, false)
+	}))
+
 	// API to install a binding provider
 	r.Post("/provider", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "provider_install", h.installProvider, false)
@@ -2053,6 +2093,11 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to run a command through a binding account
 	r.Post("/binding/run-command", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "binding_run_command", h.runBindingCommand, false)
+	}))
+
+	// API to check binding account health (connect as the account + no-op)
+	r.Get("/binding/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "binding_health", h.bindingHealth, false)
 	}))
 
 	// API to store a secret (create, or update with ?update=true)

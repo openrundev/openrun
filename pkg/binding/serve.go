@@ -255,6 +255,28 @@ func (s *providerServer) RunCommand(ctx context.Context, req *pb.RunCommandReque
 	return &pb.RunCommandResponse{Result: resultStruct}, nil
 }
 
+func (s *providerServer) CheckHealth(ctx context.Context, req *pb.CheckHealthRequest) (*pb.CheckHealthResponse, error) {
+	instance, err := s.getInstance()
+	if err != nil {
+		return nil, err
+	}
+	if err := instance.CheckHealth(ctx); err != nil {
+		return &pb.CheckHealthResponse{Error: err.Error()}, nil
+	}
+	return &pb.CheckHealthResponse{}, nil
+}
+
+func (s *providerServer) CheckBindingHealth(ctx context.Context, req *pb.CheckBindingHealthRequest) (*pb.CheckBindingHealthResponse, error) {
+	instance, err := s.getInstance()
+	if err != nil {
+		return nil, err
+	}
+	if err := instance.CheckBindingHealth(ctx, metadataFromProto(req.GetBindingMetadata())); err != nil {
+		return &pb.CheckBindingHealthResponse{Error: err.Error()}, nil
+	}
+	return &pb.CheckBindingHealthResponse{}, nil
+}
+
 // exportExecutable copies the running provider executable into the target
 // directory, keeping its base name (openrun-binding-<name>). The copy is
 // atomic (temp file + rename) and mode 0555, so a restarted init container can

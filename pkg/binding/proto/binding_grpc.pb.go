@@ -32,15 +32,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BindingProvider_Describe_FullMethodName          = "/openrun.binding.v1.BindingProvider/Describe"
-	BindingProvider_GetAccountEnv_FullMethodName     = "/openrun.binding.v1.BindingProvider/GetAccountEnv"
-	BindingProvider_InitializeService_FullMethodName = "/openrun.binding.v1.BindingProvider/InitializeService"
-	BindingProvider_CloseService_FullMethodName      = "/openrun.binding.v1.BindingProvider/CloseService"
-	BindingProvider_GenerateAccount_FullMethodName   = "/openrun.binding.v1.BindingProvider/GenerateAccount"
-	BindingProvider_DeleteArtifact_FullMethodName    = "/openrun.binding.v1.BindingProvider/DeleteArtifact"
-	BindingProvider_ApplyGrants_FullMethodName       = "/openrun.binding.v1.BindingProvider/ApplyGrants"
-	BindingProvider_RevokeGrants_FullMethodName      = "/openrun.binding.v1.BindingProvider/RevokeGrants"
-	BindingProvider_RunCommand_FullMethodName        = "/openrun.binding.v1.BindingProvider/RunCommand"
+	BindingProvider_Describe_FullMethodName           = "/openrun.binding.v1.BindingProvider/Describe"
+	BindingProvider_GetAccountEnv_FullMethodName      = "/openrun.binding.v1.BindingProvider/GetAccountEnv"
+	BindingProvider_InitializeService_FullMethodName  = "/openrun.binding.v1.BindingProvider/InitializeService"
+	BindingProvider_CloseService_FullMethodName       = "/openrun.binding.v1.BindingProvider/CloseService"
+	BindingProvider_GenerateAccount_FullMethodName    = "/openrun.binding.v1.BindingProvider/GenerateAccount"
+	BindingProvider_DeleteArtifact_FullMethodName     = "/openrun.binding.v1.BindingProvider/DeleteArtifact"
+	BindingProvider_ApplyGrants_FullMethodName        = "/openrun.binding.v1.BindingProvider/ApplyGrants"
+	BindingProvider_RevokeGrants_FullMethodName       = "/openrun.binding.v1.BindingProvider/RevokeGrants"
+	BindingProvider_RunCommand_FullMethodName         = "/openrun.binding.v1.BindingProvider/RunCommand"
+	BindingProvider_CheckHealth_FullMethodName        = "/openrun.binding.v1.BindingProvider/CheckHealth"
+	BindingProvider_CheckBindingHealth_FullMethodName = "/openrun.binding.v1.BindingProvider/CheckBindingHealth"
 )
 
 // BindingProviderClient is the client API for BindingProvider service.
@@ -61,6 +63,12 @@ type BindingProviderClient interface {
 	ApplyGrants(ctx context.Context, in *ApplyGrantsRequest, opts ...grpc.CallOption) (*ApplyGrantsResponse, error)
 	RevokeGrants(ctx context.Context, in *RevokeGrantsRequest, opts ...grpc.CallOption) (*RevokeGrantsResponse, error)
 	RunCommand(ctx context.Context, in *RunCommandRequest, opts ...grpc.CallOption) (*RunCommandResponse, error)
+	// CheckHealth verifies the service is healthy: the provider connects to the
+	// backend with the admin credentials and runs a no-op operation.
+	CheckHealth(ctx context.Context, in *CheckHealthRequest, opts ...grpc.CallOption) (*CheckHealthResponse, error)
+	// CheckBindingHealth verifies the binding account is healthy: the provider
+	// connects to the backend as the binding account and runs a no-op operation.
+	CheckBindingHealth(ctx context.Context, in *CheckBindingHealthRequest, opts ...grpc.CallOption) (*CheckBindingHealthResponse, error)
 }
 
 type bindingProviderClient struct {
@@ -161,6 +169,26 @@ func (c *bindingProviderClient) RunCommand(ctx context.Context, in *RunCommandRe
 	return out, nil
 }
 
+func (c *bindingProviderClient) CheckHealth(ctx context.Context, in *CheckHealthRequest, opts ...grpc.CallOption) (*CheckHealthResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckHealthResponse)
+	err := c.cc.Invoke(ctx, BindingProvider_CheckHealth_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *bindingProviderClient) CheckBindingHealth(ctx context.Context, in *CheckBindingHealthRequest, opts ...grpc.CallOption) (*CheckBindingHealthResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckBindingHealthResponse)
+	err := c.cc.Invoke(ctx, BindingProvider_CheckBindingHealth_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BindingProviderServer is the server API for BindingProvider service.
 // All implementations must embed UnimplementedBindingProviderServer
 // for forward compatibility.
@@ -179,6 +207,12 @@ type BindingProviderServer interface {
 	ApplyGrants(context.Context, *ApplyGrantsRequest) (*ApplyGrantsResponse, error)
 	RevokeGrants(context.Context, *RevokeGrantsRequest) (*RevokeGrantsResponse, error)
 	RunCommand(context.Context, *RunCommandRequest) (*RunCommandResponse, error)
+	// CheckHealth verifies the service is healthy: the provider connects to the
+	// backend with the admin credentials and runs a no-op operation.
+	CheckHealth(context.Context, *CheckHealthRequest) (*CheckHealthResponse, error)
+	// CheckBindingHealth verifies the binding account is healthy: the provider
+	// connects to the backend as the binding account and runs a no-op operation.
+	CheckBindingHealth(context.Context, *CheckBindingHealthRequest) (*CheckBindingHealthResponse, error)
 	mustEmbedUnimplementedBindingProviderServer()
 }
 
@@ -215,6 +249,12 @@ func (UnimplementedBindingProviderServer) RevokeGrants(context.Context, *RevokeG
 }
 func (UnimplementedBindingProviderServer) RunCommand(context.Context, *RunCommandRequest) (*RunCommandResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RunCommand not implemented")
+}
+func (UnimplementedBindingProviderServer) CheckHealth(context.Context, *CheckHealthRequest) (*CheckHealthResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckHealth not implemented")
+}
+func (UnimplementedBindingProviderServer) CheckBindingHealth(context.Context, *CheckBindingHealthRequest) (*CheckBindingHealthResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckBindingHealth not implemented")
 }
 func (UnimplementedBindingProviderServer) mustEmbedUnimplementedBindingProviderServer() {}
 func (UnimplementedBindingProviderServer) testEmbeddedByValue()                         {}
@@ -399,6 +439,42 @@ func _BindingProvider_RunCommand_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BindingProvider_CheckHealth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckHealthRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BindingProviderServer).CheckHealth(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BindingProvider_CheckHealth_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BindingProviderServer).CheckHealth(ctx, req.(*CheckHealthRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BindingProvider_CheckBindingHealth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckBindingHealthRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BindingProviderServer).CheckBindingHealth(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BindingProvider_CheckBindingHealth_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BindingProviderServer).CheckBindingHealth(ctx, req.(*CheckBindingHealthRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BindingProvider_ServiceDesc is the grpc.ServiceDesc for BindingProvider service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -441,6 +517,14 @@ var BindingProvider_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RunCommand",
 			Handler:    _BindingProvider_RunCommand_Handler,
+		},
+		{
+			MethodName: "CheckHealth",
+			Handler:    _BindingProvider_CheckHealth_Handler,
+		},
+		{
+			MethodName: "CheckBindingHealth",
+			Handler:    _BindingProvider_CheckBindingHealth_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

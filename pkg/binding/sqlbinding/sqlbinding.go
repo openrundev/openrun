@@ -34,6 +34,36 @@ type RunCommandOptions struct {
 	RowReturningKeywords []string
 }
 
+// CheckHealth implements ServiceBinding.CheckHealth for database/sql based
+// bindings: it runs the dialect's no-op query ("select 1", or
+// "select 1 from dual" on Oracle) on the open admin connection.
+func CheckHealth(ctx context.Context, adminConn *sql.DB, noopQuery string) error {
+	if adminConn == nil {
+		return fmt.Errorf("service is not initialized")
+	}
+	var result any
+	if err := adminConn.QueryRowContext(ctx, noopQuery).Scan(&result); err != nil {
+		return fmt.Errorf("error running health query: %w", err)
+	}
+	return nil
+}
+
+// CheckBindingHealth implements ServiceBinding.CheckBindingHealth for
+// database/sql based bindings: it connects with the binding account's DSN and
+// runs the dialect's no-op query, verifying the account credentials work.
+func CheckBindingHealth(ctx context.Context, driverName, dsn, noopQuery string) error {
+	conn, err := sql.Open(driverName, dsn)
+	if err != nil {
+		return fmt.Errorf("error opening connection: %w", err)
+	}
+	defer conn.Close() //nolint:errcheck
+	var result any
+	if err := conn.QueryRowContext(ctx, noopQuery).Scan(&result); err != nil {
+		return fmt.Errorf("error running binding health query: %w", err)
+	}
+	return nil
+}
+
 // RunCommand implements ServiceBinding.RunCommand for database/sql drivers:
 // it connects with the binding account's DSN, runs the command as a query when
 // it starts with a row-returning keyword and as a statement otherwise, and

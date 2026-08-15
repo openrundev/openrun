@@ -84,9 +84,15 @@ tests:
     command: bash -c 'id=$(../openrun app list -i -f json /app_update_auto | jq -r "map(select(.path == \"/app_update_auto\"))[0].id"); ../openrun binding get -f json "/auto/${id}/postgres" | jq -r ".[0].source"'
     stdout: "postgres/appupdate"
 
-  appupdate_bindings0175: # derived binding can reference an auto binding by its canonical app id path
-    command: bash -c 'id=$(../openrun app list -i -f json /app_update_auto | jq -r "map(select(.path == \"/app_update_auto\"))[0].id"); ../openrun binding create "/auto/${id}/postgres" /appupdate/auto_derived >/dev/null && ../openrun binding get -f json /appupdate/auto_derived | jq -r ".[0].source == \"/auto/${id}/postgres\""'
-    stdout: "true"
+  appupdate_bindings0175: # a derived binding cannot use an auto binding as its base
+    command: bash -c 'id=$(../openrun app list -i -f json /app_update_auto | jq -r "map(select(.path == \"/app_update_auto\"))[0].id"); ../openrun binding create "/auto/${id}/postgres" /appupdate/auto_derived'
+    exit-code: 1
+    stderr: "auto bindings are owned by their app and cannot be shared"
+
+  appupdate_bindings0176: # another app cannot attach an app's auto binding
+    command: bash -c 'id=$(../openrun app list -i -f json /app_update_auto | jq -r "map(select(.path == \"/app_update_auto\"))[0].id"); ../openrun app create --bind "/auto/${id}/postgres" ./testapp /app_update_other'
+    exit-code: 1
+    stderr: "auto binding owned by another app and cannot be attached"
 
   appupdate_bindings0180: # update with duplicate service ids auto-creates one binding for the app
     command: ../openrun app update bindings postgres/appupdate postgres/appupdate /app_update_bindings
@@ -100,5 +106,9 @@ tests:
     command: bash -c 'id=$(../openrun app list -i -f json /app_update_bindings | jq -r "map(select(.path == \"/app_update_bindings\"))[0].id"); ../openrun binding get -f json "/auto/${id}/postgres" | jq -r ".[0].source"'
     stdout: "postgres/appupdate"
 
-  appupdate_bindings9999: # cleanup
-    command: bash -c 'auto_id=$(../openrun app list -i -f json /app_update_auto | jq -r "map(select(.path == \"/app_update_auto\"))[0].id"); bindings_id=$(../openrun app list -i -f json /app_update_bindings | jq -r "map(select(.path == \"/app_update_bindings\"))[0].id"); ../openrun app delete /app_update_auto && ../openrun app delete /app_update_bindings && ../openrun binding delete /appupdate/auto_derived && ../openrun binding delete "/auto/${auto_id}/postgres" && ../openrun binding delete "/auto/${bindings_id}/postgres" && ../openrun binding delete /appupdate/b1 && ../openrun binding delete /appupdate/b2 && ../openrun binding delete /appupdate/b3 && ../openrun service delete postgres/appupdate'
+  appupdate_bindings0230: # app delete removes the app's auto binding along with the app
+    command: bash -c 'id=$(../openrun app list -i -f json /app_update_auto | jq -r "map(select(.path == \"/app_update_auto\"))[0].id"); ../openrun app delete /app_update_auto >/dev/null && ../openrun binding list -f json | jq -r "[.[].path | select(. == \"/auto/${id}/postgres\")] | length"'
+    stdout: "0"
+
+  appupdate_bindings9999: # cleanup (app delete removes the auto binding of /app_update_bindings)
+    command: bash -c '../openrun app delete /app_update_bindings && ../openrun binding delete /appupdate/b1 && ../openrun binding delete /appupdate/b2 && ../openrun binding delete /appupdate/b3 && ../openrun service delete postgres/appupdate'

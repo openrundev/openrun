@@ -31,6 +31,45 @@ func initServiceCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			serviceUpdateCommand(commonFlags, clientConfig),
 			serviceDeleteCommand(commonFlags, clientConfig),
 			serviceListCommand(commonFlags, clientConfig),
+			serviceHealthCommand(commonFlags, clientConfig),
+		},
+	}
+}
+
+func serviceHealthCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
+	return &cli.Command{
+		Name:      "health",
+		Usage:     "Check the health of a service: connect with the admin credentials and run a no-op operation",
+		Flags:     commonFlags,
+		ArgsUsage: "<service_id>",
+		UsageText: `args: <service_id>
+
+<service_id> is <service_type>/<service_name>.
+
+Examples:
+  Check service health: openrun service health postgres/p1
+`,
+		Action: func(cCtx *cli.Context) error {
+			if cCtx.NArg() != 1 {
+				return fmt.Errorf("expected one arg: <service_id>")
+			}
+			serviceType, name, err := parseServiceID(cCtx.Args().First())
+			if err != nil {
+				return err
+			}
+
+			values := url.Values{}
+			values.Add("service_type", serviceType)
+			values.Add("name", name)
+
+			client := newHttpClient(clientConfig)
+			var response map[string]any
+			if err := client.Get("/_openrun/service/health", values, &response); err != nil {
+				return err
+			}
+
+			printStdout(cCtx, "Service %s/%s is healthy\n", serviceType, name)
+			return nil
 		},
 	}
 }

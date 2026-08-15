@@ -696,6 +696,16 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 		}
 	}
 
+	accounts := s.newBindingAccountManager(dryRun)
+	cleanupCtx, cancel := bindingCleanupContext(ctx)
+	defer cancel()
+	defer accounts.closeServices(cleanupCtx)
+
+	deletedBindings, err := s.deleteAutoBindings(ctx, tx, accounts, filteredApps)
+	if err != nil {
+		return nil, err
+	}
+
 	ret := &types.AppDeleteResponse{
 		DryRun:  dryRun,
 		AppInfo: filteredApps,
@@ -708,6 +718,9 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
+	if deletedBindings {
+		s.approvalCacheGen.Add(1)
+	}
 
 	// Remove from in memory app cache
 	for _, appInfo := range filteredApps {
@@ -716,7 +729,53 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 		}
 	}
 
+	// The apps and their auto bindings are deleted; only the drop of the backend
+	// objects can fail here, which is reported along with the delete result
+	if err := accounts.finalizeDeletes(cleanupCtx); err != nil {
+		return ret, err
+	}
+
 	return ret, nil
+}
+
+// deleteAutoBindings deletes the auto binding rows of the apps being deleted and
+// records their account objects on the backend services for dropping; the caller
+// runs accounts.finalizeDeletes after the metadata transaction commits. Deleting
+// the app authorizes deleting its auto bindings: they exist only for the app,
+// so no separate binding:delete check is made. FilterApps returns only main and
+// dev apps (linked apps are cascade-deleted with their main app), and staging
+// and preview apps share the main app's auto bindings, so each deleted app's
+// auto bindings are exactly the ones under /auto/<app id>/. An auto binding
+// with derived bindings blocks the app delete, like any base binding delete.
+func (s *Server) deleteAutoBindings(ctx context.Context, tx types.Transaction, accounts *bindingAccountManager, deletedApps []types.AppInfo) (bool, error) {
+	allBindings, err := s.db.ListBindings(ctx, tx, "")
+	if err != nil {
+		return false, err
+	}
+
+	deleted := false
+	for _, appInfo := range deletedApps {
+		prefix := autoBindingPathForAppID(appInfo.Id, "")
+		for _, binding := range allBindings {
+			if !strings.HasPrefix(binding.Path, prefix) {
+				continue
+			}
+			for _, other := range allBindings {
+				if other.Source == binding.Path {
+					return false, fmt.Errorf("cannot delete app %s: its auto binding %s has derived bindings (%s), delete the derived bindings first",
+						appInfo.AppPathDomain, binding.Path, other.Path)
+				}
+			}
+			if err := s.db.DeleteBinding(ctx, tx, binding.Path); err != nil {
+				return false, err
+			}
+			if err := s.recordBindingArtifactDeletes(ctx, tx, accounts, binding); err != nil {
+				return false, err
+			}
+			deleted = true
+		}
+	}
+	return deleted, nil
 }
 
 func (s *Server) checkAuthModifiers(authTypeFull string) (string, *types.ForwardConfig, error) {

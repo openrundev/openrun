@@ -37,6 +37,51 @@ func initBindingCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			bindingShowAccountCommand(commonFlags, clientConfig),
 			bindingListCommand(commonFlags, clientConfig),
 			bindingRunCommand(commonFlags, clientConfig),
+			bindingHealthCommand(commonFlags, clientConfig),
+		},
+	}
+}
+
+func bindingHealthCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
+	flags := make([]cli.Flag, 0, len(commonFlags)+1)
+	flags = append(flags, commonFlags...)
+	flags = append(flags, newBoolFlag(STAGING_FLAG, "s", "Check the staged binding account", false))
+
+	return &cli.Command{
+		Name:      "health",
+		Usage:     "Check the health of a binding: connect as the binding account and run a no-op operation",
+		Flags:     flags,
+		ArgsUsage: "<binding_name>",
+		UsageText: `args: <binding_name>
+
+<binding_name> is the binding path.
+
+Examples:
+  Check the prod account: openrun binding health /apps/p1
+  Check the staged account: openrun binding health --staging /apps/p1
+`,
+		Action: func(cCtx *cli.Context) error {
+			if cCtx.NArg() != 1 {
+				return fmt.Errorf("expected one arg: <binding_name>")
+			}
+			bindingName := cCtx.Args().First()
+
+			values := url.Values{}
+			values.Add("name", bindingName)
+			values.Add("staging", strconv.FormatBool(cCtx.Bool(STAGING_FLAG)))
+
+			client := newHttpClient(clientConfig)
+			var response map[string]any
+			if err := client.Get("/_openrun/binding/health", values, &response); err != nil {
+				return err
+			}
+
+			env := "prod"
+			if cCtx.Bool(STAGING_FLAG) {
+				env = "staging"
+			}
+			printStdout(cCtx, "Binding %s is healthy (%s)\n", bindingName, env)
+			return nil
 		},
 	}
 }

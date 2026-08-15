@@ -340,14 +340,71 @@ tests:
     command: ../openrun binding get -f json /apps/b6 | jq -r '.[0].staged_metadata.grants | join(",")'
     stdout: "full:*"
 
-  # Dry-run delete does not persist
+  # Dry-run delete does not persist (/apps/b2 has no derived bindings; /apps/b1
+  # cannot be deleted while /apps/b6 is derived from it)
   binding0220:
-    command: ../openrun binding delete --dry-run /apps/b1
-    stdout: "Binding /apps/b1 deleted"
+    command: ../openrun binding delete --dry-run /apps/b2
+    stdout: "Binding /apps/b2 deleted"
 
   binding0221: # dry-run delete did not remove the binding
-    command: ../openrun binding get -f json /apps/b1 | jq -r '.[0].path'
-    stdout: "/apps/b1"
+    command: ../openrun binding get -f json /apps/b2 | jq -r '.[0].path'
+    stdout: "/apps/b2"
+
+  binding0222: # base binding delete is blocked while derived bindings exist
+    command: ../openrun binding delete /apps/b1
+    exit-code: 1
+    stderr: "binding /apps/b1 has derived bindings (/apps/b6), delete the derived bindings first"
+
+  # SQLite bindings record no backend artifacts (the account is computed, the
+  # volume is created by the container layer); delete is metadata-only and
+  # must succeed cleanly through the artifact-drop path
+  binding0230:
+    command: ../openrun service create sqlite/sqdel
+    stdout: "Service sqlite/sqdel created"
+
+  binding0231:
+    command: ../openrun binding create sqlite/sqdel /apps/sqdel
+    stdout: "Binding /apps/sqdel created"
+
+  binding0231a: # sqlite service health is a no-op success (no endpoint to probe)
+    command: ../openrun service health sqlite/sqdel
+    stdout: "Service sqlite/sqdel is healthy"
+
+  binding0231b: # sqlite binding health validates the computed config
+    command: ../openrun binding health /apps/sqdel
+    stdout: "Binding /apps/sqdel is healthy (prod)"
+
+  binding0232:
+    command: ../openrun binding delete /apps/sqdel
+    stdout: "Binding /apps/sqdel deleted"
+
+  binding0233: # the sqlite service has no bindings left and can be deleted
+    command: ../openrun service delete sqlite/sqdel
+    stdout: "Service sqlite/sqdel deleted"
+
+  # Health checks: the server connects with the admin credentials (service) or
+  # as the binding account (binding) and runs a no-op operation
+  binding0240:
+    command: ../openrun service health postgres/testbind
+    stdout: "Service postgres/testbind is healthy"
+
+  binding0241:
+    command: ../openrun binding health /apps/b1
+    stdout: "Binding /apps/b1 is healthy (prod)"
+
+  binding0242:
+    command: ../openrun binding health --staging /apps/b1
+    stdout: "Binding /apps/b1 is healthy (staging)"
+
+  binding0243: # health of a missing service fails
+    command: ../openrun service health postgres/missinghealth
+    exit-code: 1
+    stderr: "no service found"
+
+  binding0244: # health of a missing binding fails
+    command: ../openrun binding health /apps/missinghealth
+    exit-code: 1
+    stderr: "no binding found"
 
   # Error cases
   binding0300: # create requires <source> and <binding_path> args
