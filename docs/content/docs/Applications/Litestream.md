@@ -34,15 +34,9 @@ OpenRun's Litestream integration works with:
 
 ## How It Works
 
-```text
-Web app
-   ↓
-SQLite persistent volume
-   ↓
-Litestream managed by OpenRun
-   ↓
-S3 / R2 / MinIO
-```
+<picture class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
+  <img alt="Single-node deployment with Litestream replication of app data and server metadata to S3-compatible storage" src="/d2/single-node-litestream.svg">
+</picture>
 
 On Docker and Podman, OpenRun manages a Litestream companion container. On Kubernetes, OpenRun creates the restore init container and Litestream sidecar automatically.
 

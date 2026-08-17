@@ -1,0 +1,57 @@
+# https://d2lang.com diagram. Use make to generate SVG.
+direction: right
+
+client: {
+  label: "Client"
+  shape: person
+  style: {stroke-width: 2}
+}
+
+node: {
+  label: "Server Node"
+  shape: rectangle
+  style: {stroke-width: 2}
+
+  openrun: {
+    label: "OpenRun"
+    height: 200
+  }
+
+  metadata: {
+    label: "SQLite (Metadata DB)"
+    shape: rectangle
+    icon: "https://icon.icepanel.io/Technology/svg/SQLite.svg"
+    style: {stroke-width: 2}
+  }
+
+  cm: {
+    label: "Docker / Podman"
+    shape: rectangle
+    icon: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/docker.svg"
+    style: {stroke-width: 2}
+
+    app1: "App1 container"
+
+    vol1: {
+      label: "App1 SQLite volume"
+      shape: cylinder
+    }
+
+    litestream: "Litestream container"
+  }
+}
+
+s3: {
+  label: "S3-compatible storage\n(AWS S3 / R2 / MinIO)"
+  shape: rectangle
+  icon: "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg"
+  style: {stroke-width: 2}
+}
+
+client -> node.openrun: "App requests"
+node.openrun -> node.cm.app1: "Proxy requests"
+node.openrun -> node.metadata: "Read/write metadata"
+node.cm.app1 -> node.cm.vol1: "App SQLite data"
+node.cm.vol1 -> node.cm.litestream: "DB changes"
+node.cm.litestream <-> s3: "Continuous replication,\nautomatic restore on loss"
+node.metadata -> s3: "Metadata replication"

@@ -121,7 +121,7 @@ OpenRun supports three ways of managing apps, which can be mixed freely:
 
 On a single node, the OpenRun server manages app containers through Docker or Podman, with metadata stored in SQLite (or an external Postgres database).
 
-<img alt="OpenRun single-node components" src="https://openrun.dev/d2/container_overview.svg"/>
+<img alt="OpenRun single-node components" src="https://openrun.dev/d2/single-node.svg"/>
 
 ### Kubernetes Architecture
 
@@ -148,6 +148,8 @@ OpenRun has built-in [Litestream](https://openrun.dev/docs/applications/litestre
 - **No app changes**: Apps do not package, configure or run Litestream themselves. OpenRun manages the replication and restore lifecycle on Docker, Podman and Kubernetes.
 - **App data and server metadata**: Both the SQLite databases behind SQLite service bindings and OpenRun's own metadata and audit databases can be replicated.
 - **Disaster recovery**: Replication is continuous (changes upload within about a second) and restore is automatic. After a complete node loss, start a new server with the same config file and apps, bindings, versions and audit history come back from object storage.
+
+<img alt="Single-node deployment with Litestream replication of app data and server metadata to S3-compatible storage" src="https://openrun.dev/d2/single-node-litestream.svg"/>
 
 ## Features
 

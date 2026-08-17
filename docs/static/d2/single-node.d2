@@ -1,0 +1,41 @@
+# https://d2lang.com diagram. Use make to generate SVG.
+direction: right
+
+client: {
+  label: "Client"
+  shape: person
+  style: {stroke-width: 2}
+}
+
+node: {
+  label: "Server Node"
+  shape: rectangle
+  style: {stroke-width: 2}
+
+  openrun: {
+    label: "OpenRun"
+    height: 200
+  }
+
+  metadata: {
+    label: "SQLite (Metadata DB)"
+    shape: rectangle
+    icon: "https://icon.icepanel.io/Technology/svg/SQLite.svg"
+    style: {stroke-width: 2}
+  }
+
+  cm: {
+    label: "Docker / Podman"
+    shape: rectangle
+    icon: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/docker.svg"
+    style: {stroke-width: 2}
+
+    app1: "App1 container"
+    app2: "App2 container"
+  }
+}
+
+client -> node.openrun: "App requests"
+node.openrun -> node.cm.app1: "Proxy requests"
+node.openrun -> node.cm: "Build images,\nmanage containers"
+node.openrun -> node.metadata: "Read/write metadata"

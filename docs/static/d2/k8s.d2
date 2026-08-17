@@ -1,6 +1,40 @@
 # https://d2lang.com diagram. Use make to generate SVG.
 direction: right
 
+client: {
+  label: "Client"
+  shape: person
+  style: {stroke-width: 2}
+}
+
+k8s_cluster: {
+  label: "Kubernetes Cluster"
+  shape: rectangle
+  icon: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/kubernetes.svg"
+  style: {stroke-width: 2}
+
+  openrun_ns: {
+    label: "Namespace: openrun"
+    shape: rectangle
+
+    openrun: {
+      label: "OpenRun"
+      height: 230
+    }
+    builder: "Kaniko Build Job"
+  }
+
+  kube_api: "Kubernetes API"
+
+  apps_ns: {
+    label: "Namespace: openrun-apps"
+    shape: rectangle
+
+    app1_svc: "App1 Service/Pods"
+    app2_svc: "App2 Service/Pods"
+  }
+}
+
 external_postgres: {
   label: "Postgres (Metadata DB)"
   shape: rectangle
@@ -15,33 +49,10 @@ external_registry: {
   style: {stroke-width: 2}
 }
 
-k8s_cluster: {
-  label: "Kubernetes Cluster"
-  shape: rectangle
-  icon: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/kubernetes.svg"
-  style: {stroke-width: 2}
-
-  openrun_ns: {
-    label: "Namespace: openrun"
-    shape: rectangle
-
-    openrun: "OpenRun"
-    builder: "Kaniko Build Job"
-  }
-
-  apps_ns: {
-    label: "Namespace: openrun-apps"
-    shape: rectangle
-
-    app1_svc: "App1 Service/Pods"
-    app2_svc: "App2 Service/Pods"
-  }
-
-  kube_api: "Kubernetes API"
-}
-
-k8s_cluster.openrun_ns.openrun -> external_postgres: "Read/write metadata"
-k8s_cluster.openrun_ns.openrun -> k8s_cluster.kube_api: "Create/Update\nDeployment + Service"
+client -> k8s_cluster.openrun_ns.openrun: "App requests"
+k8s_cluster.openrun_ns.openrun -> k8s_cluster.apps_ns.app1_svc: "Proxy requests"
+k8s_cluster.openrun_ns.openrun -> k8s_cluster.kube_api: "Create Deployments"
 k8s_cluster.openrun_ns.openrun -> k8s_cluster.openrun_ns.builder: "Build image"
 k8s_cluster.openrun_ns.builder -> external_registry: "Push image"
 k8s_cluster.apps_ns.app1_svc -> external_registry: "Pull image"
+k8s_cluster.openrun_ns.openrun -> external_postgres: "Read/write metadata"
