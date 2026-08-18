@@ -1,51 +1,314 @@
 {{ define "header" }}
   <!DOCTYPE html>
-  <html data-theme="emerald" lang="en">
+  <html lang="en">
     <head>
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>{{.name}}</title>
+      <title>{{ .name }}</title>
 
       <script>
-            const theme = localStorage.getItem('theme');
-            const systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches 
-            localStorage.setItem('theme-dark', {{ .darkTheme }});
-            localStorage.setItem('theme-light', {{ .lightTheme }});
-            if (theme == 'dark' || (theme == null && systemDark)) {
-                document.documentElement.setAttribute("data-theme", {{ .darkTheme }})
-            } else {
-                document.documentElement.setAttribute("data-theme", {{ .lightTheme }})
-            }
-      </script> 
+        // The generated daisyui styles follow the system preference by
+        // default (light and dark themes from the app style config). Apply
+        // the persisted manual choice, if any, before styles load to avoid
+        // a flash. data-color-scheme drives the brand accent-text token in
+        // openrun.css (theme names are app-configurable, so the CSS cannot
+        // key off them).
+        localStorage.setItem("theme-dark", {{ .darkTheme }});
+        localStorage.setItem("theme-light", {{ .lightTheme }});
+        const theme = localStorage.getItem("theme");
+        const systemDark =
+          window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const scheme =
+          theme == "dark" || (theme == null && systemDark) ? "dark" : "light";
+        if (theme == "dark" || theme == "light") {
+          document.documentElement.setAttribute(
+            "data-theme",
+            theme == "dark" ? {{ .darkTheme }} : {{ .lightTheme }}
+          );
+        }
+        document.documentElement.setAttribute("data-color-scheme", scheme);
+      </script>
+      <style>
+        /* Paint the page background before the stylesheets apply, so the
+           first paint does not flash white in dark mode. Values match
+           base-200 of the openrun themes; a custom theme corrects on the
+           first styled paint */
+        html {
+          background-color: #f9fcf9;
+        }
+        html[data-theme="{{ .darkTheme }}"] {
+          background-color: #101a13;
+          color-scheme: dark;
+        }
+        @media (prefers-color-scheme: dark) {
+          html:not([data-theme="{{ .lightTheme }}"]) {
+            background-color: #101a13;
+            color-scheme: dark;
+          }
+        }
+      </style>
 
       {{ template "imports" . }}
     </head>
 
-    <!-- Full screen container -->
-    <body>
-      <div class="">
+    <body class="min-h-screen bg-base-200">
+      {{/* Single action apps keep the sidebar as a slide-in drawer on all
+        screen sizes (hamburger opens it for the theme switch); with
+        multiple actions it docks open on md+ for the action nav */}}
+      <div class="drawer {{ if gt (len .links) 1 }}md:drawer-open{{ end }}">
+        <input
+          id="nav-drawer"
+          type="checkbox"
+          class="drawer-toggle"
+          tabindex="-1"
+          aria-hidden="true" />
 
+        <div class="drawer-content min-w-0">
+          <main
+            class="mx-auto w-full max-w-4xl min-h-screen flex flex-col p-4 lg:p-8 gap-4">
+            <!-- Menubar: hamburger (below md), action title, action
+              switcher for multi-action apps -->
+            <div class="page-header flex items-start gap-3">
+              <!-- Main content comes first in DOM order; the skip link
+                jumps forward to the app panel -->
+              <a href="#sidebar-panel" class="skip-link">Skip to app panel</a>
 
+              {{/* A real button (not a label): keyboard operable, with
+                aria-expanded kept in sync by actions.js */}}
+              <button
+                type="button"
+                class="btn btn-ghost btn-square {{ if gt (len .links) 1 }}md:hidden{{ end }}"
+                aria-label="Open the app panel"
+                aria-controls="sidebar-panel"
+                aria-expanded="false"
+                onclick="toggleNavDrawer(this)">
+                <svg
+                  class="w-6 h-6"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  aria-hidden="true"
+                  focusable="false">
+                  <path d="M4 6h16" />
+                  <path d="M4 12h16" />
+                  <path d="M4 18h16" />
+                </svg>
+              </button>
+
+              <div class="min-w-0">
+                <a href="{{ .pagePath }}">
+                  <h1
+                    class="page-title text-2xl md:text-3xl font-bold tracking-tight break-words">
+                    {{ .name }}
+                  </h1>
+                </a>
+                {{ if .description }}
+                  <p class="mt-2 text-sm text-base-content/70">
+                    {{ .description }}
+                  </p>
+                {{ end }}
+              </div>
+
+            </div>
 {{ end }} <!-- End of "header" block -->
 
 
 {{ define "footer" }}
+          </main>
         </div>
 
+        <!-- App panel sidebar: docked on md+, slide-in drawer below -->
+        <div class="drawer-side z-20">
+          <label
+            for="nav-drawer"
+            class="drawer-overlay"
+            aria-label="Close the app panel"></label>
+          <aside
+            id="sidebar-panel"
+            tabindex="-1"
+            aria-label="App panel"
+            class="h-full w-60 bg-base-100 border-r border-base-300 flex flex-col">
+            <!-- App identity -->
+            <div class="px-4 py-4 border-b border-base-300">
+              <a href="{{ .pagePath }}" class="logo-mark block">
+                <span
+                  class="page-title block text-lg font-bold tracking-tight break-words">
+                  {{ if .appName }}{{ .appName }}{{ else }}{{ .name }}{{ end }}
+                </span>
+              </a>
+            </div>
+
+            {{/* Action navigation, only for multi-action apps (a single
+              entry nav is noise; the drawer then just holds the theme
+              switch). actions.js appends the current form values to the
+              link at click time, so switching actions preserves the
+              entered params */}}
+            {{ if gt (len .links) 1 }}
+            <nav
+              id="action-nav"
+              aria-label="Actions"
+              class="flex-1 min-h-0 overflow-y-auto py-3">
+              <ul class="menu w-full gap-0.5 px-2">
+                {{ range .links }}
+                  {{ if .Authorized }}
+                    <li>
+                      <a
+                        href="{{ .Path }}"
+                        {{ if .Active }}
+                          class="menu-active" aria-current="page"
+                        {{ end }}>
+                        {{ .Name }}
+                      </a>
+                    </li>
+                  {{ else }}
+                    <li class="menu-disabled">
+                      <a
+                        aria-disabled="true"
+                        tabindex="-1"
+                        title="You do not have access to this action">
+                        {{ .Name }}
+                      </a>
+                    </li>
+                  {{ end }}
+                {{ end }}
+              </ul>
+            </nav>
+            {{ else }}
+              <div class="flex-1 min-h-0"></div>
+            {{ end }}
+
+            <!-- Sidebar footer: theme switcher -->
+            <div
+              class="border-t border-base-300 px-4 py-2.5 flex items-center justify-between">
+              <span class="text-xs text-base-content/70">Theme</span>
+              <label
+                class="swap swap-rotate btn btn-sm btn-ghost btn-circle"
+                title="Switch between dark and light themes">
+                <input
+                  id="theme-toggle"
+                  type="checkbox"
+                  role="switch"
+                  aria-label="Light theme" />
+                <span class="swap-on" aria-hidden="true">☀️</span>
+                <span class="swap-off" aria-hidden="true">🌙</span>
+              </label>
+              <script>
+                // Set the toggle to the active scheme before first paint;
+                // doing this after DOMContentLoaded plays the swap
+                // animation on every page load. Checked means light.
+                (() => {
+                  const toggle = document.getElementById("theme-toggle");
+                  toggle.checked =
+                    document.documentElement.getAttribute(
+                      "data-color-scheme"
+                    ) != "dark";
+                })();
+              </script>
+            </div>
+          </aside>
+        </div>
+      </div>
     </body>
   </html>
 {{ end }}
 
 
+{{/* Brand fonts (see astatic/openrun.css Typography). Declared here
+  instead of in the static css so the astatic helper emits content-hashed
+  urls, which are served with immutable caching. The above-the-fold faces
+  are preloaded with the SAME hashed urls, so each font downloads once */}}
+{{ define "fonts" }}
+  <link
+    rel="preload"
+    href="{{ astatic "astatic/fonts/inter-400.woff2" }}"
+    as="font"
+    type="font/woff2"
+    crossorigin />
+  <link
+    rel="preload"
+    href="{{ astatic "astatic/fonts/jetbrains-mono-400.woff2" }}"
+    as="font"
+    type="font/woff2"
+    crossorigin />
+  <link
+    rel="preload"
+    href="{{ astatic "astatic/fonts/space-grotesk-700.woff2" }}"
+    as="font"
+    type="font/woff2"
+    crossorigin />
+  <style>
+    @font-face {
+      font-family: "Inter";
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url("{{ astatic "astatic/fonts/inter-400.woff2" }}") format("woff2");
+    }
+    @font-face {
+      font-family: "Inter";
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: url("{{ astatic "astatic/fonts/inter-500.woff2" }}") format("woff2");
+    }
+    @font-face {
+      font-family: "Inter";
+      font-style: normal;
+      font-weight: 600;
+      font-display: swap;
+      src: url("{{ astatic "astatic/fonts/inter-600.woff2" }}") format("woff2");
+    }
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: url("{{ astatic "astatic/fonts/space-grotesk-500.woff2" }}") format("woff2");
+    }
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 700;
+      font-display: swap;
+      src: url("{{ astatic "astatic/fonts/space-grotesk-700.woff2" }}") format("woff2");
+    }
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url("{{ astatic "astatic/fonts/jetbrains-mono-400.woff2" }}") format("woff2");
+    }
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: url("{{ astatic "astatic/fonts/jetbrains-mono-500.woff2" }}") format("woff2");
+    }
+  </style>
+{{ end }}
+
+
 {{ block "imports" . }}
-  {{ if and (eq .styleType "daisyui") (fileNonEmpty "static/gen/css/style.css") }}
-    <link rel="stylesheet" href="{{ static "static/gen/css/style.css" }}" />
-  {{ else }}
-    <link rel="stylesheet" href="{{ astatic "astatic/style.css" }}" />
+  {{/* The embedded stylesheet always loads first: it is regenerated with
+    the action templates (stylegen/), so every class the chrome uses is
+    guaranteed present regardless of when the app's own css was generated.
+    The app's generated css loads after it, appending into the same
+    cascade layers, so the app's themes and custom report template styles
+    win ties. See docs/designs/actions-css-layering.md */}}
+  <link rel="stylesheet" href="{{ astatic "astatic/style.css" }}" />
+  {{ if and (eq .styleType "daisyui") (fileNonEmpty "gen/css/style.css") }}
+    <link rel="stylesheet" href="{{ static "gen/css/style.css" }}" />
   {{ end }}
+  {{ template "fonts" . }}
+  <link rel="stylesheet" href="{{ astatic "astatic/openrun.css" }}" />
   <link rel="stylesheet" href="{{ astatic "astatic/json.css" }}" />
   <script src="{{ astatic "astatic/json.js" }}"></script>
-  <script src="{{ astatic "astatic/toggle.js" }}"></script>
+  <script src="{{ astatic "astatic/actions.js" }}"></script>
   <script src="{{ astatic "astatic/htmx.min.js" }}"></script>
 
   {{ if gt (len .esmLibs) 0 }}

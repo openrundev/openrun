@@ -80,36 +80,26 @@ app = ace.app("testApp",
 	testutil.AssertStringContains(t, response.Body.String(), "<title>testAction</title>")
 	testutil.AssertStringContains(t, response.Body.String(), `id="param_param1"`)
 
+	// Single action app: the sidebar stays a slide-in drawer on all screen
+	// sizes (no docked sidebar, hamburger always visible, no action nav)
+	if strings.Contains(response.Body.String(), "md:drawer-open") {
+		t.Error("single action app must not dock the sidebar open")
+	}
+	if strings.Contains(response.Body.String(), "md:hidden") {
+		t.Error("single action app must keep the hamburger visible on md+")
+	}
+	if strings.Contains(response.Body.String(), "action-nav") {
+		t.Error("single action app must not render the action nav")
+	}
+
 	request = httptest.NewRequest("POST", reqPath, nil)
 	request.Header.Set("HX-Request", "true")
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringMatch(t, "match response", response.Body.String(), `
-          <div role="status">
-            done
-          </div>
-
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-        
-          <output id="action_result" hx-swap-oob="innerHTML">
-		  <output>
-            <div class="divider text-lg text-secondary">Output</div>
-            <textarea
-			  role="alert"
-              rows="20"
-              class="textarea textarea-success w-full font-mono"
-              readonly>a
-        b
-        </textarea>
-			</output>
-          </output>
-        `)
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <output id="action_result" hx-swap-oob="innerHTML"> <output role="alert" class="block"> <div class="card border border-base-300 bg-base-100 shadow-sm w-full"> <div class="card-body p-4 sm:p-6 gap-3 min-w-0"> <h2 class="section-heading">Output</h2> <textarea rows="4" class="textarea w-full font-mono text-xs leading-5" readonly>a b </textarea> </div> </div> </output> </output>
+	`)
 
 }
 
@@ -163,46 +153,8 @@ param("param3", description="param3 description", type=INT, default=10)`,
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringMatch(t, "match response", `
-	<div role="status">
-            done
-          </div>
-        
-          <div
-            id="param_param1_error"
-            hx-swap-oob="innerHTML">
-			<div role="alert">
-            param1error
-			</div>
-          </div>
-
-		  <div
-			id="param_param2_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		  </div>
-
-          <div
-            id="param_param3_error"
-            hx-swap-oob="innerHTML">
-			<div role="alert">
-            param3error
-			</div>
-          </div>
-        
-          <output id="action_result" hx-swap-oob="innerHTML">
-		    <output>
-            <div class="divider text-lg text-secondary">Output</div>
-            <textarea
-			role="alert"
-              rows="20"
-              class="textarea textarea-success w-full font-mono"
-              readonly>a
-        b
-        </textarea>
-          </output>
-          </output>
-        `, response.Body.String())
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"><div role="alert">param1error</div></output> <output id="param_param2_error" hx-swap-oob="innerHTML"></output> <output id="param_param3_error" hx-swap-oob="innerHTML"><div role="alert">param3error</div></output> <output id="action_result" hx-swap-oob="innerHTML"> <output role="alert" class="block"> <div class="card border border-base-300 bg-base-100 shadow-sm w-full"> <div class="card-body p-4 sm:p-6 gap-3 min-w-0"> <h2 class="section-heading">Output</h2> <textarea rows="4" class="textarea w-full font-mono text-xs leading-5" readonly>a b </textarea> </div> </div> </output> </output>
+	`, response.Body.String())
 }
 
 func TestAutoReportTable(t *testing.T) {
@@ -237,37 +189,8 @@ app = ace.app("testApp",
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringMatch(t, "match response", `
-	<div role="status"> done </div>
-
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-        
-            <output id="action_result" hx-swap-oob="innerHTML">
-		    <div>
-            <div class="divider text-lg text-secondary">Report</div>
-        
-			<div class="overflow-x-auto" role="alert">
-            <table class="table table-auto min-w-full table-zebra text-sm md:text-xl font-mono">
-              <thead>
-                <tr class="text-primary">
-                    <th>a</th>
-                    <th>b</th>
-                </tr>
-              </thead>
-              <tbody>
-                  <tr>
-                      <td>1</td>
-                      <td>abc</td>
-                  </tr>
-              </tbody>
-            </table>
-			</div>
-		    </div>
-          </output>`, response.Body.String())
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <output id="action_result" hx-swap-oob="innerHTML"> <div role="alert"> <div class="card border border-base-300 bg-base-100 shadow-sm w-full"> <div class="card-body p-4 sm:p-6 gap-3 min-w-0"> <h2 class="section-heading">Report</h2> <div class="overflow-x-auto"> <table class="table table-zebra min-w-full text-sm"> <thead> <tr> <th scope="col">a</th> <th scope="col">b</th> </tr> </thead> <tbody> <tr> <td class="font-mono text-xs">1</td> <td class="font-mono text-xs">abc</td> </tr> </tbody> </table> </div> </div> </div> </div> </output>
+	`, response.Body.String())
 }
 
 func TestAutoReportJSON(t *testing.T) {
@@ -302,27 +225,8 @@ app = ace.app("testApp",
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringMatch(t, "match response", `
-		  <div role="status"> done </div>
-
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-        
-          <output id="action_result" hx-swap-oob="innerHTML">
-			<div role="alert">
-            <div class="divider text-lg text-secondary">Result</div>
-            <div class="json-container flex justify-center" data-json="{&#34;a&#34;:{&#34;c&#34;:1},&#34;b&#34;:&#34;abc&#34;}"></div>
-            <script>
-              document.querySelectorAll(".json-container").forEach(function (div) {
-                const jsonData = JSON.parse(div.getAttribute("data-json"));
-                renderJSONWithRoot(jsonData, div);
-              });
-            </script>
-		    </div>
-          </output>`, response.Body.String())
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <output id="action_result" hx-swap-oob="innerHTML"> <div role="alert"> <div class="card border border-base-300 bg-base-100 shadow-sm w-full"> <div class="card-body p-4 sm:p-6 gap-3 min-w-0"> <div class="flex items-center justify-between gap-2"> <h2 class="section-heading">Result</h2> <div class="flex gap-1"> <button type="button" class="btn btn-ghost btn-xs" onclick="jsonTreeSetAll(this, true)"> Expand all </button> <button type="button" class="btn btn-ghost btn-xs" onclick="jsonTreeSetAll(this, false)"> Collapse all </button> </div> </div> <div class="json-container overflow-x-auto" data-json="{&#34;a&#34;:{&#34;c&#34;:1},&#34;b&#34;:&#34;abc&#34;}"></div> </div> </div> <script> document.querySelectorAll(".json-container").forEach(function (div) { const jsonData = JSON.parse(div.getAttribute("data-json")); renderJSONWithRoot(jsonData, div); }); </script> </div> </output>
+	`, response.Body.String())
 }
 
 func TestReportTable(t *testing.T) {
@@ -358,39 +262,8 @@ app = ace.app("testApp",
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringMatch(t, "match response", `
-	<div role="status">
-            done
-          </div>
-
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-        
-          <output id="action_result" hx-swap-oob="innerHTML">
-		    <div>
-            <div class="divider text-lg text-secondary">Report</div>
-        
-			<div class="overflow-x-auto" role="alert">
-            <table class="table table-auto min-w-full table-zebra text-sm md:text-xl font-mono">
-              <thead>
-                <tr class="text-primary">
-                    <th>a</th>
-                    <th>b</th>
-                </tr>
-              </thead>
-              <tbody>
-                  <tr>
-                      <td>map[c:1]</td>
-                      <td>abc</td>
-                  </tr>
-              </tbody>
-            </table>
-			</div>
-		    </div>
-          </output>`, response.Body.String())
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <output id="action_result" hx-swap-oob="innerHTML"> <div role="alert"> <div class="card border border-base-300 bg-base-100 shadow-sm w-full"> <div class="card-body p-4 sm:p-6 gap-3 min-w-0"> <h2 class="section-heading">Report</h2> <div class="overflow-x-auto"> <table class="table table-zebra min-w-full text-sm"> <thead> <tr> <th scope="col">a</th> <th scope="col">b</th> </tr> </thead> <tbody> <tr> <td class="font-mono text-xs">map[c:1]</td> <td class="font-mono text-xs">abc</td> </tr> </tbody> </table> </div> </div> </div> </div> </output>
+	`, response.Body.String())
 }
 
 func TestReportTableMissingData(t *testing.T) {
@@ -425,43 +298,9 @@ app = ace.app("testApp",
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "match response", `<div role="status">
-            done
-          </div>
-
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-        
-          <output id="action_result" hx-swap-oob="innerHTML">
-			<div>
-            <div class="divider text-lg text-secondary">Report</div>
-        
-			<div class="overflow-x-auto" role="alert">
-            <table class="table table-auto min-w-full table-zebra text-sm md:text-xl font-mono">
-              <thead>
-                <tr class="text-primary">
-                    <th>a</th>
-                    <th>b</th>
-                </tr>
-              </thead>
-              <tbody>
-                  <tr>
-                      <td>1</td>
-                      <td>abc</td>
-                  </tr>
-                  <tr>
-                      <td></td>
-                      <td>abc2</td>
-                  </tr>
-              </tbody>
-            </table>
-			</div>
-			</div>
-          </output>`, response.Body.String())
+	testutil.AssertStringMatch(t, "match response", `
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <output id="action_result" hx-swap-oob="innerHTML"> <div role="alert"> <div class="card border border-base-300 bg-base-100 shadow-sm w-full"> <div class="card-body p-4 sm:p-6 gap-3 min-w-0"> <h2 class="section-heading">Report</h2> <div class="overflow-x-auto"> <table class="table table-zebra min-w-full text-sm"> <thead> <tr> <th scope="col">a</th> <th scope="col">b</th> </tr> </thead> <tbody> <tr> <td class="font-mono text-xs">1</td> <td class="font-mono text-xs">abc</td> </tr> <tr> <td class="font-mono text-xs"></td> <td class="font-mono text-xs">abc2</td> </tr> </tbody> </table> </div> </div> </div> </div> </output>
+	`, response.Body.String())
 }
 
 func TestParamPost(t *testing.T) {
@@ -509,62 +348,8 @@ param("param4", description="param4 description", type=STRING, required=False, d
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "push url", "/test?param1=abc&param2=true&param3=20", response.Header().Get("HX-Push-Url"))
 	testutil.AssertStringMatch(t, "match response", `
-	<div role="status">
-            done
-          </div>
-
-
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-
-		 <div
-			id="param_param2_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-		 <div
-			id="param_param3_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-		 <div
-			id="param_param4_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-
-        
-          <output id="action_result" hx-swap-oob="innerHTML">
-			<div>
-            <div class="divider text-lg text-secondary">Report</div>
-        
-			<div class="overflow-x-auto" role="alert">
-            <table class="table table-auto min-w-full table-zebra text-sm md:text-xl font-mono">
-              <thead>
-                <tr class="text-primary">
-                    <th>c1</th>
-                    <th>c2</th>
-                    <th>c3</th>
-                </tr>
-              </thead>
-              <tbody>
-                  <tr>
-                      <td>abc</td>
-                      <td>true</td>
-                      <td>20</td>
-                  </tr>
-              </tbody>
-            </table>
-			</div>
-			</div>
-          </output>`, response.Body.String())
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <output id="param_param2_error" hx-swap-oob="innerHTML"></output> <output id="param_param3_error" hx-swap-oob="innerHTML"></output> <output id="param_param4_error" hx-swap-oob="innerHTML"></output> <output id="action_result" hx-swap-oob="innerHTML"> <div role="alert"> <div class="card border border-base-300 bg-base-100 shadow-sm w-full"> <div class="card-body p-4 sm:p-6 gap-3 min-w-0"> <h2 class="section-heading">Report</h2> <div class="overflow-x-auto"> <table class="table table-zebra min-w-full text-sm"> <thead> <tr> <th scope="col">c1</th> <th scope="col">c2</th> <th scope="col">c3</th> </tr> </thead> <tbody> <tr> <td class="font-mono text-xs">abc</td> <td class="font-mono text-xs">true</td> <td class="font-mono text-xs">20</td> </tr> </tbody> </table> </div> </div> </div> </div> </output>
+	`, response.Body.String())
 }
 
 func TestCustomReport(t *testing.T) {
@@ -599,18 +384,9 @@ app = ace.app("testApp",
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "match response", `<div role="status">
-            done
-          </div>
-
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-
-        <div id="action_result" hx-swap-oob="innerHTML"> <output role="alert"> customdata  </output> </div>`, response.Body.String())
+	testutil.AssertStringMatch(t, "match response", `
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <div id="action_result" hx-swap-oob="innerHTML"> <output role="alert"> customdata </output> </div>
+	`, response.Body.String())
 
 	// Unset the template
 	fileData["myfile.go.html"] = ``
@@ -631,14 +407,9 @@ app = ace.app("testApp",
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "match response", `<div role="status"> done </div>
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-        <div id="action_result" hx-swap-oob="innerHTML"> <output role="alert"> </output> </div>html/template: "custom" is undefined`, response.Body.String())
+	testutil.AssertStringMatch(t, "match response", `
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <div id="action_result" hx-swap-oob="innerHTML"> <output role="alert"> </output> </div>html/template: "custom" is undefined
+	`, response.Body.String())
 }
 
 func TestActionUploadRequestBodyLimit(t *testing.T) {
@@ -729,7 +500,7 @@ param("param2", description="param2 description", type=STRING, default="myvalue2
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringContains(t, response.Body.String(), "<title>testAction</title>")
 	bodyStripped := strings.Join(strings.Fields(response.Body.String()), " ")
-	testutil.AssertStringContains(t, bodyStripped, `select id="param_param1`)
+	testutil.AssertStringContains(t, bodyStripped, `<searchable-select class="block relative" data-strict> <input id="param_param1" name="param1" type="text" class="input w-full pr-9" role="combobox"`)
 	if strings.Contains(bodyStripped, `options-param1`) {
 		t.Errorf("options-param1 should not be in the body")
 	}
@@ -765,13 +536,124 @@ param("param2", description="param2 description", type=STRING, default="myvalue2
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringContains(t, response.Body.String(), "<title>testAction</title>")
 	bodyStripped := strings.Join(strings.Fields(response.Body.String()), " ")
-	testutil.AssertStringContains(t, bodyStripped, `select id="param_param1`)
+	testutil.AssertStringContains(t, bodyStripped, `<searchable-select class="block relative" data-strict> <input id="param_param1" name="param1" type="text" class="input w-full pr-9" role="combobox"`)
 	if strings.Contains(bodyStripped, `options_param1`) {
 		t.Errorf("options_param1 should not be in the body")
 	}
 	if strings.Contains(bodyStripped, `param2`) {
 		t.Errorf("hidden param2 should not be in the body")
 	}
+}
+
+// TestActionStylesheetLayering verifies the css coexistence design
+// (docs/designs/actions-css-layering.md): the embedded stylesheet always
+// loads first so the action chrome never depends on the app's generated
+// css being current; a styled app's own css loads after it
+func TestActionStylesheetLayering(t *testing.T) {
+	logger := testutil.TestLogger()
+	appStar := `
+def handler(dry_run, args):
+	return ace.result(status="done", values=["a"], report=ace.TEXT)
+
+app = ace.app("testApp",
+	actions=[ace.action("testAction", "/", handler)],
+	style=ace.style("daisyui"))
+
+		`
+	fileData := map[string]string{
+		"app.star":    appStar,
+		"params.star": `param("param1", description="param1 description", type=STRING, default="myvalue")`,
+	}
+
+	// Styled app WITHOUT a generated css (not yet run in dev mode): only
+	// the embedded stylesheet loads
+	a, _, err := CreateTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+	request := httptest.NewRequest("GET", "/test", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	body := response.Body.String()
+	testutil.AssertStringContains(t, body, `href="/test/astatic/style-`)
+	if strings.Contains(body, "gen/css/style") {
+		t.Error("app stylesheet link rendered without a generated css file")
+	}
+
+	// Styled app WITH a generated css: both load, embedded first
+	fileData["static/gen/css/style.css"] = "/* app generated css */"
+	a, _, err = CreateTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, httptest.NewRequest("GET", "/test", nil))
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	body = response.Body.String()
+	embeddedAt := strings.Index(body, `href="/test/astatic/style-`)
+	appAt := strings.Index(body, `href="/test/static/gen/css/style`)
+	if embeddedAt == -1 || appAt == -1 {
+		t.Fatalf("expected both stylesheets, embedded at %d, app at %d", embeddedAt, appAt)
+	}
+	if embeddedAt > appAt {
+		t.Error("the embedded stylesheet must load before the app's generated css")
+	}
+}
+
+func TestParamOptionsStrict(t *testing.T) {
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+def handler(dry_run, args):
+	return ace.result(status="done", values=[args.param1, args.param2], report=ace.TEXT)
+
+app = ace.app("testApp",
+	actions=[ace.action("testAction", "/", handler)])
+
+		`,
+		"params.star": `param("param1", description="strict dropdown", type=STRING, default="a")
+param("options_param1", description="param1 options", type=LIST, default=["a", "b", "c"])
+param("param2", description="free text dropdown", type=STRING, default="a", display_type=COMBO)
+param("options_param2", description="param2 options", type=LIST, default=["a", "b", "c"])`,
+	}
+	a, _, err := CreateTestApp(logger, fileData)
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	// The strict (default) dropdown renders with data-strict, the COMBO one without
+	request := httptest.NewRequest("GET", "/test/", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	bodyStripped := strings.Join(strings.Fields(response.Body.String()), " ")
+	testutil.AssertStringContains(t, bodyStripped, `<searchable-select class="block relative" data-strict> <input id="param_param1"`)
+	testutil.AssertStringContains(t, bodyStripped, `<searchable-select class="block relative" > <input id="param_param2"`)
+
+	postForm := func(param1, param2 string) *httptest.ResponseRecorder {
+		values := url.Values{"param1": {param1}, "param2": {param2}}
+		request := httptest.NewRequest("POST", "/test/", strings.NewReader(values.Encode()))
+		request.Header.Set("HX-Request", "true")
+		request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+		response := httptest.NewRecorder()
+		a.ServeHTTP(response, request)
+		return response
+	}
+
+	// A value outside the options list is rejected for the strict param
+	response = postForm("notinlist", "a")
+	testutil.AssertEqualsInt(t, "code", http.StatusBadRequest, response.Code)
+	testutil.AssertStringContains(t, response.Body.String(), "invalid value for param1: must be one of the configured options")
+
+	// The COMBO param accepts free text; empty strict values are left to
+	// the handler's own validation
+	response = postForm("b", "freetext")
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertStringContains(t, response.Body.String(), "freetext")
+
+	response = postForm("", "a")
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 }
 
 func TestActionError(t *testing.T) {
@@ -818,31 +700,9 @@ param("param3", description="param3 description", type=INT, default=10)`,
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "match response", `<div role="status">
-            errormessage 
-          </div>
-
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-		 <div
-			id="param_param2_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-		 <div
-			id="param_param3_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-
-		<output id="action_result" hx-swap-oob="innerHTML"> <div role="status" class="divider text-lg text-secondary">No Output</div> </output>
-		`, response.Body.String())
+	testutil.AssertStringMatch(t, "match response", `
+	<div role="status" class="py-1 font-medium"> errormessage </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <output id="param_param2_error" hx-swap-oob="innerHTML"></output> <output id="param_param3_error" hx-swap-oob="innerHTML"></output> <output id="action_result" hx-swap-oob="innerHTML"> <div role="status" class="py-2 text-center text-sm text-base-content/70"> No output </div> </output>
+	`, response.Body.String())
 
 	values = url.Values{
 		"param1": {"p1val"},
@@ -872,63 +732,9 @@ param("param3", description="param3 description", type=INT, default=10)`,
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "response", `<div role="status">
-            done
-          </div>
-
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-		 <div
-			id="param_param2_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-		 <div
-			id="param_param3_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-
-          <output id="action_result" hx-swap-oob="innerHTML">
-		  	<div>
-            <div class="divider text-lg text-secondary">Report</div>
-        
-			<div class="overflow-x-auto" role="alert">
-            <table class="table table-auto min-w-full table-zebra text-sm md:text-xl font-mono">
-              <thead>
-                <tr class="text-primary">
-                  
-                    <th>c1</th>
-                  
-                    <th>c2</th>
-                  
-                    <th>c3</th>
-                  
-                </tr>
-              </thead>
-              <tbody>
-                
-                  <tr>
-                    
-                      <td>p1val</td>
-                    
-                      <td>true</td>
-                    
-                      <td>50</td>
-                    
-                  </tr>
-                
-              </tbody>
-            </table>
-			</div>
-		  	</div>
-          </output>`, response.Body.String())
+	testutil.AssertStringMatch(t, "response", `
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <output id="param_param2_error" hx-swap-oob="innerHTML"></output> <output id="param_param3_error" hx-swap-oob="innerHTML"></output> <output id="action_result" hx-swap-oob="innerHTML"> <div role="alert"> <div class="card border border-base-300 bg-base-100 shadow-sm w-full"> <div class="card-body p-4 sm:p-6 gap-3 min-w-0"> <h2 class="section-heading">Report</h2> <div class="overflow-x-auto"> <table class="table table-zebra min-w-full text-sm"> <thead> <tr> <th scope="col">c1</th> <th scope="col">c2</th> <th scope="col">c3</th> </tr> </thead> <tbody> <tr> <td class="font-mono text-xs">p1val</td> <td class="font-mono text-xs">true</td> <td class="font-mono text-xs">50</td> </tr> </tbody> </table> </div> </div> </div> </div> </output>
+	`, response.Body.String())
 }
 
 func TestNonHtmxRequest(t *testing.T) {
@@ -996,22 +802,18 @@ app = ace.app("testApp",
 	a.ServeHTTP(response, request)
 
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	body := response.Body.String()
-	if strings.Contains(body, `<li><a class="link" href="/test/test1">test1Action</a></li>`) {
-		t.Errorf("actions switcher should not have current action, got %s", body)
-	}
-	testutil.AssertStringContains(t, body, `<li><a class="link" href="/test/test2">test2Action</a></li>`)
+	body := strings.Join(strings.Fields(response.Body.String()), " ")
+	testutil.AssertStringContains(t, body, `<a href="/test/test1" class="menu-active" aria-current="page" > test1Action </a>`)
+	testutil.AssertStringContains(t, body, `<a href="/test/test2" > test2Action </a>`)
 
 	request = httptest.NewRequest("GET", "/test/test2?param1=abc", nil)
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	body = response.Body.String()
-	if strings.Contains(body, `<li><a class="link" href="/test/test2">test2Action</a></li>`) {
-		t.Errorf("actions switcher should not have current action, got %s", body)
-	}
-	testutil.AssertStringContains(t, body, `<li><a class="link" href="/test/test1?param1=abc">test1Action</a></li>`)
+	body = strings.Join(strings.Fields(response.Body.String()), " ")
+	testutil.AssertStringContains(t, body, `<a href="/test/test2" class="menu-active" aria-current="page" > test2Action </a>`)
+	testutil.AssertStringContains(t, body, `<a href="/test/test1" > test1Action </a>`)
 
 	values := url.Values{
 		"param1": {"p1val"},
@@ -1024,57 +826,7 @@ app = ace.app("testApp",
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringMatch(t, "response", `
-	<div role="status">
-            done
-          </div>
-        
-                      <ul
-                        id="dropdown-menu"
-                        hx-swap-oob="true"
-                        hx-swap="outerHTML"
-                        tabindex="0"
-                        class="dropdown-content menu bg-base-100 rounded-box z-[1] w-52 p-2 shadow">
-                        
-                          <li><a class="link" href="/test/test2?param1=p1val">test2Action</a></li>
-                        
-                      </ul>
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-        
-          <output id="action_result" hx-swap-oob="innerHTML">
-		  	<div>
-            <div class="divider text-lg text-secondary">Report</div>
-            <div class="overflow-x-auto" role="alert">
-              <table
-                class="table table-auto min-w-full table-zebra text-sm md:text-xl font-mono">
-                <thead>
-                  <tr class="text-primary">
-                    
-                      <th>a</th>
-                    
-                      <th>b</th>
-                    
-                  </tr>
-                </thead>
-                <tbody>
-                  
-                    <tr>
-                      
-                        <td>1</td>
-                      
-                        <td>abc</td>
-                      
-                    </tr>
-                  
-                </tbody>
-              </table>
-            </div>
-            </div>
-          </output>
+	<div role="status" class="py-1 font-medium"> done </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <output id="action_result" hx-swap-oob="innerHTML"> <div role="alert"> <div class="card border border-base-300 bg-base-100 shadow-sm w-full"> <div class="card-body p-4 sm:p-6 gap-3 min-w-0"> <h2 class="section-heading">Report</h2> <div class="overflow-x-auto"> <table class="table table-zebra min-w-full text-sm"> <thead> <tr> <th scope="col">a</th> <th scope="col">b</th> </tr> </thead> <tbody> <tr> <td class="font-mono text-xs">1</td> <td class="font-mono text-xs">abc</td> </tr> </tbody> </table> </div> </div> </div> </div> </output>
 	`, response.Body.String())
 }
 
@@ -1161,62 +913,9 @@ param("param2", description="param2 description", type=BOOLEAN, default=False)`,
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "body", `<div role="status">
-            Suggesting values
-          </div>
-        
-          <div id="param_param1_div" hx-swap-oob="innerHTML">
-            
-                    
-                      <div>
-                        <select
-                          id="param_param1"
-                          class="select select-bordered w-full"
-                          name="param1">
-                          
-                          
-                            <option value="a" selected>
-                              a
-                            </option>
-                          
-                            <option value="b" >
-                              b
-                            </option>
-                          
-                            <option value="c" >
-                              c
-                            </option>
-                          
-                        </select>
-                        <div id="param_param1_error" aria-live="assertive" aria-atomic="true" class="text-error mt-1"></div>
-                      </div>
-                    
-                    
-                  
-          </div>
-        
-          <div id="param_param2_div" hx-swap-oob="innerHTML">
-            
-                    
-                      <div class="flex justify-center">
-                        <input
-                          id="param_param2"
-                          name="param2"
-                          type="checkbox"
-                          value="true"
-                          class="checkbox checkbox-primary justify-self-center"
-                          checked />
-                        <div class="pl-4">
-                          <div
-                            id="param_param2_error"
-							aria-live="assertive" aria-atomic="true"
-                            class="text-error mt-1"></div>
-                        </div>
-                      </div>
-                    
-                    
-                  
-          </div>`, response.Body.String())
+	testutil.AssertStringMatch(t, "body", `
+	<div role="status" class="py-1 font-medium"> Suggesting values </div> <div id="param_param1_div" hx-swap-oob="innerHTML"> <div> <searchable-select class="block relative" data-strict> <input id="param_param1" name="param1" type="text" class="input w-full pr-9" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="param_param1_listbox" autocomplete="off" value="a" /> <button type="button" tabindex="-1" aria-label="Show all options" class="absolute right-1.5 top-1/2 -translate-y-1/2 btn btn-ghost btn-xs btn-square text-base-content/70"> <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"> <path d="M6 9l6 6 6-6" /> </svg> </button> <ul id="param_param1_listbox" role="listbox" aria-label="param1 options" hidden class="absolute z-30 mt-1 w-full max-h-60 overflow-y-auto rounded-box border border-base-300 bg-base-100 shadow-md p-1"> <li id="param_param1_opt_0" role="option" data-value="a" aria-selected="true" class="ss-option px-3 py-1.5 rounded-field cursor-pointer text-sm"> a </li> <li id="param_param1_opt_1" role="option" data-value="b" class="ss-option px-3 py-1.5 rounded-field cursor-pointer text-sm"> b </li> <li id="param_param1_opt_2" role="option" data-value="c" class="ss-option px-3 py-1.5 rounded-field cursor-pointer text-sm"> c </li> </ul> </searchable-select> <output id="param_param1_error" aria-live="assertive" aria-atomic="true" class="block text-error text-sm mt-1 empty:hidden"></output> </div> </div> <div id="param_param2_div" hx-swap-oob="innerHTML"> <div class="md:pt-2"> <input id="param_param2" name="param2" type="checkbox" value="true" class="checkbox checkbox-primary" checked /> <output id="param_param2_error" aria-live="assertive" aria-atomic="true" class="block text-error text-sm mt-1 empty:hidden"></output> </div> </div>
+	`, response.Body.String())
 }
 
 func TestValidate(t *testing.T) {
@@ -1255,22 +954,9 @@ param("param2", description="param2 description", type=BOOLEAN, default=False)`,
 	response = httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "body", `<div role="status">
-            Looks good
-          </div>
-        
-		 <div
-			id="param_param1_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>
-		 <div
-			id="param_param2_error"
-			hx-swap-oob="innerHTML">
-			<div role="alert">
-			</div>
-  		 </div>`, response.Body.String())
+	testutil.AssertStringMatch(t, "body", `
+	<div role="status" class="py-1 font-medium"> Looks good </div> <output id="param_param1_error" hx-swap-oob="innerHTML"></output> <output id="param_param2_error" hx-swap-oob="innerHTML"></output>
+	`, response.Body.String())
 }
 
 func TestStarBase(t *testing.T) {

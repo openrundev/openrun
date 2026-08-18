@@ -2,9 +2,6 @@
 
 {{ if .dev }}
   <script src="{{ astatic "astatic/sse.js" }}"></script>
-{{ end }}
-
-{{ if .dev }}
   <div
     id="cl_reload_listener"
     hx-ext="sse"
@@ -22,294 +19,234 @@
 
 
 <script>
+  document.body.addEventListener("htmx:beforeRequest", function (event) {
+    ActionMessage.classList.remove("text-error");
+  });
   document.body.addEventListener("htmx:sendError", function (event) {
+    ActionMessage.classList.add("text-error");
     ActionMessage.innerText = "API call failed: Server is not reachable";
   });
   document.body.addEventListener("htmx:responseError", function (event) {
+    ActionMessage.classList.add("text-error");
     ActionMessage.innerText =
       "API call failed: " + event.detail.xhr.responseText;
   });
 </script>
 
-<div class="w-full flex flex-col justify-center items-center">
-  <div class="md:min-w-[768px] mx-auto">
-    <div class="p-2 flex justify-between items-center md:mt-4">
-      <div>
-        {{ if and (.links) (gt (len .links) 0) }}
-          <div class="dropdown dropdown-bottom" title="Switch between Actions">
-            <div tabindex="0" role="button" class="btn btn-outline">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon icon-tabler icons-tabler-outline icon-tabler-menu-2">
-                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-                <path d="M4 6l16 0" />
-                <path d="M4 12l16 0" />
-                <path d="M4 18l16 0" />
-              </svg>
-            </div>
+<!-- Branded progress line shown while an action request is in flight -->
+<div class="relative">
+  <div
+    id="ActionIndicator"
+    class="progress-line htmx-indicator"
+    role="presentation"></div>
+</div>
 
-            {{ block "dropdown" . }}
-              <ul
-                id="dropdown-menu"
-                hx-swap-oob="true"
-                hx-swap="outerHTML"
-                tabindex="0"
-                class="dropdown-content menu bg-base-100 rounded-box z-[1] w-52 p-2 shadow">
-                {{ range .links }}
-                  {{ if .Authorized }}
-                    <li><a class="link" href="{{ .Path }}">{{ .Name }}</a></li>
-                  {{ else }}
-                    <li class="disabled menu-disabled">
-                      <a aria-disabled="true">{{ .Name }}</a>
-                    </li>
-                  {{ end }}
-                {{ end }}
-              </ul>
-            {{ end }}
-          </div>
-        {{ end }}
-      </div>
-
-      <div class="text-center text-3xl font-light text-primary justify-center">
-        <a href="{{ .pagePath }}"> {{ .name }} </a>
-      </div>
-
-      <div class="justify-right pt-2">
-        <label
-          for="theme-toggle"
-          class="swap swap-rotate"
-          title="Switch between dark and light themes">
-          <!-- This input checkbox will be hidden -->
-          <input id="theme-toggle" class="hidden" type="checkbox" />
-
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            class="theme-dark swap-on fill-current w-5 h-5"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            stroke-width="2"
-            stroke="currentColor"
-            fill="none"
-            stroke-linecap="round"
-            stroke-linejoin="round">
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
-            <path d="M12 5l0 -2" />
-            <path d="M17 7l1.4 -1.4" />
-            <path d="M19 12l2 0" />
-            <path d="M17 17l1.4 1.4" />
-            <path d="M12 19l0 2" />
-            <path d="M7 17l-1.4 1.4" />
-            <path d="M6 12l-2 0" />
-            <path d="M7 7l-1.4 -1.4" />
-          </svg>
-
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            class="theme-light swap-off fill-current w-5 h-5"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            stroke-width="2"
-            stroke="currentColor"
-            fill="none"
-            stroke-linecap="round"
-            stroke-linejoin="round">
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path
-              d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
-          </svg>
-        </label>
-      </div>
-    </div>
-
-    <p class="text-center my-4 md:my-6">
-      {{ .description }}
-    </p>
-    <form
-      method="post"
-      role="form"
-      id="action_form"
-      {{ if .hasFileUpload }}
-        enctype="multipart/form-data" hx-encoding="multipart/form-data"
-      {{ end }}>
-      {{ range .params }}
-        <div class="grid grid-cols-2 mb-1 items-center">
-          <label
-            class="label flex-col items-start px-2"
-            for="param_{{ .Name }}">
-            <span class="label-text font-bold">{{ .Name }}</span>
-            <span class="label-text text-xs md:text-sm text-gray-500"
-              >{{ .Description }}
+<form
+  method="post"
+  role="form"
+  id="action_form"
+  class="card border border-base-300 bg-base-100 shadow-sm w-full"
+  {{ if .hasFileUpload }}
+    enctype="multipart/form-data" hx-encoding="multipart/form-data"
+  {{ end }}>
+  <div class="card-body p-4 sm:p-6 gap-4">
+    {{ range .params }}
+      <div
+        class="grid grid-cols-1 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-x-6 gap-y-1.5">
+        <label class="min-w-0 md:pt-2" for="param_{{ .Name }}">
+          <span class="block text-sm font-medium break-words">
+            {{ .Name }}
+          </span>
+          {{ if .Description }}
+            <span class="block text-xs text-base-content/70 mt-0.5">
+              {{ .Description }}
             </span>
-          </label>
+          {{ end }}
+        </label>
 
-          <div id="param_{{ .Name }}_div">
-            {{ block "param_input_div" . }}
-              {{ if eq .InputType "checkbox" }}
-                <div class="flex justify-center">
+        <div id="param_{{ .Name }}_div" class="min-w-0">
+          {{ block "param_input_div" . }}
+            {{ if eq .InputType "checkbox" }}
+              <div class="md:pt-2">
+                <input
+                  id="param_{{ .Name }}"
+                  name="{{ .Name }}"
+                  type="checkbox"
+                  value="true"
+                  class="checkbox checkbox-primary"
+                  {{ .Value }} />
+                <output
+                  id="param_{{ .Name }}_error"
+                  aria-live="assertive"
+                  aria-atomic="true"
+                  class="block text-error text-sm mt-1 empty:hidden"></output>
+              </div>
+            {{ else if eq .InputType "select" }}
+              <div>
+                {{/* Searchable combobox (upgraded by actions.js): typing
+                  filters the options, the button shows the full list.
+                  Strict (default) means the value must be one of the
+                  options; the COMBO display type allows free text */}}
+                <searchable-select
+                  class="block relative"
+                  {{ if .Strict }}data-strict{{ end }}>
                   <input
                     id="param_{{ .Name }}"
                     name="{{ .Name }}"
-                    type="checkbox"
-                    value="true"
-                    class="checkbox checkbox-primary justify-self-center"
-                    {{ .Value }} />
-                  <div class="pl-4">
-                    <div
-                      id="param_{{ .Name }}_error"
-                      aria-live="assertive"
-                      aria-atomic="true"
-                      class="text-error mt-1"></div>
-                  </div>
-                </div>
-              {{ else if eq .InputType "select" }}
-                <div>
-                  <select
-                    id="param_{{ .Name }}"
-                    class="select select-bordered w-full"
-                    name="{{ .Name }}">
+                    type="text"
+                    class="input w-full pr-9"
+                    role="combobox"
+                    aria-expanded="false"
+                    aria-autocomplete="list"
+                    aria-controls="param_{{ .Name }}_listbox"
+                    autocomplete="off"
+                    value="{{ .Value }}" />
+                  <button
+                    type="button"
+                    tabindex="-1"
+                    aria-label="Show all options"
+                    class="absolute right-1.5 top-1/2 -translate-y-1/2 btn btn-ghost btn-xs btn-square text-base-content/70">
+                    <svg
+                      class="w-4 h-4"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      focusable="false">
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                  <ul
+                    id="param_{{ .Name }}_listbox"
+                    role="listbox"
+                    aria-label="{{ .Name }} options"
+                    hidden
+                    class="absolute z-30 mt-1 w-full max-h-60 overflow-y-auto rounded-box border border-base-300 bg-base-100 shadow-md p-1">
                     {{ $sel := .Value }}
-                    {{ range .Options }}
-                      <option
-                        value="{{ . }}"
-                        {{ if eq $sel . }}selected{{ end }}>
-                        {{ . }}
-                      </option>
+                    {{ $pname := .Name }}
+                    {{ range $i, $opt := .Options }}
+                      <li
+                        id="param_{{ $pname }}_opt_{{ $i }}"
+                        role="option"
+                        data-value="{{ $opt }}"
+                        {{ if eq $sel $opt }}aria-selected="true"{{ end }}
+                        class="ss-option px-3 py-1.5 rounded-field cursor-pointer text-sm">
+                        {{ $opt }}
+                      </li>
                     {{ end }}
-                  </select>
-                  <div
-                    id="param_{{ .Name }}_error"
-                    aria-live="assertive"
-                    aria-atomic="true"
-                    class="text-error mt-1"></div>
-                </div>
-              {{ else }}
-                <div>
-                  {{ if eq .DisplayType "textarea" }}
-                    <textarea
-                      id="param_{{ .Name }}"
-                      name="{{ .Name }}"
-                      class="textarea textarea-primary w-full"
-                      {{ if .DisplayTypeOptions }}
-                        rows="{{ .DisplayTypeOptions }}"
-                      {{ end }}>
+                  </ul>
+                </searchable-select>
+                <output
+                  id="param_{{ .Name }}_error"
+                  aria-live="assertive"
+                  aria-atomic="true"
+                  class="block text-error text-sm mt-1 empty:hidden"></output>
+              </div>
+            {{ else }}
+              <div>
+                {{ if eq .DisplayType "textarea" }}
+                  <textarea
+                    id="param_{{ .Name }}"
+                    name="{{ .Name }}"
+                    class="textarea w-full"
+                    {{ if .DisplayTypeOptions }}
+                      rows="{{ .DisplayTypeOptions }}"
+                    {{ end }}>
  {{- .Value -}}</textarea
-                    >
-                  {{ else if eq .DisplayType "password" }}
-                    <input
-                      id="param_{{ .Name }}"
-                      name="{{ .Name }}"
-                      type="password"
-                      class="input input-bordered w-full"
-                      value="{{ .Value }}" />
-                  {{ else if eq .DisplayType "file" }}
-                    <input
-                      id="param_{{ .Name }}"
-                      name="{{ .Name }}"
-                      type="file"
-                      {{ if .DisplayTypeOptions }}
-                        accept="{{ .DisplayTypeOptions }}"
-                      {{ end }}
-                      class="file-input file-input-primary w-full"
-                      value="{{ .Value }}" />
-                  {{ else }}
-                    <input
-                      id="param_{{ .Name }}"
-                      name="{{ .Name }}"
-                      type="{{ .DisplayType }}"
-                      class="input input-bordered w-full"
-                      value="{{ .Value }}" />
-                  {{ end }}
-                  <output
-                    id="param_{{ .Name }}_error"
-                    aria-live="assertive"
-                    aria-atomic="true"
-                    class="text-error mt-1"></output>
-                </div>
-              {{ end }}
-              <!-- param_input_div block -->
+                  >
+                {{ else if eq .DisplayType "password" }}
+                  <input
+                    id="param_{{ .Name }}"
+                    name="{{ .Name }}"
+                    type="password"
+                    class="input w-full"
+                    value="{{ .Value }}" />
+                {{ else if eq .DisplayType "file" }}
+                  <input
+                    id="param_{{ .Name }}"
+                    name="{{ .Name }}"
+                    type="file"
+                    {{ if .DisplayTypeOptions }}
+                      accept="{{ .DisplayTypeOptions }}"
+                    {{ end }}
+                    class="file-input w-full" />
+                {{ else }}
+                  <input
+                    id="param_{{ .Name }}"
+                    name="{{ .Name }}"
+                    type="{{ .DisplayType }}"
+                    class="input w-full"
+                    value="{{ .Value }}" />
+                {{ end }}
+                <output
+                  id="param_{{ .Name }}_error"
+                  aria-live="assertive"
+                  aria-atomic="true"
+                  class="block text-error text-sm mt-1 empty:hidden"></output>
+              </div>
             {{ end }}
-          </div>
+            <!-- param_input_div block -->
+          {{ end }}
         </div>
+      </div>
+    {{ end }}
+
+
+    <!-- Action buttons -->
+    <div
+      class="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 {{ if .params }}pt-2 border-t border-base-300/70{{ end }}">
+      {{ if .showSuggest }}
+        <button
+          type="submit"
+          hx-post="{{ .pagePath }}/suggest"
+          hx-target="#ActionMessage"
+          hx-swap="innerHTML swap:80ms"
+          hx-indicator="#ActionIndicator"
+          class="btn btn-outline sm:min-w-28">
+          Suggest
+        </button>
+      {{ end }}
+
+      {{ if .showValidate }}
+        <button
+          type="submit"
+          hx-post="{{ .pagePath }}/validate"
+          hx-target="#ActionMessage"
+          hx-swap="innerHTML swap:80ms"
+          hx-indicator="#ActionIndicator"
+          class="btn btn-outline sm:min-w-28">
+          Validate
+        </button>
       {{ end }}
 
 
-      <!-- Submit Button -->
-      <div class="flex space-x-2">
-        {{ if .showSuggest }}
-          <div class="form-control mt-4 flex-grow ">
-            <button
-              type="submit"
-              hx-post="{{ .pagePath }}/suggest"
-              hx-target="#ActionMessage"
-              hx-swap="innerHTML swap:80ms"
-              hx-indicator="#ActionIndicator"
-              class="btn btn-primary w-full">
-              Suggest
-            </button>
-          </div>
-        {{ end }}
-
-        {{ if .showValidate }}
-          <div class="form-control mt-4 flex-grow ">
-            <button
-              type="submit"
-              hx-post="{{ .pagePath }}/validate"
-              hx-target="#ActionMessage"
-              hx-swap="innerHTML swap:80ms"
-              hx-indicator="#ActionIndicator"
-              class="btn btn-primary w-full">
-              Validate
-            </button>
-          </div>
-        {{ end }}
-
-
-        <div class="form-control mt-4 flex-grow ">
-          <button
-            type="submit"
-            autofocus
-            hx-post="{{ .pagePath }}"
-            hx-target="#ActionMessage"
-            hx-swap="innerHTML swap:80ms"
-            hx-indicator="#ActionIndicator"
-            class="btn btn-primary w-full">
-            Run
-          </button>
-        </div>
-      </div>
-    </form>
+      <button
+        type="submit"
+        autofocus
+        hx-post="{{ .pagePath }}"
+        hx-target="#ActionMessage"
+        hx-swap="innerHTML swap:80ms"
+        hx-indicator="#ActionIndicator"
+        class="btn btn-primary sm:min-w-32">
+        Run
+      </button>
+    </div>
   </div>
-</div>
+</form>
 
-<div class="pt-1 flex justify-center items-center">
-  <img
-    id="ActionIndicator"
-    alt="Loading..."
-    class="htmx-indicator"
-    role="presentation"
-    src="{{ astatic "astatic/spinner.svg" }}" />
-</div>
 <output
   id="ActionMessage"
   aria-live="assertive"
   aria-atomic="true"
-  class="pt-1 text-center block w-full"></output>
+  class="block w-full text-center text-sm empty:hidden"></output>
 
-<div class="pt-1 card w-full shadow-2xl rounded-lg">
-  <output id="action_result" aria-live="assertive" aria-atomic="true">
-    <span></span>
-  </output>
-</div>
+<output
+  id="action_result"
+  aria-live="assertive"
+  aria-atomic="true"
+  class="block w-full"></output>
 
 {{ template "footer" . }}

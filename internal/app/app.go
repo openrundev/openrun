@@ -515,8 +515,10 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 		// newAppRouter, which is published below
 		action.AppTemplate = newTemplate
 		action.StyleType = a.appStyle.GetStyleType()
-		action.LightTheme = cmp.Or(a.appStyle.Light, apptype.DEFAULT_DAISYUI_LIGHT_THEME)
-		action.DarkTheme = cmp.Or(a.appStyle.Dark, apptype.DEFAULT_DAISYUI_DARK_THEME)
+		// Apps with no style config get the OpenRun brand themes, which are
+		// baked into the embedded fallback stylesheet used for actions
+		action.LightTheme = cmp.Or(a.appStyle.Light, apptype.DEFAULT_ACTION_LIGHT_THEME)
+		action.DarkTheme = cmp.Or(a.appStyle.Dark, apptype.DEFAULT_ACTION_DARK_THEME)
 	}
 
 	// Publish the new router and templates together; until here concurrent

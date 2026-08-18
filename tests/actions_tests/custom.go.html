@@ -1,0 +1,15 @@
+{{ define "release_notes" }}
+  <div class="card border border-base-300 bg-base-100 shadow-sm w-full">
+    <div class="card-body p-4 sm:p-6 gap-3 min-w-0">
+      <h2 class="section-heading">Release notes</h2>
+      {{ range . }}
+        <div class="text-sm">
+          <span class="font-mono">{{ .app }}</span>
+          <span class="text-base-content/70">on</span>
+          <span class="font-mono">{{ .env }}</span>
+        </div>
+        <pre class="font-mono text-xs leading-5 overflow-x-auto">{{ .notes }}</pre>
+      {{ end }}
+    </div>
+  </div>
+{{ end }}

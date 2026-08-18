@@ -147,7 +147,15 @@ param("param1", description="The param1 description", default="option1")
 param("options-param1", type=LIST, description="Options for param1", default=["option1", "option2"])
 ```
 
-In the UI, `options-param1` is not displayed. `param1` is show with a selector, having `option1` and `option2` as options. See [dictionary](https://github.com/openrundev/apps/tree/main/misc/dictionary) for an app which uses this.
+In the UI, `options-param1` is not displayed. `param1` is shown as a searchable dropdown, having `option1` and `option2` as options. Typing in the field filters the options. By default the dropdown is strict: the value has to be one of the options (enforced in the UI and also on the server for configured option lists). To allow free text entry in addition to the listed options, set `display_type=COMBO` on the param:
+
+```python {filename="params.star"}
+param("param1", description="The param1 description", default="option1", display_type=COMBO)
+
+param("options-param1", type=LIST, description="Options for param1", default=["option1", "option2"])
+```
+
+The same applies to dropdowns populated by a [suggest handler]({{< relref "#suggest-handler" >}}): values suggested as a list show as a strict searchable dropdown unless the param has `display_type=COMBO`. See [dictionary](https://github.com/openrundev/apps/tree/main/misc/dictionary) for an app which uses options.
 
 This approach is used for flexibility, instead of directly allowing the options to be configured for the param. The options param approach has the flexibility that when an app is installed, the options can be configured for the installation. This avoids having to maintain different copies of the app code. For example:
 
@@ -159,7 +167,7 @@ adds a new `options3` option.
 
 ## Display Types
 
-For string type params, the `display_type` property can be set to `FILE`, `PASSWORD` or `TEXTAREA`. If no value is set, the field shows as a text input box. `FILE` param shows as a file upload input. `PASSWORD` shows as a password input. `TEXTAREA` shows as a text area.
+For string type params, the `display_type` property can be set to `FILE`, `PASSWORD`, `TEXTAREA` or `COMBO`. If no value is set, the field shows as a text input box. `FILE` param shows as a file upload input. `PASSWORD` shows as a password input. `TEXTAREA` shows as a text area. `COMBO` makes a dropdown param (one with a [value selector]({{< relref "#param-value-selector" >}}) or suggest provided options) accept free text entry in addition to the listed options; without it dropdown values are restricted to the list.
 
 ## File Handling
 

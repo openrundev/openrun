@@ -1,0 +1,80 @@
+/* Input for generating the embedded fallback stylesheet
+   (internal/app/action/astatic/style.css), used by action apps which have
+   no styling pipeline of their own. Regenerate with gen_style.sh after
+   changing the action templates. The openrun-light/openrun-dark themes
+   mirror the OpenRun brand themes from the management console
+   (ui/console/app.star) and the list_apps app. */
+@import "tailwindcss" source(none);
+@source "../*.go.html";
+@source "../astatic/*.js";
+@plugin "./cache/daisyui.js" {
+  themes: false;
+}
+@plugin "./cache/daisyui-theme.js" {
+  name: "openrun-light";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+  --color-base-100: #ffffff;
+  --color-base-200: #f9fcf9;
+  --color-base-300: #dce8dc;
+  --color-base-content: #142319;
+  --color-primary: #00c200;
+  --color-primary-content: #012d01;
+  --color-secondary: #007700;
+  --color-secondary-content: #d9ffd6;
+  --color-accent: #009a66;
+  --color-accent-content: #f0fff8;
+  --color-neutral: #1e2b22;
+  --color-neutral-content: #eef5ee;
+  --color-info: #0b6bcb;
+  --color-info-content: #f2f8ff;
+  --color-success: #0f7d0f;
+  --color-success-content: #f2fff2;
+  --color-warning: #946000;
+  --color-warning-content: #fffaf0;
+  --color-error: #d3302f;
+  --color-error-content: #fff5f4;
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+@plugin "./cache/daisyui-theme.js" {
+  name: "openrun-dark";
+  default: false;
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: #17221a;
+  --color-base-200: #101a13;
+  --color-base-300: #273b2c;
+  --color-base-content: #d9e7db;
+  --color-primary: #00c200;
+  --color-primary-content: #012d01;
+  --color-secondary: #007700;
+  --color-secondary-content: #d9ffd6;
+  --color-accent: #00d98b;
+  --color-accent-content: #00311d;
+  --color-neutral: #22312a;
+  --color-neutral-content: #d3e3d6;
+  --color-info: #55a9ff;
+  --color-info-content: #00203f;
+  --color-success: #37d24c;
+  --color-success-content: #003a0c;
+  --color-warning: #ffbe3d;
+  --color-warning-content: #402d00;
+  --color-error: #ff6f65;
+  --color-error-content: #400300;
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}

@@ -1,4 +1,23 @@
-function renderJSON(json, container, level = 0) {
+// jsonTreeSetAll expands or collapses every JSON tree in the result card
+// holding the clicked button. Collapse keeps the root node expanded, so the
+// tree folds down to its first level (the default render state)
+function jsonTreeSetAll(btn, expand) {
+    const scope = btn.closest('.card') || document;
+    scope.querySelectorAll('.json-container').forEach((container) => {
+      container.querySelectorAll('.json-tree li').forEach((li) => {
+        const arrow = li.querySelector(':scope > .arrow');
+        if (!arrow || li.classList.contains('leaf')) {
+          return; // leaf or plain text node, nothing to toggle
+        }
+        const open = expand || li.classList.contains('root');
+        li.classList.toggle('collapsed', !open);
+        li.classList.toggle('expanded', open);
+        arrow.textContent = open ? '▼' : '▶';
+      });
+    });
+  }
+
+  function renderJSON(json, container, level = 0) {
     const ul = document.createElement('ul');
     ul.classList.add('json-tree');
 

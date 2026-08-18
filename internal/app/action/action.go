@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"io/fs"
 	"maps"
 	"mime/multipart"
 	"net/http"
@@ -49,6 +48,7 @@ type ActionLink struct {
 	Path       string
 	Permits    []string
 	Authorized bool
+	Active     bool // whether this link is the currently shown action
 }
 
 // Action represents a single action that is exposed by the App. Actions
@@ -59,6 +59,7 @@ type Action struct {
 	isDev               bool
 	name                string
 	description         string
+	appName             string
 	appPath             string
 	run                 starlark.Callable
 	suggest             starlark.Callable
@@ -86,7 +87,7 @@ type Action struct {
 }
 
 // NewAction creates a new action
-func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name, description, apath string, run, suggest starlark.Callable,
+func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name, description, appName, apath string, run, suggest starlark.Callable,
 	params []apptype.AppParam, paramValuesStr map[string]string, paramDict starlark.StringDict,
 	appPath string, styleType types.StyleType, containerProxyUrl string, hidden []string, showValidate bool,
 	auditInsert func(*types.AuditEvent) error, containerManager any, jsLibs []types.JSLibrary, appPathDomain types.AppPathDomain,
@@ -151,6 +152,7 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 		isDev:             isDev,
 		name:              name,
 		description:       description,
+		appName:           appName,
 		appPath:           appPath,
 		pagePath:          pagePath,
 		run:               run,
@@ -181,25 +183,6 @@ func (a *Action) GetLink() ActionLink {
 		Path:    a.pagePath,
 		Permits: a.permit,
 	}
-}
-
-// GetEmbeddedTemplates returns the embedded templates files
-func GetEmbeddedTemplates() (map[string][]byte, error) {
-	files, err := fs.Glob(embedFS, "*.go.html")
-	if err != nil {
-		return nil, err
-	}
-
-	templates := make(map[string][]byte)
-	for _, file := range files {
-		data, err := embedHtml.ReadFile(file)
-		if err != nil {
-			return nil, err
-		}
-		templates[file] = data
-	}
-
-	return templates, nil
 }
 
 func (a *Action) BuildRouter() (*chi.Mux, error) {
@@ -336,6 +319,12 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		args[k] = v
 	}
 
+	options, optionsErr := a.paramOptions()
+	if optionsErr != nil {
+		http.Error(w, optionsErr.Error(), http.StatusBadRequest)
+		return
+	}
+
 	qsParams := url.Values{}
 
 	var tempDir string
@@ -400,6 +389,18 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 				args[param.Name] = starlark.Bool(false)
 				qsParams.Add(param.Name, "false")
 			} else if hasValue {
+				// Dropdown params are strict by default: a non-empty value
+				// must be one of the configured options (COMBO display type
+				// allows free text; empty is left for the handler's own
+				// required-value validation). Suggest provided lists are
+				// transient and are not checked here
+				opts := options[param.Name]
+				if len(opts) > 0 && formValue != "" && param.DisplayType != apptype.DisplayTypeCombo &&
+					!slices.Contains(opts, formValue) {
+					http.Error(w, fmt.Sprintf("invalid value for %s: must be one of the configured options", param.Name), http.StatusBadRequest)
+					return
+				}
+
 				newVal, err := apptype.ParamStringToType(param.Name, param.Type, formValue)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
@@ -466,7 +467,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	}
 
 	if isSuggest {
-		a.handleSuggestResponse(r.Context(), w, qsParams.Encode(), ret)
+		a.handleSuggestResponse(w, ret)
 		return
 	}
 
@@ -522,10 +523,14 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	pageInput := map[string]any{
 		"name":        a.name,
 		"description": a.description,
-		"path":        a.pagePath,
+		"appName":     a.appName,
+		"appPath":     a.appPath,
+		"pagePath":    a.pagePath,
+		"styleType":   string(a.StyleType),
 		"lightTheme":  a.LightTheme,
 		"darkTheme":   a.DarkTheme,
 		"esmLibs":     a.esmLibs,
+		"links":       a.getNavLinks(r.Context()),
 	}
 
 	if !isHtmxRequest {
@@ -544,16 +549,6 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	if len(a.Links) > 1 {
-		linksWithQS := a.getLinksWithQS(r.Context(), qsParams.Encode())
-		input := map[string]any{"links": linksWithQS}
-		err = a.actionTemplate.ExecuteTemplate(w, "dropdown", input)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 	}
 
 	// Render the param error messages, using HTMX OOB
@@ -803,6 +798,7 @@ type ParamDef struct {
 	Value              any
 	InputType          string
 	Options            []string
+	Strict             bool // dropdown value must be one of the options (default; COMBO display type loosens)
 	DisplayType        string
 	DisplayTypeOptions string
 }
@@ -813,6 +809,24 @@ const (
 	// Both are allowed, for backward compatibility. Underscore is preferred since it is a valid starlark identifier
 )
 
+// paramOptions returns the configured dropdown options: params with an
+// options-x/options_x prefix hold the option list (JSON) for param x
+func (a *Action) paramOptions() (map[string][]string, error) {
+	options := make(map[string][]string)
+	for _, p := range a.params {
+		if strings.HasPrefix(p.Name, OPTIONS_PREFIX) || strings.HasPrefix(p.Name, OPTIONS_PREFIX_UNDERSCORE) {
+			name := p.Name[len(OPTIONS_PREFIX):]
+			var vals []string
+			err := json.Unmarshal([]byte(a.paramValuesStr[p.Name]), &vals)
+			if err != nil {
+				return nil, fmt.Errorf("invalid value for %s: %s", p.Name, a.paramValuesStr[p.Name])
+			}
+			options[name] = vals
+		}
+	}
+	return options, nil
+}
+
 func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeAction(w, r) {
 		return
@@ -821,19 +835,10 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 	params := make([]ParamDef, 0, len(a.params))
 
-	options := make(map[string][]string)
-	for _, p := range a.params {
-		// params with options-x prefix are treated as select options for x
-		if strings.HasPrefix(p.Name, OPTIONS_PREFIX) || strings.HasPrefix(p.Name, OPTIONS_PREFIX_UNDERSCORE) {
-			name := p.Name[len(OPTIONS_PREFIX):]
-			var vals []string
-			err := json.Unmarshal([]byte(a.paramValuesStr[p.Name]), &vals)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("invalid value for %s: %s", p.Name, a.paramValuesStr[p.Name]), http.StatusBadRequest)
-				return
-			}
-			options[name] = vals
-		}
+	options, err := a.paramOptions()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	hasFileUpload := false
@@ -871,9 +876,13 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 				param.Value = "checked"
 			}
 			param.InputType = "checkbox"
-		} else if options[p.Name] != nil {
+		} else if options[p.Name] != nil || p.DisplayType == apptype.DisplayTypeCombo {
+			// Dropdown: strict (value must be in the list) unless the param
+			// display type is COMBO, which allows free text. A COMBO param
+			// without a static options list gets its options from suggest
 			param.InputType = "select"
 			param.Options = options[p.Name]
+			param.Strict = p.DisplayType != apptype.DisplayTypeCombo
 			param.Value = value
 		}
 
@@ -886,6 +895,8 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 			case apptype.DisplayTypeFileUpload:
 				param.DisplayType = "file"
 				hasFileUpload = true
+			case apptype.DisplayTypeCombo:
+				param.DisplayType = "text"
 			default:
 				http.Error(w, fmt.Sprintf("invalid display type for %s: %s", p.Name, p.DisplayType), http.StatusInternalServerError)
 				return
@@ -898,31 +909,35 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 		params = append(params, param)
 	}
 
-	linksWithQS := a.getLinksWithQS(r.Context(), r.URL.RawQuery)
 	input := map[string]any{
 		"dev":           a.isDev,
 		"name":          a.name,
 		"description":   a.description,
+		"appName":       a.appName,
 		"appPath":       a.appPath,
 		"pagePath":      a.pagePath,
 		"params":        params,
 		"styleType":     string(a.StyleType),
 		"lightTheme":    a.LightTheme,
 		"darkTheme":     a.DarkTheme,
-		"links":         linksWithQS,
+		"links":         a.getNavLinks(r.Context()),
 		"hasFileUpload": hasFileUpload,
 		"showSuggest":   a.suggest != nil,
 		"showValidate":  a.showValidate,
 		"esmLibs":       a.esmLibs,
 	}
-	err := a.actionTemplate.ExecuteTemplate(w, "form.go.html", input)
+	err = a.actionTemplate.ExecuteTemplate(w, "form.go.html", input)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (a *Action) getLinksWithQS(ctx context.Context, qs string) []ActionLink {
-	linksWithQS := make([]ActionLink, 0, len(a.Links))
+// getNavLinks returns the sidebar navigation links for all actions,
+// including the current one (marked Active). The current form param values
+// are appended to the link by actions.js at click time, so switching
+// actions preserves the entered values
+func (a *Action) getNavLinks(ctx context.Context) []ActionLink {
+	navLinks := make([]ActionLink, 0, len(a.Links))
 	for _, link := range a.Links {
 		authorized := true
 		if a.rbacApi != nil && len(link.Permits) > 0 {
@@ -932,18 +947,14 @@ func (a *Action) getLinksWithQS(ctx context.Context, qs string) []ActionLink {
 				a.Error().Msgf("error authorizing link %s: %s", link.Name, err)
 			}
 		}
-		if link.Path != a.pagePath { // Don't add self link
-			if qs != "" {
-				link.Path = link.Path + "?" + qs
-			}
-			link.Authorized = authorized // whether this user has access to this action
-			linksWithQS = append(linksWithQS, link)
-		}
+		link.Authorized = authorized // whether this user has access to this action
+		link.Active = link.Path == a.pagePath
+		navLinks = append(navLinks, link)
 	}
-	return linksWithQS
+	return navLinks
 }
 
-func (a *Action) handleSuggestResponse(ctx context.Context, w http.ResponseWriter, paramQS string, retVal starlark.Value) {
+func (a *Action) handleSuggestResponse(w http.ResponseWriter, retVal starlark.Value) {
 	ret, err := starlark_type.UnmarshalStarlark(retVal)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("error unmarshalling suggest response: %s", err), http.StatusInternalServerError)
@@ -959,16 +970,6 @@ func (a *Action) handleSuggestResponse(ctx context.Context, w http.ResponseWrite
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	if len(a.Links) > 1 {
-		linksWithQS := a.getLinksWithQS(ctx, paramQS)
-		input := map[string]any{"links": linksWithQS}
-		err = a.actionTemplate.ExecuteTemplate(w, "dropdown", input)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 	}
 
 	if retIsString {
@@ -1036,6 +1037,7 @@ func (a *Action) handleSuggestResponse(ctx context.Context, w http.ResponseWrite
 			}
 			param.Value = valueList[0]
 			param.Options = valueList
+			param.Strict = p.DisplayType != apptype.DisplayTypeCombo
 		} else if p.Type == starlark_type.BOOLEAN {
 			boolValue, err := strconv.ParseBool(fmt.Sprintf("%v", value))
 			if err != nil {
@@ -1056,6 +1058,8 @@ func (a *Action) handleSuggestResponse(ctx context.Context, w http.ResponseWrite
 				param.DisplayType = "textarea"
 			case apptype.DisplayTypeFileUpload:
 				param.DisplayType = "file"
+			case apptype.DisplayTypeCombo:
+				param.DisplayType = "text"
 			default:
 				http.Error(w, fmt.Sprintf("invalid display type for %s: %s", p.Name, p.DisplayType), http.StatusInternalServerError)
 				return

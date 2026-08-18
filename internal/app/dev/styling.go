@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/openrundev/openrun/internal/app/action"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/system"
@@ -286,29 +285,18 @@ func (s *AppStyle) setupTailwindConfig(templateLocations []string, sourceFS *app
 	configPath := fmt.Sprintf("style/%s", TAILWIND_CONFIG_FILE)
 	inputPath := fmt.Sprintf("style/%s", "input.css")
 
-	// Add the action templates to the input list
+	// The generated css covers the APP's templates only. The embedded
+	// action templates are not scanned: the action chrome is styled by the
+	// embedded fallback stylesheet, which the action pages always load and
+	// which ships in sync with the templates (see
+	// docs/designs/actions-css-layering.md)
 	var buf strings.Builder
-	embededFiles, err := action.GetEmbeddedTemplates()
-	if err != nil {
-		return fmt.Errorf("error getting embedded templates : %s", err)
-	}
-	for name, data := range embededFiles {
-		filePath := fmt.Sprintf("action/%s", name)
-		_, err := workFS.Stat(filePath)
-		if err == nil {
-			// File already exists, skip
-			continue
-		}
-		if err := workFS.Write(filePath, data); err != nil {
-			return fmt.Errorf("error writing embedded template file : %s", err)
-		}
-	}
-	buf.WriteString(fmt.Sprintf("'%s'", path.Join(workFS.Root, "action", "*.go.html")))
-
 	templateLocations = append(templateLocations, "base_templates/*.go.html")
 	// Add the template locations to the input list
-	for _, loc := range templateLocations {
-		buf.WriteString(", ")
+	for i, loc := range templateLocations {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
 		buf.WriteString(fmt.Sprintf("'%s'", path.Join(sourceFS.Root, loc)))
 	}
 

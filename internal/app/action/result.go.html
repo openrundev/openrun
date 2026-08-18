@@ -1,52 +1,64 @@
 {{ block "status" . }}
-  <div role="status">
+  <div role="status" class="py-1 font-medium">
     {{ . }}
   </div>
 {{ end }}
 
 {{ block "paramError" . }}
-  <div id="param_{{ .Name }}_error" hx-swap-oob="innerHTML">
-    <div role="alert">
-      {{ .Message }}
+  <output id="param_{{ .Name }}_error" hx-swap-oob="innerHTML">
+    {{- if .Message -}}
+      <div role="alert">{{ .Message }}</div>
+    {{- end -}}
+  </output>
+{{ end }}
+
+{{ block "result-card-open" . }}
+  <div class="card border border-base-300 bg-base-100 shadow-sm w-full">
+    <div class="card-body p-4 sm:p-6 gap-3 min-w-0">
+      <h2 class="section-heading">{{ . }}</h2>
+{{ end }}
+
+{{ block "result-card-close" . }}
     </div>
   </div>
 {{ end }}
 
 {{ block "result-empty" . }}
   <output id="action_result" hx-swap-oob="innerHTML">
-    <div role="status" class="divider text-lg text-secondary">No Output</div>
+    <div role="status" class="py-2 text-center text-sm text-base-content/70">
+      No output
+    </div>
   </output>
 {{ end }}
 
 {{ block "result-textarea" . }}
   <output id="action_result" hx-swap-oob="innerHTML">
-    <output>
-      <div class="divider text-lg text-secondary">Output</div>
+    <output role="alert" class="block">
+      {{ template "result-card-open" "Output" }}
       <textarea
-        role="alert"
-        rows="20"
-        class="textarea textarea-success w-full font-mono"
+        rows="{{ min 20 (add (len .) 2) }}"
+        class="textarea w-full font-mono text-xs leading-5"
         readonly>
      {{- range . -}}
           {{- . -}}
           {{- printf "\n" -}}
         {{- end -}}
     </textarea>
+      {{ template "result-card-close" . }}
     </output>
   </output>
 {{ end }}
 
 {{ block "result-table" . }}
   <output id="action_result" hx-swap-oob="innerHTML">
-    <div>
-      <div class="divider text-lg text-secondary">Report</div>
-      <div class="overflow-x-auto" role="alert">
-        <table
-          class="table table-auto min-w-full table-zebra text-sm md:text-xl font-mono">
+    <div role="alert">
+      {{ template "result-card-open" "Report" }}
+      <div class="overflow-x-auto">
+        <table class="table table-zebra min-w-full text-sm">
           <thead>
-            <tr class="text-primary">
+            <tr>
               {{ range $k := .Keys }}
-                <th>{{ $k }}</th>
+                <th scope="col">{{ $k }}</th>
               {{ end }}
             </tr>
           </thead>
@@ -54,13 +66,14 @@
             {{ range $v := .Values }}
               <tr>
                 {{ range $e := $v }}
-                  <td>{{ $e }}</td>
+                  <td class="font-mono text-xs">{{ $e }}</td>
                 {{ end }}
               </tr>
             {{ end }}
           </tbody>
         </table>
       </div>
+      {{ template "result-card-close" . }}
     </div>
   </output>
 {{ end }}
@@ -68,13 +81,32 @@
 {{ block "result-json" . }}
   <output id="action_result" hx-swap-oob="innerHTML">
     <div role="alert">
-      <div class="divider text-lg text-secondary">Result</div>
-
-      {{ range . }}
-        <div
-          class="json-container flex justify-center"
-          data-json="{{ . | toJson }}"></div>
-      {{ end }}
+      <div class="card border border-base-300 bg-base-100 shadow-sm w-full">
+        <div class="card-body p-4 sm:p-6 gap-3 min-w-0">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="section-heading">Result</h2>
+            <div class="flex gap-1">
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs"
+                onclick="jsonTreeSetAll(this, true)">
+                Expand all
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs"
+                onclick="jsonTreeSetAll(this, false)">
+                Collapse all
+              </button>
+            </div>
+          </div>
+          {{ range . }}
+            <div
+              class="json-container overflow-x-auto"
+              data-json="{{ . | toJson }}"></div>
+          {{ end }}
+        </div>
+      </div>
 
 
       <script>
@@ -90,15 +122,33 @@
 {{ block "result-download" . }}
   <output id="action_result" hx-swap-oob="innerHTML">
     <div role="alert">
-      <div class="divider text-lg text-secondary">Output File</div>
-
-      <h2 class="text-center">
+      {{ template "result-card-open" "Output file" }}
+      <ul class="flex flex-col gap-1">
         {{ range . }}
-          Download
-          <a class="link link-primary" href="{{ .url }}">{{ .name }}</a>
-          <br />
+          <li>
+            <a
+              class="link link-primary inline-flex items-center gap-1.5 font-mono text-sm break-all"
+              href="{{ .url }}">
+              <svg
+                class="w-4 h-4 shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                focusable="false">
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                <path d="M7 11l5 5l5 -5" />
+                <path d="M12 4l0 12" />
+              </svg>
+              {{ .name }}
+            </a>
+          </li>
         {{ end }}
-      </h2>
+      </ul>
+      {{ template "result-card-close" . }}
     </div>
   </output>
 {{ end }}
@@ -106,15 +156,19 @@
 {{ block "result-image" . }}
   <output id="action_result" hx-swap-oob="innerHTML">
     <div role="alert">
-      <div class="divider text-lg text-secondary">Output File</div>
-
+      {{ template "result-card-open" "Output image" }}
       {{ range . }}
-        <div class="flex justify-center">
-          <h2>{{ .name }}</h2>
-          <img src="{{ .url }}" alt="{{ .name }}" /><img />
-          <br />
-        </div>
+        <figure class="flex flex-col items-center gap-2">
+          <img
+            class="max-w-full rounded-box border border-base-300"
+            src="{{ .url }}"
+            alt="{{ .name }}" />
+          <figcaption class="text-xs text-base-content/70 font-mono">
+            {{ .name }}
+          </figcaption>
+        </figure>
       {{ end }}
+      {{ template "result-card-close" . }}
     </div>
   </output>
 {{ end }}

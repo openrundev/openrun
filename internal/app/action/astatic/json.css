@@ -1,130 +1,90 @@
+/* JSON tree report styling. Colors ride the active daisyui theme
+   variables so the tree adapts to light/dark and custom themes. */
 .json-tree {
-    list-style-type: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  .json-tree ul {
-    list-style-type: none;
-    margin: 0;
-    padding: 0;
-    position: relative;
-  }
-
-  .json-tree li {
-    position: relative;
-    padding-left: 1.5em;
-  }
-
-  .json-tree li:not(.root)::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0.6em;
-    width: 1em;
-    height: 100%;
-    border-left: 1px dotted #ccc;
-  }
-
-  .json-tree li:not(.root)::after {
-    content: '';
-    position: absolute;
-    top: 1em;
-    left: 0.6em;
-    width: 0.75em;
-    height: 0;
-    border-top: 1px dotted #ccc;
-  }
-
-  .json-tree li:last-child::before {
-    height: 1em;
-  }
-
-  .json-tree li.collapsed > ul {
-    display: none;
-  }
-
-  .json-tree li > span.key {
-    cursor: pointer;
-  }
-
-  .json-tree li.leaf > span.key {
-    cursor: default;
-  }
-
-  .json-key {
-    color: #92278f;
-  }
-
-  .json-value {
-    color: #3ab54a;
-  }
-
-  .json-string {
-    color: #3ab54a;
-  }
-
-  .json-number {
-    color: #25aae2;
-  }
-
-  .json-boolean {
-    color: #f9822b;
-  }
-
-  .json-null {
-    color: #f9822b;
-  }
-
-  .arrow {
-    display: inline-block;
-    width: 1em;
-    text-align: center;
-    cursor: pointer;
-  }
-
-  .arrow::selection {
-    background: transparent;
-  }
-
-  /* Light/Dark Mode Support */
-  @media (prefers-color-scheme: dark) {
-
-    .json-tree li:not(.root)::before,
-    .json-tree li:not(.root)::after {
-      border-color: #555;
-    }
-
-    .json-key {
-      color: #6189c3;
-    }
-
-    .json-value,
-    .json-string {
-      color: #ce9178;
-    }
-
-    .json-number {
-      color: #b5cea8;
-    }
-
-    .json-boolean,
-    .json-null {
-      color: #569cd6;
-    }
-  }
-
-
-/* Loading Indicator used by HTMX */
-.htmx-indicator {
-    opacity: 0;
-    transition: opacity 200ms ease-in;
+  list-style-type: none;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.8125rem;
 }
 
-#ActionMessage {
-    transition: filter 80ms ease-in-out;
+.json-tree ul {
+  list-style-type: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
 }
 
-#ActionMessage.htmx-swapping {
-    filter: blur(5px); /* Apply blur effect */
+.json-tree li {
+  position: relative;
+  padding-left: 1.5em;
+}
+
+.json-tree li:not(.root)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0.6em;
+  width: 1em;
+  height: 100%;
+  border-left: 1px dotted
+    color-mix(in oklab, var(--color-base-content) 35%, transparent);
+}
+
+.json-tree li:not(.root)::after {
+  content: '';
+  position: absolute;
+  top: 1em;
+  left: 0.6em;
+  width: 0.75em;
+  height: 0;
+  border-top: 1px dotted
+    color-mix(in oklab, var(--color-base-content) 35%, transparent);
+}
+
+.json-tree li:last-child::before {
+  height: 1em;
+}
+
+.json-tree li.collapsed > ul {
+  display: none;
+}
+
+.json-tree li > span.key {
+  cursor: pointer;
+}
+
+.json-tree li.leaf > span.key {
+  cursor: default;
+}
+
+.json-key {
+  color: var(--or-accent-text, var(--color-secondary));
+  font-weight: 500;
+}
+
+.json-value,
+.json-string {
+  color: var(--color-base-content);
+}
+
+.json-number {
+  color: var(--color-info);
+}
+
+.json-boolean,
+.json-null {
+  color: var(--color-warning);
+}
+
+.arrow {
+  display: inline-block;
+  width: 1em;
+  text-align: center;
+  cursor: pointer;
+  color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+}
+
+.arrow::selection {
+  background: transparent;
 }

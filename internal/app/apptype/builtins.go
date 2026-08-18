@@ -44,6 +44,12 @@ const (
 const (
 	DEFAULT_DAISYUI_LIGHT_THEME = "emerald"
 	DEFAULT_DAISYUI_DARK_THEME  = "night"
+
+	// Default themes for the action UI when the app defines no style
+	// config. These are the OpenRun brand themes baked into the embedded
+	// fallback stylesheet (internal/app/action/astatic/style.css)
+	DEFAULT_ACTION_LIGHT_THEME = "openrun-light"
+	DEFAULT_ACTION_DARK_THEME  = "openrun-dark"
 )
 
 const (

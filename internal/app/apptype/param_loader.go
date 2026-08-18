@@ -27,6 +27,10 @@ const (
 	DisplayTypePassword   DisplayType = "password"
 	DisplayTypeTextArea   DisplayType = "textarea"
 	DisplayTypeFileUpload DisplayType = "file"
+	// DisplayTypeCombo loosens a dropdown param (list options or suggest
+	// values) to allow free text entry. Without it dropdowns are strict:
+	// the value must be one of the listed options
+	DisplayTypeCombo DisplayType = "combo"
 )
 
 // AppParam represents a parameter in an app.
@@ -94,7 +98,8 @@ func validateParamInfo(paramInfo map[string]AppParam) error {
 			return fmt.Errorf("unknown type %s for %s", p.Type, p.Name)
 		}
 
-		if p.DisplayType != "" && p.DisplayType != DisplayTypePassword && p.DisplayType != DisplayTypeTextArea && p.DisplayType != DisplayTypeFileUpload {
+		if p.DisplayType != "" && p.DisplayType != DisplayTypePassword && p.DisplayType != DisplayTypeTextArea &&
+			p.DisplayType != DisplayTypeFileUpload && p.DisplayType != DisplayTypeCombo {
 			return fmt.Errorf("unknown display type %s for %s", p.DisplayType, p.Name)
 		}
 
@@ -185,6 +190,7 @@ func LoadParamInfo(fileName string, data []byte, serverConfig *types.ServerConfi
 		strings.ToUpper(string(DisplayTypePassword)):   starlark.String(DisplayTypePassword),
 		strings.ToUpper(string(DisplayTypeTextArea)):   starlark.String(DisplayTypeTextArea),
 		strings.ToUpper(string(DisplayTypeFileUpload)): starlark.String(DisplayTypeFileUpload),
+		strings.ToUpper(string(DisplayTypeCombo)):      starlark.String(DisplayTypeCombo),
 	}
 
 	thread := &starlark.Thread{

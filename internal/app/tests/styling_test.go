@@ -81,7 +81,6 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 	testutil.AssertNoError(t, err)
 	testutil.AssertStringMatch(t, "input.css", `
 		@import "tailwindcss" source(none);
-		@source "action/*.go.html";
 		@source "*.go.html";
 		@source "base_templates/*.go.html";
 		@source "static/*.js";
@@ -105,7 +104,6 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 	testutil.AssertNoError(t, err)
 	testutil.AssertStringMatch(t, "input.css", `
 		@import "tailwindcss" source(none);
-		@source "action/*.go.html";
 		@source "*.go.html";
 		@source "base_templates/*.go.html";
 		@source "static/*.js";
@@ -132,7 +130,6 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 	testutil.AssertNoError(t, err)
 	testutil.AssertStringMatch(t, "input.css", `
 		@import "tailwindcss" source(none);
-		@source "action/*.go.html";
 		@source "*.go.html";
 		@source "base_templates/*.go.html";
 		@source "static/*.js";
@@ -159,7 +156,6 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 	testutil.AssertNoError(t, err)
 	testutil.AssertStringMatch(t, "input.css", `
 		@import "tailwindcss" source(none);
-		@source "action/*.go.html";
 		@source "*.go.html";
 		@source "base_templates/*.go.html";
 		@source "static/*.js";
@@ -198,7 +194,6 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 	testutil.AssertNoError(t, err)
 	testutil.AssertStringMatch(t, "input.css", `
 		@import "tailwindcss" source(none);
-		@source "action/*.go.html";
 		@source "*.go.html";
 		@source "base_templates/*.go.html";
 		@source "static/*.js";
@@ -249,7 +244,6 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 	testutil.AssertNoError(t, err)
 	testutil.AssertStringMatch(t, "input.css", `
 		@import "tailwindcss" source(none);
-		@source "action/*.go.html";
 		@source "*.go.html";
 		@source "base_templates/*.go.html";
 		@source "static/*.js";
@@ -310,7 +304,6 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 	testutil.AssertNoError(t, err)
 	testutil.AssertStringMatch(t, "input.css", fmt.Sprintf(`
 		@import "tailwindcss" source(none);
-		@source "action/*.go.html";
 		@source "*.go.html";
 		@source "base_templates/*.go.html";
 		@source "static/*.js";
@@ -347,7 +340,6 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 	testutil.AssertNoError(t, err)
 	testutil.AssertStringMatch(t, "input.css", `
 		@import "tailwindcss" source(none);
-		@source "action/*.go.html";
 		@source "*.go.html";
 		@source "base_templates/*.go.html";
 		@source "static/*.js";
@@ -376,7 +368,7 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 
 	data, err = workFS.ReadFile("style/tailwind.config.js")
 	testutil.AssertNoError(t, err)
-	testutil.AssertStringMatch(t, "tailwind.config.js", `module.exports = { content: ['action/*.go.html', '*.go.html', 'base_templates/*.go.html', 'static/*.js'], theme: { extend: {}, }, plugins: [ require("daisyui") ], daisyui: { themes: ["cupcake", "dark", "emerald", "night"], }, }`, string(data))
+	testutil.AssertStringMatch(t, "tailwind.config.js", `module.exports = { content: ['*.go.html', 'base_templates/*.go.html', 'static/*.js'], theme: { extend: {}, }, plugins: [ require("daisyui") ], daisyui: { themes: ["cupcake", "dark", "emerald", "night"], }, }`, string(data))
 }
 
 func TestStyleCustom(t *testing.T) {

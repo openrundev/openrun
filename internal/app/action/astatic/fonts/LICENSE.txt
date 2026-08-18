@@ -1,0 +1,10 @@
+Fonts in this directory are licensed under the SIL Open Font License 1.1
+(https://openfontlicense.org):
+
+- Inter (c) The Inter Project Authors - https://github.com/rsms/inter
+- Space Grotesk (c) 2020 The Space Grotesk Project Authors -
+  https://github.com/floriankarsten/space-grotesk
+- JetBrains Mono (c) 2020 The JetBrains Mono Project Authors -
+  https://github.com/JetBrains/JetBrainsMono
+
+woff2 subsets (latin) downloaded from fontsource (https://fontsource.org).
