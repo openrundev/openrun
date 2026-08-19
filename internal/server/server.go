@@ -214,6 +214,12 @@ type Server struct {
 	approvalCache    sync.Map // types.AppId -> approvalCacheEntry
 	approvalCacheGen atomic.Int64
 
+	// healthCache caches service/binding health check results for the
+	// aggregate health APIs ("service:<type>/<name>" / "binding:<path>" ->
+	// healthCacheEntry). Entries are keyed on the target's update times and
+	// expire after healthCacheTTL (see health.go)
+	healthCache sync.Map
+
 	stopRequested chan struct{}
 	startTime     time.Time
 	// providerMutex serializes binding provider installs, uninstalls and

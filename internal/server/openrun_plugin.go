@@ -45,6 +45,8 @@ func initOpenRunPlugin(server *Server) {
 		app.CreatePluginApiName(c.ExportAppDiff, app.READ, "export_app_diff"),
 		app.CreatePluginApiName(c.AuditApp, app.READ, "audit_app"),
 		app.CreatePluginApiName(c.ListServices, app.READ, "list_services"),
+		app.CreatePluginApiName(c.ServiceHealth, app.READ, "service_health"),
+		app.CreatePluginApiName(c.BindingHealth, app.READ, "binding_health"),
 		app.CreatePluginApiName(c.GetRBACConfig, app.READ, "get_rbac_config"),
 		app.CreatePluginApiName(c.GetConfigEntries, app.READ, "get_config_entries"),
 		app.CreatePluginApiName(c.GetConfigValues, app.READ, "get_config_values"),
@@ -1010,6 +1012,74 @@ func (c *openrunPlugin) ListServices(thread *starlark.Thread, builtin *starlark.
 		ret.Append(entry) //nolint:errcheck
 	}
 	return &ret, nil
+}
+
+// ServiceHealth checks the health of every service the caller can read (one
+// aggregate call, checks run concurrently server-side with a short result
+// cache) and reports per-service status
+func (c *openrunPlugin) ServiceHealth(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("service_health", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	results, err := c.server.ServicesHealth(system.GetRequestContext(thread))
+	if err != nil {
+		return nil, err
+	}
+
+	unhealthy := 0
+	entries := make([]map[string]any, 0, len(results))
+	for _, result := range results {
+		if !result.Healthy {
+			unhealthy++
+		}
+		entries = append(entries, map[string]any{
+			"id":      result.Id,
+			"healthy": result.Healthy,
+			"error":   result.Error,
+		})
+	}
+	return starlark_type.ConvertToStarlark(map[string]any{
+		"total":     len(results),
+		"unhealthy": unhealthy,
+		"results":   entries,
+	})
+}
+
+// BindingHealth checks the health of every binding the caller can read,
+// filtered by kind ("base", "derived", "auto" or "" for all), and reports
+// per-binding status for both the prod and the staging account. A binding
+// counts as unhealthy when either account fails its check.
+func (c *openrunPlugin) BindingHealth(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var kind starlark.String
+	if err := starlark.UnpackArgs("binding_health", args, kwargs, "kind?", &kind); err != nil {
+		return nil, err
+	}
+
+	results, err := c.server.BindingsHealth(system.GetRequestContext(thread), kind.GoString())
+	if err != nil {
+		return nil, err
+	}
+
+	unhealthy := 0
+	entries := make([]map[string]any, 0, len(results))
+	for _, result := range results {
+		if !result.Healthy || !result.StagingHealthy {
+			unhealthy++
+		}
+		entries = append(entries, map[string]any{
+			"path":            result.Path,
+			"healthy":         result.Healthy,
+			"error":           result.Error,
+			"staging_healthy": result.StagingHealthy,
+			"staging_error":   result.StagingError,
+		})
+	}
+	return starlark_type.ConvertToStarlark(map[string]any{
+		"total":     len(results),
+		"unhealthy": unhealthy,
+		"results":   entries,
+	})
 }
 
 // ListContainers lists the containers (or Kubernetes pods) managed by OpenRun

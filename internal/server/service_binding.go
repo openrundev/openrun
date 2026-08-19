@@ -1523,13 +1523,7 @@ func (s *Server) ServiceHealth(ctx context.Context, serviceType, name string) er
 		return err
 	}
 
-	serviceBinding, err := s.getServiceBinding(ctx, service)
-	if err != nil {
-		return fmt.Errorf("error connecting to service: %w", err)
-	}
-	defer serviceBinding.CloseService(ctx) //nolint:errcheck
-
-	return serviceBinding.CheckHealth(ctx)
+	return s.dialServiceHealth(ctx, service)
 }
 
 // BindingHealth verifies the binding account is healthy: the backend is
@@ -1544,13 +1538,7 @@ func (s *Server) BindingHealth(ctx context.Context, bindingName string, useStagi
 		return err
 	}
 
-	serviceBinding, err := s.getServiceBinding(ctx, service)
-	if err != nil {
-		return fmt.Errorf("error connecting to service: %w", err)
-	}
-	defer serviceBinding.CloseService(ctx) //nolint:errcheck
-
-	return serviceBinding.CheckBindingHealth(ctx, metadata)
+	return s.dialBindingHealth(ctx, service, metadata)
 }
 
 // serviceBackendTarget loads the service to connect to and enforces the caller's
