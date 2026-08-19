@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/openrundev/openrun/internal/testutil"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestStaticLoad(t *testing.T) {
@@ -71,6 +72,34 @@ def handler(req):
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringMatch(t, "body", `abc`, response.Body.String())
+}
+
+func TestStaticRootCacheControl(t *testing.T) {
+	// static_root files send the app_config static_root_cache_control value
+	// as the Cache-Control header (default empty = no header, covered in
+	// TestStaticLoad above)
+	logger := testutil.TestLogger()
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
+
+def handler(req):
+	return {"key": "myvalue"}`,
+		"index.go.html":          `abc`,
+		"static_root/robots.txt": `deny *`,
+	}
+
+	a, _, err := CreateTestAppConfig(logger, fileData, types.AppConfig{StaticRootCacheControl: "public, max-age=3600"})
+	if err != nil {
+		t.Fatalf("Error %s", err)
+	}
+
+	request := httptest.NewRequest("GET", "/test/robots.txt", nil)
+	response := httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	testutil.AssertEqualsString(t, "header cache", "public, max-age=3600", response.Header().Get("Cache-Control"))
+	testutil.AssertStringMatch(t, "body", `deny *`, response.Body.String())
 }
 
 func TestStaticLoadDevMode(t *testing.T) {

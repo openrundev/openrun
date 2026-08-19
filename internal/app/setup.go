@@ -602,6 +602,10 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 // addStaticRoot adds the static root directory contents to the router
 // Files can be referenced by /<filename>, without /static or /static_root
 func (a *App) addStaticRoot(router *chi.Mux) error {
+	// static_root files are served under stable names (unlike the hashed
+	// /static paths, which cache immutably), so the Cache-Control header
+	// comes from app_config static_root_cache_control (empty = no header)
+	cacheControl := a.AppConfig.StaticRootCacheControl
 	staticFiles := a.sourceFS.StaticFiles()
 	for _, rootFile := range staticFiles {
 		if !strings.HasPrefix(rootFile, "static_root/") {
@@ -631,6 +635,9 @@ func (a *App) addStaticRoot(router *chi.Mux) error {
 				return
 			}
 
+			if cacheControl != "" {
+				w.Header().Set("Cache-Control", cacheControl)
+			}
 			http.ServeContent(w, r, fileName, fi.ModTime(), seeker)
 		})
 

@@ -420,6 +420,11 @@ type AppConfig struct {
 	// directory instead of copying them into the metadata database. Requires a
 	// local disk source. The static_disk spec name enables the same behavior
 	StaticFromDisk bool `toml:"static_from_disk"`
+	// StaticRootCacheControl is the Cache-Control header value for files
+	// served from the app's static_root directory (favicons and other
+	// stable-named root files), e.g. "public, max-age=3600". Empty sends no
+	// Cache-Control header
+	StaticRootCacheControl string `toml:"static_root_cache_control"`
 }
 
 type ActionConfig struct {

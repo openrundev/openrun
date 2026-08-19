@@ -293,6 +293,14 @@ proxy.rewrite_location = true
 fs.file_access = ["$TEMPDIR", "/tmp"]
 fs.retain_versions = 5 # number of older versions to keep for each app
 
+# ==== Static file related settings ====
+# Cache-Control header value for files served from the app's static_root
+# directory (favicon.ico etc., served at the app root under stable names),
+# for example "public, max-age=3600". Empty sends no Cache-Control header.
+# Files under /static use content-hashed names and are cached immutably
+# regardless.
+static_root_cache_control = ""
+
 # Audit related settings
 audit.redact_url = false
 audit.skip_http_events = false
