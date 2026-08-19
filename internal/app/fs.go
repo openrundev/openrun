@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -144,7 +145,7 @@ func (f *fsPlugin) List(thread *starlark.Thread, builtin *starlark.Builtin, args
 
 	pathStr := string(path)
 	ctx := GetContext(thread)
-	ret, err := listDir(ctx, pathStr, bool(recursiveSize), bool(ignoreError))
+	ret, err := listDir(ctx, f.pluginContext.Logger, pathStr, bool(recursiveSize), bool(ignoreError))
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +179,7 @@ func (f *fsPlugin) Find(thread *starlark.Thread, builtin *starlark.Builtin, args
 	}
 
 	ctx := GetContext(thread)
-	ret, err := find(ctx, string(path), string(nameGlob), limitInt, minSizeInt, bool(ignoreError))
+	ret, err := find(ctx, f.pluginContext.Logger, string(path), string(nameGlob), limitInt, minSizeInt, bool(ignoreError))
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +194,24 @@ type FileInfo struct {
 	Mode  int
 }
 
-func listDir(ctx context.Context, path string, recursiveSize, ignoreError bool) ([]map[string]any, error) {
+// recoverToError wraps an errgroup goroutine body so a panic is logged and
+// returned as an error instead of killing the process (panics in these
+// goroutines are not covered by the http handler recovery)
+func recoverToError(logger *types.Logger, name string, fn func() error) func() error {
+	return func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic in %s: %v", name, r)
+				if logger != nil {
+					logger.Error().Str("stack", string(debug.Stack())).Msgf("Recovered from panic in %s: %v", name, r)
+				}
+			}
+		}()
+		return fn()
+	}
+}
+
+func listDir(ctx context.Context, logger *types.Logger, path string, recursiveSize, ignoreError bool) ([]map[string]any, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
@@ -221,14 +239,14 @@ func listDir(ctx context.Context, path string, recursiveSize, ignoreError bool) 
 			name := name
 			info := info
 			if info.IsDir {
-				errs.Go(func() error {
+				errs.Go(recoverToError(logger, "fs.list dir size", func() error {
 					size, err := dirSize(ctx, filepath.Join(path, name), blockSize, ignoreError)
 					if err != nil {
 						return err
 					}
 					fileInfo[name].Size = size
 					return nil
-				})
+				}))
 			}
 		}
 
@@ -269,8 +287,15 @@ func dirSize(ctx context.Context, path string, blockSize int64, ignoreError bool
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if !ignoreError && err != nil {
-			return err
+		if err != nil {
+			if !ignoreError {
+				return err
+			}
+			if d == nil {
+				// WalkDir passes a nil entry when the root itself cannot be
+				// statted, e.g. deleted after being listed
+				return nil
+			}
 		}
 		info, err := d.Info()
 		if err != nil {
@@ -293,7 +318,7 @@ func convertToBlockSize(size, blockSize int64) int64 {
 	return ((size / blockSize) + 1) * blockSize
 }
 
-func find(ctx context.Context, path, nameGlob string, limit, minSize int64, ignoreError bool) ([]map[string]any, error) {
+func find(ctx context.Context, logger *types.Logger, path, nameGlob string, limit, minSize int64, ignoreError bool) ([]map[string]any, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
@@ -328,7 +353,7 @@ func find(ctx context.Context, path, nameGlob string, limit, minSize int64, igno
 	errs, ctx := errgroup.WithContext(ctx)
 	for _, dir := range dirs {
 		dir := dir
-		errs.Go(func() error {
+		errs.Go(recoverToError(logger, "fs.find match", func() error {
 			files, err := matchFiles(ctx, filepath.Join(path, dir), nameGlob, limit, minSize, ignoreError)
 			if err != nil {
 				return err
@@ -339,7 +364,7 @@ func find(ctx context.Context, path, nameGlob string, limit, minSize int64, igno
 			fileInfo = append(fileInfo, files...)
 			fileInfo = truncateList(fileInfo, limit)
 			return nil
-		})
+		}))
 	}
 
 	if err := errs.Wait(); err != nil {
@@ -398,8 +423,15 @@ func matchFiles(ctx context.Context, path string, nameGlob string, limit, minSiz
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if !ignoreError && err != nil {
-			return err
+		if err != nil {
+			if !ignoreError {
+				return err
+			}
+			if d == nil {
+				// WalkDir passes a nil entry when the root itself cannot be
+				// statted, e.g. deleted after being listed
+				return nil
+			}
 		}
 		info, err := d.Info()
 		if err != nil {
