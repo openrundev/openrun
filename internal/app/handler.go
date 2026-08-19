@@ -157,6 +157,17 @@ func starlarkThreadPrint(_ *starlark.Thread, msg string) {
 func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Callable, rtype string) http.HandlerFunc {
 	hasArgs := handler != nil && !strings.HasSuffix(handler.Name(), "_no_args")
 	rtype = strings.ToUpper(rtype)
+
+	// Capture the per-reload app state here at handler creation time: these
+	// closures are rebuilt on every reload (published with the router under
+	// renderMu) while a reload mutates the fields on App itself, so reading
+	// a.Name/a.codeConfig etc at request time would race with the next reload.
+	// Requests routed through the previous router keep the matching old values.
+	appName := a.Name
+	codeConfig := a.codeConfig
+	containerHandler := a.containerHandler
+	errorHandler := a.errorHandler
+
 	goHandler := func(w http.ResponseWriter, r *http.Request) {
 		thread := &starlark.Thread{
 			Name:  a.Path,
@@ -165,9 +176,9 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 
 		// Save the request context in the starlark thread local
 		thread.SetLocal(types.TL_CONTEXT, r.Context())
-		if a.containerHandler != nil {
-			thread.SetLocal(types.TL_CONTAINER_HANDLER, a.containerHandler)
-			thread.SetLocal(types.TL_CONTAINER_URL, a.containerHandler.GetProxyUrl())
+		if containerHandler != nil {
+			thread.SetLocal(types.TL_CONTAINER_HANDLER, containerHandler)
+			thread.SetLocal(types.TL_CONTAINER_URL, containerHandler.GetProxyUrl())
 		}
 		// appUrlLocal is pre-boxed (see App.appUrlLocal) so this does not heap
 		// allocate to box the string on every request
@@ -177,7 +188,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 		isHtmxRequest := types.GetHTTPHeader(header, "Hx-Request") == "true" &&
 			!(types.GetHTTPHeader(header, "Hx-Boosted") == "true") //nolint:staticcheck
 
-		if a.serverConfig.System.EarlyHints && rtype == apptype.HTML_TYPE && a.codeConfig.Routing.EarlyHints && !a.IsDev &&
+		if a.serverConfig.System.EarlyHints && rtype == apptype.HTML_TYPE && codeConfig.Routing.EarlyHints && !a.IsDev &&
 			r.Method == http.MethodGet &&
 			types.GetHTTPHeader(header, "Sec-Fetch-Mode") == "navigate" &&
 			!(isHtmxRequest && fragment != "") { //nolint:staticcheck
@@ -215,7 +226,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			}
 
 			requestData = starlark_type.Request{
-				AppName:        a.Name,
+				AppName:        appName,
 				AppPath:        appPath,
 				AppUrl:         appUrl,
 				PagePath:       pagePath,
@@ -223,8 +234,8 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				Method:         r.Method,
 				IsDev:          a.IsDev,
 				IsPartial:      isHtmxRequest,
-				PushEvents:     a.codeConfig.Routing.PushEvents,
-				HtmxVersion:    a.codeConfig.Htmx.Version,
+				PushEvents:     codeConfig.Routing.PushEvents,
+				HtmxVersion:    codeConfig.Htmx.Version,
 				HeadersFunc:    headersFunc,
 				RemoteIP:       a.getRemoteIP(r),
 				UserId:         system.GetContextUserId(r.Context()),
@@ -344,7 +355,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 					msg = msg + " : " + firstFrame
 				}
 
-				if a.errorHandler == nil {
+				if errorHandler == nil {
 					// No err handler defined, abort
 					http.Error(w, msg, http.StatusInternalServerError)
 					return
@@ -353,7 +364,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				// error handler is defined, call it
 				valueDict := starlark.Dict{}
 				valueDict.SetKey(starlark.String("error"), starlark.String(msg)) //nolint:errcheck
-				ret, err = a.callStarlarkHandler(r, thread, a.errorHandler, starlark.Tuple{requestData, &valueDict})
+				ret, err = a.callStarlarkHandler(r, thread, errorHandler, starlark.Tuple{requestData, &valueDict})
 				if err != nil {
 					// error handler itself failed
 					firstFrame := ""

@@ -93,7 +93,7 @@ type App struct {
 	templateMap      map[string]*template.Template // structured templates, base_templates defined
 	templateBase     *template.Template            // the base templates alone, for routes/blocks naming a base define instead of a file
 	staticOnly       bool                          // app has only static files, no HTML routes
-	redirectBarePath bool                          // whether to redirect bare path requests to the full path with trailing slash
+	redirectBarePath atomic.Bool                   // whether to redirect bare path requests to the full path with trailing slash; written by reload, read in ServeHTTP
 	jsLibs           []types.JSLibrary             // JS libraries used by the app
 
 	watcher *fsnotify.Watcher
@@ -1058,7 +1058,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if a.redirectBarePath && r.URL.Path == a.Path && !strings.HasSuffix(r.URL.Path, "/") {
+	if a.redirectBarePath.Load() && r.URL.Path == a.Path && !strings.HasSuffix(r.URL.Path, "/") {
 		// effectivePath keeps _cl_ test URL directives in the redirect target
 		http.Redirect(wrapper, r, a.effectivePath(r.Context())+"/", http.StatusTemporaryRedirect) // some apps like gradio need redirect to the full path with trailing slash
 		return

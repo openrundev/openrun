@@ -82,10 +82,11 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 	if err != nil {
 		return err
 	}
-	a.redirectBarePath, err = apptype.GetBoolAttr(a.appDef, "redirect_bare_path")
+	redirectBarePath, err := apptype.GetBoolAttr(a.appDef, "redirect_bare_path")
 	if err != nil {
 		return err
 	}
+	a.redirectBarePath.Store(redirectBarePath)
 
 	a.jsLibs, err = a.loadLibraryInfo()
 	if err != nil {

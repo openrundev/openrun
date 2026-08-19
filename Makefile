@@ -88,7 +88,7 @@ covtest: covunit covint ## Run all tests with coverage
 unit: ## Run unit tests
 > packages="$(GO_PACKAGES)"
 > go test $$packages
-> cd pkg/binding && GOWORK=off go test ./...
+> cd pkg/binding && GOWORK=off go test -race ./...
 
 lint: ## Run lint
 > packages="$(GO_LINT_PACKAGES)"
