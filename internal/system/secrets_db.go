@@ -148,7 +148,9 @@ func (d *dbSecretProvider) bindInt(ctx context.Context, store SecretStore, evalT
 }
 
 // loadKeyMaterial returns the raw key material for the provider. For "auto"
-// the key is read from (or generated into) $OPENRUN_HOME/config/secret.key
+// the key is read from (or generated into) $OPENRUN_HOME/config/secret.key. A
+// key file containing a secret template reference is resolved through another
+// configured provider before its value is parsed as key material.
 func (d *dbSecretProvider) loadKeyMaterial(evalTemplate func(string) (string, error)) (string, error) {
 	if d.keySpec != "auto" {
 		material, err := evalTemplate(d.keySpec)
@@ -164,7 +166,18 @@ func (d *dbSecretProvider) loadKeyMaterial(evalTemplate func(string) (string, er
 	keyPath := os.ExpandEnv(secretKeyFile)
 	material, err := os.ReadFile(keyPath)
 	if err == nil {
-		return string(material), nil
+		materialString := string(material)
+		if strings.Contains(materialString, "{{") {
+			resolved, resolveErr := evalTemplate(materialString)
+			if resolveErr != nil {
+				return "", fmt.Errorf("error resolving key reference in %s: %w", keyPath, resolveErr)
+			}
+			if strings.TrimSpace(resolved) == "" {
+				return "", fmt.Errorf("key reference in %s resolved to an empty value", keyPath)
+			}
+			return resolved, nil
+		}
+		return materialString, nil
 	}
 	if !os.IsNotExist(err) {
 		return "", fmt.Errorf("error reading key file %s: %w", keyPath, err)

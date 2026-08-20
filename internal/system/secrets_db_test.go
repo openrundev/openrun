@@ -491,6 +491,40 @@ func TestDBSecretKeyTemplate(t *testing.T) {
 	testutil.AssertErrorContains(t, err, `must be "auto" or a {{secret_from ...}} template`)
 }
 
+func TestDBSecretAutoKeyFileTemplate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OPENRUN_HOME", home)
+	key1 := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))
+	t.Setenv("OPENRUN_TEST_SECRET_KEY", "mk1:"+key1)
+
+	keyPath := filepath.Join(home, "config", "secret.key")
+	testutil.AssertNoError(t, os.MkdirAll(filepath.Dir(keyPath), 0700))
+	keyRef := `{{ secret_from "env" "OPENRUN_TEST_SECRET_KEY" }}` + "\n"
+	testutil.AssertNoError(t, os.WriteFile(keyPath, []byte(keyRef), 0600))
+
+	secretConfig := map[string]types.SecretConfig{
+		"db":  {},
+		"env": {},
+	}
+	s, err := NewSecretManager(context.Background(), secretConfig, "db", &types.ServerConfig{})
+	testutil.AssertNoError(t, err)
+	store := newFakeSecretStore()
+	testutil.AssertNoError(t, s.BindDBStores(context.Background(), store))
+
+	response, err := s.CreateSecret(context.Background(), &types.CreateSecretRequest{Name: "s1", Value: "v1"}, "u", false)
+	testutil.AssertNoError(t, err)
+	info, err := s.GetSecretInfo(context.Background(), "db", response.Name, false)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "key id", "mk1", info.KeyId)
+
+	// Resolving the reference must not replace the file. Kubernetes mounts the
+	// reference as a read-only Secret volume, and key rotation happens in the
+	// referenced provider rather than by rewriting this file.
+	contents, err := os.ReadFile(keyPath)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "key file", keyRef, string(contents))
+}
+
 func TestDBSecretRekey(t *testing.T) {
 	key1 := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))
 	key2 := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("b", 32)))

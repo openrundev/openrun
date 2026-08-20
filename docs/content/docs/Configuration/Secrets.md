@@ -79,6 +79,23 @@ file_name = "/etc/props.properties"
 
 `file_name` is a required property.
 
+### Kubernetes Secrets
+
+Add a provider named `kubernetes` (or beginning with `kubernetes_`) to read native Kubernetes Secrets. In a cluster, OpenRun uses its pod service account and the namespace from `[kubernetes]`; `namespace` can be set on the provider to override it.
+
+```toml {filename="openrun.toml"}
+[secret.kubernetes]
+```
+
+Pass the Secret name and data key as separate arguments. They are joined with `/`, so these forms are equivalent:
+
+```gotemplate
+{{ secret_from "kubernetes" "my-secret" "password" }}
+{{ secret_from "kubernetes" "my-secret/password" }}
+```
+
+If the Secret contains exactly one data item, the data-key argument can be omitted. The OpenRun service account needs `get` access to Secrets in the selected namespace.
+
 ### Embedded Secrets Store (db)
 
 The `db` provider stores secrets in the OpenRun metadata database. Values are encrypted with AES-256-GCM before being saved; the master encryption key lives outside the database, so a database backup alone does not expose secrets. The provider is enabled by default with
@@ -88,7 +105,17 @@ The `db` provider stores secrets in the OpenRun metadata database. Values are en
 key = "auto"
 ```
 
-With `key = "auto"` (the default), a master key is generated on first use and saved in `$OPENRUN_HOME/config/secret.key` (file mode 0600). Back up this file separately from the database: if the key is lost, the stored secrets cannot be recovered. If the key does not match the stored secrets, the server still starts (apps that do not use stored secrets are unaffected) but logs an error and the `db` provider is disabled until the key is restored. At most one `db` provider can be configured.
+With `key = "auto"` (the default), a master key is generated on first use and saved in `$OPENRUN_HOME/config/secret.key` (file mode 0600). The file normally contains one or more `<key_id>:<base64 encoded 32 byte key>` entries, separated by newlines or commas. A bare base64 key is also accepted and uses the key ID `default`; blank lines and lines beginning with `#` are ignored. The first key is used to encrypt new values and all listed keys can decrypt.
+
+Instead of containing key material directly, `secret.key` can contain a `{{secret ...}}` or `{{secret_from ...}}` reference. OpenRun resolves the file through another configured provider before parsing the returned key material. For example, a Kubernetes Secret named `openrun-metadata-key` with a `key` data item can be referenced with:
+
+```gotemplate {filename="$OPENRUN_HOME/config/secret.key"}
+{{ secret_from "kubernetes" "openrun-metadata-key" "key" }}
+```
+
+The Kubernetes provider joins the last two arguments as `openrun-metadata-key/key`. The referenced value must use the same key-material format described above. The `db` provider cannot reference itself because its master key is required before database secrets can be read.
+
+Back up the key material separately from the database: if it is lost, the stored secrets cannot be recovered. If the key does not match the stored secrets, the server still starts (apps that do not use stored secrets are unaffected) but logs an error and the `db` provider is disabled until the key is restored. At most one `db` provider can be configured.
 
 The key can instead be resolved through another configured secret provider, which is the recommended setup for Kubernetes and multi-node deployments (all nodes share the metadata database and must use the same key):
 
@@ -99,7 +126,7 @@ The key can instead be resolved through another configured secret provider, whic
 key = '{{secret_from "env" "OPENRUN_SECRET_KEY"}}'
 ```
 
-On Kubernetes, mount the env value from a native Kubernetes Secret. Any provider other than `db` itself can be referenced. The key material is one or more `<key_id>:<base64 encoded 32 byte key>` entries, separated by newlines or commas. The first entry is used to encrypt new values; all entries can decrypt. To rotate the master key, prepend a new entry, restart the server, run `openrun secret rekey` to re-encrypt all values with the new key, then remove the old entry.
+On Kubernetes, mount the env value from a native Kubernetes Secret. Any provider other than `db` itself can be referenced. To rotate the master key, prepend a new entry, restart the server, run `openrun secret rekey` to re-encrypt all values with the new key, then remove the old entry.
 
 Secrets are stored with the `openrun secret` commands:
 

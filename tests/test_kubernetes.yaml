@@ -15,6 +15,12 @@ config:
 tests:
   kubernetes010: # setup flask app
     command: rm -rf ./flaskapp && mkdir flaskapp && cp flask.py flaskapp/app.py
+  kubernetes020: # db provider uses the namespace-scoped Kubernetes master key
+    command: ../openrun secret create --name kube_db_secret --value kube-secret-value
+    stdout: "Secret created: kube_db_secret"
+  kubernetes021: # values encrypted with that key can be read back
+    command: ../openrun secret show --reveal kube_db_secret
+    stdout: "kube-secret-value"
   kubernetes030: # setup flask prod app
     command: ../openrun app create --stage-at path --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpus=0.05 --copt memory=0.5g --approve ./flaskapp /kube_flaskprod
   kubernetes031:
@@ -122,7 +128,19 @@ tests:
     command: ../openrun app reload --verify --promote /kube_verify
     exit-code: 0
   kubernetes812: # version is updated
-    command: curl -sS localhost:${HTTP_PORT}/kube_verify/version
+    # A terminating pod can remain in the Service endpoints briefly after the
+    # verified rollout succeeds, so wait until routing converges on V2.
+    command: |
+      for attempt in $(seq 1 20); do
+        body=$(curl -sS localhost:${HTTP_PORT}/kube_verify/version)
+        if [[ "$body" == *V2* ]]; then
+          echo "$body"
+          exit 0
+        fi
+        sleep 1
+      done
+      echo "$body"
+      exit 1
     stdout: "V2"
   kubernetes820: # break the health endpoint (returns 500) and bump version
     command: perl -i -pe 's/return "ok", 200/return "broken", 500/g; s/"V2"/"V3"/g' verifyapp_tmp/app.py

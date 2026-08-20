@@ -1537,6 +1537,16 @@ if [[ -n "$KUBE_REGISTRY_URL" ]] && contains_any "test_kubernetes.yaml"; then
   kubectl create namespace "$KUBE_TEST_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
   kubectl create namespace "${KUBE_TEST_NAMESPACE}-apps" --dry-run=client -o yaml | kubectl apply -f -
 
+  # Match the Helm chart's db secrets setup: keep the encryption key outside
+  # the metadata database in a namespace-scoped Kubernetes Secret, and resolve
+  # it through [secret.db]. The fixed value is test-only key material.
+  KUBE_DB_KEY_SECRET="openrun-db-secrets-key"
+  KUBE_DB_KEY_MATERIAL="kube1:MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="
+  kubectl create secret generic "$KUBE_DB_KEY_SECRET" \
+    --namespace "$KUBE_TEST_NAMESPACE" \
+    --from-literal="key=$KUBE_DB_KEY_MATERIAL" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
   # OCI binding provider distribution test setup: the fixture provider is
   # built once for the host (registered with the local server through
   # bindings.preinstalled_dir, as the chart's shared volume would be) and once
@@ -1591,6 +1601,9 @@ port = $SERVER_HTTP_PORT
 [https]
 port = $SERVER_HTTPS_PORT
 [secret.env]
+[secret.kubernetes]
+[secret.db]
+key = '{{secret_from "kubernetes" "$KUBE_DB_KEY_SECRET" "key"}}'
 [system]
 container_command="kubernetes"
 [kubernetes]
