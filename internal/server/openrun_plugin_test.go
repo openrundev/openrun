@@ -16,7 +16,7 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
 
 func TestGetSourceUrl(t *testing.T) {
@@ -72,6 +72,46 @@ func TestGetSourceUrl(t *testing.T) {
 	}
 }
 
+// pluginCall builds an SDK call the way the local dispatch would: positional
+// args, then alternating kwarg name/value pairs.
+func pluginCall(userId string, args []any, kwargs ...any) *sdk.Call {
+	call := &sdk.Call{Args: args, Session: sdk.NewSession("test"), Thread: sdk.ThreadState{UserId: userId}}
+	for i := 0; i < len(kwargs); i += 2 {
+		call.Kwargs = append(call.Kwargs, sdk.Kwarg{Name: kwargs[i].(string), Value: kwargs[i+1]})
+	}
+	return call
+}
+
+func valueList(t *testing.T, v any, what string) []any {
+	t.Helper()
+	list, ok := v.([]any)
+	if !ok {
+		t.Fatalf("%s type = %T, want []any", what, v)
+	}
+	return list
+}
+
+func stringList(t *testing.T, v any, what string) []string {
+	t.Helper()
+	switch x := v.(type) {
+	case []string:
+		return x
+	case []any:
+		out := make([]string, len(x))
+		for i, item := range x {
+			s, ok := item.(string)
+			if !ok {
+				t.Fatalf("%s element %d type = %T, want string", what, i, item)
+			}
+			out[i] = s
+		}
+		return out
+	default:
+		t.Fatalf("%s type = %T, want string list", what, v)
+		return nil
+	}
+}
+
 func TestListAllAppsBreadcrumbGlobsCoverDisplayedBreadcrumbs(t *testing.T) {
 	now := time.Now()
 	apps := []types.AppInfo{
@@ -106,73 +146,38 @@ func TestListAllAppsBreadcrumbGlobsCoverDisplayedBreadcrumbs(t *testing.T) {
 		rbacManager:  rbacManager,
 	}
 
-	got, err := (&openrunPlugin{server: server}).ListAllApps(
-		&starlark.Thread{Name: "test"},
-		nil,
-		starlark.Tuple{starlark.String(""), starlark.String(""), starlark.Bool(true)},
-		nil,
-	)
+	got, err := (&openrunPlugin{server: server}).ListAllApps(context.Background(),
+		pluginCall("", []any{"", "", true}))
 	if err != nil {
 		t.Fatalf("list all apps: %v", err)
 	}
 
-	list, ok := got.(*starlark.List)
-	if !ok {
-		t.Fatalf("result type = %T, want *starlark.List", got)
-	}
+	list := valueList(t, got, "result")
 	var foundStage bool
-	for i := 0; i < list.Len(); i++ {
-		app, ok := list.Index(i).(*starlark.Dict)
+	for i, item := range list {
+		appEntry, ok := item.(map[string]any)
 		if !ok {
-			t.Fatalf("app %d type = %T, want *starlark.Dict", i, list.Index(i))
+			t.Fatalf("app %d type = %T, want map[string]any", i, item)
 		}
-		pathSplit := dictList(t, app, "path_split")
-		pathSplitGlob := dictList(t, app, "path_split_glob")
-		if pathSplitGlob.Len() < pathSplit.Len() {
-			t.Fatalf("app %d path_split_glob length = %d, want at least path_split length %d", i, pathSplitGlob.Len(), pathSplit.Len())
+		pathSplit := stringList(t, appEntry["path_split"], "path_split")
+		pathSplitGlob := stringList(t, appEntry["path_split_glob"], "path_split_glob")
+		if len(pathSplitGlob) < len(pathSplit) {
+			t.Fatalf("app %d path_split_glob length = %d, want at least path_split length %d", i, len(pathSplitGlob), len(pathSplit))
 		}
 
-		idValue, _, err := app.Get(starlark.String("id"))
-		if err != nil {
-			t.Fatalf("get app id: %v", err)
-		}
-		if string(idValue.(starlark.String)) != types.ID_PREFIX_APP_STAGE+"counter" {
+		if appEntry["id"] != string(types.ID_PREFIX_APP_STAGE)+"counter" {
 			continue
 		}
 		foundStage = true
-		testutil.AssertEqualsInt(t, "stage path_split length", 2, pathSplit.Len())
-		testutil.AssertEqualsString(t, "stage path_split domain", "counter.utils.demo.clace.io", string(pathSplit.Index(0).(starlark.String)))
-		testutil.AssertEqualsString(t, "stage path_split path", "/"+types.STAGE_SUFFIX, string(pathSplit.Index(1).(starlark.String)))
-		testutil.AssertEqualsString(t, "stage domain glob", "counter.utils.demo.clace.io:**", string(pathSplitGlob.Index(0).(starlark.String)))
-		testutil.AssertEqualsString(t, "stage path glob", "counter.utils.demo.clace.io:/", string(pathSplitGlob.Index(1).(starlark.String)))
+		testutil.AssertEqualsInt(t, "stage path_split length", 2, len(pathSplit))
+		testutil.AssertEqualsString(t, "stage path_split domain", "counter.utils.demo.clace.io", pathSplit[0])
+		testutil.AssertEqualsString(t, "stage path_split path", "/"+types.STAGE_SUFFIX, pathSplit[1])
+		testutil.AssertEqualsString(t, "stage domain glob", "counter.utils.demo.clace.io:**", pathSplitGlob[0])
+		testutil.AssertEqualsString(t, "stage path glob", "counter.utils.demo.clace.io:/", pathSplitGlob[1])
 	}
 	if !foundStage {
 		t.Fatal("stage app not returned")
 	}
-}
-
-func dictList(t *testing.T, dict *starlark.Dict, key string) *starlark.List {
-	t.Helper()
-	value, ok, err := dict.Get(starlark.String(key))
-	if err != nil {
-		t.Fatalf("get %s: %v", key, err)
-	}
-	if !ok {
-		t.Fatalf("missing %s", key)
-	}
-	list, ok := value.(*starlark.List)
-	if !ok {
-		t.Fatalf("%s type = %T, want *starlark.List", key, value)
-	}
-	return list
-}
-
-func pluginKwargs(values ...starlark.Value) []starlark.Tuple {
-	ret := make([]starlark.Tuple, 0, len(values)/2)
-	for i := 0; i < len(values); i += 2 {
-		ret = append(ret, starlark.Tuple{values[i], values[i+1]})
-	}
-	return ret
 }
 
 func TestOpenRunPluginManagementReads(t *testing.T) {
@@ -195,8 +200,7 @@ func TestOpenRunPluginManagementReads(t *testing.T) {
 	}()
 	initOpenRunPlugin(server)
 	c := &openrunPlugin{server: server}
-	thread := &starlark.Thread{Name: "openrun-plugin-coverage"}
-	thread.SetLocal(types.TL_CONTEXT, context.WithValue(ctx, types.USER_ID, "reader"))
+	readerCtx := context.WithValue(ctx, types.USER_ID, "reader")
 
 	applyPath := filepath.Join(t.TempDir(), "app.ace")
 	writeSyncApplyFile(t, applyPath, "/apps/plugin-coverage")
@@ -206,44 +210,44 @@ func TestOpenRunPluginManagementReads(t *testing.T) {
 	}
 	server.apps.ResetAllAppCache()
 
-	allValue, err := c.ListApps(thread, nil, nil, pluginKwargs(
-		starlark.String("query"), starlark.String("syncApp"),
-		starlark.String("path"), starlark.String("/apps/**"),
-		starlark.String("include_internal"), starlark.Bool(true),
+	allValue, err := c.ListApps(readerCtx, pluginCall("reader", nil,
+		"query", "syncApp",
+		"path", "/apps/**",
+		"include_internal", true,
 	))
 	if err != nil {
 		t.Fatalf("list apps: %v", err)
 	}
-	if allValue.(*starlark.List).Len() == 0 {
+	if len(valueList(t, allValue, "list_apps")) == 0 {
 		t.Fatal("list_apps returned no apps")
 	}
-	if value, err := c.ListApps(thread, nil, nil, pluginKwargs(
-		starlark.String("sync_id"), starlark.String("missing-sync"),
-	)); err != nil || value.(*starlark.List).Len() != 0 {
+	if value, err := c.ListApps(readerCtx, pluginCall("reader", nil,
+		"sync_id", "missing-sync",
+	)); err != nil || len(valueList(t, value, "list_apps sync")) != 0 {
 		t.Fatalf("sync filtered apps = %v, %v", value, err)
 	}
 
-	appValue, err := c.GetApp(thread, nil, starlark.Tuple{starlark.String("/apps/plugin-coverage")}, nil)
+	appValue, err := c.GetApp(readerCtx, pluginCall("reader", []any{"/apps/plugin-coverage"}))
 	if err != nil {
 		t.Fatalf("get app: %v", err)
 	}
-	appDict := appValue.(*starlark.Dict)
-	if name, found, _ := appDict.Get(starlark.String("name")); !found || string(name.(starlark.String)) != "syncApp" {
-		t.Fatalf("get_app name = %v, found=%v", name, found)
+	appDict, ok := appValue.(map[string]any)
+	if !ok {
+		t.Fatalf("get_app type = %T, want map[string]any", appValue)
 	}
-	if _, err := c.GetApp(thread, nil, starlark.Tuple{starlark.String("/apps/missing")}, nil); err == nil {
+	if appDict["name"] != "syncApp" {
+		t.Fatalf("get_app name = %v", appDict["name"])
+	}
+	if _, err := c.GetApp(readerCtx, pluginCall("reader", []any{"/apps/missing"})); err == nil {
 		t.Fatal("get_app accepted a missing app")
 	}
-	if value, err := c.ListVersions(thread, nil,
-		starlark.Tuple{starlark.String("/apps/plugin-coverage")}, nil); err != nil || value == nil {
+	if value, err := c.ListVersions(readerCtx, pluginCall("reader", []any{"/apps/plugin-coverage"})); err != nil || value == nil {
 		t.Fatalf("list versions = %v, %v", value, err)
 	}
-	if value, err := c.ListVersionFiles(thread, nil,
-		starlark.Tuple{starlark.String("/apps/plugin-coverage")}, nil); err != nil || value == nil {
+	if value, err := c.ListVersionFiles(readerCtx, pluginCall("reader", []any{"/apps/plugin-coverage"})); err != nil || value == nil {
 		t.Fatalf("list version files = %v, %v", value, err)
 	}
-	if value, err := c.GetVersionZip(thread, nil,
-		starlark.Tuple{starlark.String("/apps/plugin-coverage")}, nil); err != nil || value == nil {
+	if value, err := c.GetVersionZip(readerCtx, pluginCall("reader", []any{"/apps/plugin-coverage"})); err != nil || value == nil {
 		t.Fatalf("get version zip = %v, %v", value, err)
 	}
 
@@ -254,14 +258,11 @@ func TestOpenRunPluginManagementReads(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(customSpecs, ".git"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	specsValue, err := c.ListSpecs(thread, nil, nil, nil)
+	specsValue, err := c.ListSpecs(readerCtx, pluginCall("reader", nil))
 	if err != nil {
 		t.Fatalf("list specs: %v", err)
 	}
-	specs := []string{}
-	for i := 0; i < specsValue.(*starlark.List).Len(); i++ {
-		specs = append(specs, string(specsValue.(*starlark.List).Index(i).(starlark.String)))
-	}
+	specs := stringList(t, specsValue, "specs")
 	if !slices.Contains(specs, "custom") || slices.Contains(specs, ".git") {
 		t.Fatalf("specs = %v", specs)
 	}
@@ -281,56 +282,57 @@ func TestOpenRunPluginManagementReads(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if value, err := c.ListServices(thread, nil, nil, nil); err != nil || value.(*starlark.List).Len() != 1 {
+	if value, err := c.ListServices(readerCtx, pluginCall("reader", nil)); err != nil || len(valueList(t, value, "services")) != 1 {
 		t.Fatalf("list services = %v, %v", value, err)
 	}
-	if value, err := c.ListBindings(thread, nil, nil, nil); err != nil || value.(*starlark.List).Len() != 0 {
+	if value, err := c.ListBindings(readerCtx, pluginCall("reader", nil)); err != nil || len(valueList(t, value, "bindings")) != 0 {
 		t.Fatalf("list bindings = %v, %v", value, err)
 	}
-	if value, err := c.ListSync(thread, nil, nil, nil); err != nil || value.(*starlark.List).Len() != 0 {
+	if value, err := c.ListSync(readerCtx, pluginCall("reader", nil)); err != nil || len(valueList(t, value, "sync")) != 0 {
 		t.Fatalf("list sync = %v, %v", value, err)
 	}
-	if value, err := c.GetPermissions(thread, nil,
-		starlark.Tuple{starlark.String("/apps/plugin-coverage")}, nil); err != nil || value.(*starlark.List).Len() == 0 {
+	if value, err := c.GetPermissions(readerCtx, pluginCall("reader", []any{"/apps/plugin-coverage"})); err != nil || len(stringList(t, value, "permissions")) == 0 {
 		t.Fatalf("get permissions = %v, %v", value, err)
 	}
-	if value, err := c.SystemPluginsAllowed(thread, nil, nil, nil); err != nil || value == nil {
+	if value, err := c.SystemPluginsAllowed(readerCtx, pluginCall("reader", nil)); err != nil || value == nil {
 		t.Fatalf("system plugins allowed = %v, %v", value, err)
 	}
-	if value, err := c.ListAuths(thread, nil, nil, nil); err != nil || value.(*starlark.List).Len() < 6 {
+	if value, err := c.ListAuths(readerCtx, pluginCall("reader", nil)); err != nil || len(stringList(t, value, "auths")) < 6 {
 		t.Fatalf("list auths = %v, %v", value, err)
 	}
 	// list_git_auths returns the sorted entry names plus the default entry
 	server.staticConfig.Security.DefaultGitAuth = "alpha"
-	if value, err := c.ListGitAuths(thread, nil, nil, nil); err != nil {
+	if value, err := c.ListGitAuths(readerCtx, pluginCall("reader", nil)); err != nil {
 		t.Fatalf("list git auths = %v, %v", value, err)
 	} else {
-		gitAuths := value.(*starlark.Dict)
-		entries, _, _ := gitAuths.Get(starlark.String("entries"))
-		defaultAuth, _, _ := gitAuths.Get(starlark.String("default"))
-		if entries.String() != `["alpha", "zeta"]` || defaultAuth.String() != `"alpha"` {
-			t.Fatalf("list git auths entries = %v, default = %v", entries, defaultAuth)
+		gitAuths, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("git auths type = %T", value)
+		}
+		entries := stringList(t, gitAuths["entries"], "git auth entries")
+		if !slices.Equal(entries, []string{"alpha", "zeta"}) || gitAuths["default"] != "alpha" {
+			t.Fatalf("list git auths entries = %v, default = %v", entries, gitAuths["default"])
 		}
 	}
 
 	server.staticConfig.System.ContainerCommand = types.CONTAINER_KUBERNETES
-	if value, err := c.ListContainers(thread, nil, nil, pluginKwargs(
-		starlark.String("type"), starlark.String("agent"),
-	)); err != nil || value.(*starlark.List).Len() != 0 {
+	if value, err := c.ListContainers(readerCtx, pluginCall("reader", nil,
+		"type", "agent",
+	)); err != nil || len(valueList(t, value, "agent containers")) != 0 {
 		t.Fatalf("list agent containers = %v, %v", value, err)
 	}
 	server.staticConfig.System.ContainerCommand = ""
-	if value, err := c.ListContainers(thread, nil, nil, pluginKwargs(
-		starlark.String("type"), starlark.String("kaniko"),
-	)); err != nil || value.(*starlark.List).Len() != 0 {
+	if value, err := c.ListContainers(readerCtx, pluginCall("reader", nil,
+		"type", "kaniko",
+	)); err != nil || len(valueList(t, value, "kaniko containers")) != 0 {
 		t.Fatalf("list kaniko containers = %v, %v", value, err)
 	}
-	if _, err := c.ListContainers(thread, nil, nil, pluginKwargs(
-		starlark.String("type"), starlark.String("invalid"),
+	if _, err := c.ListContainers(readerCtx, pluginCall("reader", nil,
+		"type", "invalid",
 	)); err == nil || !strings.Contains(err.Error(), "invalid list_containers") {
 		t.Fatalf("invalid container type error = %v", err)
 	}
-	if value, err := c.KubernetesStats(thread, nil, nil, nil); err != nil || value == nil {
+	if value, err := c.KubernetesStats(readerCtx, pluginCall("reader", nil)); err != nil || value == nil {
 		t.Fatalf("kubernetes stats = %v, %v", value, err)
 	}
 }
@@ -346,8 +348,6 @@ func TestOpenRunPluginAuditQueries(t *testing.T) {
 		_ = server.auditDB.Close()
 	}()
 	c := &openrunPlugin{server: server}
-	thread := &starlark.Thread{Name: "openrun-audit-coverage"}
-	thread.SetLocal(types.TL_CONTEXT, ctx)
 
 	now := time.Now()
 	if _, err := server.auditDB.Exec(
@@ -356,41 +356,41 @@ func TestOpenRunPluginAuditQueries(t *testing.T) {
 		"reload_apps", "/apps/plugin", "success", "coverage detail"); err != nil {
 		t.Fatal(err)
 	}
-	value, err := c.ListAuditEvents(thread, nil, nil, pluginKwargs(
-		starlark.String("user_id"), starlark.String("reader"),
-		starlark.String("event_type"), starlark.String("custom"),
-		starlark.String("operation"), starlark.String("reload_apps"),
-		starlark.String("target"), starlark.String("/apps/plugin"),
-		starlark.String("status"), starlark.String("success"),
+	value, err := c.ListAuditEvents(ctx, pluginCall("reader", nil,
+		"user_id", "reader",
+		"event_type", "custom",
+		"operation", "reload_apps",
+		"target", "/apps/plugin",
+		"status", "success",
 		// The audit date filters are UTC days (sqlite strftime and postgres
 		// EXTRACT both read the bare date as UTC midnight), so the filter
 		// dates must come from the UTC clock: using the local date makes the
 		// end_date filter exclude the event whenever the local date is behind
 		// the UTC date (e.g. evenings in UTC-7)
-		starlark.String("start_date"), starlark.String(now.UTC().Add(-24*time.Hour).Format("2006-01-02")),
-		starlark.String("end_date"), starlark.String(now.UTC().Format("2006-01-02")),
-		starlark.String("rid"), starlark.String("rid_plugin"),
-		starlark.String("detail"), starlark.String("coverage detail"),
-		starlark.String("limit"), starlark.MakeInt(10),
+		"start_date", now.UTC().Add(-24*time.Hour).Format("2006-01-02"),
+		"end_date", now.UTC().Format("2006-01-02"),
+		"rid", "rid_plugin",
+		"detail", "coverage detail",
+		"limit", int64(10),
 	))
-	if err != nil || value.(*starlark.List).Len() != 1 {
+	if err != nil || len(valueList(t, value, "audit events")) != 1 {
 		t.Fatalf("list audit events = %v, %v", value, err)
 	}
-	if _, err := c.ListAuditEvents(thread, nil, nil, pluginKwargs(
-		starlark.String("start_date"), starlark.String(""),
-		starlark.String("before_timestamp"), starlark.String("invalid"),
+	if _, err := c.ListAuditEvents(ctx, pluginCall("reader", nil,
+		"start_date", "",
+		"before_timestamp", "invalid",
 	)); err == nil || !strings.Contains(err.Error(), "before_timestamp") {
 		t.Fatalf("invalid before timestamp error = %v", err)
 	}
-	if _, err := c.ListAuditEvents(thread, nil, nil, pluginKwargs(
-		starlark.String("start_date"), starlark.String(""),
-		starlark.String("limit"), starlark.MakeInt(0),
+	if _, err := c.ListAuditEvents(ctx, pluginCall("reader", nil,
+		"start_date", "",
+		"limit", int64(0),
 	)); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("invalid limit error = %v", err)
 	}
 
-	operations, err := c.ListOperations(thread, nil, nil, nil)
-	if err != nil || operations.(*starlark.List).Len() < 20 {
+	operations, err := c.ListOperations(ctx, pluginCall("reader", nil))
+	if err != nil || len(stringList(t, operations, "operations")) < 20 {
 		t.Fatalf("list operations = %v, %v", operations, err)
 	}
 	for _, test := range []struct {

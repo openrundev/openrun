@@ -15,48 +15,55 @@ import (
 	"strings"
 
 	"github.com/openrundev/openrun/internal/app"
-	"github.com/openrundev/openrun/internal/app/starlark_type"
-	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
 
 // initBuilderPlugin registers the build.in plugin: the app builder APIs used
 // by the console Builder tab
 func initBuilderPlugin(server *Server) {
-	c := &builderPlugin{}
-	pluginFuncs := []plugin.PluginFunc{
-		app.CreatePluginApiName(c.ListSessions, app.READ, "list_sessions"),
-		app.CreatePluginApiName(c.GetSession, app.READ, "get_session"),
-		app.CreatePluginApiName(c.GetMessages, app.READ, "get_messages"),
-		app.CreatePluginApiName(c.SessionEvents, app.READ, "session_events"),
-		app.CreatePluginApiName(c.ListFiles, app.READ, "list_files"),
-		app.CreatePluginApiName(c.ReadFile, app.READ, "read_file"),
-		app.CreatePluginApiName(c.GetSourceZip, app.READ, "get_source_zip"),
-		app.CreatePluginApiName(c.GetPublishConfig, app.READ, "get_publish_config"),
-		app.CreatePluginApiName(c.ListActivity, app.READ, "list_activity"),
-		app.CreatePluginApiName(c.CreateSession, app.WRITE, "create_session"),
-		app.CreatePluginApiName(c.SendMessage, app.WRITE, "send_message"),
-		app.CreatePluginApiName(c.CancelTurn, app.WRITE, "cancel_turn"),
-		app.CreatePluginApiName(c.StopSession, app.WRITE, "stop_session"),
-		app.CreatePluginApiName(c.ResumeSession, app.WRITE, "resume_session"),
-		app.CreatePluginApiName(c.DeleteSession, app.WRITE, "delete_session"),
-		app.CreatePluginApiName(c.CheckPublishPath, app.READ, "check_publish_path"),
-		app.CreatePluginApiName(c.PublishApp, app.WRITE, "publish_app"),
-		app.CreatePluginApiName(c.UnpublishApp, app.WRITE, "unpublish_app"),
-		app.CreatePluginApiName(c.VerifyConfig, app.WRITE, "verify_config"),
-	}
-
-	newBuilderPlugin := func(pluginContext *types.PluginContext) (any, error) {
-		return &builderPlugin{server: server, pluginContext: pluginContext}, nil
-	}
-	app.RegisterSystemPlugin("build", newBuilderPlugin, pluginFuncs)
+	app.RegisterLocalProvider("build", &sdk.ServeConfig{
+		ProviderVersion: "builtin",
+		Modules: map[string]sdk.ModuleDef{
+			"build": {
+				Builder: func() sdk.Module { return &builderPlugin{server: server} },
+				Functions: []sdk.FuncDef{
+					{Name: "list_sessions", Type: sdk.READ, Method: "ListSessions"},
+					{Name: "get_session", Type: sdk.READ, Method: "GetSession"},
+					{Name: "get_messages", Type: sdk.READ, Method: "GetMessages"},
+					{Name: "session_events", Type: sdk.READ, Method: "SessionEvents"},
+					{Name: "list_files", Type: sdk.READ, Method: "ListFiles"},
+					{Name: "read_file", Type: sdk.READ, Method: "ReadFile"},
+					{Name: "get_source_zip", Type: sdk.READ, Method: "GetSourceZip"},
+					{Name: "get_publish_config", Type: sdk.READ, Method: "GetPublishConfig"},
+					{Name: "list_activity", Type: sdk.READ, Method: "ListActivity"},
+					{Name: "create_session", Type: sdk.WRITE, Method: "CreateSession"},
+					{Name: "send_message", Type: sdk.WRITE, Method: "SendMessage"},
+					{Name: "cancel_turn", Type: sdk.WRITE, Method: "CancelTurn"},
+					{Name: "stop_session", Type: sdk.WRITE, Method: "StopSession"},
+					{Name: "resume_session", Type: sdk.WRITE, Method: "ResumeSession"},
+					{Name: "delete_session", Type: sdk.WRITE, Method: "DeleteSession"},
+					{Name: "check_publish_path", Type: sdk.READ, Method: "CheckPublishPath"},
+					{Name: "publish_app", Type: sdk.WRITE, Method: "PublishApp"},
+					{Name: "unpublish_app", Type: sdk.WRITE, Method: "UnpublishApp"},
+					{Name: "verify_config", Type: sdk.WRITE, Method: "VerifyConfig"},
+				},
+			},
+		},
+	}, app.LocalProviderOptions{SystemModules: []string{"build"}})
 }
 
 type builderPlugin struct {
-	server        *Server
-	pluginContext *types.PluginContext
+	server *Server
+}
+
+func (c *builderPlugin) InitModule(ctx context.Context, init sdk.ModuleInit) error {
+	return nil
+}
+
+func (c *builderPlugin) Close(ctx context.Context) error {
+	return nil
 }
 
 // requireSession loads a session and authorizes read access: users reach
@@ -79,7 +86,7 @@ func (c *builderPlugin) requireSession(ctx context.Context, id string, perm type
 	return session, nil
 }
 
-func (c *builderPlugin) sessionToStarlark(session *types.BuilderSession) (starlark.Value, error) {
+func (c *builderPlugin) sessionToValue(session *types.BuilderSession) map[string]any {
 	// The stored publish path may carry a relative (trailing ".") domain;
 	// app operations in the console need the path resolved on this instance
 	resolved := session.PublishPath
@@ -92,7 +99,7 @@ func (c *builderPlugin) sessionToStarlark(session *types.BuilderSession) (starla
 	if sessionServices == nil {
 		sessionServices = []string{}
 	}
-	return starlark_type.ConvertToStarlark(map[string]any{
+	return map[string]any{
 		"publish_path_resolved": resolved,
 		"services":              sessionServices,
 		"id":                    session.Id,
@@ -105,26 +112,25 @@ func (c *builderPlugin) sessionToStarlark(session *types.BuilderSession) (starla
 		"status":                string(session.Status),
 		"preview_path":          session.PreviewPath,
 		"publish_path":          session.PublishPath,
-		"create_time":           session.CreateTime.UTC().Format("2006-01-02T15:04:05Z"),
-		"update_time":           session.UpdateTime.UTC().Format("2006-01-02T15:04:05Z"),
+		"create_time":           session.CreateTime.UTC(),
+		"update_time":           session.UpdateTime.UTC(),
 		"workspace_dir":         session.WorkspaceDir,
-	})
+	}
 }
 
 // ListSessions lists builder sessions: one's own with builder:list, everyone's
 // with all_users (requires the admin permission)
-func (c *builderPlugin) ListSessions(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var allUsers starlark.Bool
-	if err := starlark.UnpackArgs("list_sessions", args, kwargs, "all_users?", &allUsers); err != nil {
+func (c *builderPlugin) ListSessions(ctx context.Context, call *sdk.Call) (any, error) {
+	var allUsers bool
+	if err := sdk.UnpackArgs("list_sessions", call, "all_users?", &allUsers); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	userID := system.GetContextUserId(ctx)
+	userID := call.Thread.UserId
 	if err := c.server.enforceGlobalPerm(ctx, types.PermissionBuilderList, userID); err != nil {
 		return nil, err
 	}
 	filterUser := userID
-	if bool(allUsers) {
+	if allUsers {
 		if err := c.server.enforceGlobalPerm(ctx, types.PermissionAdmin, ""); err != nil {
 			return nil, err
 		}
@@ -134,44 +140,38 @@ func (c *builderPlugin) ListSessions(thread *starlark.Thread, builtin *starlark.
 	if err != nil {
 		return nil, err
 	}
-	ret := starlark.List{}
+	ret := make([]any, 0, len(sessions))
 	for _, session := range sessions {
-		value, err := c.sessionToStarlark(session)
-		if err != nil {
-			return nil, err
-		}
-		ret.Append(value) //nolint:errcheck
+		ret = append(ret, c.sessionToValue(session))
 	}
-	return &ret, nil
+	return ret, nil
 }
 
-func (c *builderPlugin) GetSession(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id starlark.String
-	if err := starlark.UnpackArgs("get_session", args, kwargs, "id", &id); err != nil {
+func (c *builderPlugin) GetSession(ctx context.Context, call *sdk.Call) (any, error) {
+	var id string
+	if err := sdk.UnpackArgs("get_session", call, "id", &id); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireSession(ctx, id.GoString(), types.PermissionBuilderList)
+	session, err := c.requireSession(ctx, id, types.PermissionBuilderList)
 	if err != nil {
 		return nil, err
 	}
-	return c.sessionToStarlark(session)
+	return c.sessionToValue(session), nil
 }
 
 // GetMessages returns the transcript: activity rows plus the live in-flight
 // turn state (partial agent message)
-func (c *builderPlugin) GetMessages(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id, afterId starlark.String
-	if err := starlark.UnpackArgs("get_messages", args, kwargs, "id", &id, "after_id?", &afterId); err != nil {
+func (c *builderPlugin) GetMessages(ctx context.Context, call *sdk.Call) (any, error) {
+	var id, afterId string
+	if err := sdk.UnpackArgs("get_messages", call, "id", &id, "after_id?", &afterId); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireSession(ctx, id.GoString(), types.PermissionBuilderList)
+	session, err := c.requireSession(ctx, id, types.PermissionBuilderList)
 	if err != nil {
 		return nil, err
 	}
 
-	entries, err := c.server.builderManager.ListActivity(ctx, session.Id, afterId.GoString(), 0)
+	entries, err := c.server.builderManager.ListActivity(ctx, session.Id, afterId, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -182,28 +182,27 @@ func (c *builderPlugin) GetMessages(thread *starlark.Thread, builtin *starlark.B
 			"kind":        entry.Kind,
 			"content":     entry.Content,
 			"metadata":    entry.Metadata,
-			"create_time": entry.CreateTime.UTC().Format("2006-01-02T15:04:05Z"),
+			"create_time": entry.CreateTime.UTC(),
 		})
 	}
 	isLive, turnActive, partial := c.server.builderManager.LiveState(session.Id)
-	return starlark_type.ConvertToStarlark(map[string]any{
+	return map[string]any{
 		"messages":    messages,
 		"is_live":     isLive,
 		"turn_active": turnActive,
 		"partial":     partial,
 		"status":      string(session.Status),
-	})
+	}, nil
 }
 
 // SessionEvents streams session events (message chunks, tool calls, status)
 // as JSON lines until the client disconnects
-func (c *builderPlugin) SessionEvents(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id starlark.String
-	if err := starlark.UnpackArgs("session_events", args, kwargs, "id", &id); err != nil {
+func (c *builderPlugin) SessionEvents(ctx context.Context, call *sdk.Call) (any, error) {
+	var id string
+	if err := sdk.UnpackArgs("session_events", call, "id", &id); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireSession(ctx, id.GoString(), types.PermissionBuilderList)
+	session, err := c.requireSession(ctx, id, types.PermissionBuilderList)
 	if err != nil {
 		return nil, err
 	}
@@ -232,16 +231,15 @@ func (c *builderPlugin) SessionEvents(thread *starlark.Thread, builtin *starlark
 			}
 		}
 	}
-	return app.NewStreamResponse(stream), nil
+	return sdk.PushCursor("session_events", fmt.Sprintf("session_events_%p", &stream), true, stream), nil
 }
 
-func (c *builderPlugin) ListFiles(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id starlark.String
-	if err := starlark.UnpackArgs("list_files", args, kwargs, "id", &id); err != nil {
+func (c *builderPlugin) ListFiles(ctx context.Context, call *sdk.Call) (any, error) {
+	var id string
+	if err := sdk.UnpackArgs("list_files", call, "id", &id); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireSession(ctx, id.GoString(), types.PermissionBuilderList)
+	session, err := c.requireSession(ctx, id, types.PermissionBuilderList)
 	if err != nil {
 		return nil, err
 	}
@@ -249,49 +247,47 @@ func (c *builderPlugin) ListFiles(thread *starlark.Thread, builtin *starlark.Bui
 	if err != nil {
 		return nil, err
 	}
-	ret := starlark.List{}
+	ret := make([]any, 0, len(files))
 	for _, file := range files {
-		ret.Append(starlark.String(file)) //nolint:errcheck
+		ret = append(ret, file)
 	}
-	return &ret, nil
+	return ret, nil
 }
 
-func (c *builderPlugin) ReadFile(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id, path starlark.String
-	if err := starlark.UnpackArgs("read_file", args, kwargs, "id", &id, "path", &path); err != nil {
+func (c *builderPlugin) ReadFile(ctx context.Context, call *sdk.Call) (any, error) {
+	var id, path string
+	if err := sdk.UnpackArgs("read_file", call, "id", &id, "path", &path); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireSession(ctx, id.GoString(), types.PermissionBuilderList)
+	session, err := c.requireSession(ctx, id, types.PermissionBuilderList)
 	if err != nil {
 		return nil, err
 	}
-	content, err := c.server.builderManager.ReadFile(ctx, session.Id, path.GoString())
+	content, err := c.server.builderManager.ReadFile(ctx, session.Id, path)
 	if err != nil {
 		return nil, err
 	}
-	return starlark.String(content), nil
+	return content, nil
 }
 
 // GetSourceZip returns a download value whose content is a lazily produced
 // zip of the session workspace. The zip is built at response-write time by
 // the download handler, streaming to the client (chunked) with backpressure,
 // so the archive is never fully held in memory or staged to disk or the db
-func (c *builderPlugin) GetSourceZip(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id starlark.String
-	if err := starlark.UnpackArgs("get_source_zip", args, kwargs, "id", &id); err != nil {
+func (c *builderPlugin) GetSourceZip(ctx context.Context, call *sdk.Call) (any, error) {
+	var id string
+	if err := sdk.UnpackArgs("get_source_zip", call, "id", &id); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireSession(ctx, id.GoString(), types.PermissionBuilderList)
+	session, err := c.requireSession(ctx, id, types.PermissionBuilderList)
 	if err != nil {
 		return nil, err
 	}
 
 	workspaceDir := session.WorkspaceDir
-	stream := starlark_type.NewDownloadStream(builderZipName(session.Name), func(w io.Writer) error {
+	stream := &sdk.Download{Name: builderZipName(session.Name), Producer: func(w io.Writer) error {
 		return writeBuilderSourceZip(workspaceDir, w)
-	})
+	}}
 	return zipDownloadValue(stream), nil
 }
 
@@ -299,11 +295,11 @@ func (c *builderPlugin) GetSourceZip(thread *starlark.Thread, builtin *starlark.
 // download plugin APIs. content is an opaque download stream (constructible
 // only from plugin Go code) that the download response handler drains at
 // response-write time; name is the attachment file name
-func zipDownloadValue(stream *starlark_type.DownloadStream) starlark.Value {
-	dict := starlark.NewDict(2)
-	dict.SetKey(starlark.String("content"), stream)                      //nolint:errcheck
-	dict.SetKey(starlark.String("name"), starlark.String(stream.Name())) //nolint:errcheck
-	return dict
+func zipDownloadValue(stream *sdk.Download) map[string]any {
+	return map[string]any{
+		"content": stream,
+		"name":    stream.Name,
+	}
 }
 
 var zipNameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
@@ -320,18 +316,17 @@ func builderZipName(sessionName string) string {
 // GetPublishConfig returns the builder publish setup for the UI. With
 // session_id the mode and git fields reflect that session's resolved git
 // destination (its prompt preset may pick a [builder_git.*] entry)
-func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var sessionId starlark.String
-	if err := starlark.UnpackArgs("get_publish_config", args, kwargs, "session_id?", &sessionId); err != nil {
+func (c *builderPlugin) GetPublishConfig(ctx context.Context, call *sdk.Call) (any, error) {
+	var sessionId string
+	if err := sdk.UnpackArgs("get_publish_config", call, "session_id?", &sessionId); err != nil {
 		return nil, err
 	}
 	config := c.server.Config()
-	ctx := system.GetRequestContext(thread)
 
 	sessionProfile := ""
 	editApp := ""
-	if sessionId.GoString() != "" {
-		session, err := c.requireSession(ctx, sessionId.GoString(), types.PermissionBuilderList)
+	if sessionId != "" {
+		session, err := c.requireSession(ctx, sessionId, types.PermissionBuilderList)
 		if err != nil {
 			return nil, err
 		}
@@ -349,7 +344,7 @@ func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starl
 		// In-place edit sessions publish to the app's own destination,
 		// derived from its source url. Fork sessions (original not builder
 		// managed) publish as a new app with the normal resolution
-		if apps, appsErr := c.server.GetApps(system.GetRequestContext(thread), editApp, false); appsErr == nil && len(apps) == 1 &&
+		if apps, appsErr := c.server.GetApps(ctx, editApp, false); appsErr == nil && len(apps) == 1 &&
 			c.server.isBuilderManaged(&apps[0].AppEntry) {
 			inPlaceEdit = true
 			if matched, _, matchErr := c.server.matchBuilderGitBySource(apps[0].SourceUrl); matchErr == nil {
@@ -432,7 +427,7 @@ func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starl
 			"branch": entry.Branch,
 		})
 	}
-	return starlark_type.ConvertToStarlark(map[string]any{
+	return map[string]any{
 		"enabled":                 config.AppBuilder.Enabled,
 		"mode":                    mode,
 		"git_repo":                gitCfg.Repo,
@@ -449,22 +444,20 @@ func (c *builderPlugin) GetPublishConfig(thread *starlark.Thread, builtin *starl
 		"all_services":            allServices,
 		"agents":                  agents,
 		"profiles":                profiles,
-	})
+	}, nil
 }
 
-func (c *builderPlugin) ListActivity(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id, afterId starlark.String
-	limit := starlark.MakeInt(200)
-	if err := starlark.UnpackArgs("list_activity", args, kwargs, "id", &id, "after_id?", &afterId, "limit?", &limit); err != nil {
+func (c *builderPlugin) ListActivity(ctx context.Context, call *sdk.Call) (any, error) {
+	var id, afterId string
+	limit := int64(200)
+	if err := sdk.UnpackArgs("list_activity", call, "id", &id, "after_id?", &afterId, "limit?", &limit); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireSession(ctx, id.GoString(), types.PermissionBuilderList)
+	session, err := c.requireSession(ctx, id, types.PermissionBuilderList)
 	if err != nil {
 		return nil, err
 	}
-	limitInt, _ := limit.Int64()
-	entries, err := c.server.builderManager.ListActivity(ctx, session.Id, afterId.GoString(), int(limitInt))
+	entries, err := c.server.builderManager.ListActivity(ctx, session.Id, afterId, int(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -476,54 +469,47 @@ func (c *builderPlugin) ListActivity(thread *starlark.Thread, builtin *starlark.
 			"kind":        entry.Kind,
 			"content":     entry.Content,
 			"metadata":    entry.Metadata,
-			"create_time": entry.CreateTime.UTC().Format("2006-01-02T15:04:05Z"),
+			"create_time": entry.CreateTime.UTC(),
 		})
 	}
-	return starlark_type.ConvertToStarlark(result)
+	return result, nil
 }
 
-func (c *builderPlugin) CreateSession(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var name, prompt, profile, editApp starlark.String
-	var servicesList *starlark.List
-	if err := starlark.UnpackArgs("create_session", args, kwargs, "name", &name, "prompt", &prompt,
-		"profile?", &profile, "edit_app?", &editApp, "services?", &servicesList); err != nil {
+func (c *builderPlugin) CreateSession(ctx context.Context, call *sdk.Call) (any, error) {
+	var name, prompt, profile, editApp string
+	var services []string
+	if err := sdk.UnpackArgs("create_session", call, "name", &name, "prompt", &prompt,
+		"profile?", &profile, "edit_app?", &editApp, "services?", &services); err != nil {
 		return nil, err
 	}
-	services := []string{}
-	if servicesList != nil {
-		for entry := range servicesList.Elements() {
-			if str, ok := starlark.AsString(entry); ok {
-				services = append(services, str)
-			}
-		}
+	if services == nil {
+		services = []string{}
 	}
-	ctx := system.GetRequestContext(thread)
-	userID := system.GetContextUserId(ctx)
+	userID := call.Thread.UserId
 	if err := c.server.enforceGlobalPerm(ctx, types.PermissionBuilderCreate, userID); err != nil {
 		return nil, err
 	}
-	session, err := c.server.builderCreateSession(ctx, userID, name.GoString(), prompt.GoString(),
-		profile.GoString(), editApp.GoString(), services)
+	session, err := c.server.builderCreateSession(ctx, userID, name, prompt,
+		profile, editApp, services)
 	if err != nil {
 		return nil, err
 	}
-	return c.sessionToStarlark(session)
+	return c.sessionToValue(session), nil
 }
 
-func (c *builderPlugin) SendMessage(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id, message starlark.String
-	if err := starlark.UnpackArgs("send_message", args, kwargs, "id", &id, "message", &message); err != nil {
+func (c *builderPlugin) SendMessage(ctx context.Context, call *sdk.Call) (any, error) {
+	var id, message string
+	if err := sdk.UnpackArgs("send_message", call, "id", &id, "message", &message); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireWriteSession(ctx, id.GoString())
+	session, err := c.requireWriteSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.server.builderManager.SendMessage(ctx, session.Id, system.GetContextUserId(ctx), message.GoString()); err != nil {
+	if err := c.server.builderManager.SendMessage(ctx, session.Id, call.Thread.UserId, message); err != nil {
 		return nil, err
 	}
-	return starlark.None, nil
+	return nil, nil
 }
 
 // requireWriteSession authorizes session mutation: the owner needs
@@ -545,85 +531,80 @@ func (c *builderPlugin) requireWriteSession(ctx context.Context, id string) (*ty
 	return session, nil
 }
 
-func (c *builderPlugin) CancelTurn(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id starlark.String
-	if err := starlark.UnpackArgs("cancel_turn", args, kwargs, "id", &id); err != nil {
+func (c *builderPlugin) CancelTurn(ctx context.Context, call *sdk.Call) (any, error) {
+	var id string
+	if err := sdk.UnpackArgs("cancel_turn", call, "id", &id); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireWriteSession(ctx, id.GoString())
+	session, err := c.requireWriteSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if err := c.server.builderManager.CancelTurn(session.Id); err != nil {
 		return nil, err
 	}
-	return starlark.None, nil
+	return nil, nil
 }
 
-func (c *builderPlugin) StopSession(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id starlark.String
-	if err := starlark.UnpackArgs("stop_session", args, kwargs, "id", &id); err != nil {
+func (c *builderPlugin) StopSession(ctx context.Context, call *sdk.Call) (any, error) {
+	var id string
+	if err := sdk.UnpackArgs("stop_session", call, "id", &id); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireWriteSession(ctx, id.GoString())
+	session, err := c.requireWriteSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.server.builderManager.StopSession(session.Id, system.GetContextUserId(ctx)); err != nil {
+	if err := c.server.builderManager.StopSession(session.Id, call.Thread.UserId); err != nil {
 		return nil, err
 	}
-	return starlark.None, nil
+	return nil, nil
 }
 
-func (c *builderPlugin) ResumeSession(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id starlark.String
-	if err := starlark.UnpackArgs("resume_session", args, kwargs, "id", &id); err != nil {
+func (c *builderPlugin) ResumeSession(ctx context.Context, call *sdk.Call) (any, error) {
+	var id string
+	if err := sdk.UnpackArgs("resume_session", call, "id", &id); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireWriteSession(ctx, id.GoString())
+	session, err := c.requireWriteSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.server.builderManager.ResumeSession(ctx, session.Id, system.GetContextUserId(ctx)); err != nil {
+	if err := c.server.builderManager.ResumeSession(ctx, session.Id, call.Thread.UserId); err != nil {
 		return nil, err
 	}
-	return starlark.None, nil
+	return nil, nil
 }
 
-func (c *builderPlugin) DeleteSession(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id starlark.String
-	if err := starlark.UnpackArgs("delete_session", args, kwargs, "id", &id); err != nil {
+func (c *builderPlugin) DeleteSession(ctx context.Context, call *sdk.Call) (any, error) {
+	var id string
+	if err := sdk.UnpackArgs("delete_session", call, "id", &id); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireWriteSession(ctx, id.GoString())
+	session, err := c.requireWriteSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.server.builderDeleteSession(ctx, session.Id, system.GetContextUserId(ctx)); err != nil {
+	if err := c.server.builderDeleteSession(ctx, session.Id, call.Thread.UserId); err != nil {
 		return nil, err
 	}
-	return starlark.None, nil
+	return nil, nil
 }
 
 // CheckPublishPath validates a publish target for a session without
 // publishing: normalization, the profile's publish restriction and the app
 // RBAC permissions all run exactly as a real publish would. Returns the
 // normalized path and whether an app already exists there (a republish)
-func (c *builderPlugin) CheckPublishPath(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id, path starlark.String
-	if err := starlark.UnpackArgs("check_publish_path", args, kwargs, "id", &id, "path", &path); err != nil {
+func (c *builderPlugin) CheckPublishPath(ctx context.Context, call *sdk.Call) (any, error) {
+	var id, path string
+	if err := sdk.UnpackArgs("check_publish_path", call, "id", &id, "path", &path); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireSession(ctx, id.GoString(), types.PermissionBuilderPublish)
+	session, err := c.requireSession(ctx, id, types.PermissionBuilderPublish)
 	if err != nil {
 		return nil, err
 	}
-	publishPath, _, err := c.server.builderCheckPublishPath(ctx, path.GoString(), session)
+	publishPath, _, err := c.server.builderCheckPublishPath(ctx, path, session)
 	if err != nil {
 		return nil, err
 	}
@@ -635,73 +616,70 @@ func (c *builderPlugin) CheckPublishPath(thread *starlark.Thread, builtin *starl
 	if err != nil {
 		return nil, err
 	}
-	return starlark_type.ConvertToStarlark(map[string]any{
+	return map[string]any{
 		"path":     publishPath,
 		"resolved": resolvedPath,
 		"exists":   exists,
-	})
+	}, nil
 }
 
-func (c *builderPlugin) PublishApp(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id, path, commitMsg starlark.String
-	if err := starlark.UnpackArgs("publish_app", args, kwargs, "id", &id, "path", &path,
+func (c *builderPlugin) PublishApp(ctx context.Context, call *sdk.Call) (any, error) {
+	var id, path, commitMsg string
+	if err := sdk.UnpackArgs("publish_app", call, "id", &id, "path", &path,
 		"commit_msg?", &commitMsg); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireWriteSession(ctx, id.GoString())
+	session, err := c.requireWriteSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if err := c.server.enforceGlobalPerm(ctx, types.PermissionBuilderPublish, session.UserID); err != nil {
 		return nil, err
 	}
-	message := commitMsg.GoString()
+	message := commitMsg
 	if message == "" {
-		message = fmt.Sprintf("Add app %s (built with OpenRun Builder)", path.GoString())
+		message = fmt.Sprintf("Add app %s (built with OpenRun Builder)", path)
 	}
-	result, err := c.server.builderPublish(ctx, session.Id, path.GoString(), message)
+	result, err := c.server.builderPublish(ctx, session.Id, path, message)
 	if err != nil {
 		return nil, err
 	}
-	return starlark_type.ConvertToStarlark(result)
+	return structValue(result)
 }
 
-func (c *builderPlugin) UnpublishApp(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var id, commitMsg starlark.String
-	if err := starlark.UnpackArgs("unpublish_app", args, kwargs, "id", &id, "commit_msg?", &commitMsg); err != nil {
+func (c *builderPlugin) UnpublishApp(ctx context.Context, call *sdk.Call) (any, error) {
+	var id, commitMsg string
+	if err := sdk.UnpackArgs("unpublish_app", call, "id", &id, "commit_msg?", &commitMsg); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
-	session, err := c.requireWriteSession(ctx, id.GoString())
+	session, err := c.requireWriteSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if err := c.server.enforceGlobalPerm(ctx, types.PermissionBuilderPublish, session.UserID); err != nil {
 		return nil, err
 	}
-	result, err := c.server.builderUnpublish(ctx, session.Id, commitMsg.GoString())
+	result, err := c.server.builderUnpublish(ctx, session.Id, commitMsg)
 	if err != nil {
 		return nil, err
 	}
-	return starlark_type.ConvertToStarlark(result)
+	return structValue(result)
 }
 
 // VerifyConfig runs the builder config checklist. With test_prompt, each
 // profile check also round-trips one real prompt (costs a model call)
-func (c *builderPlugin) VerifyConfig(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var testPrompt starlark.Bool
-	if err := starlark.UnpackArgs("verify_config", args, kwargs, "test_prompt?", &testPrompt); err != nil {
+func (c *builderPlugin) VerifyConfig(ctx context.Context, call *sdk.Call) (any, error) {
+	var testPrompt bool
+	if err := sdk.UnpackArgs("verify_config", call, "test_prompt?", &testPrompt); err != nil {
 		return nil, err
 	}
-	ctx := system.GetRequestContext(thread)
 	if err := c.server.enforceGlobalPerm(ctx, types.PermissionConfigRead, ""); err != nil {
 		return nil, err
 	}
-	checks := c.server.builderVerify(ctx, bool(testPrompt))
+	checks := c.server.builderVerify(ctx, testPrompt)
 	result := make([]any, 0, len(checks))
 	for _, check := range checks {
 		result = append(result, map[string]any{"name": check.Name, "ok": check.Ok, "detail": check.Detail})
 	}
-	return starlark_type.ConvertToStarlark(result)
+	return result, nil
 }

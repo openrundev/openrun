@@ -10,15 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"github.com/segmentio/ksuid"
-	"go.starlark.net/starlark"
 )
 
 var (
@@ -111,95 +108,6 @@ func backgroundCleanup(ctx context.Context, cleanupTicker *time.Ticker) {
 			fmt.Fprintf(os.Stderr, "error cleaning up expired files %s", err)
 		}
 	}
-}
-
-func (f *fsPlugin) ServeTmpFile(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var pathVal, fileName starlark.String
-	visibility := starlark.String(UserAccess)
-	mimeType := starlark.String("application/octet-stream")
-	expiryMinutes := starlark.MakeInt(60)
-	singleAccess := starlark.Bool(true)
-
-	if err := starlark.UnpackArgs("serve_tmp_file", args, kwargs, "path", &pathVal, "name?", &fileName, "visibility?", &visibility,
-		"mime_type?", &mimeType, "expiry_minutes?", &expiryMinutes, "single_access", &singleAccess); err != nil {
-		return nil, err
-	}
-
-	pathStr, err := filepath.Abs(string(pathVal))
-	if err != nil {
-		return nil, err
-	}
-
-	ok, err := f.checkAccess(pathStr)
-	if err != nil {
-		return nil, fmt.Errorf("error during access check for %s: %w", pathStr, err)
-	}
-	if !ok {
-		return nil, fmt.Errorf("file access denied for %s", pathStr)
-	}
-
-	connectString, err := system.GetConnectString(f.pluginContext)
-	if err != nil {
-		return nil, err
-	}
-
-	err = InitFileStore(connectString)
-	if err != nil {
-		return nil, err
-	}
-
-	var expiryMinutesInt int
-	if err = starlark.AsInt(expiryMinutes, &expiryMinutesInt); err != nil {
-		return nil, fmt.Errorf("expiry_minutes must be an integer")
-	}
-
-	createTime := time.Now()
-	expireAt := createTime.Add(time.Duration(expiryMinutesInt) * time.Minute)
-	if expiryMinutesInt <= 0 {
-		expireAt = time.Unix(0, int64(^uint64(0)>>1))
-	}
-
-	id, err := ksuid.NewRandom()
-	if err != nil {
-		return nil, err
-	}
-
-	fileNameStr := string(fileName)
-	if fileNameStr == "" {
-		fileNameStr = filepath.Base(pathStr)
-	}
-
-	userFile := &types.UserFile{
-		Id:           "usr_file_" + id.String(),
-		AppId:        string(f.pluginContext.AppId),
-		FilePath:     "file://" + pathStr,
-		FileName:     fileNameStr,
-		MimeType:     string(mimeType),
-		CreateTime:   createTime,
-		ExpireAt:     expireAt,
-		CreatedBy:    system.GetRequestUserId(thread),
-		SingleAccess: bool(singleAccess),
-		Visibility:   string(visibility),
-		Metadata:     make(map[string]any),
-	}
-
-	err = AddUserFile(GetContext(thread), userFile)
-	if err != nil {
-		return nil, err
-	}
-
-	appPath := f.pluginContext.AppPath
-	if appPath == "/" {
-		appPath = ""
-	}
-	downloadUrl := fmt.Sprintf("%s%s/file/%s", appPath, types.APP_INTERNAL_URL_PREFIX, userFile.Id)
-
-	ret := map[string]string{
-		"id":   userFile.Id,
-		"url":  downloadUrl,
-		"name": userFile.FileName,
-	}
-	return NewResponse(ret), nil
 }
 
 func AddUserFile(ctx context.Context, file *types.UserFile) error {

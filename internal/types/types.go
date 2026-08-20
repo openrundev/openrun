@@ -155,35 +155,36 @@ type GlobalConfig struct {
 // ServerConfig is the configuration for the OpenRun Server
 type ServerConfig struct {
 	GlobalConfig
-	Http           HttpConfig                      `toml:"http"`
-	Https          HttpsConfig                     `toml:"https"`
-	Security       SecurityConfig                  `toml:"security"`
-	Bindings       BindingsConfig                  `toml:"bindings"`
-	Metadata       MetadataConfig                  `toml:"metadata"`
-	Log            LogConfig                       `toml:"logging"`
-	Telemetry      TelemetryConfig                 `toml:"telemetry"`
-	System         SystemConfig                    `toml:"system"`
-	Registry       RegistryConfig                  `toml:"registry"`
-	Builder        BuilderConfig                   `toml:"builder"`
-	Kubernetes     KubernetesConfig                `toml:"kubernetes"`
-	Litestream     map[string]LitestreamConfig     `toml:"litestream"`
-	GitAuth        map[string]GitAuthEntry         `toml:"git_auth"`
-	Plugins        map[string]PluginSettings       `toml:"plugin"`
-	Auth           map[string]AuthConfig           `toml:"auth"`
-	BuiltinAuth    map[string]BuiltinAuthEntry     `toml:"builtin_auth"`
-	SAML           map[string]SAMLConfig           `toml:"saml"`
-	ClientAuth     map[string]ClientCertConfig     `toml:"client_auth"`
-	Secret         map[string]SecretConfig         `toml:"secret"`
-	Forward        map[string]ForwardConfig        `toml:"forward"`
-	ProfileMode    string                          `toml:"profile_mode"`
-	AppConfig      AppConfig                       `toml:"app_config"`
-	NodeConfig     NodeConfig                      `toml:"node_config"`
-	Permissions    PermissionsConfig               `toml:"permissions"`
-	AppBuilder     AppBuilderConfig                `toml:"app_builder"`
-	BuilderAgent   map[string]BuilderAgentConfig   `toml:"builder_agent"`
-	BuilderProfile map[string]BuilderProfileConfig `toml:"builder_profile"`
-	BuilderGit     map[string]BuilderGitConfig     `toml:"builder_git"`
-	Restart        RestartConfig                   `toml:"restart"`
+	Http            HttpConfig                      `toml:"http"`
+	Https           HttpsConfig                     `toml:"https"`
+	Security        SecurityConfig                  `toml:"security"`
+	Bindings        BindingsConfig                  `toml:"bindings"`
+	PluginProviders PluginProvidersConfig           `toml:"plugin_providers"`
+	Metadata        MetadataConfig                  `toml:"metadata"`
+	Log             LogConfig                       `toml:"logging"`
+	Telemetry       TelemetryConfig                 `toml:"telemetry"`
+	System          SystemConfig                    `toml:"system"`
+	Registry        RegistryConfig                  `toml:"registry"`
+	Builder         BuilderConfig                   `toml:"builder"`
+	Kubernetes      KubernetesConfig                `toml:"kubernetes"`
+	Litestream      map[string]LitestreamConfig     `toml:"litestream"`
+	GitAuth         map[string]GitAuthEntry         `toml:"git_auth"`
+	Plugins         map[string]PluginSettings       `toml:"plugin"`
+	Auth            map[string]AuthConfig           `toml:"auth"`
+	BuiltinAuth     map[string]BuiltinAuthEntry     `toml:"builtin_auth"`
+	SAML            map[string]SAMLConfig           `toml:"saml"`
+	ClientAuth      map[string]ClientCertConfig     `toml:"client_auth"`
+	Secret          map[string]SecretConfig         `toml:"secret"`
+	Forward         map[string]ForwardConfig        `toml:"forward"`
+	ProfileMode     string                          `toml:"profile_mode"`
+	AppConfig       AppConfig                       `toml:"app_config"`
+	NodeConfig      NodeConfig                      `toml:"node_config"`
+	Permissions     PermissionsConfig               `toml:"permissions"`
+	AppBuilder      AppBuilderConfig                `toml:"app_builder"`
+	BuilderAgent    map[string]BuilderAgentConfig   `toml:"builder_agent"`
+	BuilderProfile  map[string]BuilderProfileConfig `toml:"builder_profile"`
+	BuilderGit      map[string]BuilderGitConfig     `toml:"builder_git"`
+	Restart         RestartConfig                   `toml:"restart"`
 
 	// EnableInPlaceRestart is set by the server start command; zero downtime
 	// in-place restarts need process-wide state (signal handling, re-exec)
@@ -729,6 +730,45 @@ type BindingsConfig struct {
 // DevProviderConfig is one [bindings.dev_providers.<name>] entry.
 type DevProviderConfig struct {
 	Path string `toml:"path"` // path to the provider executable
+}
+
+// PluginProvidersConfig configures out-of-process Starlark plugin providers
+// (modules loaded by apps with the .ex suffix). It mirrors BindingsConfig:
+// installed providers are registered in the metadata database (installed with
+// `openrun provider install plugin/<name>` or declared in
+// [plugin_providers.install]) and materialized into the local cache dir.
+type PluginProvidersConfig struct {
+	// CacheDir is the node-local directory where installed provider
+	// executables are materialized from the metadata database.
+	CacheDir string `toml:"cache_dir"`
+	// ReleaseURLTemplate is the source url used by provider install when no
+	// source url is given. {provider}, {version}, {os} and {arch} are
+	// replaced. Point this at a mirror for restricted networks.
+	ReleaseURLTemplate string `toml:"release_url_template"`
+	// Install declares providers (name = version, or name =
+	// "version@sha256:HEX[,HEX...]" to pin accepted binary digests) installed
+	// automatically at server startup from ReleaseURLTemplate. Providers
+	// listed here cannot be modified with the provider CLI.
+	Install map[string]string `toml:"install"`
+	// UnsafeAllowHTTP allows plain http:// provider source urls. Downloads
+	// over http can be tampered with in transit; enable only for isolated dev
+	// setups.
+	UnsafeAllowHTTP bool `toml:"unsafe_allow_http"`
+	// PreinstalledDir is a directory of pre-placed provider executables
+	// (openrun-plugin-<name>), discovered and registered at startup without
+	// database registration or downloads. Used by the Kubernetes OCI image
+	// distribution path, where init containers copy provider binaries from
+	// per-provider images into a shared volume; integrity comes from the
+	// image digests that placed the files (the sha256 computed at discovery
+	// is still verified on every launch).
+	PreinstalledDir string `toml:"preinstalled_dir"`
+	// DisableInstall disables the imperative `openrun provider
+	// install/uninstall` API/CLI for plugin providers on this server.
+	DisableInstall bool `toml:"disable_install"`
+	// DevProviders registers a plugin provider executable directly from a
+	// local path, bypassing checksum verification and database registration.
+	// Development use only; keys are provider names.
+	DevProviders map[string]DevProviderConfig `toml:"dev_providers"`
 }
 
 // SystemConfig is the system level configuration
@@ -1323,11 +1363,14 @@ type ConfigUpdateMessage struct {
 	Payload     ConfigUpdatePayload `json:"payload"`
 }
 
-// ProviderUpdatePayload notifies replicas that a binding provider was
-// installed, updated or uninstalled; each replica reconciles the named
-// provider from the database.
+// ProviderUpdatePayload notifies replicas that a provider was installed,
+// updated or uninstalled; each replica reconciles the named provider from
+// the database.
 type ProviderUpdatePayload struct {
-	Name     string   `json:"name"`
+	Name string `json:"name"`
+	// Type is the provider kind ("binding" or "plugin"); empty means
+	// "binding" (messages from replicas predating provider types).
+	Type     string   `json:"type,omitempty"`
 	Deleted  bool     `json:"deleted"`
 	ServerId ServerId `json:"server_id"`
 }
@@ -1632,11 +1675,22 @@ type BindingProvider struct {
 	SourceURL string `json:"source_url"`
 	// Checksums maps "os/arch" to the hex sha256 of the provider binary.
 	Checksums map[string]string `json:"checksums"`
-	// ServiceTypes are the service types served, cached from Describe.
-	ServiceTypes []string  `json:"service_types"`
-	CreatedBy    string    `json:"created_by"`
-	CreateTime   time.Time `json:"create_time"`
-	UpdateTime   time.Time `json:"update_time"`
+	// Type is the provider kind: "binding" (service binding provider) or
+	// "plugin" (Starlark plugin provider). Empty means "binding" (rows
+	// predating provider types). Further kinds can be added later.
+	Type string `json:"type"`
+	// ServiceTypes are the provider's capability names, cached from Describe:
+	// the service types served for a binding provider, the module names
+	// served for a plugin provider.
+	ServiceTypes []string `json:"service_types"`
+	// Manifest is the kind-specific Describe payload cached at install time.
+	// For plugin providers it holds the module manifests (functions,
+	// constants), so module loading and app audit work on every replica
+	// without launching the provider. Empty for binding providers.
+	Manifest   string    `json:"manifest,omitempty"`
+	CreatedBy  string    `json:"created_by"`
+	CreateTime time.Time `json:"create_time"`
+	UpdateTime time.Time `json:"update_time"`
 }
 
 // ProviderInstallRequest is the request body for the provider install API.

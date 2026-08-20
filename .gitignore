@@ -24,6 +24,8 @@
 /docs/public/
 /docs/.hugo_build.lock
 /docs/designs/
+/tests/kube_bindings/
+/tests/kube_plugins/
 
 go.work
 go.work.sum

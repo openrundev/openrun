@@ -13,10 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrundev/openrun/internal/app"
-	"github.com/openrundev/openrun/internal/app/action"
-	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -25,17 +22,13 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-type contextAwareBody struct {
-	ctx    context.Context
+type trackedBody struct {
 	data   []byte
 	read   bool
 	closed bool
 }
 
-func (b *contextAwareBody) Read(p []byte) (int, error) {
-	if err := b.ctx.Err(); err != nil {
-		return 0, err
-	}
+func (b *trackedBody) Read(p []byte) (int, error) {
 	if b.read {
 		return 0, io.EOF
 	}
@@ -44,45 +37,35 @@ func (b *contextAwareBody) Read(p []byte) (int, error) {
 	return n, io.EOF
 }
 
-func (b *contextAwareBody) Close() error {
+func (b *trackedBody) Close() error {
 	b.closed = true
 	return nil
 }
 
 // Copied from https://github.com/qri-io/starlib/blob/master/http/http_test.go
 func TestSetBody(t *testing.T) {
-	fd := map[string]string{
+	fd := map[string]any{
 		"foo": "bar baz",
 	}
 
 	cases := []struct {
-		rawBody      starlark.String
-		formData     map[string]string
-		formEncoding starlark.String
-		jsonData     starlark.Value
+		rawBody      string
+		formData     map[string]any
+		formEncoding string
+		jsonData     any
 		body         string
 		err          string
 	}{
-		{starlark.String("hallo"), nil, starlark.String(""), nil, "hallo", ""},
-		{starlark.String(""), fd, starlark.String(""), nil, "foo=bar+baz", ""},
+		{"hallo", nil, "", nil, "hallo", ""},
+		{"", fd, "", nil, "foo=bar+baz", ""},
 		// TODO - this should check multipart form data is being set
-		{starlark.String(""), fd, starlark.String("multipart/form-data"), nil, "", ""},
-		{starlark.String(""), nil, starlark.String(""), starlark.Tuple{starlark.Bool(true), starlark.MakeInt(1), starlark.String("der")}, "[true,1,\"der\"]", ""},
+		{"", fd, "multipart/form-data", nil, "", ""},
+		{"", nil, "", sdk.Tuple{true, int64(1), "der"}, "[true,1,\"der\"]", ""},
 	}
 
 	for i, c := range cases {
-		var formData *starlark.Dict
-		if c.formData != nil {
-			formData = starlark.NewDict(len(c.formData))
-			for k, v := range c.formData {
-				if err := formData.SetKey(starlark.String(k), starlark.String(v)); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-
 		req := httptest.NewRequest("get", "https://example.com", nil)
-		err := setBody(req, c.rawBody, formData, c.formEncoding, c.jsonData)
+		err := setBody(req, c.rawBody, c.formData, c.formEncoding, c.jsonData)
 		if !(err == nil && c.err == "" || (err != nil && err.Error() == c.err)) { //nolint:staticcheck
 			t.Errorf("case %d error mismatch. expected: %s, got: %s", i, c.err, err)
 			continue
@@ -112,43 +95,42 @@ func TestSetBody(t *testing.T) {
 	}
 }
 
-func TestReqMethodUsesThreadLocalContextAndDefaultTimeout(t *testing.T) {
-	type ctxKey string
+func testCall(args ...any) *sdk.Call {
+	return &sdk.Call{Function: "get", Args: args, Session: sdk.NewSession("test")}
+}
 
-	var gotValue string
+func okResponse(req *http.Request, body io.ReadCloser) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     make(http.Header),
+		Body:       body,
+		Request:    req,
+	}
+}
+
+// The request runs on the session context (the response body may be read by
+// a later body() call, so the per-call context cannot own it), with the
+// default timeout applied.
+func TestRequestUsesSessionContextAndDefaultTimeout(t *testing.T) {
 	var deadline time.Time
 
-	plugin := &httpPlugin{
+	module := &httpModule{
 		client: &http.Client{
 			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				gotValue, _ = req.Context().Value(ctxKey("request_id")).(string)
 				var ok bool
 				deadline, ok = req.Context().Deadline()
 				if !ok {
 					t.Fatal("expected request deadline")
 				}
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Status:     "200 OK",
-					Header:     make(http.Header),
-					Body:       io.NopCloser(strings.NewReader("ok")),
-					Request:    req,
-				}, nil
+				return okResponse(req, io.NopCloser(strings.NewReader("ok"))), nil
 			}),
 		},
 	}
 
-	thread := &starlark.Thread{Name: "test"}
-	thread.SetLocal(types.TL_CONTEXT, context.WithValue(context.Background(), ctxKey("request_id"), "req-123"))
-	thread.SetLocal(types.TL_CURRENT_MODULE_FULL_PATH, "http.in")
-
-	_, err := plugin.reqMethod("get")(thread, nil, starlark.Tuple{starlark.String("https://example.com")}, nil)
+	_, err := module.request(context.Background(), testCall("https://example.com"), "get")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if gotValue != "req-123" {
-		t.Fatalf("expected thread-local context value, got %q", gotValue)
 	}
 
 	remaining := time.Until(deadline)
@@ -157,10 +139,10 @@ func TestReqMethodUsesThreadLocalContextAndDefaultTimeout(t *testing.T) {
 	}
 }
 
-func TestReqMethodUsesExplicitTimeout(t *testing.T) {
+func TestRequestUsesExplicitTimeout(t *testing.T) {
 	var deadline time.Time
 
-	plugin := &httpPlugin{
+	module := &httpModule{
 		client: &http.Client{
 			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				var ok bool
@@ -168,22 +150,14 @@ func TestReqMethodUsesExplicitTimeout(t *testing.T) {
 				if !ok {
 					t.Fatal("expected request deadline")
 				}
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Status:     "200 OK",
-					Header:     make(http.Header),
-					Body:       io.NopCloser(strings.NewReader("ok")),
-					Request:    req,
-				}, nil
+				return okResponse(req, io.NopCloser(strings.NewReader("ok"))), nil
 			}),
 		},
 	}
 
-	thread := &starlark.Thread{Name: "test"}
-	thread.SetLocal(types.TL_CURRENT_MODULE_FULL_PATH, "http.in")
-	kwargs := []starlark.Tuple{{starlark.String("timeout"), starlark.MakeInt(2)}}
-
-	_, err := plugin.reqMethod("get")(thread, nil, starlark.Tuple{starlark.String("https://example.com")}, kwargs)
+	call := testCall("https://example.com")
+	call.Kwargs = []sdk.Kwarg{{Name: "timeout", Value: int64(2)}}
+	_, err := module.request(context.Background(), call, "get")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,10 +168,10 @@ func TestReqMethodUsesExplicitTimeout(t *testing.T) {
 	}
 }
 
-func TestReqMethodCancelsContextOnDoError(t *testing.T) {
+func TestRequestCancelsContextOnDoError(t *testing.T) {
 	var reqCtx context.Context
 
-	plugin := &httpPlugin{
+	module := &httpModule{
 		client: &http.Client{
 			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				reqCtx = req.Context()
@@ -206,10 +180,7 @@ func TestReqMethodCancelsContextOnDoError(t *testing.T) {
 		},
 	}
 
-	thread := &starlark.Thread{Name: "test"}
-	thread.SetLocal(types.TL_CURRENT_MODULE_FULL_PATH, "http.in")
-
-	_, err := plugin.reqMethod("get")(thread, nil, starlark.Tuple{starlark.String("https://example.com")}, nil)
+	_, err := module.request(context.Background(), testCall("https://example.com"), "get")
 	if err == nil {
 		t.Fatal("expected request error")
 	}
@@ -221,108 +192,113 @@ func TestReqMethodCancelsContextOnDoError(t *testing.T) {
 	}
 }
 
-func TestReqMethodDeferredCleanupClosesResponseBody(t *testing.T) {
-	body := &contextAwareBody{data: []byte("ok")}
-	plugin := &httpPlugin{
+// The response body stays unread until a _read_body func ref call; body()
+// reads and closes it, and the data is cached for repeated calls.
+func TestRequestBodyReadLazily(t *testing.T) {
+	body := &trackedBody{data: []byte(`{"a": 1}`)}
+	module := &httpModule{
 		client: &http.Client{
 			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				body.ctx = req.Context()
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Status:     "200 OK",
-					Header:     make(http.Header),
-					Body:       body,
-					Request:    req,
-				}, nil
+				return okResponse(req, body), nil
 			}),
 		},
 	}
 
-	thread := &starlark.Thread{Name: "test"}
-	thread.SetLocal(types.TL_CURRENT_MODULE_FULL_PATH, "http.in")
-
-	_, err := plugin.reqMethod("get")(thread, nil, starlark.Tuple{starlark.String("https://example.com")}, nil)
+	call := testCall("https://example.com")
+	result, err := module.request(context.Background(), call, "get")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if body.closed {
-		t.Fatal("response body should remain open until deferred cleanup runs")
+		t.Fatal("expected response body to stay open until body() is called")
 	}
 
-	if err := action.RunDeferredCleanup(thread); err != nil {
-		t.Fatalf("unexpected deferred cleanup error: %v", err)
+	response, ok := result.(*sdk.Struct)
+	if !ok {
+		t.Fatalf("expected struct response, got %T", result)
+	}
+	if int64(200) != response.Fields["status_code"] {
+		t.Fatalf("unexpected status code: %v", response.Fields["status_code"])
 	}
 
+	bodyRef, ok := response.Fields["body"].(*sdk.FuncRef)
+	if !ok {
+		t.Fatalf("expected body func ref, got %T", response.Fields["body"])
+	}
+
+	readCall := &sdk.Call{Function: bodyRef.Function, Args: bodyRef.Args, Session: call.Session}
+	text, err := module.ReadBody(context.Background(), readCall)
+	if err != nil {
+		t.Fatalf("unexpected read error: %v", err)
+	}
+	if text != `{"a": 1}` {
+		t.Fatalf("unexpected body value: %v", text)
+	}
 	if !body.closed {
-		t.Fatal("expected deferred cleanup to close response body")
+		t.Fatal("expected body() to close the response body")
+	}
+
+	// Repeated reads use the cached data; json mode parses it
+	jsonRef := response.Fields["json"].(*sdk.FuncRef)
+	jsonCall := &sdk.Call{Function: jsonRef.Function, Args: jsonRef.Args, Session: call.Session}
+	parsedVal, err := module.ReadBody(context.Background(), jsonCall)
+	if err != nil {
+		t.Fatalf("unexpected json read error: %v", err)
+	}
+	parsed, ok := parsedVal.(map[string]any)
+	if !ok || parsed["a"] != float64(1) {
+		t.Fatalf("unexpected json value: %#v", parsedVal)
 	}
 }
 
-func TestReqMethodBodyReadClearsDeferredCleanup(t *testing.T) {
-	body := &contextAwareBody{data: []byte("ok")}
-	plugin := &httpPlugin{
+// An unread response body is closed by the session cleanup at request end.
+func TestRequestUnreadBodyClosedBySession(t *testing.T) {
+	body := &trackedBody{data: []byte("ok")}
+	module := &httpModule{
 		client: &http.Client{
 			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				body.ctx = req.Context()
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Status:     "200 OK",
-					Header:     make(http.Header),
-					Body:       body,
-					Request:    req,
-				}, nil
+				return okResponse(req, body), nil
 			}),
 		},
 	}
 
-	thread := &starlark.Thread{Name: "test"}
-	thread.SetLocal(types.TL_CURRENT_MODULE_FULL_PATH, "http.in")
+	call := testCall("https://example.com")
+	if _, err := module.request(context.Background(), call, "get"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if body.closed {
+		t.Fatal("expected body to stay open until session end")
+	}
+	if err := call.Session.End(context.Background()); err != nil {
+		t.Fatalf("unexpected session end error: %v", err)
+	}
+	if !body.closed {
+		t.Fatal("expected session end to close the response body")
+	}
+}
 
-	respValue, err := plugin.reqMethod("get")(thread, nil, starlark.Tuple{starlark.String("https://example.com")}, nil)
+// A body that is not valid JSON fails at response.json() call time, but the
+// request itself succeeds.
+func TestRequestJsonParseError(t *testing.T) {
+	module := &httpModule{
+		client: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return okResponse(req, io.NopCloser(strings.NewReader("not json"))), nil
+			}),
+		},
+	}
+
+	call := testCall("https://example.com")
+	result, err := module.request(context.Background(), call, "get")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	resp, ok := respValue.(*app.PluginResponse)
-	if !ok {
-		t.Fatalf("expected plugin response, got %T", respValue)
-	}
-
-	value, err := resp.Attr("value")
-	if err != nil {
-		t.Fatalf("unexpected value error: %v", err)
-	}
-
-	valueAttrs, ok := value.(starlark.HasAttrs)
-	if !ok {
-		t.Fatalf("expected starlark struct, got %T", value)
-	}
-
-	bodyFn, err := valueAttrs.Attr("body")
-	if err != nil {
-		t.Fatalf("unexpected body attr error: %v", err)
-	}
-
-	bodyCallable, ok := bodyFn.(starlark.Callable)
-	if !ok {
-		t.Fatalf("expected body callable, got %T", bodyFn)
-	}
-
-	bodyValue, err := starlark.Call(thread, bodyCallable, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected body read error: %v", err)
-	}
-
-	if got := string(bodyValue.(starlark.String)); got != "ok" {
-		t.Fatalf("expected body contents, got %q", got)
-	}
-
-	if err := action.RunDeferredCleanup(thread); err != nil {
-		t.Fatalf("unexpected deferred cleanup error: %v", err)
-	}
-
-	if !body.closed {
-		t.Fatal("expected body() to close the original response body")
+	response := result.(*sdk.Struct)
+	jsonRef := response.Fields["json"].(*sdk.FuncRef)
+	jsonCall := &sdk.Call{Function: jsonRef.Function, Args: jsonRef.Args, Session: call.Session}
+	if _, err := module.ReadBody(context.Background(), jsonCall); err == nil {
+		t.Fatal("expected json parse error for invalid JSON body")
 	}
 }

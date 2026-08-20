@@ -4,15 +4,15 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
 
 // Management operations are bucketed into resource categories for the
@@ -42,18 +42,17 @@ const statusErrExpr = `case when status = 'Success' or status = '' or status lik
 // events per UTC day (all event types, with error and management-operation
 // counts) and management operations per user, bucketed by resource category.
 // The aggregation runs as SQL group-bys so the handler never pages raw events
-func (c *openrunPlugin) AnalyticsSummary(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	days := starlark.MakeInt(30)
-	if err := starlark.UnpackArgs("analytics_summary", args, kwargs, "days?", &days); err != nil {
+func (c *openrunPlugin) AnalyticsSummary(ctx context.Context, call *sdk.Call) (any, error) {
+	daysVal := int64(30)
+	if err := sdk.UnpackArgs("analytics_summary", call, "days?", &daysVal); err != nil {
 		return nil, err
 	}
-	daysVal, _ := days.Int64()
 	if daysVal <= 0 || daysVal > 366 {
 		return nil, fmt.Errorf("days has to be between 1 and 366")
 	}
 
 	// Same gate as list_audit_events: audit:read covers the audit log
-	if err := c.server.enforceGlobalPerm(system.GetRequestContext(thread), types.PermissionAuditRead, ""); err != nil {
+	if err := c.server.enforceGlobalPerm(ctx, types.PermissionAuditRead, ""); err != nil {
 		return nil, err
 	}
 
@@ -170,7 +169,7 @@ func (c *openrunPlugin) AnalyticsSummary(thread *starlark.Thread, builtin *starl
 			"builder_ops": u.categories["builder_ops"],
 			"binding_ops": u.categories["binding_ops"],
 			"other_ops":   u.categories["other_ops"],
-			"last_active": time.Unix(0, u.lastActive).UTC().Format(time.RFC3339),
+			"last_active": time.Unix(0, u.lastActive).UTC(),
 		})
 	}
 	// Most active users first; user id as the stable tie break
@@ -181,7 +180,7 @@ func (c *openrunPlugin) AnalyticsSummary(thread *starlark.Thread, builtin *starl
 		return users[i]["user_id"].(string) < users[j]["user_id"].(string)
 	})
 
-	result, err := starlark_type.ConvertToStarlark(map[string]any{
+	result, err := structValue(map[string]any{
 		"start_date": startDay.Format("2006-01-02"),
 		"end_date":   now.Format("2006-01-02"),
 		"days":       daysVal,

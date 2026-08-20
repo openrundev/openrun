@@ -24,7 +24,7 @@ const (
 func initProviderCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	return &cli.Command{
 		Name:  "provider",
-		Usage: "Manage out-of-process binding providers",
+		Usage: "Manage out-of-process providers (binding and Starlark plugin providers)",
 		Subcommands: []*cli.Command{
 			providerInstallCommand(commonFlags, clientConfig),
 			providerUninstallCommand(commonFlags, clientConfig),
@@ -42,20 +42,27 @@ func providerInstallCommand(commonFlags []cli.Flag, clientConfig *types.ClientCo
 
 	return &cli.Command{
 		Name:      "install",
-		Usage:     "Install (or update) an out-of-process binding provider",
+		Usage:     "Install (or update) an out-of-process provider",
 		Flags:     flags,
 		ArgsUsage: "<provider_name>",
 		UsageText: `args: <provider_name>
 
+The provider name carries the provider type: "plugin/<name>" installs a
+Starlark plugin provider (modules loaded by apps as <module>.ex), a bare
+name or "binding/<name>" a service binding provider.
+
 The provider binary is downloaded (or copied), verified, registered in the
-metadata database and its service types become available for service create.
-Without --source-url, the binary is downloaded from the openrundev/bindings
-GitHub releases (or the configured bindings.release_url_template).
+metadata database and its capabilities become available: service types for
+service create, or Starlark modules for app loads. Without --source-url, the
+binary is downloaded from the type's release location (configurable with
+bindings.release_url_template / plugin_providers.release_url_template).
 
 Examples:
   openrun provider install sqlserver --version v0.1.0
   openrun provider install mongodb --source-url https://github.com/openrundev/bindings/releases/download/mongodb%2F{version}/openrun-binding-mongodb-{os}-{arch} --version v0.1.0
   openrun provider install sqlserver --source-url /tmp/openrun-binding-sqlserver
+  openrun provider install plugin/pdftool --version v0.1.0
+  openrun provider install plugin/store --source-url /tmp/openrun-plugin-store
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -77,8 +84,8 @@ Examples:
 				return err
 			}
 
-			printStdout(cCtx, "Provider %s %s installed, service types: %s\n",
-				response.Name, response.Version, strings.Join(response.ServiceTypes, ", "))
+			printStdout(cCtx, "Provider %s %s installed, %s: %s\n",
+				qualifiedProviderName(&response), response.Version, providerCapabilityLabel(&response), strings.Join(response.ServiceTypes, ", "))
 			return nil
 		},
 	}
@@ -91,7 +98,7 @@ func providerUninstallCommand(commonFlags []cli.Flag, clientConfig *types.Client
 
 	return &cli.Command{
 		Name:      "uninstall",
-		Usage:     "Uninstall an out-of-process binding provider",
+		Usage:     "Uninstall an out-of-process provider; the name carries the type, e.g. plugin/store",
 		Flags:     flags,
 		ArgsUsage: "<provider_name>",
 		Action: func(cCtx *cli.Context) error {
@@ -123,7 +130,7 @@ func providerListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 
 	return &cli.Command{
 		Name:  "list",
-		Usage: "List installed binding providers",
+		Usage: "List installed providers of all types",
 		Flags: flags,
 		Action: func(cCtx *cli.Context) error {
 			client := newHttpClient(clientConfig)
@@ -157,13 +164,30 @@ func printProviderList(cCtx *cli.Context, providers []types.BindingProvider, for
 		}
 	case FORMAT_CSV:
 		for _, p := range providers {
-			printStdout(cCtx, "%s,%s,%s\n", p.Name, p.Version, strings.Join(p.ServiceTypes, " "))
+			printStdout(cCtx, "%s,%s,%s,%s\n", p.Type, p.Name, p.Version, strings.Join(p.ServiceTypes, " "))
 		}
 	default:
-		formatStr := "%-20s %-15s %-30s %-s\n"
-		printStdout(cCtx, formatStr, "Name", "Version", "ServiceTypes", "SourceURL")
+		formatStr := "%-10s %-20s %-15s %-30s %-s\n"
+		printStdout(cCtx, formatStr, "Type", "Name", "Version", "Capabilities", "SourceURL")
 		for _, p := range providers {
-			printStdout(cCtx, formatStr, p.Name, p.Version, strings.Join(p.ServiceTypes, ", "), p.SourceURL)
+			printStdout(cCtx, formatStr, p.Type, p.Name, p.Version, strings.Join(p.ServiceTypes, ", "), p.SourceURL)
 		}
 	}
+}
+
+// qualifiedProviderName is the type-qualified display name; binding providers
+// stay bare for backward compatibility.
+func qualifiedProviderName(p *types.BindingProvider) string {
+	if p.Type == "" || p.Type == "binding" {
+		return p.Name
+	}
+	return p.Type + "/" + p.Name
+}
+
+// providerCapabilityLabel names what the provider serves, by type.
+func providerCapabilityLabel(p *types.BindingProvider) string {
+	if p.Type == "plugin" {
+		return "modules"
+	}
+	return "service types"
 }

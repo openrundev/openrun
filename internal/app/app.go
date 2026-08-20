@@ -104,6 +104,14 @@ type App struct {
 	funcMap       template.FuncMap
 	starlarkCache map[string]*starlarkCacheEntry
 
+	// extProcs holds this app's external plugin provider processes (one
+	// process per provider), launched lazily on the first external plugin call
+	extProcs *extPluginProcs
+
+	// localHosts holds this app's in-process SDK plugin provider hosts (one
+	// per provider), created lazily on the first local plugin call
+	localHosts *localPluginHosts
+
 	// App config that takes default values from toml config, overridden with app level metadata.
 	// It is important that this property is used instead of reading from app metadata config, so that toml
 	// config defaults are applied.
@@ -157,6 +165,8 @@ func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger
 		AppEntry:       appEntry,
 		systemConfig:   systemConfig,
 		starlarkCache:  map[string]*starlarkCacheEntry{},
+		extProcs:       newExtPluginProcs(),
+		localHosts:     newLocalPluginHosts(),
 		notifyClose:    notifyClose,
 		secretEvalFunc: secretEvalFunc,
 		appStyle:       &dev.AppStyle{},
@@ -224,6 +234,8 @@ func (a *App) Initialize(ctx context.Context, dryRun types.DryRun) error {
 func (a *App) Close() error {
 	a.initMutex.Lock()
 	defer a.initMutex.Unlock()
+	a.extProcs.shutdown()
+	a.localHosts.shutdown()
 	if a.watcher != nil {
 		if err := a.watcher.Close(); err != nil {
 			return err
@@ -533,6 +545,23 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 
 	a.initialized = true
 	a.updateActiveContainerNameLocked()
+
+	// Retire plugin providers (external processes and in-process hosts) only
+	// now, after the new app state is fully published, so the next plugin
+	// call recreates them from the reloaded schema and settings. Retiring
+	// earlier would not stick: reload runs concurrently with requests (which
+	// do not take initMutex), so a call mid-reload could relaunch a provider
+	// from intermediate state and that provider would survive the reload. The
+	// launch path and this stop serialize on the manager's mutex, so every
+	// provider launched before this point is retired here, and any launch
+	// after it reads only the published state. Retired providers drain
+	// gracefully: requests in flight during the reload finish on the old
+	// provider, which is stopped when its last active session ends. On a
+	// reload failure (the early returns above) existing providers
+	// intentionally keep running: the app continues serving from the
+	// previous state.
+	a.extProcs.stopAll()
+	a.localHosts.stopAll()
 
 	if a.IsDev {
 		a.notifyClients()

@@ -46,6 +46,22 @@ disable_install = false
 # [bindings.dev_providers.mongodb]
 # path = "/path/to/openrun-binding-mongodb"
 
+# Out-of-process Starlark plugin providers, serving modules apps load with
+# the .ex suffix, e.g. load("myplugin.ex", "myplugin"). Installed with
+# `openrun provider install plugin/<name>` (registered in the metadata
+# database) or declared here for config-managed deployments:
+# [plugin_providers.install]
+# pdftool = "v0.1.0"
+# myplugin = "v0.1.0@sha256:8f4e..."
+# On Kubernetes, provider binaries can instead be pre-placed by init
+# containers (from per-provider OCI images) into a shared volume:
+# [plugin_providers]
+# preinstalled_dir = "/var/lib/openrun/preinstalled-plugins"
+# Development override, registers a provider executable directly from a local
+# path (no checksum verification):
+# [plugin_providers.dev_providers.myplugin]
+# path = "/path/to/openrun-plugin-myplugin"
+
 # HTTPS port binding related Config
 [https]
 host = "0.0.0.0"                               # bind to all interfaces (if port is >= 0)

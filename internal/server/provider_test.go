@@ -27,20 +27,20 @@ func TestProviderSourceURL(t *testing.T) {
 	s := &Server{staticConfig: &types.ServerConfig{}}
 
 	// Explicit source url wins
-	url, err := s.providerSourceURL(&types.ProviderInstallRequest{Name: "sqlserver", SourceURL: "/tmp/openrun-binding-sqlserver"})
+	url, err := s.providerSourceURL(providerKinds["binding"], &types.ProviderInstallRequest{Name: "sqlserver", SourceURL: "/tmp/openrun-binding-sqlserver"})
 	if err != nil || url != "/tmp/openrun-binding-sqlserver" {
 		t.Fatalf("url = %q err = %v", url, err)
 	}
 
 	// Defaulted source requires a version
-	if _, err := s.providerSourceURL(&types.ProviderInstallRequest{Name: "sqlserver"}); err == nil ||
+	if _, err := s.providerSourceURL(providerKinds["binding"], &types.ProviderInstallRequest{Name: "sqlserver"}); err == nil ||
 		!strings.Contains(err.Error(), "either source_url or version is required") {
 		t.Fatalf("expected version-required error, got %v", err)
 	}
 
 	// Default template with {provider} substituted; {version}/{os}/{arch} kept
 	// for per-fetch expansion
-	url, err = s.providerSourceURL(&types.ProviderInstallRequest{Name: "sqlserver", Version: "v0.1.0"})
+	url, err = s.providerSourceURL(providerKinds["binding"], &types.ProviderInstallRequest{Name: "sqlserver", Version: "v0.1.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestProviderSourceURL(t *testing.T) {
 
 	// Config template override
 	s.staticConfig.Bindings.ReleaseURLTemplate = "https://mirror.internal/{provider}/{version}/{os}-{arch}"
-	url, err = s.providerSourceURL(&types.ProviderInstallRequest{Name: "mongodb", Version: "v0.2.0"})
+	url, err = s.providerSourceURL(providerKinds["binding"], &types.ProviderInstallRequest{Name: "mongodb", Version: "v0.2.0"})
 	if err != nil || url != "https://mirror.internal/mongodb/{version}/{os}-{arch}" {
 		t.Fatalf("mirror url = %q err = %v", url, err)
 	}
@@ -72,21 +72,21 @@ func TestExpandProviderSourceURL(t *testing.T) {
 
 func TestProviderModifyError(t *testing.T) {
 	s := &Server{staticConfig: &types.ServerConfig{}}
-	if err := s.providerModifyError("sqlserver", "install"); err != nil {
+	if err := s.providerModifyError(providerKinds["binding"], "sqlserver", "install"); err != nil {
 		t.Fatalf("expected install allowed, got %v", err)
 	}
 
 	s.staticConfig.Bindings.Install = map[string]string{"sqlserver": "v0.1.0"}
-	if err := s.providerModifyError("sqlserver", "install"); err == nil ||
+	if err := s.providerModifyError(providerKinds["binding"], "sqlserver", "install"); err == nil ||
 		!strings.Contains(err.Error(), "[bindings.install]") {
 		t.Fatalf("expected config-managed error, got %v", err)
 	}
-	if err := s.providerModifyError("mongodb", "install"); err != nil {
+	if err := s.providerModifyError(providerKinds["binding"], "mongodb", "install"); err != nil {
 		t.Fatalf("expected non-config-managed provider allowed, got %v", err)
 	}
 
 	s.staticConfig.Bindings.DisableInstall = true
-	if err := s.providerModifyError("mongodb", "uninstall"); err == nil ||
+	if err := s.providerModifyError(providerKinds["binding"], "mongodb", "uninstall"); err == nil ||
 		!strings.Contains(err.Error(), "bindings.disable_install") {
 		t.Fatalf("expected disable_install error, got %v", err)
 	}

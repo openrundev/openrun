@@ -431,8 +431,8 @@ cleanup() {
 
   remove_session_containers
 
-  force_rm metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp sqlite_tmp verifyapp_tmp versionstest disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
-  force_rm config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp todo_flaskapp todo_rbac.json streamlitdev stdev_started.txt
+  force_rm metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp sqlite_tmp verifyapp_tmp kube_plugins versionstest disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
+  force_rm config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp todo_flaskapp todo_rbac.json streamlitdev stdev_started.txt plugin_ext storeex_app/config_gen.lock
 
   if [[ -n "$POSTGRES_TEST_CONTAINER_ID" ]]; then
     $CONTAINER_TOOL rm -f "$POSTGRES_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
@@ -996,7 +996,21 @@ git_remote_check_interval_secs = 600
 
 [client]
 default_format = "table"
+
+# Out-of-process Starlark plugin provider (store.ex), exercised by
+# commander/test_plugin_ext.yaml. The binary is built below before the
+# server starts.
+[plugin_providers.dev_providers.store]
+path = "./plugin_ext/openrun-plugin-store"
+
+[plugin."store.ex"]
+db_connection = "sqlite:./plugin_ext/openrun_storeex.db"
 EOF
+
+  # Build the store plugin provider used by commander/test_plugin_ext.yaml;
+  # the server registers it at startup from plugin_providers.dev_providers
+  rm -rf ./plugin_ext && mkdir -p ./plugin_ext
+  go build -o ./plugin_ext/openrun-plugin-store ../internal/app/store/storeprovider
 
   export TESTENV=abc
   export c1c2_c3=xyz
@@ -1549,6 +1563,26 @@ EOF
   KUBE_BINDING_ARCHIVE="$KUBE_BINDINGS_DIR/openrun-binding-fixture.tar"
   $CONTAINER_TOOL save -o "$KUBE_BINDING_ARCHIVE" "$KUBE_BINDING_IMAGE"
   go run ./registry_push --insecure --tar "$KUBE_BINDING_ARCHIVE" "$KUBE_BINDING_IMAGE"
+
+  # OCI plugin provider distribution test setup, mirroring the bindings setup
+  # above: the store plugin provider is built once for the host (registered
+  # through plugin_providers.preinstalled_dir) and once for the cluster
+  # platform, packaged as a FROM scratch image and pushed to the test registry.
+  KUBE_PLUGINS_DIR="$(pwd)/kube_plugins"
+  rm -rf "$KUBE_PLUGINS_DIR"
+  mkdir -p "$KUBE_PLUGINS_DIR/preinstalled"
+  go build -o "$KUBE_PLUGINS_DIR/preinstalled/openrun-plugin-store" ../internal/app/store/storeprovider
+  (cd .. && CGO_ENABLED=0 GOOS=linux GOARCH="$KUBE_NODE_ARCH" go build -o "$KUBE_PLUGINS_DIR/openrun-plugin-store-linux" ./internal/app/store/storeprovider)
+  cat <<EOF > "$KUBE_PLUGINS_DIR/Dockerfile"
+FROM scratch
+COPY openrun-plugin-store-linux /openrun-plugin-store
+ENTRYPOINT ["/openrun-plugin-store"]
+EOF
+  export KUBE_PLUGIN_IMAGE="$KUBE_REGISTRY_URL/openrun-plugin-store:cli-test"
+  $CONTAINER_TOOL build --platform "linux/$KUBE_NODE_ARCH" -q -t "$KUBE_PLUGIN_IMAGE" "$KUBE_PLUGINS_DIR"
+  KUBE_PLUGIN_ARCHIVE="$KUBE_PLUGINS_DIR/openrun-plugin-store.tar"
+  $CONTAINER_TOOL save -o "$KUBE_PLUGIN_ARCHIVE" "$KUBE_PLUGIN_IMAGE"
+  go run ./registry_push --insecure --tar "$KUBE_PLUGIN_ARCHIVE" "$KUBE_PLUGIN_IMAGE"
   export KUBE_TEST_NAMESPACE
 
   cat <<EOF > config_k8s.toml
@@ -1568,6 +1602,11 @@ insecure = true
 [bindings]
 preinstalled_dir = "$KUBE_BINDINGS_DIR/preinstalled"
 disable_install = true
+[plugin_providers]
+preinstalled_dir = "$KUBE_PLUGINS_DIR/preinstalled"
+disable_install = true
+[plugin."store.ex"]
+db_connection = "sqlite:$KUBE_PLUGINS_DIR/openrun_storeex_k8s.db"
 [app_config]
 container.health_attempts_after_startup = 20
 container.health_timeout_secs = 1

@@ -9,13 +9,11 @@ import (
 	"sync"
 
 	"github.com/openrundev/openrun/internal/app/apptype"
-	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/types"
 )
 
 type AppPlugins struct {
 	sync.Mutex
-	plugins map[string]any
 
 	app          *App
 	pluginConfig map[string]types.PluginSettings // pluginName -> accountName -> PluginSettings, from openrun.toml
@@ -30,56 +28,34 @@ func NewAppPlugins(app *App, pluginConfig map[string]types.PluginSettings, appAc
 
 	return &AppPlugins{
 		app:          app,
-		plugins:      make(map[string]any),
 		pluginConfig: pluginConfig,
 		accountMap:   accountMap,
 	}
 }
 
-func (p *AppPlugins) GetPlugin(pluginInfo *plugin.PluginInfo, accountName string) (any, error) {
+// GetPluginSettings resolves the plugin settings for a plugin path and
+// account, applying the same app account-link resolution as GetPlugin. Used
+// for external plugin providers, whose instances live in the provider
+// process instead of the AppPlugins instance cache.
+func (p *AppPlugins) GetPluginSettings(pluginPath, accountName string) types.PluginSettings {
 	p.Lock()
 	defer p.Unlock()
 
-	appPlugin, ok := p.plugins[pluginInfo.PluginPath]
-	if ok {
-		// Already initialized, use that
-		return appPlugin, nil
-	}
-
-	// If account name is specified, use that to lookup the account map
-	accountLookupName := pluginInfo.PluginPath
+	accountLookupName := pluginPath
 	if accountName != "" {
-		accountLookupName = fmt.Sprintf("%s%s%s", pluginInfo.PluginPath, apptype.ACCOUNT_SEPARATOR, accountName) // store.in#myaccount
+		accountLookupName = fmt.Sprintf("%s%s%s", pluginPath, apptype.ACCOUNT_SEPARATOR, accountName)
 	}
 
-	pluginAccount := pluginInfo.PluginPath
-	_, ok = p.accountMap[accountLookupName]
-	if ok {
-		pluginAccount = p.accountMap[accountLookupName]
-		// If it is just account name, make it full plugin path
+	pluginAccount := pluginPath
+	if linked, ok := p.accountMap[accountLookupName]; ok {
+		pluginAccount = linked
 		if !strings.Contains(pluginAccount, apptype.ACCOUNT_SEPARATOR) {
-			pluginAccount = fmt.Sprintf("%s%s%s", pluginInfo.PluginPath, apptype.ACCOUNT_SEPARATOR, pluginAccount)
+			pluginAccount = fmt.Sprintf("%s%s%s", pluginPath, apptype.ACCOUNT_SEPARATOR, pluginAccount)
 		}
 	}
 
-	pluginConfig := types.PluginSettings{}
-	if _, ok := p.pluginConfig[pluginAccount]; ok {
-		pluginConfig = p.pluginConfig[pluginAccount]
+	if settings, ok := p.pluginConfig[pluginAccount]; ok {
+		return settings
 	}
-
-	pluginContext := &types.PluginContext{
-		Logger:    p.app.Logger,
-		AppId:     p.app.Id,
-		StoreInfo: p.app.storeInfo,
-		Config:    pluginConfig,
-		AppConfig: p.app.AppConfig,
-		AppPath:   p.app.Path,
-	}
-	appPlugin, err := pluginInfo.Builder(pluginContext)
-	if err != nil {
-		return nil, fmt.Errorf("error creating plugin %s: %w", pluginInfo.FuncName, err)
-	}
-
-	p.plugins[pluginInfo.PluginPath] = appPlugin
-	return appPlugin, nil
+	return types.PluginSettings{}
 }

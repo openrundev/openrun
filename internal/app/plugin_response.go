@@ -39,6 +39,20 @@ func NewErrorCodeResponse(errorCode int, err error, value any) *PluginResponse {
 	}
 }
 
+// NewErrorCodeResponseThread is NewErrorCodeResponse with the thread
+// attached, so an explicit error check by the app (accessing .error or
+// truth-testing the response) clears the thread-local failure state, the way
+// NewErrorResponse does. Without the thread, a handled coded error would
+// still fail the next plugin call or the handler return.
+func NewErrorCodeResponseThread(errorCode int, err error, value any, thread *starlark.Thread) *PluginResponse {
+	return &PluginResponse{
+		errorCode: errorCode,
+		err:       err,
+		value:     value,
+		thread:    thread,
+	}
+}
+
 func NewResponse(value any) *PluginResponse {
 	return &PluginResponse{
 		value: value,

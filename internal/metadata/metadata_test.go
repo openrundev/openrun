@@ -646,13 +646,25 @@ func TestMetadataUpgradeAddsLoadIndexes(t *testing.T) {
 		_, err := m.db.Exec(`drop index ` + name)
 		testutil.AssertNoError(t, err)
 	}
+	// Also revert the version 22 provider columns, so the replayed migrations
+	// (which start below version 21) can re-apply them
+	for _, column := range []string{"provider_type", "manifest"} {
+		_, err := m.db.Exec(`alter table binding_providers drop column ` + column)
+		testutil.AssertNoError(t, err)
+	}
 	_, err := m.db.Exec(`update version set version=20`)
 	testutil.AssertNoError(t, err)
 	testutil.AssertNoError(t, m.VersionUpgrade(m.config))
 
 	var version int
 	testutil.AssertNoError(t, m.db.QueryRow(`select version from version`).Scan(&version))
-	testutil.AssertEqualsInt(t, "db version", 21, version)
+	testutil.AssertEqualsInt(t, "db version", 22, version)
+
+	// The provider registry columns from version 22 are back
+	var columnCount int
+	testutil.AssertNoError(t, m.db.QueryRow(
+		`select count(*) from pragma_table_info('binding_providers') where name in ('provider_type', 'manifest')`).Scan(&columnCount))
+	testutil.AssertEqualsInt(t, "provider columns", 2, columnCount)
 
 	indexDefinitions := map[string]string{
 		"idx_keystore_delete_at":        "where delete_at is not null",

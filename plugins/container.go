@@ -5,6 +5,7 @@ package plugins
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -12,100 +13,112 @@ import (
 
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/apptype"
-	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
 
 func init() {
-	h := &containerPlugin{}
-	pluginFuncs := []plugin.PluginFunc{
-		app.CreatePluginApi(h.Config, app.READ), // config API
-		app.CreatePluginApi(h.Run, app.READ_WRITE),
-		app.CreatePluginConstant("URL", starlark.String(apptype.CONTAINER_URL)),
-		app.CreatePluginConstant("AUTO", starlark.String(types.CONTAINER_SOURCE_AUTO)),
-		app.CreatePluginConstant("NIXPACKS", starlark.String(types.CONTAINER_SOURCE_NIXPACKS)),
-		app.CreatePluginConstant("IMAGE_PREFIX", starlark.String(types.CONTAINER_SOURCE_IMAGE_PREFIX)),
-		app.CreatePluginConstant("COMMAND", starlark.String(types.CONTAINER_LIFETIME_COMMAND)),
+	app.RegisterLocalProvider("container", &sdk.ServeConfig{
+		ProviderVersion: "builtin",
+		Modules: map[string]sdk.ModuleDef{
+			"container": {
+				Builder: NewContainerModule,
+				Functions: []sdk.FuncDef{
+					{Name: "config", Type: sdk.READ, Method: "Config"}, // config API
+					{Name: "run", Type: sdk.WRITE, Method: "Run"},
+				},
+				Constants: map[string]any{
+					"URL":          apptype.CONTAINER_URL,
+					"AUTO":         types.CONTAINER_SOURCE_AUTO,
+					"NIXPACKS":     types.CONTAINER_SOURCE_NIXPACKS,
+					"IMAGE_PREFIX": types.CONTAINER_SOURCE_IMAGE_PREFIX,
+					"COMMAND":      types.CONTAINER_LIFETIME_COMMAND,
+				},
+			},
+		},
+	}, app.LocalProviderOptions{})
+}
+
+type containerModule struct{}
+
+func NewContainerModule() sdk.Module {
+	return &containerModule{}
+}
+
+func (c *containerModule) InitModule(ctx context.Context, init sdk.ModuleInit) error {
+	return nil
+}
+
+func (c *containerModule) Close(ctx context.Context) error {
+	return nil
+}
+
+// Run executes a command inside the app's container. It needs the request's
+// container handler from the host process, so the container module is
+// host-bound: it only works compiled into the OpenRun binary.
+func (c *containerModule) Run(ctx context.Context, call *sdk.Call) (any, error) {
+	if call.Host == nil {
+		return nil, errors.New("container.run requires the compiled-in container plugin")
 	}
-	app.RegisterPlugin("container", NewContainerPlugin, pluginFuncs)
-}
-
-type containerPlugin struct {
-	pluginContext *types.PluginContext
-}
-
-func NewContainerPlugin(pluginContext *types.PluginContext) (any, error) {
-	return &containerPlugin{pluginContext: pluginContext}, nil
-}
-
-func (c *containerPlugin) Run(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	ch := thread.Local(types.TL_CONTAINER_HANDLER)
+	ch := call.Host.Value(types.TL_CONTAINER_HANDLER)
 	if ch == nil {
-		panic(errors.New("container config not initialized"))
+		return nil, errors.New("container config not initialized")
 	}
 	handler, ok := ch.(*app.ContainerHandler)
 	if !ok {
 		return nil, fmt.Errorf("expected container manager, got %T", ch)
 	}
-	return execCommand(handler, thread, builtin, args, kwargs)
+	return execCommand(ctx, call, handler)
 }
 
-func (c *containerPlugin) Config(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var src, lifetime, scheme, health, buildDir starlark.String
-	var port starlark.Int
-	var cargs, devSettings *starlark.Dict
-	var volumes *starlark.List
-	if err := starlark.UnpackArgs("config", args, kwargs, "src?", &src, "port?", &port, "scheme?", &scheme,
-		"health?", &health, "lifetime?", &lifetime, "build_dir?", &buildDir, "volumes?", &volumes, "cargs", &cargs,
-		"dev_settings?", &devSettings); err != nil {
+func (c *containerModule) Config(ctx context.Context, call *sdk.Call) (any, error) {
+	var src, lifetime, scheme, health, buildDir string
+	var port int64
+	var cargs, devSettings map[string]any
+	var volumes []string
+	if err := sdk.UnpackArgs("config", call, "src?", &src, "port?", &port, "scheme?", &scheme,
+		"health?", &health, "lifetime?", &lifetime, "build_dir?", &buildDir, "volumes?", &volumes,
+		"cargs?", &cargs, "dev_settings?", &devSettings); err != nil {
 		return nil, err
 	}
 
-	if cargs == nil {
-		cargs = starlark.NewDict(0)
-	}
-	portInt, ok := port.Int64()
-	if !ok || portInt < 0 {
+	if port < 0 {
 		return nil, fmt.Errorf("port must be an integer higher than or equal to zero")
 	}
 
+	if cargs == nil {
+		cargs = map[string]any{}
+	}
 	if devSettings == nil {
-		devSettings = starlark.NewDict(0)
+		devSettings = map[string]any{}
 	} else {
 		if err := validateDevSettings(devSettings); err != nil {
 			return nil, err
 		}
 	}
+	if volumes == nil {
+		volumes = []string{}
+	}
 
-	volumes = cmp.Or(volumes, starlark.NewList([]starlark.Value{}))
-
-	fields := starlark.StringDict{
-		"source":       starlark.String(cmp.Or(string(src), "auto")),
-		"lifetime":     starlark.String(cmp.Or(string(lifetime), "app")),
+	return &sdk.Struct{TypeName: "container_config", Fields: map[string]any{
+		"source":       cmp.Or(src, "auto"),
+		"lifetime":     cmp.Or(lifetime, "app"),
 		"port":         port,
-		"scheme":       starlark.String(cmp.Or(string(scheme), "http")),
-		"health":       starlark.String(cmp.Or(string(health), "/")),
+		"scheme":       cmp.Or(scheme, "http"),
+		"health":       cmp.Or(health, "/"),
 		"build_dir":    buildDir,
 		"volumes":      volumes,
 		"cargs":        cargs,
 		"dev_settings": devSettings,
-	}
-
-	return starlarkstruct.FromStringDict(starlark.String("container_config"), fields), nil
+	}}, nil
 }
 
 // validateDevSettings checks the dev_settings dict keys at config eval time so
 // that typos fail the app load with a clear error instead of being ignored.
-func validateDevSettings(devSettings *starlark.Dict) error {
-	for _, k := range devSettings.Keys() {
-		keyStr, ok := k.(starlark.String)
-		if !ok {
-			return fmt.Errorf("dev_settings keys must be strings, got %s", k.Type())
-		}
-		if !slices.Contains(types.DevSettingsKeys, string(keyStr)) {
-			return fmt.Errorf("invalid dev_settings key %q, allowed keys are %s", string(keyStr), strings.Join(types.DevSettingsKeys, ", "))
+func validateDevSettings(devSettings map[string]any) error {
+	for key := range devSettings {
+		if !slices.Contains(types.DevSettingsKeys, key) {
+			return fmt.Errorf("invalid dev_settings key %q, allowed keys are %s", key, strings.Join(types.DevSettingsKeys, ", "))
 		}
 	}
 	return nil

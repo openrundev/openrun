@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,17 +15,23 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
+	"github.com/segmentio/ksuid"
 	"golang.org/x/sync/errgroup"
 )
 
 const (
 	DEFAULT_FILE_LIMIT = 10_000
 	MAX_FILE_LIMIT     = 100_000
+
+	// FS_FILE_ACCESS_SETTING carries the allowed directory list into the fs
+	// module's settings; the compiled-in registration injects it from the
+	// app config (app_config.fs.file_access)
+	FS_FILE_ACCESS_SETTING = "file_access"
 )
 
 var runtimeGOOS = runtime.GOOS
@@ -37,31 +44,88 @@ const (
 )
 
 func initFS() {
-	h := &fsPlugin{}
-	pluginFuncs := []plugin.PluginFunc{
-		CreatePluginApi(h.Abs, READ),
-		CreatePluginApi(h.List, READ),
-		CreatePluginApi(h.Find, READ),
-		CreatePluginApiName(h.ServeTmpFile, READ, "serve_tmp_file"),
-		CreatePluginConstant(strings.ToUpper(string(UserAccess)), starlark.String(UserAccess)),
-		CreatePluginConstant(strings.ToUpper(string(AppAccess)), starlark.String(AppAccess)),
-	}
-	RegisterPlugin("fs", NewFSPlugin, pluginFuncs)
+	RegisterLocalProvider("fs", &sdk.ServeConfig{
+		ProviderVersion: "builtin",
+		Modules: map[string]sdk.ModuleDef{
+			"fs": {
+				Builder: NewFSModule,
+				Functions: []sdk.FuncDef{
+					{Name: "abs", Type: sdk.READ, Method: "Abs"},
+					{Name: "list", Type: sdk.READ, Method: "List"},
+					{Name: "find", Type: sdk.READ, Method: "Find"},
+					{Name: "serve_tmp_file", Type: sdk.READ, Method: "ServeTmpFile"},
+				},
+				Constants: map[string]any{
+					strings.ToUpper(string(UserAccess)): string(UserAccess),
+					strings.ToUpper(string(AppAccess)):  string(AppAccess),
+				},
+			},
+		},
+	}, LocalProviderOptions{
+		SettingsHook: func(a *App, module string, settings map[string]any) map[string]any {
+			// The allowed directory list is app config, not plugin settings
+			out := make(map[string]any, len(settings)+1)
+			maps.Copy(out, settings)
+			out[FS_FILE_ACCESS_SETTING] = a.AppConfig.FS.FileAccess
+			return out
+		},
+	})
 }
 
-type fsPlugin struct {
+type fsModule struct {
 	accessAllowed []string
-	pluginContext *types.PluginContext
+	settings      map[string]any
+	appId         string
+	appPath       string
+	logger        *types.Logger
 }
 
-func NewFSPlugin(pluginContext *types.PluginContext) (any, error) {
-	accessAllowed, err := resolveDirs(pluginContext.AppConfig.FS.FileAccess)
+func NewFSModule() sdk.Module {
+	return &fsModule{}
+}
+
+func (f *fsModule) InitModule(ctx context.Context, init sdk.ModuleInit) error {
+	fileAccess, err := stringListSetting(init.Settings[FS_FILE_ACCESS_SETTING])
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("invalid %s setting: %w", FS_FILE_ACCESS_SETTING, err)
 	}
-	return &fsPlugin{accessAllowed: accessAllowed,
-		pluginContext: pluginContext,
-	}, nil
+	accessAllowed, err := resolveDirs(fileAccess)
+	if err != nil {
+		return err
+	}
+	f.accessAllowed = accessAllowed
+	f.settings = init.Settings
+	f.appId = init.AppId
+	f.appPath = init.AppPath
+	f.logger = &types.Logger{Logger: init.Logger.Logger}
+	return nil
+}
+
+func (f *fsModule) Close(ctx context.Context) error {
+	return nil
+}
+
+// stringListSetting accepts both the in-process shape ([]string) and the
+// decoded wire shape ([]any of string) for a settings list.
+func stringListSetting(v any) ([]string, error) {
+	switch x := v.(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		return x, nil
+	case []any:
+		out := make([]string, len(x))
+		for i, item := range x {
+			s, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("expected string, got %T", item)
+			}
+			out[i] = s
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("expected list of strings, got %T", v)
+	}
 }
 
 func resolveDirs(allowed []string) ([]string, error) {
@@ -96,7 +160,7 @@ func resolveDirs(allowed []string) ([]string, error) {
 	return ret, nil
 }
 
-func (f *fsPlugin) checkAccess(filePath string) (bool, error) {
+func (f *fsModule) checkAccess(filePath string) (bool, error) {
 	realPath, err := filepath.EvalSymlinks(filePath)
 	if err != nil {
 		return false, fmt.Errorf("failed to resolve path symlinks: %w", err)
@@ -120,71 +184,124 @@ func (f *fsPlugin) checkAccess(filePath string) (bool, error) {
 	return false, nil
 }
 
-func (f *fsPlugin) Abs(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var path starlark.String
-	if err := starlark.UnpackArgs("abs", args, kwargs, "path", &path); err != nil {
+func (f *fsModule) Abs(ctx context.Context, call *sdk.Call) (any, error) {
+	var path string
+	if err := sdk.UnpackArgs("abs", call, "path", &path); err != nil {
 		return nil, err
 	}
 
-	pathStr := string(path)
-	ret, err := filepath.Abs(pathStr)
-	if err != nil {
-		return nil, err
-	}
-
-	return NewResponse(ret), nil
+	return filepath.Abs(path)
 }
 
-func (f *fsPlugin) List(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var path starlark.String
-	var recursiveSize starlark.Bool
-	var ignoreError starlark.Bool
-	if err := starlark.UnpackArgs("list", args, kwargs, "path", &path, "recursive_size?", &recursiveSize, "ignore_errors", &ignoreError); err != nil {
+func (f *fsModule) List(ctx context.Context, call *sdk.Call) (any, error) {
+	var path string
+	var recursiveSize, ignoreError bool
+	if err := sdk.UnpackArgs("list", call, "path", &path, "recursive_size?", &recursiveSize, "ignore_errors?", &ignoreError); err != nil {
 		return nil, err
 	}
 
-	pathStr := string(path)
-	ctx := GetContext(thread)
-	ret, err := listDir(ctx, f.pluginContext.Logger, pathStr, bool(recursiveSize), bool(ignoreError))
-	if err != nil {
-		return nil, err
-	}
-	return NewResponse(ret), nil
+	return listDir(ctx, f.logger, path, recursiveSize, ignoreError)
 }
 
-func (f *fsPlugin) Find(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var path, nameGlob starlark.String
-	var minSize, limit starlark.Int
-	var ignoreError starlark.Bool
+func (f *fsModule) Find(ctx context.Context, call *sdk.Call) (any, error) {
+	var path, nameGlob string
+	var minSize, limit int64
+	var ignoreError bool
 
-	if err := starlark.UnpackArgs("find", args, kwargs, "path", &path, "name?", &nameGlob, "limit?", &limit, "min_size?", &minSize, "ignore_errors", &ignoreError); err != nil {
+	if err := sdk.UnpackArgs("find", call, "path", &path, "name?", &nameGlob, "limit?", &limit, "min_size?", &minSize, "ignore_errors?", &ignoreError); err != nil {
 		return nil, err
 	}
 
-	minSizeInt, ok := minSize.Int64()
-	if !ok {
-		return nil, fmt.Errorf("min_size must be an integer")
+	if limit > MAX_FILE_LIMIT {
+		return nil, fmt.Errorf("file limit %d exceeds max limit %d", limit, MAX_FILE_LIMIT)
+	}
+	if limit <= 0 {
+		limit = DEFAULT_FILE_LIMIT
 	}
 
-	limitInt, ok := limit.Int64()
-	if !ok {
-		return nil, fmt.Errorf("limit must be an integer")
+	return find(ctx, f.logger, path, nameGlob, limit, minSize, ignoreError)
+}
+
+// ServeTmpFile registers a file on the server's filesystem for download by
+// the app's users, returning its id, download url, and name.
+func (f *fsModule) ServeTmpFile(ctx context.Context, call *sdk.Call) (any, error) {
+	var pathVal, fileName string
+	visibility := string(UserAccess)
+	mimeType := "application/octet-stream"
+	expiryMinutes := int64(60)
+	singleAccess := true
+
+	if err := sdk.UnpackArgs("serve_tmp_file", call, "path", &pathVal, "name?", &fileName, "visibility?", &visibility,
+		"mime_type?", &mimeType, "expiry_minutes?", &expiryMinutes, "single_access?", &singleAccess); err != nil {
+		return nil, err
 	}
 
-	if limitInt > MAX_FILE_LIMIT {
-		return nil, fmt.Errorf("file limit %d exceeds max limit %d", limitInt, MAX_FILE_LIMIT)
-	}
-	if limitInt <= 0 {
-		limitInt = DEFAULT_FILE_LIMIT
-	}
-
-	ctx := GetContext(thread)
-	ret, err := find(ctx, f.pluginContext.Logger, string(path), string(nameGlob), limitInt, minSizeInt, bool(ignoreError))
+	pathStr, err := filepath.Abs(pathVal)
 	if err != nil {
 		return nil, err
 	}
 
-	return NewResponse(ret), nil
+	ok, err := f.checkAccess(pathStr)
+	if err != nil {
+		return nil, fmt.Errorf("error during access check for %s: %w", pathStr, err)
+	}
+	if !ok {
+		return nil, fmt.Errorf("file access denied for %s", pathStr)
+	}
+
+	connectString, err := system.GetConnectString(&types.PluginContext{Config: f.settings})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := InitFileStore(connectString); err != nil {
+		return nil, err
+	}
+
+	createTime := time.Now()
+	expireAt := createTime.Add(time.Duration(expiryMinutes) * time.Minute)
+	if expiryMinutes <= 0 {
+		expireAt = time.Unix(0, int64(^uint64(0)>>1))
+	}
+
+	id, err := ksuid.NewRandom()
+	if err != nil {
+		return nil, err
+	}
+
+	if fileName == "" {
+		fileName = filepath.Base(pathStr)
+	}
+
+	userFile := &types.UserFile{
+		Id:           "usr_file_" + id.String(),
+		AppId:        f.appId,
+		FilePath:     "file://" + pathStr,
+		FileName:     fileName,
+		MimeType:     mimeType,
+		CreateTime:   createTime,
+		ExpireAt:     expireAt,
+		CreatedBy:    call.Thread.UserId,
+		SingleAccess: singleAccess,
+		Visibility:   visibility,
+		Metadata:     make(map[string]any),
+	}
+
+	if err := AddUserFile(ctx, userFile); err != nil {
+		return nil, err
+	}
+
+	appPath := f.appPath
+	if appPath == "/" {
+		appPath = ""
+	}
+	downloadUrl := fmt.Sprintf("%s%s/file/%s", appPath, types.APP_INTERNAL_URL_PREFIX, userFile.Id)
+
+	return map[string]string{
+		"id":   userFile.Id,
+		"url":  downloadUrl,
+		"name": userFile.FileName,
+	}, nil
 }
 
 type FileInfo struct {

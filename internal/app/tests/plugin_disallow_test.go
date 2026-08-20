@@ -4,35 +4,43 @@
 package app_test
 
 import (
+	"context"
 	"fmt"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/app"
-	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
 
 type testDisallowPlugin struct{}
 
-func (p *testDisallowPlugin) Run(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	return starlark.String("ran"), nil
+func (p *testDisallowPlugin) InitModule(ctx context.Context, init sdk.ModuleInit) error { return nil }
+func (p *testDisallowPlugin) Close(ctx context.Context) error                           { return nil }
+
+func (p *testDisallowPlugin) Run(ctx context.Context, call *sdk.Call) (any, error) {
+	return "ran", nil
 }
 
-func (p *testDisallowPlugin) Other(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	return starlark.String("other"), nil
+func (p *testDisallowPlugin) Other(ctx context.Context, call *sdk.Call) (any, error) {
+	return "other", nil
 }
 
 func init() {
-	p := &testDisallowPlugin{}
-	app.RegisterPlugin("testdis", func(pluginContext *types.PluginContext) (any, error) {
-		return &testDisallowPlugin{}, nil
-	}, []plugin.PluginFunc{
-		app.CreatePluginApiName(p.Run, app.READ, "run"),
-		app.CreatePluginApiName(p.Other, app.READ, "other"),
-	})
+	app.RegisterLocalProvider("testdis", &sdk.ServeConfig{
+		ProviderVersion: "test",
+		Modules: map[string]sdk.ModuleDef{
+			"testdis": {
+				Builder: func() sdk.Module { return &testDisallowPlugin{} },
+				Functions: []sdk.FuncDef{
+					{Name: "run", Type: sdk.READ, Method: "Run"},
+					{Name: "other", Type: sdk.READ, Method: "Other"},
+				},
+			},
+		},
+	}, app.LocalProviderOptions{})
 }
 
 // TestPluginDisallow verifies that a server config permissions.disallow entry

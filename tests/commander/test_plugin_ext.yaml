@@ -1,0 +1,123 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
+
+# External plugin providers (.ex modules), complete flow: the store plugin
+# provider binary is built by run_cli_tests.sh into ./plugin_ext; the server
+# registers it at startup from [plugin_providers.dev_providers.store], and
+# this suite then installs the same binary through the database-backed
+# provider install path (openrun provider install plugin/store), which
+# replaces the dev registration. store.ex settings come from
+# [plugin."store.ex"]. The flow covered here: provider install (typed name)
+# -> provider list -> app create -> unapproved calls blocked -> audit/approve
+# from the provider manifest -> CRUD and typed records over the provider
+# process -> sessions (commit and implicit rollback) -> lazy cursors and leak
+# detection -> app reload (provider process restart) -> app delete ->
+# provider uninstall.
+tests:
+  plugext0001: # install the plugin provider; the type is carried in the name
+    command: ../openrun provider install plugin/store --source-url ./plugin_ext/openrun-plugin-store
+    stdout: "Provider plugin/store dev installed, modules: store"
+    exit-code: 0
+
+  plugext0002: # provider list shows the typed entry
+    command: ../openrun provider list -f json | jq -r '.[0].type'
+    stdout: "plugin"
+
+  plugext0003: # the module manifest is cached in the provider row
+    command: ../openrun provider list -f json | jq -r '.[0].manifest' | jq -r '.modules[0].name'
+    stdout: "store"
+
+  plugext0004: # capability names are the served modules
+    command: ../openrun provider list -f json | jq -r '.[0].service_types[0]'
+    stdout: "store"
+
+  plugext0005: # unknown provider types are rejected
+    command: ../openrun provider install bogus/x --source-url ./plugin_ext/openrun-plugin-store
+    stderr: "unknown provider type"
+    exit-code: 1
+
+  plugext0010: # create dev app without approving permissions
+    command: ../openrun app create --dev ./storeex_app /storeex
+    exit-code: 0
+
+  plugext0011: # unapproved app cannot load the external plugin
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/setup
+    stdout: "app /storeex is not permitted to load plugin store.ex. Audit the app and approve permissions"
+
+  plugext0012: # audit and approve; the store.ex manifest drives the audit, no provider process is launched
+    command: ../openrun app approve /storeex
+    stdout: "store.ex.insert"
+    exit-code: 0
+
+  plugext0013: # everything is approved after the audit
+    command: ../openrun app approve --dry-run /storeex
+    stdout: "No approval required"
+    exit-code: 0
+
+  plugext0020: # first call launches the provider process; insert returns the new id
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/setup | jq '.id'
+    stdout: "1"
+
+  plugext0021: # typed record fields round trip (document field)
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/get | jq '.val'
+    stdout: "10"
+
+  plugext0022: # reserved fields round trip
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/get | jq -r '.creator'
+    stdout: "admin"
+
+  plugext0023: # count sees the inserted row
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/count | jq '.count'
+    stdout: "1"
+
+  plugext0030: # session transaction: begin + insert + commit
+    command: curl -su "admin:qwerty" -o /dev/null -w "%{http_code}" localhost:${MAIN_HTTP_PORT}/storeex/txn_commit
+    stdout: "200"
+
+  plugext0031: # committed row is visible
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/count | jq '.count'
+    stdout: "2"
+
+  plugext0032: # session transaction without commit rolls back at request end
+    command: curl -su "admin:qwerty" -o /dev/null -w "%{http_code}" localhost:${MAIN_HTTP_PORT}/storeex/txn_abandon
+    stdout: "200"
+
+  plugext0033: # abandoned insert was rolled back
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/count | jq '.count'
+    stdout: "2"
+
+  plugext0040: # lazy cursor iteration with sorting, batched from the provider
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/rows | jq -c '.names'
+    stdout: '["first","txn"]'
+
+  plugext0041: # an unread cursor fails the request as a leaked resource
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/leak
+    stdout: "resource has not be closed, check handler code: store.ex:rows_cursor"
+
+  plugext0042: # the leak failure does not corrupt later requests
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/count | jq '.count'
+    stdout: "2"
+
+  plugext0050: # app reload restarts the provider process
+    command: ../openrun app reload /storeex
+    exit-code: 0
+
+  plugext0051: # the relaunched provider serves with the same data
+    command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/count | jq '.count'
+    stdout: "2"
+
+  plugext0060: # cleanup
+    command: ../openrun app delete /storeex
+    exit-code: 0
+
+  plugext0061: # uninstall the plugin provider (typed name)
+    command: ../openrun provider uninstall plugin/store
+    stdout: "Provider plugin/store uninstalled"
+    exit-code: 0
+
+  plugext0062: # no providers remain installed
+    command: ../openrun provider list -f json | jq 'length'
+    stdout: "0"

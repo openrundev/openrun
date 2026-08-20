@@ -26,7 +26,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 21
+const CURRENT_DB_VERSION = 22
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -603,6 +603,26 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=21, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 22 {
+		m.Info().Msg("Upgrading to version 22")
+		// Generalize the provider registry to multiple provider kinds: the
+		// provider_type column distinguishes binding providers (existing rows,
+		// hence the default) from plugin providers and future kinds, and the
+		// manifest column caches the kind-specific Describe payload (module
+		// manifests for plugin providers) so registration on every replica
+		// works without launching the provider.
+		if _, err := tx.ExecContext(ctx, `alter table binding_providers add column provider_type text not null default 'binding'`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `alter table binding_providers add column manifest `+system.MapDataType(m.dbType, "json")); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=22, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}

@@ -9,25 +9,32 @@ import (
 	"testing"
 
 	"github.com/openrundev/openrun/internal/app"
-	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
 
 type testSysPlugin struct{}
 
-func (p *testSysPlugin) Ping(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	return starlark.String("pong"), nil
+func (p *testSysPlugin) InitModule(ctx context.Context, init sdk.ModuleInit) error { return nil }
+func (p *testSysPlugin) Close(ctx context.Context) error                           { return nil }
+
+func (p *testSysPlugin) Ping(ctx context.Context, call *sdk.Call) (any, error) {
+	return "pong", nil
 }
 
 func init() {
-	c := &testSysPlugin{}
-	app.RegisterSystemPlugin("testsys", func(pluginContext *types.PluginContext) (any, error) {
-		return &testSysPlugin{}, nil
-	}, []plugin.PluginFunc{
-		app.CreatePluginApiName(c.Ping, app.READ, "ping"),
-	})
+	app.RegisterLocalProvider("testsys", &sdk.ServeConfig{
+		ProviderVersion: "test",
+		Modules: map[string]sdk.ModuleDef{
+			"testsys": {
+				Builder: func() sdk.Module { return &testSysPlugin{} },
+				Functions: []sdk.FuncDef{
+					{Name: "ping", Type: sdk.READ, Method: "Ping"},
+				},
+			},
+		},
+	}, app.LocalProviderOptions{SystemModules: []string{"testsys"}})
 }
 
 // TestSystemPluginRequiresAuth verifies a privileged system plugin cannot be

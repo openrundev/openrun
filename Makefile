@@ -167,7 +167,7 @@ release: ## Tag and push a release; args: <app_version> <helm_version>
 > echo "Run above command to push the Helm chart after the OpenRun release job is done"
 > @cd - > /dev/null
 
-fullrelease: ## Tag+push openrun, pkg/binding and all bindings under one version; stage (not push) the Helm chart; args: <version>
+fullrelease: ## Tag+push openrun, pkg/binding, pkg/plugin and all bindings under one version; stage (not push) the Helm chart; args: <version>
 > @version="$(INPUT)"
 > version="$${version#v}"
 > if [[ -z "$$version" ]]; then
@@ -186,7 +186,7 @@ fullrelease: ## Tag+push openrun, pkg/binding and all bindings under one version
 >     exit 1
 >   fi
 > done
-> for tag in "v$$version" "pkg/binding/v$$version"; do
+> for tag in "v$$version" "pkg/binding/v$$version" "pkg/plugin/v$$version"; do
 >   if git rev-parse -q --verify "refs/tags/$$tag" > /dev/null; then
 >     echo "Error: tag $$tag already exists"
 >     exit 1
@@ -196,12 +196,25 @@ fullrelease: ## Tag+push openrun, pkg/binding and all bindings under one version
 >   echo "Error: bindings tags for v$$version already exist:" $$(git -C ../bindings tag -l "*/v$$version")
 >   exit 1
 > fi
-> # openrun server + pkg/binding SDK: tag, then push the current branch and
-> # both tags. The SDK tag must be on the remote before the bindings release,
-> # whose go mod tidy resolves it.
+> # The main module's pkg/plugin require must name a real released version:
+> # the local replace does not apply to downstream consumers of a tagged
+> # openrun release, so an unpublished version there breaks their module
+> # resolution. Pin it to this release and commit before tagging, so the
+> # tagged commit carries the resolvable version.
+> sed -i.bak -E "s|(github.com/openrundev/openrun/pkg/plugin) v[^ ]+|\1 v$$version|" go.mod
+> rm -f go.mod.bak
+> if ! git diff --quiet go.mod; then
+>   git add go.mod
+>   git commit -m "Pin pkg/plugin SDK to v$$version for release"
+> fi
+> # openrun server + pkg/binding and pkg/plugin SDKs: tag, then push the
+> # current branch and all three tags. The binding SDK tag must be on the
+> # remote before the bindings release, whose go mod tidy resolves it; the
+> # plugin SDK tag makes the release resolvable for plugin provider builds.
 > git tag -a "v$$version" -m "Release v$$version"
 > git tag -a "pkg/binding/v$$version" -m "Release pkg/binding/v$$version"
-> git push origin HEAD "v$$version" "pkg/binding/v$$version"
+> git tag -a "pkg/plugin/v$$version" -m "Release pkg/plugin/v$$version"
+> git push origin HEAD "v$$version" "pkg/binding/v$$version" "pkg/plugin/v$$version"
 > # Bindings: update every provider module to the new SDK version, tag each
 > # module and push; the bindings release workflow builds and publishes each
 > # provider (binaries + OCI image) from its pushed tag
@@ -218,7 +231,7 @@ fullrelease: ## Tag+push openrun, pkg/binding and all bindings under one version
 > git commit -m "Updated Helm chart to $$version, app version to $$version"
 > cd - > /dev/null
 > echo "**************************************************"
-> echo " Tagged and pushed: v$$version, pkg/binding/v$$version, bindings */v$$version"
+> echo " Tagged and pushed: v$$version, pkg/binding/v$$version, pkg/plugin/v$$version, bindings */v$$version"
 > echo " Helm chart commit staged in ../openrun-helm-charts (not pushed)"
 > echo " After the OpenRun release job for v$$version is done, run:"
 > echo "   cd ../openrun-helm-charts/ && git push"

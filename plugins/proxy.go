@@ -4,44 +4,60 @@
 package plugins
 
 import (
+	"context"
+
 	"github.com/openrundev/openrun/internal/app"
-	"github.com/openrundev/openrun/internal/plugin"
-	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
 
 func init() {
-	h := &proxyPlugin{}
-	pluginFuncs := []plugin.PluginFunc{
-		app.CreatePluginApi(h.Config, app.READ), // config API, preview/stage permission checks happen in the reverse proxy wrapper
-	}
-	app.RegisterPlugin("proxy", NewProxyPlugin, pluginFuncs)
+	app.RegisterLocalProvider("proxy", &sdk.ServeConfig{
+		ProviderVersion: "builtin",
+		Modules: map[string]sdk.ModuleDef{
+			"proxy": {
+				Builder: NewProxyModule,
+				Functions: []sdk.FuncDef{
+					// config API, preview/stage permission checks happen in the reverse proxy wrapper
+					{Name: "config", Type: sdk.READ, Method: "Config"},
+				},
+			},
+		},
+	}, app.LocalProviderOptions{})
 }
 
-type proxyPlugin struct {
+type proxyModule struct{}
+
+func NewProxyModule() sdk.Module {
+	return &proxyModule{}
 }
 
-func NewProxyPlugin(pluginContext *types.PluginContext) (any, error) {
-	return &proxyPlugin{}, nil
+func (h *proxyModule) InitModule(ctx context.Context, init sdk.ModuleInit) error {
+	return nil
 }
 
-func (h *proxyPlugin) Config(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var url, stripPath starlark.String
-	var preserveHost starlark.Bool
-	var stripApp = starlark.True
-	var responseHeaders = &starlark.Dict{}
-	if err := starlark.UnpackArgs("config", args, kwargs, "url", &url, "strip_path?",
-		&stripPath, "preserve_host?", &preserveHost, "strip_app?", &stripApp, "response_headers", &responseHeaders); err != nil {
+func (h *proxyModule) Close(ctx context.Context) error {
+	return nil
+}
+
+func (h *proxyModule) Config(ctx context.Context, call *sdk.Call) (any, error) {
+	var url, stripPath string
+	var preserveHost bool
+	stripApp := true
+	var responseHeaders map[string]any
+	if err := sdk.UnpackArgs("config", call, "url", &url, "strip_path?", &stripPath,
+		"preserve_host?", &preserveHost, "strip_app?", &stripApp, "response_headers?", &responseHeaders); err != nil {
 		return nil, err
 	}
 
-	fields := starlark.StringDict{
+	if responseHeaders == nil {
+		responseHeaders = map[string]any{}
+	}
+
+	return &sdk.Struct{TypeName: "ProxyConfig", Fields: map[string]any{
 		"url":              url,
 		"strip_path":       stripPath,
 		"preserve_host":    preserveHost,
 		"strip_app":        stripApp,
 		"response_headers": responseHeaders,
-	}
-	return starlarkstruct.FromStringDict(starlark.String("ProxyConfig"), fields), nil
+	}}, nil
 }

@@ -1,0 +1,257 @@
+// Copyright (c) ClaceIO, LLC
+// SPDX-License-Identifier: Apache-2.0
+
+// Wire contract between the OpenRun server and out-of-process Starlark plugin
+// providers (modules loaded in apps with load("name.ex", ...)). This proto is
+// the single source of truth for the plugin provider protocol; the server and
+// the provider SDK each map it to their own Go types.
+//
+// Application-level failures are carried in the response `error` field, not as
+// gRPC status errors: a plugin call error feeds the app's PluginResponse error
+// handling (response.error / error_handler). gRPC status errors are reserved
+// for transport failures (provider crash, protocol mismatch); the server kills
+// the provider process, fails the request's live sessions, and respawns the
+// process on the next request. Plugin calls are never retried automatically.
+syntax = "proto3";
+
+package openrun.plugin.v1;
+
+option go_package = "github.com/openrundev/openrun/pkg/plugin/proto";
+
+service PluginProvider {
+  // Describe reports the modules served by this provider binary: function
+  // manifests (used to build the Starlark module at load time without
+  // launching a provider process) and module constants. Valid before InitApp.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+
+  // InitApp establishes the app identity for this provider process. The
+  // server launches one provider process per app; InitApp is called once,
+  // immediately after the handshake. A second call is a protocol error.
+  rpc InitApp(InitAppRequest) returns (InitAppResponse);
+
+  // InitModule initializes one (module, account) instance in this process,
+  // called lazily before the instance's first Call.
+  rpc InitModule(InitModuleRequest) returns (InitModuleResponse);
+
+  // Call invokes one plugin function. The hot path.
+  rpc Call(CallRequest) returns (CallResponse);
+
+  // CursorNext fetches the next batch of items from a cursor returned by a
+  // previous Call in the same session.
+  rpc CursorNext(CursorNextRequest) returns (CursorNextResponse);
+
+  // CursorClose releases a cursor. Closing an unknown cursor or session is
+  // not an error (the cursor may have been drained or the session ended).
+  rpc CursorClose(CursorCloseRequest) returns (CursorCloseResponse);
+
+  // EndSession releases all state held for a session: remaining deferred
+  // cleanups run (open transactions roll back, cursors close) and the session
+  // is forgotten. Called by the server when the request handler finishes.
+  rpc EndSession(EndSessionRequest) returns (EndSessionResponse);
+
+  // CheckHealth reports whether the provider process is healthy.
+  rpc CheckHealth(CheckHealthRequest) returns (CheckHealthResponse);
+}
+
+// StarValue is the wire representation of a Starlark value. Full fidelity is
+// preserved for the value shapes plugin calls can carry: big ints stay exact,
+// int and float stay distinct types, tuples/sets/bytes are not folded into
+// lists/strings, and dict entry order is preserved.
+message StarValue {
+  oneof kind {
+    bool none = 1; // presence marker; the bool value is ignored
+    bool bool = 2;
+    int64 int = 3;   // fast path for ints representable in 64 bits
+    BigInt bigint = 4;
+    double float = 5;
+    string str = 6;
+    bytes bytes = 7;
+    ValueList list = 8;
+    ValueList tuple = 9;
+    ValueList set = 10;
+    StarDict dict = 11;
+    TypedStruct struct = 12;     // schema-typed record (attribute access)
+    int64 time_unix_nanos = 13;  // starlark time.time
+    Cursor cursor = 14;          // handle to a provider-side lazy iterator
+    Thunk thunk = 15;            // zero-arg callable over pre-computed data
+    FuncRef funcref = 16;        // zero-arg callable dispatching a plugin function
+  }
+}
+
+// FuncRef carries a value the server materializes as a zero-argument
+// callable: calling it invokes the named plugin function with args, in the
+// same module, account, and session as the call that returned it. Function
+// names starting with "_" are internal: not exposed as module attributes,
+// callable only through a FuncRef.
+message FuncRef {
+  string function = 1;
+  repeated StarValue args = 2;
+}
+
+// Thunk carries a value the server materializes as a zero-argument callable
+// in the app: calling it returns the value, or fails with error if set. Used
+// for records with callable members over pre-computed data, e.g. the http
+// plugin's response.body() and response.json().
+message Thunk {
+  string name = 1; // callable name, for error messages
+  StarValue value = 2;
+  string error = 3;
+}
+
+message BigInt {
+  bool negative = 1;
+  bytes abs = 2; // big-endian absolute value, big.Int.Bytes()
+}
+
+message ValueList {
+  repeated StarValue values = 1;
+}
+
+message StarDict {
+  repeated StarEntry entries = 1; // insertion order preserved
+}
+
+message StarEntry {
+  StarValue key = 1;
+  StarValue value = 2;
+}
+
+// TypedStruct carries a schema-typed record: the server materializes it as a
+// StarlarkType (attribute access, mutable fields), matching what builtin
+// plugins return for typed values.
+message TypedStruct {
+  string type_name = 1;
+  StarDict fields = 2;
+}
+
+// Cursor is a handle to a lazy result iterator that stays in the provider
+// process, scoped to the session that created it. The server wraps it in a
+// Starlark iterable that batches CursorNext calls; leak_key names the strict
+// deferred-cleanup entry the server registers so an unconsumed cursor fails
+// the request the same way an unconsumed builtin cursor does.
+message Cursor {
+  string cursor_id = 1;
+  string type_name = 2; // Starlark Type() is "<type_name> iterator"
+  string leak_key = 3;
+  // Stream cursors are returned from the app handler as streaming HTTP
+  // responses instead of being iterated in Starlark. Supported for
+  // in-process modules only; reserved here for protocol completeness.
+  bool stream = 4;
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  string provider_version = 1;
+  repeated ModuleManifest modules = 2;
+}
+
+message ModuleManifest {
+  string name = 1; // module "store" is loaded as "store.ex"
+  repeated FunctionManifest functions = 2;
+  map<string, StarValue> constants = 3;
+}
+
+message FunctionManifest {
+  string name = 1;
+  bool is_read = 2; // drives stage/preview write gating on the server
+}
+
+message InitAppRequest {
+  string app_id = 1;
+  string app_path = 2;
+  bool is_dev = 3;
+  // Raw contents of the app's schema.star, empty if the app has none.
+  bytes app_schema = 4;
+}
+
+message InitAppResponse {
+  string error = 1;
+}
+
+message InitModuleRequest {
+  string module = 1;
+  string account = 2; // "" for the default account
+  // Per-account plugin settings from the server config, e.g.
+  // [plugin."store.ex#myaccount"]. Secrets are expanded by the server.
+  map<string, StarValue> settings = 3;
+}
+
+message InitModuleResponse {
+  string error = 1;
+}
+
+// ThreadState snapshots the request-scoped Starlark thread state a plugin
+// function may read.
+message ThreadState {
+  string request_id = 1;
+  string user_id = 2;
+  string user_subject = 3;
+  string user_email = 4;
+  repeated string groups = 5;
+  string app_url = 6;
+}
+
+message Kwarg {
+  string name = 1;
+  StarValue value = 2;
+}
+
+message CallRequest {
+  string module = 1;
+  string account = 2;
+  string function = 3;
+  repeated StarValue args = 4;
+  repeated Kwarg kwargs = 5; // call-site order preserved
+  ThreadState thread = 6;
+  // Session groups the calls of one request: provider-side cross-call state
+  // (transactions, cursors) is scoped to it and released by EndSession.
+  string session_id = 7;
+}
+
+message CallResponse {
+  StarValue value = 1;
+  string error = 2;
+  int64 error_code = 3; // 0 on success; 1 is the default error code
+  // The session's strict deferred-cleanup keys after this call. The server
+  // mirrors them as strict cleanup entries so a strict resource still
+  // registered at request end fails the request as a leak, matching the
+  // strict DeferCleanup contract of builtin plugins.
+  repeated string strict_keys = 4;
+}
+
+message CursorNextRequest {
+  string session_id = 1;
+  string cursor_id = 2;
+  int32 max_items = 3;
+}
+
+message CursorNextResponse {
+  repeated StarValue items = 1;
+  bool done = 2; // no more items; the provider has closed the cursor
+  string error = 3;
+}
+
+message CursorCloseRequest {
+  string session_id = 1;
+  string cursor_id = 2;
+}
+
+message CursorCloseResponse {
+  string error = 1;
+}
+
+message EndSessionRequest {
+  string session_id = 1;
+  bool failed = 2;
+}
+
+message EndSessionResponse {
+  string error = 1; // deferred cleanup failures, for server-side logging
+}
+
+message CheckHealthRequest {}
+
+message CheckHealthResponse {
+  string error = 1;
+}

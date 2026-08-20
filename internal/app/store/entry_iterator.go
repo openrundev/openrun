@@ -4,10 +4,7 @@
 package store
 
 import (
-	"database/sql"
-	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/types"
@@ -17,23 +14,25 @@ import (
 type StoreEntryIterable struct {
 	thread *starlark.Thread
 	*types.Logger
-	table string
-	rows  *sql.Rows
+	modulePath string // module the cursor cleanup entry is registered under
+	table      string
+	iterator   *EntryIterator
 }
 
-func NewStoreEntryIterabe(thread *starlark.Thread, logger *types.Logger, table string, rows *sql.Rows) *StoreEntryIterable {
+func NewStoreEntryIterabe(thread *starlark.Thread, logger *types.Logger, modulePath, table string, iterator *EntryIterator) *StoreEntryIterable {
 	return &StoreEntryIterable{
-		thread: thread,
-		Logger: logger,
-		table:  table,
-		rows:   rows,
+		thread:     thread,
+		Logger:     logger,
+		modulePath: modulePath,
+		table:      table,
+		iterator:   iterator,
 	}
 }
 
 var _ starlark.Iterable = (*StoreEntryIterable)(nil)
 
 func (s *StoreEntryIterable) Iterate() starlark.Iterator {
-	return NewStoreEntryIterator(s.thread, s.Logger, s.table, s.rows)
+	return NewStoreEntryIterator(s.thread, s.Logger, s.modulePath, s.table, s.iterator)
 }
 
 func (s *StoreEntryIterable) String() string {
@@ -59,54 +58,35 @@ func (s *StoreEntryIterable) Hash() (uint32, error) {
 type StoreEntryIterator struct {
 	thread *starlark.Thread
 	*types.Logger
-	table string
-	rows  *sql.Rows
+	modulePath string
+	table      string
+	iterator   *EntryIterator
 }
 
 var _ starlark.Iterator = (*StoreEntryIterator)(nil)
 
-func NewStoreEntryIterator(thread *starlark.Thread, logger *types.Logger, table string, rows *sql.Rows) *StoreEntryIterator {
+func NewStoreEntryIterator(thread *starlark.Thread, logger *types.Logger, modulePath, table string, iterator *EntryIterator) *StoreEntryIterator {
 	return &StoreEntryIterator{
-		thread: thread,
-		Logger: logger,
-		table:  table,
-		rows:   rows,
+		thread:     thread,
+		Logger:     logger,
+		modulePath: modulePath,
+		table:      table,
+		iterator:   iterator,
 	}
 }
 
 func (i *StoreEntryIterator) Next(value *starlark.Value) bool {
-	entry := Entry{}
-	hasNext := i.rows.Next()
-	if !hasNext {
-		err := i.rows.Close()
-		if err != nil {
-			i.Error().Err(err).Msg("error closing rows")
-		}
+	entry, ok, err := i.iterator.Next()
+	if err != nil {
+		// starlark.Iterator.Next cannot return an error; the handler's panic
+		// recovery turns it into a request failure
+		panic(err)
+	}
+	if !ok {
 		return false
 	}
 
-	var dataStr string
-	var createdAt, updatedAt int64
-
-	err := i.rows.Scan(&entry.Id, &entry.Version, &entry.CreatedBy, &entry.UpdatedBy, &createdAt, &updatedAt, &dataStr)
-	if err != nil {
-		closeError := i.rows.Close()
-		if closeError != nil {
-			i.Error().Err(fmt.Errorf("error closing rows: %w after scan error %s", closeError, err))
-		}
-		panic(err)
-	}
-
-	if dataStr != "" {
-		if err := json.Unmarshal([]byte(dataStr), &entry.Data); err != nil {
-			panic(err)
-		}
-	}
-
-	entry.CreatedAt = time.UnixMilli(createdAt)
-	entry.UpdatedAt = time.UnixMilli(updatedAt)
-
-	returnType, err := CreateType(i.table, &entry)
+	returnType, err := CreateType(i.table, entry)
 	if err != nil {
 		panic(err)
 	}
@@ -116,9 +96,11 @@ func (i *StoreEntryIterator) Next(value *starlark.Value) bool {
 }
 
 func (i *StoreEntryIterator) Done() {
-	// Clear the deferred cleanup function, since Close is called here
-	app.ClearCleanup(i.thread, fmt.Sprintf("rows_cursor_%s_%p", i.table, i.rows))
-	closeErr := i.rows.Close()
+	// Clear the deferred cleanup function, since Close is called here. The
+	// entry is cleared under its registering module: Done can run while
+	// another plugin is the current module
+	app.ClearCleanupModule(i.thread, i.modulePath, i.iterator.LeakKey())
+	closeErr := i.iterator.Close()
 	if closeErr != nil {
 		i.Error().Err(fmt.Errorf("error closing rows: %w", closeErr))
 	}

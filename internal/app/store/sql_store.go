@@ -370,6 +370,25 @@ func (s *SqlStore) SelectOne(ctx context.Context, tx *sql.Tx, table string, filt
 
 // Select returns the entries matching the filter
 func (s *SqlStore) Select(ctx context.Context, tx *sql.Tx, thread *starlark.Thread, table string, filter map[string]any, sort []string, offset, limit int64) (starlark.Iterable, error) {
+	iterator, err := s.SelectEntries(ctx, tx, table, filter, sort, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Capture the module path now: the iterator's Done (which clears this
+	// entry) can run while another plugin is the current module, if the app
+	// makes other plugin calls between select and iterating the cursor
+	modulePath, _ := thread.Local(types.TL_CURRENT_MODULE_FULL_PATH).(string)
+	app.DeferCleanup(thread, iterator.LeakKey(), iterator.Close, true)
+
+	return NewStoreEntryIterabe(thread, s.Logger, modulePath, iterator.Table(), iterator), nil
+}
+
+// SelectEntries runs a select and returns a Go-level lazy iterator over the
+// matching entries. This is the starlark-free core beneath Select, shared
+// with the external store plugin provider; the caller owns closing the
+// iterator (or fully draining it, which closes it implicitly).
+func (s *SqlStore) SelectEntries(ctx context.Context, tx *sql.Tx, table string, filter map[string]any, sort []string, offset, limit int64) (*EntryIterator, error) {
 	if err := s.initialize(ctx); err != nil {
 		return nil, err
 	}
@@ -426,9 +445,65 @@ func (s *SqlStore) Select(ctx context.Context, tx *sql.Tx, thread *starlark.Thre
 		return nil, err
 	}
 
-	app.DeferCleanup(thread, fmt.Sprintf("rows_cursor_%s_%p", table, rows), rows.Close, true)
+	return &EntryIterator{rows: rows, table: table}, nil
+}
 
-	return NewStoreEntryIterabe(thread, s.Logger, table, rows), nil
+// EntryIterator lazily iterates the rows of a select, converting each row to
+// an Entry. It is starlark-free so the external store provider can stream
+// results through it.
+type EntryIterator struct {
+	rows  *sql.Rows
+	table string // physical (prefixed, quoted) table name
+}
+
+// Table returns the physical table name the iterator reads from.
+func (it *EntryIterator) Table() string {
+	return it.table
+}
+
+// LeakKey names the strict deferred-cleanup entry registered for this
+// iterator: if the app never consumes or closes the cursor, the request
+// fails citing this key.
+func (it *EntryIterator) LeakKey() string {
+	return fmt.Sprintf("rows_cursor_%s_%p", it.table, it)
+}
+
+// Next returns the next entry, or ok=false when the rows are exhausted (the
+// underlying cursor is closed implicitly then). A scan error closes the
+// cursor and is returned.
+func (it *EntryIterator) Next() (*Entry, bool, error) {
+	if !it.rows.Next() {
+		if err := it.rows.Close(); err != nil {
+			return nil, false, err
+		}
+		return nil, false, nil
+	}
+
+	entry := Entry{}
+	var dataStr string
+	var createdAt, updatedAt int64
+	if err := it.rows.Scan(&entry.Id, &entry.Version, &entry.CreatedBy, &entry.UpdatedBy, &createdAt, &updatedAt, &dataStr); err != nil {
+		closeErr := it.rows.Close()
+		if closeErr != nil {
+			return nil, false, fmt.Errorf("error closing rows: %w after scan error %s", closeErr, err)
+		}
+		return nil, false, err
+	}
+
+	if dataStr != "" {
+		if err := json.Unmarshal([]byte(dataStr), &entry.Data); err != nil {
+			return nil, false, err
+		}
+	}
+
+	entry.CreatedAt = time.UnixMilli(createdAt)
+	entry.UpdatedAt = time.UnixMilli(updatedAt)
+	return &entry, true, nil
+}
+
+// Close releases the underlying cursor. Safe to call after exhaustion.
+func (it *EntryIterator) Close() error {
+	return it.rows.Close()
 }
 
 // Count returns the number of entries matching the filter

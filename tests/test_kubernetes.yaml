@@ -10,6 +10,7 @@ config:
     HTTP_PORT: ${HTTP_PORT}
     GOCOVERDIR: ${GOCOVERDIR}/../client
     KUBE_BINDING_IMAGE: ${KUBE_BINDING_IMAGE}
+    KUBE_PLUGIN_IMAGE: ${KUBE_PLUGIN_IMAGE}
     KUBE_TEST_NAMESPACE: ${KUBE_TEST_NAMESPACE}
 tests:
   kubernetes010: # setup flask app
@@ -199,3 +200,64 @@ tests:
   kubernetes921: # service delete
     command: ../openrun service delete fixture/kfx1
     stdout: "Service fixture/kfx1 deleted"
+
+  # Out-of-process Starlark plugin providers, OCI distribution path: the
+  # harness built the store plugin provider into
+  # plugin_providers.preinstalled_dir (as the Helm chart's init containers
+  # populate the shared volume) and pushed it as a FROM scratch image to the
+  # test registry.
+  kubernetes930: # app loading store.ex works through the preinstalled provider
+    command: ../openrun app create --dev --approve ./storeex_app /kube_storeex
+    exit-code: 0
+  kubernetes931: # plugin call launches the provider and inserts a row
+    command: curl -sS localhost:${HTTP_PORT}/kube_storeex/setup | jq '.id'
+    stdout: "1"
+  kubernetes932: # typed record round trip through the provider
+    command: curl -sS localhost:${HTTP_PORT}/kube_storeex/get | jq '.val'
+    stdout: "10"
+  kubernetes933: # lazy cursor iteration through the provider
+    command: curl -sS localhost:${HTTP_PORT}/kube_storeex/rows | jq -c '.names'
+    stdout: '["first"]'
+  kubernetes934: # disable_install rejects imperative plugin provider install
+    command: ../openrun provider install plugin/store --version v0.1.0
+    stderr: "provider install is disabled"
+    exit-code: 1
+  kubernetes935: # cleanup plugin test app
+    command: ../openrun app delete /kube_storeex
+    exit-code: 0
+  kubernetes940: # in-cluster export: init container copies the plugin provider out of the scratch image
+    command: |
+      kubectl apply -n ${KUBE_TEST_NAMESPACE} -f - <<EOF
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: plugin-export-test
+      spec:
+        restartPolicy: Never
+        initContainers:
+          - name: plugin-provider-store
+            image: ${KUBE_PLUGIN_IMAGE}
+            command: ["/openrun-plugin-store", "export", "/providers"]
+            volumeMounts:
+              - name: providers
+                mountPath: /providers
+        containers:
+          - name: check
+            image: busybox:1.36
+            command: ["sh", "-c", "test -x /providers/openrun-plugin-store && echo EXPORT_OK"]
+            volumeMounts:
+              - name: providers
+                mountPath: /providers
+        volumes:
+          - name: providers
+            emptyDir: {}
+      EOF
+    stdout: "pod/plugin-export-test created"
+  kubernetes941: # exported binary is present and executable in the shared volume
+    command: kubectl wait -n ${KUBE_TEST_NAMESPACE} --for=jsonpath='{.status.phase}'=Succeeded pod/plugin-export-test --timeout=120s && kubectl logs -n ${KUBE_TEST_NAMESPACE} plugin-export-test -c check
+    stdout: "EXPORT_OK"
+  kubernetes942: # init container logged the export
+    command: kubectl logs -n ${KUBE_TEST_NAMESPACE} plugin-export-test -c plugin-provider-store
+    stdout: "exported /providers/openrun-plugin-store"
+  kubernetes943: # cleanup export test pod
+    command: kubectl delete pod plugin-export-test -n ${KUBE_TEST_NAMESPACE} --ignore-not-found

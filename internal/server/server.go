@@ -388,6 +388,9 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	initOpenRunPlugin(server)
 	initAdminPlugin(server)
 	initBuilderPlugin(server)
+	// Plugins compiled into a custom OpenRun build (plugin.RegisterEmbedded)
+	// are served in-process under their "<module>.in" names
+	app.RegisterEmbeddedProviders()
 
 	server.dynamicConfig, err = server.db.GetConfig()
 	if err != nil && !errors.Is(err, metadata.ErrConfigNotFound) {
@@ -977,10 +980,11 @@ func (s *Server) setupAdminAccount() (string, error) {
 func (s *Server) Start() error {
 	s.handler = NewTCPHandler(s.Logger, s.Config(), s)
 
-	// Register out-of-process binding providers (dev config entries and
-	// database-registered installs) before serving traffic, so binding
-	// operations never race the provider registrations.
-	s.setupBindingProviders(context.Background())
+	// Register out-of-process providers of every kind — binding and Starlark
+	// plugin providers, from dev config entries and database-registered
+	// installs — before serving traffic, so binding operations and app loads
+	// of .ex modules never race the provider registrations.
+	s.setupProviders(context.Background())
 	// Builder config problems must not block startup: the builder config is
 	// dynamically editable, so a bad entry has to be fixable through the
 	// console. The error is logged and surfaces again on builder use

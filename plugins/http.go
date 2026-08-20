@@ -17,23 +17,15 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/apptype"
-	"github.com/openrundev/openrun/internal/app/starlark_type"
-	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
-
-// AsString unquotes a starlark string value
-func AsString(x starlark.Value) (string, error) {
-	return strconv.Unquote(x.String())
-}
 
 // Encodings for form data.
 //
@@ -45,171 +37,242 @@ const (
 )
 
 func init() {
-	h := &httpPlugin{}
-	pluginFuncs := []plugin.PluginFunc{
-		app.CreatePluginApi(h.Get, app.READ),
-		app.CreatePluginApi(h.Head, app.READ),
-		app.CreatePluginApi(h.Options, app.READ),
-		app.CreatePluginApi(h.Post, app.WRITE),
-		app.CreatePluginApi(h.Put, app.WRITE),
-		app.CreatePluginApi(h.Delete, app.WRITE),
-		app.CreatePluginApi(h.Patch, app.WRITE),
+	app.RegisterLocalProvider("http", &sdk.ServeConfig{
+		ProviderVersion: "builtin",
+		Modules: map[string]sdk.ModuleDef{
+			"http": {
+				Builder: NewHttpModule,
+				Functions: []sdk.FuncDef{
+					{Name: "get", Type: sdk.READ, Method: "Get"},
+					{Name: "head", Type: sdk.READ, Method: "Head"},
+					{Name: "options", Type: sdk.READ, Method: "Options"},
+					{Name: "post", Type: sdk.WRITE, Method: "Post"},
+					{Name: "put", Type: sdk.WRITE, Method: "Put"},
+					{Name: "delete", Type: sdk.WRITE, Method: "Delete"},
+					{Name: "patch", Type: sdk.WRITE, Method: "Patch"},
+					// internal: backs response.body() and response.json(),
+					// callable only through the returned func refs
+					{Name: "_read_body", Type: sdk.READ, Method: "ReadBody"},
+				},
+			},
+		},
+	}, app.LocalProviderOptions{})
+}
+
+type httpModule struct {
+	client      *http.Client
+	respCounter atomic.Uint64
+}
+
+// openResponse is an HTTP response held open in the session: the body is
+// read only when the app calls response.body() or response.json(), and an
+// unread body is closed by the session cleanup at request end.
+type openResponse struct {
+	res    *http.Response
+	cancel context.CancelFunc
+}
+
+func (o *openResponse) close() error {
+	var err error
+	if o.res.Body != nil {
+		err = o.res.Body.Close()
 	}
-	app.RegisterPlugin("http", NewHttpPlugin, pluginFuncs)
-}
-
-type httpPlugin struct {
-	client *http.Client
-}
-
-func NewHttpPlugin(pluginContext *types.PluginContext) (any, error) {
-	return &httpPlugin{client: http.DefaultClient}, nil
-}
-
-func (h *httpPlugin) Get(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("get")
-	return httpFunc(thread, builtin, args, kwargs)
-}
-
-func (h *httpPlugin) Head(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("head")
-	return httpFunc(thread, builtin, args, kwargs)
-}
-
-func (h *httpPlugin) Options(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("options")
-	return httpFunc(thread, builtin, args, kwargs)
-}
-
-func (h *httpPlugin) Post(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("post")
-	return httpFunc(thread, builtin, args, kwargs)
-}
-
-func (h *httpPlugin) Put(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("put")
-	return httpFunc(thread, builtin, args, kwargs)
-}
-
-func (h *httpPlugin) Delete(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("delete")
-	return httpFunc(thread, builtin, args, kwargs)
-}
-
-func (h *httpPlugin) Patch(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("patch")
-	return httpFunc(thread, builtin, args, kwargs)
-}
-
-// reqMethod is a factory function for generating starlark builtin functions for different http request methods
-func (h *httpPlugin) reqMethod(method string) func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-		var (
-			urlv         starlark.String
-			params       = &starlark.Dict{}
-			headers      = &starlark.Dict{}
-			formBody     = &starlark.Dict{}
-			signAuth     = &starlark.Dict{}
-			formEncoding starlark.String
-			basicAuth    starlark.Tuple
-			body         starlark.String
-			jsonBody     starlark.Value
-			errorOnFail  = starlark.True
-			timeout      = starlark.MakeInt(defaultTimeoutSeconds)
-		)
-
-		if err := starlark.UnpackArgs(method, args, kwargs, "url", &urlv, "params?", &params, "headers",
-			&headers, "body", &body, "form_body", &formBody, "form_encoding", &formEncoding,
-			"json_body", &jsonBody, "auth_basic", &basicAuth, "auth_signature", &signAuth,
-			"error_on_fail", &errorOnFail, "timeout", &timeout); err != nil {
-			return nil, err
-		}
-
-		rawurl, err := AsString(urlv)
-		if err != nil {
-			return nil, err
-		}
-
-		if strings.HasPrefix(rawurl, apptype.CONTAINER_URL) {
-			// If the url starts with the container url, we need to replace it with the container proxy url
-			rawurl = strings.TrimPrefix(rawurl, apptype.CONTAINER_URL)
-			containerProxyUrl := thread.Local(types.TL_CONTAINER_URL)
-			containerProxyUrlStr, ok := containerProxyUrl.(string)
-			if !ok || containerProxyUrlStr == "" {
-				return nil, fmt.Errorf("container proxy url not set")
-			}
-			rawurl = containerProxyUrlStr + rawurl
-		}
-
-		if err = setQueryParams(&rawurl, params); err != nil {
-			return nil, err
-		}
-
-		timeoutSeconds, ok := timeout.Int64()
-		if !ok || timeoutSeconds <= 0 {
-			return nil, fmt.Errorf("timeout must be a positive integer number of seconds")
-		}
-
-		ctx := app.GetContext(thread)
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		requestCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
-		cancelOnError := true
-		defer func() {
-			if cancelOnError {
-				cancel()
-			}
-		}()
-		req, err := http.NewRequestWithContext(requestCtx, strings.ToUpper(method), rawurl, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		if err = setHeaders(req, headers); err != nil {
-			return nil, err
-		}
-		if err = setBasicAuth(req, basicAuth); err != nil {
-			return nil, err
-		}
-
-		if err = setBody(req, body, formBody, formEncoding, jsonBody); err != nil {
-			return nil, err
-		}
-
-		if signAuth.Len() > 0 {
-			if err = setSignAuth(req, signAuth); err != nil {
-				return nil, err
-			}
-		}
-
-		res, err := h.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-
-		if errorOnFail && (res.StatusCode < 200 || res.StatusCode >= 300) { // 1xx and 3xx are also failed by default
-			res.Body.Close() //nolint:errcheck
-			return nil, fmt.Errorf("http request failed with status code %d: %s", res.StatusCode, res.Status)
-		}
-
-		r := &Response{
-			Response:   *res,
-			thread:     thread,
-			cleanupKey: fmt.Sprintf("response_body_%p", res.Body),
-			cancel:     cancel,
-		}
-		app.DeferCleanup(thread, r.cleanupKey, func() error {
-			return r.cleanupBody(false)
-		}, false)
-		cancelOnError = false
-		return app.NewResponse(r.Struct()), nil
+	if o.cancel != nil {
+		o.cancel()
 	}
+	return err
 }
 
-func setQueryParams(rawurl *string, params *starlark.Dict) error {
-	keys := params.Keys()
-	if len(keys) == 0 {
+func NewHttpModule() sdk.Module {
+	return &httpModule{}
+}
+
+func (h *httpModule) InitModule(ctx context.Context, init sdk.ModuleInit) error {
+	h.client = http.DefaultClient
+	return nil
+}
+
+func (h *httpModule) Close(ctx context.Context) error {
+	return nil
+}
+
+func (h *httpModule) Get(ctx context.Context, call *sdk.Call) (any, error) {
+	return h.request(ctx, call, "get")
+}
+
+func (h *httpModule) Head(ctx context.Context, call *sdk.Call) (any, error) {
+	return h.request(ctx, call, "head")
+}
+
+func (h *httpModule) Options(ctx context.Context, call *sdk.Call) (any, error) {
+	return h.request(ctx, call, "options")
+}
+
+func (h *httpModule) Post(ctx context.Context, call *sdk.Call) (any, error) {
+	return h.request(ctx, call, "post")
+}
+
+func (h *httpModule) Put(ctx context.Context, call *sdk.Call) (any, error) {
+	return h.request(ctx, call, "put")
+}
+
+func (h *httpModule) Delete(ctx context.Context, call *sdk.Call) (any, error) {
+	return h.request(ctx, call, "delete")
+}
+
+func (h *httpModule) Patch(ctx context.Context, call *sdk.Call) (any, error) {
+	return h.request(ctx, call, "patch")
+}
+
+func (h *httpModule) request(ctx context.Context, call *sdk.Call, method string) (any, error) {
+	var rawurl, body, formEncoding string
+	var params, headers, formBody, signAuth map[string]any
+	var jsonBody, basicAuth any
+	errorOnFail := true
+	timeout := int64(defaultTimeoutSeconds)
+
+	if err := sdk.UnpackArgs(method, call, "url", &rawurl, "params?", &params, "headers?",
+		&headers, "body?", &body, "form_body?", &formBody, "form_encoding?", &formEncoding,
+		"json_body?", &jsonBody, "auth_basic?", &basicAuth, "auth_signature?", &signAuth,
+		"error_on_fail?", &errorOnFail, "timeout?", &timeout); err != nil {
+		return nil, err
+	}
+
+	if strings.HasPrefix(rawurl, apptype.CONTAINER_URL) {
+		// If the url starts with the container url, we need to replace it with
+		// the container proxy url. The proxy url is host-process state, so
+		// container calls work with the compiled-in http plugin only
+		rawurl = strings.TrimPrefix(rawurl, apptype.CONTAINER_URL)
+		var containerProxyUrl string
+		if call.Host != nil {
+			containerProxyUrl, _ = call.Host.Value(types.TL_CONTAINER_URL).(string)
+		}
+		if containerProxyUrl == "" {
+			return nil, fmt.Errorf("container proxy url not set")
+		}
+		rawurl = containerProxyUrl + rawurl
+	}
+
+	if err := setQueryParams(&rawurl, params); err != nil {
+		return nil, err
+	}
+
+	if timeout <= 0 {
+		return nil, fmt.Errorf("timeout must be a positive integer number of seconds")
+	}
+
+	// The response body may be read by a later response.body() call, so the
+	// timeout context must outlive this call: it hangs off the session
+	// context (alive until request end), not the per-call context
+	requestCtx, cancel := context.WithTimeout(call.Session.Context(), time.Duration(timeout)*time.Second)
+	cancelOnError := true
+	defer func() {
+		if cancelOnError {
+			cancel()
+		}
+	}()
+	req, err := http.NewRequestWithContext(requestCtx, strings.ToUpper(method), rawurl, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = setHeaders(req, headers); err != nil {
+		return nil, err
+	}
+	if err = setBasicAuth(req, basicAuth); err != nil {
+		return nil, err
+	}
+
+	if err = setBody(req, body, formBody, formEncoding, jsonBody); err != nil {
+		return nil, err
+	}
+
+	if len(signAuth) > 0 {
+		if err = setSignAuth(req, signAuth); err != nil {
+			return nil, err
+		}
+	}
+
+	res, err := h.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if errorOnFail && (res.StatusCode < 200 || res.StatusCode >= 300) { // 1xx and 3xx are also failed by default
+		res.Body.Close() //nolint:errcheck
+		return nil, fmt.Errorf("http request failed with status code %d: %s", res.StatusCode, res.Status)
+	}
+
+	// The body stays unread: response.body() and response.json() are func
+	// refs into _read_body, which reads it lazily from the session-held
+	// response. An unread body is closed by the session cleanup at request
+	// end (so a status-only request to a streaming endpoint does not block)
+	handleId := fmt.Sprintf("httpresp_%d", h.respCounter.Add(1))
+	open := &openResponse{res: res, cancel: cancel}
+	call.Session.Set(handleId, open)
+	call.Session.Defer(handleId, false, func(ctx context.Context) error {
+		return open.close()
+	})
+	cancelOnError = false
+
+	responseHeaders := make(map[string]string, len(res.Header))
+	for key, vals := range res.Header {
+		responseHeaders[key] = strings.Join(vals, ",")
+	}
+
+	return &sdk.Struct{Fields: map[string]any{
+		"url":         res.Request.URL.String(),
+		"status_code": int64(res.StatusCode),
+		"headers":     responseHeaders,
+		"encoding":    strings.Join(res.TransferEncoding, ","),
+
+		"body": &sdk.FuncRef{Function: "_read_body", Args: []any{handleId, "text"}},
+		"json": &sdk.FuncRef{Function: "_read_body", Args: []any{handleId, "json"}},
+	}}, nil
+}
+
+// ReadBody backs the response.body() and response.json() func refs: it reads
+// the session-held response body (once; the data is cached in the session
+// for repeated calls), closes it, and returns the text or parsed JSON.
+func (h *httpModule) ReadBody(ctx context.Context, call *sdk.Call) (any, error) {
+	var handleId, mode string
+	if err := sdk.UnpackArgs("_read_body", call, "handle", &handleId, "mode", &mode); err != nil {
+		return nil, err
+	}
+
+	dataKey := handleId + "_data"
+	data, ok := call.Session.Get(dataKey).([]byte)
+	if !ok {
+		open, ok := call.Session.Get(handleId).(*openResponse)
+		if !ok {
+			return nil, fmt.Errorf("http response is no longer available")
+		}
+		var err error
+		data, err = io.ReadAll(open.res.Body)
+		closeErr := open.close()
+		call.Session.ClearDefer(handleId)
+		call.Session.Set(handleId, nil)
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		call.Session.Set(dataKey, data)
+	}
+
+	if mode == "json" {
+		var parsed any
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			return nil, err
+		}
+		return parsed, nil
+	}
+	return string(data), nil
+}
+
+func setQueryParams(rawurl *string, params map[string]any) error {
+	if len(params) == 0 {
 		return nil
 	}
 
@@ -219,25 +282,12 @@ func setQueryParams(rawurl *string, params *starlark.Dict) error {
 	}
 
 	q := u.Query()
-	for _, key := range keys {
-		keystr, err := AsString(key)
-		if err != nil {
-			return err
+	for key, val := range params {
+		valstr, ok := val.(string)
+		if !ok {
+			return fmt.Errorf("expected param value for key '%s' to be a string. got: '%T'", key, val)
 		}
-
-		val, _, err := params.Get(key)
-		if err != nil {
-			return err
-		}
-		if val.Type() != "string" {
-			return fmt.Errorf("expected param value for key '%s' to be a string. got: '%s'", key, val.Type())
-		}
-		valstr, err := AsString(val)
-		if err != nil {
-			return err
-		}
-
-		q.Set(keystr, valstr)
+		q.Set(key, valstr)
 	}
 	if q.Encode() != "" {
 		u.RawQuery = q.Encode()
@@ -246,36 +296,42 @@ func setQueryParams(rawurl *string, params *starlark.Dict) error {
 	return nil
 }
 
-func setBasicAuth(req *http.Request, auth starlark.Tuple) error {
-	if len(auth) == 0 {
-		return nil
-	} else if len(auth) == 2 {
-		username, err := AsString(auth[0])
-		if err != nil {
-			return fmt.Errorf("parsing auth username string: %s", err.Error())
-		}
-		password, err := AsString(auth[1])
-		if err != nil {
-			return fmt.Errorf("parsing auth password string: %s", err.Error())
-		}
-		req.SetBasicAuth(username, password)
+func setBasicAuth(req *http.Request, auth any) error {
+	if auth == nil {
 		return nil
 	}
-	return fmt.Errorf("expected two values for auth params tuple")
+	tuple, ok := auth.(sdk.Tuple)
+	if !ok {
+		return fmt.Errorf("expected two values for auth params tuple")
+	}
+	if len(tuple) != 2 {
+		return fmt.Errorf("expected two values for auth params tuple")
+	}
+	username, ok := tuple[0].(string)
+	if !ok {
+		return fmt.Errorf("parsing auth username string: expected string, got %T", tuple[0])
+	}
+	password, ok := tuple[1].(string)
+	if !ok {
+		return fmt.Errorf("parsing auth password string: expected string, got %T", tuple[1])
+	}
+	req.SetBasicAuth(username, password)
+	return nil
 }
 
-func getKeyAsString(dict *starlark.Dict, key string) (string, error) {
-	val, ok, err := dict.Get(starlark.String(key))
-	if err != nil {
-		return "", err
-	}
+func getKeyAsString(dict map[string]any, key string) (string, error) {
+	val, ok := dict[key]
 	if !ok {
 		return "", fmt.Errorf("key %s not found", key)
 	}
-	return AsString(val)
+	s, ok := val.(string)
+	if !ok {
+		return "", fmt.Errorf("key %s is not a string", key)
+	}
+	return s, nil
 }
 
-func setSignAuth(req *http.Request, auth *starlark.Dict) error {
+func setSignAuth(req *http.Request, auth map[string]any) error {
 	signType, err := getKeyAsString(auth, "type")
 	if err != nil {
 		return err
@@ -369,58 +425,31 @@ func createSLAuthHeader(req *http.Request, userId, apiKey string) (map[string]st
 	return retHeaders, nil
 }
 
-func setHeaders(req *http.Request, headers *starlark.Dict) error {
-	keys := headers.Keys()
-	if len(keys) == 0 {
-		return nil
+func setHeaders(req *http.Request, headers map[string]any) error {
+	for key, val := range headers {
+		valstr, ok := val.(string)
+		if !ok {
+			return fmt.Errorf("expected param value for key '%s' to be a string. got: '%T'", key, val)
+		}
+		req.Header.Add(key, valstr)
 	}
-
-	for _, key := range keys {
-		keystr, err := AsString(key)
-		if err != nil {
-			return err
-		}
-
-		val, _, err := headers.Get(key)
-		if err != nil {
-			return err
-		}
-		if val.Type() != "string" {
-			return fmt.Errorf("expected param value for key '%s' to be a string. got: '%s'", key, val.Type())
-		}
-		valstr, err := AsString(val)
-		if err != nil {
-			return err
-		}
-
-		req.Header.Add(keystr, valstr)
-	}
-
 	return nil
 }
 
-func setBody(req *http.Request, body starlark.String, formData *starlark.Dict, formEncoding starlark.String, jsondata starlark.Value) error {
-	if !starlark_type.IsEmptyStarlarkString(body) {
-		uq, err := strconv.Unquote(body.String())
-		if err != nil {
-			return err
-		}
-		req.Body = io.NopCloser(strings.NewReader(uq))
+func setBody(req *http.Request, body string, formData map[string]any, formEncoding string, jsondata any) error {
+	if body != "" {
+		req.Body = io.NopCloser(strings.NewReader(body))
 		// Specifying the Content-Length ensures that https://go.dev/src/net/http/transfer.go doesnt specify Transfer-Encoding: chunked which is not supported by some endpoints.
 		// This is required when using ioutil.NopCloser method for the request body (see ShouldSendChunkedRequestBody() in the library mentioned above).
-		req.ContentLength = int64(len(uq))
+		req.ContentLength = int64(len(body))
 
 		return nil
 	}
 
-	if jsondata != nil && jsondata.String() != "" {
+	if jsondata != nil {
 		req.Header.Set("Content-Type", "application/json")
 
-		v, err := starlark_type.UnmarshalStarlark(jsondata)
-		if err != nil {
-			return err
-		}
-		data, err := json.Marshal(v)
+		data, err := json.Marshal(jsonCompatible(jsondata))
 		if err != nil {
 			return err
 		}
@@ -428,27 +457,14 @@ func setBody(req *http.Request, body starlark.String, formData *starlark.Dict, f
 		req.ContentLength = int64(len(data))
 	}
 
-	if formData != nil && formData.Len() > 0 {
+	if len(formData) > 0 {
 		form := url.Values{}
-		for _, key := range formData.Keys() {
-			keystr, err := AsString(key)
-			if err != nil {
-				return err
+		for key, val := range formData {
+			valstr, ok := val.(string)
+			if !ok {
+				return fmt.Errorf("expected param value for key '%s' to be a string. got: '%T'", key, val)
 			}
-
-			val, _, err := formData.Get(key)
-			if err != nil {
-				return err
-			}
-			if val.Type() != "string" {
-				return fmt.Errorf("expected param value for key '%s' to be a string. got: '%s'", key, val.Type())
-			}
-			valstr, err := AsString(val)
-			if err != nil {
-				return err
-			}
-
-			form.Add(keystr, valstr)
+			form.Add(key, valstr)
 		}
 
 		var contentType string
@@ -491,88 +507,43 @@ func setBody(req *http.Request, body starlark.String, formData *starlark.Dict, f
 	return nil
 }
 
-// Response represents an HTTP response, wrapping a go http.Response with
-// starlark methods
-type Response struct {
-	http.Response
-	thread     *starlark.Thread
-	cleanupKey string
-	cancel     context.CancelFunc
-}
-
-func (r *Response) cleanupBody(clearCleanup bool) error {
-	if clearCleanup && r.thread != nil && r.cleanupKey != "" {
-		app.ClearCleanup(r.thread, r.cleanupKey)
-		r.cleanupKey = ""
-	}
-
-	var err error
-	if r.Body != nil {
-		err = r.Body.Close()
-		r.Body = nil
-	}
-	if r.cancel != nil {
-		r.cancel()
-		r.cancel = nil
-	}
-	return err
-}
-
-// Struct turns a response into a *starlark.Struct
-func (r *Response) Struct() *starlarkstruct.Struct {
-	return starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
-		"url":         starlark.String(r.Request.URL.String()),
-		"status_code": starlark.MakeInt(r.StatusCode),
-		"headers":     r.HeadersDict(),
-		"encoding":    starlark.String(strings.Join(r.TransferEncoding, ",")),
-
-		"body": starlark.NewBuiltin("body", r.Text),
-		"json": starlark.NewBuiltin("json", r.JSON),
-	})
-}
-
-// HeadersDict flops
-func (r *Response) HeadersDict() *starlark.Dict {
-	d := new(starlark.Dict)
-	for key, vals := range r.Header {
-		if err := d.SetKey(starlark.String(key), starlark.String(strings.Join(vals, ","))); err != nil {
-			panic(err)
+// jsonCompatible converts SDK value shapes (tuples, sets, ordered dicts,
+// typed structs) into plain values encoding/json can marshal.
+func jsonCompatible(v any) any {
+	switch x := v.(type) {
+	case sdk.Tuple:
+		return jsonCompatibleSlice(x)
+	case sdk.Set:
+		return jsonCompatibleSlice(x)
+	case []any:
+		return jsonCompatibleSlice(x)
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, item := range x {
+			out[k] = jsonCompatible(item)
 		}
+		return out
+	case *sdk.Dict:
+		out := make(map[string]any, len(x.Entries))
+		for _, entry := range x.Entries {
+			out[fmt.Sprintf("%v", entry.Key)] = jsonCompatible(entry.Value)
+		}
+		return out
+	case *sdk.Struct:
+		out := make(map[string]any, len(x.Fields))
+		for k, item := range x.Fields {
+			out[k] = jsonCompatible(item)
+		}
+		return out
+	default:
+		return v
 	}
-	return d
 }
 
-// Text returns the raw data as a string
-func (r *Response) Text(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, err
+func jsonCompatibleSlice(items []any) []any {
+	out := make([]any, len(items))
+	for i, item := range items {
+		out[i] = jsonCompatible(item)
 	}
-	if err := r.cleanupBody(true); err != nil {
-		return nil, err
-	}
-	// reset reader to allow multiple calls
-	r.Body = io.NopCloser(bytes.NewReader(data))
-
-	return starlark.String(string(data)), nil
-}
-
-// JSON attempts to parse the response body as JSON
-func (r *Response) JSON(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var data interface{}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, err
-	}
-	if err := r.cleanupBody(true); err != nil {
-		return nil, err
-	}
-	// reset reader to allow multiple calls
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	return starlark_type.MarshalStarlark(data)
+	return out
 }

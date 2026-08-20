@@ -6,7 +6,7 @@ summary: "Overview of how plugins work, how to use them"
 
 Plugins provide an API for OpenRun Starlark code to call out to external systems. Plugins are implemented in Go. Every plugin API call must be approved before it is permitted, either in the app metadata or through server level defaults in `openrun.toml`. See [security]({{< ref "appsecurity#sample-application" >}}/) for an overview of the security model.
 
-Each plugin is identified by a unique name, like `store.in` or `exec.in`. Plugins ending with `.in` are internal plugins, built into the OpenRun binary. Support for external plugins which are loaded dynamically is planned.
+Each plugin is identified by a unique name, like `store.in` or `exec.in`. Apps always load plugins with the `.in` suffix: resolution prefers a plugin compiled into the OpenRun binary and falls back to an installed [external plugin provider]({{< ref "docs/plugins/external-plugins" >}}) serving that module, so apps do not change when a plugin moves between the two. The `.ex` suffix explicitly requires the external build. Both run the same plugin implementation, built with the OpenRun plugin SDK.
 
 ## Plugin Usage
 

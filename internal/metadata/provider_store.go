@@ -14,7 +14,21 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-// UpsertBindingProvider creates or replaces a binding provider entry.
+// The binding_providers table (the name predates provider kinds) is the
+// registry for all out-of-process providers: binding providers and Starlark
+// plugin providers, distinguished by the provider_type column. Rows created
+// before provider kinds existed have provider_type 'binding' (the column
+// default); providerTypeOrDefault applies the same default on scan.
+
+func providerTypeOrDefault(providerType string) string {
+	if providerType == "" {
+		return "binding"
+	}
+	return providerType
+}
+
+// UpsertBindingProvider creates or replaces a provider entry. The provider's
+// Type and Name together identify the row.
 func (m *Metadata) UpsertBindingProvider(ctx context.Context, tx types.Transaction, provider *types.BindingProvider) error {
 	checksumsJson, err := json.Marshal(provider.Checksums)
 	if err != nil {
@@ -24,13 +38,15 @@ func (m *Metadata) UpsertBindingProvider(ctx context.Context, tx types.Transacti
 	if err != nil {
 		return fmt.Errorf("error marshalling provider service types: %w", err)
 	}
+	providerType := providerTypeOrDefault(provider.Type)
 
 	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`UPDATE binding_providers set version = ?, source_url = ?, checksums = ?, service_types = ?, update_time = `+
-			system.FuncNow(m.dbType)+` where name = ?`),
-		provider.Version, provider.SourceURL, string(checksumsJson), string(serviceTypesJson), provider.Name)
+		`UPDATE binding_providers set version = ?, source_url = ?, checksums = ?, service_types = ?, manifest = ?, update_time = `+
+			system.FuncNow(m.dbType)+` where provider_type = ? and name = ?`),
+		provider.Version, provider.SourceURL, string(checksumsJson), string(serviceTypesJson), provider.Manifest,
+		providerType, provider.Name)
 	if err != nil {
-		return fmt.Errorf("error updating binding provider: %w", err)
+		return fmt.Errorf("error updating provider: %w", err)
 	}
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
@@ -41,51 +57,53 @@ func (m *Metadata) UpsertBindingProvider(ctx context.Context, tx types.Transacti
 	}
 
 	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into binding_providers(name, version, source_url, checksums, service_types, created_by, create_time, update_time) `+
-			`values(?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		provider.Name, provider.Version, provider.SourceURL, string(checksumsJson), string(serviceTypesJson), provider.CreatedBy)
+		`INSERT into binding_providers(name, provider_type, version, source_url, checksums, service_types, manifest, created_by, create_time, update_time) `+
+			`values(?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
+		provider.Name, providerType, provider.Version, provider.SourceURL, string(checksumsJson), string(serviceTypesJson),
+		provider.Manifest, provider.CreatedBy)
 	if err != nil {
-		return fmt.Errorf("error inserting binding provider: %w", err)
+		return fmt.Errorf("error inserting provider: %w", err)
 	}
 	return nil
 }
 
-func (m *Metadata) DeleteBindingProvider(ctx context.Context, tx types.Transaction, name string) error {
+func (m *Metadata) DeleteBindingProvider(ctx context.Context, tx types.Transaction, providerType, name string) error {
 	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`delete from binding_providers where name = ?`), name)
+		`delete from binding_providers where provider_type = ? and name = ?`), providerTypeOrDefault(providerType), name)
 	if err != nil {
-		return fmt.Errorf("error deleting binding provider: %w", err)
+		return fmt.Errorf("error deleting provider: %w", err)
 	}
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("error getting rows affected: %w", err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("binding provider %s not found", name)
+		return fmt.Errorf("%s provider %s not found", providerTypeOrDefault(providerType), name)
 	}
 	return nil
 }
 
-func (m *Metadata) GetBindingProvider(ctx context.Context, tx types.Transaction, name string) (*types.BindingProvider, error) {
+func (m *Metadata) GetBindingProvider(ctx context.Context, tx types.Transaction, providerType, name string) (*types.BindingProvider, error) {
 	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select name, version, source_url, checksums, service_types, created_by, create_time, update_time `+
-			`from binding_providers where name = ?`), name)
+		`select name, provider_type, version, source_url, checksums, service_types, manifest, created_by, create_time, update_time `+
+			`from binding_providers where provider_type = ? and name = ?`), providerTypeOrDefault(providerType), name)
 	provider, err := scanBindingProvider(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("binding provider %s not found", name)
+			return nil, fmt.Errorf("%s provider %s not found", providerTypeOrDefault(providerType), name)
 		}
-		return nil, fmt.Errorf("error querying binding provider: %w", err)
+		return nil, fmt.Errorf("error querying provider: %w", err)
 	}
 	return provider, nil
 }
 
+// ListBindingProviders returns all installed providers, of every type.
 func (m *Metadata) ListBindingProviders(ctx context.Context, tx types.Transaction) ([]*types.BindingProvider, error) {
 	rows, err := tx.QueryContext(ctx,
-		`select name, version, source_url, checksums, service_types, created_by, create_time, update_time `+
-			`from binding_providers order by name`)
+		`select name, provider_type, version, source_url, checksums, service_types, manifest, created_by, create_time, update_time `+
+			`from binding_providers order by provider_type, name`)
 	if err != nil {
-		return nil, fmt.Errorf("error querying binding providers: %w", err)
+		return nil, fmt.Errorf("error querying providers: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck
 
@@ -93,7 +111,7 @@ func (m *Metadata) ListBindingProviders(ctx context.Context, tx types.Transactio
 	for rows.Next() {
 		provider, err := scanBindingProvider(rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("error scanning binding provider: %w", err)
+			return nil, fmt.Errorf("error scanning provider: %w", err)
 		}
 		providers = append(providers, provider)
 	}
@@ -102,10 +120,14 @@ func (m *Metadata) ListBindingProviders(ctx context.Context, tx types.Transactio
 
 func scanBindingProvider(scan func(dest ...any) error) (*types.BindingProvider, error) {
 	provider := types.BindingProvider{}
-	var checksumsJson, serviceTypesJson sql.NullString
-	if err := scan(&provider.Name, &provider.Version, &provider.SourceURL, &checksumsJson, &serviceTypesJson,
-		&provider.CreatedBy, &provider.CreateTime, &provider.UpdateTime); err != nil {
+	var checksumsJson, serviceTypesJson, manifest sql.NullString
+	if err := scan(&provider.Name, &provider.Type, &provider.Version, &provider.SourceURL, &checksumsJson, &serviceTypesJson,
+		&manifest, &provider.CreatedBy, &provider.CreateTime, &provider.UpdateTime); err != nil {
 		return nil, err
+	}
+	provider.Type = providerTypeOrDefault(provider.Type)
+	if manifest.Valid {
+		provider.Manifest = manifest.String
 	}
 	if checksumsJson.Valid && checksumsJson.String != "" {
 		if err := json.Unmarshal([]byte(checksumsJson.String), &provider.Checksums); err != nil {
@@ -120,9 +142,9 @@ func scanBindingProvider(scan func(dest ...any) error) (*types.BindingProvider, 
 	return &provider, nil
 }
 
-// NotifyProviderUpdate broadcasts that a binding provider was installed,
-// updated or uninstalled, so other replicas reconcile it from the database.
-func (m *Metadata) NotifyProviderUpdate(name string, deleted bool) error {
+// NotifyProviderUpdate broadcasts that a provider was installed, updated or
+// uninstalled, so other replicas reconcile it from the database.
+func (m *Metadata) NotifyProviderUpdate(providerType, name string, deleted bool) error {
 	if m.dbType != system.DB_TYPE_POSTGRES {
 		return nil
 	}
@@ -131,6 +153,7 @@ func (m *Metadata) NotifyProviderUpdate(name string, deleted bool) error {
 		MessageType: types.MessageTypeProviderUpdate,
 		Payload: types.ProviderUpdatePayload{
 			Name:     name,
+			Type:     providerTypeOrDefault(providerType),
 			Deleted:  deleted,
 			ServerId: types.CurrentServerId,
 		},

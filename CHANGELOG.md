@@ -9,6 +9,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added support for dynamically loaded plugins using same go-plugin mechanism as used for bindings
 - Added the `static_root_cache_control` app config property: sets the `Cache-Control` header value for files served from an app's `static_root` directory (favicons and other stable-named root files). Default is empty, no header. The built-in list_apps app sets `public, max-age=3600`.
 
 ## [v0.18.18] - 2026-08-12

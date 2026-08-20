@@ -5,6 +5,7 @@ package app_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,11 +14,9 @@ import (
 	"testing"
 
 	"github.com/openrundev/openrun/internal/app"
-	"github.com/openrundev/openrun/internal/app/starlark_type"
-	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
 
 // The download response (ace.response(..., download=name)) streams the body
@@ -214,21 +213,22 @@ def handler(req):
 	testutil.AssertEqualsString(t, "body", "partial", response.Body.String())
 }
 
-// testStreamPlugin returns download-stream values, the lazily produced
-// download bodies the zip download plugin APIs use. get(size=N, fail=True)
-// produces N bytes of "A" in 64KB writes and then optionally fails, letting
-// the tests drive the producer past (or keep it under) the 16MB response
-// buffer.
+// testStreamPlugin returns download values, the lazily produced download
+// bodies the zip download plugin APIs use. get(size=N, fail=True) produces N
+// bytes of "A" in 64KB writes and then optionally fails, letting the tests
+// drive the producer past (or keep it under) the 16MB response buffer.
 type testStreamPlugin struct{}
 
-func (p *testStreamPlugin) Get(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var size starlark.Int
-	var fail starlark.Bool
-	if err := starlark.UnpackArgs("get", args, kwargs, "size", &size, "fail?", &fail); err != nil {
+func (p *testStreamPlugin) InitModule(ctx context.Context, init sdk.ModuleInit) error { return nil }
+func (p *testStreamPlugin) Close(ctx context.Context) error                           { return nil }
+
+func (p *testStreamPlugin) Get(ctx context.Context, call *sdk.Call) (any, error) {
+	var total int64
+	var fail bool
+	if err := sdk.UnpackArgs("get", call, "size", &total, "fail?", &fail); err != nil {
 		return nil, err
 	}
-	total, _ := size.Int64()
-	stream := starlark_type.NewDownloadStream("stream.bin", func(w io.Writer) error {
+	stream := &sdk.Download{Name: "stream.bin", Producer: func(w io.Writer) error {
 		chunk := bytes.Repeat([]byte{'A'}, 64*1024)
 		remaining := total
 		for remaining > 0 {
@@ -238,24 +238,29 @@ func (p *testStreamPlugin) Get(thread *starlark.Thread, fn *starlark.Builtin, ar
 			}
 			remaining -= n
 		}
-		if bool(fail) {
+		if fail {
 			return fmt.Errorf("producer failed after %d bytes", total)
 		}
 		return nil
-	})
-	dict := starlark.NewDict(2)
-	dict.SetKey(starlark.String("content"), stream)                     //nolint:errcheck
-	dict.SetKey(starlark.String("name"), starlark.String("stream.bin")) //nolint:errcheck
-	return dict, nil
+	}}
+	return map[string]any{
+		"content": stream,
+		"name":    stream.Name,
+	}, nil
 }
 
 func init() {
-	p := &testStreamPlugin{}
-	app.RegisterPlugin("teststream", func(pluginContext *types.PluginContext) (any, error) {
-		return &testStreamPlugin{}, nil
-	}, []plugin.PluginFunc{
-		app.CreatePluginApiName(p.Get, app.READ, "get"),
-	})
+	app.RegisterLocalProvider("teststream", &sdk.ServeConfig{
+		ProviderVersion: "test",
+		Modules: map[string]sdk.ModuleDef{
+			"teststream": {
+				Builder: func() sdk.Module { return &testStreamPlugin{} },
+				Functions: []sdk.FuncDef{
+					{Name: "get", Type: sdk.READ, Method: "Get"},
+				},
+			},
+		},
+	}, app.LocalProviderOptions{})
 }
 
 func streamTestApp(t *testing.T, call string) *app.App {
