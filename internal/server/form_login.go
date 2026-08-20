@@ -9,6 +9,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"html/template"
 	"net"
 	"net/http"
@@ -67,11 +68,16 @@ var loginStyleCSS []byte
 //go:embed login_html/login_extra.css
 var loginExtraCSS []byte
 
+//go:embed login_html/fonts/*.woff2
+var loginFontsFS embed.FS
+
 const (
 	formLoginPath    = types.INTERNAL_URL_PREFIX + "/auth/login"
 	formCompletePath = formLoginPath + "/complete"
 	formStylePath    = formLoginPath + "/style.css"
 	formExtraPath    = formLoginPath + "/extra.css"
+	formFontsCSSPath = formLoginPath + "/fonts.css"
+	formFontsPath    = formLoginPath + "/fonts"
 
 	// CRED_FP_KEY stores a fingerprint of the bcrypt hash the session was
 	// authenticated against; a password change invalidates the session
@@ -90,6 +96,10 @@ type FormLoginManager struct {
 	extraHref   string
 	styleEtag   string
 	extraEtag   string
+	fontsCSS    []byte
+	fontsHref   string
+	fontsEtag   string
+	fontEtags   map[string]string
 
 	// sessionHttpsOnly mirrors the cookie store's Secure attribute, which is
 	// fixed at startup (oauth.Setup) and shared with OAuth/SAML. canStartFlow
@@ -107,8 +117,13 @@ func NewFormLoginManager(logger *types.Logger, getConfig func() *types.ServerCon
 		return nil, err
 	}
 
+	fontsCSS, fontEtags, err := buildLoginFontsCSS()
+	if err != nil {
+		return nil, err
+	}
 	styleHash := contentHash(loginStyleCSS)
 	extraHash := contentHash(loginExtraCSS)
+	fontsHash := contentHash(fontsCSS)
 	return &FormLoginManager{
 		Logger:           logger,
 		getConfig:        getConfig,
@@ -121,6 +136,10 @@ func NewFormLoginManager(logger *types.Logger, getConfig func() *types.ServerCon
 		extraHref:        formExtraPath + "?v=" + extraHash,
 		styleEtag:        `"` + styleHash + `"`,
 		extraEtag:        `"` + extraHash + `"`,
+		fontsCSS:         fontsCSS,
+		fontsHref:        formFontsCSSPath + "?v=" + fontsHash,
+		fontsEtag:        `"` + fontsHash + `"`,
+		fontEtags:        fontEtags,
 		sessionHttpsOnly: sessionHttpsOnly,
 	}, nil
 }
@@ -128,6 +147,47 @@ func NewFormLoginManager(logger *types.Logger, getConfig func() *types.ServerCon
 func contentHash(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:8])
+}
+
+// buildLoginFontsCSS generates the brand-font stylesheet for the login and
+// logout pages: @font-face declarations whose urls carry a content hash (so
+// the font responses can be cached immutable, same scheme as the css hrefs),
+// plus the rules applying the faces. Generated at startup rather than
+// embedded statically because the hashes are only known from the embedded
+// font bytes. The dev-harness app keeps a hand-written copy of the rules
+// (static/css/login_fonts.css in openrundev/apps openrun/login) - keep the
+// two in sync
+func buildLoginFontsCSS() ([]byte, map[string]string, error) {
+	faces := []struct {
+		family string
+		weight int
+		file   string
+	}{
+		{"Schibsted Grotesk", 400, "schibsted-grotesk-400.woff2"},
+		{"Schibsted Grotesk", 500, "schibsted-grotesk-500.woff2"},
+		{"Schibsted Grotesk", 600, "schibsted-grotesk-600.woff2"},
+		{"Space Grotesk", 700, "space-grotesk-700.woff2"},
+	}
+	etags := make(map[string]string, len(faces))
+	var css strings.Builder
+	for _, f := range faces {
+		content, err := loginFontsFS.ReadFile("login_html/fonts/" + f.file)
+		if err != nil {
+			return nil, nil, err
+		}
+		hash := contentHash(content)
+		etags[f.file] = `"` + hash + `"`
+		fmt.Fprintf(&css,
+			"@font-face { font-family: %q; font-style: normal; font-weight: %d; font-display: swap; src: url(%q) format(\"woff2\"); }\n",
+			f.family, f.weight, formFontsPath+"/"+f.file+"?v="+hash)
+	}
+	// The generated tailwind preflight resolves the body font from
+	// --default-font-family at runtime; --font-sans covers any daisyui rule
+	// routed through it. The brand title uses the console's display face.
+	css.WriteString(":root { --default-font-family: \"Schibsted Grotesk\", ui-sans-serif, system-ui, sans-serif; " +
+		"--font-sans: \"Schibsted Grotesk\", ui-sans-serif, system-ui, sans-serif; }\n")
+	css.WriteString(".login-title { font-family: \"Space Grotesk\", \"Schibsted Grotesk\", ui-sans-serif, sans-serif; }\n")
+	return []byte(css.String()), etags, nil
 }
 
 // credentialFingerprint returns a fingerprint of the current stored bcrypt
@@ -284,6 +344,33 @@ func (s *FormLoginManager) RegisterRoutes(csrfMiddleware *http.CrossOriginProtec
 	mux.Get(formCompletePath, s.complete)
 	mux.Get(formStylePath, s.serveCSS(loginStyleCSS, s.styleEtag))
 	mux.Get(formExtraPath, s.serveCSS(loginExtraCSS, s.extraEtag))
+	mux.Get(formFontsCSSPath, s.serveCSS(s.fontsCSS, s.fontsEtag))
+	mux.Get(formFontsPath+"/{name}", s.serveFont)
+}
+
+// serveFont serves one embedded login font. The name is gated on the etag map
+// built from the embedded files, so only known font names resolve
+func (s *FormLoginManager) serveFont(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	etag, ok := s.fontEtags[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	content, err := loginFontsFS.ReadFile("login_html/fonts/" + name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	// The href carries a content hash, so the response can be cached hard
+	w.Header().Set("Content-Type", "font/woff2")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	_, _ = w.Write(content)
 }
 
 func (s *FormLoginManager) serveCSS(content []byte, etag string) http.HandlerFunc {
@@ -309,7 +396,7 @@ func (s *FormLoginManager) serveCSS(content []byte, etag string) http.HandlerFun
 // it does not weaken the protection meaningfully
 func setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy",
-		"default-src 'none'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+		"default-src 'none'; style-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
@@ -329,6 +416,7 @@ func (s *FormLoginManager) render(w http.ResponseWriter, authType, state, errorM
 			"State":     state,
 			"StyleHref": s.styleHref,
 			"ExtraHref": s.extraHref,
+			"FontsHref": s.fontsHref,
 			"LoginPath": loginPath,
 		},
 	}

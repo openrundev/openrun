@@ -182,6 +182,7 @@ func (s *FormLoginManager) renderLogout(w http.ResponseWriter, mode, user, redir
 			"LogoutPath": formLogoutPath,
 			"StyleHref":  s.styleHref,
 			"ExtraHref":  s.extraHref,
+			"FontsHref":  s.fontsHref,
 		},
 	}
 	setSecurityHeaders(w)

@@ -7,7 +7,7 @@
 
 /* ---- Typography ---------------------------------------------------------
    Self-hosted brand type (SIL OFL, woff2 in astatic/fonts/): Space Grotesk
-   for headings, Inter for body, JetBrains Mono for identifiers and report
+   for headings, Schibsted Grotesk for body, JetBrains Mono for identifiers and report
    values. The @font-face declarations live in the layout template
    (layout.go.html "fonts" block), NOT here: a static css file can only
    reference the fonts by their plain names, while the template's astatic
@@ -15,12 +15,12 @@
    generated tailwind layer routes every font through
    --font-sans/--font-mono, so redefining the variables here covers the
    preflight body default and the font-sans/font-mono utilities alike.
-   Shipped weights only: Inter 400/500/600, Space Grotesk 500/700,
+   Shipped weights only: Schibsted Grotesk 400/500/600, Space Grotesk 500/700,
    JetBrains Mono 400/500. */
 
 :root {
   --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif,
+  --font-sans: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
     "Noto Color Emoji";
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
