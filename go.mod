@@ -37,8 +37,8 @@ require (
 	github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c
 	github.com/markbates/goth v1.82.0
 	github.com/moby/buildkit v0.31.2
-	github.com/openrundev/openrun/pkg/binding v0.18.11
-	github.com/openrundev/openrun/pkg/plugin v0.0.0
+	github.com/openrundev/openrun/pkg/binding v0.19.0
+	github.com/openrundev/openrun/pkg/plugin v0.19.0
 	github.com/pkg/profile v1.7.0
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/rs/zerolog v1.35.1
