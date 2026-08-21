@@ -74,6 +74,12 @@ jobs:
           cache: false
       - name: Install dependencies
         run: go mod download
+      - name: Clean stale OpenRun containers
+        run: |
+          mapfile -t stale_openrun_containers < <(docker ps -a -q --filter label=dev.openrun.server.home)
+          if (( ${#stale_openrun_containers[@]} > 0 )); then
+            docker rm -f "${stale_openrun_containers[@]}" || true
+          fi
       - name: Unit and Integration test
         env:
           CL_INFOCLACE_SSH: ${{ secrets.CL_INFOCLACE_SSH }}
@@ -135,24 +141,32 @@ jobs:
 
           gmake covtest "${MAKE_TEST_ARGS[@]}"
 
-          # Remove only containers managed by OpenRun. Capture their generated
-          # cli-* images after stopping the containers, then remove those
-          # images while retaining pulled base images (including Litestream,
-          # language runtimes, and databases) and Docker's build-layer cache.
+      - name: Clean OpenRun test resources
+        if: ${{ always() }}
+        run: |
+          # Stop OpenRun-managed containers before inspecting and removing
+          # them. The test harness normally removes its containers first, so
+          # also find generated cli-* images directly by their reserved prefix.
           mapfile -t openrun_containers < <(docker ps -a -q --filter label=dev.openrun.server.home)
           declare -A generated_images=()
           if (( ${#openrun_containers[@]} > 0 )); then
-            docker stop -t 1 "${openrun_containers[@]}"
+            docker stop -t 1 "${openrun_containers[@]}" || true
             while read -r image_ref; do
               if [[ "$image_ref" == cli-* || "$image_ref" == */cli-* ]]; then
                 generated_images["$image_ref"]=1
               fi
             done < <(docker inspect --format '{{.Config.Image}}' "${openrun_containers[@]}")
-            docker rm "${openrun_containers[@]}"
+            docker rm -f "${openrun_containers[@]}" || true
           fi
+          while read -r image_ref; do
+            if [[ "$image_ref" == cli-* || "$image_ref" == */cli-* ]]; then
+              generated_images["$image_ref"]=1
+            fi
+          done < <(docker image ls --format '{{.Repository}}:{{.Tag}}')
           if (( ${#generated_images[@]} > 0 )); then
-            docker image rm "${!generated_images[@]}"
+            docker image rm "${!generated_images[@]}" || true
           fi
+          docker volume prune -f
 
       - name: Upload Go test results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
