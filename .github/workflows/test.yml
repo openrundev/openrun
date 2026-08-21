@@ -166,7 +166,7 @@ jobs:
           if (( ${#generated_images[@]} > 0 )); then
             docker image rm "${!generated_images[@]}" || true
           fi
-          docker volume prune -f
+          docker volume prune -a -f
 
       - name: Upload Go test results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
