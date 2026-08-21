@@ -65,7 +65,7 @@ endif
 .RECIPEPREFIX = >
 TAG := 
 
-.PHONY: help test unit int testui covtest covunit covint release fullrelease int_single lint verify build-linux image tags docs-screenshots
+.PHONY: help test unit int testui covtest covunit covint release fullrelease update-dep update-go int_single lint verify build-linux image tags docs-screenshots
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -145,6 +145,80 @@ tags: ## Show current release version tags
 > echo "Binding providers"
 > $(MAKE) --no-print-directory -s -C ../bindings tags
 > echo "Helm chart : $$(git -C ../openrun-helm-charts tag -l 'openrun-*' --sort=-version:refname | head -n 1)"
+
+update-dep: ## Update one dependency in all OpenRun and binding-provider modules; args: <module[@version]>
+> @dependency="$(INPUT)"
+> if [[ -z "$$dependency" ]]; then
+>   echo "Usage: make update-dep <module[@version]>, e.g. make update-dep google.golang.org/grpc"
+>   exit 1
+> fi
+> module_dirs=(. internal/bindings/testdata/fixtureprovider pkg/plugin pkg/binding)
+> if [[ ! -f ../bindings/Makefile ]]; then
+>   echo "Error: ../bindings is required"
+>   exit 1
+> fi
+> binding_modules="$$($(MAKE) --no-print-directory -s -C ../bindings modules)"
+> for module in $$binding_modules; do
+>   module_dirs+=("../bindings/$$module")
+> done
+> for module_dir in "$${module_dirs[@]}"; do
+>   if [[ ! -f "$$module_dir/go.mod" ]]; then
+>     echo "Error: module file not found: $$module_dir/go.mod"
+>     exit 1
+>   fi
+> done
+> for module_dir in "$${module_dirs[@]}"; do
+>   echo "==> $$module_dir: go get -u $$dependency"
+>   (cd "$$module_dir" && GOWORK=off go get -u "$$dependency")
+> done
+
+update-go: ## Update the Go version in all modules and Actions workflows; args: <major.minor.patch>
+> @version="$(INPUT)"
+> version="$${version#go}"
+> if [[ ! "$$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$$ ]]; then
+>   echo "Usage: make update-go <major.minor.patch>, e.g. make update-go 1.26.6"
+>   exit 1
+> fi
+> module_dirs=(. docs internal/bindings/testdata/fixtureprovider pkg/plugin pkg/binding ui/console_tests)
+> if [[ ! -f ../bindings/Makefile ]]; then
+>   echo "Error: ../bindings is required"
+>   exit 1
+> fi
+> binding_modules="$$($(MAKE) --no-print-directory -s -C ../bindings modules)"
+> for module in $$binding_modules; do
+>   module_dirs+=("../bindings/$$module")
+> done
+> for module_dir in "$${module_dirs[@]}"; do
+>   if [[ ! -f "$$module_dir/go.mod" ]]; then
+>     echo "Error: module file not found: $$module_dir/go.mod"
+>     exit 1
+>   fi
+> done
+> workflow_dirs=(.github/workflows ../bindings/.github/workflows ui/console_tests/.github/workflows)
+> for workflow_dir in "$${workflow_dirs[@]}"; do
+>   if [[ ! -d "$$workflow_dir" ]]; then
+>     echo "Error: workflow directory not found: $$workflow_dir"
+>     exit 1
+>   fi
+> done
+> for module_dir in "$${module_dirs[@]}"; do
+>   echo "==> $$module_dir/go.mod: go $$version"
+>   (cd "$$module_dir" && GOWORK=off go mod edit -go="$$version")
+> done
+> for workflow_dir in "$${workflow_dirs[@]}"; do
+>   while IFS= read -r -d '' workflow; do
+>     if ! grep -Eq "^[[:space:]]*go-version:[[:space:]]*(\[?[\"']?)?[0-9]+\.[0-9]+" "$$workflow"; then
+>       continue
+>     fi
+>     sed -E \
+>       -e "s/^([[:space:]]*go-version:[[:space:]]*\[?\")[0-9]+\.[0-9]+(\.[0-9]+)?(\"\]?[[:space:]]*)$$/\1$$version\3/" \
+>       -e "s/^([[:space:]]*go-version:[[:space:]]*\[?')[0-9]+\.[0-9]+(\.[0-9]+)?('\]?[[:space:]]*)$$/\1$$version\3/" \
+>       -e "s/^([[:space:]]*go-version:[[:space:]]*)[0-9]+\.[0-9]+(\.[0-9]+)?([[:space:]]*)$$/\1$$version\3/" \
+>       "$$workflow" > "$$workflow.new"
+>     mv "$$workflow.new" "$$workflow"
+>   done < <(find "$$workflow_dir" -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
+> done
+> echo "Updated Go version to $$version in $${#module_dirs[@]} modules and Actions workflows"
 
 release: ## Tag and push a release; args: <app_version> <helm_version>
 > @if [[ -z "$(INPUT)" || "$(INPUT)" == v* ]]; then \

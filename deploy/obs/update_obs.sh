@@ -58,11 +58,12 @@ rm -rf apps
 # module and local module dependencies before creating vendor metadata. The
 # .0 form (not a bare major.minor) is required: go mod vendor rejects a go.mod
 # whose go directive is not in the canonical three-part form.
-echo "==> Relaxing go.mod patch version and vendoring modules"
-for mod_file in go.mod pkg/binding/go.mod; do
+echo "==> Relaxing go.mod patch version, tidying, and vendoring modules"
+for mod_file in go.mod pkg/*/go.mod; do
     sed -E 's/^go ([0-9]+\.[0-9]+)\.[0-9]+$/go \1.0/' "$mod_file" > "$mod_file.new"
     mv "$mod_file.new" "$mod_file"
 done
+GOTOOLCHAIN=local go mod tidy
 GOTOOLCHAIN=local go mod vendor
 CGO_ENABLED=0 GOTOOLCHAIN=local go build -mod=vendor -o /dev/null ./cmd/openrun
 

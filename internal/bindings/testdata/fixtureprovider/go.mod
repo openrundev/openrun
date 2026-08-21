@@ -1,6 +1,6 @@
 module fixtureprovider
 
-go 1.26.6
+go 1.27.0
 
 require github.com/openrundev/openrun/pkg/binding v0.0.0
 
