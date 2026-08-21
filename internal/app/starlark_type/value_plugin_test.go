@@ -1,7 +1,7 @@
 // Copyright (c) ClaceIO, LLC
 // SPDX-License-Identifier: Apache-2.0
 
-package app
+package starlark_type
 
 import (
 	"math/big"
@@ -76,16 +76,16 @@ func starCorpus(t testing.TB) map[string]starlark.Value {
 }
 
 // TestStarToGoMatchesWire verifies the direct bridge's starlark->Go
-// conversion is exactly equivalent to the wire path (starToWire followed by
+// conversion is exactly equivalent to the wire path (ToWire followed by
 // DecodeValue), which external providers use.
 func TestStarToGoMatchesWire(t *testing.T) {
 	for name, v := range starCorpus(t) {
 		t.Run(name, func(t *testing.T) {
-			direct, err := starToGoValue(v, 0)
+			direct, err := ToPlugin(v, 0)
 			if err != nil {
 				t.Fatalf("direct: %v", err)
 			}
-			wire, err := starToWire(v, 0)
+			wire, err := ToWire(v, 0)
 			if err != nil {
 				t.Fatalf("wire encode: %v", err)
 			}
@@ -135,17 +135,24 @@ func goCorpus() map[string]any {
 		"nested": map[string]any{
 			"rows": []map[string]any{{"n": "x", "v": int64(1)}},
 		},
+		"nil_bigint":   (*big.Int)(nil),
+		"nil_dict":     (*sdk.Dict)(nil),
+		"nil_struct":   (*sdk.Struct)(nil),
+		"nil_thunk":    (*sdk.Thunk)(nil),
+		"nil_funcref":  (*sdk.FuncRef)(nil),
+		"nil_download": (*sdk.Download)(nil),
+		"nil_cursor":   (*sdk.Cursor)(nil),
 	}
 }
 
 // TestGoToStarMatchesWire verifies the direct bridge's Go->starlark
 // conversion is exactly equivalent to the wire path (EncodeValue followed by
-// wireToStar). Equality is checked by round-tripping both results through
+// FromWire). Equality is checked by round-tripping both results through
 // the already-validated starlark->Go direction and comparing types.
 func TestGoToStarMatchesWire(t *testing.T) {
 	for name, v := range goCorpus() {
 		t.Run(name, func(t *testing.T) {
-			direct, err := goValueToStar(v, 0, nil)
+			direct, err := FromPlugin(v, 0, nil)
 			if err != nil {
 				t.Fatalf("direct: %v", err)
 			}
@@ -153,18 +160,18 @@ func TestGoToStarMatchesWire(t *testing.T) {
 			if err != nil {
 				t.Fatalf("wire encode: %v", err)
 			}
-			viaWire, err := wireToStar(wire, nil, nil, 0)
+			viaWire, err := FromWire(wire, nil, nil, 0)
 			if err != nil {
 				t.Fatalf("wire decode: %v", err)
 			}
 			if direct.Type() != viaWire.Type() {
 				t.Fatalf("type mismatch: direct %s, viaWire %s", direct.Type(), viaWire.Type())
 			}
-			directGo, err := starToGoValue(direct, 0)
+			directGo, err := ToPlugin(direct, 0)
 			if err != nil {
 				t.Fatalf("direct roundtrip: %v", err)
 			}
-			wireGo, err := starToGoValue(viaWire, 0)
+			wireGo, err := ToPlugin(viaWire, 0)
 			if err != nil {
 				t.Fatalf("wire roundtrip: %v", err)
 			}
@@ -186,13 +193,13 @@ func TestThunkMaterialization(t *testing.T) {
 		name        string
 		materialize func() (starlark.Value, error)
 	}{
-		{"direct", func() (starlark.Value, error) { return goValueToStar(thunk, 0, nil) }},
+		{"direct", func() (starlark.Value, error) { return FromPlugin(thunk, 0, nil) }},
 		{"wire", func() (starlark.Value, error) {
 			enc, err := sdk.EncodeValue(thunk)
 			if err != nil {
 				return nil, err
 			}
-			return wireToStar(enc, nil, nil, 0)
+			return FromWire(enc, nil, nil, 0)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -215,7 +222,7 @@ func TestThunkMaterialization(t *testing.T) {
 	}
 
 	errThunk := &sdk.Thunk{Name: "json", Error: "invalid json"}
-	v, err := goValueToStar(errThunk, 0, nil)
+	v, err := FromPlugin(errThunk, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

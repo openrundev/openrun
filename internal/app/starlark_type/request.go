@@ -73,17 +73,17 @@ func (r Request) Attr(name string) (starlark.Value, error) {
 		if headers == nil && r.HeadersFunc != nil {
 			headers = r.HeadersFunc()
 		}
-		return MarshalStarlark(headers)
+		return FromGo(headers)
 	case "RemoteIP":
 		return starlark.String(r.RemoteIP), nil
 	case "UrlParams":
-		return MarshalStarlark(r.UrlParams)
+		return FromGo(r.UrlParams)
 	case "Form":
-		return MarshalStarlark(r.Form)
+		return FromGo(r.Form)
 	case "Query":
-		return MarshalStarlark(r.Query)
+		return FromGo(r.Query)
 	case "PostForm":
-		return MarshalStarlark(r.PostForm)
+		return FromGo(r.PostForm)
 	case "UserId":
 		return starlark.String(r.UserId), nil
 	case "UserSubject":
@@ -91,11 +91,11 @@ func (r Request) Attr(name string) (starlark.Value, error) {
 	case "UserEmail":
 		return starlark.String(r.UserEmail), nil
 	case "CustomPerms":
-		return MarshalStarlark(r.CustomPerms)
+		return FromGo(r.CustomPerms)
 	case "AppRBACEnabled":
 		return starlark.Bool(r.AppRBACEnabled), nil
 	case "Data":
-		return MarshalStarlark(r.Data)
+		return FromGo(r.Data)
 	default:
 		return starlark.None, fmt.Errorf("request has no attribute '%s'", name)
 	}

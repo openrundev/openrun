@@ -133,8 +133,28 @@ func TestCodecUnsupported(t *testing.T) {
 	if _, err := EncodeValue(make(chan int)); err == nil {
 		t.Error("expected error for chan")
 	}
+	if _, err := EncodeValue(&Download{}); err == nil {
+		t.Error("expected error for external download")
+	}
 	if _, err := EncodeValue(&Cursor{}); err == nil {
 		t.Error("expected error for nested cursor")
+	}
+}
+
+func TestCodecTypedNilPointers(t *testing.T) {
+	values := []any{
+		(*big.Int)(nil),
+		(*Dict)(nil),
+		(*Struct)(nil),
+		(*Thunk)(nil),
+		(*FuncRef)(nil),
+		(*Download)(nil),
+		(*Cursor)(nil),
+	}
+	for _, value := range values {
+		if got := roundTrip(t, value); got != nil {
+			t.Errorf("round trip %T: got %#v, want nil", value, got)
+		}
 	}
 }
 

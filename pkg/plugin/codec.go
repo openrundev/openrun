@@ -21,8 +21,8 @@ const MaxValueDepth = 100
 // the value shapes plugin functions return: nil, bool, all int/uint widths,
 // *big.Int, float32/64, string, []byte, time.Time, Tuple, Set, *Dict/Dict,
 // *Struct/Struct, []any (and common typed slices), and map[string]any (and
-// common typed maps). Cursors are not encoded here; the provider serve loop
-// registers them and encodes a cursor handle.
+// common typed maps). Nil pointers encode as None. Cursors are not encoded
+// here; the provider serve loop registers them and encodes a cursor handle.
 func EncodeValue(v any) (*pb.StarValue, error) {
 	return encodeValue(v, 0)
 }
@@ -59,6 +59,9 @@ func encodeValue(v any, depth int) (*pb.StarValue, error) {
 	case uint64:
 		return encodeUint64(x), nil
 	case *big.Int:
+		if x == nil {
+			return &pb.StarValue{Kind: &pb.StarValue_None{None: true}}, nil
+		}
 		if x.IsInt64() {
 			return encodeInt64(x.Int64()), nil
 		}
@@ -91,10 +94,16 @@ func encodeValue(v any, depth int) (*pb.StarValue, error) {
 	case Dict:
 		return encodeDictEntries(x.Entries, depth)
 	case *Dict:
+		if x == nil {
+			return &pb.StarValue{Kind: &pb.StarValue_None{None: true}}, nil
+		}
 		return encodeDictEntries(x.Entries, depth)
 	case Struct:
 		return encodeStruct(&x, depth)
 	case *Struct:
+		if x == nil {
+			return &pb.StarValue{Kind: &pb.StarValue_None{None: true}}, nil
+		}
 		return encodeStruct(x, depth)
 	case []any:
 		list, err := encodeSlice(x, depth)
@@ -155,12 +164,26 @@ func encodeValue(v any, depth int) (*pb.StarValue, error) {
 	case Thunk:
 		return encodeThunk(&x, depth)
 	case *Thunk:
+		if x == nil {
+			return &pb.StarValue{Kind: &pb.StarValue_None{None: true}}, nil
+		}
 		return encodeThunk(x, depth)
 	case FuncRef:
 		return encodeFuncRef(&x, depth)
 	case *FuncRef:
+		if x == nil {
+			return &pb.StarValue{Kind: &pb.StarValue_None{None: true}}, nil
+		}
 		return encodeFuncRef(x, depth)
+	case *Download:
+		if x == nil {
+			return &pb.StarValue{Kind: &pb.StarValue_None{None: true}}, nil
+		}
+		return nil, fmt.Errorf("a Download is only supported by in-process plugins")
 	case *Cursor:
+		if x == nil {
+			return &pb.StarValue{Kind: &pb.StarValue_None{None: true}}, nil
+		}
 		return nil, fmt.Errorf("a Cursor can only be the top-level return value of a plugin function")
 	default:
 		return nil, fmt.Errorf("cannot encode value of type %T for plugin transport", v)
@@ -364,26 +387,22 @@ func decodeSlice(list *pb.ValueList, depth int) ([]any, error) {
 // wire entry order intact.
 func decodeDict(dict *pb.StarDict, depth int) (any, error) {
 	entries := dict.GetEntries()
-	stringKeys := true
+	m := make(map[string]any, len(entries))
 	for _, entry := range entries {
-		if _, ok := entry.GetKey().GetKind().(*pb.StarValue_Str); !ok {
-			stringKeys = false
-			break
+		key, ok := entry.GetKey().GetKind().(*pb.StarValue_Str)
+		if !ok {
+			return decodeDictEntries(entries, depth)
 		}
-	}
-
-	if stringKeys {
-		m := make(map[string]any, len(entries))
-		for _, entry := range entries {
-			val, err := decodeValue(entry.GetValue(), depth)
-			if err != nil {
-				return nil, err
-			}
-			m[entry.GetKey().GetKind().(*pb.StarValue_Str).Str] = val
+		val, err := decodeValue(entry.GetValue(), depth)
+		if err != nil {
+			return nil, err
 		}
-		return m, nil
+		m[key.Str] = val
 	}
+	return m, nil
+}
 
+func decodeDictEntries(entries []*pb.StarEntry, depth int) (*Dict, error) {
 	d := &Dict{Entries: make([]DictEntry, 0, len(entries))}
 	for _, entry := range entries {
 		key, err := decodeValue(entry.GetKey(), depth)

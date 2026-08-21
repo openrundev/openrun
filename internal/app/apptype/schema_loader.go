@@ -200,7 +200,7 @@ func getFields(typeName string, typeStruct *starlarkstruct.Struct, key string) (
 
 		defaultValue, err := fieldStruct.Attr("default")
 		if err == nil { // Attr is present
-			val, err := starlark_type.UnmarshalStarlark(defaultValue)
+			val, err := starlark_type.ToGo(defaultValue)
 			if err != nil {
 				return nil, fmt.Errorf("error unmarshalling default value for field %s in type %s: %s", fieldName, typeName, err)
 			}

@@ -232,7 +232,7 @@ func ParamStringToType(name string, typeName starlark_type.TypeName, valueStr st
 			return nil, fmt.Errorf("param %s is not a json dict", name)
 		}
 
-		dictVal, err := starlark_type.MarshalStarlark(dictValue)
+		dictVal, err := starlark_type.FromGo(dictValue)
 		if err != nil {
 			return nil, fmt.Errorf("param %s is not a starlark dict", name)
 		}
@@ -242,7 +242,7 @@ func ParamStringToType(name string, typeName starlark_type.TypeName, valueStr st
 		if err := json.Unmarshal([]byte(valueStr), &listValue); err != nil {
 			return nil, fmt.Errorf("param %s is not a json list", name)
 		}
-		listVal, err := starlark_type.MarshalStarlark(listValue)
+		listVal, err := starlark_type.FromGo(listValue)
 		if err != nil {
 			return nil, fmt.Errorf("param %s is not a starlark list", name)
 		}

@@ -1,25 +1,24 @@
 // Copyright (c) ClaceIO, LLC
 // SPDX-License-Identifier: Apache-2.0
 
-package app
+package starlark_type
 
 import (
 	"math/big"
 	"testing"
 	"time"
 
-	"github.com/openrundev/openrun/internal/app/starlark_type"
 	startime "go.starlark.net/lib/time"
 	"go.starlark.net/starlark"
 )
 
 func starRoundTrip(t *testing.T, v starlark.Value) starlark.Value {
 	t.Helper()
-	enc, err := starToWire(v, 0)
+	enc, err := ToWire(v, 0)
 	if err != nil {
 		t.Fatalf("encode %s: %v", v, err)
 	}
-	dec, err := wireToStar(enc, nil, nil, 0)
+	dec, err := FromWire(enc, nil, nil, 0)
 	if err != nil {
 		t.Fatalf("decode %s: %v", v, err)
 	}
@@ -114,14 +113,14 @@ func TestStarValueTime(t *testing.T) {
 }
 
 func TestStarValueTypedStruct(t *testing.T) {
-	typed := starlark_type.NewStarlarkType("test1", map[string]starlark.Value{
+	typed := NewStarlarkType("test1", map[string]starlark.Value{
 		"_id":     starlark.MakeInt(7),
 		"aint":    starlark.MakeInt(10),
 		"astring": starlark.String("abc"),
 		"adict":   starlark.NewDict(0),
 	})
 	got := starRoundTrip(t, typed)
-	gotTyped, ok := got.(*starlark_type.StarlarkType)
+	gotTyped, ok := got.(*StarlarkType)
 	if !ok {
 		t.Fatalf("expected StarlarkType, got %s", got.Type())
 	}
@@ -145,7 +144,7 @@ func TestStarValueTypedStruct(t *testing.T) {
 func TestStarValueCycleDetection(t *testing.T) {
 	list := starlark.NewList([]starlark.Value{})
 	_ = list.Append(list) // cyclic
-	if _, err := starToWire(list, 0); err == nil {
+	if _, err := ToWire(list, 0); err == nil {
 		t.Error("expected error for cyclic list")
 	}
 }
@@ -154,7 +153,7 @@ func TestStarValueUnsupported(t *testing.T) {
 	fn := starlark.NewBuiltin("f", func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		return starlark.None, nil
 	})
-	if _, err := starToWire(fn, 0); err == nil {
+	if _, err := ToWire(fn, 0); err == nil {
 		t.Error("expected error for builtin function")
 	}
 }

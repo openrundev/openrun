@@ -49,7 +49,7 @@ func BenchmarkAppServeJSONAPI(b *testing.B) {
 
 // newBenchHTMLApp serves an HTML page: the handler returns a data map that a
 // template renders, exercising App.ServeHTTP -> starlark handler ->
-// UnmarshalStarlark -> html/template execution (the console's actual workload).
+// Starlark conversion -> html/template execution (the console's actual workload).
 func newBenchHTMLApp(b *testing.B) *app.App {
 	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
 	fileData := map[string]string{
@@ -89,7 +89,7 @@ def handler(req):
 }
 
 // BenchmarkAppServeHTML measures the HTML page path: starlark handler ->
-// UnmarshalStarlark -> html/template render.
+// Starlark conversion -> html/template render.
 func BenchmarkAppServeHTML(b *testing.B) {
 	a := newBenchHTMLApp(b)
 

@@ -15,6 +15,7 @@ import (
 
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -208,7 +209,7 @@ func manifestToPluginMap(providerName, pluginPath string, manifest *pb.ModuleMan
 		}
 	}
 	for constName, constValue := range manifest.GetConstants() {
-		value, err := wireToStar(constValue, nil, nil, 0)
+		value, err := starlark_type.FromWire(constValue, nil, nil, 0)
 		if err != nil {
 			return nil, fmt.Errorf("constant %s: %w", constName, err)
 		}
@@ -539,7 +540,7 @@ func (a *App) remotePluginFunc(pluginInfo *plugin.PluginInfo, modulePath, accoun
 
 		wireArgs := make([]*pb.StarValue, len(args))
 		for i, arg := range args {
-			enc, err := starToWire(arg, 0)
+			enc, err := starlark_type.ToWire(arg, 0)
 			if err != nil {
 				return nil, fmt.Errorf("%s.%s argument %d: %w", modulePath, functionName, i, err)
 			}
@@ -551,7 +552,7 @@ func (a *App) remotePluginFunc(pluginInfo *plugin.PluginInfo, modulePath, accoun
 			if !ok {
 				return nil, fmt.Errorf("%s.%s: invalid keyword argument name", modulePath, functionName)
 			}
-			enc, err := starToWire(kwarg[1], 0)
+			enc, err := starlark_type.ToWire(kwarg[1], 0)
 			if err != nil {
 				return nil, fmt.Errorf("%s.%s keyword argument %s: %w", modulePath, functionName, name, err)
 			}
@@ -593,7 +594,7 @@ func (a *App) remotePluginFunc(pluginInfo *plugin.PluginInfo, modulePath, accoun
 		// callable dispatching the referenced function over the same
 		// provider session. Errors propagate as starlark errors (matching
 		// member callables like response.body()), not as a PluginResponse
-		var funcRefFn wireFuncRefFunc
+		var funcRefFn starlark_type.WireFuncRefFunc
 		funcRefFn = func(ref *pb.FuncRef) (starlark.Value, error) {
 			function := ref.GetFunction()
 			refArgs := ref.GetArgs()
@@ -623,7 +624,7 @@ func (a *App) remotePluginFunc(pluginInfo *plugin.PluginInfo, modulePath, accoun
 					}
 					return nil, err
 				}
-				return wireToStar(resp.GetValue(), nil, funcRefFn, 0)
+				return starlark_type.FromWire(resp.GetValue(), nil, funcRefFn, 0)
 			}), nil
 		}
 
@@ -658,7 +659,7 @@ func (a *App) remotePluginFunc(pluginInfo *plugin.PluginInfo, modulePath, accoun
 				modulePath: pluginInfo.PluginPath,
 			}, nil
 		}
-		return wireToStar(resp.GetValue(), cursorFn, funcRefFn, 0)
+		return starlark_type.FromWire(resp.GetValue(), cursorFn, funcRefFn, 0)
 	}
 }
 
@@ -714,7 +715,7 @@ func (a *App) buildThreadState(thread *starlark.Thread) *pb.ThreadState {
 }
 
 // remoteIterable wraps a provider-side cursor as a starlark iterable,
-// batching CursorNext calls. It mirrors the builtin StoreEntryIterable
+// batching CursorNext calls. It mirrors the in-process cursor iterable
 // contract: the strict cleanup entry is cleared in Done (run by the
 // interpreter when a for loop over the iterable finishes), and a cursor the
 // app never iterates is reported as a leaked resource at request end.
@@ -787,7 +788,7 @@ func (i *remoteIterator) Next(value *starlark.Value) bool {
 		}
 		items := make([]starlark.Value, len(resp.GetItems()))
 		for idx, item := range resp.GetItems() {
-			dec, decErr := wireToStar(item, nil, nil, 0)
+			dec, decErr := starlark_type.FromWire(item, nil, nil, 0)
 			if decErr != nil {
 				panic(decErr)
 			}

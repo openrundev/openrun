@@ -403,7 +403,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 
 			if ret != nil {
 				// Response from handler, or if handler failed, response from error_handler if defined
-				handlerResponse, err = starlark_type.UnmarshalStarlark(ret)
+				handlerResponse, err = starlark_type.ToGo(ret)
 				if err != nil {
 					a.Error().Err(err).Msg("error converting response")
 					http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -625,7 +625,7 @@ func (a *App) handleResponse(retStruct *starlarkstruct.Struct, r *http.Request, 
 		return true, nil
 	}
 
-	templateValue, err := starlark_type.UnmarshalStarlark(data)
+	templateValue, err := starlark_type.ToGo(data)
 	if err != nil {
 		a.Error().Err(err).Msg("error converting response")
 		http.Error(w, err.Error(), http.StatusInternalServerError)

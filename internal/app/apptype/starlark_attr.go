@@ -151,7 +151,7 @@ func GetListMapAttr(s starlark.HasAttrs, key string, optional bool) ([]map[strin
 	for iter.Next(&val) {
 		count++
 
-		v, err := starlark_type.UnmarshalStarlark(val)
+		v, err := starlark_type.ToGo(val)
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +174,7 @@ func GetDictAttr(s starlark.HasAttrs, key string, optional bool) (map[string]any
 		}
 	}
 
-	ret, err := starlark_type.UnmarshalStarlark(v)
+	ret, err := starlark_type.ToGo(v)
 	if err != nil {
 		return nil, err
 	}
@@ -197,16 +197,23 @@ func GetDictStringAttr(s starlark.HasAttrs, key string, optional bool) (map[stri
 		}
 	}
 
-	ret, err := starlark_type.UnmarshalStarlark(v)
+	ret, err := starlark_type.ToGo(v)
 	if err != nil {
 		return nil, err
 	}
 
-	retDict, ok := ret.(map[string]string)
+	values, ok := ret.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("%s is not a string dict", key)
 	}
-
+	retDict := make(map[string]string, len(values))
+	for name, value := range values {
+		stringValue, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s value for %s is not a string", key, name)
+		}
+		retDict[name] = stringValue
+	}
 	return retDict, nil
 }
 

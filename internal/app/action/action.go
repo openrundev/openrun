@@ -955,7 +955,7 @@ func (a *Action) getNavLinks(ctx context.Context) []ActionLink {
 }
 
 func (a *Action) handleSuggestResponse(w http.ResponseWriter, retVal starlark.Value) {
-	ret, err := starlark_type.UnmarshalStarlark(retVal)
+	ret, err := starlark_type.ToGo(retVal)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("error unmarshalling suggest response: %s", err), http.StatusInternalServerError)
 		return

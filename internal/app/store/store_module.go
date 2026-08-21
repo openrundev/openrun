@@ -104,9 +104,8 @@ func (m *storeModule) Begin(ctx context.Context, call *plugin.Call) (any, error)
 		return nil, err
 	}
 	call.Session.Set(TRANSACTION_KEY, tx)
-	// An uncommitted transaction rolls back at session end (request end),
-	// without failing the request, mirroring the builtin plugin's deferred
-	// rollback
+	// An uncommitted transaction rolls back at session end (request end)
+	// without failing the request.
 	call.Session.Defer(fmt.Sprintf("transaction_%p", tx), false, func(ctx context.Context) error {
 		return tx.Rollback()
 	})
@@ -295,9 +294,9 @@ func (m *storeModule) Select(ctx context.Context, call *plugin.Call) (any, error
 	}, nil
 }
 
-// entryFromStruct converts a typed entry argument into a store Entry,
-// mirroring the builtin plugin's Entry.Unpack: the reserved _-fields map to
-// the Entry columns and everything else goes into the JSON document.
+// entryFromStruct converts a typed entry argument into a store Entry: the
+// reserved _-fields map to Entry columns and everything else goes into the
+// JSON document.
 func entryFromStruct(s *plugin.Struct) (*Entry, error) {
 	entry := &Entry{Data: Document{}}
 	for name, value := range s.Fields {
@@ -364,9 +363,8 @@ func stringField(name string, value any) (string, error) {
 	return s, nil
 }
 
-// normalizeFilter converts a decoded filter into the exact value shapes the
-// builtin plugin's starlark unmarshalling produces, which the query parser
-// depends on: ints are Go ints, and homogeneous lists specialize to
+// normalizeFilter converts a plugin-decoded filter into the value shapes the
+// query parser expects: ints are Go ints, and homogeneous lists specialize to
 // []string, []int, or []map[string]any (e.g. for $or/$and conditions).
 func normalizeFilter(filter map[string]any) map[string]any {
 	if filter == nil {
@@ -480,8 +478,8 @@ func normalizeSlice(items []any) []any {
 	return out
 }
 
-// structFromEntry converts a store Entry into a typed struct, mirroring the
-// builtin plugin's CreateType: reserved fields plus the document fields.
+// structFromEntry converts a store Entry into a typed struct containing the
+// reserved fields followed by the document fields.
 func structFromEntry(name string, entry *Entry) *plugin.Struct {
 	fields := map[string]any{
 		ID_FIELD:         int64(entry.Id),

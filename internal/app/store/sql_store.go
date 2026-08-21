@@ -13,10 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"go.starlark.net/starlark"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
@@ -39,8 +37,6 @@ type SqlStore struct {
 	prefix        string
 	isSqlite      bool // false means postgres, no other options
 }
-
-var _ Store = (*SqlStore)(nil)
 
 func NewSqlStore(pluginContext *types.PluginContext) (*SqlStore, error) {
 	return &SqlStore{
@@ -368,26 +364,9 @@ func (s *SqlStore) SelectOne(ctx context.Context, tx *sql.Tx, table string, filt
 
 }
 
-// Select returns the entries matching the filter
-func (s *SqlStore) Select(ctx context.Context, tx *sql.Tx, thread *starlark.Thread, table string, filter map[string]any, sort []string, offset, limit int64) (starlark.Iterable, error) {
-	iterator, err := s.SelectEntries(ctx, tx, table, filter, sort, offset, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	// Capture the module path now: the iterator's Done (which clears this
-	// entry) can run while another plugin is the current module, if the app
-	// makes other plugin calls between select and iterating the cursor
-	modulePath, _ := thread.Local(types.TL_CURRENT_MODULE_FULL_PATH).(string)
-	app.DeferCleanup(thread, iterator.LeakKey(), iterator.Close, true)
-
-	return NewStoreEntryIterabe(thread, s.Logger, modulePath, iterator.Table(), iterator), nil
-}
-
 // SelectEntries runs a select and returns a Go-level lazy iterator over the
-// matching entries. This is the starlark-free core beneath Select, shared
-// with the external store plugin provider; the caller owns closing the
-// iterator (or fully draining it, which closes it implicitly).
+// matching entries. The caller owns closing the iterator (or fully draining
+// it, which closes it implicitly).
 func (s *SqlStore) SelectEntries(ctx context.Context, tx *sql.Tx, table string, filter map[string]any, sort []string, offset, limit int64) (*EntryIterator, error) {
 	if err := s.initialize(ctx); err != nil {
 		return nil, err

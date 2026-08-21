@@ -260,7 +260,11 @@ func (h *Host) Call(ctx context.Context, call *HostCall) (*HostResult, error) {
 	}
 
 	if cursor, ok := result.(*Cursor); ok {
-		hostResult.Cursor = h.registerCursor(session, cursor)
+		// An interface holding a typed-nil cursor is a nil plugin result, not a
+		// cursor to register. Dereferencing it here would panic the host.
+		if cursor != nil {
+			hostResult.Cursor = h.registerCursor(session, cursor)
+		}
 	} else {
 		hostResult.Value = result
 	}

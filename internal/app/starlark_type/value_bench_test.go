@@ -1,15 +1,15 @@
 // Copyright (c) ClaceIO, LLC
 // SPDX-License-Identifier: Apache-2.0
 
-package app
+package starlark_type
 
 import (
 	"encoding/json/v2"
 	"fmt"
 	"testing"
 
-	"github.com/openrundev/openrun/internal/app/starlark_type"
 	sdk "github.com/openrundev/openrun/pkg/plugin"
+	pb "github.com/openrundev/openrun/pkg/plugin/proto"
 	"go.starlark.net/starlark"
 	"google.golang.org/protobuf/proto"
 )
@@ -18,15 +18,15 @@ import (
 // plugin calls, measured as the full round trip a call pays: starlark value
 // (argument) -> Go value handed to the plugin -> starlark value (result).
 //
-//   - direct:  starToGoValue / goValueToStar (the chosen bridge)
-//   - wire:    starToWire -> DecodeValue / EncodeValue -> wireToStar (the
+//   - direct:  ToPlugin / FromPlugin (the chosen bridge)
+//   - wire:    ToWire -> DecodeValue / EncodeValue -> FromWire (the
 //     gRPC path's codec, without serialization)
 //   - wireser: wire plus proto.Marshal/Unmarshal (what an external provider
 //     call pays for encoding, excluding gRPC/process overhead)
-//   - json:    UnmarshalStarlark -> json.Marshal -> json.Unmarshal ->
-//     MarshalStarlark (the JSON approach; lossy: ints arrive as float64)
+//   - json:    application ToGo -> json.Marshal -> json.Unmarshal -> FromGo
+//     (the JSON approach; lossy: ints arrive as float64)
 //
-// Run with: go test -bench BenchmarkBridge -run xx ./internal/app/
+// Run with: go test -bench BenchmarkBridge -run '^$' ./internal/app/starlark_type/
 
 func benchRecord(i int) *starlark.Dict {
 	d := starlark.NewDict(8)
@@ -61,16 +61,28 @@ func benchPayloads() map[string]starlark.Value {
 	}
 }
 
-func BenchmarkBridge(b *testing.B) {
+func benchGoPayloads(tb testing.TB) map[string]any {
+	tb.Helper()
+	values := make(map[string]any, len(benchPayloads()))
+	for name, payload := range benchPayloads() {
+		value, err := ToPlugin(payload, 0)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		values[name] = value
+	}
+	return values
+}
+
+// BenchmarkStarlarkToGo measures arguments entering a plugin. The wire case
+// includes construction and decoding of the protobuf value tree, but not
+// serialization or RPC overhead.
+func BenchmarkStarlarkToGo(b *testing.B) {
 	for name, payload := range benchPayloads() {
 		b.Run("direct/"+name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				goVal, err := starToGoValue(payload, 0)
-				if err != nil {
-					b.Fatal(err)
-				}
-				if _, err := goValueToStar(goVal, 0, nil); err != nil {
+				if _, err := ToPlugin(payload, 0); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -78,7 +90,64 @@ func BenchmarkBridge(b *testing.B) {
 		b.Run("wire/"+name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				enc, err := starToWire(payload, 0)
+				enc, err := ToWire(payload, 0)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := sdk.DecodeValue(enc); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkGoToStarlark measures plugin results entering Starlark. The wire
+// case includes construction and decoding of the protobuf value tree, but not
+// serialization or RPC overhead.
+func BenchmarkGoToStarlark(b *testing.B) {
+	for name, payload := range benchGoPayloads(b) {
+		b.Run("direct/"+name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := FromPlugin(payload, 0, nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run("wire/"+name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				enc, err := sdk.EncodeValue(payload)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := FromWire(enc, nil, nil, 0); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkBridge(b *testing.B) {
+	for name, payload := range benchPayloads() {
+		b.Run("direct/"+name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				goVal, err := ToPlugin(payload, 0)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := FromPlugin(goVal, 0, nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run("wire/"+name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				enc, err := ToWire(payload, 0)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -90,7 +159,7 @@ func BenchmarkBridge(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				if _, err := wireToStar(enc2, nil, nil, 0); err != nil {
+				if _, err := FromWire(enc2, nil, nil, 0); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -98,7 +167,7 @@ func BenchmarkBridge(b *testing.B) {
 		b.Run("wireser/"+name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				enc, err := starToWire(payload, 0)
+				enc, err := ToWire(payload, 0)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -106,11 +175,11 @@ func BenchmarkBridge(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				var decoded = enc.ProtoReflect().New().Interface()
+				decoded := new(pb.StarValue)
 				if err := proto.Unmarshal(data, decoded); err != nil {
 					b.Fatal(err)
 				}
-				goVal, err := sdk.DecodeValue(enc)
+				goVal, err := sdk.DecodeValue(decoded)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -122,11 +191,11 @@ func BenchmarkBridge(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				var decoded2 = enc2.ProtoReflect().New().Interface()
+				decoded2 := new(pb.StarValue)
 				if err := proto.Unmarshal(data2, decoded2); err != nil {
 					b.Fatal(err)
 				}
-				if _, err := wireToStar(enc2, nil, nil, 0); err != nil {
+				if _, err := FromWire(decoded2, nil, nil, 0); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -134,7 +203,7 @@ func BenchmarkBridge(b *testing.B) {
 		b.Run("json/"+name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				goVal, err := starlark_type.UnmarshalStarlark(payload)
+				goVal, err := ToGo(payload)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -146,7 +215,7 @@ func BenchmarkBridge(b *testing.B) {
 				if err := json.Unmarshal(data, &decoded); err != nil {
 					b.Fatal(err)
 				}
-				if _, err := starlark_type.MarshalStarlark(decoded); err != nil {
+				if _, err := FromGo(decoded); err != nil {
 					b.Fatal(err)
 				}
 			}

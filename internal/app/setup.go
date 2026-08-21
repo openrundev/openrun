@@ -106,7 +106,7 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 			return errors.New("settings is not a starlark dict")
 		}
 		var converted any
-		if converted, err = starlark_type.UnmarshalStarlark(dict); err != nil {
+		if converted, err = starlark_type.ToGo(dict); err != nil {
 			return err
 		}
 		if settingsMap, ok = converted.(map[string]interface{}); !ok {
@@ -251,7 +251,7 @@ func (a *App) addParams(builtin starlark.StringDict) (starlark.StringDict, error
 			case starlark_type.BOOLEAN:
 				a.paramValuesStr[p.Name] = strconv.FormatBool(bool(p.DefaultValue.(starlark.Bool)))
 			case starlark_type.DICT, starlark_type.LIST:
-				val, err := starlark_type.UnmarshalStarlark(p.DefaultValue)
+				val, err := starlark_type.ToGo(p.DefaultValue)
 				if err != nil {
 					return nil, err
 				}

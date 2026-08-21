@@ -42,6 +42,10 @@ func (m *countingModule) Ping(ctx context.Context, call *Call) (any, error) {
 	return "pong", nil
 }
 
+func (m *countingModule) NilCursor(ctx context.Context, call *Call) (any, error) {
+	return (*Cursor)(nil), nil
+}
+
 func newCountingHost(t *testing.T, inited *atomic.Int64, closed *atomic.Int64, initErr error) *Host {
 	t.Helper()
 	host, err := NewHost(&ServeConfig{
@@ -52,7 +56,10 @@ func newCountingHost(t *testing.T, inited *atomic.Int64, closed *atomic.Int64, i
 				Builder: func() Module {
 					return &countingModule{initDelay: 10 * time.Millisecond, initErr: initErr, inited: inited, closed: closed}
 				},
-				Functions: []FuncDef{{Name: "ping", Type: READ, Method: "Ping"}},
+				Functions: []FuncDef{
+					{Name: "ping", Type: READ, Method: "Ping"},
+					{Name: "nil_cursor", Type: READ, Method: "NilCursor"},
+				},
 			},
 		},
 	}, nil)
@@ -63,6 +70,27 @@ func newCountingHost(t *testing.T, inited *atomic.Int64, closed *atomic.Int64, i
 		t.Fatal(err)
 	}
 	return host
+}
+
+func TestHostTypedNilCursorIsNilValue(t *testing.T) {
+	var inited, closed atomic.Int64
+	host := newCountingHost(t, &inited, &closed, nil)
+	if err := host.InitModule(context.Background(), "mod", "", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := host.Call(context.Background(), &HostCall{
+		Module: "mod", Function: "nil_cursor", SessionId: "s1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Cursor != nil || result.Value != nil {
+		t.Fatalf("typed nil cursor became %#v", result)
+	}
+	if err := host.EndSession(context.Background(), "s1"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // Concurrent first calls for the same (module, account) must build exactly

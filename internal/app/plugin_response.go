@@ -10,7 +10,6 @@ import (
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
 )
 
 // PluginResponse is a starlark.Value that represents the response to a plugin request
@@ -99,10 +98,7 @@ func (r *PluginResponse) Attr(name string) (starlark.Value, error) {
 		if v, ok := r.value.(starlark.Value); ok {
 			return v, nil
 		}
-		if v, ok := r.value.(*starlarkstruct.Struct); ok {
-			return v, nil
-		}
-		return starlark_type.MarshalStarlark(r.value)
+		return starlark_type.FromGo(r.value)
 
 	default:
 		return starlark.None, fmt.Errorf("response has no attribute '%s'", name)
@@ -148,7 +144,7 @@ func (r *PluginResponse) Hash() (uint32, error) {
 	return starlark.Tuple{starlark.MakeInt(r.errorCode), errValue, value}.Hash()
 }
 
-func (r *PluginResponse) UnmarshalStarlarkType() (any, error) {
+func (r *PluginResponse) ToGoValue() (any, error) {
 	return map[string]any{
 		"error_code": r.errorCode,
 		"error":      r.err,
@@ -158,4 +154,4 @@ func (r *PluginResponse) UnmarshalStarlarkType() (any, error) {
 }
 
 var _ starlark.Value = (*PluginResponse)(nil)
-var _ starlark_type.TypeUnmarshaler = (*PluginResponse)(nil)
+var _ starlark_type.GoValuer = (*PluginResponse)(nil)

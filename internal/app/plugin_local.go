@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -20,7 +21,7 @@ import (
 
 // Local plugin providers serve SDK plugin modules (pkg/plugin ModuleDef, the
 // same API external providers are built with) in-process: calls go through
-// the direct value bridge (starvalue_bridge.go) into a sdk.Host, with no
+// the direct starlark_type value bridge into a sdk.Host, with no
 // gRPC and no serialization. The registry below is process-global, like
 // builtInPlugins; Hosts are per app, managed by localHosts on each App, so
 // module instances, sessions, and cursors have exactly the scoping an
@@ -144,7 +145,7 @@ func moduleDefToPluginMap(providerName, pluginPath, moduleName string, def sdk.M
 		}
 	}
 	for constName, constValue := range def.Constants {
-		value, err := goValueToStar(constValue, 0, nil)
+		value, err := starlark_type.FromPlugin(constValue, 0, nil)
 		if err != nil {
 			return nil, fmt.Errorf("constant %s: %w", constName, err)
 		}
@@ -353,7 +354,7 @@ func (a *App) localPluginFunc(pluginInfo *plugin.PluginInfo, modulePath, account
 
 		goArgs := make([]any, len(args))
 		for i, arg := range args {
-			dec, err := starToGoValue(arg, 0)
+			dec, err := starlark_type.ToPlugin(arg, 0)
 			if err != nil {
 				return nil, fmt.Errorf("%s.%s argument %d: %w", modulePath, functionName, i, err)
 			}
@@ -365,7 +366,7 @@ func (a *App) localPluginFunc(pluginInfo *plugin.PluginInfo, modulePath, account
 			if !ok {
 				return nil, fmt.Errorf("%s.%s: invalid keyword argument name", modulePath, functionName)
 			}
-			dec, err := starToGoValue(kwarg[1], 0)
+			dec, err := starlark_type.ToPlugin(kwarg[1], 0)
 			if err != nil {
 				return nil, fmt.Errorf("%s.%s keyword argument %s: %w", modulePath, functionName, name, err)
 			}
@@ -434,7 +435,7 @@ func (a *App) localPluginFunc(pluginInfo *plugin.PluginInfo, modulePath, account
 				funcRefFn:  funcRefFn,
 			}, nil
 		}
-		return goValueToStar(result.Value, 0, funcRefFn)
+		return starlark_type.FromPlugin(result.Value, 0, funcRefFn)
 	}
 }
 
@@ -444,8 +445,8 @@ func (a *App) localPluginFunc(pluginInfo *plugin.PluginInfo, modulePath, account
 // session. Unlike top-level plugin calls, a func ref call's error propagates
 // as a starlark error (matching the previous behavior of member callables
 // like response.body()), not as a PluginResponse.
-func (a *App) localFuncRefFn(host *sdk.Host, pluginInfo *plugin.PluginInfo, accountName, sessionId string, thread *starlark.Thread) funcRefValueFunc {
-	var funcRefFn funcRefValueFunc
+func (a *App) localFuncRefFn(host *sdk.Host, pluginInfo *plugin.PluginInfo, accountName, sessionId string, thread *starlark.Thread) starlark_type.FuncRefValueFunc {
+	var funcRefFn starlark_type.FuncRefValueFunc
 	funcRefFn = func(ref *sdk.FuncRef) (starlark.Value, error) {
 		function := ref.Function
 		args := ref.Args
@@ -475,7 +476,7 @@ func (a *App) localFuncRefFn(host *sdk.Host, pluginInfo *plugin.PluginInfo, acco
 			if result.Cursor != nil {
 				return nil, fmt.Errorf("%s: a func ref call cannot return a cursor", function)
 			}
-			return goValueToStar(result.Value, 0, funcRefFn)
+			return starlark_type.FromPlugin(result.Value, 0, funcRefFn)
 		}), nil
 	}
 	return funcRefFn
@@ -541,7 +542,7 @@ type localIterable struct {
 	typeName   string
 	leakKey    string
 	modulePath string // module the leak-key cleanup entry is registered under
-	funcRefFn  funcRefValueFunc
+	funcRefFn  starlark_type.FuncRefValueFunc
 }
 
 var _ starlark.Iterable = (*localIterable)(nil)
@@ -593,7 +594,7 @@ func (i *localIterator) Next(value *starlark.Value) bool {
 		}
 		items := make([]starlark.Value, len(goItems))
 		for idx, item := range goItems {
-			dec, decErr := goValueToStar(item, 0, i.r.funcRefFn)
+			dec, decErr := starlark_type.FromPlugin(item, 0, i.r.funcRefFn)
 			if decErr != nil {
 				panic(decErr)
 			}

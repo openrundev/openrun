@@ -1,34 +1,29 @@
 // Copyright (c) ClaceIO, LLC
 // SPDX-License-Identifier: Apache-2.0
 
-package app
+package starlark_type
 
 import (
 	"fmt"
 	"math/big"
 	"time"
 
-	"github.com/openrundev/openrun/internal/app/starlark_type"
+	sdk "github.com/openrundev/openrun/pkg/plugin"
 	pb "github.com/openrundev/openrun/pkg/plugin/proto"
 	startime "go.starlark.net/lib/time"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
 
-// maxStarValueDepth bounds wire value nesting: starlark collections are
-// mutable and can be made cyclic, so the encoder fails cleanly instead of
-// recursing forever.
-const maxStarValueDepth = 100
-
-// starToWire converts a starlark value into its wire representation for a
+// ToWire converts a starlark value into its wire representation for a
 // plugin provider call, in a single pass with no intermediate Go value tree.
 // Fidelity notes: int64-representable ints use the int fast path and larger
 // ints go as big ints; int and float stay distinct; tuple/set/bytes are
 // preserved; dict entries keep insertion order; StarlarkType values become
 // typed structs.
-func starToWire(v starlark.Value, depth int) (*pb.StarValue, error) {
-	if depth > maxStarValueDepth {
-		return nil, fmt.Errorf("value nesting exceeds max depth %d (cyclic value?)", maxStarValueDepth)
+func ToWire(v starlark.Value, depth int) (*pb.StarValue, error) {
+	if depth > sdk.MaxValueDepth {
+		return nil, fmt.Errorf("value nesting exceeds max depth %d (cyclic value?)", sdk.MaxValueDepth)
 	}
 	depth++
 
@@ -75,18 +70,18 @@ func starToWire(v starlark.Value, depth int) (*pb.StarValue, error) {
 	case *starlark.Dict:
 		entries := make([]*pb.StarEntry, 0, x.Len())
 		for key, value := range x.Entries() {
-			ke, err := starToWire(key, depth)
+			ke, err := ToWire(key, depth)
 			if err != nil {
 				return nil, err
 			}
-			ve, err := starToWire(value, depth)
+			ve, err := ToWire(value, depth)
 			if err != nil {
 				return nil, err
 			}
 			entries = append(entries, &pb.StarEntry{Key: ke, Value: ve})
 		}
 		return &pb.StarValue{Kind: &pb.StarValue_Dict{Dict: &pb.StarDict{Entries: entries}}}, nil
-	case *starlark_type.StarlarkType:
+	case *StarlarkType:
 		return typedStructToWire(x.Type(), x.AttrNames(), x.Attr, depth)
 	case *starlarkstruct.Struct:
 		return typedStructToWire("", x.AttrNames(), x.Attr, depth)
@@ -99,7 +94,7 @@ func iterableToWire(seq func(yield func(starlark.Value) bool), n, depth int) (*p
 	values := make([]*pb.StarValue, 0, n)
 	var seqErr error
 	seq(func(item starlark.Value) bool {
-		enc, err := starToWire(item, depth)
+		enc, err := ToWire(item, depth)
 		if err != nil {
 			seqErr = err
 			return false
@@ -120,7 +115,7 @@ func typedStructToWire(typeName string, attrNames []string, attr func(string) (s
 		if err != nil {
 			return nil, err
 		}
-		ve, err := starToWire(value, depth)
+		ve, err := ToWire(value, depth)
 		if err != nil {
 			return nil, err
 		}
@@ -135,22 +130,22 @@ func typedStructToWire(typeName string, attrNames []string, attr func(string) (s
 	}}}, nil
 }
 
-// cursorValueFunc materializes a wire cursor handle into a starlark value;
+// CursorValueFunc materializes a wire cursor handle into a starlark value;
 // supplied by the remote call path, which knows the session and provider.
-type cursorValueFunc func(cursor *pb.Cursor) (starlark.Value, error)
+type CursorValueFunc func(cursor *pb.Cursor) (starlark.Value, error)
 
-// wireFuncRefFunc materializes a wire func ref into a starlark callable that
+// WireFuncRefFunc materializes a wire func ref into a starlark callable that
 // dispatches the referenced plugin function; supplied by the remote call
-// path. A nil wireFuncRefFunc rejects func refs (e.g. in constants).
-type wireFuncRefFunc func(ref *pb.FuncRef) (starlark.Value, error)
+// path. A nil WireFuncRefFunc rejects func refs (e.g. in constants).
+type WireFuncRefFunc func(ref *pb.FuncRef) (starlark.Value, error)
 
-// wireToStar converts a wire value into a starlark value. Typed structs
+// FromWire converts a wire value into a starlark value. Typed structs
 // become StarlarkType values (attribute access, mutable fields), matching
-// what builtin plugins return. Cursors are materialized via cursorFn; a nil
+// what in-process plugins return. Cursors are materialized via cursorFn; a nil
 // cursorFn rejects cursors (e.g. in constants).
-func wireToStar(v *pb.StarValue, cursorFn cursorValueFunc, funcRefFn wireFuncRefFunc, depth int) (starlark.Value, error) {
-	if depth > maxStarValueDepth {
-		return nil, fmt.Errorf("value nesting exceeds max depth %d", maxStarValueDepth)
+func FromWire(v *pb.StarValue, cursorFn CursorValueFunc, funcRefFn WireFuncRefFunc, depth int) (starlark.Value, error) {
+	if depth > sdk.MaxValueDepth {
+		return nil, fmt.Errorf("value nesting exceeds max depth %d", sdk.MaxValueDepth)
 	}
 	depth++
 
@@ -206,11 +201,11 @@ func wireToStar(v *pb.StarValue, cursorFn cursorValueFunc, funcRefFn wireFuncRef
 		entries := kind.Dict.GetEntries()
 		dict := starlark.NewDict(len(entries))
 		for _, entry := range entries {
-			key, err := wireToStar(entry.GetKey(), cursorFn, funcRefFn, depth)
+			key, err := FromWire(entry.GetKey(), cursorFn, funcRefFn, depth)
 			if err != nil {
 				return nil, err
 			}
-			value, err := wireToStar(entry.GetValue(), cursorFn, funcRefFn, depth)
+			value, err := FromWire(entry.GetValue(), cursorFn, funcRefFn, depth)
 			if err != nil {
 				return nil, err
 			}
@@ -227,13 +222,13 @@ func wireToStar(v *pb.StarValue, cursorFn cursorValueFunc, funcRefFn wireFuncRef
 			if !ok {
 				return nil, fmt.Errorf("struct field key must be a string")
 			}
-			value, err := wireToStar(entry.GetValue(), cursorFn, funcRefFn, depth)
+			value, err := FromWire(entry.GetValue(), cursorFn, funcRefFn, depth)
 			if err != nil {
 				return nil, err
 			}
 			data[key.Str] = value
 		}
-		return starlark_type.NewStarlarkType(kind.Struct.GetTypeName(), data), nil
+		return NewStarlarkType(kind.Struct.GetTypeName(), data), nil
 	case *pb.StarValue_Thunk:
 		if kind.Thunk.GetError() != "" {
 			errMsg := kind.Thunk.GetError()
@@ -241,7 +236,7 @@ func wireToStar(v *pb.StarValue, cursorFn cursorValueFunc, funcRefFn wireFuncRef
 				return nil, fmt.Errorf("%s", errMsg)
 			}), nil
 		}
-		value, err := wireToStar(kind.Thunk.GetValue(), cursorFn, funcRefFn, depth)
+		value, err := FromWire(kind.Thunk.GetValue(), cursorFn, funcRefFn, depth)
 		if err != nil {
 			return nil, err
 		}
@@ -266,11 +261,11 @@ func wireToStar(v *pb.StarValue, cursorFn cursorValueFunc, funcRefFn wireFuncRef
 	}
 }
 
-func wireListToStar(list *pb.ValueList, cursorFn cursorValueFunc, funcRefFn wireFuncRefFunc, depth int) ([]starlark.Value, error) {
+func wireListToStar(list *pb.ValueList, cursorFn CursorValueFunc, funcRefFn WireFuncRefFunc, depth int) ([]starlark.Value, error) {
 	values := list.GetValues()
 	items := make([]starlark.Value, len(values))
 	for i, item := range values {
-		dec, err := wireToStar(item, cursorFn, funcRefFn, depth)
+		dec, err := FromWire(item, cursorFn, funcRefFn, depth)
 		if err != nil {
 			return nil, err
 		}

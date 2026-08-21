@@ -522,7 +522,7 @@ func CreateConfigBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) func(
 
 		localVal, ok := nodeConfig[string(key)]
 		if ok {
-			outVal, err = starlark_type.MarshalStarlark(localVal)
+			outVal, err = starlark_type.FromGo(localVal)
 			if err != nil {
 				return nil, fmt.Errorf("error marshalling config value for %s: %w", key, err)
 			}
