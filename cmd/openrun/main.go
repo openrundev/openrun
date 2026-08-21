@@ -336,3 +336,4 @@ func main() {
 func printStdout(cCtx *cli.Context, format string, a ...any) {
 	fmt.Fprintf(cCtx.App.Writer, format, a...) //nolint:errcheck
 }
+
