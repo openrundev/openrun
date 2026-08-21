@@ -9,7 +9,8 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"regexp"
@@ -1071,8 +1072,8 @@ type AppMetadata struct {
 	AuthnType        AppAuthnType      `json:"authn_type"`
 	GitAuthName      string            `json:"git_auth_name"`
 	Bindings         []string          `json:"bindings"`
-	AppliedSyncId    string            `json:"applied_sync_id"`             // id of the sync entry which last applied to this app, empty for imperative changes
-	BuilderPublished bool              `json:"builder_published,omitempty"` // app was published by the app builder; enables builder edit sessions
+	AppliedSyncId    string            `json:"applied_sync_id"`                      // id of the sync entry which last applied to this app, empty for imperative changes
+	BuilderPublished bool              `json:"builder_published,omitempty,omitzero"` // app was published by the app builder; enables builder edit sessions
 }
 
 // AppSettings contains the settings for an app. Settings are not version controlled.
@@ -1109,7 +1110,18 @@ func (t *SpecFiles) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &encodedData); err != nil {
 		return err
 	}
+	return t.decode(encodedData)
+}
 
+func (t *SpecFiles) UnmarshalJSONFrom(in *jsontext.Decoder) error {
+	encodedData := map[string]string{}
+	if err := json.UnmarshalDecode(in, &encodedData); err != nil {
+		return err
+	}
+	return t.decode(encodedData)
+}
+
+func (t *SpecFiles) decode(encodedData map[string]string) error {
 	decoded := map[string]string{}
 	for name, encodedData := range encodedData {
 		decodedData, err := base64.StdEncoding.DecodeString(encodedData)
@@ -1124,12 +1136,20 @@ func (t *SpecFiles) UnmarshalJSON(data []byte) error {
 }
 
 func (t *SpecFiles) MarshalJSON() ([]byte, error) {
+	return json.Marshal(t.encoded(), json.Deterministic(true))
+}
+
+func (t *SpecFiles) MarshalJSONTo(out *jsontext.Encoder) error {
+	return json.MarshalEncode(out, t.encoded())
+}
+
+func (t *SpecFiles) encoded() map[string]string {
 	encoded := map[string]string{}
 	for name, decodedData := range *t {
 		encoded[name] = base64.StdEncoding.EncodeToString([]byte(decodedData))
 	}
 
-	return json.Marshal(encoded)
+	return encoded
 }
 
 // AccountLink links the account to use for each plugin
@@ -1289,7 +1309,7 @@ type SyncEntry struct {
 // when the create call was not RBAC enforced; such syncs run unrestricted.
 type RBACSnapshot struct {
 	UserId           string                      `json:"user_id"`
-	Admin            bool                        `json:"admin,omitempty"` // creator held the admin super-user permission; Grants is empty
+	Admin            bool                        `json:"admin,omitempty,omitzero"` // creator held the admin super-user permission; Grants is empty
 	Grants           []RBACSnapshotGrant         `json:"grants,omitempty"`
 	OwnerPermissions map[string][]RBACPermission `json:"owner_permissions,omitempty"` // resource -> perms, for the owner virtual grant
 }

@@ -5,7 +5,7 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -148,19 +148,17 @@ func providerListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 func printProviderList(cCtx *cli.Context, providers []types.BindingProvider, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(providers) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, providers, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, p := range providers {
-			enc.Encode(p) //nolint:errcheck
+			json.MarshalEncode(enc, p, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, p := range providers {
-			enc.Encode(p) //nolint:errcheck
+			json.MarshalEncode(enc, p, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_CSV:
 		for _, p := range providers {

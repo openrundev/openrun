@@ -5,7 +5,7 @@ package app_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -85,7 +85,7 @@ def handler(req):
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
+	json.UnmarshalRead(response.Body, &ret) //nolint:errcheck
 	testutil.AssertEqualsString(t, "body", "test contents", ret["key1"].(string))
 	testutil.AssertEqualsString(t, "body", "test contents", ret["key2"].(string))
 	testutil.AssertEqualsString(t, "body", "test contents", ret["key3"].(string))
@@ -304,7 +304,7 @@ def handler(req):
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
+	json.UnmarshalRead(response.Body, &ret) //nolint:errcheck
 	testutil.AssertEqualsInt(t, "status_code", 200, int(ret["status_code"].(float64)))
 
 	select {

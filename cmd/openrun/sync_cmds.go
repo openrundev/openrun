@@ -5,7 +5,7 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -231,19 +231,17 @@ func syncDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 func printSyncList(cCtx *cli.Context, sync []*types.SyncEntry, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(sync) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, sync, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, s := range sync {
-			enc.Encode(s) //nolint:errcheck
+			json.MarshalEncode(enc, s, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, s := range sync {
-			enc.Encode(s) //nolint:errcheck
+			json.MarshalEncode(enc, s, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_BASIC:
 		formatStr := "%-35s %-9s %-12s %-s\n"

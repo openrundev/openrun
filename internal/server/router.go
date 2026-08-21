@@ -8,7 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -483,7 +483,7 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 		return
 	}
 	w.Header().Add("Content-Type", "application/json")
-	err = json.NewEncoder(w).Encode(resp)
+	err = json.MarshalWrite(w, resp)
 	if err != nil {
 		event.Status = string(types.EventStatusFailure)
 		h.Error().Err(err).Msg("error encoding response")
@@ -673,7 +673,7 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 	}
 
 	w.Header().Add("Content-Type", "application/json")
-	err = json.NewEncoder(w).Encode(resp)
+	err = json.MarshalWrite(w, resp)
 	if err != nil {
 		h.Error().Err(err).Msg("error encoding response")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -815,7 +815,7 @@ func (h *Handler) createApp(r *http.Request) (any, error) {
 	}
 
 	var appRequest types.CreateAppRequest
-	err = json.NewDecoder(r.Body).Decode(&appRequest)
+	err = json.UnmarshalRead(r.Body, &appRequest)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1039,7 +1039,7 @@ func (h *Handler) updateAppSettings(r *http.Request) (any, error) {
 	updateOperationInContext(r, genOperationName("update_settings", false, false))
 
 	var updateAppRequest types.UpdateAppRequest
-	err = json.NewDecoder(r.Body).Decode(&updateAppRequest)
+	err = json.UnmarshalRead(r.Body, &updateAppRequest)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1070,7 +1070,7 @@ func (h *Handler) updateAppMetadata(r *http.Request) (any, error) {
 	updateOperationInContext(r, genOperationName("update_metadata", promote, false))
 
 	var updateAppRequest types.UpdateAppMetadataRequest
-	err = json.NewDecoder(r.Body).Decode(&updateAppRequest)
+	err = json.UnmarshalRead(r.Body, &updateAppRequest)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1319,7 +1319,7 @@ func (h *Handler) createSyncEntry(r *http.Request) (any, error) {
 	}
 
 	var sync types.SyncMetadata
-	err = json.NewDecoder(r.Body).Decode(&sync)
+	err = json.UnmarshalRead(r.Body, &sync)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1391,7 +1391,7 @@ func (h *Handler) createService(r *http.Request) (any, error) {
 	}
 
 	var service types.Service
-	if err = json.NewDecoder(r.Body).Decode(&service); err != nil {
+	if err = json.UnmarshalRead(r.Body, &service); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 	if service.Name == "" || service.ServiceType == "" {
@@ -1414,7 +1414,7 @@ func (h *Handler) updateService(r *http.Request) (any, error) {
 	}
 
 	var service types.Service
-	if err = json.NewDecoder(r.Body).Decode(&service); err != nil {
+	if err = json.UnmarshalRead(r.Body, &service); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 	if service.Name == "" || service.ServiceType == "" {
@@ -1500,7 +1500,7 @@ func (h *Handler) listServices(r *http.Request) (any, error) {
 
 func (h *Handler) installProvider(r *http.Request) (any, error) {
 	var request types.ProviderInstallRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	if err := json.UnmarshalRead(r.Body, &request); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 	if request.Name == "" {
@@ -1555,7 +1555,7 @@ func (h *Handler) createBinding(r *http.Request) (any, error) {
 	}
 
 	var createRequest types.CreateBindingRequest
-	if err = json.NewDecoder(r.Body).Decode(&createRequest); err != nil {
+	if err = json.UnmarshalRead(r.Body, &createRequest); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 	if createRequest.Path == "" {
@@ -1587,9 +1587,7 @@ func (h *Handler) updateBinding(r *http.Request) (any, error) {
 	}
 
 	var updateRequest types.UpdateBindingRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&updateRequest); err != nil {
+	if err = json.UnmarshalRead(r.Body, &updateRequest, json.RejectUnknownMembers(true)); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 	if updateRequest.Path == "" {
@@ -1684,8 +1682,7 @@ func (h *Handler) replicationStatus(r *http.Request) (any, error) {
 
 func (h *Handler) runBindingCommand(r *http.Request) (any, error) {
 	var runRequest types.RunBindingCommandRequest
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&runRequest); err != nil {
+	if err := json.UnmarshalRead(r.Body, &runRequest); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 	if runRequest.BindingName == "" {
@@ -1712,9 +1709,7 @@ func (h *Handler) createSecret(r *http.Request) (any, error) {
 	}
 
 	var createRequest types.CreateSecretRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&createRequest); err != nil {
+	if err = json.UnmarshalRead(r.Body, &createRequest, json.RejectUnknownMembers(true)); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
@@ -1805,7 +1800,7 @@ func (h *Handler) userUpdate(r *http.Request) (any, error) {
 	}
 
 	var updateRequest types.UserUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&updateRequest); err != nil {
+	if err := json.UnmarshalRead(r.Body, &updateRequest); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
@@ -1849,7 +1844,7 @@ func (h *Handler) configUpdate(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = json.NewDecoder(r.Body).Decode(&dynamicConfig)
+	err = json.UnmarshalRead(r.Body, &dynamicConfig)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}

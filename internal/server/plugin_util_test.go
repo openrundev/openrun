@@ -125,7 +125,7 @@ func TestStructValueErrors(t *testing.T) {
 }
 
 // A nil embedded struct pointer drops its promoted fields instead of
-// panicking, matching encoding/json.
+// panicking, matching encoding/json/v2.
 func TestStructValueNilEmbeddedPointer(t *testing.T) {
 	type embedded struct{ Promoted string }
 	type outer struct {

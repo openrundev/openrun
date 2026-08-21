@@ -6,7 +6,7 @@ package main
 import (
 	"cmp"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/url"
@@ -253,9 +253,8 @@ func secretShowCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 				return nil
 			}
 
-			enc := json.NewEncoder(cCtx.App.Writer)
-			enc.SetIndent("", "  ")
-			enc.Encode(response.SecretInfo) //nolint:errcheck
+			enc := newJSONEncoder(cCtx.App.Writer, true)
+			json.MarshalEncode(enc, response.SecretInfo, deterministicJSON) //nolint:errcheck
 			return nil
 		},
 	}
@@ -337,19 +336,17 @@ Examples:
 func printSecretList(cCtx *cli.Context, secrets []types.SecretInfo, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(secrets) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, secrets, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, s := range secrets {
-			enc.Encode(s) //nolint:errcheck
+			json.MarshalEncode(enc, s, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, s := range secrets {
-			enc.Encode(s) //nolint:errcheck
+			json.MarshalEncode(enc, s, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_BASIC:
 		formatStr := "%-40s %-40s\n"

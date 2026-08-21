@@ -5,7 +5,7 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -354,19 +354,17 @@ Examples:
 func printServiceList(cCtx *cli.Context, services []types.Service, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(services) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, services, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, s := range services {
-			enc.Encode(s) //nolint:errcheck
+			json.MarshalEncode(enc, s, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, s := range services {
-			enc.Encode(s) //nolint:errcheck
+			json.MarshalEncode(enc, s, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_BASIC:
 		formatStr := "%-20s %-20s %-9s %-20s\n"

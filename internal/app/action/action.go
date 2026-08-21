@@ -6,7 +6,7 @@ package action
 import (
 	"context"
 	"embed"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"html/template"

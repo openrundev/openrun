@@ -5,7 +5,8 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 
 	"github.com/openrundev/openrun/internal/rbac"
@@ -79,7 +80,7 @@ func (c *openrunPlugin) GetConfigVersion(ctx context.Context, call *sdk.Call) (a
 		}
 		snapshot = redacted
 	}
-	formatted, err := json.MarshalIndent(snapshot, "", "  ")
+	formatted, err := json.Marshal(snapshot, jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, err
 	}

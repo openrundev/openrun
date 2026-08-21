@@ -96,7 +96,7 @@ func reflectToValue(rv reflect.Value, depth int) (any, error) {
 			fv, err := rv.FieldByIndexErr(f.index)
 			if err != nil {
 				// A nil embedded pointer on the promoted field's path: the
-				// promoted fields are absent, matching encoding/json
+				// promoted fields are absent, matching encoding/json/v2
 				continue
 			}
 			value, err := reflectToValue(fv, depth)
@@ -143,7 +143,7 @@ func planForType(t reflect.Type) []structFieldPlan {
 	for _, sf := range fields {
 		if sf.Anonymous || !sf.IsExported() {
 			// Embedded structs contribute their promoted fields, not an
-			// entry of their own, matching encoding/json
+			// entry of their own, matching encoding/json/v2
 			continue
 		}
 		name := sf.Name

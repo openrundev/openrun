@@ -10,7 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -508,7 +508,7 @@ func setBody(req *http.Request, body string, formData map[string]any, formEncodi
 }
 
 // jsonCompatible converts SDK value shapes (tuples, sets, ordered dicts,
-// typed structs) into plain values encoding/json can marshal.
+// typed structs) into plain values encoding/json/v2 can marshal.
 func jsonCompatible(v any) any {
 	switch x := v.(type) {
 	case sdk.Tuple:

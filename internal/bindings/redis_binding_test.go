@@ -226,7 +226,7 @@ func TestRedisServerVersion(t *testing.T) {
 }
 
 func TestRedisReplyToJSON(t *testing.T) {
-	// RESP3 map replies have any-typed keys which encoding/json rejects
+	// RESP3 map replies have any-typed keys which encoding/json/v2 rejects
 	reply := map[any]any{
 		"a": int64(1),
 		int64(2): []any{

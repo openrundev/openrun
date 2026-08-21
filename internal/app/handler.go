@@ -7,7 +7,8 @@ import (
 	"bufio"
 	"bytes"
 	"cmp"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -134,7 +135,7 @@ func (a *App) validatedRefererRedirect(r *http.Request, referrer string) (string
 
 // pooled holds one encoder and its buffer.
 type pooled struct {
-	enc *json.Encoder
+	enc *jsontext.Encoder
 	buf *bytes.Buffer
 }
 
@@ -142,7 +143,7 @@ var encoderPool = sync.Pool{
 	New: func() interface{} {
 		buf := bytes.NewBuffer(make([]byte, 0, 512))
 		return &pooled{
-			enc: json.NewEncoder(buf),
+			enc: jsontext.NewEncoder(buf),
 			buf: buf,
 		}
 	},
@@ -433,7 +434,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 
 			encoder := encoderPool.Get().(*pooled)
 			encoder.buf.Reset()
-			err := encoder.enc.Encode(handlerResponse)
+			err := json.MarshalEncode(encoder.enc, handlerResponse)
 			_, err2 := w.Write(encoder.buf.Bytes())
 			encoderPool.Put(encoder)
 			if err == nil {
@@ -637,7 +638,7 @@ func (a *App) handleResponse(retStruct *starlarkstruct.Struct, r *http.Request, 
 		}
 		// If the route type is JSON, then return the handler response as JSON
 		w.Header().Set("Content-Type", "application/json")
-		err := json.NewEncoder(w).Encode(templateValue)
+		err := json.MarshalWrite(w, templateValue)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return true, nil
@@ -850,7 +851,7 @@ func (a *App) handleStreamResponse(w http.ResponseWriter, r *http.Request, rtype
 				return
 			}
 		} else if rtype == apptype.JSON {
-			err := json.NewEncoder(w).Encode(v)
+			err := json.MarshalWrite(w, v)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return

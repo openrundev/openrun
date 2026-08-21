@@ -5,7 +5,7 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -67,19 +67,17 @@ func versionListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 func printVersionList(cCtx *cli.Context, versions []types.AppVersion, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(versions) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, versions, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, version := range versions {
-			enc.Encode(version) //nolint:errcheck
+			json.MarshalEncode(enc, version, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, version := range versions {
-			enc.Encode(version) //nolint:errcheck
+			json.MarshalEncode(enc, version, deterministicJSON) //nolint:errcheck
 			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:
@@ -157,19 +155,17 @@ func versionFilesCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 func printFileList(cCtx *cli.Context, files []types.AppFile, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(files) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, files, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, version := range files {
-			enc.Encode(version) //nolint:errcheck
+			json.MarshalEncode(enc, version, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, f := range files {
-			enc.Encode(f) //nolint:errcheck
+			json.MarshalEncode(enc, f, deterministicJSON) //nolint:errcheck
 			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:

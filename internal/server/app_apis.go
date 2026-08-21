@@ -7,7 +7,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/x509"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"

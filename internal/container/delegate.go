@@ -7,7 +7,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"mime"
@@ -66,7 +66,7 @@ func sendDelegateBuild(url string, data DelegateRequest, sourcePath string, buil
 			_ = pw.CloseWithError(err)
 			return
 		}
-		if err := json.NewEncoder(jsonPart).Encode(data); err != nil {
+		if err := json.MarshalWrite(jsonPart, data); err != nil {
 			_ = pw.CloseWithError(err)
 			return
 		}
@@ -164,7 +164,7 @@ func DelegateHandler(r *http.Request, config *types.ServerConfig, logger *types.
 		switch name {
 		case "meta":
 			// Stream-decode JSON for meta
-			if err := json.NewDecoder(part).Decode(&data); err != nil {
+			if err := json.UnmarshalRead(part, &data); err != nil {
 				_ = part.Close()
 				return nil, fmt.Errorf("invalid meta json: %v", err)
 			}

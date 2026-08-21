@@ -4,9 +4,8 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -118,11 +117,11 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 	}
 
 	// Update the app config with entries loaded from the settings map
-	var jsonBuf bytes.Buffer
-	if err = json.NewEncoder(&jsonBuf).Encode(settingsMap); err != nil {
+	jsonBytes, err := json.Marshal(settingsMap)
+	if err != nil {
 		return err
 	}
-	if err = json.Unmarshal(jsonBuf.Bytes(), a.codeConfig); err != nil {
+	if err = json.Unmarshal(jsonBytes, a.codeConfig); err != nil {
 		return err
 	}
 
@@ -1232,7 +1231,7 @@ func (a *App) createInternalRoutes(router *chi.Mux) error {
 			"file_exists": "true",
 			"file_size":   strconv.FormatInt(fileSize.Size(), 10),
 		}
-		json.NewEncoder(w).Encode(ret) //nolint:errcheck
+		json.MarshalWrite(w, ret) //nolint:errcheck
 	})
 	return nil
 }

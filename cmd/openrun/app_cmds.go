@@ -6,7 +6,7 @@ package main
 import (
 	"bytes"
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -305,19 +305,17 @@ Examples:
 func printAppList(cCtx *cli.Context, apps []types.AppResponse, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(apps) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, apps, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, app := range apps {
-			enc.Encode(app) //nolint:errcheck
+			json.MarshalEncode(enc, app, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, app := range apps {
-			enc.Encode(app) //nolint:errcheck
+			json.MarshalEncode(enc, app, deterministicJSON) //nolint:errcheck
 			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:

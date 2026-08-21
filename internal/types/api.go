@@ -4,6 +4,8 @@
 package types
 
 import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"math"
 	"net/http"
@@ -441,6 +443,13 @@ type UserUpdateRequest struct {
 	Groups   []string `json:"groups"`
 }
 
+// MarshalJSONTo preserves the distinction between nil groups (keep the
+// existing groups on update) and an empty group list (clear the groups).
+func (r UserUpdateRequest) MarshalJSONTo(out *jsontext.Encoder) error {
+	type wireUserUpdateRequest UserUpdateRequest
+	return json.MarshalEncode(out, wireUserUpdateRequest(r), json.FormatNilSliceAsNull(true))
+}
+
 type UserUpdateResponse struct {
 	Username string `json:"username"`
 	Updated  bool   `json:"updated"` // true if an existing user entry was updated
@@ -498,7 +507,7 @@ const (
 type ReplicationFileStatus struct {
 	Path        string    `json:"path"` // relative to the binding data dir, e.g. data.db
 	LastSync    time.Time `json:"last_sync,omitzero"`
-	ReplicaTXID uint64    `json:"replica_txid,omitempty"`
+	ReplicaTXID uint64    `json:"replica_txid,omitempty,omitzero"`
 	Size        int64     `json:"size"`
 }
 
@@ -515,9 +524,9 @@ type ReplicationStatusEntry struct {
 	State            string    `json:"state"`
 	SidecarRunning   *bool     `json:"sidecar_running,omitempty"` // nil when not determinable (kubernetes)
 	LastSync         time.Time `json:"last_sync,omitzero"`
-	ReplicaSize      int64     `json:"replica_size,omitempty"`
-	LocalTXID        uint64    `json:"local_txid,omitempty"`   // metadata only
-	ReplicaTXID      uint64    `json:"replica_txid,omitempty"` // highest replicated TXID
+	ReplicaSize      int64     `json:"replica_size,omitempty,omitzero"`
+	LocalTXID        uint64    `json:"local_txid,omitempty,omitzero"`   // metadata only
+	ReplicaTXID      uint64    `json:"replica_txid,omitempty,omitzero"` // highest replicated TXID
 	// Files is the per-database breakdown for app targets: with directory
 	// watching a binding can replicate several database files
 	Files []ReplicationFileStatus `json:"files,omitempty"`

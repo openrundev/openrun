@@ -7,7 +7,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"html/template"

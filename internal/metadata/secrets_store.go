@@ -6,7 +6,7 @@ package metadata
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 
 	"github.com/openrundev/openrun/internal/system"

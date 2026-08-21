@@ -4,7 +4,7 @@
 package server
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"testing"
 	"time"
 

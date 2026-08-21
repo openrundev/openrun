@@ -4,7 +4,7 @@
 package app_test
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http/httptest"
 	"testing"
 
@@ -197,7 +197,7 @@ def handler(req):
 
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	var body map[string]string
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+	if err := json.UnmarshalRead(response.Body, &body); err != nil {
 		t.Fatalf("error decoding response: %s", err)
 	}
 	testutil.AssertEqualsString(t, "file_path", "file.txt", body["file_path"])

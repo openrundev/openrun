@@ -5,7 +5,7 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"os"
@@ -222,19 +222,17 @@ func userListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 func printUserList(cCtx *cli.Context, users []types.BuiltinUserInfo, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(users) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, users, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, u := range users {
-			enc.Encode(u) //nolint:errcheck
+			json.MarshalEncode(enc, u, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, u := range users {
-			enc.Encode(u) //nolint:errcheck
+			json.MarshalEncode(enc, u, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_BASIC:
 		formatStr := "%-30s %-40s\n"

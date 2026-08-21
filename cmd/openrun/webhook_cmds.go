@@ -5,7 +5,7 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -66,19 +66,17 @@ func webhookListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 func printWebhookList(cCtx *cli.Context, tokens []types.AppToken, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(tokens) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, tokens, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, version := range tokens {
-			enc.Encode(version) //nolint:errcheck
+			json.MarshalEncode(enc, version, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, f := range tokens {
-			enc.Encode(f) //nolint:errcheck
+			json.MarshalEncode(enc, f, deterministicJSON) //nolint:errcheck
 			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:

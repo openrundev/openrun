@@ -7,7 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -139,7 +139,7 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 
 	if parse == "json" {
 		var result map[string]any
-		if err := json.NewDecoder(&buf).Decode(&result); err != nil {
+		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 			return nil, fmt.Errorf("error parsing JSON output: %w", err)
 		}
 		return []map[string]any{result}, nil
@@ -153,7 +153,7 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 		count++
 		if parse == "jsonlines" {
 			var result map[string]any
-			if err := json.NewDecoder(bytes.NewReader(line)).Decode(&result); err != nil {
+			if err := json.Unmarshal(line, &result); err != nil {
 				return nil, fmt.Errorf("error parsing JSON output: %w", err)
 			}
 			lines = append(lines, result)
@@ -200,7 +200,7 @@ func streamCursor(cmd *exec.Cmd, stdout io.Reader, parse string, reap func()) *s
 				line := scanner.Bytes()
 				if parse == "jsonlines" {
 					var result map[string]any
-					if err := json.NewDecoder(bytes.NewReader(line)).Decode(&result); err != nil {
+					if err := json.Unmarshal(line, &result); err != nil {
 						reap()
 						return nil, false, fmt.Errorf("error parsing JSON output: %w", err)
 					}

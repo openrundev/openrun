@@ -10,7 +10,8 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"embed"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log"
@@ -697,7 +698,7 @@ func (s *Server) SaveDynamicConfig(ctx context.Context) error {
 	}
 
 	targetPath := path.Join(targetDir, "dynamic_config.json")
-	configJson, err := json.MarshalIndent(s.dynamicConfig, "", "  ")
+	configJson, err := json.Marshal(s.dynamicConfig, jsontext.WithIndent("  "))
 	if err != nil {
 		return fmt.Errorf("error marshalling dynamic config: %w", err)
 	}

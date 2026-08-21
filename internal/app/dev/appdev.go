@@ -6,7 +6,8 @@ package dev
 import (
 	"bytes"
 	"embed"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -254,7 +255,7 @@ func (a *AppDev) GenerateHTML() error {
 }
 
 func (a *AppDev) SaveConfigLockFile() error {
-	buf, err := json.MarshalIndent(a.Config, "", "  ")
+	buf, err := json.Marshal(a.Config, jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}

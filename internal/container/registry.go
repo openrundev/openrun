@@ -8,7 +8,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -128,7 +129,7 @@ func GenerateDockerConfigJSON(r *types.RegistryConfig) ([]byte, error) {
 		}
 	}
 
-	return json.MarshalIndent(out, "", "  ")
+	return json.Marshal(out, jsontext.WithIndent("  "))
 }
 
 // ----- Build transport (CAs, mTLS, insecure) -----

@@ -5,7 +5,7 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"strings"
@@ -77,19 +77,17 @@ func replicationTarget(entry types.ReplicationStatusEntry) string {
 func printReplicationStatus(cCtx *cli.Context, entries []types.ReplicationStatusEntry, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(entries) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, entries, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, entry := range entries {
-			enc.Encode(entry) //nolint:errcheck
+			json.MarshalEncode(enc, entry, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, entry := range entries {
-			enc.Encode(entry) //nolint:errcheck
+			json.MarshalEncode(enc, entry, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_BASIC:
 		formatStr := "%-10s %-40s %-15s\n"

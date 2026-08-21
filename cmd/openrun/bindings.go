@@ -5,7 +5,7 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"sort"
@@ -339,9 +339,8 @@ Examples:
 				return err
 			}
 
-			enc := json.NewEncoder(cCtx.App.Writer)
-			enc.SetIndent("", "  ")
-			enc.Encode(account) //nolint:errcheck
+			enc := newJSONEncoder(cCtx.App.Writer, true)
+			json.MarshalEncode(enc, account, deterministicJSON) //nolint:errcheck
 			return nil
 		},
 	}
@@ -421,9 +420,8 @@ Examples:
 				return err
 			}
 
-			enc := json.NewEncoder(cCtx.App.Writer)
-			enc.SetIndent("", "  ")
-			enc.Encode(response) //nolint:errcheck
+			enc := newJSONEncoder(cCtx.App.Writer, true)
+			json.MarshalEncode(enc, response, deterministicJSON) //nolint:errcheck
 			return nil
 		},
 	}
@@ -432,19 +430,17 @@ Examples:
 func printBindingList(cCtx *cli.Context, bindings []types.Binding, format string) {
 	switch format {
 	case FORMAT_JSON:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
-		enc.Encode(bindings) //nolint:errcheck
+		enc := newJSONEncoder(cCtx.App.Writer, true)
+		json.MarshalEncode(enc, bindings, deterministicJSON) //nolint:errcheck
 	case FORMAT_JSONL:
-		enc := json.NewEncoder(cCtx.App.Writer)
+		enc := newJSONEncoder(cCtx.App.Writer, false)
 		for _, b := range bindings {
-			enc.Encode(b) //nolint:errcheck
+			json.MarshalEncode(enc, b, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_JSONL_PRETTY:
-		enc := json.NewEncoder(cCtx.App.Writer)
-		enc.SetIndent("", "  ")
+		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, b := range bindings {
-			enc.Encode(b) //nolint:errcheck
+			json.MarshalEncode(enc, b, deterministicJSON) //nolint:errcheck
 		}
 	case FORMAT_BASIC:
 		formatStr := "%-30s %-30s\n"

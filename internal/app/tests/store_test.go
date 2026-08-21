@@ -6,7 +6,7 @@ package app_test
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -210,7 +210,7 @@ indexes=[
 	ret := make(map[string]any)
 	str := response.Body.String()
 	fmt.Print(str)
-	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
+	json.UnmarshalRead(response.Body, &ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
@@ -488,7 +488,7 @@ type("mytype", fields=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
+	json.UnmarshalRead(response.Body, &ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
@@ -505,7 +505,7 @@ type("mytype", fields=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret = make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
+	json.UnmarshalRead(response.Body, &ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
@@ -528,7 +528,7 @@ type("mytype", fields=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret = make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
+	json.UnmarshalRead(response.Body, &ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
@@ -550,7 +550,7 @@ type("mytype", fields=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret = make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
+	json.UnmarshalRead(response.Body, &ret) //nolint:errcheck
 
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
@@ -722,7 +722,7 @@ type("mytype", fields=[
 		a.ServeHTTP(response, request)
 		testutil.AssertEqualsInt(t, "code "+path, 200, response.Code)
 		crossRet := make(map[string]any)
-		json.NewDecoder(response.Body).Decode(&crossRet) //nolint:errcheck
+		json.UnmarshalRead(response.Body, &crossRet) //nolint:errcheck
 		if _, ok := crossRet["error"]; ok {
 			t.Fatal(crossRet["error"])
 		}
@@ -737,7 +737,7 @@ type("mytype", fields=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 
 	ret := make(map[string]any)
-	json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
+	json.UnmarshalRead(response.Body, &ret) //nolint:errcheck
 	if _, ok := ret["error"]; ok {
 		t.Fatal(ret["error"])
 	}
@@ -805,7 +805,7 @@ type("mytype", fields=[
 		a.ServeHTTP(response, request)
 		testutil.AssertEqualsInt(t, "code", 200, response.Code)
 		ret := make(map[string]any)
-		json.NewDecoder(response.Body).Decode(&ret) //nolint:errcheck
+		json.UnmarshalRead(response.Body, &ret) //nolint:errcheck
 		if _, ok := ret["error"]; ok {
 			t.Fatal(ret["error"])
 		}

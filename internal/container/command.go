@@ -8,7 +8,8 @@ import (
 	"bytes"
 	"container/ring"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -363,10 +364,12 @@ func (c *CommandCM) listContainers(ctx context.Context, filters []string, getAll
 		}
 	} else if output[0] == '{' {
 		// Newline separated JSON (Docker)
-		decoder := json.NewDecoder(bytes.NewReader(output))
-		for decoder.More() {
+		decoder := jsontext.NewDecoder(bytes.NewReader(output))
+		for {
 			var c Container
-			if err := decoder.Decode(&c); err != nil {
+			if err := json.UnmarshalDecode(decoder, &c); err == io.EOF {
+				break
+			} else if err != nil {
 				return nil, fmt.Errorf("error decoding container output: %v", err)
 			}
 

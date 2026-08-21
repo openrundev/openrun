@@ -6,7 +6,7 @@ package system
 import (
 	"bytes"
 	"crypto/tls"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net"
@@ -113,7 +113,7 @@ func (h *HttpClient) request(method, apiPath string, params url.Values, input an
 	var payloadBuf bytes.Buffer
 
 	if input != nil {
-		if err := json.NewEncoder(&payloadBuf).Encode(input); err != nil {
+		if err := json.MarshalWrite(&payloadBuf, input); err != nil {
 			return fmt.Errorf("error encoding request: %w", err)
 		}
 	}
@@ -165,12 +165,8 @@ func (h *HttpClient) request(method, apiPath string, params url.Values, input an
 		return nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
 	if output != nil {
-		if err := json.Unmarshal(body, output); err != nil {
+		if err := json.UnmarshalRead(resp.Body, output); err != nil {
 			return fmt.Errorf("error parsing response: %w", err)
 		}
 	}

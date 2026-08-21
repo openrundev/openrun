@@ -496,7 +496,7 @@ func (b *RedisServiceBinding) RunCommand(ctx context.Context, bindingMetadata ty
 }
 
 // redisReplyToJSON converts a go-redis reply value into JSON-marshalable
-// types. RESP3 map replies use any-typed keys which encoding/json rejects.
+// types. RESP3 map replies use any-typed keys which encoding/json/v2 rejects.
 func redisReplyToJSON(value any) any {
 	switch v := value.(type) {
 	case nil:

@@ -4,7 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -58,7 +58,7 @@ func TestSendDelegateBuild(t *testing.T) {
 
 				switch part.FormName() {
 				case "meta":
-					if err := json.NewDecoder(part).Decode(&gotMeta); err != nil {
+					if err := json.UnmarshalRead(part, &gotMeta); err != nil {
 						t.Fatalf("decode meta: %v", err)
 					}
 				case "file":
@@ -405,7 +405,7 @@ func buildDelegateMultipartBody(t *testing.T, meta DelegateRequest, includeFile 
 	if err != nil {
 		t.Fatalf("create meta field: %v", err)
 	}
-	if err := json.NewEncoder(metaPart).Encode(meta); err != nil {
+	if err := json.MarshalWrite(metaPart, meta); err != nil {
 		t.Fatalf("encode meta: %v", err)
 	}
 

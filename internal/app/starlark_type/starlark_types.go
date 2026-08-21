@@ -4,7 +4,7 @@
 package starlark_type
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"math"
 
@@ -129,8 +129,8 @@ func ConvertToStarlark(p any) (starlark.Value, error) {
 // directly into starlark, matching the result of the
 // json.Marshal->Unmarshal->MarshalStarlark round-trip used by ConvertToStarlark.
 // The key compatibility points: every number becomes a starlark float (json
-// decodes numbers as float64), nil maps and slices become None (they marshal to
-// json null), and non-finite floats are rejected (json.Marshal errors on them).
+// decodes numbers as float64), nil maps and slices become empty collections,
+// and non-finite floats are rejected (json.Marshal errors on them).
 // It returns ok=false for any type json would treat differently or reject, so
 // the caller falls back to the exact json path.
 func jsonCompatMarshal(p any) (starlark.Value, bool) {
@@ -173,9 +173,6 @@ func jsonCompatMarshal(p any) (starlark.Value, bool) {
 		}
 		return starlark.Float(x), true
 	case map[string]any:
-		if x == nil {
-			return starlark.None, true
-		}
 		dict := starlark.NewDict(len(x))
 		for k, val := range x {
 			sv, ok := jsonCompatMarshal(val)
@@ -188,9 +185,6 @@ func jsonCompatMarshal(p any) (starlark.Value, bool) {
 		}
 		return dict, true
 	case []any:
-		if x == nil {
-			return starlark.None, true
-		}
 		elems := make([]starlark.Value, len(x))
 		for i, val := range x {
 			sv, ok := jsonCompatMarshal(val)
@@ -201,9 +195,6 @@ func jsonCompatMarshal(p any) (starlark.Value, bool) {
 		}
 		return starlark.NewList(elems), true
 	case map[string]string:
-		if x == nil {
-			return starlark.None, true
-		}
 		dict := starlark.NewDict(len(x))
 		for k, val := range x {
 			if err := dict.SetKey(starlark.String(k), starlark.String(val)); err != nil {
@@ -212,18 +203,12 @@ func jsonCompatMarshal(p any) (starlark.Value, bool) {
 		}
 		return dict, true
 	case []string:
-		if x == nil {
-			return starlark.None, true
-		}
 		elems := make([]starlark.Value, len(x))
 		for i, s := range x {
 			elems[i] = starlark.String(s)
 		}
 		return starlark.NewList(elems), true
 	case []map[string]any:
-		if x == nil {
-			return starlark.None, true
-		}
 		elems := make([]starlark.Value, len(x))
 		for i, m := range x {
 			sv, ok := jsonCompatMarshal(m)
@@ -234,9 +219,6 @@ func jsonCompatMarshal(p any) (starlark.Value, bool) {
 		}
 		return starlark.NewList(elems), true
 	case []map[string]string:
-		if x == nil {
-			return starlark.None, true
-		}
 		elems := make([]starlark.Value, len(x))
 		for i, m := range x {
 			sv, ok := jsonCompatMarshal(m)

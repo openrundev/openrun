@@ -5,7 +5,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -328,7 +328,7 @@ func metadataStatus(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 }
 
 func printMetadataStatus(cCtx *cli.Context, response types.MetadataHealthResponse) error {
-	output, err := json.MarshalIndent(response, "", "  ")
+	output, err := json.Marshal(response, prettyJSON, deterministicJSON)
 	if err != nil {
 		return err
 	}
@@ -367,7 +367,7 @@ func showConfig(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	if err != nil {
 		return err
 	}
-	json, err := json.MarshalIndent(response.DynamicConfig, "", "  ")
+	json, err := json.Marshal(response.DynamicConfig, prettyJSON, deterministicJSON)
 	if err != nil {
 		return err
 	}
@@ -401,7 +401,7 @@ func updateConfig(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 		return err
 	}
 
-	json, err := json.MarshalIndent(response.DynamicConfig, "", "  ")
+	json, err := json.Marshal(response.DynamicConfig, prettyJSON, deterministicJSON)
 	if err != nil {
 		return err
 	}
