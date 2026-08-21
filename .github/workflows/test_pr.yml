@@ -23,6 +23,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     strategy:
       matrix:
         go-version: ["1.26.6"]
@@ -47,16 +48,16 @@ jobs:
         run: |
           go install filippo.io/mkcert@v1.4.4
           # Add mkcert to the PATH if not already there
-          echo "PATH=$(go env GOPATH)/bin:$PATH" >> $GITHUB_ENV
+          echo "PATH=$(go env GOPATH)/bin:$PATH" >> "$GITHUB_ENV"
           mkcert -install
 
       - name: Unit and Integration test
         run: |
-          export OPENRUN_HOME=`pwd`
+          export OPENRUN_HOME="$(pwd)"
           rm -rf internal/server/appspecs && cd internal/server
           git clone --single-branch --depth 1 https://github.com/openrundev/appspecs.git
           rm -rf appspecs/.git
-          cd $OPENRUN_HOME
+          cd "$OPENRUN_HOME"
 
           go install github.com/commander-cli/commander/v2/cmd/commander@v2.5.0
           # pull requests use the github runner, docker/podman does not run there

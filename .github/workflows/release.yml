@@ -8,6 +8,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # Builds the Windows binary and Authenticode-signs it via SignPath (the
   # certificate lives in SignPath's HSM, so signing is a round-trip: upload
@@ -16,6 +20,7 @@ jobs:
   # archiving via deploy/sign-windows.sh.
   sign-windows:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read # SignPath downloads the unsigned artifact with the workflow token
@@ -75,6 +80,7 @@ jobs:
   goreleaser:
     needs: sign-windows
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
       packages: write # required to push to GHCR
@@ -125,6 +131,7 @@ jobs:
     name: Publish to Open Build Service
     needs: goreleaser
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -137,7 +144,7 @@ jobs:
         with:
           go-version: "1.26.6"
       - name: Install osc
-        run: pipx install osc
+        run: pipx install 'osc==1.27.3'
       - name: Configure osc credentials
         env:
           # build.opensuse.org account, set in the repo's Actions secrets

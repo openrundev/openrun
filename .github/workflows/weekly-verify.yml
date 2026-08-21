@@ -6,6 +6,8 @@ on:
     - cron: "0 18 * * 2"
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   docs:
     permissions:

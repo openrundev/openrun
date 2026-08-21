@@ -48,6 +48,7 @@ concurrency:
 jobs:
   build:
     runs-on: self-hosted
+    timeout-minutes: 60
     strategy:
       matrix:
         go-version: ["1.26.6"]
@@ -77,35 +78,42 @@ jobs:
           CL_INFOCLACE_SSH: ${{ secrets.CL_INFOCLACE_SSH }}
           CL_GITHUB_SECRET: ${{ secrets.CL_GITHUB_SECRET }}
           TEST_PAT: ${{ secrets.TEST_PAT }}
+          ENABLE_DR_TESTS: ${{ inputs.enable_dr_tests }}
+          ENABLE_KUBERNETES_TESTS: ${{ inputs.enable_kubernetes_tests }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
         run: |
-          export OPENRUN_HOME=`pwd`
+          export OPENRUN_HOME="$(pwd)"
           rm -rf internal/server/appspecs && cd internal/server
           git clone --single-branch --depth 1 https://github.com/openrundev/appspecs.git
           rm -rf appspecs/.git
-          cd $OPENRUN_HOME
+          cd "$OPENRUN_HOME"
 
           go install github.com/commander-cli/commander/v2/cmd/commander@v2.5.0
           # Using a self-hosted runner, use Docker for container tests
           MAKE_TEST_ARGS=(CONTAINER_COMMANDS=docker POSTGRES=1 MYSQL=1 REDIS=1 SEAWEEDFS=1)
 
-          if [[ "${{ inputs.enable_dr_tests }}" == "true" ]]; then
+          if [[ "$ENABLE_DR_TESTS" == "true" ]]; then
             # Run the docker and kubernetes disaster recovery scenarios too
             # (the kubernetes one needs enable_kubernetes_tests as well)
             MAKE_TEST_ARGS+=(DR=1)
           fi
 
           RUN_KUBERNETES_TESTS=false
-          if [[ "${{ inputs.enable_kubernetes_tests }}" == "true" ]]; then
+          if [[ "$ENABLE_KUBERNETES_TESTS" == "true" ]]; then
             RUN_KUBERNETES_TESTS=true
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
-            HEAD="${{ github.event.pull_request.head.sha }}"
+          elif [[ "$EVENT_NAME" == "pull_request" ]]; then
+            BASE="$PR_BASE_SHA"
+            HEAD="$PR_HEAD_SHA"
             if git diff --name-only "$BASE" "$HEAD" | grep -q '^internal/container/'; then
               RUN_KUBERNETES_TESTS=true
             fi
-          elif [[ "${{ github.event_name }}" != "workflow_call" ]]; then
-            BASE="${{ github.event.before }}"
-            HEAD="${{ github.sha }}"
+          elif [[ "$EVENT_NAME" != "workflow_call" ]]; then
+            BASE="$BEFORE_SHA"
+            HEAD="$CURRENT_SHA"
             if git diff --name-only "$BASE" "$HEAD" | grep -q '^internal/container/'; then
               RUN_KUBERNETES_TESTS=true
             fi
@@ -127,8 +135,9 @@ jobs:
           docker system prune -f
           gmake covtest "${MAKE_TEST_ARGS[@]}"
 
-          if [[ -n "$(docker ps -a -q)" ]]; then
-            docker stop -t 1 $(docker ps -a -q)
+          mapfile -t containers < <(docker ps -a -q)
+          if (( ${#containers[@]} > 0 )); then
+            docker stop -t 1 "${containers[@]}"
           fi
 
           docker system prune -f
