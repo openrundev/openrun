@@ -17,6 +17,8 @@ INPUT2 := $(word 3,$(MAKECMDGOALS))
 GO_PACKAGES = $$(GOWORK=off go list ./... | grep -v '/ui/')
 GO_COVER_PACKAGES = $$(GOWORK=off go list ./... | grep -v '/ui/' | paste -sd, -)
 GO_LINT_PACKAGES = $$(module=$$(GOWORK=off go list -m); GOWORK=off go list ./... | grep -v '/ui/' | awk -v module="$$module" '{ sub("^" module, "."); print }')
+GOLANGCI_LINT_VERSION := v2.13.1
+GOLANGCI_LINT = GOWORK=off go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 # tests/run_cli_tests.sh flags, settable from the make command line, e.g.
 # `make int CONTAINER_COMMANDS=docker POSTGRES=1`. RUN_CLI_TEST_ARGS is an
@@ -92,8 +94,8 @@ unit: ## Run unit tests
 
 lint: ## Run lint
 > packages="$(GO_LINT_PACKAGES)"
-> golangci-lint run $$packages
-> cd pkg/binding && GOWORK=off golangci-lint run ./...
+> $(GOLANGCI_LINT) run $$packages
+> cd pkg/binding && $(GOLANGCI_LINT) run ./...
 
 covunit: ## Run unit tests with coverage and the race detector
 > rm -rf $(OPENRUN_HOME)/coverage/unit && mkdir -p $(OPENRUN_HOME)/coverage/unit

@@ -832,8 +832,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 		return rootWildcard, fmt.Errorf("error parsing url %s: %w", urlStr, err)
 	}
 
-	proxy := httputil.NewSingleHostReverseProxy(urlParsed)
-	proxy.BufferPool = proxyBufPool
+	proxy := &httputil.ReverseProxy{BufferPool: proxyBufPool}
 
 	customTransport := http.DefaultTransport.(*http.Transport).Clone()
 	maxIdleConnCount := a.AppConfig.Proxy.MaxIdleConns
@@ -861,27 +860,42 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 		}
 	}
 
-	defaultDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
+	proxy.Rewrite = func(req *httputil.ProxyRequest) {
 		target := resolveProxyTarget()
-		defaultDirector(req)
-		// The default director joined the path against the setup-time
-		// target; scheme/host come from the per-request resolution (the
-		// container url never carries a path, so the join is unaffected)
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		if req.Header.Get("Upgrade") == "websocket" {
-			// Forward Connection/Upgrade as-is so the handshake survives. Host
+		req.SetURL(target)
+		req.SetXForwarded()
+		// The request wrapper has already sanitized these values using the
+		// configured trusted proxies. Rewrite removes forwarding headers before
+		// this callback, so restore the sanitized host and scheme explicitly.
+		req.Out.Header.Set("X-Forwarded-Host", req.In.Header.Get("X-Forwarded-Host"))
+		req.Out.Header.Set("X-Forwarded-Proto", req.In.Header.Get("X-Forwarded-Proto"))
+		if realIP := req.In.Header.Get("X-Real-IP"); realIP != "" {
+			req.Out.Header.Set("X-Real-IP", realIP)
+		}
+		if prefix := req.In.Header.Get("X-Forwarded-Prefix"); prefix != "" {
+			req.Out.Header.Set("X-Forwarded-Prefix", prefix)
+		}
+		// Connection may nominate arbitrary headers as hop-by-hop. Restore the
+		// authoritative OpenRun headers after ReverseProxy has processed those
+		// tokens; the request wrapper removed all client-supplied values before
+		// generating these headers from the authenticated context.
+		for key, values := range req.In.Header {
+			if len(key) >= len(types.OPENRUN_HEADER_PREFIX) &&
+				strings.EqualFold(key[:len(types.OPENRUN_HEADER_PREFIX)], types.OPENRUN_HEADER_PREFIX) {
+				req.Out.Header[key] = slices.Clone(values)
+			}
+		}
+		if req.In.Header.Get("Upgrade") == "websocket" {
+			// ReverseProxy restores Connection/Upgrade before Rewrite. Host
 			// is intentionally left untouched (even when preserve_host=false):
 			// upstream WebSocket frameworks reject the handshake as a
 			// "disallowed origin" when the browser-supplied Origin's host
 			// doesn't match Host. The Host that reaches this code has already
 			// been constrained by MatchApp and system.ValidHostHeader, so it
 			// is a registered app domain — not an attacker-controlled value.
-			req.Header.Set("Connection", "Upgrade")
-			req.Header.Set("Upgrade", "websocket")
-		} else if !preserveHost {
-			req.Host = target.Host
+			req.Out.Host = req.In.Host
+		} else if preserveHost {
+			req.Out.Host = req.In.Host
 		}
 	}
 

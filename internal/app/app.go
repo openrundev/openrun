@@ -1432,7 +1432,7 @@ func (a *App) updateAppConfig() error {
 
 	buf := strings.Builder{}
 	for key, value := range a.Metadata.AppConfig {
-		buf.WriteString(fmt.Sprintf("%s=%s\n", key, value))
+		fmt.Fprintf(&buf, "%s=%s\n", key, value)
 	}
 
 	_, err := toml.Decode(buf.String(), &a.AppConfig)

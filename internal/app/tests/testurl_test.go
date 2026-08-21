@@ -153,6 +153,13 @@ permissions=[
 
 	ctx := testUrlContext([]string{"app:read"}, "/test/_cl_perm=app:read")
 	request := httptest.NewRequest("GET", "/test/page", nil).WithContext(ctx)
+	// A client may nominate arbitrary headers in Connection. The proxy must
+	// restore its authoritative prefix and authorization headers after Go's
+	// hop-by-hop cleanup, never the spoofed client values.
+	request.Header.Set("Connection", "X-Forwarded-Prefix, X-Openrun-Perms, X-Openrun-Rbac-Enabled")
+	request.Header.Set("X-Forwarded-Prefix", "/spoofed")
+	request.Header.Set("X-Openrun-Perms", "admin")
+	request.Header.Set("X-Openrun-Rbac-Enabled", "false")
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "status", http.StatusOK, response.Code)

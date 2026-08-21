@@ -436,8 +436,11 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			err := encoder.enc.Encode(handlerResponse)
 			_, err2 := w.Write(encoder.buf.Bytes())
 			encoderPool.Put(encoder)
-			if cmp.Or(err, err2) != nil {
-				http.Error(w, cmp.Or(err, err2).Error(), http.StatusInternalServerError)
+			if err == nil {
+				err = err2
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			return

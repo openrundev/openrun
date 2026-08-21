@@ -24,6 +24,62 @@ type testRBAC struct {
 	perms []string
 }
 
+type proxyRequestSnapshot struct {
+	method   string
+	host     string
+	path     string
+	rawPath  string
+	rawQuery string
+	body     string
+	header   http.Header
+}
+
+func snapshotProxyRequest(r *http.Request) proxyRequestSnapshot {
+	body, _ := io.ReadAll(r.Body)
+	return proxyRequestSnapshot{
+		method:   r.Method,
+		host:     r.Host,
+		path:     r.URL.Path,
+		rawPath:  r.URL.RawPath,
+		rawQuery: r.URL.RawQuery,
+		body:     string(body),
+		header:   r.Header.Clone(),
+	}
+}
+
+func newProxyTestHandler(t *testing.T, target string, preserveHost bool) http.Handler {
+	t.Helper()
+
+	preserveOption := ""
+	if preserveHost {
+		preserveOption = ", preserve_host=True"
+	}
+	fileData := map[string]string{
+		"app.star": fmt.Sprintf(`
+load("proxy.in", "proxy")
+
+app = ace.app("testApp", routes = [ace.proxy("/", proxy.config(%q%s))],
+permissions=[
+	ace.permission("proxy.in", "config"),
+]
+)`, target, preserveOption),
+	}
+
+	var handler http.Handler
+	var err error
+	if preserveHost {
+		handler, _, err = CreateTestAppPluginDomain(testutil.TestLogger(), "app.example.com", fileData, []string{"proxy.in"},
+			[]types.Permission{{Plugin: "proxy.in", Method: "config"}}, map[string]types.PluginSettings{})
+	} else {
+		handler, _, err = CreateTestAppPlugin(testutil.TestLogger(), fileData, []string{"proxy.in"},
+			[]types.Permission{{Plugin: "proxy.in", Method: "config"}}, map[string]types.PluginSettings{})
+	}
+	if err != nil {
+		t.Fatalf("create proxy test app: %v", err)
+	}
+	return handler
+}
+
 func (t *testRBAC) AuthorizeAny(ctx context.Context, permissions []string) (bool, error) {
 	for _, permission := range permissions {
 		if slices.Contains(t.perms, permission) {
@@ -575,6 +631,191 @@ permissions=[
 	testutil.AssertEqualsString(t, "backend host", "grafana.example.com", backendHost)
 }
 
+func TestProxyRewriteRegularRequestSemantics(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		preserveHost bool
+	}{
+		{name: "upstream host", preserveHost: false},
+		{name: "preserved client host", preserveHost: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := make(chan proxyRequestSnapshot, 1)
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- snapshotProxyRequest(r)
+				w.Header().Set("X-Backend-End-To-End", "kept")
+				w.WriteHeader(http.StatusCreated)
+			}))
+			defer backend.Close()
+
+			handler := newProxyTestHandler(t, backend.URL+"/base?target=one", tt.preserveHost)
+			request := httptest.NewRequest(http.MethodPost,
+				"https://app.example.com/test/child%2Fitem?request=two", strings.NewReader("payload"))
+			request.Host = "app.example.com:8443"
+			request.RemoteAddr = "198.51.100.40:4242"
+			request.Header.Set("Connection",
+				"keep-alive, X-Remove-Me, X-Forwarded-Host, X-Forwarded-Proto, X-Real-IP, "+
+					"X-Openrun-User, X-Openrun-User-Id, X-Openrun-User-Email, X-Openrun-Perms, X-Openrun-Rbac-Enabled")
+			request.Header.Set("Keep-Alive", "timeout=5")
+			request.Header.Set("Proxy-Connection", "keep-alive")
+			request.Header.Set("Proxy-Authorization", "Basic secret")
+			request.Header.Set("Te", "trailers")
+			request.Header.Set("Trailer", "X-Request-Trailer")
+			request.Header.Set("Upgrade", "h2c")
+			request.Header.Set("X-Remove-Me", "remove")
+			request.Header.Set("X-End-To-End", "kept")
+			request.Header.Set("X-Forwarded-For", "203.0.113.1")
+			request.Header.Set("X-Forwarded-Host", "spoofed.example")
+			request.Header.Set("X-Forwarded-Proto", "ftp")
+			request.Header.Set("Forwarded", "for=203.0.113.2")
+			request.Header.Set("X-Openrun-User", "spoofed-user")
+			ctx := context.WithValue(request.Context(), types.USER_ID, "trusted-user")
+			ctx = context.WithValue(ctx, types.USER_SUBJECT, "trusted-subject")
+			ctx = context.WithValue(ctx, types.USER_EMAIL, "trusted@example.com")
+			ctx = context.WithValue(ctx, types.CUSTOM_PERMS, []string{"read:data", "write:data"})
+			ctx = context.WithValue(ctx, types.RBAC_ENABLED, true)
+			request = request.WithContext(ctx)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusCreated {
+				t.Fatalf("response status = %d, want %d; body=%q", response.Code, http.StatusCreated, response.Body.String())
+			}
+			if got := response.Header().Get("X-Backend-End-To-End"); got != "kept" {
+				t.Errorf("response end-to-end header = %q, want kept", got)
+			}
+
+			got := <-requests
+			wantHost := backend.Listener.Addr().String()
+			if tt.preserveHost {
+				wantHost = "app.example.com:8443"
+			}
+			if got.host != wantHost {
+				t.Errorf("upstream Host = %q, want %q", got.host, wantHost)
+			}
+			if got.method != http.MethodPost || got.body != "payload" {
+				t.Errorf("upstream method/body = %q/%q, want POST/payload", got.method, got.body)
+			}
+			if got.path != "/base/child/item" || got.rawPath != "/base/child%2Fitem" {
+				t.Errorf("upstream path/rawPath = %q/%q, want /base/child/item and /base/child%%2Fitem", got.path, got.rawPath)
+			}
+			if got.rawQuery != "target=one&request=two" {
+				t.Errorf("upstream query = %q, want target=one&request=two", got.rawQuery)
+			}
+			if value := got.header.Get("Connection"); value != "" {
+				t.Errorf("upstream Connection = %q, want empty", value)
+			}
+			for _, header := range []string{"Keep-Alive", "Proxy-Connection", "Proxy-Authorization", "Trailer", "Upgrade"} {
+				if value := got.header.Get(header); value != "" {
+					t.Errorf("upstream hop-by-hop header %s = %q, want empty", header, value)
+				}
+			}
+			if value := got.header.Get("Te"); !strings.EqualFold(value, "trailers") {
+				t.Errorf("upstream Te = %q, want trailers", value)
+			}
+			if value := got.header.Get("X-Remove-Me"); value != "" {
+				t.Errorf("connection-nominated header reached upstream: %q", value)
+			}
+			if value := got.header.Get("X-End-To-End"); value != "kept" {
+				t.Errorf("upstream end-to-end header = %q, want kept", value)
+			}
+			if value := got.header.Get("Forwarded"); value != "" {
+				t.Errorf("untrusted Forwarded header reached upstream: %q", value)
+			}
+			if value := got.header.Get("X-Forwarded-For"); value != "198.51.100.40" {
+				t.Errorf("X-Forwarded-For = %q, want 198.51.100.40", value)
+			}
+			if value := got.header.Get("X-Real-IP"); value != "198.51.100.40" {
+				t.Errorf("X-Real-IP = %q, want 198.51.100.40", value)
+			}
+			if value := got.header.Get("X-Forwarded-Host"); value != "app.example.com" {
+				t.Errorf("X-Forwarded-Host = %q, want app.example.com", value)
+			}
+			if value := got.header.Get("X-Forwarded-Proto"); value != "https" {
+				t.Errorf("X-Forwarded-Proto = %q, want https", value)
+			}
+			if value := got.header.Get("X-Openrun-User"); value != "trusted-user" {
+				t.Errorf("X-Openrun-User = %q, want trusted-user", value)
+			}
+			if value := got.header.Get("X-Openrun-User-Id"); value != "trusted-subject" {
+				t.Errorf("X-Openrun-User-Id = %q, want trusted-subject", value)
+			}
+			if value := got.header.Get("X-Openrun-User-Email"); value != "trusted@example.com" {
+				t.Errorf("X-Openrun-User-Email = %q, want trusted@example.com", value)
+			}
+			if value := got.header.Get("X-Openrun-Perms"); value != "read:data,write:data" {
+				t.Errorf("X-Openrun-Perms = %q, want read:data,write:data", value)
+			}
+			if value := got.header.Get("X-Openrun-Rbac-Enabled"); value != "true" {
+				t.Errorf("X-Openrun-Rbac-Enabled = %q, want true", value)
+			}
+		})
+	}
+}
+
+func TestProxyRewriteCleansMalformedQuery(t *testing.T) {
+	queries := make(chan string, 1)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries <- r.URL.RawQuery
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	handler := newProxyTestHandler(t, backend.URL+"/base?target=one", false)
+	request := httptest.NewRequest(http.MethodGet, "/test/search", nil)
+	request.URL.RawQuery = "good=1&bad=%zz&also=2"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("response status = %d, want %d; body=%q", response.Code, http.StatusNoContent, response.Body.String())
+	}
+	if got := <-queries; got != "target=one&also=2&good=1" {
+		t.Errorf("cleaned upstream query = %q, want target=one&also=2&good=1", got)
+	}
+}
+
+func TestProxyRewriteStripsResponseHopByHopHeaders(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Connection", "X-Backend-Hop")
+		w.Header().Set("Keep-Alive", "timeout=5")
+		w.Header().Set("Proxy-Connection", "keep-alive")
+		w.Header().Set("Proxy-Authenticate", "Basic")
+		w.Header().Set("Te", "trailers")
+		w.Header().Set("Trailer", "X-Backend-Trailer")
+		w.Header().Set("Upgrade", "h2c")
+		w.Header().Set("X-Backend-Hop", "remove")
+		w.Header().Set("X-Backend-End-To-End", "kept")
+		io.WriteString(w, "ok") //nolint:errcheck
+		w.Header().Set("X-Backend-Trailer", "completed")
+	}))
+	defer backend.Close()
+
+	handler := newProxyTestHandler(t, backend.URL, false)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/test/resource", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want %d; body=%q", response.Code, http.StatusOK, response.Body.String())
+	}
+	for _, header := range []string{
+		"Connection", "Keep-Alive", "Proxy-Connection", "Proxy-Authenticate", "Te", "Upgrade", "X-Backend-Hop",
+	} {
+		if value := response.Header().Get(header); value != "" {
+			t.Errorf("response hop-by-hop header %s = %q, want empty", header, value)
+		}
+	}
+	if value := response.Header().Get("X-Backend-End-To-End"); value != "kept" {
+		t.Errorf("response end-to-end header = %q, want kept", value)
+	}
+	if value := response.Header().Get("Trailer"); value != "X-Backend-Trailer" {
+		t.Errorf("response Trailer declaration = %q, want X-Backend-Trailer", value)
+	}
+	if value := response.Header().Get("X-Backend-Trailer"); value != "completed" {
+		t.Errorf("response trailer value = %q, want completed", value)
+	}
+}
+
 func TestProxyPreserveHostRequiresCanonicalDomain(t *testing.T) {
 	// preserve_host requires a canonical authority so an attacker-controlled
 	// Host header can't be forwarded blindly to the backend. The test harness
@@ -1124,6 +1365,134 @@ permissions=[
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertEqualsString(t, "body", "test contents", response.Body.String())
 	testutil.AssertEqualsString(t, "forwarded host", "2001:db8::1", forwardedHost)
+}
+
+func TestProxyRewriteWebSocketSemantics(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		preserveHost bool
+	}{
+		{name: "websocket host override", preserveHost: false},
+		{name: "websocket preserved host", preserveHost: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := make(chan proxyRequestSnapshot, 1)
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- snapshotProxyRequest(r)
+				conn, bufrw, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Errorf("backend hijack: %v", err)
+					return
+				}
+				defer conn.Close() //nolint:errcheck
+				if _, err := bufrw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"); err != nil {
+					t.Errorf("backend handshake: %v", err)
+					return
+				}
+				if err := bufrw.Flush(); err != nil {
+					t.Errorf("backend flush handshake: %v", err)
+					return
+				}
+				line, err := bufrw.ReadString('\n')
+				if err != nil {
+					t.Errorf("backend read: %v", err)
+					return
+				}
+				if _, err := bufrw.WriteString("echo:" + line); err != nil {
+					t.Errorf("backend echo: %v", err)
+					return
+				}
+				if err := bufrw.Flush(); err != nil {
+					t.Errorf("backend flush echo: %v", err)
+				}
+			}))
+			defer backend.Close()
+
+			handler := newProxyTestHandler(t, backend.URL+"/socket-base", tt.preserveHost)
+			appServer := httptest.NewServer(handler)
+			defer appServer.Close()
+
+			conn, err := net.Dial("tcp", appServer.Listener.Addr().String())
+			if err != nil {
+				t.Fatalf("dial proxy: %v", err)
+			}
+			defer conn.Close() //nolint:errcheck
+
+			_, err = fmt.Fprint(conn, "GET /test/ws?transport=websocket HTTP/1.1\r\n"+
+				"Host: app.example.com\r\n"+
+				"Origin: https://app.example.com\r\n"+
+				"Upgrade: websocket\r\n"+
+				"Connection: keep-alive, Upgrade, X-Remove-Me, X-Forwarded-Host, X-Forwarded-Proto\r\n"+
+				"X-Remove-Me: remove\r\n"+
+				"X-Forwarded-Host: spoofed.example\r\n"+
+				"X-Forwarded-Proto: ftp\r\n"+
+				"X-End-To-End: kept\r\n\r\n")
+			if err != nil {
+				t.Fatalf("write websocket handshake: %v", err)
+			}
+
+			reader := bufio.NewReader(conn)
+			statusLine, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("read websocket status: %v", err)
+			}
+			if !strings.Contains(statusLine, "101") {
+				t.Fatalf("websocket status = %q, want 101", statusLine)
+			}
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					t.Fatalf("read websocket headers: %v", err)
+				}
+				if line == "\r\n" {
+					break
+				}
+			}
+			if _, err := fmt.Fprint(conn, "hello\n"); err != nil {
+				t.Fatalf("write websocket payload: %v", err)
+			}
+			echoed, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("read websocket echo: %v", err)
+			}
+			if echoed != "echo:hello\n" {
+				t.Errorf("websocket echo = %q, want echo:hello\\n", echoed)
+			}
+
+			got := <-requests
+			if got.host != "app.example.com" {
+				t.Errorf("websocket upstream Host = %q, want app.example.com", got.host)
+			}
+			if got.path != "/socket-base/ws" || got.rawQuery != "transport=websocket" {
+				t.Errorf("websocket upstream path/query = %q/%q, want /socket-base/ws/transport=websocket", got.path, got.rawQuery)
+			}
+			if value := got.header.Get("Connection"); !strings.EqualFold(value, "Upgrade") {
+				t.Errorf("websocket upstream Connection = %q, want Upgrade", value)
+			}
+			if value := got.header.Get("Upgrade"); !strings.EqualFold(value, "websocket") {
+				t.Errorf("websocket upstream Upgrade = %q, want websocket", value)
+			}
+			if value := got.header.Get("X-Remove-Me"); value != "" {
+				t.Errorf("websocket connection-nominated header reached upstream: %q", value)
+			}
+			if value := got.header.Get("Origin"); value != "https://app.example.com" {
+				t.Errorf("websocket upstream Origin = %q, want https://app.example.com", value)
+			}
+			if value := got.header.Get("X-End-To-End"); value != "kept" {
+				t.Errorf("websocket end-to-end header = %q, want kept", value)
+			}
+			if value := got.header.Get("X-Forwarded-Host"); value != "app.example.com" {
+				t.Errorf("websocket X-Forwarded-Host = %q, want app.example.com", value)
+			}
+			if value := got.header.Get("X-Forwarded-Proto"); value != "http" {
+				t.Errorf("websocket X-Forwarded-Proto = %q, want http", value)
+			}
+			forwardedFor := got.header.Get("X-Forwarded-For")
+			if net.ParseIP(forwardedFor) == nil || !net.ParseIP(forwardedFor).IsLoopback() {
+				t.Errorf("websocket X-Forwarded-For = %q, want loopback client IP", forwardedFor)
+			}
+		})
+	}
 }
 
 // TestProxyWebsocketUpgrade exercises the proxy upgrade path: the response is

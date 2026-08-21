@@ -225,16 +225,15 @@ func TestMetadata_AppLifecycle(t *testing.T) {
 		SourceUrl:     "https://example.com/repo.git",
 		UserID:        "u1",
 		Metadata: types.AppMetadata{
-			Name: "Prod app",
+			Name:        "Prod app",
+			AuthnType:   types.AppAuthnSystem,
+			GitAuthName: "git-one",
 			VersionMetadata: types.VersionMetadata{
 				Version: 1,
 			},
 			AppConfig: map[string]string{"star_base": "\"/tmp/base\""},
 		},
-		Settings: types.AppSettings{
-			AuthnType:   types.AppAuthnSystem,
-			GitAuthName: "git-one",
-		},
+		Settings: types.AppSettings{},
 	}
 	preview := &types.AppEntry{
 		Id:            types.AppId(types.ID_PREFIX_APP_PREVIEW + "1"),

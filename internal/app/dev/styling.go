@@ -297,11 +297,11 @@ func (s *AppStyle) setupTailwindConfig(templateLocations []string, sourceFS *app
 		if i > 0 {
 			buf.WriteString(", ")
 		}
-		buf.WriteString(fmt.Sprintf("'%s'", path.Join(sourceFS.Root, loc)))
+		fmt.Fprintf(&buf, "'%s'", path.Join(sourceFS.Root, loc))
 	}
 
 	buf.WriteString(", ")
-	buf.WriteString(fmt.Sprintf("'%s'", path.Join(sourceFS.Root, "static", "*.js")))
+	fmt.Fprintf(&buf, "'%s'", path.Join(sourceFS.Root, "static", "*.js"))
 
 	var inputContents string
 	if twVersion == types.TailwindVersionLegacy {
@@ -338,7 +338,7 @@ func (s *AppStyle) legacyDaisyThemes() string {
 		if i > 0 {
 			quotedThemes.WriteString(", ")
 		}
-		quotedThemes.WriteString(fmt.Sprintf("\"%s\"", theme))
+		fmt.Fprintf(&quotedThemes, "\"%s\"", theme)
 	}
 
 	return fmt.Sprintf("  daisyui: { themes: [%s], },", quotedThemes.String())
@@ -432,7 +432,7 @@ func sourceDirectives(contentList string) string {
 	var buf strings.Builder
 	for _, source := range sources {
 		source = strings.Trim(source, "'")
-		buf.WriteString(fmt.Sprintf("@source \"%s\";\n", source))
+		fmt.Fprintf(&buf, "@source \"%s\";\n", source)
 	}
 	return strings.TrimSpace(buf.String())
 }
