@@ -15,6 +15,7 @@ keywords:
     "VPS deployment",
     "scale to zero",
     "SSO for internal tools",
+    "SAML for internal tools",
     "RBAC",
     "database service bindings",
     "PostgreSQL provisioning",
