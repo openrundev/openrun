@@ -26,4 +26,4 @@ jobs:
           go-version-file: go.mod
       - run: |
           packages="$(go list ./... | sed "\#^$(go list -m)/ui/#d")"
-          go run golang.org/x/vuln/cmd/govulncheck@v1.1.2 $packages
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 $packages
