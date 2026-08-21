@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.19.0] - 2026-08-20
+
 ### Added
 
 - Added support for dynamically loaded plugins using same go-plugin mechanism as used for bindings
