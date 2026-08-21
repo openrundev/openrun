@@ -85,7 +85,7 @@ image: build-linux ## Build docker image
 covtest: covunit covint ## Run all tests with coverage
 > go tool covdata percent -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/unit,$(OPENRUN_HOME)/coverage/int
 > go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/unit,$(OPENRUN_HOME)/coverage/int -o $(OPENRUN_HOME)/coverage.txt
-> go tool cover -func coverage/profile | grep '^total:'
+> go tool cover -func coverage.txt | grep '^total:'
 
 unit: ## Run unit tests
 > packages="$(GO_PACKAGES)"
@@ -102,9 +102,6 @@ covunit: ## Run unit tests with coverage and the race detector
 > packages="$(GO_PACKAGES)"
 > cover_packages="$(GO_COVER_PACKAGES)"
 > go test -race -covermode=atomic -coverpkg "$$cover_packages" $$packages -args -test.gocoverdir="$(OPENRUN_HOME)/coverage/unit"
-> go tool covdata percent -i=$(OPENRUN_HOME)/coverage/unit
-> go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/unit -o $(OPENRUN_HOME)/coverage/profile
-> go tool cover -func coverage/profile | grep '^total:'
 
 int: ## Run integration tests
 > ./tests/run_cli_tests.sh $(RUN_CLI_TESTS_FLAGS)
@@ -135,9 +132,6 @@ covint: ## Run integration tests with coverage
 > rm -rf $(OPENRUN_HOME)/coverage/int && mkdir -p $(OPENRUN_HOME)/coverage/int
 > rm -rf $(OPENRUN_HOME)/coverage/client && mkdir -p $(OPENRUN_HOME)/coverage/client
 > ./tests/run_cli_tests.sh $(RUN_CLI_TESTS_FLAGS) --coverdir $(OPENRUN_HOME)/coverage/int
-> go tool covdata percent -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/int
-> go tool covdata textfmt -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/int -o $(OPENRUN_HOME)/coverage/profile
-> go tool cover -func coverage/profile | grep '^total:'
 
 tags: ## Show current release version tags
 > @echo "OpenRun SDK releases"

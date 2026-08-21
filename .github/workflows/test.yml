@@ -71,6 +71,7 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: ${{ matrix.go-version }}
+          cache: false
       - name: Install dependencies
         run: go mod download
       - name: Unit and Integration test
@@ -132,15 +133,26 @@ jobs:
             echo "**********Kubernetes tests skipped************"
           fi
 
-          docker system prune -f
           gmake covtest "${MAKE_TEST_ARGS[@]}"
 
-          mapfile -t containers < <(docker ps -a -q)
-          if (( ${#containers[@]} > 0 )); then
-            docker stop -t 1 "${containers[@]}"
+          # Remove only containers managed by OpenRun. Capture their generated
+          # cli-* images after stopping the containers, then remove those
+          # images while retaining pulled base images (including Litestream,
+          # language runtimes, and databases) and Docker's build-layer cache.
+          mapfile -t openrun_containers < <(docker ps -a -q --filter label=dev.openrun.server.home)
+          declare -A generated_images=()
+          if (( ${#openrun_containers[@]} > 0 )); then
+            docker stop -t 1 "${openrun_containers[@]}"
+            while read -r image_ref; do
+              if [[ "$image_ref" == cli-* || "$image_ref" == */cli-* ]]; then
+                generated_images["$image_ref"]=1
+              fi
+            done < <(docker inspect --format '{{.Config.Image}}' "${openrun_containers[@]}")
+            docker rm "${openrun_containers[@]}"
           fi
-
-          docker system prune -f
+          if (( ${#generated_images[@]} > 0 )); then
+            docker image rm "${!generated_images[@]}"
+          fi
 
       - name: Upload Go test results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
