@@ -1398,9 +1398,8 @@ func writeBuilderSourceZip(workspaceDir string, w io.Writer) error {
 		if err != nil {
 			return err
 		}
-		defer src.Close() //nolint:errcheck
-		_, err = io.Copy(dest, src)
-		return err
+		_, copyErr := io.Copy(dest, src)
+		return errors.Join(copyErr, src.Close())
 	})
 	if err != nil {
 		writer.Close() //nolint:errcheck

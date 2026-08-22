@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,7 +17,7 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-func (s *SqlStore) initStore(ctx context.Context) error {
+func (s *SqlStore) initStore(ctx context.Context) (retErr error) {
 	if s.pluginContext.StoreInfo == nil {
 		return fmt.Errorf("store info not found")
 	}
@@ -29,6 +30,14 @@ func (s *SqlStore) initStore(ctx context.Context) error {
 		return err
 	}
 	s.db = db
+	// Initialization below can fail after sql.Open has created a live pool.
+	// Do not retain that pool (or overwrite it on a later retry).
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, db.Close())
+			s.db = nil
+		}
+	}()
 	s.isSqlite = dbType == system.DB_TYPE_SQLITE
 
 	s.prefix = "db_" + string(s.pluginContext.AppId)[len(types.ID_PREFIX_APP_PROD):]
@@ -90,7 +99,7 @@ func (s *SqlStore) createSchemaInfo(ctx context.Context) error {
 	createStmt := "CREATE TABLE IF NOT EXISTS " + schemaTable + " (version " + autoKey + ", created_by TEXT, updated_by TEXT, created_at " +
 		system.MapDataType(s.dbType(), "datetime") + ", updated_at " + system.MapDataType(s.dbType(), "datetime") + ", main_app TEXT, schema_data " +
 		system.MapDataType(s.dbType(), "blob") + ", schema_etag TEXT)"
-	_, err := s.db.Exec(createStmt)
+	_, err := s.db.ExecContext(ctx, createStmt)
 	if err != nil {
 		return fmt.Errorf("error creating table %s: %w", schemaTable, err)
 	}

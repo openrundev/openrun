@@ -4,6 +4,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func TestExtProcsShutdownBlocksRelaunch(t *testing.T) {
 	a.AppEntry = &types.AppEntry{Path: "/testapp"}
 	a.extProcs.shutdown()
 
-	if _, err := a.getExtProc("someprovider"); err == nil ||
+	if _, err := a.getExtProc(context.Background(), "someprovider"); err == nil ||
 		!strings.Contains(err.Error(), "closed") {
 		t.Errorf("expected closed error, got %v", err)
 	}
@@ -53,7 +54,7 @@ func TestExtProcsShutdownBlocksRelaunch(t *testing.T) {
 	b := &App{extProcs: newExtPluginProcs()}
 	b.AppEntry = &types.AppEntry{Path: "/testapp"}
 	b.extProcs.stopAll()
-	if _, err := b.getExtProc("someprovider"); err == nil ||
+	if _, err := b.getExtProc(context.Background(), "someprovider"); err == nil ||
 		!strings.Contains(err.Error(), "not registered") {
 		t.Errorf("expected not-registered error after stopAll, got %v", err)
 	}

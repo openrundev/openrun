@@ -86,7 +86,10 @@ func (m *storeModule) InitModule(ctx context.Context, init plugin.ModuleInit) er
 }
 
 func (m *storeModule) Close(ctx context.Context) error {
-	return nil
+	if m.sqlStore == nil {
+		return nil
+	}
+	return m.sqlStore.Close()
 }
 
 func fetchTransaction(call *plugin.Call) *sql.Tx {
@@ -95,6 +98,9 @@ func fetchTransaction(call *plugin.Call) *sql.Tx {
 }
 
 func (m *storeModule) Begin(ctx context.Context, call *plugin.Call) (any, error) {
+	if fetchTransaction(call) != nil {
+		return nil, errors.New("transaction already active")
+	}
 	// The transaction outlives this call: database/sql rolls a transaction
 	// back when its context is cancelled, and the per-call gRPC context is
 	// cancelled as soon as the begin call returns, so the transaction must
@@ -107,7 +113,12 @@ func (m *storeModule) Begin(ctx context.Context, call *plugin.Call) (any, error)
 	// An uncommitted transaction rolls back at session end (request end)
 	// without failing the request.
 	call.Session.Defer(fmt.Sprintf("transaction_%p", tx), false, func(ctx context.Context) error {
-		return tx.Rollback()
+		call.Session.Set(TRANSACTION_KEY, nil)
+		err := tx.Rollback()
+		if errors.Is(err, sql.ErrTxDone) {
+			return nil
+		}
+		return err
 	})
 	return true, nil
 }
@@ -117,8 +128,10 @@ func (m *storeModule) Commit(ctx context.Context, call *plugin.Call) (any, error
 	if tx == nil {
 		return nil, errors.New("no transaction to commit")
 	}
+	err := m.sqlStore.Commit(ctx, tx)
 	call.Session.ClearDefer(fmt.Sprintf("transaction_%p", tx))
-	if err := m.sqlStore.Commit(ctx, tx); err != nil {
+	call.Session.Set(TRANSACTION_KEY, nil)
+	if err != nil {
 		return nil, err
 	}
 	return true, nil
@@ -129,8 +142,10 @@ func (m *storeModule) Rollback(ctx context.Context, call *plugin.Call) (any, err
 	if tx == nil {
 		return nil, errors.New("no transaction to rollback")
 	}
+	err := m.sqlStore.Rollback(ctx, tx)
 	call.Session.ClearDefer(fmt.Sprintf("transaction_%p", tx))
-	if err := m.sqlStore.Rollback(ctx, tx); err != nil {
+	call.Session.Set(TRANSACTION_KEY, nil)
+	if err != nil {
 		return nil, err
 	}
 	return true, nil

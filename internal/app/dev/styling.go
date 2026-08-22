@@ -526,6 +526,9 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 	watcher.Stdout = s.watcherStdout
 	watcher.Stderr = s.watcherStdout
 	if err := watcher.Start(); err != nil {
+		_ = s.watcherStdout.Close()
+		s.watcherStdout = nil
+		s.watcherState = nil
 		return fmt.Errorf("error starting tailwind watcher : %s", err)
 	}
 	s.watcher = watcher

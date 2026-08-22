@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/go-plugin"
 	pb "github.com/openrundev/openrun/pkg/binding/proto"
@@ -21,6 +22,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 )
+
+const providerCleanupTimeout = 10 * time.Second
 
 // ServeConfig configures a binding provider process.
 type ServeConfig struct {
@@ -139,6 +142,14 @@ func (s *providerServer) InitializeService(ctx context.Context, req *pb.Initiali
 		s.mu.Lock()
 		s.instance = nil
 		s.mu.Unlock()
+		// Initialization may have opened pools or clients before a later step
+		// failed. Give the implementation a bounded opportunity to release them;
+		// the host will still receive the original initialization error.
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), providerCleanupTimeout)
+		if closeErr := instance.CloseService(cleanupCtx); closeErr != nil {
+			s.logger.Warn().Err(closeErr).Msg("error closing binding after failed initialization")
+		}
+		cancel()
 		return &pb.InitializeServiceResponse{Error: err.Error()}, nil
 	}
 	return &pb.InitializeServiceResponse{}, nil
@@ -156,9 +167,12 @@ func (s *providerServer) getInstance() (ServiceBinding, error) {
 }
 
 func (s *providerServer) CloseService(ctx context.Context, req *pb.CloseServiceRequest) (*pb.CloseServiceResponse, error) {
-	instance, err := s.getInstance()
-	if err != nil {
-		return nil, err
+	s.mu.Lock()
+	instance := s.instance
+	s.instance = nil
+	s.mu.Unlock()
+	if instance == nil {
+		return nil, status.Error(codes.FailedPrecondition, "service not initialized")
 	}
 	if err := instance.CloseService(ctx); err != nil {
 		return &pb.CloseServiceResponse{Error: err.Error()}, nil

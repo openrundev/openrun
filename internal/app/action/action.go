@@ -345,11 +345,11 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 				http.Error(w, fmt.Sprintf("error getting file %s: %s", param.Name, err), http.StatusBadRequest)
 				return
 			}
-			defer f.Close() //nolint:errcheck
 
 			if tempDir == "" {
 				tempDir, err = os.MkdirTemp("", "openrun-file-upload-*")
 				if err != nil {
+					_ = f.Close()
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
@@ -363,19 +363,22 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 
 			fullPath, err := uploadedFilePath(tempDir, fh.Filename)
 			if err != nil {
+				_ = f.Close()
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 
 			destFile, err := os.Create(fullPath)
 			if err != nil {
+				_ = f.Close()
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			defer destFile.Close() //nolint:errcheck
 
 			// Write contents of uploaded file to destFile
-			if _, err = io.Copy(destFile, f); err != nil {
+			_, copyErr := io.Copy(destFile, f)
+			closeErr := errors.Join(destFile.Close(), f.Close())
+			if err = errors.Join(copyErr, closeErr); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

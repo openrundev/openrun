@@ -39,6 +39,14 @@ type Host struct {
 	// retired marks a host being replaced (app reload): it closes once the
 	// last session ends, so in-flight requests finish on the old instances
 	retired bool
+	closed  bool
+
+	// InitModule and EndSession perform cleanup outside mu. Close marks the
+	// host closed under mu (preventing new Add calls), then waits for both
+	// groups before returning so no module or session resource can appear
+	// after shutdown has completed.
+	initWG    sync.WaitGroup
+	cleanupWG sync.WaitGroup
 
 	cursorCounter atomic.Uint64
 }
@@ -59,6 +67,7 @@ var (
 	ErrUnknownModule    = errors.New("unknown module")
 	ErrModuleNotInited  = errors.New("module not initialized")
 	ErrUnknownFunction  = errors.New("unknown function")
+	ErrHostClosed       = errors.New("plugin host is closed")
 	errUnknownSession   = errors.New("unknown session")
 	errUnknownCursor    = errors.New("unknown cursor")
 )
@@ -131,6 +140,9 @@ func (h *Host) Config() *ServeConfig {
 func (h *Host) InitApp(info AppInfo) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return ErrHostClosed
+	}
 	if h.appInited {
 		return ErrAppAlreadyInited
 	}
@@ -157,6 +169,10 @@ func (h *Host) InitModule(ctx context.Context, module, account string, settings 
 	key := instanceKey(module, account)
 
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return ErrHostClosed
+	}
 	if !h.appInited {
 		h.mu.Unlock()
 		return ErrAppNotInited
@@ -172,10 +188,21 @@ func (h *Host) InitModule(ctx context.Context, module, account string, settings 
 	}
 	inflight := &moduleIniting{done: make(chan struct{})}
 	h.initing[key] = inflight
+	h.initWG.Add(1)
 	appId, appPath, isDev, appSchema := h.appId, h.appPath, h.isDev, h.appSchema
 	h.mu.Unlock()
 
 	instance := def.Builder()
+	if instance == nil {
+		initErr := errors.New("module builder returned nil")
+		h.mu.Lock()
+		delete(h.initing, key)
+		inflight.err = initErr
+		h.mu.Unlock()
+		close(inflight.done)
+		h.initWG.Done()
+		return initErr
+	}
 	initErr := instance.InitModule(ctx, ModuleInit{
 		AppId:     appId,
 		AppPath:   appPath,
@@ -196,19 +223,34 @@ func (h *Host) InitModule(ctx context.Context, module, account string, settings 
 
 	h.mu.Lock()
 	delete(h.initing, key)
-	if initErr == nil {
+	closed := h.closed
+	if initErr == nil && !closed {
 		h.modules[key] = &moduleInstance{module: instance, functions: functions}
 	}
+	if initErr == nil && closed {
+		initErr = ErrHostClosed
+	}
+	inflight.err = initErr
 	h.mu.Unlock()
 
-	inflight.err = initErr
+	// A failed or shutdown-racing initialization may already own resources.
+	// It was never installed in h.modules, so close it here.
+	if initErr != nil {
+		if err := instance.Close(context.Background()); err != nil {
+			h.logger.Warn().Err(err).Msg("error closing plugin module after failed initialization")
+		}
+	}
 	close(inflight.done)
+	h.initWG.Done()
 	return initErr
 }
 
 func (h *Host) getSession(sessionId string) *Session {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return nil
+	}
 	session, ok := h.sessions[sessionId]
 	if !ok {
 		session = newSession(sessionId)
@@ -231,6 +273,10 @@ func (h *Host) StartSession(sessionId string) {
 // signal caller bugs.
 func (h *Host) Call(ctx context.Context, call *HostCall) (*HostResult, error) {
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return nil, ErrHostClosed
+	}
 	instance, ok := h.modules[instanceKey(call.Module, call.Account)]
 	h.mu.Unlock()
 	if !ok {
@@ -242,6 +288,9 @@ func (h *Host) Call(ctx context.Context, call *HostCall) (*HostResult, error) {
 	}
 
 	session := h.getSession(call.SessionId)
+	if session == nil {
+		return nil, ErrHostClosed
+	}
 	pluginCall := &Call{
 		Function: call.Function,
 		Args:     call.Args,
@@ -280,7 +329,7 @@ func (h *Host) registerCursor(session *Session, cursor *Cursor) *CursorInfo {
 	session.cursors[cursorId] = &cursorState{cursor: cursor}
 	session.mu.Unlock()
 	session.Defer("cursor_"+cursorId, false, func(ctx context.Context) error {
-		return h.closeCursor(session, cursorId)
+		return h.closeCursor(ctx, session, cursorId)
 	})
 	return &CursorInfo{
 		CursorId: cursorId,
@@ -311,7 +360,7 @@ func (h *Host) DetachCursor(sessionId, cursorId string) (*Cursor, error) {
 	return state.cursor, nil
 }
 
-func (h *Host) closeCursor(session *Session, cursorId string) error {
+func (h *Host) closeCursor(ctx context.Context, session *Session, cursorId string) error {
 	session.mu.Lock()
 	state, ok := session.cursors[cursorId]
 	delete(session.cursors, cursorId)
@@ -319,7 +368,7 @@ func (h *Host) closeCursor(session *Session, cursorId string) error {
 	if !ok || state.cursor.Close == nil {
 		return nil
 	}
-	return state.cursor.Close(context.Background())
+	return state.cursor.Close(ctx)
 }
 
 // CursorNext returns up to max items from a cursor and whether iteration is
@@ -345,10 +394,14 @@ func (h *Host) CursorNext(ctx context.Context, sessionId, cursorId string, max i
 	}
 	items, done, err := state.cursor.Next(ctx, max)
 	if err != nil {
-		return nil, false, err
+		session.ClearDefer("cursor_" + cursorId)
+		return nil, false, errors.Join(err, h.closeCursor(ctx, session, cursorId))
 	}
 
 	if done {
+		// Cursor implementations own their terminal close (the Cursor contract
+		// permits Close only for early termination). Forget the already-drained
+		// handle without invoking Close a second time.
 		session.mu.Lock()
 		delete(session.cursors, cursorId)
 		session.mu.Unlock()
@@ -367,7 +420,7 @@ func (h *Host) CursorClose(ctx context.Context, sessionId, cursorId string) erro
 		return nil
 	}
 	session.ClearDefer("cursor_" + cursorId)
-	return h.closeCursor(session, cursorId)
+	return h.closeCursor(ctx, session, cursorId)
 }
 
 // EndSession runs the session's remaining deferred cleanups and forgets it.
@@ -377,11 +430,15 @@ func (h *Host) EndSession(ctx context.Context, sessionId string) error {
 	session, ok := h.sessions[sessionId]
 	delete(h.sessions, sessionId)
 	closeNow := h.retired && len(h.sessions) == 0
+	if ok {
+		h.cleanupWG.Add(1)
+	}
 	h.mu.Unlock()
 	if !ok {
 		return nil
 	}
 	err := session.end(ctx)
+	h.cleanupWG.Done()
 	if closeNow {
 		h.Close(ctx)
 	}
@@ -409,12 +466,32 @@ func (h *Host) Retire() {
 // hosts.
 func (h *Host) Close(ctx context.Context) {
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return
+	}
+	h.closed = true
+	sessions := make([]*Session, 0, len(h.sessions))
+	for _, session := range h.sessions {
+		sessions = append(sessions, session)
+	}
+	h.sessions = map[string]*Session{}
 	instances := make([]*moduleInstance, 0, len(h.modules))
 	for _, instance := range h.modules {
 		instances = append(instances, instance)
 	}
 	h.modules = map[string]*moduleInstance{}
 	h.mu.Unlock()
+
+	// Release session-scoped transactions, cursors, response bodies and
+	// contexts before closing the modules and their shared pools.
+	for _, session := range sessions {
+		if err := session.end(ctx); err != nil {
+			h.logger.Warn().Err(err).Msg("error ending plugin session during host close")
+		}
+	}
+	h.cleanupWG.Wait()
+	h.initWG.Wait()
 
 	for _, instance := range instances {
 		if err := instance.module.Close(ctx); err != nil {

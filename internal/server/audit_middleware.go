@@ -35,6 +35,8 @@ func (s *Server) initAuditDB(connectString string) error {
 	}
 
 	if err := s.versionUpgradeAuditDB(); err != nil {
+		s.auditDB.Close() //nolint:errcheck
+		s.auditDB = nil
 		return err
 	}
 

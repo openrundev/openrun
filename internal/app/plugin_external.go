@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/openrundev/openrun/internal/app/apptype"
@@ -23,6 +24,11 @@ import (
 	pb "github.com/openrundev/openrun/pkg/plugin/proto"
 	"go.starlark.net/starlark"
 	"google.golang.org/protobuf/encoding/protojson"
+)
+
+const (
+	externalPluginCleanupTimeout  = 10 * time.Second
+	externalPluginDescribeTimeout = 30 * time.Second
 )
 
 // External plugin providers serve Starlark plugin modules (loaded as
@@ -55,7 +61,9 @@ var (
 // A provider registered under the same name is replaced; a module served by
 // a different provider is a conflict.
 func RegisterExternalProvider(name, execPath, sha256Hex string) error {
-	version, _, manifest, err := DescribeExternalProviderManifest(context.Background(), execPath, sha256Hex)
+	describeCtx, cancel := context.WithTimeout(context.Background(), externalPluginDescribeTimeout)
+	defer cancel()
+	version, _, manifest, err := DescribeExternalProviderManifest(describeCtx, execPath, sha256Hex)
 	if err != nil {
 		return fmt.Errorf("plugin provider %s: %w", name, err)
 	}
@@ -326,7 +334,7 @@ func (e *extPluginProcs) stop(terminal bool) {
 // mutex so a concurrent reload cannot observe zero active sessions and kill
 // the process before the caller registers its request session; the caller
 // owes a matching sessionEnded.
-func (a *App) getExtProc(providerName string) (*extProc, error) {
+func (a *App) getExtProc(ctx context.Context, providerName string) (*extProc, error) {
 	a.extProcs.mu.Lock()
 	defer a.extProcs.mu.Unlock()
 	if a.extProcs.closed {
@@ -338,9 +346,14 @@ func (a *App) getExtProc(providerName string) (*extProc, error) {
 		return nil, fmt.Errorf("plugin provider %s is not registered", providerName)
 	}
 
-	if proc, ok := a.extProcs.procs[providerName]; ok && !proc.isDead() {
-		proc.sessionStarted()
-		return proc, nil
+	if proc, ok := a.extProcs.procs[providerName]; ok {
+		if !proc.isDead() {
+			proc.sessionStarted()
+			return proc, nil
+		}
+		// Exited go-plugin clients still own transport bookkeeping until Kill.
+		proc.markDead()
+		delete(a.extProcs.procs, providerName)
 	}
 
 	provider, err := launchProviderProcess(registered.ExecPath, registered.Sha256, "WARN")
@@ -352,7 +365,7 @@ func (a *App) getExtProc(providerName string) (*extProc, error) {
 	if a.storeInfo != nil {
 		appSchema = a.storeInfo.Bytes
 	}
-	initErr := provider.InitApp(context.Background(), &pb.InitAppRequest{
+	initErr := provider.InitApp(ctx, &pb.InitAppRequest{
 		AppId:     string(a.Id),
 		AppPath:   a.Path,
 		IsDev:     a.IsDev,
@@ -488,7 +501,11 @@ func (a *App) getExtProcSession(thread *starlark.Thread, providerName string) (*
 		return ps.proc, ps.sessionId, nil
 	}
 
-	proc, err := a.getExtProc(providerName)
+	ctx := GetContext(thread)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	proc, err := a.getExtProc(ctx, providerName)
 	if err != nil {
 		return nil, "", err
 	}
@@ -502,8 +519,17 @@ func (a *App) getExtProcSession(thread *starlark.Thread, providerName string) (*
 		if proc.isDead() {
 			return nil // session state died with the process
 		}
-		if err := proc.provider.EndSession(context.Background(), &pb.EndSessionRequest{SessionId: sessionId}); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), externalPluginCleanupTimeout)
+		defer cancel()
+		if err := proc.provider.EndSession(cleanupCtx, &pb.EndSessionRequest{SessionId: sessionId}); err != nil {
 			a.Warn().Err(err).Msgf("error ending plugin session %s on provider %s", sessionId, proc.providerName)
+			if _, ok := err.(*sdk.ProviderError); !ok {
+				// A session cleanup transport failure can leave transactions,
+				// cursors and response bodies alive in the provider indefinitely.
+				// Killing it releases all process-owned resources and forces a
+				// clean launch for the next request.
+				proc.markDead()
+			}
 		}
 		return nil
 	}, false)
@@ -640,10 +666,18 @@ func (a *App) remotePluginFunc(pluginInfo *plugin.PluginInfo, modulePath, accoun
 				if proc.isDead() {
 					return nil
 				}
-				return proc.provider.CursorClose(context.Background(), &pb.CursorCloseRequest{
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), externalPluginCleanupTimeout)
+				defer cancel()
+				err := proc.provider.CursorClose(cleanupCtx, &pb.CursorCloseRequest{
 					SessionId: sessionId,
 					CursorId:  cursorId,
 				})
+				if err != nil {
+					if _, ok := err.(*sdk.ProviderError); !ok {
+						proc.markDead()
+					}
+				}
+				return err
 			}, true)
 			return &remoteIterable{
 				app:       a,
@@ -815,11 +849,16 @@ func (i *remoteIterator) Done() {
 	if i.r.proc.isDead() {
 		return
 	}
-	if err := i.r.proc.provider.CursorClose(context.Background(), &pb.CursorCloseRequest{
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), externalPluginCleanupTimeout)
+	defer cancel()
+	if err := i.r.proc.provider.CursorClose(cleanupCtx, &pb.CursorCloseRequest{
 		SessionId: i.r.sessionId,
 		CursorId:  i.r.cursorId,
 	}); err != nil {
 		i.r.app.Warn().Err(err).Msgf("error closing plugin cursor %s", i.r.cursorId)
+		if _, ok := err.(*sdk.ProviderError); !ok {
+			i.r.proc.markDead()
+		}
 	}
 }
 

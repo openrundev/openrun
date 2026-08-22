@@ -43,7 +43,7 @@ type utilSample struct {
 func TestStructValue(t *testing.T) {
 	when := time.Date(2026, 8, 19, 10, 30, 0, 0, time.UTC)
 	sample := utilSample{
-		utilEmbedded: utilEmbedded{Inner: "promoted"},
+		utilEmbedded: utilEmbedded{Inner: "promoted", hidden: "not exported"},
 		Name:         "app one",
 		Id:           "app_prd_123",
 		Count:        42,
@@ -55,6 +55,7 @@ func TestStructValue(t *testing.T) {
 		Rows:         []utilNested{{N: 1}, {N: 2}},
 		Meta:         map[string]any{"k": utilNested{N: 3}},
 		Child:        &utilNested{N: 4},
+		unexpored:    7,
 	}
 
 	got, err := structValue(sample)

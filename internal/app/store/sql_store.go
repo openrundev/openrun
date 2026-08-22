@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -188,6 +189,21 @@ func (s *SqlStore) initialize(ctx context.Context) error {
 	}
 	s.isInitialized = true
 	return nil
+}
+
+// Close releases the store's database connection pool. A store module owns
+// exactly one SqlStore, so its module Close callback is the lifecycle boundary
+// for both the in-process and out-of-process plugin builds.
+func (s *SqlStore) Close() error {
+	s.Lock()
+	db := s.db
+	s.db = nil
+	s.isInitialized = false
+	s.Unlock()
+	if db == nil {
+		return nil
+	}
+	return db.Close()
 }
 
 func (s *SqlStore) Begin(ctx context.Context) (*sql.Tx, error) {
@@ -452,7 +468,7 @@ func (it *EntryIterator) LeakKey() string {
 // cursor and is returned.
 func (it *EntryIterator) Next() (*Entry, bool, error) {
 	if !it.rows.Next() {
-		if err := it.rows.Close(); err != nil {
+		if err := errors.Join(it.rows.Err(), it.rows.Close()); err != nil {
 			return nil, false, err
 		}
 		return nil, false, nil
@@ -471,7 +487,7 @@ func (it *EntryIterator) Next() (*Entry, bool, error) {
 
 	if dataStr != "" {
 		if err := json.Unmarshal([]byte(dataStr), &entry.Data); err != nil {
-			return nil, false, err
+			return nil, false, errors.Join(err, it.rows.Close())
 		}
 	}
 

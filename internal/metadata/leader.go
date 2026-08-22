@@ -25,6 +25,7 @@ type LeaderElection struct {
 	heartbeatIntervalSecs int
 	isLeader              atomic.Bool
 	cancel                context.CancelFunc
+	done                  chan struct{}
 }
 
 type LeaderState struct {
@@ -129,6 +130,9 @@ func (l *LeaderElection) Stop() {
 	if l.cancel != nil {
 		l.cancel()
 	}
+	if l.done != nil {
+		<-l.done
+	}
 }
 
 func (l *LeaderElection) StartLoop(parentCtx context.Context) {
@@ -138,11 +142,13 @@ func (l *LeaderElection) StartLoop(parentCtx context.Context) {
 
 	ctx, cancel := context.WithCancel(parentCtx)
 	l.cancel = cancel
+	l.done = make(chan struct{})
 
 	l.Info().Msgf("Starting leader election loop, heartbeat interval: %d seconds, lease %d seconds",
 		l.heartbeatIntervalSecs, l.heartbeatLeaseSecs)
 
 	go func() {
+		defer close(l.done)
 		// Try to acquire leadership immediately on startup
 		_, acquired, err := l.tryAcquire(ctx)
 		if err != nil {

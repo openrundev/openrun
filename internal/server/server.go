@@ -223,6 +223,12 @@ type Server struct {
 
 	stopRequested chan struct{}
 	startTime     time.Time
+	// cleanupVersionsCtx cancels version/file cleanup SQL during shutdown.
+	// cleanupVersionsMu is both the single-flight guard and shutdown join: the
+	// worker holds it for its lifetime, and Stop waits by locking it.
+	cleanupVersionsCtx    context.Context
+	cleanupVersionsCancel context.CancelFunc
+	cleanupVersionsMu     sync.Mutex
 	// providerMutex serializes binding provider installs, uninstalls and
 	// reconciles on this node: concurrent mutations of the same provider's
 	// binary and registrations must not interleave.
@@ -313,6 +319,20 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		stopRequested: make(chan struct{}),
 		startTime:     time.Now(),
 	}
+	server.cleanupVersionsCtx, server.cleanupVersionsCancel = context.WithCancel(context.Background())
+	serverCleanup := true
+	defer func() {
+		if serverCleanup {
+			// NewServer owns every pool and background component created from
+			// this point. Reuse the normal shutdown ordering on any later
+			// startup error instead of returning a half-built server with live
+			// database, audit, provider or telemetry resources.
+			telemetryCleanup = false
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = server.Stop(cleanupCtx)
+		}
+	}()
 	server.secretsManager.Store(secretsManager)
 	server.forwardAuthHTTPClient = newForwardAuthHTTPClient(config)
 	db.AppNotifyFunc = server.appNotifyHandler
@@ -370,10 +390,12 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}
 
 	if litestreamMgr != nil {
+		// Assign before Start so the startup-error cleanup can close a manager
+		// whose Start partially succeeded.
+		server.litestream = litestreamMgr
 		if err := litestreamMgr.Start(context.Background()); err != nil {
 			return nil, err
 		}
-		server.litestream = litestreamMgr
 	}
 
 	server.initAccessLogger(config)
@@ -443,6 +465,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	// stale container sweeper
 	server.startSyncRunner()
 	server.startStaleContainerCleanup()
+	serverCleanup = false
 	telemetryCleanup = false
 	return server, nil
 }
@@ -1451,11 +1474,24 @@ func (s *Server) Stop(ctx context.Context) error {
 		// Shutdown does not wait for hijacked (websocket) connections; wait
 		// for them to finish and force-close any left when ctx expires
 		s.connTracker.drain(ctx)
+		// No cleanup job may continue into metadata pool shutdown. The SQL calls
+		// use this context, so an in-progress VACUUM/query is interrupted before
+		// we wait for the worker to exit.
+		if s.cleanupVersionsCancel != nil {
+			s.cleanupVersionsCancel()
+		}
+		// Wait for an active cleanup worker before closing the metadata pool.
+		s.cleanupVersionsMu.Lock() //nolint:staticcheck // lock acquisition waits for cleanup
+		//lint:ignore SA2001 acquiring and releasing this mutex is the worker join operation
+		s.cleanupVersionsMu.Unlock() //nolint:staticcheck // paired join lock has no protected body
 		// Close the apps after the HTTP servers have drained: stops dev-mode
 		// child processes (tailwind watcher) which would otherwise be
 		// orphaned when this process exits
 		if s.apps != nil {
 			s.apps.CloseAll()
+		}
+		if err := app.CloseFileStore(); err != nil {
+			s.Warn().Err(err).Msg("Error closing shared file store")
 		}
 		s.closeSharedRepoCache()
 
@@ -1662,29 +1698,49 @@ func (s *Server) KVInitConstant(ctx context.Context, keyName string, newValue []
 }
 
 func (s *Server) CleanupVersions() {
+	ctx := s.cleanupVersionsCtx
+	if ctx == nil || ctx.Err() != nil || !s.cleanupVersionsMu.TryLock() {
+		return
+	}
+	// Stop may have cancelled the context between the first check and TryLock.
+	if ctx.Err() != nil {
+		s.cleanupVersionsMu.Unlock()
+		return
+	}
+
 	// Cleanup old versions of apps
 	go func() {
 		defer func() {
+			s.cleanupVersionsMu.Unlock()
 			if r := recover(); r != nil {
 				s.Error().Msgf("error in cleanup versions: %v", r)
 			}
 		}()
 
-		apps, err := s.apps.GetAllAppsInfo()
+		apps, err := s.db.GetAllAppsContext(ctx, true)
 		if err != nil {
 			s.Error().Err(err).Msg("error getting all apps info")
 			return
 		}
 
 		for _, app := range apps {
-			err := s.db.CleanupAppVersions(app)
+			if ctx.Err() != nil {
+				return
+			}
+			err := s.db.CleanupAppVersions(ctx, app)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				s.Error().Err(err).Msgf("error cleaning up versions for app %s", app.AppPathDomain)
 			}
 		}
 
-		err = s.db.CleanupFiles()
+		err = s.db.CleanupFiles(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			s.Error().Err(err).Msg("error cleaning up files")
 		}
 	}()

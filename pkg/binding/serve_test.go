@@ -5,10 +5,45 @@ package binding
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	pb "github.com/openrundev/openrun/pkg/binding/proto"
 )
+
+func TestInitializeServiceFailureClosesPartialInstance(t *testing.T) {
+	var built *fakeBinding
+	srv := &providerServer{
+		config: &ServeConfig{Bindings: map[string]Builder{
+			"fake": func() ServiceBinding {
+				built = &fakeBinding{}
+				return built
+			},
+		}},
+		logger: NewLogger("WARN"),
+	}
+
+	resp, err := srv.InitializeService(context.Background(), &pb.InitializeServiceRequest{
+		ServiceType: "fake",
+		ServiceConfig: map[string]string{
+			"fail_init": "partial failure",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.GetError() != "partial failure" {
+		t.Fatalf("initialize error = %q", resp.GetError())
+	}
+	if built == nil || !built.closed {
+		t.Fatal("failed binding instance was not closed")
+	}
+	if srv.instance != nil {
+		t.Fatal("failed binding instance remained installed")
+	}
+}
 
 func TestExportExecutable(t *testing.T) {
 	// exportExecutable copies the running executable (here, the test binary)

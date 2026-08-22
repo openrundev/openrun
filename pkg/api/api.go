@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	clserver "github.com/openrundev/openrun/internal/server"
@@ -27,8 +28,10 @@ func NewServerConfig() (*ServerConfig, error) {
 
 // Server is the instance of the OpenRun Server
 type Server struct {
-	config *ServerConfig
-	server *clserver.Server
+	config         *ServerConfig
+	server         *clserver.Server
+	stopNotifyOnce sync.Once
+	stopNotify     chan struct{}
 }
 
 // NewServer creates a new instance of the OpenRun Server
@@ -85,13 +88,17 @@ func (s *Server) StopNotify() <-chan struct{} {
 		return serverStop
 	}
 
-	stop := make(chan struct{})
-	go func() {
-		select {
-		case <-serverStop:
-		case <-serviceStop:
-		}
-		close(stop)
-	}()
-	return stop
+	// StopNotify may be called by multiple embedders. Share one fan-in
+	// goroutine instead of leaking one waiter per call until shutdown.
+	s.stopNotifyOnce.Do(func() {
+		s.stopNotify = make(chan struct{})
+		go func() {
+			select {
+			case <-serverStop:
+			case <-serviceStop:
+			}
+			close(s.stopNotify)
+		}()
+	})
+	return s.stopNotify
 }

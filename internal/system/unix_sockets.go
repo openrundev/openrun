@@ -34,7 +34,7 @@ type Transport struct {
 
 func (t *Transport) initTransport() {
 	t.transport.DialContext = t.dialContext
-	t.transport.DialTLS = t.dialTLS //nolint:staticcheck
+	t.transport.DialTLSContext = t.dialTLSContext
 	t.transport.DisableCompression = true
 	t.transport.ResponseHeaderTimeout = t.ResponseHeaderTimeout
 }
@@ -67,7 +67,7 @@ func (t *Transport) dialContext(ctx context.Context, network, addr string) (net.
 	return d.DialContext(ctx, "unix", path)
 }
 
-func (t *Transport) dialTLS(network, addr string) (net.Conn, error) {
+func (t *Transport) dialTLSContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	return nil, errors.New("httpunix: TLS over UNIX domain sockets is not supported")
 }
 

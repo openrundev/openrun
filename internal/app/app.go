@@ -97,6 +97,7 @@ type App struct {
 	jsLibs           []types.JSLibrary             // JS libraries used by the app
 
 	watcher *fsnotify.Watcher
+	closed  bool // guarded by initMutex; terminal once Close begins
 	// sseListeners has its own lock (not initMutex) since notifyClients runs
 	// from code paths that already hold initMutex
 	sseMu         sync.Mutex
@@ -234,31 +235,34 @@ func (a *App) Initialize(ctx context.Context, dryRun types.DryRun) error {
 func (a *App) Close() error {
 	a.initMutex.Lock()
 	defer a.initMutex.Unlock()
+	if a.closed {
+		return nil
+	}
+	a.closed = true
 	a.extProcs.shutdown()
 	a.localHosts.shutdown()
+	var closeErr error
 	if a.watcher != nil {
-		if err := a.watcher.Close(); err != nil {
-			return err
-		}
+		closeErr = errors.Join(closeErr, a.watcher.Close())
+		a.watcher = nil
 	}
 
 	if a.appDev != nil {
-		_ = a.appDev.Close()
+		closeErr = errors.Join(closeErr, a.appDev.Close())
 	}
 
 	if a.containerHandler != nil {
-		if err := a.containerHandler.Close(); err != nil {
-			return err
-		}
+		closeErr = errors.Join(closeErr, a.containerHandler.Close())
 	}
 
 	if a.sourceFS != nil {
 		if err := a.sourceFS.Close(); err != nil {
 			a.Warn().Err(err).Msg("Error closing source fs")
+			closeErr = errors.Join(closeErr, err)
 		}
 	}
 
-	return nil
+	return closeErr
 }
 
 // PauseIdleShutdown suspends idle-based container shutdown for this app's
@@ -356,6 +360,9 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 
 	a.initMutex.Lock()
 	defer a.initMutex.Unlock()
+	if a.closed {
+		return false, fmt.Errorf("app %s is closed", a.Path)
+	}
 	if a.initialized && !force {
 		return false, nil
 	}
@@ -1142,6 +1149,9 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (a *App) startWatcher() error {
 	a.initMutex.Lock()
 	defer a.initMutex.Unlock()
+	if a.closed {
+		return fmt.Errorf("app %s is closed", a.Path)
+	}
 	if a.watcher != nil {
 		_ = a.watcher.Close()
 	}
@@ -1151,11 +1161,16 @@ func (a *App) startWatcher() error {
 	if err != nil {
 		return err
 	}
+	watcher := a.watcher
 
 	// Start listening for events.
 	a.Trace().Msg("Start waiting for file changes")
 	go func() {
+		var styleNotify *time.Timer // reset by each style.css event, only this goroutine touches it
 		defer func() {
+			if styleNotify != nil {
+				styleNotify.Stop()
+			}
 			if r := recover(); r != nil {
 				a.Error().Msgf("Recovered from panic in watcher: %s", r)
 			}
@@ -1164,11 +1179,10 @@ func (a *App) startWatcher() error {
 		debounceDur := time.Duration(a.systemConfig.FileWatcherDebounceMillis) * time.Millisecond
 		inReload := atomic.Bool{}
 		pendingReload := atomic.Bool{}
-		var styleNotify *time.Timer // reset by each style.css event, only this goroutine touches it
 
 		for {
 			select {
-			case event, ok := <-a.watcher.Events:
+			case event, ok := <-watcher.Events:
 				if !ok {
 					return
 				}
@@ -1262,26 +1276,35 @@ func (a *App) startWatcher() error {
 						}
 					}
 				}()
-			case err, ok := <-a.watcher.Errors:
-				a.Error().Err(err).Msgf("Error in watcher error receiver")
+			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
 				}
+				a.Error().Err(err).Msgf("Error in watcher error receiver")
 			}
 		}
 	}()
 
 	// Add watcher path.
-	return filepath.WalkDir(a.SourceUrl, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(a.SourceUrl, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			a.Trace().Str("path", path).Msg("Adding path to watcher")
-			return a.watcher.Add(path)
+			return watcher.Add(path)
 		}
 		return nil
 	})
+	if err != nil {
+		// Walk/Add can fail after the watcher goroutine has started. Closing the
+		// local watcher releases its descriptor and terminates that goroutine.
+		_ = watcher.Close()
+		if a.watcher == watcher {
+			a.watcher = nil
+		}
+	}
+	return err
 }
 
 func (a *App) addSSEClient(newChan chan SSEMessage) {

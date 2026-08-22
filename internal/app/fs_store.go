@@ -22,6 +22,8 @@ var (
 	mu       sync.RWMutex
 	fsDB     *sql.DB
 	fsDBType system.DBType
+	fsCancel context.CancelFunc
+	fsDone   chan struct{}
 )
 
 func InitFileStore(connectString string) error {
@@ -50,12 +52,45 @@ func InitFileStore(connectString string) error {
 	}
 	fsDB, fsDBType = db, dbType
 
-	// The file store is a process-lifetime singleton, so the cleanup loop runs
-	// with a background context; a request-scoped context would cancel the
-	// cleanup queries once the request that initialized the store completes
+	// The file store is shared by all apps, so its context is server-scoped
+	// rather than request-scoped. CloseFileStore cancels it during shutdown.
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	cleanupTicker := time.NewTicker(5 * time.Minute)
-	go backgroundCleanup(context.Background(), cleanupTicker)
+	fsCancel = cleanupCancel
+	fsDone = make(chan struct{})
+	go func(done chan struct{}) {
+		defer close(done)
+		backgroundCleanup(cleanupCtx, cleanupTicker)
+	}(fsDone)
 
+	return nil
+}
+
+// CloseFileStore stops the shared cleanup goroutine, closes its database
+// pool and resets the singleton so another in-process server can initialize
+// it again. Server shutdown calls this after requests and apps have drained.
+func CloseFileStore() error {
+	mu.Lock()
+	defer mu.Unlock()
+	db, cancel, done := fsDB, fsCancel, fsDone
+	if cancel != nil {
+		cancel()
+	}
+
+	if done != nil {
+		<-done
+	}
+	// fsDB stays non-nil until the cleanup loop exits, preventing a new
+	// initializer from replacing the globals while that loop still uses them.
+	if fsDB == db {
+		fsDB = nil
+		fsDBType = ""
+		fsCancel = nil
+		fsDone = nil
+	}
+	if db != nil {
+		return db.Close()
+	}
 	return nil
 }
 
@@ -98,12 +133,18 @@ func fileCleanup(ctx context.Context) error {
 }
 
 func backgroundCleanup(ctx context.Context, cleanupTicker *time.Ticker) {
+	defer cleanupTicker.Stop()
 	// Errors are logged and cleanup is retried on the next tick
 	if err := fileCleanup(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "error cleaning up expired files %s", err)
 	}
 
-	for range cleanupTicker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-cleanupTicker.C:
+		}
 		if err := fileCleanup(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "error cleaning up expired files %s", err)
 		}

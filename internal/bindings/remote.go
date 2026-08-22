@@ -162,8 +162,8 @@ func (b *remoteServiceBinding) launch() (*binding.Provider, error) {
 // running, a short-lived one is launched for the call.
 func (b *remoteServiceBinding) GetAccountEnv(ctx context.Context) ([]string, []string, error) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	provider := b.provider
-	b.mu.Unlock()
 	if provider != nil {
 		return provider.GetAccountEnv(ctx, b.serviceType)
 	}
@@ -227,9 +227,9 @@ func (b *remoteServiceBinding) CloseService(ctx context.Context) error {
 // executed on the service.
 func (b *remoteServiceBinding) call(ctx context.Context, retryable bool, fn func(p *binding.Provider) error) error {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	provider := b.provider
 	initialized := b.initialized
-	b.mu.Unlock()
 	if !initialized || provider == nil {
 		return fmt.Errorf("service binding not initialized")
 	}
@@ -239,18 +239,21 @@ func (b *remoteServiceBinding) call(ctx context.Context, retryable bool, fn func
 	if err == nil || errors.As(err, &providerError) {
 		return err
 	}
-	if !retryable {
-		return err
-	}
 	if ctx.Err() != nil {
 		// The transport error came from the caller's context being cancelled
 		// or timing out; the provider is likely healthy, and a retry with the
 		// same context cannot succeed. Leave the process running.
 		return err
 	}
+	if !retryable {
+		// The operation may have reached the service, so it cannot be replayed.
+		// The transport itself is broken, though: release the process now. A
+		// later idempotent compensation call can respawn and retry safely.
+		provider.Kill()
+		return err
+	}
 
 	// Transport failure: respawn and retry once.
-	b.mu.Lock()
 	if b.logger != nil {
 		b.logger.Warn().Err(err).Str("service_type", b.serviceType).Msg("binding provider transport error, respawning provider")
 	}
@@ -259,7 +262,6 @@ func (b *remoteServiceBinding) call(ctx context.Context, retryable bool, fn func
 	if launchErr != nil {
 		b.provider = nil
 		b.initialized = false
-		b.mu.Unlock()
 		return fmt.Errorf("binding provider failed (%s) and could not be respawned: %w", err, launchErr)
 	}
 	if initErr := newProvider.InitializeService(ctx, b.serviceType, b.serviceConfig,
@@ -267,11 +269,9 @@ func (b *remoteServiceBinding) call(ctx context.Context, retryable bool, fn func
 		newProvider.Kill()
 		b.provider = nil
 		b.initialized = false
-		b.mu.Unlock()
 		return fmt.Errorf("binding provider failed (%s) and could not be reinitialized: %w", err, initErr)
 	}
 	b.provider = newProvider
-	b.mu.Unlock()
 
 	return fn(newProvider)
 }

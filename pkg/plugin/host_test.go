@@ -151,6 +151,55 @@ func TestHostInitModuleFailureRetries(t *testing.T) {
 	if inited.Load() < 2 {
 		t.Fatalf("expected a fresh init on retry, inited=%d", inited.Load())
 	}
+	if closed.Load() != inited.Load() {
+		t.Fatalf("failed instances were not closed: inited=%d closed=%d", inited.Load(), closed.Load())
+	}
+}
+
+func TestHostCloseEndsSessions(t *testing.T) {
+	var inited, closed atomic.Int64
+	host := newCountingHost(t, &inited, &closed, nil)
+	if err := host.InitModule(context.Background(), "mod", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	host.StartSession("s1")
+	session := host.getSession("s1")
+	var cleaned atomic.Int64
+	session.Defer("resource", false, func(context.Context) error {
+		cleaned.Add(1)
+		return nil
+	})
+
+	host.Close(context.Background())
+	if cleaned.Load() != 1 {
+		t.Fatalf("session cleanup count = %d, want 1", cleaned.Load())
+	}
+	if closed.Load() != 1 {
+		t.Fatalf("module close count = %d, want 1", closed.Load())
+	}
+	if err := host.InitModule(context.Background(), "mod", "other", nil); !errors.Is(err, ErrHostClosed) {
+		t.Fatalf("init after close = %v, want ErrHostClosed", err)
+	}
+}
+
+func TestHostCloseRacingInitClosesNewInstance(t *testing.T) {
+	var inited, closed atomic.Int64
+	host := newCountingHost(t, &inited, &closed, nil)
+	initDone := make(chan error, 1)
+	go func() {
+		initDone <- host.InitModule(context.Background(), "mod", "", nil)
+	}()
+
+	for inited.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	host.Close(context.Background())
+	if err := <-initDone; !errors.Is(err, ErrHostClosed) {
+		t.Fatalf("racing init = %v, want ErrHostClosed", err)
+	}
+	if closed.Load() != 1 {
+		t.Fatalf("racing instance close count = %d, want 1", closed.Load())
+	}
 }
 
 // A session registered at acquisition time (StartSession), before any call

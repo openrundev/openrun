@@ -42,6 +42,7 @@ type Metadata struct {
 	sqliteDBPath       string
 	pgListener         *pgxlisten.Listener
 	pgListenerCancel   context.CancelFunc
+	pgListenerDone     chan struct{}
 	AppNotifyFunc      func(types.AppUpdatePayload)
 	ConfigNotifyFunc   func(types.ConfigUpdatePayload)
 	ProviderNotifyFunc func(types.ProviderUpdatePayload)
@@ -78,6 +79,15 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 		dbType:       dbType,
 		sqliteDBPath: sqliteDBPath,
 	}
+	initialized := false
+	defer func() {
+		if !initialized {
+			// Every failure after opening the pool must release it. In
+			// particular, hostname/cert/schema setup errors used to strand a
+			// pool (and its driver goroutines) on each startup retry.
+			db.Close() //nolint:errcheck
+		}
+	}()
 
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -96,8 +106,6 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 	if err != nil {
 		return nil, err
 	}
-
-	m.leaderElection.StartLoop(context.Background())
 
 	if m.dbType == system.DB_TYPE_POSTGRES {
 		// Use the same env expanded connect string as the main connection pool
@@ -168,7 +176,9 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 		m.pgListener.Handle(pg_listen_channel, handler)
 		listenCtx, listenCancel := context.WithCancel(context.Background())
 		m.pgListenerCancel = listenCancel
+		m.pgListenerDone = make(chan struct{})
 		go func() {
+			defer close(m.pgListenerDone)
 			err := m.pgListener.Listen(listenCtx)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				m.Error().Err(err).Msg("error listening for postgres messages")
@@ -177,6 +187,10 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 		}()
 	}
 
+	// Start background ownership only after every fallible initialization
+	// step has completed, so an error cannot orphan the leader loop.
+	m.leaderElection.StartLoop(context.Background())
+	initialized = true
 	return m, nil
 }
 
@@ -234,6 +248,9 @@ func (m *Metadata) Close() {
 	m.leaderElection.Stop()
 	if m.pgListenerCancel != nil {
 		m.pgListenerCancel()
+	}
+	if m.pgListenerDone != nil {
+		<-m.pgListenerDone
 	}
 	if m.fileCache != nil {
 		m.fileCache.Close() //nolint:errcheck
@@ -773,10 +790,14 @@ func (m *Metadata) migrateAuthSettings(ctx context.Context, tx types.Transaction
 		return fmt.Errorf("error getting app metadata and settings: %w", err)
 	}
 	for _, app := range allApps {
-		app.metadata.AuthnType = app.settings.AuthnType     //nolint:staticcheck // deprecated
-		app.settings.AuthnType = ""                         //nolint:staticcheck // deprecated
-		app.metadata.GitAuthName = app.settings.GitAuthName // nolint:staticcheck // deprecated
-		app.settings.GitAuthName = ""                       //nolint:staticcheck // deprecated
+		//lint:ignore SA1019 this migration must read the legacy field
+		app.metadata.AuthnType = app.settings.AuthnType //nolint:staticcheck // migration reads legacy data
+		//lint:ignore SA1019 this migration must clear the legacy field
+		app.settings.AuthnType = "" //nolint:staticcheck // migration clears legacy data
+		//lint:ignore SA1019 this migration must read the legacy field
+		app.metadata.GitAuthName = app.settings.GitAuthName //nolint:staticcheck // migration reads legacy data
+		//lint:ignore SA1019 this migration must clear the legacy field
+		app.settings.GitAuthName = "" //nolint:staticcheck // migration clears legacy data
 		err := m.updateAppMetadata(ctx, tx, app.path, app.domain, app.metadata)
 		if err != nil {
 			return fmt.Errorf("error updating app metadata: %w", err)
@@ -918,19 +939,25 @@ func (m *Metadata) GetAppsForDomain(domain string) ([]string, error) {
 }
 
 func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
+	return m.GetAllAppsContext(context.Background(), includeInternal)
+}
+
+// GetAllAppsContext is the cancellable form used by background ownership
+// tasks that must be joined before database shutdown.
+func (m *Metadata) GetAllAppsContext(ctx context.Context, includeInternal bool) ([]types.AppInfo, error) {
 	sqlStr := `select domain, path, is_dev, id, main_app, linked_app_path, settings, metadata, source_url, update_time, user_id from apps`
 	if !includeInternal {
 		sqlStr += ` where main_app = ''`
 	}
 	sqlStr += ` order by create_time desc`
 
-	stmt, err := m.db.Prepare(sqlStr)
+	stmt, err := m.db.PrepareContext(ctx, sqlStr)
 	if err != nil {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
 	defer stmt.Close() //nolint:errcheck
 
-	rows, err := stmt.Query()
+	rows, err := stmt.QueryContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error querying all apps: %w", err)
 	}
@@ -1582,7 +1609,7 @@ func (m *Metadata) CleanupExpiredKV(ctx context.Context) error {
 	return nil
 }
 
-func (m *Metadata) CleanupAppVersions(app types.AppInfo) error {
+func (m *Metadata) CleanupAppVersions(ctx context.Context, app types.AppInfo) error {
 	m.Logger.Trace().Msgf("cleaning up app versions for app %s retain %d", app.AppPathDomain, app.RetainVersions)
 	if app.RetainVersions < 0 {
 		return nil
@@ -1596,14 +1623,14 @@ func (m *Metadata) CleanupAppVersions(app types.AppInfo) error {
 	// and nothing is deleted.
 	cutoffQuery := `SELECT version FROM app_versions WHERE appid = ? AND version <= ? ORDER BY version DESC LIMIT 1 OFFSET ?`
 
-	_, err := m.db.Exec(system.RebindQuery(m.dbType,
+	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
 		`DELETE FROM app_versions WHERE appid = ? AND version < (`+cutoffQuery+`)`),
 		app.Id, app.Id, app.Version, app.RetainVersions)
 	if err != nil {
 		return fmt.Errorf("error cleaning up app versions: %w", err)
 	}
 
-	_, err = m.db.Exec(system.RebindQuery(m.dbType,
+	_, err = m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
 		`DELETE FROM app_files WHERE appid = ? AND version < (`+cutoffQuery+`)`),
 		app.Id, app.Id, app.Version, app.RetainVersions)
 	if err != nil {
@@ -1613,8 +1640,8 @@ func (m *Metadata) CleanupAppVersions(app types.AppInfo) error {
 	return nil
 }
 
-func (m *Metadata) CleanupFiles() error {
-	result, err := m.db.Exec(`DELETE FROM files WHERE sha NOT IN (SELECT DISTINCT sha FROM app_files)`)
+func (m *Metadata) CleanupFiles(ctx context.Context) error {
+	result, err := m.db.ExecContext(ctx, `DELETE FROM files WHERE sha NOT IN (SELECT DISTINCT sha FROM app_files)`)
 	if err != nil {
 		return fmt.Errorf("error cleaning up files: %w", err)
 	}
@@ -1627,7 +1654,7 @@ func (m *Metadata) CleanupFiles() error {
 	}
 
 	if m.dbType == system.DB_TYPE_SQLITE {
-		_, err = m.db.Exec(`VACUUM`)
+		_, err = m.db.ExecContext(ctx, `VACUUM`)
 		if err != nil {
 			return fmt.Errorf("error vacuuming files: %w", err)
 		}

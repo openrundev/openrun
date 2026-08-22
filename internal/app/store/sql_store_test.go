@@ -4,11 +4,36 @@
 package store
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 )
+
+func TestSqlStoreCloseClosesPool(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	store := &SqlStore{db: db, isInitialized: true}
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if store.db != nil || store.isInitialized {
+		t.Fatal("store retained initialized database after close")
+	}
+	if err := db.Ping(); err == nil {
+		t.Fatal("database pool remained usable after store close")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("second close: %v", err)
+	}
+}
 
 func TestGenTableName(t *testing.T) {
 	s := &SqlStore{
