@@ -534,12 +534,17 @@ func (c *openrunAdminPlugin) GetSecret(ctx context.Context, call *sdk.Call) (any
 // the plugin framework resolves secret references in call arguments before the
 // method runs, gated by the secrets patterns of the app's approved permission
 // for this call, so the method body only has to echo the argument back.
-// Unlike GetSecret with reveal=True, authority comes from the app's approved
+// The app must have an approved
 // `ace.permission("openrun_admin.in", "secret_reveal", secrets=[[...]])` entry
-// (the audit/approve flow), not from the request caller's RBAC permissions,
-// so this deliberately does not call a server API gated by enforceGlobalPerm.
-// The caller must still be an authenticated user (system plugin auth check)
+// (checked by the plugin framework). When RBAC is enabled, the request caller
+// must independently hold secret:reveal; app approval must not confer the
+// secret permission on every viewer of the app. The caller must also be an
+// authenticated user (system plugin auth check).
 func (c *openrunAdminPlugin) SecretReveal(ctx context.Context, call *sdk.Call) (any, error) {
+	if err := c.server.enforceGlobalPerm(ctx, types.PermissionSecretReveal, ""); err != nil {
+		return nil, err
+	}
+
 	var value string
 	if err := sdk.UnpackArgs("secret_reveal", call, "value", &value); err != nil {
 		return nil, err

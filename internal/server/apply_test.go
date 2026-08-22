@@ -1553,7 +1553,7 @@ func TestSyncRBACSnapshotUnenforcedCreate(t *testing.T) {
 	applyPath := filepath.Join(t.TempDir(), "sync.ace")
 	writeSyncApplyFile(t, applyPath, "/apps/anywhere")
 
-	// A trusted create call (CLI over unix socket / admin over TCP, stamped by
+	// A trusted create call (CLI over unix socket, stamped by
 	// apiHandler) is not enforced: no snapshot is stored even though RBAC is enabled
 	response, err := server.CreateSyncEntry(system.WithTrustedOperation(ctx), applyPath, true, false, &types.SyncMetadata{})
 	if err != nil {

@@ -374,8 +374,9 @@ func (s *Server) validateRBACCandidate(ctx context.Context, candidate *types.RBA
 
 	// The lockout check only applies when the caller would actually be subject
 	// to enforcement after publish: the candidate has RBAC enabled (it then
-	// applies to every app) and there is a calling app context. No app context
-	// (CLI, unix socket) is never enforced; admin access always works
+	// applies to every app) and there is a calling app context. UDS calls have
+	// no app context and are not enforced; admin-over-TCP is checked as the
+	// built-in admin super-user and therefore cannot lock itself out
 	user := system.GetContextUserId(ctx)
 	callerSubject := ctx.Value(types.APP_AUTH) != nil
 	if candidate.Enabled && callerSubject && user != "" && user != types.ADMIN_USER && !force {

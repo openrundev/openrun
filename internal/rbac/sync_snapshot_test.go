@@ -44,7 +44,7 @@ func TestSnapshotUserGrants(t *testing.T) {
 
 	t.Run("nil when not enforced", func(t *testing.T) {
 		t.Parallel()
-		// A trusted admin/UDS create call is not enforced: no snapshot, the
+		// A trusted UDS create call is not enforced: no snapshot, the
 		// sync runs unrestricted. Same when RBAC is disabled in the config
 		snap, err := manager.SnapshotUserGrants(trustedCtx())
 		if err != nil || snap != nil {

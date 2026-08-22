@@ -263,6 +263,7 @@ type sqliteMaintenanceState struct {
 	vacuumDeferredPasses int
 	maintenanceDB        *sql.DB            // guarded by sqliteMaintMu
 	maintenanceCancel    context.CancelFunc // guarded by sqliteMaintMu
+	maintenanceDone      <-chan struct{}    // guarded by sqliteMaintMu
 }
 
 func sqliteMaintenanceKey(dbFilePath string) string {
@@ -473,11 +474,16 @@ func initSQLiteSelfMaintenance(logger *types.Logger, db *sql.DB, invoker, dbFile
 	maintenanceDB.SetMaxOpenConns(1)
 	maintenanceDB.SetMaxIdleConns(1)
 	maintenanceCtx, maintenanceCancel := context.WithCancel(context.Background())
+	maintenanceDone := make(chan struct{})
 	sqliteMaintMu.Lock()
 	state.maintenanceDB = maintenanceDB
 	state.maintenanceCancel = maintenanceCancel
+	state.maintenanceDone = maintenanceDone
 	sqliteMaintMu.Unlock()
-	go sqliteMaintenanceLoop(maintenanceCtx, logger, maintenanceDB, invoker, maintKey, maint, state)
+	go func() {
+		defer close(maintenanceDone)
+		sqliteMaintenanceLoop(maintenanceCtx, logger, maintenanceDB, invoker, maintKey, maint, state)
+	}()
 }
 
 // sqliteMaintenanceLoop periodically reclaims freed pages and checkpoints the

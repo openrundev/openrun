@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -77,6 +78,102 @@ func TestAsUserContextAttribution(t *testing.T) {
 	}
 	testutil.AssertEqualsString(t, "userId", "github:carol", system.GetContextUserId(ctx))
 	testutil.AssertEqualsInt(t, "groups", 0, len(system.GetContextGroups(ctx)))
+}
+
+func TestAdminTCPContextAttribution(t *testing.T) {
+	server := newAsUserTestServer(t, &types.RBACConfig{Enabled: true})
+
+	ctx := server.adminTCPRequestContext(context.Background())
+	testutil.AssertEqualsString(t, "userId", types.ADMIN_USER, system.GetContextUserId(ctx))
+	testutil.AssertEqualsBool(t, "rbac enabled", true, system.IsAppRBACEnabled(ctx))
+	testutil.AssertEqualsBool(t, "trusted", false, system.IsTrustedOperation(ctx))
+	if !server.rbacManager.APIEnforced(ctx) {
+		t.Fatal("admin-over-TCP context must traverse management API RBAC checks")
+	}
+	// The built-in admin is the RBAC super-user, so attribution preserves the
+	// established admin API behavior while removing the transport bypass.
+	if err := server.enforceGlobalPerm(ctx, types.PermissionConfigRead, ""); err != nil {
+		t.Fatalf("admin principal should pass the RBAC check: %v", err)
+	}
+
+	disabled := newAsUserTestServer(t, &types.RBACConfig{Enabled: false})
+	disabledCtx := disabled.adminTCPRequestContext(context.Background())
+	if disabled.rbacManager.APIEnforced(disabledCtx) {
+		t.Fatal("admin-over-TCP context must keep RBAC disabled when computed disabled at request start")
+	}
+	if !system.AppRBACMarkerPresent(disabledCtx) {
+		t.Fatal("admin-over-TCP context must carry an explicit enforcement marker")
+	}
+}
+
+func TestManagementHandlersEnforceConfigRead(t *testing.T) {
+	server := newAsUserTestServer(t, &types.RBACConfig{Enabled: true})
+	handler := &Handler{Logger: server.Logger, server: server}
+
+	ctx, err := server.asUserRequestContext(context.Background(), "builtin:bob")
+	if err != nil {
+		t.Fatalf("as user context: %v", err)
+	}
+
+	configReq, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://example.com/_openrun/config", nil)
+	if err != nil {
+		t.Fatalf("config request: %v", err)
+	}
+	if _, err = handler.configGet(configReq); err == nil || !strings.Contains(err.Error(), string(types.PermissionConfigRead)) {
+		t.Fatalf("expected config:read denial from config_get, got %v", err)
+	}
+
+	prettyReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"http://example.com/_openrun/pretty_print?applyPath=/tmp/config.star", nil)
+	if err != nil {
+		t.Fatalf("pretty-print request: %v", err)
+	}
+	if _, err = handler.prettyPrint(prettyReq); err == nil || !strings.Contains(err.Error(), string(types.PermissionConfigRead)) {
+		t.Fatalf("expected config:read denial from pretty_print, got %v", err)
+	}
+}
+
+func TestSecretRevealRequiresCallerRBACPermission(t *testing.T) {
+	deniedServer := newAsUserTestServer(t, &types.RBACConfig{Enabled: true})
+	deniedCtx, err := deniedServer.asUserRequestContext(context.Background(), "builtin:bob")
+	if err != nil {
+		t.Fatalf("as user context: %v", err)
+	}
+	plugin := &openrunAdminPlugin{server: deniedServer}
+	if value, err := plugin.SecretReveal(deniedCtx, pluginCall("builtin:bob", []any{"cleartext"})); err == nil || value != nil || !strings.Contains(err.Error(), string(types.PermissionSecretReveal)) {
+		t.Fatalf("secret_reveal without caller permission = %v, %v", value, err)
+	}
+
+	allowedServer := newAsUserTestServer(t, &types.RBACConfig{
+		Enabled: true,
+		Roles: map[string][]types.RBACPermission{
+			"revealer": {types.PermissionSecretReveal},
+		},
+		Grants: []types.RBACGrant{{
+			Description: "bob can reveal secrets",
+			Users:       []string{"builtin:bob"},
+			Roles:       []string{"revealer"},
+			Targets:     []string{"all"},
+		}},
+	})
+	allowedCtx, err := allowedServer.asUserRequestContext(context.Background(), "builtin:bob")
+	if err != nil {
+		t.Fatalf("as user context: %v", err)
+	}
+	plugin = &openrunAdminPlugin{server: allowedServer}
+	value, err := plugin.SecretReveal(allowedCtx, pluginCall("builtin:bob", []any{"cleartext"}))
+	if err != nil || value != "cleartext" {
+		t.Fatalf("secret_reveal with caller permission = %v, %v", value, err)
+	}
+
+	// With RBAC disabled, app approval remains the only permission gate, as it
+	// was before management API RBAC enforcement was enabled.
+	disabledServer := newAsUserTestServer(t, &types.RBACConfig{Enabled: false})
+	plugin = &openrunAdminPlugin{server: disabledServer}
+	value, err = plugin.SecretReveal(system.WithTrustedOperation(context.Background()), pluginCall(types.ADMIN_USER, []any{"cleartext"}))
+	if err != nil || value != "cleartext" {
+		t.Fatalf("secret_reveal with RBAC disabled = %v, %v", value, err)
+	}
 }
 
 func TestAsUserValidation(t *testing.T) {

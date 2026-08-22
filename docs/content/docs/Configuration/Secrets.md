@@ -235,10 +235,11 @@ This is disabled by default and is gated like any other plugin secret access:
 
 - The `ace.permission("openrun_admin.in", "secret_reveal", secrets=[[...]])` entry must be declared in the app definition and approved (`openrun app approve`). The audit output shows the exact secret patterns being exposed. Without a matching approved pattern, the request fails and the reference is not resolved.
 - `openrun_admin` is a privileged system plugin, so the page request must come from an authenticated user: an anonymous viewer can never trigger the reveal (unless `security.unsafe_allow_system_plugins_anon` is set).
+- When RBAC is enabled, the request user must also hold the global `secret:reveal` permission. App approval controls which secrets the app code may request; RBAC independently controls which viewers may receive their values.
 - The call can be blocked for all apps with a server config [permissions.disallow]({{< ref "/docs/configuration/security" >}}) entry for `openrun_admin.in` / `secret_reveal`.
 - The `permit=` field of `ace.permission` optionally restricts the reveal to request users holding a specific RBAC permission.
 
-Note that unlike `openrun_admin.get_secret(name, reveal=True)`, which enforces the `secret:reveal` RBAC permission against the request caller, the authority for `secret_reveal` is the app's approved permission: any authenticated viewer of an approved app receives the page with the secret materialized. The value is part of the served response, so use this only where viewers are trusted with the value, and consider setting `Cache-Control: no-store` on the page response.
+Like `openrun_admin.get_secret(name, reveal=True)`, `secret_reveal` enforces the `secret:reveal` RBAC permission against the request caller whenever RBAC is enabled. The value is part of the served response, so use this only where authorized viewers are trusted with the value, and consider setting `Cache-Control: no-store` on the page response.
 
 ## Multiple Keys
 

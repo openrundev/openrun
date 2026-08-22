@@ -80,8 +80,8 @@ func (h *RBACManager) IsAppRBACEnabled(_ context.Context) bool {
 // replaces allow-all, so simulation can only narrow access) and for a background
 // sync run carrying the frozen creator snapshot (SyncAuthorizer).
 //
-// Trusted administrative paths (authenticated admin/UDS management API requests,
-// token authenticated webhooks, internal background operations) carry the
+// Trusted administrative paths (UDS management API requests, token authenticated
+// webhooks, internal background operations) carry the
 // TRUSTED_OPERATION marker and are never enforced. A context with NO marker at
 // all is a propagation bug: enforcement is reported active when RBAC is enabled,
 // and AuthorizeAPI then fails closed for it
@@ -143,7 +143,7 @@ func (h *RBACManager) authorizeAPICtx(ctx context.Context, perm types.RBACPermis
 		return sa.Authorize(perm, target, resourceId, owner)
 	}
 	if system.IsTrustedOperation(ctx) || system.AppRBACMarkerPresent(ctx) || !h.ConfigEnabled() {
-		// Trusted administrative path (authenticated admin/UDS API, token
+		// Trusted administrative path (UDS API, token
 		// authenticated webhook, internal background operation), an app request
 		// whose per-request enforcement state was computed off (stable for the
 		// request even if a config publish enables RBAC mid-request), or RBAC

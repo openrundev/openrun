@@ -15,8 +15,9 @@ import (
 // RBAC enforcement for the management APIs. Enforcement is active whenever the
 // RBAC config is enabled - it then applies to every app (the RBAC_ENABLED context
 // bool, computed once per request in authenticateAndServeApp). All API calls made
-// over the unix socket or with admin over TCP have no app context and are never
-// enforced. The operation to permission mapping is documented in
+// over the unix socket are trusted and never enforced. Authenticated admin over
+// TCP is attributed to the built-in admin principal and still traverses these
+// checks. The operation to permission mapping is documented in
 // design/rbac-api-design.md.
 //
 // App scoped operations resolve stage/preview apps to the main app path and pass

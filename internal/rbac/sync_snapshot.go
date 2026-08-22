@@ -14,8 +14,8 @@ import (
 // SnapshotUserGrants builds the frozen authorization snapshot for the calling
 // user, stored on a sync entry at create time and enforced on its background
 // runs. Returns nil (no snapshot, runs stay unrestricted) when API enforcement
-// is not active for this call: RBAC disabled, or a unix socket / admin over TCP
-// call with no app context. Group membership (config groups and SSO context
+// is not active for this call: RBAC disabled or a trusted unix-socket call
+// with no app context. Group membership (config groups and SSO context
 // groups) is resolved now, so the snapshot stays valid without live group data.
 // Under a _cl_perm test URL directive the real grants of the (anonymous) user
 // are snapshotted, not the simulated set: simulation is a narrowing debug aid

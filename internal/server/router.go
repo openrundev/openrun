@@ -416,19 +416,24 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 			return
 		}
 		r = r.WithContext(asCtx)
+	} else if enableBasicAuth && operation != DELEGATE_BUILD_OP {
+		// Admin over TCP is authenticated above, but it is not a transport-level
+		// RBAC exemption. Attribute the request to the built-in admin principal
+		// and carry the current enforcement state so every management operation
+		// traverses its permission check. The as-user header remains UDS-only.
+		r = r.WithContext(h.server.adminTCPRequestContext(r.Context()))
 	} else {
-		// The caller is the administrator: over UDS the unix file permissions
-		// authenticate, over TCP the admin/builder auth above did (the as
-		// user header is ignored over TCP). Mark the context trusted so RBAC
-		// enforcement stays off for this call (an unmarked context fails
-		// closed when RBAC is enabled)
+		// Unix socket calls are authenticated by filesystem permissions and are
+		// the sole management API transport exempt from RBAC. Delegated builder
+		// requests use their separately scoped bearer-token API.
 		r = r.WithContext(system.WithTrustedOperation(r.Context()))
 	}
 
 	event := types.AuditEvent{
 		RequestId:  system.GetContextRequestId(r.Context()),
 		CreateTime: time.Now(),
-		// Admin APIs run as the admin user; over TCP the context has no user id
+		// Unattributed trusted APIs (UDS/delegated builder) audit as admin;
+		// admin-over-TCP and --as contexts already carry their principal
 		UserId:    cmp.Or(system.GetContextUserId(r.Context()), types.ADMIN_USER),
 		AppId:     system.GetContextAppId(r.Context()),
 		EventType: types.EventTypeSystem,
@@ -1293,6 +1298,10 @@ func (h *Handler) export(r *http.Request) (any, error) {
 // prettyPrint is the handler for the pretty-print API which reformats an
 // existing declarative config file
 func (h *Handler) prettyPrint(r *http.Request) (any, error) {
+	if err := h.server.enforceGlobalPerm(r.Context(), types.PermissionConfigRead, ""); err != nil {
+		return nil, err
+	}
+
 	applyPath := r.URL.Query().Get("applyPath")
 	if applyPath == "" {
 		return nil, types.CreateRequestError("applyPath is required", http.StatusBadRequest)
@@ -1834,6 +1843,9 @@ func (h *Handler) userList(r *http.Request) (any, error) {
 
 func (h *Handler) configGet(r *http.Request) (any, error) {
 	updateOperationInContext(r, "config_get")
+	if err := h.server.enforceGlobalPerm(r.Context(), types.PermissionConfigRead, ""); err != nil {
+		return nil, err
+	}
 	return types.ConfigResponse{DynamicConfig: h.server.GetDynamicConfig()}, nil
 }
 

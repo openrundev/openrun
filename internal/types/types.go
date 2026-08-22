@@ -79,8 +79,9 @@ const (
 	// and RBAC is enabled; never present on interactive requests.
 	SYNC_RBAC ContextKey = "sync_rbac"
 	// TRUSTED_OPERATION marks a context as a trusted administrative path:
-	// authenticated admin/UDS management API requests, token authenticated
-	// webhooks and internal background operations. RBAC enforcement fails
+	// UDS management API requests, token authenticated webhooks and internal
+	// background operations. Admin-over-TCP requests are attributed and checked.
+	// RBAC enforcement fails
 	// CLOSED for contexts that carry neither this nor an enforcement marker,
 	// so a context propagation bug denies instead of silently running as admin
 	TRUSTED_OPERATION ContextKey = "trusted_operation"

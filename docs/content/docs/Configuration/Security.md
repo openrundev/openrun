@@ -61,6 +61,8 @@ admin_password = "" # Change to actual password
 skip_cert_check = false # Change to true if using self-signed certs
 ```
 
+When RBAC is enabled, admin API requests over HTTP/HTTPS still traverse the management API permission checks and are attributed to the authenticated built-in `admin` principal. Only local CLI requests over the unix domain socket are treated as transport-trusted and skip those checks.
+
 All other server related config entries are ignored by the OpenRun client. Note that to connect to an OpenRun server over HTTP remotely, the server needs to be bound to the all interface (0.0.0.0), see [networking]({{< ref "networking" >}}).
 
 If server_uri is set to the HTTPS endpoint and the OpenRun server is running with a self-signed certificate, set `skip_cert_check = true` in config to disable the TLS certificate check.

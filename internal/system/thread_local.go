@@ -178,8 +178,9 @@ func AppRBACMarkerPresent(ctx context.Context) bool {
 
 // WithTrustedOperation marks the context as a trusted administrative path.
 // Set ONLY where the caller's authority is established by other means: the
-// admin/UDS management API after authentication, token authenticated
-// webhooks, and internal background operations (newBackgroundOperationContext).
+// UDS management API, token authenticated webhooks, and internal background
+// operations (newBackgroundOperationContext). Admin-over-TCP requests are
+// attributed and RBAC checked instead of trusted.
 // RBAC enforcement fails closed for contexts with neither this nor an
 // enforcement marker, so an unmarked context (a propagation bug, e.g. a
 // missing Starlark thread context) is denied instead of running as admin

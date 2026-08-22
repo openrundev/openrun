@@ -12,28 +12,41 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-// asUserContext carries the identity for a management API call made with the
-// CLI --as flag over the unix domain socket: the call runs as the given user
-// with RBAC enforcement instead of as the trusted administrator. Answering
-// USER_ID, GROUPS and RBAC_ENABLED from one context node mirrors authContext;
-// RBAC_ENABLED is always true since the context is only built when RBAC is
-// enabled (enforcement state is computed once per request, like app requests)
-type asUserContext struct {
+// managementAPIContext carries the identity and frozen RBAC enforcement state
+// for an attributed management API request. It is used by CLI --as calls over
+// the unix socket and by authenticated admin-over-TCP calls. Answering USER_ID,
+// GROUPS and RBAC_ENABLED from one context node mirrors authContext.
+type managementAPIContext struct {
 	context.Context
-	userId string
-	groups []string
+	userId      string
+	groups      []string
+	rbacEnabled bool
 }
 
-func (c *asUserContext) Value(key any) any {
+func (c *managementAPIContext) Value(key any) any {
 	switch key {
 	case types.USER_ID:
 		return c.userId
 	case types.GROUPS:
 		return c.groups
 	case types.RBAC_ENABLED:
-		return true
+		return c.rbacEnabled
 	}
 	return c.Context.Value(key)
+}
+
+// adminTCPRequestContext attributes an authenticated admin-over-TCP request
+// instead of marking it trusted. Only the unix-socket CLI is outside management
+// API RBAC enforcement. The built-in admin principal still passes authorization
+// as the RBAC super-user, but every TCP operation now traverses the same checks
+// as Starlark management calls and cannot become an unattributed bypass.
+func (s *Server) adminTCPRequestContext(ctx context.Context) context.Context {
+	return &managementAPIContext{
+		Context:     ctx,
+		userId:      types.ADMIN_USER,
+		groups:      []string{},
+		rbacEnabled: s.rbacManager.ConfigEnabled(),
+	}
 }
 
 // asUserRequestContext builds the request context for a management API call
@@ -70,5 +83,5 @@ func (s *Server) asUserRequestContext(ctx context.Context, asUser string) (conte
 		}
 	}
 
-	return &asUserContext{Context: ctx, userId: asUser, groups: groups}, nil
+	return &managementAPIContext{Context: ctx, userId: asUser, groups: groups, rbacEnabled: true}, nil
 }

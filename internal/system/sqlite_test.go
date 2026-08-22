@@ -25,9 +25,11 @@ func stopSQLiteMaintenanceForTest(dbFilePath string) {
 	}
 	var cancel context.CancelFunc
 	var db *sql.DB
+	var done <-chan struct{}
 	if ok {
 		cancel = state.maintenanceCancel
 		db = state.maintenanceDB
+		done = state.maintenanceDone
 	}
 	sqliteMaintMu.Unlock()
 	if cancel != nil {
@@ -35,6 +37,9 @@ func stopSQLiteMaintenanceForTest(dbFilePath string) {
 	}
 	if db != nil {
 		db.Close() //nolint:errcheck
+	}
+	if done != nil {
+		<-done
 	}
 }
 
@@ -82,6 +87,7 @@ func TestAddSQLitePragmas(t *testing.T) {
 // pooled connection, not just the first one
 func TestSQLitePragmasPerConnection(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "pragma_test.db")
+	t.Cleanup(func() { stopSQLiteMaintenanceForTest(dbPath) })
 	db, dbType, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +134,7 @@ func TestSQLitePragmasPerConnection(t *testing.T) {
 
 func TestSQLiteMaintenanceRestoresZeroBusyTimeout(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "zero_timeout.db")
+	t.Cleanup(func() { stopSQLiteMaintenanceForTest(dbPath) })
 	db, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -172,6 +179,7 @@ func TestSQLiteMaintenanceRestoresZeroBusyTimeout(t *testing.T) {
 // journal_size_limit on the pooled connections
 func TestSQLiteAutoVacuumMigration(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "vacuum_test.db")
+	t.Cleanup(func() { stopSQLiteMaintenanceForTest(dbPath) })
 	db, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil)
 	if err != nil {
 		t.Fatal(err)

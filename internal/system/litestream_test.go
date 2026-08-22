@@ -48,6 +48,7 @@ func TestLitestreamManagerReplicateAndRestore(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "meta.db")
+	t.Cleanup(func() { stopSQLiteMaintenanceForTest(dbPath) })
 	replicaDir := filepath.Join(dir, "replica")
 	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
 	lsConfig := types.LitestreamConfig{Type: LitestreamReplicaTypeFile, Path: replicaDir, SyncInterval: "100ms"}

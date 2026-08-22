@@ -34,7 +34,7 @@ func enforcedCtx(user string, groups ...string) context.Context {
 	return ctx
 }
 
-// trustedCtx models an authenticated admin/UDS management API call: marked as
+// trustedCtx models a UDS management API call: marked as
 // a trusted operation, never enforced
 func trustedCtx() context.Context {
 	return system.WithTrustedOperation(context.Background())
@@ -755,7 +755,7 @@ func TestGetAPIPermissions(t *testing.T) {
 			Roles: []string{"deployer"}, Targets: []string{"/test"}},
 	))
 
-	// Trusted operation (admin/UDS call): all permissions
+	// Trusted operation (UDS call): all permissions
 	perms, err := manager.GetAPIPermissions(trustedCtx(), testTarget(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
