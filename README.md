@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://openrun.dev/openrun.png" alt="OpenRun-logo" width="300" height="250"/>
 
-  <p align="center">Open-source, self-hosted GitOps platform for deploying web apps and internal tools to Docker or Kubernetes. Declarative deployments, SSO, RBAC, TLS, secrets, database service bindings, SQLite backups to S3, staged releases and scale-to-zero.</p>
+  <p align="center">Open-source, self-hosted GitOps platform for deploying web apps and internal tools to Docker or Kubernetes. Declarative deployments, SSO, RBAC, database service bindings, SQLite backups to S3 and scale-to-zero.</p>
 </p>
 
 <p>
@@ -10,10 +10,10 @@
   <a href="https://github.com/openrundev/openrun/actions"><img src="https://github.com/openrundev/openrun/workflows/CI/badge.svg" alt="Build Status"></a>
   <a href="https://app.codecov.io/github/openrundev/openrun"><img src="https://codecov.io/gh/openrundev/openrun/branch/main/graph/badge.svg" alt="Code Coverage"></a>
   <!--a href="https://goreportcard.com/report/github.com/openrundev/openrun"><img src="https://goreportcard.com/badge/github.com/openrundev/openrun" alt="Go Report Card"></a-->
-  <a href="https://landscape.cncf.io/?item=app-definition-and-development--application-definition-image-build--openrun"><img src="https://img.shields.io/badge/CNCF-0086FF" alt="Listed in CNCF landscape"></a>
-  <a href="https://www.bestpractices.dev/projects/11301"><img src="https://www.bestpractices.dev/projects/11301/badge"></a>
-  <a href="https://github.com/avelino/awesome-go"><img src="https://awesome.re/mentioned-badge.svg" alt="Mentioned in Awesome Go"></a>
   <img src="https://img.shields.io/github/downloads/openrundev/openrun/total.svg" alt="downloads"/>
+  <a href="https://landscape.cncf.io/?item=app-definition-and-development--application-definition-image-build--openrun"><img src="https://img.shields.io/badge/CNCF-0086FF" alt="Listed in CNCF landscape"></a>
+  <a href="https://github.com/avelino/awesome-go"><img src="https://awesome.re/mentioned-badge.svg" alt="Mentioned in Awesome Go"></a>
+  <a href="https://www.bestpractices.dev/projects/11301"><img src="https://www.bestpractices.dev/projects/11301/badge"></a>
 </p>
 
 ### Menu
