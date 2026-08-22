@@ -8,7 +8,7 @@
   <a href="https://github.com/openrundev/openrun/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openrundev/openrun" alt="License"></a>
   <a href="https://github.com/openrundev/openrun/releases"><img src="https://img.shields.io/github/release/openrundev/openrun.svg?color=00C200" alt="Latest Release"></a>
   <a href="https://github.com/openrundev/openrun/actions"><img src="https://github.com/openrundev/openrun/workflows/CI/badge.svg" alt="Build Status"></a>
-  <a href="https://app.codecov.io/github/openrundev/openrun"><img src="https://img.shields.io/codecov/c/github/openrundev/openrun" alt="Code Coverage"></a>
+  <a href="https://app.codecov.io/github/openrundev/openrun"><img src="https://codecov.io/gh/openrundev/openrun/branch/main/graph/badge.svg" alt="Code Coverage"></a>
   <!--a href="https://goreportcard.com/report/github.com/openrundev/openrun"><img src="https://goreportcard.com/badge/github.com/openrundev/openrun" alt="Go Report Card"></a-->
   <a href="https://landscape.cncf.io/?item=app-definition-and-development--application-definition-image-build--openrun"><img src="https://img.shields.io/badge/CNCF-0086FF" alt="Listed in CNCF landscape"></a>
   <a href="https://www.bestpractices.dev/projects/11301"><img src="https://www.bestpractices.dev/projects/11301/badge"></a>
