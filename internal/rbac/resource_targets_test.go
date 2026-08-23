@@ -303,3 +303,34 @@ func TestResourcePermsInCatalog(t *testing.T) {
 		t.Errorf("binding:manage must not report binding:reveal, got %v", perms)
 	}
 }
+
+func TestProviderPermsInCatalog(t *testing.T) {
+	t.Parallel()
+
+	for _, perm := range []types.RBACPermission{
+		types.PermissionProviderRead,
+		types.PermissionProviderManage,
+	} {
+		if !slices.Contains(allPermissionNames, string(perm)) {
+			t.Errorf("expected %s in allPermissionNames", perm)
+		}
+	}
+
+	manager := newTestManager(t, grantConfig(
+		map[string][]types.RBACPermission{
+			"provider-admin": {types.PermissionProviderManage},
+		},
+		types.RBACGrant{Description: "provider admin", Users: []string{"user1"},
+			Roles: []string{"provider-admin"}, Targets: []string{"all"}},
+	))
+
+	for _, perm := range []types.RBACPermission{
+		types.PermissionProviderManage,
+		types.PermissionProviderRead,
+	} {
+		allowed, err := manager.AuthorizeGlobalAPI(enforcedCtx("user1"), perm, "")
+		if err != nil || !allowed {
+			t.Errorf("provider:manage should confer %s, got allowed=%v err=%v", perm, allowed, err)
+		}
+	}
+}

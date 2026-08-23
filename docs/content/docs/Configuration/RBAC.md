@@ -59,11 +59,11 @@ In addition to any roles you define, OpenRun ships a set of built-in roles that 
 | Role | Purpose | Highlights |
 |------|---------|------------|
 | `openrun-admin` | Unrestricted super-user; bypasses every check | the `admin` permission |
-| `openrun-operator` | Runs the platform | full app lifecycle, `app:approve`, sync, services, bindings, container management, config, secrets (no reveal), audit, server stop, builder |
+| `openrun-operator` | Runs the platform | full app lifecycle, `app:approve`, sync, services, bindings, provider management, container management, config, secrets (no reveal), audit, server stop, builder |
 | `openrun-developer` | Builds and deploys apps | `app:manage`, services/bindings (no delete), `container:read`, `sync:run`/`read`, `secret:create`/`read`, `config:basic_read` (for the create/update forms) — no `app:approve`, full config, audit, secret delete/reveal, server stop, or builder |
 | `openrun-builder` | A developer who also uses the AI app builder | everything in `openrun-developer` plus `builder:*` |
 | `openrun-user` | Baseline authenticated user | `access` and `read` |
-| `openrun-monitor` | Read-only observability | read access across apps, audit, containers, sync, services, bindings, config, and secret metadata (no reveal, no writes) |
+| `openrun-monitor` | Read-only observability | read access across apps, audit, containers, sync, services, bindings, providers, config, and secret metadata (no reveal, no writes) |
 
 `secret:reveal` (reading back stored secret values) and `binding:reveal` (reading back binding account credentials with `binding show-account`) are not included in any built-in role other than `openrun-admin` (whose `admin` permission bypasses every check). Users who need to read these values back must be granted `secret:reveal` / `binding:reveal` explicitly.
 
@@ -82,7 +82,7 @@ The `app:*` permissions are **scoped**: `app:access`, `app:read`, `app:create`, 
 
 The `service:*` and `binding:*` permissions are scoped too, against the grant's `service:<glob>` and `binding:<glob>` target entries: `service:create`, `service:update`, `service:delete`, `service:read`, `service:bind` (provision binding accounts on the service, needed to create base/auto bindings from it) and the `service:manage` composite apply to the services matched by the grant's `service:` targets; `binding:create`, `binding:update`, `binding:delete`, `binding:read`, `binding:run_command`, `binding:use` (attach the binding to an app, or derive a new binding from it), `binding:reveal` (read back the binding account credentials) and the `binding:manage` composite apply to the bindings matched by the grant's `binding:` targets. Like `app:approve`, `binding:reveal` is never implied by `binding:manage`: it needs an explicit grant, and binding owners do not hold it by default (add it to `owner_permissions.binding` to opt owners in). A grant whose targets only name app paths confers no service or binding permissions; use `service:**` / `binding:/**` entries (or `all`) to grant them broadly. Attaching a binding to an app requires `binding:use` on the binding (or `service:bind` on the service for auto bindings created from a service source), in addition to the app permission for the app update itself. Service and binding list operations return only the entries the user can read.
 
-Every other permission is **global** (`builder:*`, `sync:*`, `container:*`, `config:*`, `secret:*`, `audit:read`, `server:stop`, `admin`): a grant confers a global permission **regardless of its `targets`**. `admin` is the super-user permission that bypasses every check.
+Every other permission is **global** (`builder:*`, `sync:*`, `container:*`, `provider:*`, `config:*`, `secret:*`, `audit:read`, `server:stop`, `admin`): a grant confers a global permission **regardless of its `targets`**. `provider:read` lists installed providers and `provider:manage` installs or removes provider executables (and implies `provider:read`). `admin` is the super-user permission that bypasses every check.
 
 The creator of a service or binding holds the configured owner permissions on it (default `service:manage` / `binding:manage`) without needing a grant, like app and sync owners. Override with `owner_permissions.service` / `owner_permissions.binding`.
 

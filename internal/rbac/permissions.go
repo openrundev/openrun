@@ -28,7 +28,7 @@ var predefinedRoles = map[string][]types.RBACPermission{
 	"openrun-admin": {types.PermissionAdmin},
 
 	// Runs the platform: full app lifecycle plus plugin approval, sync,
-	// services, bindings, container management, config, secrets, audit,
+	// services, bindings, provider and container management, config, secrets, audit,
 	// server stop and the builder. No secret:reveal or binding:reveal —
 	// reading back stored secret values and binding account credentials is
 	// admin-only (openrun-admin or an explicit grant)
@@ -36,6 +36,7 @@ var predefinedRoles = map[string][]types.RBACPermission{
 		types.PermissionAppManage, types.PermissionApprove,
 		types.PermissionSyncCreate, types.PermissionSyncRun, types.PermissionSyncDelete, types.PermissionSyncRead,
 		types.PermissionServiceManage, types.PermissionBindingManage,
+		types.PermissionProviderManage,
 		types.PermissionContainerManage,
 		types.PermissionConfigRead, types.PermissionConfigUpdate,
 		types.PermissionSecretCreate, types.PermissionSecretRead, types.PermissionSecretDelete,
@@ -74,6 +75,7 @@ var predefinedRoles = map[string][]types.RBACPermission{
 		types.PermissionRead,
 		types.PermissionAuditRead, types.PermissionContainerRead,
 		types.PermissionSyncRead, types.PermissionServiceRead, types.PermissionBindingRead,
+		types.PermissionProviderRead,
 		types.PermissionConfigRead, types.PermissionSecretRead,
 	},
 }
@@ -193,6 +195,8 @@ var globalPermissions = map[types.RBACPermission]bool{
 	types.PermissionSyncRead:        true,
 	types.PermissionContainerRead:   true,
 	types.PermissionContainerManage: true,
+	types.PermissionProviderRead:    true,
+	types.PermissionProviderManage:  true,
 	types.PermissionConfigBasicRead: true,
 	types.PermissionConfigRead:      true,
 	types.PermissionConfigUpdate:    true,
@@ -283,6 +287,7 @@ var permissionImplications = map[types.RBACPermission][]types.RBACPermission{
 	// app:approve from app:manage: it always needs an explicit grant
 	types.PermissionBindingManage:   managePermissions(bindingPermissions, types.PermissionBindingManage, types.PermissionBindingReveal),
 	types.PermissionContainerManage: {types.PermissionContainerRead},
+	types.PermissionProviderManage:  {types.PermissionProviderRead},
 	types.PermissionConfigRead:      {types.PermissionConfigBasicRead},
 }
 
