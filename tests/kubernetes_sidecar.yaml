@@ -66,7 +66,7 @@ tests:
 
   # --- app.star declared sidecars ---
   ksidecar0060: # setup app.star variant
-    command: cp -r sidecar_app ksc_star && cp sidecar_app/app.star.txt ksc_star/app.star && cp ../config/appspecs/python-flask/Containerfile ksc_star/Containerfile
+    command: cp -r sidecar_app ksc_star && cp sidecar_app/app.star.txt ksc_star/app.star
   ksidecar0061: # create, permissions approved
     command: ../openrun app create --approve --stage-at path --copt cpus=0.05 --copt memory=0.5g ./ksc_star /ksc_star
     stdout:

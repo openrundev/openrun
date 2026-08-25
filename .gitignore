@@ -26,6 +26,7 @@
 /docs/designs/
 /tests/kube_bindings/
 /tests/kube_plugins/
+/tests/sc_app/
 
 go.work
 go.work.sum

@@ -104,8 +104,8 @@ tests:
       interval: 1s
 
   # --- app.star declared sidecars (container.sidecar) ---
-  sidecar0060: # setup app.star variant with the flask spec Containerfile
-    command: cp -r sidecar_app sc_star && cp sidecar_app/app.star.txt sc_star/app.star && cp ../config/appspecs/python-flask/Containerfile sc_star/Containerfile
+  sidecar0060: # setup app.star variant (sidecar_app carries a copy of the flask spec Containerfile; config/appspecs is not present on CI)
+    command: cp -r sidecar_app sc_star && cp sidecar_app/app.star.txt sc_star/app.star
   sidecar0061: # create app, sidecar permissions approved
     command: ../openrun app create --approve --stage-at path ./sc_star /sc_star
     stdout:
@@ -122,7 +122,7 @@ tests:
       retries: 10
       interval: 1s
   sidecar0070: # a sidecar image not covered by the approved permission is rejected
-    command: cp -r sidecar_app sc_badperm && cp sidecar_app/app_badperm.star.txt sc_badperm/app.star && cp ../config/appspecs/python-flask/Containerfile sc_badperm/Containerfile
+    command: cp -r sidecar_app sc_badperm && cp sidecar_app/app_badperm.star.txt sc_badperm/app.star
   sidecar0071: # approval records the declared permission; the mismatching call fails when the app loads
     command: ../openrun app create --approve --stage-at path ./sc_badperm /sc_badperm
   sidecar0072:
@@ -130,4 +130,9 @@ tests:
     stdout: "not permitted to call container.in.sidecar with argument 1"
 
   sidecar0090: # cleanup
-    command: ../openrun app delete "/sc_*" && rm -rf ./sc_app ./sc_star ./sc_badperm
+    command: ../openrun app delete "/sc_*"
+    stdout: "app(s) deleted"
+  sidecar0091: # remove copied app dirs; ./sc_app is left in place (the dev container writes
+    # root-owned .venv/__pycache__ into the bind mount on rootful docker, like flaskapp
+    # in test_containers.yaml; the suite start re-copies it)
+    command: rm -rf ./sc_star ./sc_badperm
