@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/openrundev/openrun/internal/container"
@@ -70,10 +71,34 @@ func (s *Server) cleanupStaleContainers(ctx context.Context) error {
 	for name := range s.inFlightContainerNames() {
 		active[name] = true
 	}
-	return cleanupStaleContainers(ctx, s.Logger, manager, active)
+	// always_on sidecars (workers) keep running while their app is
+	// idle-stopped, and an idle-stopped app is closed (no longer in the app
+	// store): keep them as long as their app still exists. Superseded
+	// versions are stopped at deploy commit, not by the sweeper
+	appIds := map[string]bool{}
+	if s.db != nil { // nil only in tests exercising the sweep loop itself
+		apps, err := s.FilterApps("all", true)
+		if err != nil {
+			// Without the app list the keep filter cannot tell an always_on
+			// sidecar of a live app from a stale one; skip this sweep
+			// instead of stopping them
+			return fmt.Errorf("listing apps for stale container sweep: %w", err)
+		}
+		for _, appInfo := range apps {
+			appIds[string(appInfo.Id)] = true
+		}
+	}
+	keep := func(cont container.Container) bool {
+		return cont.HasLabel(container.SidecarAlwaysOnLabelKey, "true") &&
+			appIds[cont.LabelValue(container.LABEL_PREFIX+"app.id")]
+	}
+	return cleanupStaleContainers(ctx, s.Logger, manager, active, keep)
 }
 
-func cleanupStaleContainers(ctx context.Context, logger *types.Logger, manager staleContainerManager, active map[container.ContainerName]bool) error {
+// cleanupStaleContainers stops the managed containers not in active; keep,
+// when set, exempts containers by their labels
+func cleanupStaleContainers(ctx context.Context, logger *types.Logger, manager staleContainerManager,
+	active map[container.ContainerName]bool, keep func(container.Container) bool) error {
 	containers, err := manager.ListOpenRunContainers(ctx)
 	if err != nil {
 		return err
@@ -86,7 +111,7 @@ func cleanupStaleContainers(ctx context.Context, logger *types.Logger, manager s
 			logger.Warn().Str("container_id", cont.ID).Msg("Skipping OpenRun managed container with no name")
 			continue
 		}
-		if active[containerName] {
+		if active[containerName] || (keep != nil && keep(cont)) {
 			continue
 		}
 

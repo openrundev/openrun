@@ -6,6 +6,7 @@ package plugins
 import (
 	"cmp"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -25,6 +26,7 @@ func init() {
 				Builder: NewContainerModule,
 				Functions: []sdk.FuncDef{
 					{Name: "config", Type: sdk.READ, Method: "Config"}, // config API
+					{Name: "sidecar", Type: sdk.READ, Method: "Sidecar"},
 					{Name: "run", Type: sdk.WRITE, Method: "Run"},
 				},
 				Constants: map[string]any{
@@ -71,15 +73,122 @@ func (c *containerModule) Run(ctx context.Context, call *sdk.Call) (any, error) 
 	return execCommand(ctx, call, handler)
 }
 
+const sidecarTypeName = "container_sidecar"
+
+// Sidecar declares one sidecar container of the app: a worker running the
+// app image with its own command, or a companion service from a foreign
+// image. The result is passed in container.config(sidecars=[...]). Going
+// through this call gives each sidecar its own permission entry
+// (container.in sidecar, with the name and image as positional arguments),
+// so foreign images show up in the app approval, and lets secret references
+// in env resolve through the permission's secrets list.
+func (c *containerModule) Sidecar(ctx context.Context, call *sdk.Call) (any, error) {
+	var name, image, health string
+	var port int64
+	var command, args, volumes []string
+	var env, options map[string]any
+	var inheritEnv, alwaysOn any
+	if err := sdk.UnpackArgs("sidecar", call, "name", &name, "image?", &image, "command?", &command,
+		"args?", &args, "env?", &env, "inherit_env?", &inheritEnv, "port?", &port, "health?", &health,
+		"volumes?", &volumes, "always_on?", &alwaysOn, "options?", &options); err != nil {
+		return nil, err
+	}
+
+	spec := types.SidecarSpec{
+		Name:    name,
+		Image:   image,
+		Command: command,
+		Args:    args,
+		Port:    int32(port),
+		Health:  health,
+		Volumes: volumes,
+	}
+	if port < 0 || port > 65535 {
+		return nil, fmt.Errorf("sidecar %s: port must be between 0 and 65535", name)
+	}
+	if image != "" && !strings.HasPrefix(image, types.CONTAINER_SOURCE_IMAGE_PREFIX) {
+		// Accept a bare reference too: the prefix is what the spec stores
+		spec.Image = types.CONTAINER_SOURCE_IMAGE_PREFIX + image
+	}
+	var err error
+	if spec.Env, err = stringMap("env", env); err != nil {
+		return nil, err
+	}
+	if spec.Options, err = stringMap("options", options); err != nil {
+		return nil, err
+	}
+	if spec.InheritEnv, err = optionalBool("inherit_env", inheritEnv); err != nil {
+		return nil, err
+	}
+	if spec.AlwaysOn, err = optionalBool("always_on", alwaysOn); err != nil {
+		return nil, err
+	}
+	if err := spec.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Round trip through the JSON form so the struct fields are exactly the
+	// spec's JSON members (omitted optionals stay omitted)
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(spec.String()), &fields); err != nil {
+		return nil, fmt.Errorf("error encoding sidecar %s: %w", name, err)
+	}
+	return &sdk.Struct{TypeName: sidecarTypeName, Fields: fields}, nil
+}
+
+func stringMap(argName string, in map[string]any) (map[string]string, error) {
+	if in == nil {
+		return nil, nil
+	}
+	ret := make(map[string]string, len(in))
+	for k, v := range in {
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s: value for %s must be a string, got %T", argName, k, v)
+		}
+		ret[k] = s
+	}
+	return ret, nil
+}
+
+func optionalBool(argName string, v any) (*bool, error) {
+	if v == nil {
+		return nil, nil
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return nil, fmt.Errorf("%s must be a bool, got %T", argName, v)
+	}
+	return &b, nil
+}
+
 func (c *containerModule) Config(ctx context.Context, call *sdk.Call) (any, error) {
 	var src, lifetime, scheme, health, buildDir string
 	var port int64
 	var cargs, devSettings map[string]any
 	var volumes []string
+	var sidecars []any
 	if err := sdk.UnpackArgs("config", call, "src?", &src, "port?", &port, "scheme?", &scheme,
 		"health?", &health, "lifetime?", &lifetime, "build_dir?", &buildDir, "volumes?", &volumes,
-		"cargs?", &cargs, "dev_settings?", &devSettings); err != nil {
+		"cargs?", &cargs, "dev_settings?", &devSettings, "sidecars?", &sidecars); err != nil {
 		return nil, err
+	}
+
+	// Only container.sidecar() results are accepted, so every sidecar went
+	// through its own permission check (a dict literal would bypass it)
+	sidecarList := make([]any, 0, len(sidecars))
+	names := map[string]bool{}
+	for i, entry := range sidecars {
+		st, ok := entry.(*sdk.Struct)
+		if !ok || st.TypeName != sidecarTypeName {
+			return nil, fmt.Errorf("sidecars entry %d must be created with container.sidecar(), got %T", i, entry)
+		}
+		name, _ := st.Fields["name"].(string)
+		if names[name] {
+			return nil, fmt.Errorf("duplicate sidecar name %q", name)
+		}
+		names[name] = true
+		sidecarList = append(sidecarList, st.Fields)
 	}
 
 	if port < 0 {
@@ -110,6 +219,7 @@ func (c *containerModule) Config(ctx context.Context, call *sdk.Call) (any, erro
 		"volumes":      volumes,
 		"cargs":        cargs,
 		"dev_settings": devSettings,
+		"sidecars":     sidecarList,
 	}}, nil
 }
 

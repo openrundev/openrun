@@ -212,6 +212,10 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 	appEntry.Metadata.ContainerOptions = appRequest.ContainerOptions
 	appEntry.Metadata.ContainerArgs = appRequest.ContainerArgs
 	appEntry.Metadata.ContainerVolumes = appRequest.ContainerVolumes
+	appEntry.Metadata.Sidecars, err = canonicalSidecars(appRequest.Sidecars)
+	if err != nil {
+		return nil, err
+	}
 	appEntry.Metadata.AppConfig = appRequest.AppConfig
 	// Set when the create is driven by a sync entry, empty for imperative creates
 	appEntry.Metadata.AppliedSyncId = system.GetContextValue(ctx, types.SYNC_ID)

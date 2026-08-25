@@ -160,3 +160,48 @@ openrun app update cvol --promote "cl_secret:secret.tmpl:/app/secret.ini" /APPPA
 ```
 
 multiple values are supported for `cvol`.
+
+## Sidecar Containers
+
+A container app can declare sidecar containers: a background worker that runs the app's own image with a different command, or a companion service like memcached from another image. Sidecars start, in the declared order, before the app container and are ready before it starts. On Kubernetes they run as native sidecar containers in the app pod; on Docker/Podman they run as containers on a private per app network. A sidecar is part of the app version: changing a sidecar definition creates a new version, and promoting it rolls the app and its sidecars together.
+
+In the app definition, sidecars are declared with `container.sidecar` and passed to `container.config`. Each sidecar call needs a `container.in sidecar` permission, with the sidecar name and image as the (positional) arguments, so the images a sidecar pulls in are visible during app approval:
+
+```python {filename="app.star"}
+app = ace.app("orders",
+    routes=[ace.proxy("/", proxy.config(container.URL))],
+    container=container.config(container.AUTO, port=8000,
+        sidecars=[
+            container.sidecar("cache", "image:memcached:1.6-alpine", port=11211, args=["-m", "64"]),
+            container.sidecar("worker", command=["python", "-m", "orders.worker"], env={"ORDERS_ROLE": "worker"}),
+        ]),
+    permissions=[
+        ace.permission("proxy.in", "config", [container.URL]),
+        ace.permission("container.in", "config", [container.AUTO]),
+        ace.permission("container.in", "sidecar", ["cache", "image:memcached:1.6-alpine"]),
+        ace.permission("container.in", "sidecar", ["worker"]),
+    ])
+```
+
+`container.sidecar(name, image="", command=[], args=[], env={}, inherit_env=None, port=0, health="", volumes=[], always_on=None, options={})`:
+
+- `name`: lower case letters, digits and dashes; used in the container name and in the `CL_SIDECAR_<NAME>_ADDR` env var (`-` becomes `_`).
+- `image`: `image:<ref>` for a foreign image. Omit it to run the app's own image, in which case `command` is required (the image default command is the app's web server).
+- `env`: the sidecar's own env. `inherit_env` copies the app env (params, binding env vars, `CL_APP_PATH`, `CL_APP_URL`) into the sidecar first; it defaults to true for app image sidecars and false for foreign images, which should not see the app's secrets unless asked to. The app `PORT` is never inherited; a sidecar with a `port` gets `PORT` set to it.
+- `port`: the port the sidecar listens on. Port'd sidecars are readiness checked before the app container starts (a TCP connect, or an HTTP GET when `health="http:/path"` is set), and the app gets `CL_SIDECAR_<NAME>_ADDR` (`localhost:<port>` on Kubernetes, the sidecar container name on Docker/Podman) to reach it. The port must differ from the app port and from other sidecars.
+- `volumes`: same syntax as the app `volumes`; a named volume also used by the app is the same volume.
+- `always_on` (Docker/Podman): keep the sidecar running when the app container is stopped for idleness. Defaults to true for sidecars without a port (workers keep processing) and false for port'd sidecars, which are restarted before the app on the next request.
+- `options`: container options for the sidecar, same keys as `--copt` (`kubernetes.cpus`, `kubernetes.memory`, ...).
+
+Sidecars can also be set by the operator on any container app, without changes to the app definition, as JSON documents with the same fields. They are merged by name over the definition's sidecars (a metadata sidecar replaces a same-name definition sidecar entirely) and are bounded by the `security.allowed_sidecar_images` server config (exact references or `regex:` entries; empty allows any image):
+
+```sh
+openrun app create --spec python-flask \
+  --sidecar '{"name":"cache","image":"image:memcached:1.6-alpine","port":11211}' \
+  --sidecar '{"name":"worker","command":["python","worker.py"],"env":{"WORKER_ROLE":"worker"}}' ./myapp /myapp
+
+# Replace the metadata sidecars (staged, promote to apply to prod); "-" clears them
+openrun app update sidecars --promote @sidecars.json /myapp
+```
+
+`--sidecar` and `app update sidecars` accept a JSON object, or `@file` holding a JSON object or a list of objects. In `apps.star` sync entries, use `sidecars=[{...}, ...]` with the same fields. Sidecars are not service bindings: a sidecar cache is per app and per version (per replica on Kubernetes) and its data does not survive a deploy; use a `redis` service binding for a shared or durable cache.

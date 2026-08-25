@@ -1,0 +1,133 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    HTTP_PORT: ${HTTP_PORT}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    OPENRUN_CONTAINER_COMMAND: ${OPENRUN_CONTAINER_COMMAND}
+    PATH: ${PATH}
+tests:
+  # Sidecar containers on docker/podman: a memcached companion (foreign
+  # image, port, readiness gated) and a worker running the app image with its
+  # own command. The app fails at import time if the cache is not reachable,
+  # so a healthy app proves the sidecars came up first.
+  sidecar0010: # setup app source
+    command: rm -rf ./sc_app ./sc_star ./sc_badperm && cp -r sidecar_app sc_app
+
+  # --- CLI declared sidecars on a spec'd app (python-flask) ---
+  sidecar0020: # create prod app with cli sidecars
+    command: ../openrun app create --stage-at path --spec python-flask --param app_name=sc-cli --sidecar '{"name":"cache","image":"image:memcached:1.6-alpine","port":11211,"args":["-m","32"]}' --sidecar '{"name":"worker","command":["python","worker.py"],"env":{"WORKER_ROLE":"cli"}}' ./sc_app /sc_cli
+  sidecar0021: # stage app is up (cache reachable at startup)
+    command: curl -sS localhost:${HTTP_PORT}/sc_cli_cl_stage
+    stdout: hello
+  sidecar0022: # app talks to the cache sidecar by CL_SIDECAR_CACHE_ADDR
+    command: curl -sS localhost:${HTTP_PORT}/sc_cli_cl_stage/cache
+    stdout: "cache ok: v1"
+  sidecar0023: # worker sidecar runs the app image with its command, inherits params but not PORT
+    command: curl -sS localhost:${HTTP_PORT}/sc_cli_cl_stage/worker
+    stdout: "alive role=cli app_name=sc-cli port=-"
+    config:
+      retries: 10
+      interval: 1s
+  sidecar0024: # app env carries the sidecar address on the app network
+    command: curl -sS localhost:${HTTP_PORT}/sc_cli_cl_stage/env
+    stdout: "cache_addr=clc-app_stg_"
+  sidecar0025: # sidecar containers are labelled and on the app network
+    command: bash -c '${OPENRUN_CONTAINER_COMMAND} ps --filter "label=dev.openrun.app.path=/sc_cli_cl_stage" --filter "label=dev.openrun.role=sidecar" --format "{{.Names}} {{.Networks}}" | sort'
+    stdout:
+      contains:
+        - "-cache cln-app_stg_"
+        - "-worker cln-app_stg_"
+  sidecar0026: # the cache port is published on loopback only
+    command: bash -c '${OPENRUN_CONTAINER_COMMAND} ps --filter "label=dev.openrun.app.path=/sc_cli_cl_stage" --filter "label=dev.openrun.sidecar=cache" --format "{{.Ports}}"'
+    stdout: "127.0.0.1:"
+  sidecar0030: # promote
+    command: ../openrun app promote /sc_cli
+  sidecar0031: # prod app works with its own sidecars
+    command: curl -sS localhost:${HTTP_PORT}/sc_cli/cache
+    stdout: "cache ok: v1"
+  sidecar0032: # prod worker
+    command: curl -sS localhost:${HTTP_PORT}/sc_cli/worker
+    stdout: "alive role=cli"
+    config:
+      retries: 10
+      interval: 1s
+
+  # --- update sidecars through metadata ---
+  sidecar0040: # update the worker env through app update sidecars (list replaces, from a file)
+    command: ../openrun app update sidecars '{"name":"cache","image":"image:memcached:1.6-alpine","port":11211,"args":["-m","32"]}' '{"name":"worker","command":["python","worker.py"],"env":{"WORKER_ROLE":"updated"}}' /sc_cli
+    stdout: "1 app(s) updated"
+  sidecar0041: # stage worker runs with the updated env (new version, new sidecars)
+    command: curl -sS localhost:${HTTP_PORT}/sc_cli_cl_stage/worker
+    stdout: "alive role=updated"
+    config:
+      retries: 10
+      interval: 1s
+  sidecar0042: # prod is unchanged until promote
+    command: curl -sS localhost:${HTTP_PORT}/sc_cli/worker
+    stdout: "alive role=cli"
+  sidecar0043: # reload with promote
+    command: ../openrun app promote /sc_cli
+  sidecar0044: # prod worker updated
+    command: curl -sS localhost:${HTTP_PORT}/sc_cli/worker
+    stdout: "alive role=updated"
+    config:
+      retries: 10
+      interval: 1s
+  sidecar0045: # every running app version container has its two sidecars running (a superseded version lingers until the sweeper, with its sidecars)
+    command: bash -c 'apps=$(${OPENRUN_CONTAINER_COMMAND} ps --filter "label=dev.openrun.app.path=/sc_cli" --format "{{.Names}} {{.Label \"dev.openrun.role\"}}" | grep -vc sidecar); sc=$(${OPENRUN_CONTAINER_COMMAND} ps --filter "label=dev.openrun.app.path=/sc_cli" --filter "label=dev.openrun.role=sidecar" --format "{{.Names}}" | wc -l | tr -d " "); echo "apps=$apps sidecars=$sc"; [ "$sc" -eq $((apps * 2)) ]'
+    stdout: "sidecars="
+
+  # --- validation ---
+  sidecar0050: # unknown field is rejected client side
+    command: ../openrun app create --spec python-flask --sidecar '{"name":"x","command":["a"],"bogus":1}' ./sc_app /sc_bad1
+    stderr: "unknown"
+    exit-code: 1
+  sidecar0051: # app image sidecar needs a command
+    command: ../openrun app create --spec python-flask --sidecar '{"name":"x"}' ./sc_app /sc_bad2
+    stderr: "uses the app image and must set command"
+    exit-code: 1
+  sidecar0052: # sidecar port cannot be the app port (app load is lazy, the error surfaces on first request)
+    command: ../openrun app create --spec python-flask --sidecar '{"name":"x","image":"image:memcached:1.6-alpine","port":5000}' ./sc_app /sc_bad3
+  sidecar0052a:
+    command: curl -sS localhost:${HTTP_PORT}/sc_bad3
+    stdout: "conflicts with the app port"
+  sidecar0053: # sidecars from a file (list)
+    command: ../openrun app create --dev --spec python-flask --param app_name=sc-dev --sidecar @sidecar_app/sidecars.json ./sc_app /sc_dev
+  sidecar0054: # dev app works with sidecars (dev names carry no version hash)
+    command: curl -sS localhost:${HTTP_PORT}/sc_dev/env
+    stdout: "cache_addr=clc-app_dev_"
+  sidecar0055: # dev worker inherits the dev env
+    command: curl -sS localhost:${HTTP_PORT}/sc_dev/worker
+    stdout: "alive role=file app_name=sc-dev"
+    config:
+      retries: 10
+      interval: 1s
+
+  # --- app.star declared sidecars (container.sidecar) ---
+  sidecar0060: # setup app.star variant with the flask spec Containerfile
+    command: cp -r sidecar_app sc_star && cp sidecar_app/app.star.txt sc_star/app.star && cp ../config/appspecs/python-flask/Containerfile sc_star/Containerfile
+  sidecar0061: # create app, sidecar permissions approved
+    command: ../openrun app create --approve --stage-at path ./sc_star /sc_star
+    stdout:
+      contains:
+        - "container.in.sidecar [cache image:memcached:1.6-alpine]"
+        - "container.in.sidecar [worker]"
+  sidecar0062: # stage works
+    command: curl -sS localhost:${HTTP_PORT}/sc_star_cl_stage/cache
+    stdout: "cache ok: v1"
+  sidecar0063: # worker env from container.sidecar
+    command: curl -sS localhost:${HTTP_PORT}/sc_star_cl_stage/worker
+    stdout: "alive role=star"
+    config:
+      retries: 10
+      interval: 1s
+  sidecar0070: # a sidecar image not covered by the approved permission is rejected
+    command: cp -r sidecar_app sc_badperm && cp sidecar_app/app_badperm.star.txt sc_badperm/app.star && cp ../config/appspecs/python-flask/Containerfile sc_badperm/Containerfile
+  sidecar0071: # approval records the declared permission; the mismatching call fails when the app loads
+    command: ../openrun app create --approve --stage-at path ./sc_badperm /sc_badperm
+  sidecar0072:
+    command: curl -sS localhost:${HTTP_PORT}/sc_badperm_cl_stage
+    stdout: "not permitted to call container.in.sidecar with argument 1"
+
+  sidecar0090: # cleanup
+    command: ../openrun app delete "/sc_*" && rm -rf ./sc_app ./sc_star ./sc_badperm

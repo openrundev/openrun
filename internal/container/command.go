@@ -101,6 +101,10 @@ type CommandCM struct {
 	appRunDir string
 	appId     types.AppId
 	config    *types.ServerConfig
+	// appNetwork is the app's private network once EnsureSidecarNetwork has
+	// run: app containers started by this manager join it so they reach the
+	// sidecars by name. The manager instance is per app handler
+	appNetwork string
 }
 
 var _ DevContainerManager = (*CommandCM)(nil)
@@ -442,6 +446,11 @@ func (c *CommandCM) StopAppContainersExcept(ctx context.Context, appId types.App
 			// version container swaps
 			continue
 		}
+		if cont.HasLabel(LABEL_PREFIX+sidecarAppLabel, string(keep)) {
+			// App sidecars belong to the version of their app container; the
+			// active version's sidecars stay up with it
+			continue
+		}
 		c.Info().Msgf("Stopping superseded container %s for app %s", name, appId)
 		errs = append(errs, c.StopContainer(ctx, name))
 	}
@@ -546,6 +555,9 @@ func (c *CommandCM) runContainer(ctx context.Context, appEntry *types.AppEntry, 
 	}
 
 	args := []string{"run", "--name", string(containerName), "--detach", "--publish", publish}
+	if c.appNetwork != "" {
+		args = append(args, "--network", c.appNetwork)
+	}
 	mountArgs, err := c.genMountArgs(sourceDir, volumes, paramMap)
 	if err != nil {
 		return fmt.Errorf("error generating mount args: %w", err)

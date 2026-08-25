@@ -837,6 +837,23 @@ func (s *Server) updateMetadataHandler(ctx context.Context, tx types.Transaction
 	return appPathDomain, appPathDomain, nil
 }
 
+// canonicalSidecars validates sidecar JSON documents and returns them in
+// canonical form (the form stored in the app metadata).
+func canonicalSidecars(entries []string) ([]string, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	specs, err := types.ParseSidecarSpecs(entries)
+	if err != nil {
+		return nil, err
+	}
+	ret := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		ret = append(ret, spec.String())
+	}
+	return ret, nil
+}
+
 // updateAppMetadataConfig updates the app metadata config.
 func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, configType types.AppMetadataConfigType,
 	configEntries []string, dryRun bool, accounts *bindingAccountManager) error {
@@ -853,6 +870,18 @@ func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transacti
 	switch configType {
 	case types.AppMetadataContainerVolumes:
 		appEntry.Metadata.ContainerVolumes = configEntries
+		return nil
+	case types.AppMetadataSidecars:
+		if len(configEntries) == 1 && configEntries[0] == "-" {
+			// A single "-" clears all metadata sidecars
+			appEntry.Metadata.Sidecars = nil
+			return nil
+		}
+		sidecars, err := canonicalSidecars(configEntries)
+		if err != nil {
+			return err
+		}
+		appEntry.Metadata.Sidecars = sidecars
 		return nil
 	case types.AppMetadataBindings:
 		if len(configEntries) == 1 && configEntries[0] == "-" {

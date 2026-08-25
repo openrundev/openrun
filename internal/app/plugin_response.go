@@ -58,6 +58,22 @@ func NewResponse(value any) *PluginResponse {
 	}
 }
 
+// ToPluginValue returns the response value for passing into another plugin
+// call. A failed response fails the call; a handled error is not possible
+// through this path.
+func (r *PluginResponse) ToPluginValue(depth int) (any, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.isStream {
+		return nil, errors.New("stream value cannot be passed to a plugin call")
+	}
+	if v, ok := r.value.(starlark.Value); ok {
+		return starlark_type.ToPlugin(v, depth)
+	}
+	return r.value, nil
+}
+
 func NewStreamResponse(value any) *PluginResponse {
 	return &PluginResponse{
 		value:    value,

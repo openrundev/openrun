@@ -63,6 +63,9 @@ func normalizeAppRequest(req *types.CreateAppRequest) {
 	if len(req.Bindings) == 0 {
 		req.Bindings = []string{}
 	}
+	if len(req.Sidecars) == 0 {
+		req.Sidecars = []string{}
+	}
 }
 
 func normalizeBindingRequest(req *types.CreateBindingRequest) {
@@ -73,6 +76,46 @@ func normalizeBindingRequest(req *types.CreateBindingRequest) {
 		req.Config = map[string]string{}
 	}
 	req.ApplyInfo = nil
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// TestExportSidecarFormat verifies the metadata sidecars (stored as canonical
+// JSON documents) export as container.sidecar(...) calls - the app.star
+// container config surface - with kwargs in SidecarSpec declaration order and
+// defaults omitted, one sidecar per line
+func TestExportSidecarFormat(t *testing.T) {
+	t.Parallel()
+	req := &types.CreateAppRequest{
+		Path: "/apps/sc", SourceUrl: "/tmp/app",
+		Sidecars: []string{
+			types.SidecarSpec{Name: "cache", Image: "image:memcached:1.6-alpine",
+				Port: 11211, Health: "http:/ready"}.String(),
+			types.SidecarSpec{Name: "worker", Command: []string{"python", "worker.py"},
+				Args: []string{"-v"}, Env: map[string]string{"Q": "1"},
+				InheritEnv: boolPtr(false), AlwaysOn: boolPtr(true),
+				Volumes: []string{"data:/data"},
+				Options: map[string]string{"kubernetes.cpus": "0.5"}}.String(),
+		},
+	}
+	out, warnings := formatApp(req)
+	if len(warnings) != 0 {
+		t.Fatalf("formatApp warnings = %v, want none", warnings)
+	}
+	want := `    sidecars=[
+        container.sidecar("cache", image="image:memcached:1.6-alpine", port=11211, health="http:/ready"),
+        container.sidecar("worker", command=["python", "worker.py"], args=["-v"], env={"Q": "1"}, inherit_env=False, volumes=["data:/data"], always_on=True, options={"kubernetes.cpus": "0.5"}),
+    ]`
+	if !strings.Contains(out, want) {
+		t.Errorf("sidecar export format mismatch\nwant block:\n%s\ngot:\n%s", want, out)
+	}
+
+	// A single short sidecar stays inline
+	req.Sidecars = []string{types.SidecarSpec{Name: "c", Image: "image:redis:7"}.String()}
+	out, _ = formatApp(req)
+	if !strings.Contains(out, `sidecars=[container.sidecar("c", image="image:redis:7")]`) {
+		t.Errorf("short sidecar not inline:\n%s", out)
+	}
 }
 
 // TestExportFormatRoundTrip verifies that formatConfig output, when parsed by

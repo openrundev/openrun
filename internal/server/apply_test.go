@@ -1956,3 +1956,83 @@ func (b *applyAccountTrackingServiceBinding) GetAccountEnv(ctx context.Context) 
 func (b *grantLifecycleServiceBinding) GetAccountEnv(ctx context.Context) ([]string, []string, error) {
 	return []string{"url", "url_direct"}, []string{}, nil
 }
+
+// TestMergeSidecars covers the name-keyed sidecar merge: entries are matched
+// by sidecar name (not whole document), so a changed declaration replaces the
+// live document of the same name instead of appending a duplicate
+func TestMergeSidecars(t *testing.T) {
+	t.Parallel()
+	doc := func(name string, port int32) string {
+		return types.SidecarSpec{Name: name, Image: "image:redis:7", Port: port}.String()
+	}
+
+	t.Run("changed_declaration_replaces_live_edit", func(t *testing.T) {
+		// old=worker@v1, live independently edited to worker@v2, new=worker@v3:
+		// the live document is replaced, never duplicated
+		live := []string{doc("worker", 6002)}
+		changed, err := mergeSidecars([]string{doc("worker", 6001)}, []string{doc("worker", 6003)}, &live, false)
+		if err != nil || !changed {
+			t.Fatalf("changed=%v err=%v", changed, err)
+		}
+		if len(live) != 1 || live[0] != doc("worker", 6003) {
+			t.Fatalf("live = %v, want single worker@6003", live)
+		}
+		if _, err := types.ParseSidecarSpecs(live); err != nil {
+			t.Fatalf("merged list invalid: %v", err)
+		}
+	})
+
+	t.Run("unchanged_is_noop", func(t *testing.T) {
+		live := []string{doc("worker", 6001)}
+		changed, err := mergeSidecars([]string{doc("worker", 6001)}, []string{doc("worker", 6001)}, &live, false)
+		if err != nil || changed {
+			t.Fatalf("changed=%v err=%v, want no change", changed, err)
+		}
+	})
+
+	t.Run("add_and_remove_by_name", func(t *testing.T) {
+		live := []string{doc("worker", 6001), doc("cache", 6002)}
+		// new drops cache and adds queue
+		changed, err := mergeSidecars(
+			[]string{doc("worker", 6001), doc("cache", 6002)},
+			[]string{doc("worker", 6001), doc("queue", 6004)}, &live, false)
+		if err != nil || !changed {
+			t.Fatalf("changed=%v err=%v", changed, err)
+		}
+		want := []string{doc("worker", 6001), doc("queue", 6004)}
+		if !slices.Equal(live, want) {
+			t.Fatalf("live = %v, want %v", live, want)
+		}
+	})
+
+	t.Run("first_run_appends", func(t *testing.T) {
+		live := []string{doc("worker", 6001)}
+		changed, err := mergeSidecars(nil, []string{doc("cache", 6002)}, &live, false)
+		if err != nil || !changed {
+			t.Fatalf("changed=%v err=%v", changed, err)
+		}
+		want := []string{doc("worker", 6001), doc("cache", 6002)}
+		if !slices.Equal(live, want) {
+			t.Fatalf("live = %v, want %v", live, want)
+		}
+	})
+
+	t.Run("clobber_nil_vs_empty_is_noop", func(t *testing.T) {
+		var live []string
+		changed, err := mergeSidecars(nil, []string{}, &live, true)
+		if err != nil || changed {
+			t.Fatalf("changed=%v err=%v, want no change", changed, err)
+		}
+	})
+
+	t.Run("heals_persisted_duplicates", func(t *testing.T) {
+		live := []string{doc("worker", 6001), doc("worker", 6003)}
+		changed, err := mergeSidecars([]string{doc("worker", 6003)}, []string{doc("worker", 6003)}, &live, false)
+		if err != nil || !changed {
+			t.Fatalf("changed=%v err=%v", changed, err)
+		}
+		if len(live) != 1 || live[0] != doc("worker", 6003) {
+			t.Fatalf("live = %v, want deduped worker@6003", live)
+		}
+	})
+}

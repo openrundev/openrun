@@ -918,12 +918,17 @@ func (s *Server) appNeedsApproval(ctx context.Context, tx types.Transaction, app
 }
 
 // AuditApp audits the app's code and returns the requested plugin loads and
-// permissions with the approval status. For prod apps the staging app is
-// audited, since approvals apply to staging first. Nothing is persisted
+// permissions with the approval status. By default the staging app is audited
+// for prod apps, since approvals apply to staging first; env="prod" audits
+// the prod app itself (dev apps are always audited directly). Nothing is
+// persisted
 func (c *openrunPlugin) AuditApp(ctx context.Context, call *sdk.Call) (any, error) {
-	var path string
-	if err := sdk.UnpackArgs("audit_app", call, "path", &path); err != nil {
+	var path, env string
+	if err := sdk.UnpackArgs("audit_app", call, "path", &path, "env?", &env); err != nil {
 		return nil, err
+	}
+	if env != "" && env != "prod" && env != "stage" {
+		return nil, fmt.Errorf("invalid env %q, expected prod or stage", env)
 	}
 
 	appPathDomain, err := parseAppPath(path)
@@ -944,7 +949,7 @@ func (c *openrunPlugin) AuditApp(ctx context.Context, call *sdk.Call) (any, erro
 	if err := c.server.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
 		return nil, err
 	}
-	if !appEntry.IsDev {
+	if !appEntry.IsDev && env != "prod" {
 		appEntry, err = c.server.getStageApp(ctx, tx, appEntry)
 		if err != nil {
 			return nil, err
@@ -1071,7 +1076,8 @@ func (c *openrunPlugin) BindingHealth(ctx context.Context, call *sdk.Call) (any,
 // ListContainers lists the containers (or Kubernetes pods) managed by OpenRun
 func (c *openrunPlugin) ListContainers(ctx context.Context, call *sdk.Call) (any, error) {
 	var ctype string
-	if err := sdk.UnpackArgs("list_containers", call, "type?", &ctype); err != nil {
+	var times bool
+	if err := sdk.UnpackArgs("list_containers", call, "type?", &ctype, "times?", &times); err != nil {
 		return nil, err
 	}
 
@@ -1089,6 +1095,11 @@ func (c *openrunPlugin) ListContainers(ctx context.Context, call *sdk.Call) (any
 	}
 	if err != nil {
 		return nil, err
+	}
+	if times {
+		// Start/stop times need an inspect per listing (one batched call);
+		// opt-in for the views that show them (app detail tooltips)
+		c.server.FillContainerTimes(ctx, containers)
 	}
 
 	ret := []any{}

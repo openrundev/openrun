@@ -6,9 +6,11 @@ package main
 import (
 	"bytes"
 	"cmp"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
@@ -90,6 +92,12 @@ func appCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		})
 	flags = append(flags,
 		&cli.StringSliceFlag{
+			Name:    "sidecar",
+			Aliases: []string{"sc"},
+			Usage:   "Add a sidecar container: a JSON object with name, image (image:<ref>, omit for the app image), command, args, env, port, health, volumes, inherit_env, always_on, options; or @file holding an object or a list",
+		})
+	flags = append(flags,
+		&cli.StringSliceFlag{
 			Name:    "binding",
 			Aliases: []string{"bindings", "bind"},
 			Usage:   "Link a binding path to the app. Repeat to preserve binding order",
@@ -130,7 +138,10 @@ Examples:
   Create app from a git branch: openrun app create --approve --branch main github.com/openrundev/openrun/examples/memory_usage/ /memory_usage
   Create app using git url: openrun app create --approve git@github.com:openrundev/openrun.git/examples/disk_usage /disk_usage
   Create app using git url, with git private key auth: openrun app create --approve --git-auth mykey git@github.com:openrundev/privaterepo.git/examples/disk_usage /disk_usage
-  Create app for specified domain, no auth : openrun app create --approve --auth=none github.com/openrundev/openrun/examples/memory_usage/ openrun.example.com:/`,
+  Create app for specified domain, no auth : openrun app create --approve --auth=none github.com/openrundev/openrun/examples/memory_usage/ openrun.example.com:/
+  Create app with a memcached sidecar and a worker running the app image:
+    openrun app create --spec python-flask --sidecar '{"name":"cache","image":"image:memcached:1.6-alpine","port":11211}' \
+      --sidecar '{"name":"worker","command":["python","worker.py"]}' ./myapp /myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
 				return fmt.Errorf("require two arguments: <app_source_url> <app_path>")
@@ -172,6 +183,10 @@ Examples:
 				return err
 			}
 			bindings := cCtx.StringSlice("binding")
+			sidecars, err := parseSidecarArgs(cCtx.StringSlice("sidecar"))
+			if err != nil {
+				return err
+			}
 
 			appConfig := cCtx.StringSlice("app-config")
 			confMap := make(map[string]string)
@@ -210,6 +225,7 @@ Examples:
 				ContainerOptions: coptMap,
 				ContainerArgs:    cargMap,
 				ContainerVolumes: containerVolumes,
+				Sidecars:         sidecars,
 				AppConfig:        confMap,
 				Bindings:         bindings,
 				StageAt:          cCtx.String("stage-at"),
@@ -229,6 +245,48 @@ Examples:
 			return nil
 		},
 	}
+}
+
+// parseSidecarArgs expands --sidecar values: a JSON object, or @file holding
+// a JSON object or list of objects. Each entry is validated client side and
+// returned in canonical form.
+func parseSidecarArgs(values []string) ([]string, error) {
+	var ret []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "-" {
+			ret = append(ret, value)
+			continue
+		}
+		docs := []string{value}
+		if strings.HasPrefix(value, "@") {
+			data, err := os.ReadFile(value[1:])
+			if err != nil {
+				return nil, fmt.Errorf("error reading sidecar file %s: %w", value[1:], err)
+			}
+			trimmed := strings.TrimSpace(string(data))
+			if strings.HasPrefix(trimmed, "[") {
+				var items []jsontext.Value
+				if err := json.Unmarshal([]byte(trimmed), &items); err != nil {
+					return nil, fmt.Errorf("error parsing sidecar file %s: %w", value[1:], err)
+				}
+				docs = docs[:0]
+				for _, item := range items {
+					docs = append(docs, string(item))
+				}
+			} else {
+				docs = []string{trimmed}
+			}
+		}
+		for _, doc := range docs {
+			spec, err := types.ParseSidecarSpec(doc)
+			if err != nil {
+				return nil, err
+			}
+			ret = append(ret, spec.String())
+		}
+	}
+	return ret, nil
 }
 
 func printCreateResult(cCtx *cli.Context, createResult types.AppCreateResponse) {

@@ -1,0 +1,4 @@
+[
+  {"name": "cache", "image": "image:memcached:1.6-alpine", "port": 11211, "args": ["-m", "32"]},
+  {"name": "worker", "command": ["python", "worker.py"], "env": {"WORKER_ROLE": "file"}}
+]

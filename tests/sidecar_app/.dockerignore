@@ -1,0 +1,40 @@
+# VCS metadata
+.git
+.gitignore
+.gitattributes
+
+# Local editor/OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python caches and test output
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local environments
+.venv/
+venv/
+env/
+
+.env
+.env.*
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.whl
+
+# Misc local artifacts
+.cache/

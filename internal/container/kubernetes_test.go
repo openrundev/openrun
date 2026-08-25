@@ -587,7 +587,7 @@ func TestKubernetesCMProcessVolumes(t *testing.T) {
 		},
 	}
 
-	podVolumes, mounts, err := k.processVolumes(ctx, "myapp", volumes, sourceDir, map[string]string{"token": "abc123"})
+	podVolumes, mounts, err := k.processVolumes(ctx, "myapp", "myapp", volumes, sourceDir, map[string]string{"token": "abc123"})
 	if err != nil {
 		t.Fatalf("processVolumes returned error: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestKubernetesCMProcessVolumes(t *testing.T) {
 	}
 
 	longWorkloadName := "clc-app-stg-3fh4ceunz5euxiftqywraidepfm-b755db8cce9f79c1"
-	podVolumes, mounts, err = k.processVolumes(ctx, longWorkloadName, volumes[:1], sourceDir, map[string]string{"token": "abc123"})
+	podVolumes, mounts, err = k.processVolumes(ctx, longWorkloadName, longWorkloadName, volumes[:1], sourceDir, map[string]string{"token": "abc123"})
 	if err != nil {
 		t.Fatalf("processVolumes with long workload returned error: %v", err)
 	}

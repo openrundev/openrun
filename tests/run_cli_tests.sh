@@ -381,7 +381,11 @@ force_rm() {
 
 # remove_session_containers removes helper containers carrying this
 # invocation's unique label and OpenRun-managed app/sidecar containers owned
-# by any OPENRUN_HOME used during the invocation. Container engines are
+# by any OPENRUN_HOME used during the invocation, then the per-app sidecar
+# networks (cln-<appId>) those servers created - the server never removes
+# them, and they carry the same dev.openrun.server.home label. Networks go
+# last so their endpoints are already gone; one still in use (external
+# container) fails its rm and is left alone. Container engines are
 # deduplicated because --container-tool and --container-commands commonly both
 # contain docker.
 remove_session_containers() {
@@ -408,6 +412,13 @@ remove_session_containers() {
       while IFS= read -r id; do
         [[ -n "$id" ]] && "$runtime" rm -f "$id" >/dev/null 2>&1 || true
       done < <("$runtime" ps -aq \
+        --filter "label=dev.openrun.server.home=$home" 2>/dev/null || true)
+    done
+
+    for home in "${TEST_SERVER_HOMES[@]}"; do
+      while IFS= read -r id; do
+        [[ -n "$id" ]] && "$runtime" network rm "$id" >/dev/null 2>&1 || true
+      done < <("$runtime" network ls -q \
         --filter "label=dev.openrun.server.home=$home" 2>/dev/null || true)
     done
   done
@@ -897,7 +908,7 @@ done
 POSTGRES_FILES="test_service.yaml test_bindings.yaml test_app_update_bindings.yaml test_postgres.yaml test_postgres_container.yaml test_todo_flow.yaml"
 MYSQL_FILES="test_mysql.yaml"
 REDIS_FILES="test_redis.yaml"
-CONTAINER_FILES="test_containers.yaml test_postgres_container.yaml test_todo_flow.yaml"
+CONTAINER_FILES="test_containers.yaml container_sidecar.yaml test_postgres_container.yaml test_todo_flow.yaml"
 LITESTREAM_FILES="test_sqlite_litestream.yaml test_replication_status.yaml test_metadata_litestream.yaml test_metadata_litestream_verify.yaml"
 
 if [[ -n "$ENABLE_POSTGRES" ]] && contains_any "$POSTGRES_FILES"; then
@@ -1159,6 +1170,10 @@ EOF
     if is_selected test_containers.yaml; then
         commander test $VERBOSE test_containers.yaml
         MATCHED_TESTS+=(test_containers.yaml)
+    fi
+    if is_selected container_sidecar.yaml; then
+        commander test $VERBOSE container_sidecar.yaml
+        MATCHED_TESTS+=(container_sidecar.yaml)
     fi
     if is_selected test_postgres_container.yaml; then
         if [[ -n "$TEST_POSTGRES_URL" ]]; then
@@ -1528,7 +1543,7 @@ EOF
   rm -rf sqlite_drk_tmp
 fi
 
-if [[ -n "$KUBE_REGISTRY_URL" ]] && contains_any "test_kubernetes.yaml"; then
+if [[ -n "$KUBE_REGISTRY_URL" ]] && contains_any "test_kubernetes.yaml kubernetes_sidecar.yaml"; then
   # test kubernetes container manager
   if [[ -z "$KUBE_TEST_NAMESPACE" ]]; then
     KUBE_TEST_NAMESPACE="openrun-cli-test-$$"
@@ -1646,8 +1661,14 @@ EOF
 
     export HTTP_PORT=$SERVER_HTTP_PORT
     echo "********Testing containerized apps with kubernetes *********"
-    commander test $VERBOSE test_kubernetes.yaml
-    MATCHED_TESTS+=(test_kubernetes.yaml)
+    if is_selected test_kubernetes.yaml; then
+        commander test $VERBOSE test_kubernetes.yaml
+        MATCHED_TESTS+=(test_kubernetes.yaml)
+    fi
+    if is_selected kubernetes_sidecar.yaml; then
+        commander test $VERBOSE kubernetes_sidecar.yaml
+        MATCHED_TESTS+=(kubernetes_sidecar.yaml)
+    fi
     CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
     SERVER_PID=""
 fi

@@ -122,6 +122,11 @@ func starlarkToGo(v starlark.Value, depth int, mode valueMode) (any, error) {
 			}
 			return nil, fmt.Errorf("unrecognized starlark type: %s", v.Type())
 		}
+		if valuer, ok := v.(PluginValuer); ok {
+			// A plugin call result passed to another plugin call (e.g. a
+			// container.sidecar() entry in container.config(sidecars=))
+			return valuer.ToPluginValue(depth)
+		}
 		return nil, fmt.Errorf("cannot pass value of type %s to a plugin", v.Type())
 	}
 }
@@ -575,4 +580,10 @@ func goThunkToStarlark(value *sdk.Thunk, depth int, funcRefFn FuncRefValueFunc, 
 // representation.
 type GoValuer interface {
 	ToGoValue() (any, error)
+}
+
+// PluginValuer converts a custom Starlark value to its plugin SDK
+// representation, for values passed from one plugin call into another.
+type PluginValuer interface {
+	ToPluginValue(depth int) (any, error)
 }

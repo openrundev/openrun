@@ -34,6 +34,20 @@ type Container struct {
 	Labels      map[string]string `json:"-"` // Podman format, parsed from the JSON map
 }
 
+// LabelValue returns the value of a container label ("" when absent),
+// handling both the Podman (map) and Docker (comma separated string) formats.
+func (c *Container) LabelValue(key string) string {
+	if c.Labels != nil {
+		return c.Labels[key]
+	}
+	for kv := range strings.SplitSeq(c.LabelString, ",") {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			return v
+		}
+	}
+	return ""
+}
+
 // HasLabel reports whether the container carries the given label, handling
 // both the Podman (map) and Docker (comma separated string) label formats.
 func (c *Container) HasLabel(key, value string) bool {

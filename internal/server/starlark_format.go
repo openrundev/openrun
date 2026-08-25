@@ -47,12 +47,14 @@ func formatConfig(bindings []*types.CreateBindingRequest, apps []*types.CreateAp
 	return sb.String(), warnings
 }
 
-// callArg is one argument of a rendered call. Dict-valued kwargs carry their
-// entries so wrapCall can expand them to one entry per line when too long
+// callArg is one argument of a rendered call. Dict- and list-valued kwargs
+// carry their entries so wrapCall can expand them to one entry per line when
+// too long
 type callArg struct {
-	text    string   // inline form, including the key= prefix for kwargs
-	prefix  string   // key= prefix, set only for expandable dict kwargs
-	entries []string // dict entries for the expanded form
+	text        string   // inline form, including the key= prefix for kwargs
+	prefix      string   // key= prefix, set only for expandable kwargs
+	entries     []string // entries for the expanded form
+	open, close string   // expanded form brackets: {} for dicts, [] for lists
 }
 
 func strArg(text string) callArg {
@@ -109,6 +111,11 @@ func formatApp(req *types.CreateAppRequest) (string, []string) {
 	if len(req.ContainerVolumes) > 0 {
 		args = append(args, strArg("container_vols="+formatStringList(req.ContainerVolumes)))
 	}
+	if len(req.Sidecars) > 0 {
+		// Stored as canonical JSON docs, exported as container.sidecar(...)
+		// calls (the app.star container config surface)
+		args = append(args, listArg("sidecars", sidecarLiterals(req.Sidecars)))
+	}
 	if len(req.Bindings) > 0 {
 		args = append(args, strArg("bindings="+formatStringList(req.Bindings)))
 	}
@@ -131,11 +138,11 @@ func wrapCall(name string, args []callArg) string {
 		}
 		arg := args[i]
 		if arg.entries != nil && len("    "+arg.text)+len(suffix) > formatLineWidth {
-			sb.WriteString("    " + arg.prefix + "{\n")
+			sb.WriteString("    " + arg.prefix + arg.open + "\n")
 			for _, entry := range arg.entries {
 				sb.WriteString("        " + entry + ",\n")
 			}
-			sb.WriteString("    }" + suffix + "\n")
+			sb.WriteString("    " + arg.close + suffix + "\n")
 		} else {
 			sb.WriteString("    " + arg.text + suffix + "\n")
 		}
@@ -148,7 +155,79 @@ func dictArg(key string, entries []string) callArg {
 		text:    key + "={" + strings.Join(entries, ", ") + "}",
 		prefix:  key + "=",
 		entries: entries,
+		open:    "{", close: "}",
 	}
+}
+
+// listArg is an expandable list kwarg: one entry per line when too long
+func listArg(key string, entries []string) callArg {
+	return callArg{
+		text:    key + "=[" + strings.Join(entries, ", ") + "]",
+		prefix:  key + "=",
+		entries: entries,
+		open:    "[", close: "]",
+	}
+}
+
+// sidecarLiterals renders the stored sidecar JSON documents as
+// container.sidecar(...) calls, kwargs in the SidecarSpec declaration order
+// with defaults omitted - the same starlark surface app.star uses in
+// container.config(sidecars=)
+func sidecarLiterals(docs []string) []string {
+	literals := make([]string, 0, len(docs))
+	for _, doc := range docs {
+		literals = append(literals, sidecarLiteral(doc))
+	}
+	return literals
+}
+
+func sidecarLiteral(doc string) string {
+	spec, err := types.ParseSidecarSpec(doc)
+	if err != nil {
+		// Not expected for stored metadata; keep the raw JSON string
+		return quoteStarlark(doc)
+	}
+	args := []string{quoteStarlark(spec.Name)}
+	add := func(key, literal string) {
+		args = append(args, key+"="+literal)
+	}
+	boolLit := func(b bool) string {
+		if b {
+			return "True"
+		}
+		return "False"
+	}
+	if spec.Image != "" {
+		add("image", quoteStarlark(spec.Image))
+	}
+	if len(spec.Command) > 0 {
+		add("command", formatStringList(spec.Command))
+	}
+	if len(spec.Args) > 0 {
+		add("args", formatStringList(spec.Args))
+	}
+	if len(spec.Env) > 0 {
+		add("env", "{"+strings.Join(stringDictEntries(spec.Env), ", ")+"}")
+	}
+	if spec.InheritEnv != nil {
+		add("inherit_env", boolLit(*spec.InheritEnv))
+	}
+	if spec.Port != 0 {
+		add("port", strconv.Itoa(int(spec.Port)))
+	}
+	if spec.Health != "" {
+		add("health", quoteStarlark(spec.Health))
+	}
+	if len(spec.Volumes) > 0 {
+		add("volumes", formatStringList(spec.Volumes))
+	}
+	if spec.AlwaysOn != nil {
+		add("always_on", boolLit(*spec.AlwaysOn))
+	}
+	if len(spec.Options) > 0 {
+		add("options", "{"+strings.Join(stringDictEntries(spec.Options), ", ")+"}")
+	}
+	return "container.sidecar(" + strings.Join(args, ", ") + ")"
 }
 
 // stringDictEntries renders a string valued map as sorted dict entries

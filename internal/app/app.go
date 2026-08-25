@@ -323,6 +323,18 @@ func (a *App) LitestreamSidecarName() (container.ContainerName, bool) {
 	return a.containerHandler.LitestreamSidecarName()
 }
 
+// SidecarContainerNames returns the app's active version sidecar container
+// names (docker/podman), so the stale container cleanup treats them as
+// active.
+func (a *App) SidecarContainerNames() []container.ContainerName {
+	a.initMutex.Lock()
+	defer a.initMutex.Unlock()
+	if a.containerHandler == nil {
+		return nil
+	}
+	return a.containerHandler.SidecarContainerNames()
+}
+
 func (a *App) updateActiveContainerNameLocked() {
 	a.activeContainerName = ""
 	if a.containerHandler == nil {
@@ -677,6 +689,15 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 		return fmt.Errorf("error parsing dev_settings: %w", err)
 	}
 
+	sidecarMaps, err := apptype.GetListMapAttr(configAttr, "sidecars", true)
+	if err != nil {
+		return fmt.Errorf("error reading sidecars: %w", err)
+	}
+	sidecars, err := a.resolveSidecarSpecs(sidecarMaps)
+	if err != nil {
+		return err
+	}
+
 	// Parse the source file specification
 	var fileName string
 	switch src {
@@ -726,12 +747,54 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 	a.containerHandler, err = NewContainerHandler(a.Logger, a,
 		fileName, a.serverConfig, portInt, lifetime, scheme, health, buildDir,
 		a.sourceFS, a.paramValuesStr, a.AppConfig.Container, stripAppPath, volumes,
-		a.getSecretsAllowed("container.in", "config"), cargs, a.bindings, devSettings)
+		a.getSecretsAllowed("container.in", "config"), cargs, a.bindings, devSettings, sidecars)
 	if err != nil {
 		return fmt.Errorf("error creating container handler: %w", err)
 	}
 
 	return nil
+}
+
+// resolveSidecarSpecs combines the container.config sidecars (already
+// authorized through the container.in sidecar permission when evaluated)
+// with the operator-set metadata sidecars, which are bounded by the server
+// allowed_sidecar_images list instead. A metadata sidecar replaces a
+// same-name definition sidecar.
+func (a *App) resolveSidecarSpecs(sidecarMaps []map[string]any) ([]types.SidecarSpec, error) {
+	fromApp := make([]types.SidecarSpec, 0, len(sidecarMaps))
+	for _, m := range sidecarMaps {
+		data, err := json.Marshal(m)
+		if err != nil {
+			return nil, fmt.Errorf("error encoding sidecar definition: %w", err)
+		}
+		spec, err := types.ParseSidecarSpec(string(data))
+		if err != nil {
+			return nil, err
+		}
+		fromApp = append(fromApp, spec)
+	}
+
+	fromMetadata, err := types.ParseSidecarSpecs(a.Metadata.Sidecars)
+	if err != nil {
+		return nil, fmt.Errorf("invalid app metadata sidecars: %w", err)
+	}
+	for _, spec := range fromMetadata {
+		if spec.IsAppImage() {
+			continue
+		}
+		allowed, err := types.SidecarImageAllowed(a.serverConfig.Security.AllowedSidecarImages, spec.ImageRef())
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, fmt.Errorf("sidecar %s image %s is not allowed by the server config security.allowed_sidecar_images",
+				spec.Name, spec.ImageRef())
+		}
+	}
+	if len(fromApp) == 0 && len(fromMetadata) == 0 {
+		return nil, nil
+	}
+	return types.MergeSidecarSpecs(fromApp, fromMetadata, 0)
 }
 
 // parseDevSettings converts the dev_settings dict from container.config into a

@@ -207,6 +207,9 @@ func (a *AppStore) ActiveContainerNames() map[container.ContainerName]bool {
 		if sidecar, ok := application.LitestreamSidecarName(); ok {
 			names[sidecar] = true
 		}
+		for _, sidecar := range application.SidecarContainerNames() {
+			names[sidecar] = true
+		}
 	}
 	return names
 }

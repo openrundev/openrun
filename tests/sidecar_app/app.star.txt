@@ -1,0 +1,19 @@
+load("proxy.in", "proxy")
+load("container.in", "container")
+
+app = ace.app("sidecar star app",
+              routes=[
+                  ace.proxy("/", proxy.config(container.URL))
+              ],
+              container=container.config(container.AUTO, port=5000,
+                                         sidecars=[
+                                             container.sidecar("cache", "image:memcached:1.6-alpine", port=11211, args=["-m", "32"]),
+                                             container.sidecar("worker", command=["python", "worker.py"], env={"WORKER_ROLE": "star"}),
+                                         ]),
+              permissions=[
+                  ace.permission("proxy.in", "config", [container.URL]),
+                  ace.permission("container.in", "config", [container.AUTO]),
+                  ace.permission("container.in", "sidecar", ["cache", "image:memcached:1.6-alpine"]),
+                  ace.permission("container.in", "sidecar", ["worker"]),
+              ]
+       )

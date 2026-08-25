@@ -61,6 +61,22 @@ func applyOptions() meta.ApplyOptions {
 	return meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER, Force: true}
 }
 
+// hasPersistentVolume reports whether the app or any of its sidecars mounts a
+// PVC-backed volume. Sidecar PVCs count: they are mounted by the same pod, so
+// an RWO claim forces the single-replica in-place (Recreate) deployment path
+// just like an app volume would.
+func (k *KubernetesCM) hasPersistentVolume(volumes []*VolumeInfo) bool {
+	if HasPersistentVolume(volumes) {
+		return true
+	}
+	for _, sidecar := range k.sidecars {
+		if HasPersistentVolume(sidecar.Volumes) {
+			return true
+		}
+	}
+	return false
+}
+
 // ownershipLabels returns the labels marking a generated object as OpenRun-owned
 // and scoped to the given container name.
 func ownershipLabels(name string) map[string]string {
@@ -104,6 +120,11 @@ type DeployRequest struct {
 	// Litestream, when set, adds the app's replication companion to the pod:
 	// per-database restore init containers and the replicate native sidecar.
 	Litestream *LitestreamAppSpec
+	// Sidecars are the app's sidecar containers, run as native sidecars in
+	// the pod (kubernetes) in list order before the app container.
+	Sidecars []*ResolvedSidecar
+	// SidecarAddrEnv carries the CL_SIDECAR_*_ADDR vars for the pod
+	SidecarAddrEnv map[string]string
 }
 
 type DeployResult struct {
@@ -153,6 +174,9 @@ type KubernetesCM struct {
 	// deploy, stashed by DeployContainer for createDeployment (reached through
 	// RunContainer's fixed signature); the manager instance is per app handler
 	litestream *LitestreamAppSpec
+	// sidecars and sidecarAddrEnv are stashed by DeployContainer like litestream
+	sidecars       []*ResolvedSidecar
+	sidecarAddrEnv map[string]string
 }
 
 func sanitizeContainerName(name string) string {
@@ -513,7 +537,7 @@ func (k *KubernetesCM) RunContainer(ctx context.Context, appEntry *types.AppEntr
 		return fmt.Errorf("error parsing kubernetes options: %w", err)
 	}
 	serviceName := sanitizeContainerName(string(containerName))
-	usesPV := HasPersistentVolume(volumes)
+	usesPV := k.hasPersistentVolume(volumes)
 	wlName := workloadName(serviceName, versionHash, usesPV)
 
 	// PVC apps update the Service in place (version-agnostic selector). Stateless
@@ -646,7 +670,13 @@ func (k *KubernetesCM) VolumeCreate(ctx context.Context, name VolumeName, reques
 // processVolumes converts VolumeInfo entries to Kubernetes Volume and VolumeMount configurations.
 // It creates Secrets for secret volumes, ConfigMaps for volumes without a VolumeName, and
 // references existing PVCs for named volumes.
-func (k *KubernetesCM) processVolumes(ctx context.Context, name string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string) (
+// processVolumes renders one container's volume list into pod volumes and
+// mounts, generating Secrets/ConfigMaps for file-backed entries. name prefixes
+// the generated object names (unique per container: the app's wlName, or
+// wlName-<sidecar>); owner is the workload name stamped into the ownership
+// labels, so cleanup, snapshot and rollback (which select on
+// ownershipSelector(wlName)) always see the generated objects
+func (k *KubernetesCM) processVolumes(ctx context.Context, name, owner string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string) (
 	[]*corev1apply.VolumeApplyConfiguration, []*corev1apply.VolumeMountApplyConfiguration, error) {
 
 	var podVolumes []*corev1apply.VolumeApplyConfiguration
@@ -676,7 +706,7 @@ func (k *KubernetesCM) processVolumes(ctx context.Context, name string, volumes 
 
 			fileName := filepath.Base(vol.TargetPath)
 			secretApply := corev1apply.Secret(secretName, k.appNamespace).
-				WithLabels(ownershipLabels(name)).
+				WithLabels(ownershipLabels(owner)).
 				WithData(map[string][]byte{fileName: secretData})
 
 			if _, err := k.clientSet.CoreV1().Secrets(k.appNamespace).Apply(
@@ -710,7 +740,7 @@ func (k *KubernetesCM) processVolumes(ctx context.Context, name string, volumes 
 
 			fileName := filepath.Base(vol.TargetPath)
 			configMapApply := corev1apply.ConfigMap(configMapName, k.appNamespace).
-				WithLabels(ownershipLabels(name)).
+				WithLabels(ownershipLabels(owner)).
 				WithData(map[string]string{fileName: string(data)})
 
 			if _, err := k.clientSet.CoreV1().ConfigMaps(k.appNamespace).Apply(
@@ -816,7 +846,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 	port int32, envMap map[string]string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string,
 	appEntry *types.AppEntry, versionHash string, kubernetesOptions KubernetesOptions, isImageSpec bool,
 	healthProbe *HealthProbe) (string, error) {
-	usesPV := HasPersistentVolume(volumes)
+	usesPV := k.hasPersistentVolume(volumes)
 	workloadSelectorLabels := workloadSelector(serviceName, versionHash, usesPV)
 	// Services pick only the active version's Ready pods. Even PVC-backed apps
 	// include the version hash so a stateless <-> PVC transition cannot
@@ -852,8 +882,13 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 	}
 
 	// Convert envMap to Kubernetes EnvVar apply configurations
-	envVars := make([]*corev1apply.EnvVarApplyConfiguration, 0, len(envMap))
+	envVars := make([]*corev1apply.EnvVarApplyConfiguration, 0, len(envMap)+len(k.sidecarAddrEnv))
 	for key, value := range envMap {
+		envVars = append(envVars, corev1apply.EnvVar().
+			WithName(key).
+			WithValue(value))
+	}
+	for key, value := range k.sidecarAddrEnv {
 		envVars = append(envVars, corev1apply.EnvVar().
 			WithName(key).
 			WithValue(value))
@@ -862,7 +897,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 	// Process volumes (creates Secrets/ConfigMaps as needed). These are named
 	// after the (possibly versioned) workload so blue-green versions get
 	// isolated config that is GC'd with their Deployment.
-	podVolumes, volumeMounts, err := k.processVolumes(ctx, wlName, volumes, sourceDir, paramMap)
+	podVolumes, volumeMounts, err := k.processVolumes(ctx, wlName, wlName, volumes, sourceDir, paramMap)
 	if err != nil {
 		return "", err
 	}
@@ -982,9 +1017,20 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 	if litestreamSidecar != nil {
 		initContainers = append(initContainers, litestreamSidecar)
 	}
+	// App sidecars start after the replication companion, in list order,
+	// before the app container
+	sidecarVolumes, sidecarContainers, err := k.sidecarPodAdditions(ctx, wlName, image, sourceDir, paramMap, podVolumes)
+	if err != nil {
+		return "", err
+	}
+	podVolumes = append(podVolumes, sidecarVolumes...)
+	initContainers = append(initContainers, sidecarContainers...)
 
 	podSpec := corev1apply.PodSpec().
-		WithContainers(containerConfig)
+		WithContainers(containerConfig).
+		// App pods never talk to the Kubernetes API; do not hand them (or
+		// their sidecars) the service account token
+		WithAutomountServiceAccountToken(false)
 	if permsInit != nil {
 		// fsGroup makes the sqlite volume group-writable at mount time on
 		// storage classes with kubernetes ownership management (most CSI
@@ -1058,6 +1104,25 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 		if minReplicas < 1 {
 			minReplicas = 1
 		}
+		metric := autoscalingv2apply.MetricSpec().
+			WithType(autoscalingv2.ResourceMetricSourceType).
+			WithResource(autoscalingv2apply.ResourceMetricSource().
+				WithName(core.ResourceCPU).
+				WithTarget(autoscalingv2apply.MetricTarget().
+					WithType(autoscalingv2.UtilizationMetricType).
+					WithAverageUtilization(k.appConfig.Kubernetes.ScalingThresholdCPU)))
+		if len(k.sidecars) > 0 {
+			// With sidecars in the pod, scale on the app container's own CPU
+			// so a busy worker sidecar does not scale the web tier
+			metric = autoscalingv2apply.MetricSpec().
+				WithType(autoscalingv2.ContainerResourceMetricSourceType).
+				WithContainerResource(autoscalingv2apply.ContainerResourceMetricSource().
+					WithName(core.ResourceCPU).
+					WithContainer(serviceName).
+					WithTarget(autoscalingv2apply.MetricTarget().
+						WithType(autoscalingv2.UtilizationMetricType).
+						WithAverageUtilization(k.appConfig.Kubernetes.ScalingThresholdCPU)))
+		}
 		hpa := autoscalingv2apply.HorizontalPodAutoscaler(wlName, k.appNamespace).
 			WithLabels(workloadSelectorLabels).
 			WithSpec(autoscalingv2apply.HorizontalPodAutoscalerSpec().
@@ -1067,13 +1132,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 					WithName(wlName)).
 				WithMinReplicas(minReplicas).
 				WithMaxReplicas(kubernetesOptions.MaxReplicas).
-				WithMetrics(autoscalingv2apply.MetricSpec().
-					WithType(autoscalingv2.ResourceMetricSourceType).
-					WithResource(autoscalingv2apply.ResourceMetricSource().
-						WithName(core.ResourceCPU).
-						WithTarget(autoscalingv2apply.MetricTarget().
-							WithType(autoscalingv2.UtilizationMetricType).
-							WithAverageUtilization(k.appConfig.Kubernetes.ScalingThresholdCPU)))))
+				WithMetrics(metric))
 
 		if _, err := k.clientSet.AutoscalingV2().HorizontalPodAutoscalers(k.appNamespace).Apply(
 			ctx, hpa, applyOptions()); err != nil {
@@ -1151,6 +1210,8 @@ func (k *KubernetesCM) DeployContainer(ctx context.Context, req DeployRequest) (
 	// Stash the litestream spec for createDeployment, which is reached through
 	// RunContainer's fixed signature. The manager instance is per app handler.
 	k.litestream = req.Litestream
+	k.sidecars = req.Sidecars
+	k.sidecarAddrEnv = req.SidecarAddrEnv
 	appID := k.deployAppID(req.AppEntry)
 	if hostNamePort, running, err := k.GetContainerState(ctx, req.ContainerName, req.VersionHash); err != nil {
 		k.cleanupSourceDir(req.SourceDir, appID)
@@ -1165,7 +1226,7 @@ func (k *KubernetesCM) DeployContainer(ctx context.Context, req DeployRequest) (
 		}, nil
 	}
 
-	if HasPersistentVolume(req.Volumes) {
+	if k.hasPersistentVolume(req.Volumes) {
 		return k.deployInPlace(ctx, req)
 	}
 	return k.deployBlueGreen(ctx, req)

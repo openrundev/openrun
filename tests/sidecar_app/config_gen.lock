@@ -1,0 +1,24 @@
+{
+  "routing": {
+    "template_locations": [
+      "*.go.html"
+    ],
+    "base_templates": "base_templates",
+    "push_events": false,
+    "early_hints": true,
+    "container_exclude": [
+      "static/**/*",
+      "static_root/**/*",
+      "base_templates/**/*",
+      "*.go.html",
+      "*.star",
+      "config_gen.lock"
+    ]
+  },
+  "htmx": {
+    "version": "2.0.3"
+  },
+  "container": {
+    "separate_stage_prod_images": false
+  }
+}

@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added sidecar containers for container apps: background workers running the app image with a different command, or companion services from another image (e.g. memcached). Sidecars start in order and are ready before the app container; on Kubernetes they are native sidecars in the app pod (reachable on `localhost`), on docker/podman peer containers on a per app network.
+
 ### Fixed
 
 - Added the existing `provider:read` and `provider:manage` checks to the RBAC permission catalog. `provider:manage` now implies `provider:read`, and the built-in operator/monitor roles include the corresponding provider permission.

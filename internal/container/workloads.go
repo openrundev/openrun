@@ -33,6 +33,26 @@ type WorkloadPod struct {
 	Node       string
 	PodIP      string
 	Mounts     []WorkloadMount
+	// Sidecars are the app's sidecar container names (native sidecars in
+	// the pod, excluding the litestream companion)
+	Sidecars []string
+}
+
+// podSidecarNames returns the names of the app sidecars of a pod: the native
+// sidecars (init containers with restartPolicy Always) other than the
+// litestream replication companion
+func podSidecarNames(pod *core.Pod) []string {
+	var names []string
+	for _, c := range pod.Spec.InitContainers {
+		if c.RestartPolicy == nil || *c.RestartPolicy != core.ContainerRestartPolicyAlways {
+			continue
+		}
+		if c.Name == "litestream" {
+			continue
+		}
+		names = append(names, c.Name)
+	}
+	return names
 }
 
 // WorkloadMount is a volume mount of a workload pod
@@ -72,6 +92,7 @@ func podToWorkload(pod *core.Pod) WorkloadPod {
 		Node:       pod.Spec.NodeName,
 		PodIP:      pod.Status.PodIP,
 		CreatedAt:  pod.CreationTimestamp.Format(time.RFC3339),
+		Sidecars:   podSidecarNames(pod),
 	}
 	if len(pod.Spec.Containers) > 0 {
 		wl.Image = pod.Spec.Containers[0].Image
@@ -253,6 +274,30 @@ type PodContainerStatus struct {
 	Message  string `json:"message"`
 	Restarts int    `json:"restarts"`
 	Ready    bool   `json:"ready"`
+	// Sidecar marks an app sidecar container (a native sidecar of the pod)
+	Sidecar bool `json:"sidecar"`
+}
+
+func podContainerStatus(cs core.ContainerStatus, sidecar bool) PodContainerStatus {
+	entry := PodContainerStatus{
+		Name:     cs.Name,
+		Restarts: int(cs.RestartCount),
+		Ready:    cs.Ready,
+		Sidecar:  sidecar,
+	}
+	switch {
+	case cs.State.Running != nil:
+		entry.State = "running"
+	case cs.State.Waiting != nil:
+		entry.State = "waiting"
+		entry.Reason = cs.State.Waiting.Reason
+		entry.Message = cs.State.Waiting.Message
+	case cs.State.Terminated != nil:
+		entry.State = "terminated"
+		entry.Reason = cs.State.Terminated.Reason
+		entry.Message = cs.State.Terminated.Message
+	}
+	return entry
 }
 
 // PodEvent is one kubernetes event of a pod, newest first
@@ -293,25 +338,19 @@ func GetWorkloadPodStatus(ctx context.Context, config *types.ServerConfig, name 
 			Message: cond.Message,
 		})
 	}
+	// App sidecars (native sidecars, started before the app container) are
+	// listed first, in start order, then the app container
+	sidecars := map[string]bool{}
+	for _, name := range podSidecarNames(pod) {
+		sidecars[name] = true
+	}
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if sidecars[cs.Name] {
+			status.Containers = append(status.Containers, podContainerStatus(cs, true))
+		}
+	}
 	for _, cs := range pod.Status.ContainerStatuses {
-		entry := PodContainerStatus{
-			Name:     cs.Name,
-			Restarts: int(cs.RestartCount),
-			Ready:    cs.Ready,
-		}
-		switch {
-		case cs.State.Running != nil:
-			entry.State = "running"
-		case cs.State.Waiting != nil:
-			entry.State = "waiting"
-			entry.Reason = cs.State.Waiting.Reason
-			entry.Message = cs.State.Waiting.Message
-		case cs.State.Terminated != nil:
-			entry.State = "terminated"
-			entry.Reason = cs.State.Terminated.Reason
-			entry.Message = cs.State.Terminated.Message
-		}
-		status.Containers = append(status.Containers, entry)
+		status.Containers = append(status.Containers, podContainerStatus(cs, false))
 	}
 
 	// Events need list access on the namespace, which the service account may

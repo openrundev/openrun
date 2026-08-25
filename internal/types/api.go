@@ -48,6 +48,7 @@ type CreateAppRequest struct {
 	ContainerOptions map[string]string `json:"container_options"`
 	ContainerArgs    map[string]string `json:"container_args"`
 	ContainerVolumes []string          `json:"container_volumes"`
+	Sidecars         []string          `json:"sidecars,omitempty,omitzero"` // JSON SidecarSpec documents
 	AppConfig        map[string]string `json:"appconfig"`
 	Bindings         []string          `json:"bindings"`
 	StageAt          string            `json:"stage_at"`

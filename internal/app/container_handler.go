@@ -101,13 +101,25 @@ type ContainerHandler struct {
 	bindings       []*types.Binding
 	devSettings    *types.DevSettings
 	devInferredEnv map[string]string // final stage ENV values missing from the built dev image
+	// devMounts are the dev mode source and additional bind mounts, also
+	// applied to app image sidecars in dev mode
+	devMounts []*container.VolumeInfo
+
+	// sidecars are the app's sidecar definitions (app definition merged with
+	// metadata), with parsed volumes. sidecarDigests holds the digests
+	// resolved for foreign sidecar images, guarded by its own mutex: it is
+	// read on paths that already hold stateLock (the deploy request is built
+	// under it) and RWMutex is not reentrant
+	sidecars        []sidecarConfig
+	sidecarDigests  map[string]string
+	sidecarDigestMu sync.RWMutex
 }
 
 func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	serverConfig *types.ServerConfig, configPort int32, lifetime, scheme, health, buildDir string, sourceFS appfs.ReadableFS,
 	paramMap map[string]string, containerConfig types.Container, stripAppPath bool,
 	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any, bindings []*types.Binding,
-	devSettings *types.DevSettings) (*ContainerHandler, error) {
+	devSettings *types.DevSettings, sidecarSpecs []types.SidecarSpec) (*ContainerHandler, error) {
 
 	devStageName := defaultDevStage
 	devStageExplicit := false
@@ -363,8 +375,13 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 			}
 		}
 		volumeInfo = append(kept, devMounts...)
+		h.devMounts = devMounts
 	}
 	h.volumeInfo = volumeInfo
+
+	if h.sidecars, err = h.parseSidecarConfigs(sidecarSpecs); err != nil {
+		return nil, err
+	}
 
 	return h, nil
 }
@@ -483,6 +500,11 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 		// sidecar after its final sync. It is restarted with the app
 		if err := h.stopLitestreamSidecar(ctx); err != nil {
 			h.Error().Err(err).Msgf("Error stopping litestream sidecar for idle app %s", h.app.Id)
+		}
+		// App sidecars stop after the app (nothing is mid-request against a
+		// vanishing companion); always_on sidecars keep running
+		if err := h.stopIdleSidecars(ctx, versionHash); err != nil {
+			h.Error().Err(err).Msgf("Error stopping sidecars for idle app %s", h.app.Id)
 		}
 		return
 	}
@@ -722,7 +744,12 @@ func (h *ContainerHandler) createSpecFiles() ([]string, error) {
 }
 
 func (h *ContainerHandler) createVolumes(ctx context.Context) error {
-	for _, volInfo := range h.volumeInfo {
+	volumes := append([]*container.VolumeInfo{}, h.volumeInfo...)
+	for _, sc := range h.sidecars {
+		volumes = append(volumes, sc.volumes...)
+	}
+	created := map[container.VolumeName]bool{}
+	for _, volInfo := range volumes {
 		if volInfo.VolumeName == "" {
 			// bind mount
 			continue
@@ -734,6 +761,10 @@ func (h *ContainerHandler) createVolumes(ctx context.Context) error {
 		}
 
 		genVolumeName := container.GenVolumeName(h.app.Id, dir)
+		if created[genVolumeName] {
+			continue
+		}
+		created[genVolumeName] = true
 		h.Info().Msgf("Applying volume %s for app %s dir %s", genVolumeName, h.app.Id, dir)
 		if h.manager.VolumeExists(ctx, genVolumeName) {
 			h.Warn().Msgf("Reusing existing volume %s for app %s dir %s; previous data will be mounted", genVolumeName, h.app.Id, dir)
@@ -972,8 +1003,11 @@ func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
 		// Command lifetime, service is not started, commands will be run with the image
 		return nil
 	}
+	if err = h.ensureSidecars(ctx, "", h.app.SourceUrl, containerName, true); err != nil {
+		return err
+	}
 	err = devCM.RunContainer(ctx, h.app.AppEntry, h.app.SourceUrl, containerName,
-		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, "", h.IsImageSpec(), nil)
+		h.GenImageName, h.port, h.withSidecarAddrEnv(h.envMap, ""), h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, "", h.IsImageSpec(), nil)
 	if err != nil {
 		return fmt.Errorf("error running container: %w", err)
 	}
@@ -1060,6 +1094,11 @@ func (h *ContainerHandler) devReloadFast(ctx context.Context, devCM container.De
 	}
 
 	if matches && h.devSettings.Reload != types.DEV_RELOAD_RECREATE {
+		// Sidecars are (re)started and ready before the app container; app
+		// image sidecars restart on a source change like the app does
+		if err := h.ensureSidecars(ctx, "", h.app.SourceUrl, containerName, running); err != nil {
+			return err
+		}
 		if running && h.devSettings.Reload == types.DEV_RELOAD_NONE {
 			// The app handles source changes itself (framework hot reload),
 			// just refresh the handler state
@@ -1115,8 +1154,11 @@ func (h *ContainerHandler) devReloadFast(ctx context.Context, devCM container.De
 		return nil
 	}
 
+	if err = h.ensureSidecars(ctx, "", h.app.SourceUrl, containerName, false); err != nil {
+		return err
+	}
 	err = devCM.RunDevContainer(ctx, h.app.AppEntry, h.app.SourceUrl, containerName,
-		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap,
+		h.GenImageName, h.port, h.withSidecarAddrEnv(h.envMap, ""), h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap,
 		container.DevRunOptions{RunHash: runHash, WorkDir: h.devSettings.Dir, Command: h.devSettings.Command})
 	if err != nil {
 		return h.devInferredHint(fmt.Errorf("error running container: %w", err))
@@ -1215,8 +1257,12 @@ func (h *ContainerHandler) devRunHash(imageHash string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error getting mounts hash: %w", err)
 	}
+	sidecarsHash, err := h.sidecarsHash(h.envMap)
+	if err != nil {
+		return "", fmt.Errorf("error getting sidecars hash: %w", err)
+	}
 	return getValuesHash(imageHash, h.envMapHash, coptHash, mountsHash,
-		h.devSettings.Command, h.devSettings.Dir, strconv.Itoa(int(h.port)), h.lifetime)
+		h.devSettings.Command, h.devSettings.Dir, strconv.Itoa(int(h.port)), h.lifetime, sidecarsHash)
 }
 
 // healthRetryBudget returns how long the original exponential-backoff health
@@ -1395,6 +1441,15 @@ func (h *ContainerHandler) getAppHash() (string, error) {
 	if lsSpec := h.litestreamSpec(); lsSpec != nil {
 		fullHashVal += "-ls" + lsSpec.ConfigHash
 	}
+	// Sidecars are part of the version: a sidecar change rolls the app (and
+	// its sidecars, which are named per version)
+	sidecarsHash, err := h.sidecarsHash(h.envMap)
+	if err != nil {
+		return "", fmt.Errorf("error getting sidecars hash: %w", err)
+	}
+	if sidecarsHash != "" {
+		fullHashVal += "-sc" + sidecarsHash
+	}
 	sha := sha256.New()
 	if _, err := sha.Write([]byte(fullHashVal)); err != nil {
 		return "", err
@@ -1459,8 +1514,16 @@ func (h *ContainerHandler) buildImageName(fullHash string) (container.ImageName,
 	return container.GenImageName(appID, fullHash), nil
 }
 
+func (h *ContainerHandler) allVolumes() []*container.VolumeInfo {
+	volumes := append([]*container.VolumeInfo{}, h.volumeInfo...)
+	for _, sc := range h.sidecars {
+		volumes = append(volumes, sc.volumes...)
+	}
+	return volumes
+}
+
 func (h *ContainerHandler) needsRuntimeSourceDir() bool {
-	for _, volInfo := range h.volumeInfo {
+	for _, volInfo := range h.allVolumes() {
 		if volInfo.IsSecret {
 			return true
 		}
@@ -1469,7 +1532,7 @@ func (h *ContainerHandler) needsRuntimeSourceDir() bool {
 }
 
 func (h *ContainerHandler) needsKubernetesDeploySourceDir() bool {
-	for _, volInfo := range h.volumeInfo {
+	for _, volInfo := range h.allVolumes() {
 		if volInfo.IsSecret || volInfo.VolumeName == "" {
 			return true
 		}
@@ -1515,6 +1578,15 @@ type BuildPlan struct {
 func (h *ContainerHandler) PrepareBuild(ctx context.Context) (*BuildPlan, error) {
 	if h.app.IsDev || h.image != "" {
 		return nil, nil
+	}
+
+	// Foreign sidecar image digests are folded into the identity hash (via
+	// the sidecars hash), so resolve them before hashing - mirroring
+	// ProdReload. With empty digests the prebuild would compute a different
+	// hash than the reload does after its own refresh, miss the prebuilt
+	// image and build a second time
+	if err := h.refreshSidecarImages(ctx); err != nil {
+		return nil, err
 	}
 
 	var err error
@@ -1629,6 +1701,12 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 		}
 	}
 
+	if !dryRun {
+		if err := h.refreshSidecarImages(ctx); err != nil {
+			return err
+		}
+	}
+
 	h.envMap, h.envMapHash, err = h.getEnvMapAndHash()
 	if err != nil {
 		return fmt.Errorf("error getting env map hash: %w", err)
@@ -1685,12 +1763,20 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 			if err := h.ensureLitestream(ctx, false); err != nil {
 				h.Warn().Err(err).Msgf("error ensuring litestream sidecar for app %s", h.app.Id)
 			}
+			if err := h.ensureSidecars(ctx, fullHash, "", containerName, false); err != nil {
+				h.Warn().Err(err).Msgf("error ensuring sidecars for app %s", h.app.Id)
+			}
 			// Nothing was started, so nothing to roll back; still register so
 			// superseded version containers are stopped at operation commit
 			h.registerDeployTxn(ctx, containerName, false)
 			return nil
 		}
 		if hostNamePort != "" && !running {
+			// Sidecars come up (and become ready) before the app container,
+			// the app may depend on them at startup
+			if err := h.ensureSidecars(ctx, fullHash, "", containerName, false); err != nil {
+				return err
+			}
 			if err := h.manager.StartContainer(ctx, containerName); err != nil {
 				return fmt.Errorf("error starting stopped container: %w", err)
 			}
@@ -1742,6 +1828,13 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 		return err
 	}
 
+	if !startedExisting && h.lifetime != types.CONTAINER_LIFETIME_COMMAND {
+		// App sidecars start, in order, and are ready before the app container
+		if err = h.ensureSidecars(ctx, fullHash, sourceDir, containerName, false); err != nil {
+			return err
+		}
+	}
+
 	h.stateLock.Lock()
 	defer h.stateLock.Unlock()
 
@@ -1752,7 +1845,7 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 
 	if !startedExisting {
 		if err := h.manager.RunContainer(ctx, h.app.AppEntry, sourceDir, containerName,
-			h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, fullHash, h.IsImageSpec(),
+			h.GenImageName, h.port, h.withSidecarAddrEnv(h.envMap, fullHash), h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, fullHash, h.IsImageSpec(),
 			nil); err != nil {
 			return fmt.Errorf("error starting container after update: %w", err)
 		}
@@ -1787,6 +1880,19 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 	h.activeContainerName = containerName
 	h.activeVersionHash = fullHash
 	h.hostNamePort = hostNamePort
+
+	if container.DeployTxnFromContext(ctx) == nil && !startedExisting {
+		// Standalone reload (lazy initialization after a promote): nothing
+		// defers the cleanup to a commit, so stop the superseded version's
+		// containers (and their sidecars) now rather than leaving them to
+		// the stale sweeper - which must leave always_on sidecars of
+		// existing apps alone and would otherwise keep an old worker running
+		if stopper, ok := container.AsAppContainerStopper(h.manager); ok {
+			if err := stopper.StopAppContainersExcept(ctx, h.app.Id, containerName); err != nil {
+				h.Warn().Err(err).Msgf("error stopping superseded containers for app %s", h.app.Id)
+			}
+		}
+	}
 	return nil
 }
 
@@ -1862,6 +1968,8 @@ func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash st
 		LogLinesToShow:     h.containerConfig.LogLinesToShow,
 		ShowLogsForFailure: h.containerConfig.ShowLogsForFailure,
 		Litestream:         litestreamSpec,
+		Sidecars:           h.buildSidecars(h.envMap),
+		SidecarAddrEnv:     h.sidecarAddrEnv(fullHash),
 	})
 	if err != nil {
 		return err

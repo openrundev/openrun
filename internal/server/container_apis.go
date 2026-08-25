@@ -37,6 +37,72 @@ type ContainerInfo struct {
 	// CreatedAt is the container/pod creation time, date-first formatted so
 	// it sorts lexicographically (used by the console for recency ordering)
 	CreatedAt string `json:"created_at"`
+	// Role is "sidecar" for an app sidecar container and "litestream" for
+	// the replication companion (docker/podman, from the role label); empty
+	// for app containers and pods
+	Role string `json:"role"`
+	// Sidecar is the sidecar name for role sidecar containers
+	Sidecar string `json:"sidecar"`
+	// SidecarOf is the app container a sidecar belongs to (docker/podman)
+	SidecarOf string `json:"sidecar_of"`
+	// Sidecars are the app sidecar container names of a kubernetes pod
+	Sidecars []string `json:"sidecars"`
+	// StartedAt / FinishedAt are filled by FillContainerTimes (list_containers
+	// times=True): the last start of the container and, for stopped ones,
+	// when it stopped. RFC3339, empty when unknown
+	StartedAt  string `json:"started_at,omitempty,omitzero"`
+	FinishedAt string `json:"finished_at,omitempty,omitzero"`
+}
+
+// FillContainerTimes adds the start/stop times to listed containers with one
+// batched inspect call (docker/podman). Kubernetes pods carry their start
+// time from the listing already. Best effort: a failed inspect leaves the
+// times empty
+func (s *Server) FillContainerTimes(ctx context.Context, infos []ContainerInfo) {
+	runtime := s.containerRuntime()
+	if runtime == "" || runtime == types.CONTAINER_KUBERNETES || len(infos) == 0 {
+		return
+	}
+	args := []string{"inspect", "--type", "container", "--format", "{{.Id}} {{.State.StartedAt}} {{.State.FinishedAt}}"}
+	index := map[string]int{}
+	for i, info := range infos {
+		if info.Id == "" {
+			continue
+		}
+		args = append(args, info.Id)
+		index[info.Id] = i
+	}
+	out, err := runContainerCmd(ctx, runtime, args...)
+	if err != nil {
+		s.Debug().Err(err).Msg("error inspecting containers for times")
+		// A missing container fails the whole call; fall through and parse
+		// whatever was printed
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		// Inspect prints the full id; the listing carries the short form
+		for id, i := range index {
+			if strings.HasPrefix(fields[0], id) {
+				infos[i].StartedAt = zeroTimeToEmpty(fields[1])
+				if infos[i].State != "running" {
+					infos[i].FinishedAt = zeroTimeToEmpty(fields[2])
+				}
+				break
+			}
+		}
+	}
+}
+
+// zeroTimeToEmpty maps the container runtime's zero time (never started /
+// never stopped) to ""
+func zeroTimeToEmpty(t string) string {
+	if strings.HasPrefix(t, "0001-") {
+		return ""
+	}
+	return t
 }
 
 // ContainerMount is a mount point of a container
@@ -197,6 +263,9 @@ func (s *Server) ListManagedContainers(ctx context.Context) ([]ContainerInfo, er
 			Ports:     entryPorts(entry),
 			Runtime:   filepath.Base(runtime),
 			CreatedAt: entryCreatedAt(entry),
+			Role:      labels[container.RoleLabelKey],
+			Sidecar:   labels[container.SidecarNameLabelKey],
+			SidecarOf: labels[container.SidecarAppLabelKey],
 		})
 	}
 	s.resolveContainerApps(infos)
@@ -321,13 +390,16 @@ func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats b
 
 	detail := &ContainerDetail{
 		ContainerInfo: ContainerInfo{
-			Id:      entryString(entry, "Id", "ID"),
-			Name:    strings.TrimPrefix(entryString(entry, "Name"), "/"),
-			AppId:   labels[containerAppIdLabel],
-			AppPath: labels[containerAppPathLabel],
-			Image:   entryString(config, "Image"),
-			State:   entryString(state, "Status"),
-			Runtime: filepath.Base(runtime),
+			Id:        entryString(entry, "Id", "ID"),
+			Name:      strings.TrimPrefix(entryString(entry, "Name"), "/"),
+			AppId:     labels[containerAppIdLabel],
+			AppPath:   labels[containerAppPathLabel],
+			Image:     entryString(config, "Image"),
+			State:     entryString(state, "Status"),
+			Runtime:   filepath.Base(runtime),
+			Role:      labels[container.RoleLabelKey],
+			Sidecar:   labels[container.SidecarNameLabelKey],
+			SidecarOf: labels[container.SidecarAppLabelKey],
 		},
 		Command:      command,
 		StartedAt:    entryString(state, "StartedAt"),
@@ -652,6 +724,8 @@ func kubernetesPodInfo(pod *container.WorkloadPod) ContainerInfo {
 		Ports:     pod.PodIP,
 		Runtime:   types.CONTAINER_KUBERNETES,
 		CreatedAt: pod.CreatedAt,
+		Sidecars:  pod.Sidecars,
+		StartedAt: pod.StartedAt,
 	}
 }
 

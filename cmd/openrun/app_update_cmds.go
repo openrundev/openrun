@@ -154,6 +154,7 @@ func appUpdateMetadataCommand(commonFlags []cli.Flag, clientConfig *types.Client
 			appUpdateConfig(commonFlags, clientConfig, "container-option", "copt", types.AppMetadataContainerOptions, "option"),
 			appUpdateConfig(commonFlags, clientConfig, "container-arg", "carg", types.AppMetadataContainerArgs, "arg"),
 			appUpdateConfig(commonFlags, clientConfig, "container-volumes", "cvol", types.AppMetadataContainerVolumes, "volume"),
+			appUpdateConfig(commonFlags, clientConfig, "sidecars", "sc", types.AppMetadataSidecars, "sidecar_json"),
 			appUpdateConfig(commonFlags, clientConfig, "app-config", "conf", types.AppMetadataAppConfig, "config"),
 			appUpdateConfig(commonFlags, clientConfig, "auth", "", types.AppMetadataAuthnType, "<auth_type>"),
 			appUpdateConfig(commonFlags, clientConfig, "git-auth", "", types.AppMetadataGitAuthName, "<git_auth>"),
@@ -267,6 +268,15 @@ The initial argument are strings. The last argument is <appPathGlob>. `+PATH_SPE
 				if err := validateNoFlagLikeValues("--cvol", "container volume", body.ConfigEntries); err != nil {
 					return err
 				}
+			}
+			if configType == types.AppMetadataSidecars {
+				// JSON objects or @file entries; "-" clears all metadata
+				// sidecars. The full list replaces the previous one
+				entries, err := parseSidecarArgs(body.ConfigEntries)
+				if err != nil {
+					return err
+				}
+				body.ConfigEntries = entries
 			}
 
 			var updateResponse types.AppUpdateMetadataResponse

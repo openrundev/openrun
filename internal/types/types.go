@@ -556,6 +556,12 @@ type SecurityConfig struct {
 	PreviewEnableWriteAccess bool              `toml:"preview_enable_write_access"`
 	AllowedContainerArgs     map[string]string `toml:"allowed_container_args"` // the container args that are allowed to be used in the app config
 	AllowedMounts            []string          `toml:"allowed_mounts"`         // the volume mounts paths that are allowed to be used in the app config
+	// AllowedSidecarImages bounds the foreign images operator-set sidecars
+	// (app create --sidecar, app update sidecars, apps.star sidecars) may
+	// run: exact references or regex: entries. Empty allows any image. App
+	// definition sidecars are bounded by the app's approved container.in
+	// sidecar permission instead
+	AllowedSidecarImages []string `toml:"allowed_sidecar_images"`
 
 	// UnsafeAgentWithoutSandbox runs app builder agents as plain host
 	// processes instead of container sandboxes. The sandbox is the safety
@@ -1069,6 +1075,10 @@ type AppMetadata struct {
 	ContainerOptions map[string]string `json:"container_options"`
 	ContainerArgs    map[string]string `json:"container_args"`
 	ContainerVolumes []string          `json:"container_volumes"`
+	// Sidecars are the operator-set sidecar definitions (JSON SidecarSpec
+	// documents), merged by name over the app definition's container.config
+	// sidecars. See SidecarSpec
+	Sidecars         []string          `json:"sidecars,omitempty,omitzero"`
 	AppConfig        map[string]string `json:"appconfig"`
 	AuthnType        AppAuthnType      `json:"authn_type"`
 	GitAuthName      string            `json:"git_auth_name"`
@@ -1180,6 +1190,7 @@ const (
 	AppMetadataContainerOptions AppMetadataConfigType = "container_options"
 	AppMetadataContainerArgs    AppMetadataConfigType = "container_args"
 	AppMetadataContainerVolumes AppMetadataConfigType = "container_volumes"
+	AppMetadataSidecars         AppMetadataConfigType = "sidecars"
 	AppMetadataAuthnType        AppMetadataConfigType = "auth"
 	AppMetadataGitAuthName      AppMetadataConfigType = "git_auth"
 	AppMetadataBindings         AppMetadataConfigType = "bindings"

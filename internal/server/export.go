@@ -35,6 +35,7 @@ var appExportFields = map[string]bool{
 	"container_options": true,
 	"container_args":    true,
 	"container_volumes": true,
+	"sidecars":          true,
 	"appconfig":         true,
 	"bindings":          true,
 	"stage_at":          true,
@@ -328,6 +329,7 @@ func (s *Server) exportApp(ctx context.Context, tx types.Transaction, appEntry *
 		ContainerOptions: metadata.ContainerOptions,
 		ContainerArgs:    metadata.ContainerArgs,
 		ContainerVolumes: metadata.ContainerVolumes,
+		Sidecars:         metadata.Sidecars,
 	}
 
 	// The deprecated AppSettings auth fields are migrated into AppMetadata on

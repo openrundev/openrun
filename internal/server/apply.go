@@ -18,6 +18,7 @@ import (
 	apppkg "github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/rbac"
@@ -148,6 +149,10 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	if err != nil {
 		return nil, err
 	}
+	sidecars, err := sidecarEntries(appDef)
+	if err != nil {
+		return nil, err
+	}
 	bindings, err := apptype.GetListStringAttr(appDef, "bindings", true)
 	if err != nil {
 		return nil, err
@@ -183,10 +188,53 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 		ContainerOptions: containerOptsStr,
 		ContainerArgs:    containerArgsStr,
 		ContainerVolumes: containerVols,
+		Sidecars:         sidecars,
 		Bindings:         bindings,
 		StageAt:          stageAt,
 		Verify:           verify,
 	}, nil
+}
+
+// sidecarEntries reads the app entry's sidecars: JSON strings or dicts with
+// the SidecarSpec fields, normalized to canonical JSON strings.
+func sidecarEntries(appDef *starlarkstruct.Struct) ([]string, error) {
+	v, err := appDef.Attr("sidecars")
+	if err != nil {
+		return nil, nil
+	}
+	list, ok := v.(*starlark.List)
+	if !ok {
+		return nil, fmt.Errorf("sidecars is not a list")
+	}
+	if list.Len() == 0 {
+		// nil, not an empty slice: the omitempty ApplyInfo round trip makes
+		// the stored old info nil, and change detection compares the two
+		return nil, nil
+	}
+	ret := make([]string, 0, list.Len())
+	for i := 0; i < list.Len(); i++ {
+		var entry string
+		switch item := list.Index(i).(type) {
+		case starlark.String:
+			entry = item.GoString()
+		default:
+			goValue, err := starlark_type.ToGo(item)
+			if err != nil {
+				return nil, err
+			}
+			data, err := json.Marshal(goValue)
+			if err != nil {
+				return nil, fmt.Errorf("sidecars entry %d: %w", i, err)
+			}
+			entry = string(data)
+		}
+		spec, err := types.ParseSidecarSpec(entry)
+		if err != nil {
+			return nil, err
+		}
+		ret = append(ret, spec.String())
+	}
+	return ret, nil
 }
 
 func (s *Server) setupSource(ctx context.Context, applyPath, branch, commit, gitAuth string, repoCache *RepoCache, isDev bool) (string, string, error) {
@@ -764,6 +812,15 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	}
 	contVolsChanged := mergeSlice(oldContVolumes, newInfo.ContainerVolumes, &liveApp.Metadata.ContainerVolumes, clobber)
 
+	var oldSidecars []string
+	if oldInfo != nil {
+		oldSidecars = oldInfo.Sidecars
+	}
+	sidecarsChanged, err := mergeSidecars(oldSidecars, newInfo.Sidecars, &liveApp.Metadata.Sidecars, clobber)
+	if err != nil {
+		return nil, fmt.Errorf("merging sidecars for %s: %w", appPathDomain, err)
+	}
+
 	var oldAppConfig map[string]string
 	if oldInfo != nil {
 		oldAppConfig = oldInfo.AppConfig
@@ -779,7 +836,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	var approvalResult *types.ApproveResult
 
 	updated := specChanged || gitBranchChanged || gitCommitChanged || paramsChanged ||
-		contConfigChanged || contArgsChanged || contVolsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged
+		contConfigChanged || contArgsChanged || contVolsChanged || sidecarsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged
 	updatedApps := make([]types.AppPathDomain, 0)
 	if updated {
 		liveApp.Metadata.VersionMetadata.ApplyInfo, err = json.Marshal(newInfo)
@@ -1159,7 +1216,10 @@ func mergeMap(old, new, live map[string]string, clobber bool) bool {
 
 func mergeSlice(old, new []string, live *[]string, clobber bool) bool {
 	if clobber {
-		if reflect.DeepEqual(*live, new) {
+		// nil and empty are the same absent value: stored/live state round
+		// trips through omitempty JSON as nil while a parsed empty kwarg is
+		// an empty slice
+		if len(*live) == 0 && len(new) == 0 || reflect.DeepEqual(*live, new) {
 			return false
 		}
 		// Force update all values
@@ -1217,6 +1277,104 @@ func mergeSlice(old, new []string, live *[]string, clobber bool) bool {
 	return updated
 }
 
+// mergeSidecars merges sidecar JSON documents keyed by sidecar NAME, with
+// mergeMap's three way semantics. The whole-document mergeSlice would keep an
+// independently edited live document alongside its changed replacement from
+// the new config - two entries with the same name, which ParseSidecarSpecs
+// rejects on the next reload. Live declaration order (the start order) is
+// preserved; documents added by new append in their declared order.
+func mergeSidecars(old, new []string, live *[]string, clobber bool) (bool, error) {
+	if clobber {
+		// nil and empty are the same absent value (see mergeSlice)
+		if len(*live) == 0 && len(new) == 0 || reflect.DeepEqual(*live, new) {
+			return false, nil
+		}
+		*live = append([]string{}, new...)
+		return true, nil
+	}
+
+	byName := func(docs []string) (map[string]string, []string, error) {
+		m := make(map[string]string, len(docs))
+		order := make([]string, 0, len(docs))
+		for _, doc := range docs {
+			spec, err := types.ParseSidecarSpec(doc)
+			if err != nil {
+				return nil, nil, err
+			}
+			m[spec.Name] = doc
+			order = append(order, spec.Name)
+		}
+		return m, order, nil
+	}
+	liveMap, liveOrder, err := byName(*live)
+	if err != nil {
+		return false, err
+	}
+	newMap, newOrder, err := byName(new)
+	if err != nil {
+		return false, err
+	}
+	oldMap, _, err := byName(old)
+	if err != nil {
+		return false, err
+	}
+
+	// Duplicate names persisted by an earlier merge collapse to the last
+	// document (byName keeps the last), healing the stored list
+	updated := len(liveMap) != len(liveOrder)
+	set := func(name, doc string) {
+		if liveMap[name] == doc {
+			return
+		}
+		if _, present := liveMap[name]; !present {
+			liveOrder = append(liveOrder, name)
+		}
+		liveMap[name] = doc
+		updated = true
+	}
+	if old == nil {
+		// First run of apply
+		for _, name := range newOrder {
+			set(name, newMap[name])
+		}
+	} else {
+		// Three way merge
+		for name, oldDoc := range oldMap {
+			newDoc, inNew := newMap[name]
+			if inNew && oldDoc != newDoc {
+				// Changed from old to new
+				set(name, newDoc)
+			}
+			if !inNew {
+				// Removed from new
+				if _, present := liveMap[name]; present {
+					delete(liveMap, name)
+					updated = true
+				}
+			}
+		}
+		for _, name := range newOrder {
+			if _, inOld := oldMap[name]; !inOld {
+				// Added in new
+				set(name, newMap[name])
+			}
+		}
+	}
+	if !updated {
+		return false, nil
+	}
+	merged := make([]string, 0, len(liveMap))
+	emitted := map[string]bool{}
+	for _, name := range liveOrder {
+		if doc, present := liveMap[name]; present && !emitted[name] {
+			emitted[name] = true
+			merged = append(merged, doc)
+		}
+	}
+	*live = merged
+	return true, nil
+}
+
 func checkPropertyChanged(oldInfo *types.CreateAppRequest, fetchVal func(*types.CreateAppRequest) any, newVal, liveVal any, clobber bool) bool {
 	if clobber || oldInfo == nil {
 		return !reflect.DeepEqual(liveVal, newVal)
@@ -1247,13 +1405,14 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 		var containerOpts = starlark.NewDict(0)
 		var containerArgs = starlark.NewDict(0)
 		var containerVols = &starlark.List{}
+		var sidecars = &starlark.List{}
 		var bindings = &starlark.List{}
 
 		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "dev?", &dev,
 			"auth?", &auth, "git_auth?", &gitAuth, "git_branch?", &gitBranch, "git_commit?", &gitCommit,
 			"params?", &params, "spec?", &appSpec, "stage_at?", &stageAt, "app_config", &appConfig,
 			"container_opts?", &containerOpts, "container_args?", &containerArgs, "container_vols?", &containerVols,
-			"bindings?", &bindings, "verify?", &verify,
+			"sidecars?", &sidecars, "bindings?", &bindings, "verify?", &verify,
 		); err != nil {
 			return nil, err
 		}
@@ -1273,6 +1432,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 			"container_opts": containerOpts,
 			"container_args": containerArgs,
 			"container_vols": containerVols,
+			"sidecars":       sidecars,
 			"bindings":       bindings,
 			"verify":         verify,
 		}
