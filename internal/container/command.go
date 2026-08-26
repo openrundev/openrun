@@ -464,14 +464,14 @@ func (c *CommandCM) StopAppContainersExcept(ctx context.Context, appId types.App
 	return errors.Join(errs...)
 }
 
-// RemoveAppResources removes every local runtime asset of a deleted app: its
-// containers (all versions, sidecars, litestream), its generated images, its
-// named volumes and its per app network. Sidecar images are not removed:
-// foreign images are user pulled and may be shared across apps, and app image
-// sidecars use the app image, which is removed. Images pushed to a remote
-// registry are not touched. Best effort: keeps going past individual failures
-// and returns them joined.
-func (c *CommandCM) RemoveAppResources(ctx context.Context, appId types.AppId) error {
+// RemoveAppContainers force-removes every container of a deleted app: all
+// versions, sidecars and litestream, running or stopped. Callers remove the
+// containers of every app being deleted before removing any app's other
+// assets (RemoveAppAssets): stage and prod apps share one generated image
+// repository, and docker refuses to remove an image still referenced by the
+// linked app's (even stopped) containers. Best effort: keeps going past
+// individual failures and returns them joined.
+func (c *CommandCM) RemoveAppContainers(ctx context.Context, appId types.AppId) error {
 	var errs []error
 	containers, err := c.listContainers(ctx, []string{fmt.Sprintf("label=%sapp.id=%s", LABEL_PREFIX, appId)}, true)
 	if err != nil {
@@ -487,6 +487,19 @@ func (c *CommandCM) RemoveAppResources(ctx context.Context, appId types.AppId) e
 			errs = append(errs, err)
 		}
 	}
+	return errors.Join(errs...)
+}
+
+// RemoveAppAssets removes a deleted app's remaining local runtime assets: its
+// generated images, its named volumes and its per app network. Called after
+// RemoveAppContainers has run for every app being deleted, so nothing
+// references them anymore. Sidecar images are not removed: foreign images are
+// user pulled and may be shared across apps, and app image sidecars use the
+// app image, which is removed. Images pushed to a remote registry are not
+// touched. Best effort: keeps going past individual failures and returns them
+// joined.
+func (c *CommandCM) RemoveAppAssets(ctx context.Context, appId types.AppId) error {
+	var errs []error
 	for _, imageId := range appImageIds(appId) {
 		if err := c.removeAppImages(ctx, imageId, ""); err != nil {
 			errs = append(errs, err)
@@ -495,7 +508,6 @@ func (c *CommandCM) RemoveAppResources(ctx context.Context, appId types.AppId) e
 	if err := c.removeAppVolumes(ctx, appId); err != nil {
 		errs = append(errs, err)
 	}
-	// The network goes last, once its endpoints (the containers) are gone
 	if err := c.RemoveSidecarNetwork(ctx, appId); err != nil {
 		errs = append(errs, err)
 	}

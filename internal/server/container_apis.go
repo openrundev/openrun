@@ -916,12 +916,6 @@ func entryPorts(entry map[string]any) string {
 	return ""
 }
 
-// appResourceRemover removes every container runtime asset of one app; both
-// container managers implement it (docker/podman and kubernetes).
-type appResourceRemover interface {
-	RemoveAppResources(ctx context.Context, appId types.AppId) error
-}
-
 // removeAppRuntimeResources removes the runtime assets of deleted apps: their
 // containers and sidecars, generated images (sidecar images are user pulled
 // and are kept), named volumes and per app networks on docker/podman;
@@ -932,7 +926,6 @@ type appResourceRemover interface {
 func (s *Server) removeAppRuntimeResources(ctx context.Context, appIds []types.AppId) error {
 	var errs []error
 	command := s.Config().System.ContainerCommand
-	var remover appResourceRemover
 	if command == types.CONTAINER_KUBERNETES {
 		// The removal APIs use only the cluster connection; the per app config
 		// (nil here) is not available for a deleted app and is not needed
@@ -940,19 +933,31 @@ func (s *Server) removeAppRuntimeResources(ctx context.Context, appIds []types.A
 		if err != nil {
 			errs = append(errs, fmt.Errorf("removing deleted app resources: %w", err))
 		} else {
-			remover = k8sCM
+			for _, appId := range appIds {
+				if err := k8sCM.RemoveAppResources(ctx, appId); err != nil {
+					errs = append(errs, fmt.Errorf("removing runtime resources of app %s: %w", appId, err))
+				}
+			}
 		}
 	} else if command != "" {
-		remover = container.NewCommandCM(s.Logger, s.Config(), "", "")
+		commandCM := container.NewCommandCM(s.Logger, s.Config(), "", "")
+		// Every deleted app's containers go first: linked stage and prod apps
+		// share one generated image repository, and the image removal below
+		// fails while any (even stopped) container still references it
+		for _, appId := range appIds {
+			if err := commandCM.RemoveAppContainers(ctx, appId); err != nil {
+				errs = append(errs, fmt.Errorf("removing containers of app %s: %w", appId, err))
+			}
+		}
+		for _, appId := range appIds {
+			if err := commandCM.RemoveAppAssets(ctx, appId); err != nil {
+				errs = append(errs, fmt.Errorf("removing runtime assets of app %s: %w", appId, err))
+			}
+		}
 	}
 
 	clHome := cmp.Or(os.Getenv("OPENRUN_HOME"), "./")
 	for _, appId := range appIds {
-		if remover != nil {
-			if err := remover.RemoveAppResources(ctx, appId); err != nil {
-				errs = append(errs, fmt.Errorf("removing runtime resources of app %s: %w", appId, err))
-			}
-		}
 		if err := os.RemoveAll(filepath.Join(clHome, "run", "app", string(appId))); err != nil {
 			errs = append(errs, fmt.Errorf("removing run dir of app %s: %w", appId, err))
 		}

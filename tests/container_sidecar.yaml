@@ -155,8 +155,9 @@ tests:
     config:
       retries: 10
       interval: 1s
-  sidecar0083: # record the stage app id for the delete cleanup checks
-    command: bash -c '../openrun app list --internal --format csv /sc_idle | grep -o "app_stg_[a-z0-9]*" | head -1 > sc_idle_id.txt && [ -s sc_idle_id.txt ]'
+  sidecar0083: # record app ids for the delete cleanup checks: the idle app and the
+    # promoted app (whose stage containers reference the shared stage/prod image)
+    command: bash -c '../openrun app list --internal --format csv /sc_idle | grep -o "app_stg_[a-z0-9]*" | head -1 > sc_idle_id.txt && ../openrun app list --internal --format csv /sc_cli | grep -o "app_stg_[a-z0-9]*" | head -1 > sc_cli_id.txt && [ -s sc_idle_id.txt ] && [ -s sc_cli_id.txt ]'
 
   sidecar0090: # cleanup
     command: ../openrun app delete "/sc_*"
@@ -166,6 +167,8 @@ tests:
     # in test_containers.yaml; the suite start re-copies it)
     command: rm -rf ./sc_star ./sc_badperm
   sidecar0092: # delete removed the app's containers, sidecars, generated images (the
-    # stage/prod shared cli-<ulid> repo and any per-id repo) and network
-    command: bash -c 'id=$(cat sc_idle_id.txt); rm -f sc_idle_id.txt; c=$(${OPENRUN_CONTAINER_COMMAND} ps -aq --filter "label=dev.openrun.app.id=$id" | wc -l | tr -d " "); i=$(( $(${OPENRUN_CONTAINER_COMMAND} images -q "cli-$id" | wc -l) + $(${OPENRUN_CONTAINER_COMMAND} images -q "cli-${id#app_stg_}" | wc -l) )); n=$(${OPENRUN_CONTAINER_COMMAND} network ls -q --filter "name=cln-$id" | wc -l | tr -d " "); v=$(${OPENRUN_CONTAINER_COMMAND} volume ls -q --filter "name=clv-$id" | wc -l | tr -d " "); echo "containers=$c images=$i networks=$n volumes=$v"'
-    stdout: "containers=0 images=0 networks=0 volumes=0"
+    # stage/prod shared cli-<ulid> repo and any per-id repo) and network; the promoted
+    # app's shared images (referenced by stage and prod containers of several versions)
+    # are gone too
+    command: bash -c 'id=$(cat sc_idle_id.txt); cid=$(cat sc_cli_id.txt); rm -f sc_idle_id.txt sc_cli_id.txt; c=$(${OPENRUN_CONTAINER_COMMAND} ps -aq --filter "label=dev.openrun.app.id=$id" | wc -l | tr -d " "); i=$(( $(${OPENRUN_CONTAINER_COMMAND} images -q "cli-$id" | wc -l) + $(${OPENRUN_CONTAINER_COMMAND} images -q "cli-${id#app_stg_}" | wc -l) )); p=$(( $(${OPENRUN_CONTAINER_COMMAND} ps -aq --filter "label=dev.openrun.app.id=$cid" | wc -l) + $(${OPENRUN_CONTAINER_COMMAND} images -q "cli-${cid#app_stg_}" | wc -l) )); n=$(${OPENRUN_CONTAINER_COMMAND} network ls -q --filter "name=cln-$id" | wc -l | tr -d " "); v=$(${OPENRUN_CONTAINER_COMMAND} volume ls -q --filter "name=clv-$id" | wc -l | tr -d " "); echo "containers=$c images=$i promoted=$p networks=$n volumes=$v"'
+    stdout: "containers=0 images=0 promoted=0 networks=0 volumes=0"
