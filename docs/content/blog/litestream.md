@@ -1,23 +1,27 @@
 ---
-title: "SQLite in Production with Zero-Config Litestream Replication"
-description: "OpenRun continuously replicates app SQLite databases to S3-compatible storage with Litestream and restores them automatically, on a single node and on Kubernetes."
+title: "SQLite in Production with Built-In Litestream Replication"
+description: "OpenRun adds built-in Litestream replication for SQLite apps, with automatic backup to S3-compatible storage and restore on Docker, Podman, and Kubernetes."
 summary: "Continuous SQLite replication to S3 with automatic restore, managed by the platform instead of the app."
 date: 2026-08-25
 ---
 
-{{< openrun-intro >}}
+OpenRun is an [open-source](https://github.com/openrundev/openrun), self-hosted GitOps platform for deploying web apps and internal tools on Docker, Podman, or Kubernetes. It provides authentication, authorization, auditing and RBAC without requiring changes to the application.
 
-OpenRun now has built-in [Litestream](https://litestream.io/) support for SQLite apps. App databases are continuously replicated to AWS S3 or S3-compatible object storage such as Cloudflare R2, MinIO and SeaweedFS. Restore is automatic: when an app starts with an empty or recreated volume, the database is pulled back from the replica before the app starts. The same setup works on a single node with Docker/Podman and on Kubernetes.
+OpenRun now has built-in [Litestream](https://litestream.io/) support for SQLite apps. App databases are continuously replicated to AWS S3 or S3-compatible object storage such as Cloudflare R2, MinIO and SeaweedFS. Restore is automatic: when OpenRun detects an empty or recreated app volume, it restores the database from the replica before starting the app. The same setup works on a single node with Docker/Podman and on Kubernetes.
+
+The result is that application developers use SQLite normally without having to install Litestream, configure object storage, modify their container image, or implement restore logic.
 
 ## Background
 
-SQLite is a great fit for internal tools and small web apps: one file holds all the data, reads are fast and there is zero database server overhead. Litestream solves date replication for SQLite by streaming WAL changes to object storage. Each app has to bundle the Litestream binary in its image, write a config file and run the restore step on startup.
+SQLite is a great fit for internal tools and small web apps: the database is file-backed, reads are fast, and there is no separate database server to operate. Litestream continuously replicates SQLite changes to object storage, providing durable off-node backups and point-in-time recovery.
 
-OpenRun moves all the Litestream setup overhead into the deployment platform. Litestream settings live in the server config, and OpenRun manages the replication and restore lifecycle outside the app container. The app image stays unchanged, adding new apps which use SQLite is much easier.
+Without platform integration, however, you still need to deploy Litestream alongside the app, configure the replica, and handle database restoration during startup.
+
+OpenRun moves that operational work into the platform. Litestream settings are defined once in the server configuration, while OpenRun manages replication and restoration outside the app container. The app image stays unchanged, and new SQLite apps can use replication without any Litestream-specific setup.
 
 ## Deploying a SQLite App
 
-Define a Litestream config once in the server config:
+Define Litestream once in the OpenRun server configuration:
 
 ```toml {filename="openrun.toml"}
 [litestream.mainbackup]
@@ -34,7 +38,7 @@ openrun service create sqlite/main --is-default --config litestream_config=mainb
 openrun app create --bind sqlite --approve github.com/example/notes-app /notes
 ```
 
-The same app can be defined declaratively. Put the definition in an apply file, in Git alongside your other config:
+The same app can be defined declaratively. Put the definition in an apply file alongside your other configuration in Git:
 
 ```python {filename="apps.star"}
 app("/notes", "github.com/example/notes-app", bindings=["sqlite"])
@@ -58,11 +62,11 @@ On Docker and Podman, OpenRun runs Litestream in a per-app companion container t
   <img alt="Single-node deployment with Litestream replication of app data and server metadata to S3-compatible storage" src="/d2/single-node-litestream.svg">
 </picture>
 
-The server's own metadata can be replicated the same way. Litestream is embedded in the OpenRun binary as a Go library, so setting `metadata.litestream_config` in the server config replicates the metadata and audit databases with zero extra processes.
+The server's own metadata can be replicated the same way. Litestream is embedded in the OpenRun binary as a Go library, so setting `metadata.litestream_config` in the server config replicates the metadata and audit databases without an additional Litestream process.
 
 ## Kubernetes
 
-The same app config works when OpenRun [deploys to a Kubernetes cluster]({{< ref "/docs/container/kubernetes" >}}). The binding's volume becomes a PersistentVolumeClaim, and OpenRun adds a restore init container plus a native Litestream sidecar (Kubernetes 1.29 or newer) to the app pod automatically. The sidecar starts before the app container and is terminated after it, so the final changes are always synced. Apps with a SQLite binding run as a single replica with the `Recreate` update strategy, which respects SQLite's single-writer model.
+The same app config works when OpenRun [deploys to a Kubernetes cluster]({{< ref "/docs/container/kubernetes" >}}). The binding's volume becomes a PersistentVolumeClaim, and OpenRun adds a restore init container plus a native Litestream sidecar (Kubernetes 1.29 or newer) to the app pod automatically. The sidecar starts before the app container and is terminated after it, allowing Litestream to perform a final sync during orderly shutdown. Apps with a SQLite binding run as a single replica with the Recreate update strategy, preventing multiple app pods from writing to the same SQLite volume during an update.
 
 <picture class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
   <img alt="Kubernetes deployment with a restore init container, app container and Litestream sidecar in the app pod, replicating the SQLite PVC to S3-compatible storage" src="/d2/k8s-litestream.svg">
@@ -70,18 +74,18 @@ The same app config works when OpenRun [deploys to a Kubernetes cluster]({{< ref
 
 ## What Happens on a Volume or Node Loss
 
-For a lost app volume, recovery is automatic and invisible to the app. The next time the app starts, OpenRun sees the empty volume, runs the restore containers to pull the databases back from the replica, and then starts the app container against the restored data. The replica is keyed by the binding, so attaching the binding to a new app restores the data into that app's fresh volume too.
+For a lost app volume, recovery is automatic from the app's perspective. The next time the app starts, OpenRun sees the empty volume, runs the restore containers to pull the databases back from the replica, and then starts the app container against the restored data. The replica is keyed by the binding, so attaching the same binding to a new app restores the data into that app's fresh volume too.
 
 For a complete node loss, with metadata replication enabled, the recovery procedure is:
 
 1. Install OpenRun on a new machine.
 2. Start the server with the same config file.
 
-On startup, the server finds its metadata database missing, restores the metadata and audit databases from the replica, and comes up with all apps, bindings, services, versions and audit history intact. Each app then redeploys on first request, restoring its SQLite data from its own replica before the container starts. The config file is the single thing to keep safe outside the node.
+On startup, the server finds its metadata database missing, restores the metadata and audit databases from the replica, and comes up with all apps, bindings, services, versions and audit history intact. Each app then redeploys on first request, restoring its SQLite data from its own replica before the container starts. To recover the node, you only need the server config and its referenced secrets; the rest is restored from object storage.
 
-Replication is asynchronous, so up to the last `sync_interval` of writes (one second by default) can be lost in a crash.
+Application data and OpenRun's own metadata can therefore be recovered from the same object-storage backend. Replication is asynchronous. Under normal conditions, with the default one-second `sync_interval`, a sudden crash can lose roughly the most recent second of writes that have not yet reached object storage.
 
-The node loss scenario is exercised end to end in [CI tests](https://github.com/openrundev/openrun/blob/7baff958df092121b014ac36d469771bc54f547b/tests/run_cli_tests.sh#L1344).
+The node-loss scenario is exercised end-to-end in [CI tests](https://github.com/openrundev/openrun/blob/7baff958df092121b014ac36d469771bc54f547b/tests/run_cli_tests.sh#L1344). The test hard-kills the server, deletes the containers, volumes, and the OpenRun installation directory including the metadata databases. It then verifies that everything is rebuilt automatically from the object store, including the app SQLite data.
 
 ## Monitoring
 
@@ -96,8 +100,8 @@ app        /auto/app_prd_.../sqlite (prod)     mainbackup   healthy   2026-08-25
 app        /auto/app_prd_.../sqlite (staged)   mainbackup   pending   -                    -          stage.localhost:/notes
 ```
 
-App states combine the replica listing in object storage with the replication container's state, so a dead sidecar is flagged even when the app is idle.
+App states combine the replica listing in object storage with the replication container's state, so a failed replication container is visible even when object storage still contains a recent replica.
 
 See the [Litestream reference]({{< ref "/docs/applications/litestream" >}}) for the full config options and the [SQLite hosting use case]({{< ref "/docs/use-cases/sqliteapps" >}}) for app best practices (WAL mode, busy timeouts, short write transactions).
 
-The replication status is also visible in the [Console App]({{< ref "/console-tour" >}}), see [demo](https://utils.demo.clace.io/console/containers?query=&filter=litestream).
+The replication status is also visible in the [Console App]({{< ref "/console-tour" >}}); see [demo](https://utils.demo.clace.io/console/containers?query=&filter=litestream).
