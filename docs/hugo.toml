@@ -55,8 +55,8 @@ default = "system"
 displayToggle = true
 
 [params.banner]
-key = "announcement-service-bindings"
-message = "📌 Provide isolated databases for apps with [Service Bindings](https://openrun.dev/blog/service-binding)."
+key = "announcement-litestream"
+message = "📌 Enable SQLite data replication to S3 with [Litestream sync](https://openrun.dev/blog/litestream)"
 
 [params.page.contextMenu]
 enable = true
