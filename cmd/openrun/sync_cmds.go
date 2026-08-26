@@ -39,6 +39,7 @@ func syncScheduleCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 	flags = append(flags, newIntFlag("minutes", "s", "Schedule sync for every N minutes", 0))
 	flags = append(flags, newBoolFlag("clobber", "", "Force update app config, overwriting non-declarative changes", false))
 	flags = append(flags, newBoolFlag("force-reload", "f", "Force reload even if there are no new commits", false))
+	flags = append(flags, newBoolFlag("prune", "", "Delete apps and bindings created by this sync that are no longer declared", false))
 	flags = append(flags, dryRunFlag())
 
 	return &cli.Command{
@@ -83,6 +84,7 @@ Examples:
 				Reload:            string(reloadMode),
 				Clobber:           cCtx.Bool("clobber"),
 				ForceReload:       cCtx.Bool("force-reload"),
+				Prune:             cCtx.Bool("prune"),
 				ScheduleFrequency: cCtx.Int("minutes"),
 			}
 

@@ -1267,6 +1267,32 @@ func (h *Handler) apply(r *http.Request) (any, error) {
 	return ret, nil
 }
 
+// applyDelete is the handler for the declarative delete API which deletes the
+// apps and bindings declared in an apply file that match the glob
+func (h *Handler) applyDelete(r *http.Request) (any, error) {
+	appPathGlob := r.URL.Query().Get("appPathGlob")
+	if appPathGlob == "" {
+		return nil, types.CreateRequestError("appPathGlob is required", http.StatusBadRequest)
+	}
+	applyPath := r.URL.Query().Get("applyPath")
+	if applyPath == "" {
+		return nil, types.CreateRequestError("applyPath is required", http.StatusBadRequest)
+	}
+	dryRun, err := parseBoolArg(r.URL.Query().Get(DRY_RUN_ARG), false)
+	if err != nil {
+		return nil, err
+	}
+	updateTargetInContext(r, appPathGlob, dryRun)
+	updateOperationInContext(r, "apply_delete")
+
+	ret, err := h.server.ApplyDelete(r.Context(), applyPath, appPathGlob, dryRun,
+		r.URL.Query().Get("branch"), r.URL.Query().Get("commit"), r.URL.Query().Get("gitAuth"))
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
+	}
+	return ret, nil
+}
+
 // export is the handler for the export API which writes the current app and
 // binding state as a declarative config file
 func (h *Handler) export(r *http.Request) (any, error) {
@@ -1990,6 +2016,11 @@ func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
 	// API to apply app config
 	r.Post("/apply", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.apiHandler(w, r, enableBasicAuth, "apply", h.apply, true)
+	}))
+
+	// API to delete the apps and bindings declared in an apply file
+	r.Delete("/apply", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.apiHandler(w, r, enableBasicAuth, "apply_delete", h.applyDelete, true)
 	}))
 
 	// API to export app config declaratively

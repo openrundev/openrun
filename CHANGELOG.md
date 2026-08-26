@@ -10,6 +10,9 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Added sidecar containers for container apps: background workers running the app image with a different command, or companion services from another image (e.g. memcached). Sidecars start in order and are ready before the app container; on Kubernetes they are native sidecars in the app pod (reachable on `localhost`), on docker/podman peer containers on a per app network.
+- `app delete` now removes the app's runtime assets: its containers and sidecars, generated images, named volumes and per app network on docker/podman, and its workloads, service and volume claims on Kubernetes. Foreign sidecar images and remote registry images are not removed.
+- Added `--prune` to `sync schedule`: each sync run deletes the apps and bindings the sync itself created that are no longer present in the apply file. Resources created imperatively and later adopted by the sync are never pruned. Pruning runs in the same transaction as the apply, so a blocked delete fails and rolls back the run.
+- Added the `openrun delete <filePath> [<appPathGlob>]` command, the counterpart of `apply` for removal: the apps and bindings declared in the file that match the glob are deleted (declared resources that do not exist are skipped and reported). All deletes run in one transaction; a blocked delete rolls the whole command back.
 
 ### Fixed
 

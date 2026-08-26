@@ -135,7 +135,14 @@ func (c *CommandCM) RemoveImage(ctx context.Context, name ImageName) error {
 // RemoveSupersededImages removes the app's generated images other than keep,
 // cleaning up dev images left behind by image hash changes.
 func (c *CommandCM) RemoveSupersededImages(ctx context.Context, keep ImageName) error {
-	repo := string(GenImageName(c.appId, ""))
+	return c.removeAppImages(ctx, c.appId, keep)
+}
+
+// removeAppImages removes the generated (cli-<appId>) images of the app other
+// than keep; an empty keep removes them all. Foreign images (sidecars, image
+// specs) never match the generated repository and are not touched.
+func (c *CommandCM) removeAppImages(ctx context.Context, appId types.AppId, keep ImageName) error {
+	repo := string(GenImageName(appId, ""))
 	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "images",
 		"--filter", "reference="+repo, "--format", "{{.Repository}}:{{.Tag}}")
 	output, err := cmd.CombinedOutput()
@@ -453,6 +460,87 @@ func (c *CommandCM) StopAppContainersExcept(ctx context.Context, appId types.App
 		}
 		c.Info().Msgf("Stopping superseded container %s for app %s", name, appId)
 		errs = append(errs, c.StopContainer(ctx, name))
+	}
+	return errors.Join(errs...)
+}
+
+// RemoveAppResources removes every local runtime asset of a deleted app: its
+// containers (all versions, sidecars, litestream), its generated images, its
+// named volumes and its per app network. Sidecar images are not removed:
+// foreign images are user pulled and may be shared across apps, and app image
+// sidecars use the app image, which is removed. Images pushed to a remote
+// registry are not touched. Best effort: keeps going past individual failures
+// and returns them joined.
+func (c *CommandCM) RemoveAppResources(ctx context.Context, appId types.AppId) error {
+	var errs []error
+	containers, err := c.listContainers(ctx, []string{fmt.Sprintf("label=%sapp.id=%s", LABEL_PREFIX, appId)}, true)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	for _, cont := range containers {
+		name := ContainerName(cont.Names)
+		if name == "" {
+			continue
+		}
+		c.Info().Msgf("Removing container %s of deleted app %s", name, appId)
+		if err := c.RemoveContainer(ctx, name); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, imageId := range appImageIds(appId) {
+		if err := c.removeAppImages(ctx, imageId, ""); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := c.removeAppVolumes(ctx, appId); err != nil {
+		errs = append(errs, err)
+	}
+	// The network goes last, once its endpoints (the containers) are gone
+	if err := c.RemoveSidecarNetwork(ctx, appId); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// appImageIds returns the app id forms that key an app's generated images:
+// the id itself (dev images, container.separate_stage_prod_images) and, for
+// stage/prod apps, the shared stage/prod form with the env prefix stripped
+// (the default image naming, see sharedStageProdImageAppID in the app
+// package). Stage and prod apps are always deleted together, so removing the
+// shared repository is safe.
+func appImageIds(appId types.AppId) []types.AppId {
+	ids := []types.AppId{appId}
+	id := string(appId)
+	for _, prefix := range []string{types.ID_PREFIX_APP_PROD, types.ID_PREFIX_APP_STAGE} {
+		if rest := strings.TrimPrefix(id, prefix); rest != id && rest != "" {
+			ids = append(ids, types.AppId(rest))
+		}
+	}
+	return ids
+}
+
+// removeAppVolumes removes the app's named volumes (clv-<appId>-<dir hash>).
+// Callers remove the app's containers first so the volumes are unreferenced.
+func (c *CommandCM) removeAppVolumes(ctx context.Context, appId types.AppId) error {
+	// The volume name filter is a substring match; app ids are fixed length so
+	// one app's prefix cannot match another app's volumes
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "volume", "ls", "-q",
+		"--filter", "name=clv-"+string(appId)+"-")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("error listing volumes: %s : %s", output, err)
+	}
+	var errs []error
+	for _, line := range strings.Split(string(output), "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		c.Info().Msgf("Removing volume %s of deleted app %s", name, appId)
+		rm := exec.CommandContext(ctx, c.config.System.ContainerCommand, "volume", "rm", name)
+		if out, err := rm.CombinedOutput(); err != nil {
+			errs = append(errs, fmt.Errorf("error removing volume %s: %s : %s", name, out, err))
+		}
 	}
 	return errors.Join(errs...)
 }

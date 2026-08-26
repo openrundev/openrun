@@ -1849,6 +1849,50 @@ func (k *KubernetesCM) deleteWorkloadObjects(ctx context.Context, wlName string)
 	return errors.Join(errs...)
 }
 
+// RemoveAppResources deletes every Kubernetes object of a deleted app: all of
+// its workloads (Deployments with their HPAs and labeled Secrets/ConfigMaps,
+// sidecar objects included), the stable Service and the app's
+// PersistentVolumeClaims. Images pushed to the registry are not removed (the
+// registry is external). Best effort: keeps going past individual failures
+// and returns them joined.
+func (k *KubernetesCM) RemoveAppResources(ctx context.Context, appId types.AppId) error {
+	n := sanitizeContainerName(string(GenContainerName(appId, "", true)))
+	var errs []error
+	deps, err := k.clientSet.AppsV1().Deployments(k.appNamespace).List(ctx, meta.ListOptions{
+		LabelSelector: labels.Set(map[string]string{"app": n}).String(),
+	})
+	if err != nil {
+		errs = append(errs, fmt.Errorf("list deployments for %s: %w", n, err))
+	} else {
+		for i := range deps.Items {
+			k.Info().Msgf("Removing workload %s of deleted app %s", deps.Items[i].Name, appId)
+			errs = append(errs, k.deleteWorkloadObjects(ctx, deps.Items[i].Name))
+		}
+	}
+	errs = append(errs, k.deleteIfExists("service", func() error {
+		return k.clientSet.CoreV1().Services(k.appNamespace).Delete(ctx, n, meta.DeleteOptions{})
+	}))
+	// PVC names are the sanitized clv-<appId>-<dir hash> volume names; app ids
+	// are fixed length so one app's prefix cannot match another app's claims
+	pvcPrefix := sanitizeContainerName("clv-"+string(appId)) + "-"
+	pvcs := k.clientSet.CoreV1().PersistentVolumeClaims(k.appNamespace)
+	if cur, err := pvcs.List(ctx, meta.ListOptions{}); err != nil {
+		errs = append(errs, fmt.Errorf("list pvcs for %s: %w", n, err))
+	} else {
+		for i := range cur.Items {
+			name := cur.Items[i].Name
+			if !strings.HasPrefix(name, pvcPrefix) {
+				continue
+			}
+			k.Info().Msgf("Removing volume claim %s of deleted app %s", name, appId)
+			errs = append(errs, k.deleteIfExists("pvc", func() error {
+				return pvcs.Delete(ctx, name, meta.DeleteOptions{})
+			}))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // cleanupInactiveWorkloads deletes the workloads of an app's superseded
 // versions. The active version is re-resolved from the live Service at call time
 // (rather than captured by the caller), so a cleanup that runs after a delay —

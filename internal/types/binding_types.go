@@ -22,7 +22,8 @@ type Binding struct {
 	DerivedFrom      string          `json:"derived_from"` // the base binding path this is derived from
 	StagedMetadata   BindingMetadata `json:"staged_metadata"`
 	Metadata         BindingMetadata `json:"metadata"`
-	CreatedBy        string          `json:"created_by"` // user who created the binding
+	CreatedBy        string          `json:"created_by"`         // user who created the binding
+	CreatedBySyncId  string          `json:"created_by_sync_id"` // id of the sync entry which created this binding, empty for imperative/apply creates; used by sync prune
 	CreateTime       time.Time       `json:"create_time"`
 	UpdateTime       time.Time       `json:"update_time"`
 

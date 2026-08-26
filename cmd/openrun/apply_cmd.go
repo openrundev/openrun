@@ -195,10 +195,141 @@ func printApplyResponse(cCtx *cli.Context, applyResponse *types.AppApplyResponse
 		printStdout(cCtx, "\n")
 	}
 
+	if len(applyResponse.PrunedApps) > 0 {
+		printStdout(cCtx, "Pruned apps: ")
+		for i, pruned := range applyResponse.PrunedApps {
+			if i > 0 {
+				printStdout(cCtx, ", ")
+			}
+			printStdout(cCtx, "%s", pruned)
+		}
+		printStdout(cCtx, "\n")
+	}
+
+	if len(applyResponse.PrunedBindings) > 0 {
+		printStdout(cCtx, "Pruned bindings: ")
+		for i, pruned := range applyResponse.PrunedBindings {
+			if i > 0 {
+				printStdout(cCtx, ", ")
+			}
+			printStdout(cCtx, "%s", pruned)
+		}
+		printStdout(cCtx, "\n")
+	}
+
 	printStdout(cCtx, "%d app(s) created, %d app(s) updated, %d app(s) reloaded, %d app(s) skipped, %d app(s) approved, %d app(s) promoted.\n",
 		len(applyResponse.CreateResults), len(applyResponse.UpdateResults), len(applyResponse.ReloadResults), len(applyResponse.SkippedResults), len(applyResponse.ApproveResults), len(applyResponse.PromoteResults))
 	if len(applyResponse.CreateBindingResults) > 0 || len(applyResponse.UpdateBindingResults) > 0 || len(applyResponse.PromoteBindingResults) > 0 {
 		printStdout(cCtx, "%d binding(s) created, %d binding(s) updated, %d binding(s) promoted.\n",
 			len(applyResponse.CreateBindingResults), len(applyResponse.UpdateBindingResults), len(applyResponse.PromoteBindingResults))
 	}
+	// PrunedApps/PrunedBindings are non-nil (possibly empty) only when a
+	// prune-enabled sync ran
+	if applyResponse.PrunedApps != nil || applyResponse.PrunedBindings != nil {
+		printStdout(cCtx, "%d app(s) pruned, %d binding(s) pruned.\n",
+			len(applyResponse.PrunedApps), len(applyResponse.PrunedBindings))
+	}
+}
+
+func initDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
+	flags := make([]cli.Flag, 0, len(commonFlags)+2)
+	flags = append(flags, commonFlags...)
+	flags = append(flags, newStringFlag("branch", "b", "The branch to checkout if using git source", "main"))
+	flags = append(flags, newStringFlag("commit", "c", "The commit SHA to checkout if using git source. This takes precedence over branch", ""))
+	flags = append(flags, newStringFlag("git-auth", "g", "The name of the git_auth entry in server config to use", ""))
+	flags = append(flags, dryRunFlag())
+
+	return &cli.Command{
+		Name:      "delete",
+		Usage:     "Delete the apps and bindings declared in an apply file",
+		Flags:     flags,
+		ArgsUsage: "<filePath> [<appPathGlob>]",
+		UsageText: `args: <filePath> [<appPathGlob>]
+
+<filePath> is the path to the file containing the app configuration.
+<appPathGlob> is an optional second argument, which default to "all".
+` + PATH_SPEC_HELP +
+			`
+The apps and bindings declared in the file that match the glob are deleted,
+regardless of how they were created. Declared resources that do not exist are
+skipped. All deletes run in one transaction: any failure rolls the whole
+command back.
+
+Examples:
+  Delete all apps and bindings in the file: openrun delete ./app.ace
+  Delete the example.com domain apps declared in the file: openrun delete ./app.ace example.com:**
+  Delete resources declared in a git hosted file: openrun delete github.com/openrundev/apps/apps.ace
+`,
+
+		Action: func(cCtx *cli.Context) error {
+			if cCtx.NArg() == 0 || cCtx.NArg() > 2 {
+				return fmt.Errorf("expected one or two arguments: <filePath> [<appPathGlob>]")
+			}
+			appPathGlob := "all"
+			if cCtx.NArg() == 2 {
+				appPathGlob = cCtx.Args().Get(1)
+			}
+
+			sourceUrl, err := makeAbsolute(cCtx.Args().Get(0))
+			if err != nil {
+				return err
+			}
+
+			values := url.Values{}
+			values.Add("applyPath", sourceUrl)
+			values.Add("appPathGlob", appPathGlob)
+			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
+			values.Add("branch", cCtx.String("branch"))
+			values.Add("commit", cCtx.String("commit"))
+			values.Add("gitAuth", cCtx.String("git-auth"))
+
+			client := newHttpClient(clientConfig)
+			var deleteResponse types.ApplyDeleteResponse
+			err = client.Delete("/_openrun/apply", values, &deleteResponse)
+			if err != nil {
+				return err
+			}
+
+			printPathList(cCtx, "Deleted apps", deleteResponse.DeletedApps)
+			printStringList(cCtx, "Deleted bindings", deleteResponse.DeletedBindings)
+			printPathList(cCtx, "Not found (skipped) apps", deleteResponse.MissingApps)
+			printStringList(cCtx, "Not found (skipped) bindings", deleteResponse.MissingBindings)
+			printStdout(cCtx, "%d app(s) deleted, %d binding(s) deleted, %d declared resource(s) not found.\n",
+				len(deleteResponse.DeletedApps), len(deleteResponse.DeletedBindings),
+				len(deleteResponse.MissingApps)+len(deleteResponse.MissingBindings))
+			if deleteResponse.DryRun {
+				fmt.Print(DRY_RUN_MESSAGE)
+			}
+
+			return nil
+		},
+	}
+}
+
+func printPathList(cCtx *cli.Context, label string, paths []types.AppPathDomain) {
+	if len(paths) == 0 {
+		return
+	}
+	printStdout(cCtx, "%s: ", label)
+	for i, path := range paths {
+		if i > 0 {
+			printStdout(cCtx, ", ")
+		}
+		printStdout(cCtx, "%s", path)
+	}
+	printStdout(cCtx, "\n")
+}
+
+func printStringList(cCtx *cli.Context, label string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	printStdout(cCtx, "%s: ", label)
+	for i, value := range values {
+		if i > 0 {
+			printStdout(cCtx, ", ")
+		}
+		printStdout(cCtx, "%s", value)
+	}
+	printStdout(cCtx, "\n")
 }

@@ -191,6 +191,17 @@ By default, changes are applied as a three way merge. The old config and new con
 
 If `--dev` option is specified for the apply, the apps are created in dev mode. For apps with source path pointing to git, a local source folder is created under `$OPENRUN_HOME/app_src`. This allows for easy zero-config dev environment setup.
 
+### Delete Command
+
+The `delete` command is the counterpart of `apply` for removal. It takes the same `<filePath> [<appPathGlob>]` arguments (with the `--branch`, `--commit`, `--git-auth` and `--dry-run` options): the apps and bindings declared in the file that match the glob and currently exist are deleted, similar to `kubectl delete -f`.
+
+```sh
+openrun delete apps.ace
+openrun delete apps.ace "example.com:**"
+```
+
+Any matching declared resource is deleted, regardless of whether it was created declaratively or imperatively. Declared resources that do not exist are skipped and reported. All deletes run in one transaction, apps before bindings: a blocked delete (for example a declared base binding that still has derived bindings not covered by the file) fails and rolls back the whole command. Deleted apps are fully removed, containers, images, volumes and networks included; deleted bindings drop their backend objects the same way `binding delete` does.
+
 ### App Configuration
 
 The declarative app configuration uses Starlark syntax. An app is defined using the `app` struct which has these properties:
@@ -278,11 +289,14 @@ OPTIONS:
    --verify                    Verify reload by reloading app containers (default: false)
    --clobber                   Force update app config, overwriting non-declarative changes (default: false)
    --force-reload, -f          Force reload even if there are no new commits (default: false)
+   --prune                     Delete apps and bindings created by this sync that are no longer declared (default: false)
    --dry-run                   Verify command but don't commit any changes (default: false)
    --help, -h                  show help
 ```
 
 Scheduled sync takes all the same options as the `apply` command except `--dev` and `--commit`. The apply is done automatically by OpenRun on schedule. If `--verify` is set on a scheduled sync, each sync run verifies app reloads before promoting changes.
+
+If `--prune` is set, each sync run deletes the apps and bindings this sync itself created that are no longer present in the apply file, making the file the full source of truth for the resources it manages. Only resources originally created by the sync are pruned: apps and bindings created imperatively (or by another sync), even if they were later updated by this sync, are left alone. Pruned apps are fully deleted, containers, images, volumes and networks included; pruned bindings drop their backend objects the same way `binding delete` does. Pruning runs in the same transaction as the apply, so a blocked delete (for example a pruned base binding that still has derived bindings created outside the sync) fails and rolls back that sync run.
 
 Use `openrun sync list` to list all jobs and `openrun sync delete <sync_id>` to delete a sync job.
 

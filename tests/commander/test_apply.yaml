@@ -163,3 +163,42 @@ tests:
     command: ../openrun app list -i -f json /applytest/app4 | jq -c '.[1].metadata.container_volumes'
     stdout:
       exactly: '["v1:/abc","v4"]'
+
+  ## --- declarative delete: `openrun delete <file> [<glob>]` deletes the apps
+  ## and bindings declared in the file that match the glob; missing ones are
+  ## skipped and reported; the whole command is one transaction
+  applydel0001: # setup: declaration with two apps and a binding on a sqlite service
+    command: ../openrun service create sqlite/appdelsvc && printf 'app("/appdel/app1", "/tmp/testapp", stage_at="path")\napp("/appdel/app2", "/tmp/testapp", stage_at="path")\nbinding("/appdel/bind1", "sqlite/appdelsvc")\n' > /tmp/appdel.ace && ../openrun apply /tmp/appdel.ace all
+    stdout: "2 app(s) created"
+  applydel0002: # dry run reports what would be deleted without deleting
+    command: ../openrun delete --dry-run /tmp/appdel.ace all
+    stdout:
+      contains:
+        - "Deleted apps: /appdel/app1, /appdel/app2"
+        - "Deleted bindings: /appdel/bind1"
+        - "2 app(s) deleted, 1 binding(s) deleted, 0 declared resource(s) not found."
+  applydel0003: # dry run deleted nothing
+    command: ../openrun app list -f json "/appdel/*" | jq length
+    stdout: "2"
+  applydel0004: # the glob narrows the delete to one app; the binding does not match
+    command: ../openrun delete /tmp/appdel.ace "/appdel/app1"
+    stdout:
+      contains:
+        - "Deleted apps: /appdel/app1"
+        - "1 app(s) deleted, 0 binding(s) deleted, 0 declared resource(s) not found."
+  applydel0005: # full delete removes the rest; the already-deleted app is skipped and reported
+    command: ../openrun delete /tmp/appdel.ace
+    stdout:
+      contains:
+        - "Deleted apps: /appdel/app2"
+        - "Deleted bindings: /appdel/bind1"
+        - "Not found (skipped) apps: /appdel/app1"
+        - "1 app(s) deleted, 1 binding(s) deleted, 1 declared resource(s) not found."
+  applydel0006: # repeat delete is a no-op reporting everything as not found
+    command: ../openrun delete /tmp/appdel.ace
+    stdout: "0 app(s) deleted, 0 binding(s) deleted, 3 declared resource(s) not found."
+  applydel0007:
+    command: ../openrun app list -f json "/appdel/*" | jq length
+    stdout: "0"
+  applydel0008: # cleanup
+    command: ../openrun service delete sqlite/appdelsvc && rm -f /tmp/appdel.ace

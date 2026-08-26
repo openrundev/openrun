@@ -219,9 +219,25 @@ type AppApplyResponse struct {
 	ReloadResults         []AppPathDomain     `json:"reload_results"`
 	SkippedResults        []AppPathDomain     `json:"skipped_results"`
 	FilteredApps          []AppPathDomain     `json:"filtered_apps"`
+	FilteredBindings      []string            `json:"filtered_bindings"`
 	CreateBindingResults  []string            `json:"create_binding_results"`
 	UpdateBindingResults  []string            `json:"update_binding_results"`
 	PromoteBindingResults []string            `json:"promote_binding_results"`
+	// PrunedApps/PrunedBindings are the resources deleted by a prune-enabled
+	// sync. Nil (null) when no prune ran; non-nil (possibly empty) when it did.
+	PrunedApps     []AppPathDomain `json:"pruned_apps"`
+	PrunedBindings []string        `json:"pruned_bindings"`
+}
+
+// ApplyDeleteResponse is the response of the declarative delete API: the apps
+// and bindings declared in the apply file (and matching the glob) that were
+// deleted, and the declared ones skipped because they do not exist.
+type ApplyDeleteResponse struct {
+	DryRun          bool            `json:"dry_run"`
+	DeletedApps     []AppPathDomain `json:"deleted_apps"`
+	DeletedBindings []string        `json:"deleted_bindings"`
+	MissingApps     []AppPathDomain `json:"missing_apps"`
+	MissingBindings []string        `json:"missing_bindings"`
 }
 
 type AppPromoteResponse struct {

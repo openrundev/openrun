@@ -148,6 +148,23 @@ func (c *CommandCM) EnsureSidecarNetwork(ctx context.Context, appId types.AppId)
 	return nil
 }
 
+// RemoveSidecarNetwork removes the app's private network if one was created.
+// Called after the app's containers are removed so no endpoints remain; a
+// network still in use fails its rm and the error is reported.
+func (c *CommandCM) RemoveSidecarNetwork(ctx context.Context, appId types.AppId) error {
+	name := SidecarNetworkName(appId)
+	inspect := exec.CommandContext(ctx, c.config.System.ContainerCommand, "network", "inspect", name)
+	if err := inspect.Run(); err != nil {
+		return nil // the app never had a network
+	}
+	c.Info().Msgf("Removing app network %s", name)
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "network", "rm", name)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("error removing app network %s: %s : %w", name, output, err)
+	}
+	return nil
+}
+
 func (c *CommandCM) GetSidecarInfo(ctx context.Context, name ContainerName, configHash string) (bool, bool, string, bool, error) {
 	containers, err := c.listContainers(ctx, []string{"name=" + string(name)}, true)
 	if err != nil {

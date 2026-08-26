@@ -58,3 +58,44 @@ tests:
     command: ../openrun sync list
     stdout:
       line-count: 1
+
+  ## --- prune: a sync created with --prune deletes the apps and bindings it
+  ## created that are no longer declared; resources created imperatively and
+  ## later adopted by the sync are never pruned
+  sync0200: # setup: app source, sqlite service and a declaration with two apps, one binding and one pre-existing app
+    command: rm -rf /tmp/prunetestapp /tmp/prune_sync.ace && cp -r ./testapp /tmp/prunetestapp && ../openrun service create sqlite/prunesvc && printf 'app("/prune/app1", "/tmp/prunetestapp", stage_at="path")\napp("/prune/app2", "/tmp/prunetestapp", stage_at="path")\napp("/prune/manual", "/tmp/prunetestapp", stage_at="path")\nbinding("/prune/bind1", "sqlite/prunesvc")\n' > /tmp/prune_sync.ace
+  sync0201: # created imperatively; the sync adopts it below but must never prune it
+    command: ../openrun app create --stage-at path /tmp/prunetestapp /prune/manual
+  sync0202: # first run creates the declared resources and stamps them as sync-created
+    command: ../openrun sync schedule --prune /tmp/prune_sync.ace
+    stdout:
+      contains:
+        - "2 app(s) created"
+        - "0 app(s) pruned, 0 binding(s) pruned"
+        - "Sync job created with Id"
+  sync0203:
+    command: ../openrun sync list -f json | jq -r '.[0].id' > prune_sync_id.tmp
+  sync0204: # drop app2, the binding and the adopted app from the declaration
+    command: printf 'app("/prune/app1", "/tmp/prunetestapp", stage_at="path")\n' > /tmp/prune_sync.ace
+  sync0205: # the sync prunes only what it created; the adopted app is kept
+    command: sh -c 'id=$(cat prune_sync_id.tmp); ../openrun sync run "$id"'
+    stdout:
+      contains:
+        - "Pruned apps: /prune/app2"
+        - "Pruned bindings: /prune/bind1"
+        - "1 app(s) pruned, 1 binding(s) pruned"
+  sync0206: # app2 is gone; app1 and the adopted app remain
+    command: ../openrun app list -f json "/prune/*" | jq -r '[.[].path] | sort | join(",")'
+    stdout: "/prune/app1,/prune/manual"
+  sync0207: # the pruned binding is gone
+    command: ../openrun binding list -f json | jq -r '[.[].path | select(. == "/prune/bind1")] | length'
+    stdout: "0"
+  sync0208: # a run with no declaration change prunes nothing
+    command: sh -c 'id=$(cat prune_sync_id.tmp); ../openrun sync run "$id"'
+    stdout: "0 app(s) pruned, 0 binding(s) pruned"
+  sync0210: # cleanup
+    command: sh -c 'id=$(cat prune_sync_id.tmp); ../openrun sync delete "$id" && rm -f prune_sync_id.tmp'
+    stdout: "deleted"
+  sync0211:
+    command: ../openrun app delete "/prune/*" && ../openrun service delete sqlite/prunesvc && rm -rf /tmp/prunetestapp /tmp/prune_sync.ace
+    stdout: "app(s) deleted"

@@ -5,6 +5,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -913,4 +914,48 @@ func entryPorts(entry map[string]any) string {
 		return strings.Join(ports, ", ")
 	}
 	return ""
+}
+
+// appResourceRemover removes every container runtime asset of one app; both
+// container managers implement it (docker/podman and kubernetes).
+type appResourceRemover interface {
+	RemoveAppResources(ctx context.Context, appId types.AppId) error
+}
+
+// removeAppRuntimeResources removes the runtime assets of deleted apps: their
+// containers and sidecars, generated images (sidecar images are user pulled
+// and are kept), named volumes and per app networks on docker/podman;
+// workloads, services and volume claims on kubernetes. Each app's run
+// directory is removed as well. Called after the metadata delete commits, so
+// failures are best effort: the caller reports them alongside the delete
+// result.
+func (s *Server) removeAppRuntimeResources(ctx context.Context, appIds []types.AppId) error {
+	var errs []error
+	command := s.Config().System.ContainerCommand
+	var remover appResourceRemover
+	if command == types.CONTAINER_KUBERNETES {
+		// The removal APIs use only the cluster connection; the per app config
+		// (nil here) is not available for a deleted app and is not needed
+		k8sCM, err := container.NewKubernetesCM(s.Logger, s.Config(), nil, "", "")
+		if err != nil {
+			errs = append(errs, fmt.Errorf("removing deleted app resources: %w", err))
+		} else {
+			remover = k8sCM
+		}
+	} else if command != "" {
+		remover = container.NewCommandCM(s.Logger, s.Config(), "", "")
+	}
+
+	clHome := cmp.Or(os.Getenv("OPENRUN_HOME"), "./")
+	for _, appId := range appIds {
+		if remover != nil {
+			if err := remover.RemoveAppResources(ctx, appId); err != nil {
+				errs = append(errs, fmt.Errorf("removing runtime resources of app %s: %w", appId, err))
+			}
+		}
+		if err := os.RemoveAll(filepath.Join(clHome, "run", "app", string(appId))); err != nil {
+			errs = append(errs, fmt.Errorf("removing run dir of app %s: %w", appId, err))
+		}
+	}
+	return errors.Join(errs...)
 }

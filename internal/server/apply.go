@@ -7,12 +7,14 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	apppkg "github.com/openrundev/openrun/internal/app"
@@ -287,6 +289,73 @@ func (s *Server) checkoutApplySource(ctx context.Context, applyPath, branch, com
 	return newSha, dir, file, false, nil
 }
 
+// loadApplyConfigs parses the declaration files matched by file under
+// sourceFS into the declared app and binding requests: app paths are
+// normalized (trailing-dot domains get the default domain appended), binding
+// paths cannot carry a domain and duplicates are rejected. bindingList
+// preserves the declaration order of the binding paths.
+func (s *Server) loadApplyConfigs(sourceFS *appfs.SourceFs, file, applyPath, branch string, isDev bool) (
+	map[types.AppPathDomain]*types.CreateAppRequest, map[string]*types.CreateBindingRequest, []string, error) {
+	applyConfig := map[types.AppPathDomain]*types.CreateAppRequest{}
+	bindingConfig := map[string]*types.CreateBindingRequest{}
+	globFiles, err := sourceFS.Glob(file)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	if len(globFiles) == 0 {
+		return nil, nil, nil, fmt.Errorf("no matching files found in %s", applyPath)
+	}
+	bindingList := make([]string, 0)
+	for _, f := range globFiles {
+		s.Trace().Msgf("Loading declaration file %s", f)
+		fileBytes, err := sourceFS.ReadFile(f)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("error reading file %s: %w", f, err)
+		}
+
+		appDefs, bindingDefs, err := s.loadApplyInfo(f, fileBytes, branch, isDev)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		for _, appDef := range appDefs {
+			appPathDomain, err := parseAppPath(appDef.Path)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			if appPathDomain.Domain != "" && appPathDomain.Domain[len(appPathDomain.Domain)-1] == '.' {
+				// If domain ends with a dot, append the default domain
+				if s.Config().System.DefaultDomain == "" {
+					return nil, nil, nil, types.CreateRequestError("Domain cannot end with a dot since default_domain is not configured", http.StatusBadRequest)
+				}
+				appPathDomain.Domain += s.Config().System.DefaultDomain
+			}
+			if _, ok := applyConfig[appPathDomain]; ok {
+				return nil, nil, nil, fmt.Errorf("duplicate app %s defined in file %s", appPathDomain, f)
+			}
+			applyConfig[appPathDomain] = appDef
+		}
+
+		for _, bindingDef := range bindingDefs {
+			bindingPathDomain, err := parseAppPath(bindingDef.Path)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			if bindingPathDomain.Domain != "" {
+				return nil, nil, nil, fmt.Errorf("binding %s cannot include a domain", bindingDef.Path)
+			}
+			bindingDef.Path = bindingPathDomain.Path
+			if _, ok := bindingConfig[bindingDef.Path]; ok {
+				return nil, nil, nil, fmt.Errorf("duplicate binding %s defined in file %s", bindingDef.Path, f)
+			}
+			bindingConfig[bindingDef.Path] = bindingDef
+			bindingList = append(bindingList, bindingDef.Path)
+		}
+	}
+	return applyConfig, bindingConfig, bindingList, nil
+}
+
 func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath string, appPathGlob string, approve, dryRun, promote bool,
 	reload types.AppReloadOption, branch, commit, gitAuth string, clobber,
 	forceReload, verify bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (_ *types.AppApplyResponse, _ []types.AppPathDomain, retErr error) {
@@ -362,62 +431,9 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	}
 	defer sourceFS.Close() //nolint:errcheck
 
-	applyConfig := map[types.AppPathDomain]*types.CreateAppRequest{}
-	bindingConfig := map[string]*types.CreateBindingRequest{}
-	globFiles, err := sourceFS.Glob(file)
+	applyConfig, bindingConfig, bindingList, err := s.loadApplyConfigs(sourceFS, file, applyPath, branch, isDev)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	if len(globFiles) == 0 {
-		return nil, nil, fmt.Errorf("no matching files found in %s", applyPath)
-	}
-	bindingList := make([]string, 0)
-	for _, f := range globFiles {
-		s.Trace().Msgf("Applying file %s", f)
-		fileBytes, err := sourceFS.ReadFile(f)
-		if err != nil {
-			return nil, nil, fmt.Errorf("error reading file %s: %w", f, err)
-		}
-
-		appDefs, bindingDefs, err := s.loadApplyInfo(f, fileBytes, branch, isDev)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		for _, appDef := range appDefs {
-			appPathDomain, err := parseAppPath(appDef.Path)
-			if err != nil {
-				return nil, nil, err
-			}
-			if appPathDomain.Domain != "" && appPathDomain.Domain[len(appPathDomain.Domain)-1] == '.' {
-				// If domain ends with a dot, append the default domain
-				if s.Config().System.DefaultDomain == "" {
-					return nil, nil, types.CreateRequestError("Domain cannot end with a dot since default_domain is not configured", http.StatusBadRequest)
-				}
-				appPathDomain.Domain += s.Config().System.DefaultDomain
-			}
-			if _, ok := applyConfig[appPathDomain]; ok {
-				return nil, nil, fmt.Errorf("duplicate app %s defined in file %s", appPathDomain, f)
-			}
-			applyConfig[appPathDomain] = appDef
-		}
-
-		for _, bindingDef := range bindingDefs {
-			bindingPathDomain, err := parseAppPath(bindingDef.Path)
-			if err != nil {
-				return nil, nil, err
-			}
-			if bindingPathDomain.Domain != "" {
-				return nil, nil, fmt.Errorf("binding %s cannot include a domain", bindingDef.Path)
-			}
-			bindingDef.Path = bindingPathDomain.Path
-			if _, ok := bindingConfig[bindingDef.Path]; ok {
-				return nil, nil, fmt.Errorf("duplicate binding %s defined in file %s", bindingDef.Path, f)
-			}
-			bindingConfig[bindingDef.Path] = bindingDef
-			bindingList = append(bindingList, bindingDef.Path)
-		}
 	}
 	s.Trace().Msgf("Applying %d apps and %d bindings", len(applyConfig), len(bindingList))
 
@@ -659,6 +675,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		ReloadResults:         reloadResults,
 		SkippedResults:        skippedResults,
 		FilteredApps:          filteredApps,
+		FilteredBindings:      bindingList,
 		CreateBindingResults:  createBindingResults,
 		UpdateBindingResults:  updateBindingResults,
 		PromoteBindingResults: promoteBindingResults,
@@ -1499,4 +1516,189 @@ func bindingDefToApplyInfo(bindingDef *starlarkstruct.Struct) (*types.CreateBind
 		Grants: grants,
 		Config: configStr,
 	}, nil
+}
+
+// ApplyDelete is the counterpart of Apply for removal: it deletes the apps and
+// bindings declared in the given apply file that match the glob and currently
+// exist. Any matching resource is deleted regardless of how it was created
+// (the file plus glob is an explicit statement of intent); declared resources
+// that do not exist are skipped and reported. All deletes run in one
+// transaction, apps before bindings (an app's auto bindings may derive from a
+// declared base binding) and derived bindings before their base: any failure,
+// like a declared base binding with derived bindings outside the file, rolls
+// the whole command back. The deleted apps' runtime assets are removed after
+// the commit, like an imperative app delete.
+func (s *Server) ApplyDelete(ctx context.Context, applyPath, appPathGlob string, dryRun bool,
+	branch, commit, gitAuth string) (*types.ApplyDeleteResponse, error) {
+	repoCache, err := NewRepoCache(s)
+	if err != nil {
+		return nil, err
+	}
+	defer repoCache.Cleanup()
+
+	if system.IsGit(applyPath) {
+		branch = cmp.Or(branch, "main")
+	} else {
+		branch = ""
+	}
+	// The checkout runs before the transaction is opened, so no git network
+	// operations happen while the transaction below is held
+	_, dir, file, _, err := s.checkoutApplySource(ctx, applyPath, branch, commit, gitAuth,
+		"", false, types.AppReloadOptionUpdated, repoCache, false)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceFS, err := appfs.NewSourceFs(dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
+	if err != nil {
+		return nil, err
+	}
+	defer sourceFS.Close() //nolint:errcheck
+
+	applyConfig, _, bindingList, err := s.loadApplyConfigs(sourceFS, file, applyPath, branch, false)
+	if err != nil {
+		return nil, err
+	}
+
+	allApps, err := s.apps.GetAllAppsInfo()
+	if err != nil {
+		return nil, err
+	}
+	allAppsMap := make(map[types.AppPathDomain]types.AppInfo)
+	for _, appInfo := range allApps {
+		allAppsMap[appInfo.AppPathDomain] = appInfo
+	}
+
+	deleteApps := make([]types.AppInfo, 0)
+	missingApps := make([]types.AppPathDomain, 0)
+	for appPathDomain := range applyConfig {
+		match, err := rbac.MatchGlob(appPathGlob, appPathDomain)
+		if err != nil {
+			return nil, err
+		}
+		if !match {
+			continue
+		}
+		if appInfo, ok := allAppsMap[appPathDomain]; ok {
+			deleteApps = append(deleteApps, appInfo)
+		} else {
+			missingApps = append(missingApps, appPathDomain)
+		}
+	}
+	slices.SortFunc(deleteApps, func(a, b types.AppInfo) int {
+		return cmp.Compare(a.String(), b.String())
+	})
+	slices.SortFunc(missingApps, func(a, b types.AppPathDomain) int {
+		return cmp.Compare(a.String(), b.String())
+	})
+
+	tx, err := s.db.BeginTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	accounts := s.newBindingAccountManager(dryRun)
+	cleanupCtx, cancel := bindingCleanupContext(ctx)
+	defer cancel()
+	defer accounts.closeServices(cleanupCtx)
+
+	// The invoker needs delete authority on every resource being deleted
+	deletedAutoBindings, deletedAppIds, err := s.deleteAppsTx(ctx, tx, accounts, deleteApps)
+	if err != nil {
+		return nil, err
+	}
+	deletedApps := make([]types.AppPathDomain, 0, len(deleteApps))
+	for _, appInfo := range deleteApps {
+		s.Info().Msgf("Declarative delete of app %s", appInfo.AppPathDomain)
+		deletedApps = append(deletedApps, appInfo.AppPathDomain)
+	}
+
+	// The app deletes above already removed their auto bindings; list after so
+	// existence reflects this transaction's state
+	allBindings, err := s.db.ListBindings(ctx, tx, "")
+	if err != nil {
+		return nil, err
+	}
+	allBindingsMap := make(map[string]*types.Binding)
+	for _, binding := range allBindings {
+		allBindingsMap[binding.Path] = binding
+	}
+	deleteBindings := make([]*types.Binding, 0)
+	missingBindings := make([]string, 0)
+	for _, bindingPath := range bindingList {
+		match, err := rbac.MatchGlob(appPathGlob, types.AppPathDomain{Path: bindingPath})
+		if err != nil {
+			return nil, err
+		}
+		if !match {
+			continue
+		}
+		if binding, ok := allBindingsMap[bindingPath]; ok {
+			deleteBindings = append(deleteBindings, binding)
+		} else {
+			missingBindings = append(missingBindings, bindingPath)
+		}
+	}
+	// Derived bindings are deleted before base bindings so a base declared in
+	// the same file deletes cleanly; a declared base with a derived binding
+	// outside the file still fails (delete the derived binding first)
+	slices.SortStableFunc(deleteBindings, func(a, b *types.Binding) int {
+		aDerived := strings.HasPrefix(a.Source, "/")
+		bDerived := strings.HasPrefix(b.Source, "/")
+		if aDerived == bDerived {
+			return 0
+		}
+		if aDerived {
+			return -1
+		}
+		return 1
+	})
+	deletedBindings := make([]string, 0, len(deleteBindings))
+	for _, binding := range deleteBindings {
+		s.Info().Msgf("Declarative delete of binding %s", binding.Path)
+		if err := s.deleteBindingTx(ctx, tx, accounts, binding.Path); err != nil {
+			return nil, err
+		}
+		deletedBindings = append(deletedBindings, binding.Path)
+	}
+
+	ret := &types.ApplyDeleteResponse{
+		DryRun:          dryRun,
+		DeletedApps:     deletedApps,
+		DeletedBindings: deletedBindings,
+		MissingApps:     missingApps,
+		MissingBindings: missingBindings,
+	}
+	if dryRun {
+		return ret, nil
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	if deletedAutoBindings || len(deletedBindings) > 0 {
+		s.approvalCacheGen.Add(1)
+	}
+
+	// Remove from the in memory app cache
+	for _, appPathDomain := range deletedApps {
+		if err := s.apps.ClearLinkedApps(appPathDomain); err != nil {
+			return nil, fmt.Errorf("error deleting app: %s", err)
+		}
+	}
+
+	// The metadata is deleted; only the cleanup of the backend objects and
+	// runtime assets can fail here, which is reported along with the result
+	var cleanupErrs []error
+	if err := accounts.finalizeDeletes(cleanupCtx); err != nil {
+		cleanupErrs = append(cleanupErrs, err)
+	}
+	if err := s.removeAppRuntimeResources(cleanupCtx, deletedAppIds); err != nil {
+		cleanupErrs = append(cleanupErrs, err)
+	}
+	if len(cleanupErrs) > 0 {
+		return ret, errors.Join(cleanupErrs...)
+	}
+	return ret, nil
 }

@@ -9,9 +9,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/passwd"
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
@@ -471,6 +473,26 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		status.FailureCount = 0
 	}
 
+	if applyErr == nil && !applyInfo.SkippedApply && entry.Metadata.Prune {
+		// Delete the resources this sync created that are no longer declared.
+		// Runs in the same transaction as the apply: a prune failure (a blocked
+		// delete included) rolls the whole run back and counts as a sync failure
+		prunedApps, prunedBindings, pruneErr := s.pruneSyncResources(ctx, tx, entry, applyInfo, dryRun)
+		if pruneErr != nil {
+			s.Error().Err(pruneErr).Msgf("Error pruning resources for sync job %s", entry.Id)
+			status.Error = pruneErr.Error()
+			status.FailureCount = entry.Status.FailureCount + 1
+			if status.FailureCount >= s.Config().System.MaxSyncFailureCount {
+				status.State = "Disabled"
+			} else {
+				status.State = "Failing"
+			}
+		} else {
+			applyInfo.PrunedApps = prunedApps
+			applyInfo.PrunedBindings = prunedBindings
+		}
+	}
+
 	reloadResults := make([]types.AppPathDomain, 0, len(lastRunApps))
 	approveResults := make([]types.ApproveResult, 0, len(lastRunApps))
 	promoteResults := make([]types.AppPathDomain, 0, len(lastRunApps))
@@ -593,4 +615,118 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	}
 
 	return &status, updatedApps, nil
+}
+
+// pruneSyncResources deletes the apps and bindings created by this sync entry
+// that are no longer present in its declaration. Only resources stamped with
+// this entry's id at create time (CreatedBySyncId) are considered: resources
+// created imperatively (or by another sync) and later updated by this sync are
+// never pruned. Deletes run in the caller's transaction, so a prune failure
+// rolls back the whole sync run. The post-commit cleanup of pruned apps (app
+// store eviction, approval cache invalidation and runtime asset removal) is
+// registered as a deploy transaction commit hook, run by the owning scope
+// after the metadata commit; pruned bindings' backend artifact drops are
+// recorded on the operation's account manager the same way a binding delete
+// records them.
+func (s *Server) pruneSyncResources(ctx context.Context, tx types.Transaction, entry *types.SyncEntry,
+	applyInfo *types.AppApplyResponse, dryRun bool) ([]types.AppPathDomain, []string, error) {
+
+	accounts := bindingEffectsFromContext(ctx)
+	if accounts == nil {
+		return nil, nil, fmt.Errorf("sync prune requires an operation scope")
+	}
+
+	declaredApps := make(map[types.AppPathDomain]bool, len(applyInfo.FilteredApps))
+	for _, appPath := range applyInfo.FilteredApps {
+		declaredApps[appPath] = true
+	}
+	// FilterApps returns main and dev apps; linked staging/preview apps are
+	// cascade-deleted with their main app
+	allApps, err := s.FilterApps("all", false)
+	if err != nil {
+		return nil, nil, err
+	}
+	pruneApps := make([]types.AppInfo, 0)
+	prunedAppPaths := make([]types.AppPathDomain, 0)
+	for _, appInfo := range allApps {
+		if appInfo.CreatedBySyncId == entry.Id && !declaredApps[appInfo.AppPathDomain] {
+			pruneApps = append(pruneApps, appInfo)
+			prunedAppPaths = append(prunedAppPaths, appInfo.AppPathDomain)
+		}
+	}
+
+	var prunedAppIds []types.AppId
+	if len(pruneApps) > 0 {
+		for _, appInfo := range pruneApps {
+			s.Info().Msgf("Sync %s pruning app %s", entry.Id, appInfo.AppPathDomain)
+		}
+		// The delete permission checks run against the sync's authority
+		// (background runs use the creator's frozen RBAC snapshot)
+		if _, prunedAppIds, err = s.deleteAppsTx(ctx, tx, accounts, pruneApps); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	declaredBindings := make(map[string]bool, len(applyInfo.FilteredBindings))
+	for _, path := range applyInfo.FilteredBindings {
+		declaredBindings[path] = true
+	}
+	allBindings, err := s.db.ListBindings(ctx, tx, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	pruneBindings := make([]*types.Binding, 0)
+	for _, binding := range allBindings {
+		// Auto bindings exist only for their app and are deleted with it; they
+		// are never declared, so they are not prune candidates themselves
+		if strings.HasPrefix(binding.Path, autoBindingPathPrefix+"/") {
+			continue
+		}
+		if binding.CreatedBySyncId == entry.Id && !declaredBindings[binding.Path] {
+			pruneBindings = append(pruneBindings, binding)
+		}
+	}
+	// Derived bindings are deleted before base bindings so a base pruned in the
+	// same run deletes cleanly; a pruned base with a derived binding outside
+	// this prune set still fails the run (delete the derived binding first)
+	slices.SortStableFunc(pruneBindings, func(a, b *types.Binding) int {
+		aDerived := strings.HasPrefix(a.Source, "/")
+		bDerived := strings.HasPrefix(b.Source, "/")
+		if aDerived == bDerived {
+			return 0
+		}
+		if aDerived {
+			return -1
+		}
+		return 1
+	})
+	prunedBindingPaths := make([]string, 0, len(pruneBindings))
+	for _, binding := range pruneBindings {
+		s.Info().Msgf("Sync %s pruning binding %s", entry.Id, binding.Path)
+		if err := s.deleteBindingTx(ctx, tx, accounts, binding.Path); err != nil {
+			return nil, nil, err
+		}
+		prunedBindingPaths = append(prunedBindingPaths, binding.Path)
+	}
+
+	if !dryRun && (len(pruneApps) > 0 || len(prunedBindingPaths) > 0) {
+		if dt := container.DeployTxnFromContext(ctx); dt != nil {
+			paths := slices.Clone(prunedAppPaths)
+			ids := slices.Clone(prunedAppIds)
+			dt.Register(types.AppId(entry.Id), "", nil, func(c context.Context) error {
+				s.approvalCacheGen.Add(1)
+				var errs []error
+				for _, path := range paths {
+					if err := s.apps.ClearLinkedApps(path); err != nil {
+						errs = append(errs, err)
+					}
+				}
+				if len(ids) > 0 {
+					errs = append(errs, s.removeAppRuntimeResources(c, ids))
+				}
+				return errors.Join(errs...)
+			})
+		}
+	}
+	return prunedAppPaths, prunedBindingPaths, nil
 }

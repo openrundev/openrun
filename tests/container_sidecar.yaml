@@ -129,6 +129,35 @@ tests:
     command: curl -sS localhost:${HTTP_PORT}/sc_badperm_cl_stage
     stdout: "not permitted to call container.in.sidecar with argument 1"
 
+  # --- idle shutdown and resume ---
+  # On idle the app container stops first, then its port'd sidecars (cache);
+  # always_on sidecars (the worker, no port) keep running. The next request
+  # starts the sidecars in order, ready-waits them and then starts the app
+  # container - the app imports fail if the cache is not up, so a successful
+  # request proves the ordering.
+  sidecar0080: # create app with a 5s idle timeout
+    command: ../openrun app create --stage-at path --spec python-flask --param app_name=sc-idle --conf container.idle_shutdown_secs=5 --sidecar '{"name":"cache","image":"image:memcached:1.6-alpine","port":11211,"args":["-m","32"]}' --sidecar '{"name":"worker","command":["python","worker.py"],"env":{"WORKER_ROLE":"idle"}}' ./sc_app /sc_idle
+  sidecar0080a: # app serves (idempotent retry in case the idle timer fires first under coverage overhead)
+    command: curl -sS localhost:${HTTP_PORT}/sc_idle_cl_stage/cache
+    stdout: "cache ok: v1"
+    config:
+      retries: 10
+      interval: 2s
+  sidecar0081: # idle stops the app container and the cache sidecar; the always_on worker keeps running
+    command: bash -c 'a=$(${OPENRUN_CONTAINER_COMMAND} ps --filter "label=dev.openrun.app.path=/sc_idle_cl_stage" --format "{{.Label \"dev.openrun.role\"}}" | grep -vc sidecar); c=$(${OPENRUN_CONTAINER_COMMAND} ps -q --filter "label=dev.openrun.app.path=/sc_idle_cl_stage" --filter "label=dev.openrun.sidecar=cache" | wc -l | tr -d " "); w=$(${OPENRUN_CONTAINER_COMMAND} ps -q --filter "label=dev.openrun.app.path=/sc_idle_cl_stage" --filter "label=dev.openrun.sidecar=worker" | wc -l | tr -d " "); echo "app=$a cache=$c worker=$w"'
+    stdout: "app=0 cache=0 worker=1"
+    config:
+      retries: 30
+      interval: 2s
+  sidecar0082: # the next request resumes the cache sidecar (ready-waited) before the app container
+    command: curl -sS localhost:${HTTP_PORT}/sc_idle_cl_stage/cache
+    stdout: "cache ok: v1"
+    config:
+      retries: 10
+      interval: 1s
+  sidecar0083: # record the stage app id for the delete cleanup checks
+    command: bash -c '../openrun app list --internal --format csv /sc_idle | grep -o "app_stg_[a-z0-9]*" | head -1 > sc_idle_id.txt && [ -s sc_idle_id.txt ]'
+
   sidecar0090: # cleanup
     command: ../openrun app delete "/sc_*"
     stdout: "app(s) deleted"
@@ -136,3 +165,7 @@ tests:
     # root-owned .venv/__pycache__ into the bind mount on rootful docker, like flaskapp
     # in test_containers.yaml; the suite start re-copies it)
     command: rm -rf ./sc_star ./sc_badperm
+  sidecar0092: # delete removed the app's containers, sidecars, generated images (the
+    # stage/prod shared cli-<ulid> repo and any per-id repo) and network
+    command: bash -c 'id=$(cat sc_idle_id.txt); rm -f sc_idle_id.txt; c=$(${OPENRUN_CONTAINER_COMMAND} ps -aq --filter "label=dev.openrun.app.id=$id" | wc -l | tr -d " "); i=$(( $(${OPENRUN_CONTAINER_COMMAND} images -q "cli-$id" | wc -l) + $(${OPENRUN_CONTAINER_COMMAND} images -q "cli-${id#app_stg_}" | wc -l) )); n=$(${OPENRUN_CONTAINER_COMMAND} network ls -q --filter "name=cln-$id" | wc -l | tr -d " "); v=$(${OPENRUN_CONTAINER_COMMAND} volume ls -q --filter "name=clv-$id" | wc -l | tr -d " "); echo "containers=$c images=$i networks=$n volumes=$v"'
+    stdout: "containers=0 images=0 networks=0 volumes=0"

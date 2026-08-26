@@ -83,5 +83,14 @@ tests:
       retries: 10
       interval: 1s
 
+  ksidecar0080: # record the sanitized stage app id for the delete cleanup check
+    command: bash -c '../openrun app list --internal --format csv /ksc_star | grep -o "app_stg_[a-z0-9]*" | head -1 | tr "_" "-" > ksc_id.txt && [ -s ksc_id.txt ]'
+
   ksidecar0090: # cleanup
     command: ../openrun app delete "/ksc_*" && rm -rf ./ksc_app ./ksc_star
+  ksidecar0091: # delete removed the app's workloads, service and generated objects
+    command: bash -c 'id=$(cat ksc_id.txt); rm -f ksc_id.txt; n=$(kubectl get deploy,hpa,svc,secret,configmap,pvc -n ${KUBE_TEST_NAMESPACE}-apps -o name | grep -c "$id"); echo "objects=$n"'
+    stdout: "objects=0"
+    config:
+      retries: 10
+      interval: 2s

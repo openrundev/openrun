@@ -935,23 +935,24 @@ func (a AppPathDomain) String() string {
 // AppInfo is the basic info for an app
 type AppInfo struct {
 	AppPathDomain
-	Name           string
-	Id             AppId
-	IsDev          bool
-	MainApp        AppId
-	LinkedAppPath  string
-	Auth           AppAuthnType
-	SourceUrl      string
-	Spec           AppSpec
-	Version        int
-	GitSha         string
-	GitMessage     string
-	Branch         string
-	StarBase       string
-	UpdateTime     time.Time
-	RetainVersions int
-	AppliedSyncId  string
-	UserID         string // user who created the app, used for RBAC owner checks
+	Name            string
+	Id              AppId
+	IsDev           bool
+	MainApp         AppId
+	LinkedAppPath   string
+	Auth            AppAuthnType
+	SourceUrl       string
+	Spec            AppSpec
+	Version         int
+	GitSha          string
+	GitMessage      string
+	Branch          string
+	StarBase        string
+	UpdateTime      time.Time
+	RetainVersions  int
+	AppliedSyncId   string
+	CreatedBySyncId string // id of the sync entry which created this app, used by sync prune
+	UserID          string // user who created the app, used for RBAC owner checks
 }
 
 func CreateAppPathDomain(path, domain string) AppPathDomain {
@@ -1084,6 +1085,7 @@ type AppMetadata struct {
 	GitAuthName      string            `json:"git_auth_name"`
 	Bindings         []string          `json:"bindings"`
 	AppliedSyncId    string            `json:"applied_sync_id"`                      // id of the sync entry which last applied to this app, empty for imperative changes
+	CreatedBySyncId  string            `json:"created_by_sync_id,omitempty"`         // id of the sync entry which created this app, empty for imperative/apply creates; used by sync prune
 	BuilderPublished bool              `json:"builder_published,omitempty,omitzero"` // app was published by the app builder; enables builder edit sessions
 }
 
@@ -1345,6 +1347,7 @@ type SyncMetadata struct {
 	Reload      string `json:"reload"`       // which apps to reload after the sync
 	Clobber     bool   `json:"clobber"`      // whether to force update the sync, overwriting non-declarative changes
 	ForceReload bool   `json:"force_reload"` // whether to force reload even if there is no new commit
+	Prune       bool   `json:"prune"`        // whether to delete resources created by this sync that are no longer declared
 
 	WebhookUrl        string `json:"webhook_url"`        // for webhook : the url to use
 	WebhookSecret     string `json:"webhook_secret"`     // for webhook : the secret to use

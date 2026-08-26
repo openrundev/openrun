@@ -319,6 +319,9 @@ func (s *Server) createBindingTx(ctx context.Context, tx types.Transaction, crea
 		Path:      createRequest.Path,
 		Source:    createRequest.Source,
 		CreatedBy: system.GetContextUserId(ctx),
+		// Set when the create is driven by a sync entry, empty for imperative
+		// creates; a prune-enabled sync deletes only the bindings it created
+		CreatedBySyncId: system.GetContextValue(ctx, types.SYNC_ID),
 		StagedMetadata: types.BindingMetadata{
 			Grants:    normalizeGrantList(createRequest.Grants),
 			Config:    createRequest.Config,
@@ -1251,6 +1254,34 @@ func (s *Server) DeleteBinding(ctx context.Context, path string, dryRun bool) er
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	accounts := s.newBindingAccountManager(dryRun)
+	cleanupCtx, cancel := bindingCleanupContext(ctx)
+	defer cancel()
+	defer accounts.closeServices(cleanupCtx)
+
+	if err := s.deleteBindingTx(ctx, tx, accounts, path); err != nil {
+		return err
+	}
+
+	if dryRun {
+		return nil
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.approvalCacheGen.Add(1)
+
+	// The binding is deleted; a failure here only means its backend objects were
+	// left behind, which is reported to the caller
+	return accounts.finalizeDeletes(cleanupCtx)
+}
+
+// deleteBindingTx deletes one binding's metadata within the caller's
+// transaction: the delete permission check, the derived bindings guard and the
+// row delete. The backend artifact drops are only recorded on accounts; the
+// caller finalizes them after the commit (finalizeDeletes, or the operation
+// scope's commit when accounts belongs to one).
+func (s *Server) deleteBindingTx(ctx context.Context, tx types.Transaction, accounts *bindingAccountManager, path string) error {
 	binding, err := s.db.GetBinding(ctx, tx, path)
 	if err != nil {
 		if strings.HasPrefix(err.Error(), "binding not found with path: ") {
@@ -1274,31 +1305,10 @@ func (s *Server) DeleteBinding(ctx context.Context, path string, dryRun bool) er
 			path, strings.Join(bindingPaths(derived), ", "))
 	}
 
-	accounts := s.newBindingAccountManager(dryRun)
-	cleanupCtx, cancel := bindingCleanupContext(ctx)
-	defer cancel()
-	defer accounts.closeServices(cleanupCtx)
-
 	if err := s.db.DeleteBinding(ctx, tx, path); err != nil {
 		return err
 	}
-	// Only record what to drop on the backend service here; the drops run after
-	// the metadata commit, so the transaction is not held open across them
-	if err := s.recordBindingArtifactDeletes(ctx, tx, accounts, binding); err != nil {
-		return err
-	}
-
-	if dryRun {
-		return nil
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	s.approvalCacheGen.Add(1)
-
-	// The binding is deleted; a failure here only means its backend objects were
-	// left behind, which is reported to the caller
-	return accounts.finalizeDeletes(cleanupCtx)
+	return s.recordBindingArtifactDeletes(ctx, tx, accounts, binding)
 }
 
 // bindingCleanupTimeout bounds the post-commit work on the backend services

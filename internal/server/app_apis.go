@@ -217,8 +217,11 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 		return nil, err
 	}
 	appEntry.Metadata.AppConfig = appRequest.AppConfig
-	// Set when the create is driven by a sync entry, empty for imperative creates
+	// Set when the create is driven by a sync entry, empty for imperative creates.
+	// CreatedBySyncId is stamped only here (never on update): a prune-enabled
+	// sync deletes only the apps it created, not pre-existing apps it adopted
 	appEntry.Metadata.AppliedSyncId = system.GetContextValue(ctx, types.SYNC_ID)
+	appEntry.Metadata.CreatedBySyncId = appEntry.Metadata.AppliedSyncId
 	appEntry.UserID = system.GetContextUserId(ctx)
 	appEntry.Id, err = newAppID(appEntry.IsDev)
 	if err != nil {
@@ -684,28 +687,18 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
-	if err := s.enforceAppPermInfos(ctx, types.PermissionDelete, filteredApps); err != nil {
-		return nil, err
-	}
-
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	for _, appInfo := range filteredApps {
-		if err := s.db.DeleteApp(ctx, tx, appInfo.Id); err != nil {
-			return nil, err
-		}
-	}
-
 	accounts := s.newBindingAccountManager(dryRun)
 	cleanupCtx, cancel := bindingCleanupContext(ctx)
 	defer cancel()
 	defer accounts.closeServices(cleanupCtx)
 
-	deletedBindings, err := s.deleteAutoBindings(ctx, tx, accounts, filteredApps)
+	deletedBindings, deletedAppIds, err := s.deleteAppsTx(ctx, tx, accounts, filteredApps)
 	if err != nil {
 		return nil, err
 	}
@@ -733,13 +726,64 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 		}
 	}
 
-	// The apps and their auto bindings are deleted; only the drop of the backend
-	// objects can fail here, which is reported along with the delete result
+	// The apps and their auto bindings are deleted; only the cleanup of the
+	// backend objects and runtime assets can fail here, which is reported
+	// along with the delete result
+	var cleanupErrs []error
 	if err := accounts.finalizeDeletes(cleanupCtx); err != nil {
-		return ret, err
+		cleanupErrs = append(cleanupErrs, err)
+	}
+	// Remove the deleted apps' runtime assets: containers and sidecars,
+	// generated images, volumes and networks (docker/podman) or workloads,
+	// services and volume claims (kubernetes), plus each app's run dir
+	if err := s.removeAppRuntimeResources(cleanupCtx, deletedAppIds); err != nil {
+		cleanupErrs = append(cleanupErrs, err)
+	}
+	if len(cleanupErrs) > 0 {
+		return ret, errors.Join(cleanupErrs...)
 	}
 
 	return ret, nil
+}
+
+// deleteAppsTx deletes the given apps' metadata within the caller's
+// transaction: the delete permission checks, the app rows (linked
+// staging/preview apps cascade with their main app) and their auto bindings,
+// whose backend artifact drops are recorded on accounts for the caller to
+// finalize after the commit. Returns whether any bindings were deleted (the
+// approval cache must then be invalidated after commit) and the ids of every
+// deleted app, linked apps included, which key the post-commit runtime asset
+// removal.
+func (s *Server) deleteAppsTx(ctx context.Context, tx types.Transaction, accounts *bindingAccountManager,
+	filteredApps []types.AppInfo) (bool, []types.AppId, error) {
+	if err := s.enforceAppPermInfos(ctx, types.PermissionDelete, filteredApps); err != nil {
+		return false, nil, err
+	}
+
+	// Collect every app id being deleted before the rows go away
+	deletedAppIds := make([]types.AppId, 0, 2*len(filteredApps))
+	for _, appInfo := range filteredApps {
+		deletedAppIds = append(deletedAppIds, appInfo.Id)
+		linkedApps, err := s.db.GetLinkedApps(ctx, tx, appInfo.Id)
+		if err != nil {
+			return false, nil, err
+		}
+		for _, linked := range linkedApps {
+			deletedAppIds = append(deletedAppIds, linked.Id)
+		}
+	}
+
+	for _, appInfo := range filteredApps {
+		if err := s.db.DeleteApp(ctx, tx, appInfo.Id); err != nil {
+			return false, nil, err
+		}
+	}
+
+	deletedBindings, err := s.deleteAutoBindings(ctx, tx, accounts, filteredApps)
+	if err != nil {
+		return false, nil, err
+	}
+	return deletedBindings, deletedAppIds, nil
 }
 
 // deleteAutoBindings deletes the auto binding rows of the apps being deleted and
