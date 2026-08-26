@@ -28,7 +28,7 @@ The main differences are:
 - OpenRun supports staged (blue-green) deployment for both code and config changes, and atomic updates across apps.
 - OpenRun deploys apps to a single machine or onto Kubernetes with the same config.
 
-The tradeoff: OpenRun does not deploy Docker Compose stacks; apps run in a single container and connect to externally managed databases through service bindings. See the full [comparison with Coolify, CapRover, Kamal and Dokku]({{< ref "compare/coolify-caprover-kamal" >}}).
+The tradeoff: OpenRun does not deploy Docker Compose stacks; apps run in a single container (with optional [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}})) and connect to externally managed databases through service bindings. See the full [comparison with Coolify, CapRover, Kamal and Dokku]({{< ref "compare/coolify-caprover-kamal" >}}).
 
 ### How does OpenRun compare to Google Cloud Run and AWS App Runner?
 
@@ -50,7 +50,7 @@ Declarative configuration is what makes Kubernetes and Terraform useful. OpenRun
 
 ### What types of apps can be deployed with OpenRun?
 
-OpenRun can deploy any web app which runs in a single container. OpenRun supports [AppSpecs]({{< ref "docs/container/appspecs" >}}) which allow zero-config deployment of frameworks like Streamlit/Gradio/FastHTML/NiceGUI/Shiny/Reflex based apps. For frameworks which have an AppSpec, no Dockerfile is required and no code changes are required in the app source. For frameworks which do not have an AppSpec defined, a Dockerfile needs to be present in the app source repo.
+OpenRun can deploy any web app which runs in a single container, with optional [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}) for background workers and companion services. OpenRun supports [AppSpecs]({{< ref "docs/container/appspecs" >}}) which allow zero-config deployment of frameworks like Streamlit/Gradio/FastHTML/NiceGUI/Shiny/Reflex based apps. For frameworks which have an AppSpec, no Dockerfile is required and no code changes are required in the app source. For frameworks which do not have an AppSpec defined, a Dockerfile needs to be present in the app source repo.
 
 OpenRun does NOT support apps which require multiple containers using Docker Compose. The target use case is internal tools talking to existing API endpoints and web apps where the database is externally managed. OpenRun support service bindings, which is a better abstraction for managing endpoints.
 

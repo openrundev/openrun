@@ -80,7 +80,7 @@ cascade:
 
 {{< hextra/feature-grid >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="What is OpenRun?" icon="information-circle" subtitle="<br>OpenRun is an open-source, self-hosted GitOps platform for deploying web apps and internal tools. Run the single binary on a node with Docker/Podman, or deploy apps onto a Kubernetes cluster with the same declarative config.<br><br>OpenRun adds the authentication, authorization and auditing features required for team use. Code-first apps get the platform capabilities usually found in enterprise low-code tools like Retool." class="openrun-feature-card openrun-feature-card-dark" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="What is OpenRun?" icon="information-circle" subtitle="<br>OpenRun is an open-source, self-hosted GitOps platform for deploying web apps and internal tools. Run the single binary on a node with Docker/Podman, or deploy apps onto a Kubernetes cluster with the same declarative config.<br><br>OpenRun adds the authentication, authorization and auditing features required by teams. Code-first apps get the platform capabilities usually found in enterprise low-code tools like Retool." class="openrun-feature-card openrun-feature-card-dark" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Motivation" icon="flag" subtitle="<br>OpenRun is built with these goals:<br><br>➣ True GitOps: create and configure apps through Git, not just update code<br>➣ Start on single-node, scale to Kubernetes if needed<br>➣ Make auth and RBAC easy for internal tools<br>➣ Easy SAML support without paying the SSO tax<br>➣ Run thousands of apps - zero idle resource usage" class="openrun-feature-card openrun-feature-card-dark" >}}
 

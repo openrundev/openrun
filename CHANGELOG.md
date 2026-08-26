@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.19.2] - 2026-08-25
+
 ### Added
 
 - Added sidecar containers for container apps: background workers running the app image with a different command, or companion services from another image (e.g. memcached). Sidecars start in order and are ready before the app container; on Kubernetes they are native sidecars in the app pod (reachable on `localhost`), on docker/podman peer containers on a per app network.

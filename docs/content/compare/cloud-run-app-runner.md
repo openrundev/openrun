@@ -29,7 +29,7 @@ OpenRun brings the serverless container deployment model to infrastructure you c
 | RBAC for app access | Built in, per app path/domain grants | Via IAM and IAP policies | Via fronting infrastructure |
 | App management through Git | Yes, declarative config, apps created and configured via Git sync | Partial: YAML service specs; continuous deployment via Cloud Build triggers | Partial: source-based deploys from a repo |
 | Management interface | CLI, optional [web console]({{< ref "console-tour" >}}) and declarative GitOps | Cloud console, gcloud CLI | AWS console, AWS CLI |
-| Docker Compose support | No, single container apps | No (sidecar containers supported) | No |
+| Docker Compose support | No (sidecar containers supported) | No (sidecar containers supported) | No |
 | Staged deployment | Yes, staging app per app with promote step | Revisions with traffic splitting | Deployments replace the service |
 | Run on a private network behind a VPN | Yes | No, runs in Google Cloud (private ingress available) | No |
 | Custom domains with automatic TLS | Yes | Yes | Yes |

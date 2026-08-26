@@ -24,7 +24,7 @@ OpenRun provides the web app deployment slice of that stack as one system. OpenR
 | Access control          | Combination of Kubernetes RBAC, proxy config and app code            | [RBAC]({{< ref "docs/configuration/rbac/" >}}) grants mapping IdP groups to apps                                                               |
 | Scale to zero           | Knative serving                                                      | Built in, lazy start on first request                                                                                                          |
 | App catalog / portal    | Backstage or similar IDP                                             | Optional [management console]({{< ref "console-tour" >}}) and app listing; CLI, UI and declarative GitOps all supported                        |
-| Docker Compose support  | Not native; convert with Kompose or rewrite as manifests             | No, apps are single container                                                                                                                  |
+| Docker Compose support  | Not native; convert with Kompose or rewrite as manifests             | No, apps are a single container plus optional [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}})                                                                                                                  |
 | Audit                   | Assembled from component logs                                        | [Audit events]({{< ref "docs/applications/audit/" >}}) built in                                                                                |
 | Database access per app | Manual secrets, operators                                            | [Service bindings]({{< ref "docs/applications/servicebindings/" >}}) provisioning isolated credentials                                         |
 | Version history         | Git plus cluster state across tools                                  | App versions tracked in OpenRun metadata                                                                                                       |
@@ -68,7 +68,7 @@ Knative is the closest single component to OpenRun's runtime model, providing sc
 A DIY platform is the right choice when:
 
 - You run workloads beyond single-container web apps: microservice meshes, operators, batch jobs, StatefulSets. OpenRun targets web apps and internal tools; it does not replace general Kubernetes usage and does not deploy Docker Compose style multi-container apps.
-- You need fine-grained control over ingress behavior, sidecars, network policies or a service mesh.
+- You need fine-grained control over ingress behavior, network policies or a service mesh.
 - You already operate ArgoCD, Jenkins and friends with a platform team, and the marginal cost of another app on that stack is low.
 
 OpenRun can also run alongside a DIY stack: use it for the long tail of internal tools and dashboards while core product services stay on the existing pipeline.

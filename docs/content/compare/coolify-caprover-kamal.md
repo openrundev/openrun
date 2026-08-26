@@ -79,7 +79,7 @@ Coolify, CapRover, Kamal and Dokku are built around Docker on individual servers
 
 ## Where the Alternatives Are Better
 
-OpenRun focuses on web apps and internal tools, and that focus comes with a real limitation: **OpenRun does not support Docker Compose stacks**. An OpenRun app is a single container; multi-container applications defined in a compose file cannot be deployed as-is. Apps that need a database use service bindings to an externally managed database instead of a bundled database container.
+OpenRun focuses on web apps and internal tools, and that focus comes with a real limitation: **OpenRun does not support Docker Compose stacks**. An OpenRun app is a single container plus optional [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}); multi-container applications defined in a compose file cannot be deployed as-is. Apps that need a database use service bindings to an externally managed database instead of a bundled database container.
 
 This means Coolify, CapRover or Dokku are better choices when you want to:
 
@@ -115,7 +115,7 @@ Yes, for web apps and internal tools. OpenRun covers the same self-hosted deploy
 
 ### Can OpenRun deploy any web app?
 
-OpenRun can deploy any web app that runs in a single container. [App specs]({{< ref "docs/container/appspecs/" >}}) provide zero-config deployment for frameworks like Streamlit, Gradio, FastAPI, FastHTML, NiceGUI, Shiny and Reflex. Other apps need a Dockerfile in the repo.
+OpenRun can deploy any web app that runs in a single container, with optional [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}). [App specs]({{< ref "docs/container/appspecs/" >}}) provide zero-config deployment for frameworks like Streamlit, Gradio, FastAPI, FastHTML, NiceGUI, Shiny and Reflex. Other apps need a Dockerfile in the repo.
 
 ### Does OpenRun require Kubernetes?
 

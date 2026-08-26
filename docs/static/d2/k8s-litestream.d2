@@ -1,0 +1,61 @@
+# https://d2lang.com diagram. Use make to generate SVG.
+direction: right
+
+client: {
+  label: "Client"
+  shape: person
+  style: {stroke-width: 2}
+}
+
+k8s_cluster: {
+  label: "Kubernetes Cluster"
+  shape: rectangle
+  icon: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/kubernetes.svg"
+  style: {stroke-width: 2}
+
+  openrun_ns: {
+    label: "Namespace: openrun"
+    shape: rectangle
+
+    openrun: {
+      label: "OpenRun"
+      height: 200
+    }
+  }
+
+  kube_api: "Kubernetes API"
+
+  apps_ns: {
+    label: "Namespace: openrun-apps"
+    shape: rectangle
+
+    app1_pod: {
+      label: "App1 Pod"
+      shape: rectangle
+
+      restore: "Restore init container"
+      app: "App container"
+      litestream: "Litestream sidecar"
+    }
+
+    pvc1: {
+      label: "App1 SQLite PVC"
+      shape: cylinder
+    }
+  }
+}
+
+s3: {
+  label: "S3-compatible storage\n(AWS S3 / R2 / MinIO)"
+  shape: rectangle
+  icon: "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg"
+  style: {stroke-width: 2}
+}
+
+client -> k8s_cluster.openrun_ns.openrun: "App requests"
+k8s_cluster.openrun_ns.openrun -> k8s_cluster.apps_ns.app1_pod.app: "Proxy requests"
+k8s_cluster.openrun_ns.openrun -> k8s_cluster.kube_api: "Create Deployment with\ninit and sidecar containers"
+k8s_cluster.apps_ns.app1_pod.restore -> s3: "Restore DBs on empty PVC"
+k8s_cluster.apps_ns.app1_pod.app -> k8s_cluster.apps_ns.pvc1: "App SQLite data"
+k8s_cluster.apps_ns.app1_pod.litestream -> k8s_cluster.apps_ns.pvc1: "Read DB changes"
+k8s_cluster.apps_ns.app1_pod.litestream -> s3: "Continuous replication"

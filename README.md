@@ -88,7 +88,7 @@ OpenRun supports three ways of managing apps, which can be mixed freely:
 <details>
   <summary><b>What types of apps can be deployed with OpenRun?</b></summary>
 
-> OpenRun can deploy any web app which runs in a single container. OpenRun supports [AppSpecs](https://openrun.dev/docs/container/overview/#app-specs) which allow zero-config deployment of frameworks like Streamlit/Gradio/FastHTML/NiceGUI/Shiny/Reflex based apps. For frameworks which have an AppSpec, no Dockerfile is required, no code changes are required in the app source code. For frameworks which do not have an AppSpec defined, a Dockerfile needs to be present in the app source repo.
+> OpenRun can deploy any web app which runs in a single container, with optional [sidecar containers](https://openrun.dev/docs/container/overview/#sidecar-containers) for background workers and companion services. OpenRun supports [AppSpecs](https://openrun.dev/docs/container/overview/#app-specs) which allow zero-config deployment of frameworks like Streamlit/Gradio/FastHTML/NiceGUI/Shiny/Reflex based apps. For frameworks which have an AppSpec, no Dockerfile is required, no code changes are required in the app source code. For frameworks which do not have an AppSpec defined, a Dockerfile needs to be present in the app source repo.
 >
 > OpenRun does NOT support apps which require multiple containers using Docker Compose. External services are accessed through a service binding, which is a more flexible and operationally convenient approach to provisioning services.
 
