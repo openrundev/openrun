@@ -5,7 +5,8 @@ admin_user = "admin"
 
 # Properties use by the OpenRun client to connect to the server
 [client]
-admin_password = ""      # the password for the admin user. Required only if admin over TCP is enabled
+api_key = ""             # bearer credential (openrun apikey create) for remote servers;
+                         # the OPENRUN_API_KEY env var takes precedence. Not needed over the unix socket
 skip_cert_check = false
 default_format = "basic" # default output format for the client commands
 
@@ -74,9 +75,30 @@ cert_location = "$OPENRUN_HOME/config/certificates" # where to look for existing
 storage_location = "$OPENRUN_HOME/run/certmagic"    # where to cache dynamically created certificates
 disable_client_certs = true                    # disable client certs for HTTPS
 
+[api]
+enable = []                      # remote API surfaces: "rest" (management REST over TCP, remote CLI)
+                                 # and/or "mcp" (/_openrun/mcp). Default: neither. Enabled surfaces
+                                 # require RBAC to be enabled and HTTPS (or a trusted TLS-terminating
+                                 # proxy listed in security.trusted_proxies).
+external_url = ""                # canonical https origin for API token resource URIs; defaults to
+                                 # security.callback_url when unset
+auth = []                        # login mechanisms for interactive API auth (OAuth flow): "builtin",
+                                 # "admin", or an [auth.*]/[saml.*] entry name
+access_token_ttl = "1h"          # OAuth access token lifetime
+refresh_token_ttl = "720h"       # OAuth refresh token lifetime (30d)
+federated_identity_ttl = "720h"  # provider-derived group snapshot max age; older snapshots are
+                                 # dropped until the next interactive login
+pat_default_ttl = "2160h"        # default API key expiry (90d); --expires=never for non-expiring
+
+[api.mcp]                        # per-operation overrides for the MCP invoker
+enable = []                      # ops disabled by default for MCP (like secret_reveal), opted back in
+disable = []                     # additional ops turned off for MCP
+
+[api.tcp]                        # per-operation overrides for the remote REST invoker
+enable = []
+disable = []
+
 [security]
-unsafe_admin_over_tcp = false    # enable admin API's over TCP (HTTP/HTTPS). Admin is over UDS only by default.
-                                 # It is strongly recommended to keep this setting disabled (false).
 admin_password_bcrypt = ""       # the password bcrypt value
 session_max_age = 86400          # session max age in seconds (restart-only: applied to the shared cookie store at startup)
 session_https_only = true        # session cookie is HTTPS only (restart-only: applied to the shared cookie store at startup)

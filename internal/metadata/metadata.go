@@ -26,7 +26,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 23
+const CURRENT_DB_VERSION = 25
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -654,6 +654,54 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 
 		if _, err := tx.ExecContext(ctx, `update version set version=23, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 24 {
+		m.Info().Msg("Upgrading to version 24")
+		// Remote API auth: identities holds the principals credentials map to
+		// (with provider group snapshots for federated users); credentials
+		// holds hashed API keys (PATs) and, later, OAuth access/refresh
+		// tokens. See docs: mcp-remote-auth design
+		if _, err := tx.ExecContext(ctx, `create table identities (id text, provider text, stable_subject text, `+
+			`principal_name text, groups `+system.MapDataType(m.dbType, "json")+`, `+
+			`groups_observed_at `+system.MapDataType(m.dbType, "datetime")+`, `+
+			`disabled_at `+system.MapDataType(m.dbType, "datetime")+`, `+
+			`create_time `+system.MapDataType(m.dbType, "datetime")+`, PRIMARY KEY(id))`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `create unique index idx_identities_principal on identities (principal_name)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `create table credentials (id text, secret_hash text, type text, `+
+			`identity_id text, scopes `+system.MapDataType(m.dbType, "json")+`, `+
+			`resources `+system.MapDataType(m.dbType, "json")+`, description text, `+
+			`oauth_client_id text default '', grant_id text default '', family_id text default '', `+
+			`replaced_by_id text default '', consumed_at `+system.MapDataType(m.dbType, "datetime")+`, `+
+			`revoked_at `+system.MapDataType(m.dbType, "datetime")+`, revocation_reason text default '', `+
+			`expires_at `+system.MapDataType(m.dbType, "datetime")+`, created_by text, `+
+			`create_time `+system.MapDataType(m.dbType, "datetime")+`, `+
+			`last_used_at `+system.MapDataType(m.dbType, "datetime")+`, PRIMARY KEY(id))`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=24, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 25 {
+		m.Info().Msg("Upgrading to version 25")
+		// OAuth dynamic client registration: public clients (PKCE only, no
+		// secrets) registered by MCP clients at /_openrun/oauth/register
+		if _, err := tx.ExecContext(ctx, `create table oauth_clients (id text, name text, `+
+			`redirect_uris `+system.MapDataType(m.dbType, "json")+`, `+
+			`create_time `+system.MapDataType(m.dbType, "datetime")+`, PRIMARY KEY(id))`); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=25, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}

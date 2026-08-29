@@ -43,25 +43,30 @@ This will prompt for the password and print out the bcrypt hash to add to the co
 
 By default, the OpenRun client uses Unix domain sockets to connect to the OpenRun server. Admin API calls to manage applications are disabled over HTTP/HTTPS by default. Unix sockets work when the client is on the same machine as the server, the client does not need to pass any credentials to connect over unix sockets.
 
-To enable remote API calls, where the client is on a different machine from the server, the server needs to be changed to add the following:
+To enable remote API calls, where the client is on a different machine from the server, the server needs [RBAC]({{< ref "rbac" >}}) enabled and the remote API surface turned on:
 
 ```toml {filename="openrun.toml"}
-[security]
-unsafe_admin_over_tcp = true
+[api]
+enable = ["rest"]        # add "mcp" to also enable the MCP endpoint at /_openrun/mcp
 ```
+
+The remote surface is served only over HTTPS (or through a TLS-terminating proxy listed in `security.trusted_proxies`); plaintext requests get a 404. Remote calls authenticate with an API key created with `openrun apikey create` (over the local unix socket, or by a user holding `apikey:manage:self`). The key is shown once at creation. Every remote call runs as the key's user identity with RBAC enforced; keys expire after 90 days by default (`--expires` to change, `--expires=never` for a non-expiring key) and can carry `--scopes` to further limit what the key allows.
 
 If running the OpenRun client from a remote machine, the config options required for the client are:
 
 ```toml {filename="openrun.toml"}
 server_uri = "https://<SERVER_HOST>:25223"
-admin_user = "admin"
 
 [client]
-admin_password = "" # Change to actual password
+api_key = ""            # or set the OPENRUN_API_KEY environment variable
 skip_cert_check = false # Change to true if using self-signed certs
 ```
 
-When RBAC is enabled, admin API requests over HTTP/HTTPS still traverse the management API permission checks and are attributed to the authenticated built-in `admin` principal. Only local CLI requests over the unix domain socket are treated as transport-trusted and skip those checks.
+Note on MCP and secrets: the `secret_create` tool is enabled for MCP by default, which means secret values typed into an AI client transit that client and the model's context by design. Reading values back (`secret_reveal`) and revealing binding account credentials stay disabled for MCP unless explicitly enabled with `[api.mcp] enable`. Disable `secret_create` too (`[api.mcp] disable = ["secret_create"]`) if secret writes must never pass through an AI client.
+
+Instead of an API key, `openrun login` runs a browser login against the server (using the mechanisms listed in the server's `api.auth`, like builtin users or the admin account) and stores short-lived tokens in the OS keychain; later CLI calls use and refresh them automatically. `openrun logout` revokes the session server side and clears the stored tokens.
+
+Only local CLI requests over the unix domain socket are treated as transport-trusted and skip the RBAC checks; remote requests are always attributed to the API key's user.
 
 All other server related config entries are ignored by the OpenRun client. Note that to connect to an OpenRun server over HTTP remotely, the server needs to be bound to the all interface (0.0.0.0), see [networking]({{< ref "networking" >}}).
 

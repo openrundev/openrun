@@ -42,7 +42,13 @@ func (s *Server) ListSecrets(ctx context.Context, providerName, nameGlob string)
 func (s *Server) GetSecret(ctx context.Context, providerName, name string, reveal bool) (*types.SecretGetResponse, error) {
 	perm := types.PermissionSecretRead
 	if reveal {
+		// Reveal is a separate logical operation: distinct audit name and
+		// invoker policy (secret_reveal is disabled by default for MCP)
 		perm = types.PermissionSecretReveal
+		updateApiOperation(ctx, "secret_reveal", name)
+		if err := s.checkApiOpEnabled(ctx, API_SECRET_REVEAL); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.enforceGlobalPerm(ctx, perm, ""); err != nil {
 		return nil, err

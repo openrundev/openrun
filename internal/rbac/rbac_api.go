@@ -5,6 +5,8 @@ package rbac
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/openrundev/openrun/internal/system"
@@ -127,6 +129,20 @@ func (h *RBACManager) AuthorizeGlobalAPI(ctx context.Context, perm types.RBACPer
 func (h *RBACManager) authorizeAPICtx(ctx context.Context, perm types.RBACPermission,
 	target types.AppPathDomain, resourceId string, owner string) (bool, error) {
 	if system.IsAppRBACEnabled(ctx) {
+		// Credential scope ceiling: a scoped bearer credential (remote CLI
+		// PAT, MCP token) must cover the permission before the user's grants
+		// are even consulted. Applied here so every enforcement path -
+		// including conditional multi-permission operations - traverses it.
+		// The error names the missing scope and how to fix it, so a scope
+		// denial is distinguishable from a missing RBAC grant: the remedy is
+		// re-consenting/minting a broader credential, not asking an admin
+		if scopes, ok := system.GetContextApiScopes(ctx); ok && !ScopesAllow(scopes, perm) {
+			return false, types.CreateRequestError(
+				fmt.Sprintf("credential scope ceiling: this token's scopes %v do not include %s."+
+					" Re-authenticate with a broader scope (openrun login --scopes, or the manage preset)"+
+					" or use an API key that grants %s. The user's RBAC grants were not evaluated",
+					scopes, perm, perm), http.StatusForbidden)
+		}
 		// live config enforcement; test URL directives and sync snapshots are
 		// only ever attached to contexts where this is not set
 		return h.authorizeAPIInt(system.GetContextUserId(ctx), system.GetContextGroups(ctx), perm, target, resourceId, owner)

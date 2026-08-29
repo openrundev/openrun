@@ -42,6 +42,7 @@ var predefinedRoles = map[string][]types.RBACPermission{
 		types.PermissionSecretCreate, types.PermissionSecretRead, types.PermissionSecretDelete,
 		types.PermissionAuditRead, types.PermissionServerStop,
 		types.PermissionBuilderList, types.PermissionBuilderCreate, types.PermissionBuilderPublish,
+		types.PermissionApiKeyManageSelf,
 	},
 
 	// App lifecycle and supporting resources, minus operator-only controls
@@ -57,6 +58,7 @@ var predefinedRoles = map[string][]types.RBACPermission{
 		types.PermissionSyncRun, types.PermissionSyncRead,
 		types.PermissionSecretCreate, types.PermissionSecretRead,
 		types.PermissionConfigBasicRead,
+		types.PermissionApiKeyManageSelf,
 	},
 
 	// A developer who also gets the AI app builder
@@ -186,27 +188,28 @@ func scopedKind(perm types.RBACPermission, isAppLevelPermission bool) (targetKin
 // session publishes or edits is separately enforced with the app permissions
 // (app:create/app:update/app:delete) on that path.
 var globalPermissions = map[types.RBACPermission]bool{
-	types.PermissionBuilderList:     true,
-	types.PermissionBuilderCreate:   true,
-	types.PermissionBuilderPublish:  true,
-	types.PermissionSyncCreate:      true,
-	types.PermissionSyncRun:         true,
-	types.PermissionSyncDelete:      true,
-	types.PermissionSyncRead:        true,
-	types.PermissionContainerRead:   true,
-	types.PermissionContainerManage: true,
-	types.PermissionProviderRead:    true,
-	types.PermissionProviderManage:  true,
-	types.PermissionConfigBasicRead: true,
-	types.PermissionConfigRead:      true,
-	types.PermissionConfigUpdate:    true,
-	types.PermissionServerStop:      true,
-	types.PermissionAuditRead:       true,
-	types.PermissionSecretCreate:    true,
-	types.PermissionSecretRead:      true,
-	types.PermissionSecretDelete:    true,
-	types.PermissionSecretReveal:    true,
-	types.PermissionAdmin:           true,
+	types.PermissionBuilderList:      true,
+	types.PermissionBuilderCreate:    true,
+	types.PermissionBuilderPublish:   true,
+	types.PermissionSyncCreate:       true,
+	types.PermissionSyncRun:          true,
+	types.PermissionSyncDelete:       true,
+	types.PermissionSyncRead:         true,
+	types.PermissionContainerRead:    true,
+	types.PermissionContainerManage:  true,
+	types.PermissionProviderRead:     true,
+	types.PermissionProviderManage:   true,
+	types.PermissionConfigBasicRead:  true,
+	types.PermissionConfigRead:       true,
+	types.PermissionConfigUpdate:     true,
+	types.PermissionServerStop:       true,
+	types.PermissionAuditRead:        true,
+	types.PermissionSecretCreate:     true,
+	types.PermissionSecretRead:       true,
+	types.PermissionSecretDelete:     true,
+	types.PermissionSecretReveal:     true,
+	types.PermissionApiKeyManageSelf: true,
+	types.PermissionAdmin:            true,
 }
 
 // globalPermissionNames is the sorted list of global permission names, for

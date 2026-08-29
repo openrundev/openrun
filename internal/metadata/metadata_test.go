@@ -654,6 +654,11 @@ func TestMetadataUpgradeAddsLoadIndexes(t *testing.T) {
 	}
 	_, err := m.db.Exec(`alter table bindings drop column created_by_sync_id`)
 	testutil.AssertNoError(t, err)
+	// And the version 24/25 auth tables, re-created by the replayed migration
+	for _, table := range []string{"credentials", "identities", "oauth_clients"} {
+		_, err := m.db.Exec(`drop table ` + table)
+		testutil.AssertNoError(t, err)
+	}
 	_, err = m.db.Exec(`update version set version=20`)
 	testutil.AssertNoError(t, err)
 	testutil.AssertNoError(t, m.VersionUpgrade(m.config))

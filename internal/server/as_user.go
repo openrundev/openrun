@@ -35,20 +35,6 @@ func (c *managementAPIContext) Value(key any) any {
 	return c.Context.Value(key)
 }
 
-// adminTCPRequestContext attributes an authenticated admin-over-TCP request
-// instead of marking it trusted. Only the unix-socket CLI is outside management
-// API RBAC enforcement. The built-in admin principal still passes authorization
-// as the RBAC super-user, but every TCP operation now traverses the same checks
-// as Starlark management calls and cannot become an unattributed bypass.
-func (s *Server) adminTCPRequestContext(ctx context.Context) context.Context {
-	return &managementAPIContext{
-		Context:     ctx,
-		userId:      types.ADMIN_USER,
-		groups:      []string{},
-		rbacEnabled: s.rbacManager.ConfigEnabled(),
-	}
-}
-
 // asUserRequestContext builds the request context for a management API call
 // made as another user (the CLI --as flag). asUser is <provider>:<username>,
 // like builtin:user1. For builtin users the entry must exist and its groups

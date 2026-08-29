@@ -225,7 +225,7 @@ func listExpiredFile(ctx context.Context) ([]expiredFile, error) {
 
 	defer stmt.Close() //nolint:errcheck
 
-	rows, err := stmt.Query(time.Now())
+	rows, err := stmt.Query(time.Now().UTC())
 	if err != nil {
 		return nil, fmt.Errorf("error querying files: %w", err)
 	}
@@ -257,7 +257,7 @@ func deleteExpiredFiles(ctx context.Context) error {
 	}
 	defer stmt.Close() //nolint:errcheck
 
-	_, err = stmt.Exec(time.Now())
+	_, err = stmt.Exec(time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("error deleting files: %w", err)
 	}

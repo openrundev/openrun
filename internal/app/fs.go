@@ -258,10 +258,13 @@ func (f *fsModule) ServeTmpFile(ctx context.Context, call *sdk.Call) (any, error
 		return nil, err
 	}
 
-	createTime := time.Now()
+	// UTC strips the monotonic reading before the sqlite driver persists the
+	// times (it stores time.Time via String()) and keeps the stored text
+	// comparable across processes in different timezones
+	createTime := time.Now().UTC()
 	expireAt := createTime.Add(time.Duration(expiryMinutes) * time.Minute)
 	if expiryMinutes <= 0 {
-		expireAt = time.Unix(0, int64(^uint64(0)>>1))
+		expireAt = time.Unix(0, int64(^uint64(0)>>1)).UTC()
 	}
 
 	id, err := ksuid.NewRandom()

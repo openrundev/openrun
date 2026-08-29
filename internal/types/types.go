@@ -72,8 +72,20 @@ const (
 	// (rbac.UrlDirectives) for dev app requests when security.unsafe_enable_testurl_rbac
 	// is set. Never present on prod app or management API requests.
 	TESTURL_DIRECTIVES ContextKey = "testurl_directives"
-	SYNC_ID            ContextKey = "sync_id"         // id of the sync entry driving the current apply
-	APPLY_OPERATION    ContextKey = "apply_operation" // set when the current operation is a declarative apply
+	// API_SCOPES holds the credential's scope ceiling ([]string permission
+	// globs) for bearer-authenticated remote API requests. Absent for
+	// unscoped credentials and for every non-credential invoker.
+	API_SCOPES ContextKey = "api_scopes"
+	// API_INVOKER identifies which front end dispatched the management API
+	// call: "plugin", "uds", "tcp" or "mcp". Used for per-invoker operation
+	// policy and audit attribution.
+	API_INVOKER ContextKey = "api_invoker"
+	// API_CREDENTIAL holds the *Credential the request authenticated with
+	// (bearer invokers only). Used to enforce attenuation: a credential can
+	// only mint credentials at most as powerful as itself.
+	API_CREDENTIAL  ContextKey = "api_credential"
+	SYNC_ID         ContextKey = "sync_id"         // id of the sync entry driving the current apply
+	APPLY_OPERATION ContextKey = "apply_operation" // set when the current operation is a declarative apply
 	// SYNC_RBAC holds the frozen creator authorization (rbac.SyncAuthorizer) for
 	// background sync runs. Set only when the sync entry carries an RBAC snapshot
 	// and RBAC is enabled; never present on interactive requests.
@@ -187,11 +199,56 @@ type ServerConfig struct {
 	BuilderProfile  map[string]BuilderProfileConfig `toml:"builder_profile"`
 	BuilderGit      map[string]BuilderGitConfig     `toml:"builder_git"`
 	Restart         RestartConfig                   `toml:"restart"`
+	Api             ApiConfig                       `toml:"api"`
 
 	// EnableInPlaceRestart is set by the server start command; zero downtime
 	// in-place restarts need process-wide state (signal handling, re-exec)
 	// which embedded and test servers must not take over
 	EnableInPlaceRestart bool `toml:"-"`
+}
+
+// ApiSurface names a remote API surface that can be listed in api.enable
+type ApiSurface string
+
+const (
+	ApiSurfaceRest ApiSurface = "rest" // the REST management API over TCP (/_openrun, remote CLI)
+	ApiSurfaceMCP  ApiSurface = "mcp"  // the MCP endpoint (/_openrun/mcp)
+)
+
+// ApiInvokerOps is the per-invoker operation override lists: operation names
+// (the audit operation vocabulary, like create_app) enabled or disabled for
+// one invoker type, overriding the registry defaults
+type ApiInvokerOps struct {
+	Enable  []string `toml:"enable"`  // ops disabled by default for this invoker, opted back in
+	Disable []string `toml:"disable"` // ops turned off for this invoker
+}
+
+// ApiConfig is the remote management API configuration ([api] in openrun.toml).
+// Remote surfaces (REST over TCP, MCP) are off by default: api.enable lists
+// which are on. Any enabled surface requires RBAC to be enabled and the
+// transport rules (HTTPS or a trusted TLS-terminating proxy)
+type ApiConfig struct {
+	// Enable lists the enabled remote surfaces: "rest" and/or "mcp"
+	// (case-insensitive). Default empty - neither surface exists.
+	Enable []string `toml:"enable"`
+
+	// ExternalUrl is the canonical https origin for token resource URIs and
+	// (later) OAuth issuer/metadata. Never derived from the request Host.
+	// Defaults to security.callback_url when unset.
+	ExternalUrl string `toml:"external_url"`
+
+	// Auth lists the login mechanisms for interactive auth (phase 3 OAuth
+	// authorize / openrun login): "builtin", "admin", or an [auth.*]/[saml.*]
+	// entry name. Required once the OAuth flow ships; unused for PAT auth.
+	Auth []string `toml:"auth"`
+
+	AccessTokenTTL       string `toml:"access_token_ttl"`       // OAuth access token lifetime (phase 3), default 1h
+	RefreshTokenTTL      string `toml:"refresh_token_ttl"`      // OAuth refresh token lifetime (phase 3), default 720h
+	FederatedIdentityTTL string `toml:"federated_identity_ttl"` // provider-derived group snapshot max age, default 720h
+	PatDefaultTTL        string `toml:"pat_default_ttl"`        // default API key expiry, default 2160h (90d)
+
+	MCP ApiInvokerOps `toml:"mcp"` // per-op overrides for the MCP invoker
+	TCP ApiInvokerOps `toml:"tcp"` // per-op overrides for the remote REST invoker
 }
 
 // RestartConfig controls zero downtime in-place restarts and shutdown drain
@@ -530,7 +587,6 @@ type HttpsConfig struct {
 
 // SecurityConfig is the security related configuration
 type SecurityConfig struct {
-	UnsafeAdminOverTCP  bool   `toml:"unsafe_admin_over_tcp"`
 	AdminPasswordBcrypt string `toml:"admin_password_bcrypt"`
 	AppDefaultAuthType  string `toml:"app_default_auth_type"`
 	AuthRequired        bool   `toml:"auth_required"`
@@ -906,8 +962,11 @@ type ClientConfig struct {
 
 // ClientConfigStruct is the configuration for the OpenRun Client
 type ClientConfigStruct struct {
-	SkipCertCheck bool   `toml:"skip_cert_check"`
-	AdminPassword string `toml:"admin_password"`
+	SkipCertCheck bool `toml:"skip_cert_check"`
+	// ApiKey is the bearer credential (openrun apikey create) for remote
+	// servers; the OPENRUN_API_KEY environment variable takes precedence.
+	// Not needed over the unix domain socket
+	ApiKey        string `toml:"api_key"`
 	DefaultFormat string `toml:"default_format"` // the default format for the CLI output
 	// AsUser runs the management API call as this user id (the --as flag,
 	// e.g. builtin:user1) with RBAC enforcement instead of as the trusted
@@ -1574,6 +1633,11 @@ const (
 	PermissionBuilderCreate  RBACPermission = "builder:create"  // create sessions, message/stop/resume/delete one's own sessions
 	PermissionBuilderPublish RBACPermission = "builder:publish" // publish/unpublish (also needs app:create on the path)
 
+	// PermissionApiKeyManageSelf allows creating/listing/deleting one's OWN
+	// API keys (openrun apikey). Managing another user's keys requires the
+	// admin permission, not a broader apikey permission
+	PermissionApiKeyManageSelf RBACPermission = "apikey:manage:self"
+
 	// PermissionAdmin is the super-user permission: holders pass every RBAC
 	// check (management APIs, app access, other users' builder sessions).
 	// The "admin" user holds it implicitly; other users acquire it through a
@@ -1623,6 +1687,7 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 	{Resource: "builder", Permissions: []RBACPermission{
 		PermissionBuilderList, PermissionBuilderCreate,
 		PermissionBuilderPublish}},
+	{Resource: "apikey", Permissions: []RBACPermission{PermissionApiKeyManageSelf}},
 	{Resource: "server", Permissions: []RBACPermission{PermissionServerStop}},
 	{Resource: "audit", Permissions: []RBACPermission{PermissionAuditRead}},
 	{Resource: "admin", Permissions: []RBACPermission{PermissionAdmin}},
@@ -1675,6 +1740,9 @@ var ErrSecretExists = errors.New("secret already exists")
 
 // ErrSecretNotFound is returned when a secret with the given name does not exist
 var ErrSecretNotFound = errors.New("secret not found")
+
+// ErrApiKeyNotFound is returned on lookup/delete of an absent credential
+var ErrApiKeyNotFound = errors.New("api key not found")
 
 // SecretMetadata is the non-sensitive metadata stored with an encrypted secret
 type SecretMetadata struct {

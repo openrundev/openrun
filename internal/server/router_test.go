@@ -13,7 +13,7 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-func newRouterTestServer(adminOverTCP, redirectToHTTPS bool) (*types.ServerConfig, *Server, *types.Logger) {
+func newRouterTestServer(apiEnabled, redirectToHTTPS bool) (*types.ServerConfig, *Server, *types.Logger) {
 	config := &types.ServerConfig{
 		Http: types.HttpConfig{
 			RedirectToHttps: redirectToHTTPS,
@@ -21,12 +21,12 @@ func newRouterTestServer(adminOverTCP, redirectToHTTPS bool) (*types.ServerConfi
 		Https: types.HttpsConfig{
 			Port: 7443,
 		},
-		Security: types.SecurityConfig{
-			UnsafeAdminOverTCP: adminOverTCP,
-		},
 		System: types.SystemConfig{
 			DefaultDomain: "example.com",
 		},
+	}
+	if apiEnabled {
+		config.Api.Enable = []string{"rest"}
 	}
 	logger := types.NewLogger(&types.LogConfig{
 		Level: "WARN",
@@ -72,22 +72,35 @@ func TestRouterNewTCPHandler_SystemRoutes(t *testing.T) {
 	internalRec := httptest.NewRecorder()
 	handler.router.ServeHTTP(internalRec, internalReq)
 	if internalRec.Code != http.StatusNotFound {
-		t.Fatalf("internal status when admin over tcp disabled: want %d got %d", http.StatusNotFound, internalRec.Code)
+		t.Fatalf("internal status when remote api disabled: want %d got %d", http.StatusNotFound, internalRec.Code)
 	}
 }
 
-func TestRouterNewTCPHandler_AdminOverTCPRequiresAuth(t *testing.T) {
+func TestRouterNewTCPHandler_RemoteApiTransportGateAndAuth(t *testing.T) {
 	config, server, logger := newRouterTestServer(true, false)
 	handler := NewTCPHandler(logger, config, server)
 
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/_openrun/apps", nil)
-	rec := httptest.NewRecorder()
-	handler.router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status: want %d got %d", http.StatusUnauthorized, rec.Code)
+	// Plaintext request: the remote surface does not exist on an untrusted
+	// transport - plain 404, no auth metadata, never a redirect
+	plainReq := httptest.NewRequest(http.MethodGet, "http://example.com/_openrun/apps", nil)
+	plainRec := httptest.NewRecorder()
+	handler.router.ServeHTTP(plainRec, plainReq)
+	if plainRec.Code != http.StatusNotFound {
+		t.Fatalf("plaintext status: want %d got %d", http.StatusNotFound, plainRec.Code)
 	}
-	if got := rec.Header().Get("WWW-Authenticate"); got != `Basic realm="openrun"` {
+	if got := plainRec.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("plaintext response must carry no auth metadata, got %q", got)
+	}
+
+	// HTTPS request without a bearer token: 401 with a Bearer challenge
+	tlsReq := httptest.NewRequest(http.MethodGet, "https://example.com/_openrun/apps", nil)
+	tlsReq.TLS = &tls.ConnectionState{}
+	tlsRec := httptest.NewRecorder()
+	handler.router.ServeHTTP(tlsRec, tlsReq)
+	if tlsRec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: want %d got %d", http.StatusUnauthorized, tlsRec.Code)
+	}
+	if got := tlsRec.Header().Get("WWW-Authenticate"); got != `Bearer realm="openrun"` {
 		t.Fatalf("WWW-Authenticate header: got %q", got)
 	}
 }

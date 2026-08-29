@@ -80,32 +80,6 @@ func TestAsUserContextAttribution(t *testing.T) {
 	testutil.AssertEqualsInt(t, "groups", 0, len(system.GetContextGroups(ctx)))
 }
 
-func TestAdminTCPContextAttribution(t *testing.T) {
-	server := newAsUserTestServer(t, &types.RBACConfig{Enabled: true})
-
-	ctx := server.adminTCPRequestContext(context.Background())
-	testutil.AssertEqualsString(t, "userId", types.ADMIN_USER, system.GetContextUserId(ctx))
-	testutil.AssertEqualsBool(t, "rbac enabled", true, system.IsAppRBACEnabled(ctx))
-	testutil.AssertEqualsBool(t, "trusted", false, system.IsTrustedOperation(ctx))
-	if !server.rbacManager.APIEnforced(ctx) {
-		t.Fatal("admin-over-TCP context must traverse management API RBAC checks")
-	}
-	// The built-in admin is the RBAC super-user, so attribution preserves the
-	// established admin API behavior while removing the transport bypass.
-	if err := server.enforceGlobalPerm(ctx, types.PermissionConfigRead, ""); err != nil {
-		t.Fatalf("admin principal should pass the RBAC check: %v", err)
-	}
-
-	disabled := newAsUserTestServer(t, &types.RBACConfig{Enabled: false})
-	disabledCtx := disabled.adminTCPRequestContext(context.Background())
-	if disabled.rbacManager.APIEnforced(disabledCtx) {
-		t.Fatal("admin-over-TCP context must keep RBAC disabled when computed disabled at request start")
-	}
-	if !system.AppRBACMarkerPresent(disabledCtx) {
-		t.Fatal("admin-over-TCP context must carry an explicit enforcement marker")
-	}
-}
-
 func TestManagementHandlersEnforceConfigRead(t *testing.T) {
 	server := newAsUserTestServer(t, &types.RBACConfig{Enabled: true})
 	handler := &Handler{Logger: server.Logger, server: server}

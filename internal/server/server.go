@@ -17,6 +17,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -184,7 +185,9 @@ type Server struct {
 	effectiveConfig  atomic.Pointer[types.ServerConfig]
 	rbacManager      *rbac.RBACManager
 	csrfMiddleware   *http.CrossOriginProtection
-	telemetry        *telemetry.Providers
+	mcpServerState
+	oauthState
+	telemetry *telemetry.Providers
 
 	forwardAuthHTTPClient *http.Client
 	builderManager        *builder.Manager
@@ -255,6 +258,51 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 
 	l := types.NewLogger(&config.Log)
 	l.Info().Str("version", types.GetVersion()).Str("commit", types.GetCommit()).Msg("Initializing server")
+
+	// Validate the [api] section up front: surface names, override op names
+	// and the transport prerequisite for enabled remote surfaces
+	if err := validateApiConfig(config); err != nil {
+		return nil, err
+	}
+	if apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) || apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
+		if config.Https.Port == -1 && len(config.Security.TrustedProxies) == 0 {
+			return nil, fmt.Errorf("api.enable requires an HTTPS listener or security.trusted_proxies for a TLS-terminating proxy")
+		}
+		// The external url backs token resource URIs and the OAuth metadata;
+		// a server that would 404 discovery or fail login only after
+		// credentials are typed must not start
+		external := strings.TrimSuffix(cmp.Or(config.Api.ExternalUrl, config.Security.CallbackUrl), "/")
+		if external == "" {
+			return nil, fmt.Errorf("api.enable requires api.external_url (or security.callback_url): the canonical https origin for API tokens and OAuth metadata")
+		}
+		// OAuth endpoints and resource identifiers are built from this value
+		// by concatenation: it must be a plain https origin, or the
+		// discovery metadata comes out invalid
+		parsed, err := url.Parse(external)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+			parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+			return nil, fmt.Errorf("api.external_url must be a plain https origin (https://host[:port], no path/query/fragment/userinfo), got %q", external)
+		}
+		for _, mechanism := range config.Api.Auth {
+			switch mechanism {
+			case "builtin", "admin":
+			default:
+				_, isOAuth := config.Auth[mechanism]
+				_, isSAML := config.SAML[mechanism]
+				if !isOAuth && !isSAML {
+					return nil, fmt.Errorf("api.auth: unknown login mechanism %q (valid: builtin, admin, or an [auth.*]/[saml.*] entry name)", mechanism)
+				}
+			}
+		}
+		if len(config.Api.Auth) == 0 {
+			l.Warn().Msg("api.auth is empty: the OAuth login flow (openrun login, MCP browser auth) is unavailable, API keys only")
+		}
+		if len(config.Api.MCP.Enable) > 0 {
+			// Operator opted dangerous operations back in for MCP: make it
+			// visible in the startup log
+			l.Warn().Strs("operations", config.Api.MCP.Enable).Msg("MCP default-disabled operations are ENABLED via api.mcp enable")
+		}
+	}
 
 	// Setup secrets manager
 	secretsManager, err := system.NewSecretManager(context.Background(), config.Secret, config.AppConfig.Security.DefaultSecretsProvider, config)
@@ -545,6 +593,43 @@ func (s *Server) ResumeBackground() {
 // the new process reports ready. Blocks until the new process is ready or
 // has failed; on failure this process resumes normal operation and the error
 // is returned
+// ServerVersion reports the build version and commit. Requires
+// config:basic_read; enforcement lives here so every front end (REST, MCP)
+// traverses it
+func (s *Server) ServerVersion(ctx context.Context) (*types.ServerVersionResponse, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionConfigBasicRead, ""); err != nil {
+		return nil, err
+	}
+	return &types.ServerVersionResponse{Version: types.GetVersion(), Commit: types.GetCommit()}, nil
+}
+
+// StopServer requests a graceful server stop. Requires server:stop
+func (s *Server) StopServer(ctx context.Context) (*types.ServerStopResponse, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionServerStop, ""); err != nil {
+		return nil, err
+	}
+	s.Warn().Msg("Server stop called")
+	s.RequestStop()
+	return &types.ServerStopResponse{PID: os.Getpid()}, nil
+}
+
+// RestartServer performs a zero downtime in-place restart: a new process
+// takes over the listeners and this one drains. Requires server:stop
+// (restarting is a stop/start of the same server)
+func (s *Server) RestartServer(ctx context.Context) (map[string]any, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionServerStop, ""); err != nil {
+		return nil, err
+	}
+	s.Warn().Msg("Server in-place restart called")
+	if err := s.RequestRestart(); err != nil {
+		if errors.Is(err, system.ErrInPlaceRestartUnavailable) {
+			return nil, types.CreateRequestError(err.Error(), http.StatusNotImplemented)
+		}
+		return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
+	}
+	return map[string]any{"status": "restarted, new process is serving"}, nil
+}
+
 func (s *Server) RequestRestart() error {
 	if s.upgrader == nil {
 		return fmt.Errorf("%w: server is not started", system.ErrInPlaceRestartUnavailable)

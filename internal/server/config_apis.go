@@ -120,6 +120,15 @@ type ConfigEntry struct {
 // GetConfigEntries returns the static and dynamic entries for the requested
 // config sections (all dynamically settable sections when empty). Secret
 // field values are redacted
+// GetConfigResponse returns the dynamic config document. Requires
+// config:read; enforcement lives here so every front end traverses it
+func (s *Server) GetConfigResponse(ctx context.Context) (*types.ConfigResponse, error) {
+	if err := s.enforceGlobalPerm(ctx, types.PermissionConfigRead, ""); err != nil {
+		return nil, err
+	}
+	return &types.ConfigResponse{DynamicConfig: s.GetDynamicConfig()}, nil
+}
+
 func (s *Server) GetConfigEntries(ctx context.Context, sections []string) (map[string][]ConfigEntry, error) {
 	if err := s.enforceGlobalPerm(ctx, types.PermissionConfigRead, ""); err != nil {
 		return nil, err

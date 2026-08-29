@@ -29,13 +29,14 @@ const (
 type HttpClient struct {
 	client    *http.Client
 	serverUri string
-	user      string
-	password  string
+	apiKey    string
 	headers   map[string]string // extra headers sent with every request
 }
 
-// NewHttpClient creates a new HttpClient instance
-func NewHttpClient(serverUri, user, password string, skipCertCheck bool) *HttpClient {
+// NewHttpClient creates a new HttpClient instance. apiKey is the bearer
+// credential for remote (TCP) servers; over the unix domain socket no
+// credential is needed (filesystem permissions authenticate the caller)
+func NewHttpClient(serverUri, apiKey string, skipCertCheck bool) *HttpClient {
 	serverUri = os.ExpandEnv(serverUri)
 
 	// Change to OPENRUN_HOME directory, helps avoid length limit on UDS file (around 104 chars).
@@ -79,9 +80,16 @@ func NewHttpClient(serverUri, user, password string, skipCertCheck bool) *HttpCl
 	return &HttpClient{
 		client:    client,
 		serverUri: serverUri,
-		user:      user,
-		password:  password,
+		apiKey:    apiKey,
 	}
+}
+
+// NewPlainHttpClient returns a plain *http.Client for direct requests
+// (well-known metadata fetches), honoring skip_cert_check
+func NewPlainHttpClient(skipCertCheck bool) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: skipCertCheck}
+	return &http.Client{Transport: transport, Timeout: 30 * time.Second}
 }
 
 // SetHeader adds a header sent with every request made by this client
@@ -132,7 +140,9 @@ func (h *HttpClient) request(method, apiPath string, params url.Values, input an
 		return fmt.Errorf("error creating request: %w", err)
 	}
 
-	request.SetBasicAuth(h.user, h.password)
+	if h.apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+h.apiKey)
+	}
 	request.Header.Set("Accept", ApplicationJson)
 	for name, value := range h.headers {
 		request.Header.Set(name, value)

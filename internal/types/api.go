@@ -569,6 +569,99 @@ type ServerInfo struct {
 	MetadataReplication []ReplicationStatusEntry `json:"metadata_replication"`
 }
 
+// Credential types stored in the credentials table
+const (
+	CredentialTypePAT          = "pat"
+	CredentialTypeOAuthAccess  = "oauth_access"
+	CredentialTypeOAuthRefresh = "oauth_refresh"
+)
+
+// Identity is a principal that credentials map to. PrincipalName is the
+// provider:username string RBAC grants match; StableSubject is the provider's
+// stable id (equals the username for builtin/admin). Groups is the provider
+// group snapshot for federated identities (builtin groups are re-resolved
+// live from config on every request instead)
+type Identity struct {
+	Id               string     `json:"id"`
+	Provider         string     `json:"provider"`
+	StableSubject    string     `json:"stable_subject"`
+	PrincipalName    string     `json:"principal_name"`
+	Groups           []string   `json:"groups"`
+	GroupsObservedAt *time.Time `json:"groups_observed_at,omitempty"`
+	DisabledAt       *time.Time `json:"disabled_at,omitempty"`
+	CreateTime       time.Time  `json:"create_time"`
+}
+
+// Credential is one stored bearer credential (API key / OAuth token). The
+// secret is stored only as a SHA-256 hash. Scopes nil means unscoped (RBAC
+// alone governs); non-nil is the ceiling
+type Credential struct {
+	Id               string     `json:"id"`
+	SecretHash       string     `json:"-"`
+	Type             string     `json:"type"`
+	IdentityId       string     `json:"identity_id"`
+	Scopes           []string   `json:"scopes,omitempty"`
+	Resources        []string   `json:"resources,omitempty"`
+	Description      string     `json:"description,omitempty"`
+	OAuthClientId    string     `json:"oauth_client_id,omitempty"`
+	GrantId          string     `json:"grant_id,omitempty"`
+	FamilyId         string     `json:"family_id,omitempty"`
+	ReplacedById     string     `json:"replaced_by_id,omitempty"`
+	ConsumedAt       *time.Time `json:"consumed_at,omitempty"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	RevocationReason string     `json:"revocation_reason,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"` // nil = never expires
+	CreatedBy        string     `json:"created_by"`
+	CreateTime       time.Time  `json:"create_time"`
+	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
+}
+
+// ApiKeyCreateRequest is the request to create an API key (PAT). User names
+// the key's identity (provider:username, like builtin:alice); empty means the
+// caller's own identity. Creating a key for another user requires the admin
+// permission and audits as create_apikey_other
+type ApiKeyCreateRequest struct {
+	User        string   `json:"user"`
+	ExpiresIn   string   `json:"expires_in"`  // Go duration, "never", or "" for the configured default (90d)
+	Scopes      []string `json:"scopes"`      // permission globs; empty = unscoped (RBAC alone governs)
+	Resources   []string `json:"resources"`   // "rest", "mcp"; empty = rest
+	Description string   `json:"description"` //nolint:misspell
+}
+
+// ApiKeyCreateResponse carries the one-time plaintext key. The secret is
+// never stored or shown again
+type ApiKeyCreateResponse struct {
+	Id        string     `json:"id"`
+	Key       string     `json:"key"` // orun_pat_<id>_<secret>, shown once
+	User      string     `json:"user"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"` // nil = never expires
+}
+
+// ApiKeyInfo is one API key's metadata (no secret material)
+type ApiKeyInfo struct {
+	Id          string     `json:"id"`
+	User        string     `json:"user"`
+	Type        string     `json:"type"` // pat | oauth_access | oauth_refresh
+	Scopes      []string   `json:"scopes,omitempty"`
+	Resources   []string   `json:"resources,omitempty"`
+	Description string     `json:"description,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	CreatedBy   string     `json:"created_by"`
+	CreateTime  time.Time  `json:"create_time"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+}
+
+// ApiKeyListResponse lists API keys: the caller's own, or all with --all (admin)
+type ApiKeyListResponse struct {
+	Keys []ApiKeyInfo `json:"keys"`
+}
+
+// ApiKeyDeleteResponse confirms an API key deletion
+type ApiKeyDeleteResponse struct {
+	Id   string `json:"id"`
+	User string `json:"user"`
+}
+
 // GetHTTPHeader returns the first value of the header with the given key.
 // The key has to be a HTTP Canonical Header Key (case is important)
 func GetHTTPHeader(header http.Header, key string) string {

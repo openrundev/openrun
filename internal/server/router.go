@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -147,10 +146,25 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	if config.Builder.Mode == "delegate_server" {
 		logger.Warn().Msg("Delegated build server mode is enabled")
 		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveDelegatedBuild()))
-	} else if config.Security.UnsafeAdminOverTCP {
-		// Mount the internal API's only if admin over TCP is enabled
-		logger.Warn().Msg("Admin API access over TCP is enabled, this is **NOT** recommended")
-		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveInternal(true)))
+	} else if apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) || apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
+		// Remote API surfaces ([api] enable): bearer-authenticated REST
+		// management and/or MCP, served only over HTTPS or via a trusted
+		// TLS-terminating proxy (the transport gate inside)
+		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveRemoteInternal(config)))
+		// OAuth well-known metadata documents (RFC 8414 / RFC 9728), behind
+		// the same transport gate. One PRM document per enabled surface
+		wellKnownGate := func(next http.HandlerFunc) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				if system.GetRequestScheme(r, config.Security.TrustedProxies) != "https" {
+					http.NotFound(w, r)
+					return
+				}
+				next(w, r)
+			}
+		}
+		router.Get("/.well-known/oauth-authorization-server", wellKnownGate(handler.serveOAuthASMetadata))
+		router.Get("/.well-known/oauth-protected-resource/rest", wellKnownGate(handler.serveOAuthPRM(ApiResourceRest)))
+		router.Get("/.well-known/oauth-protected-resource/mcp", wellKnownGate(handler.serveOAuthPRM(ApiResourceMCP)))
 	} else {
 		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(http.NotFoundHandler())) // reserve the path
 	}
@@ -189,6 +203,14 @@ func (h *Handler) validateHostHeader(next http.Handler) http.Handler {
 func (h *Handler) httpsRedirectMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS == nil {
+			if strings.HasPrefix(r.URL.Path, types.INTERNAL_URL_PREFIX) {
+				// Management/webhook paths are never redirected to HTTPS: a
+				// credential-bearing plaintext request has already leaked its
+				// token, so the transport gate refuses it (404) instead; the
+				// unauthenticated /_openrun/health probe stays served
+				next.ServeHTTP(w, r)
+				return
+			}
 			u := *r.URL
 			u.Scheme = "https"
 			u.Host = h.httpsRedirectHost(r.Host)
@@ -377,8 +399,8 @@ func (h *Handler) builderAuth(r *http.Request) error {
 	return nil
 }
 
-func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasicAuth bool, operation string, apiFunc func(r *http.Request) (any, error), runVersionCleanup bool) {
-	if enableBasicAuth {
+func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, remote bool, operation string, apiFunc func(r *http.Request) (any, error), runVersionCleanup bool) {
+	if remote {
 		if operation == DELEGATE_BUILD_OP {
 			// Builder auth is required for delegated builds
 			err := h.builderAuth(r)
@@ -389,18 +411,36 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 				return
 			}
 		} else {
-			// Admin auth is required for other APIs
-			authStatus := h.server.authHandler.authenticate(r.Header.Get("Authorization"))
-			if !authStatus {
-				h.server.insertAuthFailureEvent(r, operation, "admin API authentication failed")
-				w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, REALM))
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			// Remote REST surface: bearer credential (API key) auth. The
+			// request runs as the credential's identity with RBAC enforced -
+			// remote calls are never trusted-context
+			authCtx, cred, ok := h.server.authenticateApiRequest(w, r, ApiResourceRest, operation)
+			if !ok {
 				return
 			}
+			if !h.server.apiOpEnabled(InvokerTCP, API_NAME(operation)) {
+				// Refused attempts are audited: "what was tried and refused"
+				// is a first-class query on the invoker-tagged trail
+				refusedEvent := types.AuditEvent{
+					RequestId:  system.GetContextRequestId(r.Context()),
+					CreateTime: time.Now(),
+					UserId:     system.GetContextUserId(authCtx),
+					EventType:  types.EventTypeSystem,
+					Operation:  operation,
+					Status:     string(types.EventStatusFailure),
+					Detail:     "invoker=" + InvokerTCP + " cred=" + cred.Id + " refused=op_disabled",
+				}
+				if auditErr := h.server.InsertAuditEvent(&refusedEvent); auditErr != nil {
+					h.Error().Err(auditErr).Msg("error inserting audit event for refused call")
+				}
+				http.Error(w, fmt.Sprintf("operation %s is disabled for the tcp API surface", operation), http.StatusForbidden)
+				return
+			}
+			r = r.WithContext(authCtx)
 		}
 	}
 
-	if asUser := r.Header.Get(types.OPENRUN_HEADER_AS_USER); asUser != "" && !enableBasicAuth {
+	if asUser := r.Header.Get(types.OPENRUN_HEADER_AS_USER); asUser != "" && !remote {
 		// The CLI --as flag, over the unix domain socket only: the caller is
 		// the administrator (unix file permissions), who chooses to run this
 		// call as the given user with RBAC enforcement instead. Requires RBAC
@@ -416,16 +456,12 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 			return
 		}
 		r = r.WithContext(asCtx)
-	} else if enableBasicAuth && operation != DELEGATE_BUILD_OP {
-		// Admin over TCP is authenticated above, but it is not a transport-level
-		// RBAC exemption. Attribute the request to the built-in admin principal
-		// and carry the current enforcement state so every management operation
-		// traverses its permission check. The as-user header remains UDS-only.
-		r = r.WithContext(h.server.adminTCPRequestContext(r.Context()))
-	} else {
+	} else if !remote {
 		// Unix socket calls are authenticated by filesystem permissions and are
-		// the sole management API transport exempt from RBAC. Delegated builder
-		// requests use their separately scoped bearer-token API.
+		// the sole management API transport exempt from RBAC
+		r = r.WithContext(system.WithTrustedOperation(system.WithApiInvoker(r.Context(), InvokerUDS)))
+	} else if operation == DELEGATE_BUILD_OP {
+		// Delegated builder requests use their separately scoped bearer-token API
 		r = r.WithContext(system.WithTrustedOperation(r.Context()))
 	}
 
@@ -440,6 +476,11 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, enableBasic
 		Operation: operation,
 		// Status starts as Failed so a panic in apiFunc is not recorded as a success
 		Status: string(types.EventStatusFailure),
+	}
+	if detail := apiAuditDetail(r.Context()); detail != "" {
+		// "what has MCP/remote CLI done", down to the specific credential,
+		// is a single audit query
+		event.Detail = detail
 	}
 
 	defer func() {
@@ -754,14 +795,8 @@ func (h *Handler) getApps(r *http.Request) (any, error) {
 }
 
 func (h *Handler) stopServer(r *http.Request) (any, error) {
-	if err := h.server.enforceGlobalPerm(r.Context(), types.PermissionServerStop, ""); err != nil {
-		return nil, err
-	}
-	h.Warn().Msgf("Server stop called")
 	updateOperationInContext(r, "stop_server")
-	h.server.RequestStop()
-
-	return types.ServerStopResponse{PID: os.Getpid()}, nil
+	return h.server.StopServer(r.Context())
 }
 
 // serverStatus reports "ok": reaching this handler means the connection and
@@ -772,10 +807,7 @@ func (h *Handler) serverStatus(_ *http.Request) (any, error) {
 
 // serverVersion reports the server's build version and commit
 func (h *Handler) serverVersion(r *http.Request) (any, error) {
-	if err := h.server.enforceGlobalPerm(r.Context(), types.PermissionConfigBasicRead, ""); err != nil {
-		return nil, err
-	}
-	return types.ServerVersionResponse{Version: types.GetVersion(), Commit: types.GetCommit()}, nil
+	return h.server.ServerVersion(r.Context())
 }
 
 // metadataHealth reports operational connection and SQLite maintenance
@@ -795,18 +827,8 @@ func (h *Handler) metadataHealth(r *http.Request) (any, error) {
 // continues serving). Uses the server stop permission: restarting is a
 // stop/start of the same server
 func (h *Handler) restartServer(r *http.Request) (any, error) {
-	if err := h.server.enforceGlobalPerm(r.Context(), types.PermissionServerStop, ""); err != nil {
-		return nil, err
-	}
-	h.Warn().Msgf("Server in-place restart called")
 	updateOperationInContext(r, "restart_server")
-	if err := h.server.RequestRestart(); err != nil {
-		if errors.Is(err, system.ErrInPlaceRestartUnavailable) {
-			return nil, types.CreateRequestError(err.Error(), http.StatusNotImplemented)
-		}
-		return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
-	}
-	return map[string]any{"status": "restarted, new process is serving"}, nil
+	return h.server.RestartServer(r.Context())
 }
 
 func (h *Handler) createApp(r *http.Request) (any, error) {
@@ -1869,10 +1891,7 @@ func (h *Handler) userList(r *http.Request) (any, error) {
 
 func (h *Handler) configGet(r *http.Request) (any, error) {
 	updateOperationInContext(r, "config_get")
-	if err := h.server.enforceGlobalPerm(r.Context(), types.PermissionConfigRead, ""); err != nil {
-		return nil, err
-	}
-	return types.ConfigResponse{DynamicConfig: h.server.GetDynamicConfig()}, nil
+	return h.server.GetConfigResponse(r.Context())
 }
 
 func (h *Handler) configUpdate(r *http.Request) (any, error) {
@@ -1893,303 +1912,68 @@ func (h *Handler) configUpdate(r *http.Request) (any, error) {
 	return types.ConfigResponse{DynamicConfig: *newConfig}, nil
 }
 
-// serveInternal returns a handler for the internal APIs for app admin and management
-func (h *Handler) serveInternal(enableBasicAuth bool) http.Handler {
-	// These API's are mounted at /_openrun
+// serveInternal builds the management API router from the operation
+// registry: every routed operation contributes exactly one method+path
+// handled through the shared apiHandler wrapper, so the registry is the
+// single source of truth for the REST surface (auth, invoker policy, audit
+// and MCP tools all key on the same entries). chi panics on a duplicate
+// method+path at startup, which doubles as a registry sanity check.
+// Registry entries with an empty Path are logical operations resolved
+// inside a handler (secret_reveal, create_apikey_other, ...) and get no
+// route of their own
+func (h *Handler) serveInternal(remote bool) http.Handler {
 	r := chi.NewRouter()
-
-	// Stop server
-	r.Post("/stop", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "stop_server", h.stopServer, false)
-	}))
-
-	// Zero downtime in-place restart
-	r.Post("/restart", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "restart_server", h.restartServer, false)
-	}))
-
-	// Server status: lightweight connectivity check
-	r.Get("/server_status", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "server_status", h.serverStatus, false)
-	}))
-
-	// Server version
-	r.Get("/server_version", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "server_version", h.serverVersion, false)
-	}))
-
-	// Metadata database connection and maintenance health
-	r.Get("/metadata_health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "metadata_health", h.metadataHealth, false)
-	}))
-
-	// Get apps
-	r.Get("/apps", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_apps", h.getApps, false)
-	}))
-
-	// Get app
-	r.Get("/app", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "get_app", h.getApp, false)
-	}))
-
-	// Create app
-	r.Post("/app", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "create_app", h.createApp, false)
-	}))
-
-	// Delete app
-	r.Delete("/app", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "delete_apps", h.deleteApps, true)
-	}))
-
-	// API to approve the plugin usage and permissions for the app
-	r.Post("/approve", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "approve_apps", h.approveApps, false)
-	}))
-
-	// API to reload apps
-	r.Post("/reload", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "reload_apps", h.reloadApps, true)
-	}))
-
-	// API to promote apps
-	r.Post("/promote", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "promote_apps", h.promoteApps, true)
-	}))
-
-	// API to create a preview version of an app
-	r.Post("/preview", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "create_preview", h.previewApp, false)
-	}))
-
-	// API to update app settings
-	r.Post("/app_settings", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "update_settings", h.updateAppSettings, false)
-	}))
-
-	// API to update app metadata
-	r.Post("/app_metadata", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "update_metadata", h.updateAppMetadata, true)
-	}))
-
-	// API to change account links
-	r.Post("/link_account", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "update_links", h.accountLink, true)
-	}))
-
-	// API to update param values
-	r.Post("/update_param", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "update_params", h.updateParam, true)
-	}))
-
-	// API to list versions for an app
-	r.Get("/version", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_versions", h.versionList, false)
-	}))
-
-	// API to list files in a version
-	r.Get("/version/files", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_files", h.versionFiles, false)
-	}))
-
-	// API to switch version for an app
-	r.Post("/version", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "version_switch", h.versionSwitch, false)
-	}))
-
-	// Token list
-	r.Get("/app_webhook_token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_webhooks", h.tokenList, false)
-	}))
-
-	// Token create
-	r.Post("/app_webhook_token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "token_create", h.tokenCreate, false)
-	}))
-
-	// Token delete
-	r.Delete("/app_webhook_token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "token_delete", h.tokenDelete, false)
-	}))
-
-	// API to apply app config
-	r.Post("/apply", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "apply", h.apply, true)
-	}))
-
-	// API to delete the apps and bindings declared in an apply file
-	r.Delete("/apply", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "apply_delete", h.applyDelete, true)
-	}))
-
-	// API to export app config declaratively
-	r.Get("/export", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "export_apps", h.export, false)
-	}))
-
-	// API to pretty print a declarative config file
-	r.Get("/pretty_print", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "pretty_print", h.prettyPrint, false)
-	}))
-
-	// API to create sync entry
-	r.Post("/sync", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "sync_create", h.createSyncEntry, true)
-	}))
-
-	// API to run sync
-	r.Post("/sync/run", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "sync_run", h.runSyncEntry, true)
-	}))
-
-	// API to delete sync entry
-	r.Delete("/sync", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "sync_delete", h.deleteSyncEntry, false)
-	}))
-
-	// API to get sync entries
-	r.Get("/sync", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_sync", h.listSyncEntries, false)
-	}))
-
-	// API to create service
-	r.Post("/service", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "service_create", h.createService, false)
-	}))
-
-	// API to update service
-	r.Put("/service", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "service_update", h.updateService, false)
-	}))
-
-	// API to delete service
-	r.Delete("/service", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "service_delete", h.deleteService, false)
-	}))
-
-	// API to list services
-	r.Get("/services", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_services", h.listServices, false)
-	}))
-
-	// API to check service health (admin connection + no-op operation)
-	r.Get("/service/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "service_health", h.serviceHealth, false)
-	}))
-
-	// API to install a binding provider
-	r.Post("/provider", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "provider_install", h.installProvider, false)
-	}))
-
-	// API to uninstall a binding provider
-	r.Delete("/provider", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "provider_uninstall", h.uninstallProvider, false)
-	}))
-
-	// API to list binding providers
-	r.Get("/providers", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_providers", h.listProviders, false)
-	}))
-
-	// API to create binding
-	r.Post("/binding", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "binding_create", h.createBinding, false)
-	}))
-
-	// API to update binding
-	r.Put("/binding", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "binding_update", h.updateBinding, false)
-	}))
-
-	// API to delete binding
-	r.Delete("/binding", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "binding_delete", h.deleteBinding, false)
-	}))
-
-	// API to get a binding
-	r.Get("/binding", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "binding_get", h.getBinding, false)
-	}))
-
-	// API to list bindings
-	r.Get("/bindings", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_bindings", h.listBindings, false)
-	}))
-
-	// API for litestream replication status (metadata databases and sqlite bindings)
-	r.Get("/replication/status", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "replication_status", h.replicationStatus, false)
-	}))
-
-	// API to show binding account info
-	r.Get("/binding/account", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "binding_show_account", h.getBindingAccount, false)
-	}))
-
-	// API to run a command through a binding account
-	r.Post("/binding/run-command", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "binding_run_command", h.runBindingCommand, false)
-	}))
-
-	// API to check binding account health (connect as the account + no-op)
-	r.Get("/binding/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "binding_health", h.bindingHealth, false)
-	}))
-
-	// API to store a secret (create, or update with ?update=true)
-	r.Post("/secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, MAX_SECRET_UPLOAD_SIZE)
-		h.apiHandler(w, r, enableBasicAuth, "secret_create", h.createSecret, false)
-	}))
-
-	// API to get secret info (?reveal=true returns the value)
-	r.Get("/secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "secret_get", h.getSecret, false)
-	}))
-
-	// API to delete a secret
-	r.Delete("/secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "secret_delete", h.deleteSecret, false)
-	}))
-
-	// API to list secrets
-	r.Get("/secrets", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "list_secrets", h.listSecrets, false)
-	}))
-
-	// API to re-encrypt secrets with the active master key
-	r.Post("/secret/rekey", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "secret_rekey", h.rekeySecrets, false)
-	}))
-
-	// API to create/update a builtin auth user (update with ?update=true)
-	r.Post("/user", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "user_add", h.userUpdate, false)
-	}))
-
-	// API to delete a builtin auth user
-	r.Delete("/user", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "user_delete", h.userDelete, false)
-	}))
-
-	// API to list builtin auth users
-	r.Get("/users", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "user_list", h.userList, false)
-	}))
-
-	// API to get config
-	r.Get("/config", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "config_get", h.configGet, false)
-	}))
-
-	// API to update config
-	r.Post("/config", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.apiHandler(w, r, enableBasicAuth, "config_update", h.configUpdate, false)
-	}))
-
+	for name, op := range apiRegistry {
+		if op.Path == "" {
+			continue
+		}
+		operation, entry := name, op
+		r.MethodFunc(entry.Method, entry.Path, func(w http.ResponseWriter, req *http.Request) {
+			if entry.MaxBodyBytes > 0 {
+				req.Body = http.MaxBytesReader(w, req.Body, entry.MaxBodyBytes)
+			}
+			h.apiHandler(w, req, remote, string(operation), func(req *http.Request) (any, error) {
+				return entry.ApiFunc(h, req)
+			}, entry.RunVersionCleanup)
+		})
+	}
 	return r
+}
+
+// serveRemoteInternal wraps the internal APIs for the TCP listeners: a
+// transport gate (HTTPS or trusted TLS-terminating proxy; anything else gets
+// a plain 404 - never a redirect and never auth metadata, a plaintext bearer
+// token is already leaked by the time a response is written), then dispatch
+// to the MCP endpoint or the REST management APIs per the enabled surfaces
+func (h *Handler) serveRemoteInternal(config *types.ServerConfig) http.Handler {
+	restHandler := http.NotFoundHandler()
+	if apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) {
+		restHandler = h.serveInternal(true)
+	}
+	mcpHandler := http.NotFoundHandler()
+	if apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
+		mcpHandler = h.server.mcpHTTPHandler()
+	}
+	oauthHandler := h.serveOAuth()
+	mcpPath := types.INTERNAL_URL_PREFIX + "/mcp"
+	oauthPrefix := types.INTERNAL_URL_PREFIX + "/oauth/"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if system.GetRequestScheme(r, config.Security.TrustedProxies) != "https" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path == mcpPath {
+			mcpHandler.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, oauthPrefix) {
+			// The OAuth AS endpoints are pre-authentication: they mint the
+			// credentials the other paths require
+			oauthHandler.ServeHTTP(w, r)
+			return
+		}
+		restHandler.ServeHTTP(w, r)
+	})
 }
 
 // serveDelegatedBuild returns a handler for the delegated build API

@@ -83,7 +83,60 @@ var (
 	rbacEnabledKey   any = types.RBAC_ENABLED
 	trustedOpKey     any = types.TRUSTED_OPERATION
 	appPathDomainKey any = types.APP_PATH_DOMAIN
+	apiScopesKey     any = types.API_SCOPES
+	apiInvokerKey    any = types.API_INVOKER
+	apiCredentialKey any = types.API_CREDENTIAL
 )
+
+// WithApiScopes attaches a bearer credential's scope ceiling (permission
+// globs) to the request context. Only set for scoped credentials; RBAC
+// enforcement applies the ceiling before evaluating grants
+func WithApiScopes(ctx context.Context, scopes []string) context.Context {
+	return context.WithValue(ctx, apiScopesKey, scopes)
+}
+
+// GetContextApiScopes returns the credential scope ceiling and whether one is
+// present. Absent means unscoped: no ceiling applies
+func GetContextApiScopes(ctx context.Context) ([]string, bool) {
+	value := ctx.Value(apiScopesKey)
+	if value == nil {
+		return nil, false
+	}
+	scopes, ok := value.([]string)
+	return scopes, ok
+}
+
+// WithApiCredential attaches the bearer credential the request authenticated
+// with. CreateApiKey enforces attenuation against it: a credential can only
+// mint credentials at most as powerful (scopes, resources, expiry) as itself
+func WithApiCredential(ctx context.Context, cred *types.Credential) context.Context {
+	return context.WithValue(ctx, apiCredentialKey, cred)
+}
+
+// GetContextApiCredential returns the authenticating credential, nil when the
+// caller did not authenticate with one (UDS, console plugin)
+func GetContextApiCredential(ctx context.Context) *types.Credential {
+	value := ctx.Value(apiCredentialKey)
+	if value == nil {
+		return nil
+	}
+	cred, ok := value.(*types.Credential)
+	if !ok {
+		return nil
+	}
+	return cred
+}
+
+// WithApiInvoker marks which front end dispatched this management API call:
+// "plugin", "uds", "tcp" or "mcp"
+func WithApiInvoker(ctx context.Context, invoker string) context.Context {
+	return context.WithValue(ctx, apiInvokerKey, invoker)
+}
+
+// GetContextApiInvoker returns the invoker marker, "" when not set
+func GetContextApiInvoker(ctx context.Context) string {
+	return getContextString(ctx, apiInvokerKey)
+}
 
 // GetContextAppPathDomain returns the path domain of the app serving the
 // request, the zero value when not present

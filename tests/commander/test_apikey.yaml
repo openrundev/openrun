@@ -1,0 +1,236 @@
+# Remote API auth e2e: openrun apikey (PATs), the remote CLI over HTTPS with
+# builtin auth users under RBAC, scope ceilings, resource binding, the MCP
+# endpoint, the OAuth code+PKCE flow, and openrun login/logout.
+# The main test server runs with [api] enable = ["rest", "mcp"] and
+# api.auth = ["builtin", "admin"] (see run_cli_tests.sh).
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
+tests:
+  apikey0010: # remote client config; mint an admin key over the (trusted) unix socket
+    command: |
+      cat > remote_client.toml <<EOF
+      server_uri = "https://localhost:${MAIN_HTTPS_PORT}"
+      [client]
+      skip_cert_check = true
+      EOF
+      ../openrun apikey create --desc "admin key" | grep -o "orun_pat_[0-9a-f_]*" > apikey_admin.txt
+      test -s apikey_admin.txt
+    exit-code: 0
+  apikey0020: # the remote surface requires RBAC to be enabled
+    command: OPENRUN_API_KEY=$(cat apikey_admin.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list
+    stderr: "RBAC must be enabled"
+    exit-code: 1
+  apikey0030: # enable RBAC (alice gets openrun-developer on /apps/**), add builtin users
+    command: |
+      cat > apikey_rbac.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "enabled": true,
+          "groups": {},
+          "roles": {},
+          "grants": [
+            {
+              "description": "alice develops under /apps",
+              "users": ["builtin:alice"],
+              "roles": ["openrun-developer"],
+              "targets": ["/apps/**"]
+            }
+          ]
+        }
+      }
+      EOF
+      ../openrun server update-config --force apikey_rbac.json
+      ../openrun user add alice --value alicepw --groups devs
+      ../openrun user add bob --value bobpw
+    exit-code: 0
+  apikey0040: # create a test app (unix socket stays trusted under RBAC)
+    command: ../openrun app create ./rbac_child_app /apps/apikey_app
+    stdout: "App: /apps/apikey_app"
+    exit-code: 0
+  apikey0050: # the admin key works over the remote CLI (RBAC super-user)
+    command: OPENRUN_API_KEY=$(cat apikey_admin.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list "/apps/**"
+    stdout: "/apps/apikey_app"
+    exit-code: 0
+  apikey0060: # a bad key is rejected
+    command: OPENRUN_API_KEY=orun_pat_dead_beef CL_CONFIG_FILE=remote_client.toml ../openrun app list
+    stderr: "Unauthorized"
+    exit-code: 1
+  apikey0070: # admin mints keys for alice and bob (create for another user needs admin)
+    command: |
+      ../openrun apikey create --user builtin:alice | grep -o "orun_pat_[0-9a-f_]*" > apikey_alice.txt
+      ../openrun apikey create --user builtin:bob | grep -o "orun_pat_[0-9a-f_]*" > apikey_bob.txt
+      test -s apikey_alice.txt && test -s apikey_bob.txt
+    exit-code: 0
+  apikey0080: # alice sees the app through her grant
+    command: OPENRUN_API_KEY=$(cat apikey_alice.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list "/apps/**"
+    stdout: "/apps/apikey_app"
+    exit-code: 0
+  apikey0090: # bob authenticates but has no grants - the list is filtered empty
+    command: OPENRUN_API_KEY=$(cat apikey_bob.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list "/apps/**"
+    stdout:
+      not-contains:
+        - "/apps/apikey_app"
+    exit-code: 0
+  apikey0100: # bob cannot delete the app
+    command: OPENRUN_API_KEY=$(cat apikey_bob.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app delete --dry-run /apps/apikey_app
+    stderr: "does not have"
+    exit-code: 1
+  apikey0110: # a *:read scoped key for alice: reads work, deletes are blocked by the scope ceiling
+    command: |
+      ../openrun apikey create --user builtin:alice --scopes "*:read" | grep -o "orun_pat_[0-9a-f_]*" > apikey_alice_ro.txt
+      OPENRUN_API_KEY=$(cat apikey_alice_ro.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list "/apps/**" | grep -q /apps/apikey_app
+      OPENRUN_API_KEY=$(cat apikey_alice_ro.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app delete --dry-run /apps/apikey_app 2>&1 || echo SCOPE_BLOCKED
+    stdout: "SCOPE_BLOCKED"
+    exit-code: 0
+  apikey0120: # a key bound to the mcp surface is rejected at the REST surface
+    command: |
+      ../openrun apikey create --user builtin:alice --resource mcp | grep -o "orun_pat_[0-9a-f_]*" > apikey_mcp.txt
+      OPENRUN_API_KEY=$(cat apikey_mcp.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list
+    stderr: "Unauthorized"
+    exit-code: 1
+  apikey0130: # alice manages her own keys remotely (apikey:manage:self via openrun-developer)
+    command: OPENRUN_API_KEY=$(cat apikey_alice.txt) CL_CONFIG_FILE=remote_client.toml ../openrun apikey create --desc "alice remote"
+    stdout: "orun_pat_"
+    exit-code: 0
+  apikey0140: # alice cannot mint a key for bob (admin only)
+    command: OPENRUN_API_KEY=$(cat apikey_alice.txt) CL_CONFIG_FILE=remote_client.toml ../openrun apikey create --user builtin:bob
+    stderr: "does not have"
+    exit-code: 1
+  apikey0150: # bob has no apikey:manage:self grant
+    command: OPENRUN_API_KEY=$(cat apikey_bob.txt) CL_CONFIG_FILE=remote_client.toml ../openrun apikey create
+    stderr: "does not have"
+    exit-code: 1
+  apikey0160: # alice lists only her own keys; --all needs admin
+    command: |
+      OPENRUN_API_KEY=$(cat apikey_alice.txt) CL_CONFIG_FILE=remote_client.toml ../openrun apikey list | grep -v builtin:bob | grep -q builtin:alice
+      OPENRUN_API_KEY=$(cat apikey_alice.txt) CL_CONFIG_FILE=remote_client.toml ../openrun apikey list --all 2>&1 || echo ALL_BLOCKED
+    stdout: "ALL_BLOCKED"
+    exit-code: 0
+  apikey0200: # the MCP endpoint answers an initialize request with a PAT
+    command: |
+      curl -sk -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/mcp \
+        -H "Authorization: Bearer $(cat apikey_mcp.txt)" \
+        -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+    stdout: "openrun"
+    exit-code: 0
+  apikey0210: # tools/list shows the tool set; default-disabled ops are absent
+    command: |
+      curl -sk -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/mcp \
+        -H "Authorization: Bearer $(cat apikey_mcp.txt)" \
+        -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+        -H "MCP-Protocol-Version: 2025-03-26" \
+        -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+    stdout:
+      contains:
+        - "list_apps"
+        - "delete_apps"
+      not-contains:
+        - "stop_server"
+        - "config_update"
+        - "secret_reveal"
+    exit-code: 0
+  apikey0220: # a rest-bound key is rejected at the MCP endpoint (resource binding)
+    command: |
+      curl -sk -o /dev/null -w "%{http_code}" -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/mcp \
+        -H "Authorization: Bearer $(cat apikey_alice.txt)" \
+        -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+    stdout: "401"
+    exit-code: 0
+  apikey0230: # the remote surface does not exist over plaintext http (404, never a redirect)
+    command: |
+      curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $(cat apikey_admin.txt)" \
+        http://localhost:${MAIN_HTTP_PORT}/_openrun/apps
+    stdout: "404"
+    exit-code: 0
+  apikey0300: # OAuth metadata documents are served
+    command: |
+      curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-authorization-server | grep -q authorization_endpoint
+      curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/rest
+    stdout: "/rest"
+    exit-code: 0
+  apikey0310: # OAuth code + PKCE flow: login form post as alice, code exchange
+    command: |
+      set -e
+      VERIFIER="commander-test-verifier-0123456789abcdef"
+      CHALLENGE=$(printf %s "$VERIFIER" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+      LOCATION=$(curl -sk -o /dev/null -w '%{redirect_url}' -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/oauth/authorize \
+        -d response_type=code -d client_id=openrun-cli -d "redirect_uri=http://127.0.0.1:9/callback" \
+        -d state=xyz -d "code_challenge=$CHALLENGE" -d code_challenge_method=S256 \
+        --data-urlencode "resource=https://localhost:${MAIN_HTTPS_PORT}/rest" --data-urlencode "scope=*" \
+        -d or_username=alice -d or_password=alicepw --data-urlencode "or_scope=*")
+      CODE=$(printf %s "$LOCATION" | sed -n 's/.*code=\([^&]*\).*/\1/p')
+      test -n "$CODE"
+      curl -sk -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/oauth/token \
+        -d grant_type=authorization_code -d "code=$CODE" -d "redirect_uri=http://127.0.0.1:9/callback" \
+        -d client_id=openrun-cli -d "code_verifier=$VERIFIER" > token_resp.json
+      jq -r .access_token token_resp.json > oauth_at.txt
+      jq -r .refresh_token token_resp.json > oauth_rt.txt
+      grep -q orun_at_ oauth_at.txt
+      grep -q orun_rt_ oauth_rt.txt
+      jq -r .principal token_resp.json
+    stdout: "builtin:alice"
+    exit-code: 0
+  apikey0320: # the access token works for the remote CLI as alice
+    command: OPENRUN_API_KEY=$(cat oauth_at.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list "/apps/**"
+    stdout: "/apps/apikey_app"
+    exit-code: 0
+  apikey0330: # refresh rotation works; reusing the consumed refresh token trips reuse detection
+    command: |
+      set -e
+      curl -sk -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/oauth/token \
+        -d grant_type=refresh_token -d "refresh_token=$(cat oauth_rt.txt)" -d client_id=openrun-cli > rotate1.json
+      jq -e '.access_token | startswith("orun_at_")' rotate1.json > /dev/null
+      curl -sk -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/oauth/token \
+        -d grant_type=refresh_token -d "refresh_token=$(cat oauth_rt.txt)" -d client_id=openrun-cli
+    stdout: "invalid_grant"
+    exit-code: 0
+  apikey0340: # reuse detection revoked the whole grant family, including the rotated access token
+    command: OPENRUN_API_KEY=$(jq -r .access_token rotate1.json) CL_CONFIG_FILE=remote_client.toml ../openrun app list
+    stderr: "Unauthorized"
+    exit-code: 1
+  apikey0400: # openrun login end to end: drive the printed authorize url as the browser would
+    command: |
+      set -e
+      export OPENRUN_NO_KEYRING=1
+      CL_CONFIG_FILE=remote_client.toml ../openrun login --no-browser > login_out.txt 2>&1 &
+      LOGIN_PID=$!
+      for i in $(seq 1 100); do grep -q "authorize?" login_out.txt 2>/dev/null && break; sleep 0.1; done
+      AUTH_URL=$(grep -o 'https://[^[:space:]]*' login_out.txt | head -1)
+      test -n "$AUTH_URL"
+      QUERY=${AUTH_URL#*\?}
+      curl -sk -L -X POST "https://localhost:${MAIN_HTTPS_PORT}/_openrun/oauth/authorize" \
+        -d "$QUERY" -d or_username=alice -d or_password=alicepw --data-urlencode "or_scope=*" > /dev/null
+      wait $LOGIN_PID
+      cat login_out.txt
+    stdout: "as builtin:alice"
+    exit-code: 0
+  apikey0410: # the stored login is used automatically by the remote CLI
+    command: OPENRUN_NO_KEYRING=1 CL_CONFIG_FILE=remote_client.toml ../openrun app list "/apps/**"
+    stdout: "/apps/apikey_app"
+    exit-code: 0
+  apikey0420: # logout revokes the grant and clears the stored login
+    command: |
+      OPENRUN_NO_KEYRING=1 CL_CONFIG_FILE=remote_client.toml ../openrun logout
+      OPENRUN_NO_KEYRING=1 CL_CONFIG_FILE=remote_client.toml ../openrun app list "/apps/**" 2>&1 || echo LOGGED_OUT_OK
+    stdout: "LOGGED_OUT_OK"
+    exit-code: 0
+  apikey0900: # cleanup: app, users, keys, RBAC off, working files
+    command: |
+      ../openrun app delete /apps/apikey_app
+      ../openrun user delete alice
+      ../openrun user delete bob
+      for id in $(../openrun apikey list --all -f json | jq -r '.[].id'); do ../openrun apikey delete "$id" > /dev/null; done
+      cat > apikey_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"enabled": false, "groups": {}, "roles": {}, "grants": []}}
+      EOF
+      ../openrun server update-config --force apikey_rbac.json
+      rm -f apikey_admin.txt apikey_alice.txt apikey_alice_ro.txt apikey_bob.txt apikey_mcp.txt
+      rm -f oauth_at.txt oauth_rt.txt token_resp.json rotate1.json login_out.txt apikey_rbac.json remote_client.toml
+    exit-code: 0

@@ -64,7 +64,7 @@ func TestConnTrackerUnwrapsTLS(t *testing.T) {
 	tracker := &connTracker{}
 	tc, client := newTrackedPipe(tracker)
 	defer client.Close() //nolint:errcheck
-	defer tc.Close() //nolint:errcheck
+	defer tc.Close()     //nolint:errcheck
 
 	// The HTTPS server reports the *tls.Conn; connState must unwrap it to
 	// find the tracked conn
@@ -79,7 +79,7 @@ func TestConnTrackerIgnoresUntrackedStates(t *testing.T) {
 	tracker := &connTracker{}
 	tc, client := newTrackedPipe(tracker)
 	defer client.Close() //nolint:errcheck
-	defer tc.Close() //nolint:errcheck
+	defer tc.Close()     //nolint:errcheck
 
 	tracker.connState(tc, http.StateNew)
 	tracker.connState(tc, http.StateActive)

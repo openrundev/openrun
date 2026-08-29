@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,6 +42,7 @@ func newFormatFlag() *cli.StringFlag {
 		},
 	}
 }
+
 // Terminal colors, empty strings when the terminal does not support ANSI escape sequences
 var RESET, RED, GREEN, YELLOW = initColors()
 
@@ -112,10 +114,17 @@ func newBoolFlag(name, alias, usage string, value bool) *cli.BoolFlag {
 }
 
 // newHttpClient creates the management API client from the client config,
-// applying the --as user header when set
+// applying the --as user header when set. The bearer credential resolves
+// from OPENRUN_API_KEY, then client.api_key; over the unix socket no
+// credential is needed
 func newHttpClient(clientConfig *types.ClientConfig) *system.HttpClient {
-	client := system.NewHttpClient(clientConfig.ServerUri, clientConfig.AdminUser,
-		clientConfig.Client.AdminPassword, clientConfig.Client.SkipCertCheck)
+	apiKey := cmp.Or(os.Getenv("OPENRUN_API_KEY"), clientConfig.Client.ApiKey)
+	if apiKey == "" && (strings.HasPrefix(clientConfig.ServerUri, "https://") || strings.HasPrefix(clientConfig.ServerUri, "http://")) {
+		// Fall back to a stored openrun login for the server, refreshing the
+		// access token transparently when it is stale
+		apiKey = system.ResolveLoginToken(clientConfig.ServerUri, clientConfig.Client.SkipCertCheck)
+	}
+	client := system.NewHttpClient(clientConfig.ServerUri, apiKey, clientConfig.Client.SkipCertCheck)
 	if client != nil && clientConfig.Client.AsUser != "" {
 		client.SetHeader(types.OPENRUN_HEADER_AS_USER, clientConfig.Client.AsUser)
 	}

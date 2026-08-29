@@ -1,0 +1,1145 @@
+{
+  "apply": {
+    "additionalProperties": false,
+    "properties": {
+      "approve": {
+        "description": "approve plugin permissions (requires app:approve)",
+        "type": "boolean"
+      },
+      "clobber": {
+        "description": "overwrite non-declarative changes",
+        "type": "boolean"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "apply file location: server-local path or git url",
+        "type": "string"
+      },
+      "path_glob": {
+        "description": "app path glob to apply, default all",
+        "type": "string"
+      },
+      "promote": {
+        "description": "promote changes to prod",
+        "type": "boolean"
+      },
+      "reload": {
+        "description": "which apps to reload: none, updated or matched (default updated)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "apply_delete": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "apply file location: server-local path or git url",
+        "type": "string"
+      },
+      "path_glob": {
+        "description": "app path glob to delete, default all",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "approve_apps": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path_glob": {
+        "description": "app path glob to operate on",
+        "type": "string"
+      },
+      "promote": {
+        "description": "also promote the staging change to prod",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path_glob"
+    ],
+    "type": "object"
+  },
+  "binding_create": {
+    "additionalProperties": false,
+    "properties": {
+      "config": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "binding configuration values",
+        "type": "object"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "grants": {
+        "description": "grant entries for the binding",
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "path": {
+        "description": "the binding path, like /myapp/db",
+        "type": "string"
+      },
+      "source": {
+        "description": "the binding source, like a service id (postgres/main)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "source"
+    ],
+    "type": "object"
+  },
+  "binding_delete": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "the binding path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "binding_get": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "the binding path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "binding_health": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "description": "the binding name/path",
+        "type": "string"
+      },
+      "staging": {
+        "description": "use the staging account",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "binding_run_command": {
+    "additionalProperties": false,
+    "properties": {
+      "command": {
+        "description": "the provider command to run",
+        "type": "string"
+      },
+      "name": {
+        "description": "the binding name/path",
+        "type": "string"
+      },
+      "staging": {
+        "description": "use the staging account",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "name",
+      "command"
+    ],
+    "type": "object"
+  },
+  "binding_show_account": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "description": "the binding name/path",
+        "type": "string"
+      },
+      "staging": {
+        "description": "use the staging account",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "binding_update": {
+    "additionalProperties": false,
+    "properties": {
+      "add_grants": {
+        "description": "grant entries to add",
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "delete_grants": {
+        "description": "grant entries to delete",
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "the binding path",
+        "type": "string"
+      },
+      "promote": {
+        "description": "promote dependent apps",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "config_get": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "config_update": {
+    "additionalProperties": false,
+    "properties": {
+      "config_json": {
+        "description": "the full dynamic config document as JSON (same shape as config_get returns)",
+        "type": "string"
+      },
+      "force": {
+        "description": "skip the version conflict check",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "config_json"
+    ],
+    "type": "object"
+  },
+  "create_apikey": {
+    "additionalProperties": false,
+    "properties": {
+      "description": {
+        "description": "description for the key",
+        "type": "string"
+      },
+      "expires_in": {
+        "description": "lifetime: Go duration, <N>d, or never. Default 90d",
+        "type": "string"
+      },
+      "resources": {
+        "description": "surfaces the key is valid for: rest and/or mcp",
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "scopes": {
+        "description": "permission glob scopes limiting the key",
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "user": {
+        "description": "the key's user identity; empty for the caller. Another user requires admin",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "create_app": {
+    "additionalProperties": false,
+    "properties": {
+      "approve": {
+        "description": "approve the app's plugin permissions immediately (requires app:approve)",
+        "type": "boolean"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "params": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "app parameter values",
+        "type": "object"
+      },
+      "path": {
+        "description": "the app path to create, like /myapp",
+        "type": "string"
+      },
+      "source_url": {
+        "description": "app source: git url, github shorthand like github.com/org/repo/folder, or server-local directory path",
+        "type": "string"
+      },
+      "spec": {
+        "description": "app spec name, like image or python-streamlit. Empty auto-detects for known frameworks",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "source_url"
+    ],
+    "type": "object"
+  },
+  "create_preview": {
+    "additionalProperties": false,
+    "properties": {
+      "approve": {
+        "description": "approve the preview app's plugin permissions",
+        "type": "boolean"
+      },
+      "commit": {
+        "description": "the git commit id to preview",
+        "type": "string"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "the app path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "commit"
+    ],
+    "type": "object"
+  },
+  "delete_apikey": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "description": "the api key id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "type": "object"
+  },
+  "delete_apps": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path_glob": {
+        "description": "app path glob to delete",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path_glob"
+    ],
+    "type": "object"
+  },
+  "get_app": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "the app path, like /myapp or example.com:/myapp",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "list_apikeys": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "list_apps": {
+    "additionalProperties": false,
+    "properties": {
+      "path_glob": {
+        "description": "app path glob to match, like /myapp, example.com:/**, or all. Empty matches all apps across all domains",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "list_bindings": {
+    "additionalProperties": false,
+    "properties": {
+      "source": {
+        "description": "filter by binding source",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "list_files": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "the app path",
+        "type": "string"
+      },
+      "version": {
+        "description": "the version to list files of; empty for current",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "list_providers": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "list_secrets": {
+    "additionalProperties": false,
+    "properties": {
+      "name_glob": {
+        "description": "secret name glob",
+        "type": "string"
+      },
+      "provider": {
+        "description": "secret provider name, empty for the default",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "list_services": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "description": "filter by service name",
+        "type": "string"
+      },
+      "type": {
+        "description": "filter by service type, like postgres",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "list_sync": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "list_versions": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "the app path, like /myapp or example.com:/myapp",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "list_webhooks": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "the app path, like /myapp or example.com:/myapp",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "promote_apps": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path_glob": {
+        "description": "app path glob to delete",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path_glob"
+    ],
+    "type": "object"
+  },
+  "provider_install": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "description": "the provider name",
+        "type": "string"
+      },
+      "sha256": {
+        "description": "expected sha256 of the binary",
+        "type": "string"
+      },
+      "source_url": {
+        "description": "http(s) url ({os}/{arch} placeholders allowed) or server-local path of the provider binary",
+        "type": "string"
+      },
+      "version": {
+        "description": "provider version",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "source_url"
+    ],
+    "type": "object"
+  },
+  "provider_uninstall": {
+    "additionalProperties": false,
+    "properties": {
+      "force": {
+        "description": "force uninstall even when in use",
+        "type": "boolean"
+      },
+      "name": {
+        "description": "the provider name",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "reload_apps": {
+    "additionalProperties": false,
+    "properties": {
+      "approve": {
+        "description": "approve any new plugin permissions (requires app:approve)",
+        "type": "boolean"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path_glob": {
+        "description": "app path glob to reload",
+        "type": "string"
+      },
+      "promote": {
+        "description": "promote to prod after reload (requires app:promote)",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path_glob"
+    ],
+    "type": "object"
+  },
+  "replication_status": {
+    "additionalProperties": false,
+    "properties": {
+      "refresh": {
+        "description": "refresh the replication status",
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  },
+  "restart_server": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "secret_create": {
+    "additionalProperties": false,
+    "properties": {
+      "description": {
+        "description": "description for the secret",
+        "type": "string"
+      },
+      "name": {
+        "description": "the secret name",
+        "type": "string"
+      },
+      "provider": {
+        "description": "secret provider name, empty for the default",
+        "type": "string"
+      },
+      "update": {
+        "description": "update an existing secret instead of creating",
+        "type": "boolean"
+      },
+      "value": {
+        "description": "the secret value",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "value"
+    ],
+    "type": "object"
+  },
+  "secret_delete": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "description": "the secret name",
+        "type": "string"
+      },
+      "provider": {
+        "description": "secret provider name, empty for the default",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "secret_get": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "description": "the secret name",
+        "type": "string"
+      },
+      "provider": {
+        "description": "secret provider name, empty for the default",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "secret_rekey": {
+    "additionalProperties": false,
+    "properties": {
+      "provider": {
+        "description": "secret provider name, empty for the default",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "secret_reveal": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "description": "the secret name",
+        "type": "string"
+      },
+      "provider": {
+        "description": "secret provider name, empty for the default",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "server_status": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "server_version": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "service_create": {
+    "additionalProperties": false,
+    "properties": {
+      "config": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "service configuration values",
+        "type": "object"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "name": {
+        "description": "the service name",
+        "type": "string"
+      },
+      "type": {
+        "description": "the service type, like postgres",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "type"
+    ],
+    "type": "object"
+  },
+  "service_delete": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "name": {
+        "description": "the service name",
+        "type": "string"
+      },
+      "type": {
+        "description": "the service type",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "type"
+    ],
+    "type": "object"
+  },
+  "service_health": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "name": {
+        "description": "the service name",
+        "type": "string"
+      },
+      "type": {
+        "description": "the service type",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "type"
+    ],
+    "type": "object"
+  },
+  "service_update": {
+    "additionalProperties": false,
+    "properties": {
+      "config": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "service configuration values",
+        "type": "object"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "name": {
+        "description": "the service name",
+        "type": "string"
+      },
+      "type": {
+        "description": "the service type, like postgres",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "type"
+    ],
+    "type": "object"
+  },
+  "stop_server": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "sync_create": {
+    "additionalProperties": false,
+    "properties": {
+      "approve": {
+        "description": "syncs approve plugin permissions",
+        "type": "boolean"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "apply file location: server-local path or git url",
+        "type": "string"
+      },
+      "promote": {
+        "description": "syncs promote to prod",
+        "type": "boolean"
+      },
+      "schedule_frequency": {
+        "description": "run every N minutes (scheduled sync)",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "sync_delete": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "id": {
+        "description": "the sync entry id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "type": "object"
+  },
+  "sync_run": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "id": {
+        "description": "the sync entry id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "type": "object"
+  },
+  "token_create": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "the app path",
+        "type": "string"
+      },
+      "type": {
+        "description": "webhook type: reload, reload_promote or promote",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "type"
+    ],
+    "type": "object"
+  },
+  "token_delete": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "the app path",
+        "type": "string"
+      },
+      "type": {
+        "description": "webhook type: reload, reload_promote or promote",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "type"
+    ],
+    "type": "object"
+  },
+  "update_links": {
+    "additionalProperties": false,
+    "properties": {
+      "account": {
+        "description": "the account name to link the plugin to",
+        "type": "string"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path_glob": {
+        "description": "app path glob to update",
+        "type": "string"
+      },
+      "plugin": {
+        "description": "the plugin to link, like store.in",
+        "type": "string"
+      },
+      "promote": {
+        "description": "promote to prod after the update",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path_glob",
+      "plugin",
+      "account"
+    ],
+    "type": "object"
+  },
+  "update_metadata": {
+    "additionalProperties": false,
+    "properties": {
+      "config_entries": {
+        "description": "entries for the config type, each formatted as key=value",
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "config_type": {
+        "description": "metadata config to update: app_config, container_options, container_args, container_volumes, sidecars, auth, git_auth or bindings",
+        "type": "string"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path_glob": {
+        "description": "app path glob to update",
+        "type": "string"
+      },
+      "promote": {
+        "description": "promote to prod after the update",
+        "type": "boolean"
+      },
+      "spec": {
+        "description": "app spec name; empty leaves unchanged",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path_glob"
+    ],
+    "type": "object"
+  },
+  "update_params": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "name": {
+        "description": "the parameter name",
+        "type": "string"
+      },
+      "path_glob": {
+        "description": "app path glob to update",
+        "type": "string"
+      },
+      "promote": {
+        "description": "promote to prod after the update",
+        "type": "boolean"
+      },
+      "value": {
+        "description": "the parameter value; use - to delete the parameter",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path_glob",
+      "name",
+      "value"
+    ],
+    "type": "object"
+  },
+  "update_settings": {
+    "additionalProperties": false,
+    "properties": {
+      "authn_type": {
+        "description": "app auth type (system, none, or an auth entry name); empty leaves unchanged",
+        "type": "string"
+      },
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "git_auth_name": {
+        "description": "git auth entry name; empty leaves unchanged",
+        "type": "string"
+      },
+      "path_glob": {
+        "description": "app path glob to update",
+        "type": "string"
+      },
+      "preview_write_access": {
+        "description": "preview write plugin access; omit to leave unchanged",
+        "type": [
+          "null",
+          "boolean"
+        ]
+      },
+      "spec": {
+        "description": "app spec name; empty leaves unchanged",
+        "type": "string"
+      },
+      "stage_write_access": {
+        "description": "staging write plugin access; omit to leave unchanged",
+        "type": [
+          "null",
+          "boolean"
+        ]
+      }
+    },
+    "required": [
+      "path_glob"
+    ],
+    "type": "object"
+  },
+  "user_add": {
+    "additionalProperties": false,
+    "properties": {
+      "groups": {
+        "description": "RBAC groups for the user",
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "password_hash": {
+        "description": "bcrypt hash of the user's password",
+        "type": "string"
+      },
+      "update": {
+        "description": "update an existing user instead of creating",
+        "type": "boolean"
+      },
+      "username": {
+        "description": "the builtin auth username",
+        "type": "string"
+      }
+    },
+    "required": [
+      "username",
+      "password_hash"
+    ],
+    "type": "object"
+  },
+  "user_delete": {
+    "additionalProperties": false,
+    "properties": {
+      "username": {
+        "description": "the builtin auth username",
+        "type": "string"
+      }
+    },
+    "required": [
+      "username"
+    ],
+    "type": "object"
+  },
+  "user_list": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "version_switch": {
+    "additionalProperties": false,
+    "properties": {
+      "dry_run": {
+        "description": "preview without applying",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "the app path",
+        "type": "string"
+      },
+      "version": {
+        "description": "target version number, or previous/next",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "version"
+    ],
+    "type": "object"
+  }
+}

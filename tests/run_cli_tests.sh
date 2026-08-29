@@ -1008,6 +1008,13 @@ git_remote_check_interval_secs = 600
 [client]
 default_format = "table"
 
+# Remote API surfaces for commander/test_apikey.yaml: REST over TCP + MCP,
+# bearer authenticated (openrun apikey), HTTPS only. external_url defaults to
+# security.callback_url set above
+[api]
+enable = ["rest", "mcp"]
+auth = ["builtin", "admin"]
+
 # Out-of-process Starlark plugin provider (store.ex), exercised by
 # commander/test_plugin_ext.yaml. The binary is built below before the
 # server starts.
