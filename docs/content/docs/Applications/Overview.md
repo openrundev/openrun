@@ -222,6 +222,8 @@ The declarative app configuration uses Starlark syntax. An app is defined using 
 | container_args |   true   |    dict     |         |            The container build args options for the app             |
 | container_vols |   true   | list string |         |                  The container volumes for the app                  |
 |    stage_at    |   true   |   string    | system  | Staging location for new prod apps: `domain`, `path`, or a staging domain |
+|    sidecars    |   true   |  list dict  |         | The [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}) for the app, same JSON fields as `--sidecar` |
+|    bindings    |   true   | list string |         | The paths of the [service bindings]({{< ref "docs/applications/servicebindings" >}}) to attach to the app |
 |     verify     |   true   |    bool     |  false  |                   Verify reload for this app only                   |
 
 For example, a definition like

@@ -71,14 +71,14 @@ The `static_from_disk` property makes an app with a local disk source serve its 
 
 ## Config Access from Code
 
-[App Params]({{< ref "docs/develop/#app-parameters" >}}) are the primary user configurable properties for apps. For cases where properties need to be read from `openrun.toml` config file or from env, the config builtin can be used. This is available as `config` in app definitions and in `params.star`. In app declaration (like `app.star`), this is available as `ace.config`.
+[App Params]({{< ref "docs/develop/#app-parameters" >}}) are the primary user configurable properties for apps. For cases where properties need to be read from `openrun.toml` config file or from env, the config builtin can be used. This is available as `config` in app declarations (`apps.star`) and in `params.star`. In the app definition (`app.star`), this is available as `ace.config`.
 
 The `config`/`ace.config` builtin supports the following parameters:
 
 - **key** (string, required) : the config key name
 - **default** (any, required) : the default value
 
-`_branch` is a special key which resolves to the git branch from which the app declaration is loaded. `_dev` is true if the apply is run in dev mode.
+`_branch` is a special key which resolves to the git branch from which the app declaration is loaded. `_dev` is true if the apply is run in dev mode. In `app.star`, `ace.config("_app_url", "")` is a special key which resolves to the url the app is served at.
 
 In `app.star`, a call to config like
 

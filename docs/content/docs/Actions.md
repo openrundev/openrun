@@ -139,28 +139,30 @@ See dictionary [code](https://github.com/openrundev/apps/tree/main/misc/dictiona
 
 ## Param Value Selector
 
-For some params, it is useful to be able to provide a list of values from which the user can choose. The way this is supported is by using an options param. If `param1` is a param which should show up as a selector, then define another param with the name `options-param1`, of type `LIST`. Set a default value for `options-param1` with the values to show in the selector dropdown. For example
+For some params, it is useful to be able to provide a list of values from which the user can choose. The way this is supported is by using an options param. `options_` is a special param name prefix: if `param1` is a param which should show up as a selector, then define another param with the name `options_param1`, of type `LIST`. Set a default value for `options_param1` with the values to show in the selector dropdown. For example
 
 ```python {filename="params.star"}
 param("param1", description="The param1 description", default="option1")
 
-param("options-param1", type=LIST, description="Options for param1", default=["option1", "option2"])
+param("options_param1", type=LIST, description="Options for param1", default=["option1", "option2"])
 ```
 
-In the UI, `options-param1` is not displayed. `param1` is shown as a searchable dropdown, having `option1` and `option2` as options. Typing in the field filters the options. By default the dropdown is strict: the value has to be one of the options (enforced in the UI and also on the server for configured option lists). To allow free text entry in addition to the listed options, set `display_type=COMBO` on the param:
+In the UI, `options_param1` is not displayed. `param1` is shown as a searchable dropdown, having `option1` and `option2` as options. Typing in the field filters the options. By default the dropdown is strict: the value has to be one of the options (enforced in the UI and also on the server for configured option lists). To allow free text entry in addition to the listed options, set `display_type=COMBO` on the param:
 
 ```python {filename="params.star"}
 param("param1", description="The param1 description", default="option1", display_type=COMBO)
 
-param("options-param1", type=LIST, description="Options for param1", default=["option1", "option2"])
+param("options_param1", type=LIST, description="Options for param1", default=["option1", "option2"])
 ```
+
+The `options-param1` naming format (with a dash) is also supported, for backward compatibility. The underscore format is preferred since it is a valid Starlark identifier, so the value stays accessible in the app code as `param.options_param1`.
 
 The same applies to dropdowns populated by a [suggest handler]({{< relref "#suggest-handler" >}}): values suggested as a list show as a strict searchable dropdown unless the param has `display_type=COMBO`. See [dictionary](https://github.com/openrundev/apps/tree/main/misc/dictionary) for an app which uses options.
 
 This approach is used for flexibility, instead of directly allowing the options to be configured for the param. The options param approach has the flexibility that when an app is installed, the options can be configured for the installation. This avoids having to maintain different copies of the app code. For example:
 
 ```bash
-openrun app create --approve --param options-param1='["option1", "option2", "options3"]' /mycode /myapp
+openrun app create --approve --param options_param1='["option1", "option2", "options3"]' /mycode /myapp
 ```
 
 adds a new `options3` option.
