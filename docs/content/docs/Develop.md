@@ -17,6 +17,77 @@ The structure of an OpenRun application is:
 - An html template file called `index.go.html` if using custom layout
 - If not using custom layout, an html template block called `openrun_body` defined in any `*.go.html` file, for example `app.go.html`
 
+## App Definition
+
+The `app` global is created by calling the `ace.app` builtin. `name` is the only required argument, all other arguments are optional keyword arguments. The `ace.app` struct definition is
+
+|      Property      | Optional |                    Type                     |  Default  |                                                                             Notes                                                                              |
+| :----------------: | :------: | :-----------------------------------------: | :-------: | :------------------------------------------------------------------------------------------------------------------------------------------------------------: |
+|        name        |  False   |                   string                    |           |                                                                  The display name for the app                                                                  |
+|       routes       |   True   | list of `ace.html`, `ace.api` , `ace.proxy` |    []     |                                          The [routes]({{< ref "docs/app/routing" >}}) exposed by the application                                               |
+|      actions       |   True   |            list of `ace.action`             |    []     |                                     The [actions]({{< ref "actions" >}}) exposed by the app, with an auto-generated UI                                         |
+|    permissions     |   True   |           list of `ace.permission`          |    []     |                          The plugin calls the app is allowed to make, see [App Permissions]({{< relref "#app-permissions" >}})                                 |
+|     container      |   True   |             `container.config`              |           |                        The container configuration, for [containerized apps]({{< relref "#containerized-app" >}})                                              |
+|       style        |   True   |                 `ace.style`                 |           |                                       The CSS [styling]({{< ref "docs/app/styling" >}}) configuration for the app                                              |
+|     libraries      |   True   |      list of string or `ace.library`        |    []     |                                 The [JavaScript modules]({{< ref "docs/app/javascript" >}}) to import for the app                                              |
+|   custom_layout    |   True   |                    bool                     |   False   | If True, the app defines the full HTML layout in `index.go.html`. If False, a layout is generated and the app defines only the `openrun_body` [template block]({{< ref "docs/app/templates" >}}) |
+|      settings      |   True   |                    dict                     |    {}     |                                     Advanced app settings, see [App Settings]({{< relref "#app-settings" >}})                                                  |
+|    static_only     |   True   |                    bool                     |   False   |                            If True, the app serves static files only, see [Static Apps]({{< relref "#static-apps" >}})                                         |
+|       index        |   True   |                   string                    |           |            For static apps, the file served for the app root path. Defaults to `index.html` (or `index.htm`) if present in the app source                      |
+|    single_file     |   True   |                    bool                     |   False   |                     For static apps, serve only the `index` file; requests for any other path return a 404 response                                            |
+| redirect_bare_path |   True   |                    bool                     |   False   |              If True, requests to the bare app path (like `/myapp`) are redirected to the path with a trailing slash (`/myapp/`)                               |
+
+For example, a minimal app definition is
+
+```python {filename="app.star"}
+app = ace.app("hello", routes=[ace.api("/", type=ace.TEXT)])
+```
+
+### Static Apps
+
+Setting `static_only=True` makes the app serve the files in the app source folder directly, at the root level of the app path. No Starlark handlers or HTML templates are involved. The `index` property sets the file served for the app root path; if not set, `index.html` or `index.htm` from the app source is used if present. A static app cannot define HTML routes or a root level wildcard proxy route.
+
+Setting `single_file=True` (along with `static_only=True`) serves only the `index` file; any other path returns a 404 response. The `index` property is required in this case. The `static`, `static_single` and `static_disk` [app specs]({{< ref "docs/container/appspecs" >}}) use these options, so static sites can be deployed without writing any Starlark configuration.
+
+### Redirect Bare Path
+
+Some containerized apps (like Gradio based apps) require the app to be accessed with a trailing slash in the path. Setting `redirect_bare_path=True` makes OpenRun redirect a request for the bare app path, like `/myapp`, to the full path with a trailing slash `/myapp/`.
+
+### App Settings
+
+The `settings` dict allows advanced customization of the app behavior. The supported settings, with their default values, are
+
+```python {filename="app.star"}
+app = ace.app("myapp",
+    routes=[ace.html("/")],
+    settings={
+        "routing": {
+            # Locations searched for template files
+            "template_locations": ["*.go.html"],
+            # Folder containing base templates for the structured template layout
+            "base_templates": "base_templates",
+            # Enable the server sent events (SSE) endpoint in prod mode
+            "push_events": False,
+            # Send HTTP 103 Early Hints for static files, for HTML routes in prod mode
+            "early_hints": True,
+            # Glob patterns excluded from the container content change check
+            "container_exclude": ["static/**/*", "static_root/**/*", "base_templates/**/*", "*.go.html", "*.star", "config_gen.lock"],
+        },
+        "htmx": {
+            # The HTMX library version to use
+            "version": "2.0.3",
+        },
+        "container": {
+            # Use separate container images for the stage and prod versions of the app
+            "separate_stage_prod_images": False,
+        },
+    })
+```
+
+All settings are optional; only the entries being changed need to be specified. See [Templates]({{< ref "docs/app/templates/#template-file-location" >}}) for details on `template_locations` and `base_templates`.
+
+In addition, an `app_config` key in the settings dict can set [app configuration]({{< ref "docs/applications/overview" >}}) options from within the app definition, the same options as set with `--conf` during app creation. For example, `settings={"app_config": {"cors": {"allow_origin": "*"}}}` sets the CORS allowed origin for the app. Values set in the app metadata using `--conf` take precedence over `app_config` values set in `app.star`.
+
 ## Sharing Files Across Apps
 
 The app config property `star_base` can be used to set the base directory for Starlark files. This is useful when multiple apps need to share common files, like templates, static files, container spec etc. For example, if dir /mydir/ is the base directory with /mydir/app1 and /mydir/app2 as subdirectories containing two apps, creating apps using
