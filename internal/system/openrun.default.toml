@@ -93,6 +93,7 @@ pat_default_ttl = "2160h"        # default API key expiry (90d); --expires=never
 [api.mcp]                        # per-operation overrides for the MCP invoker
 enable = []                      # ops disabled by default for MCP (like secret_reveal), opted back in
 disable = []                     # additional ops turned off for MCP
+skip_destructive_confirm = false # true disables the dry-run + confirmation prompt on destructive MCP tools
 
 [api.tcp]                        # per-operation overrides for the remote REST invoker
 enable = []

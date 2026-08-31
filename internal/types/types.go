@@ -221,6 +221,12 @@ const (
 type ApiInvokerOps struct {
 	Enable  []string `toml:"enable"`  // ops disabled by default for this invoker, opted back in
 	Disable []string `toml:"disable"` // ops turned off for this invoker
+
+	// SkipDestructiveConfirm turns off the dry-run + elicitation
+	// confirmation flow for destructive MCP tools. Useful for headless
+	// automation, or for clients whose elicitation handling stalls the
+	// calling side while the prompt waits on a human. mcp only
+	SkipDestructiveConfirm bool `toml:"skip_destructive_confirm"`
 }
 
 // ApiConfig is the remote management API configuration ([api] in openrun.toml).

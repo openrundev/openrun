@@ -415,11 +415,21 @@
   },
   "list_apikeys": {
     "additionalProperties": false,
+    "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      }
+    },
     "type": "object"
   },
   "list_apps": {
     "additionalProperties": false,
     "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      },
       "path_glob": {
         "description": "app path glob to match, like /myapp, example.com:/**, or all. Empty matches all apps across all domains",
         "type": "string"
@@ -430,6 +440,10 @@
   "list_bindings": {
     "additionalProperties": false,
     "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      },
       "source": {
         "description": "filter by binding source",
         "type": "string"
@@ -440,6 +454,10 @@
   "list_files": {
     "additionalProperties": false,
     "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      },
       "path": {
         "description": "the app path",
         "type": "string"
@@ -456,11 +474,21 @@
   },
   "list_providers": {
     "additionalProperties": false,
+    "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      }
+    },
     "type": "object"
   },
   "list_secrets": {
     "additionalProperties": false,
     "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      },
       "name_glob": {
         "description": "secret name glob",
         "type": "string"
@@ -475,6 +503,10 @@
   "list_services": {
     "additionalProperties": false,
     "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      },
       "name": {
         "description": "filter by service name",
         "type": "string"
@@ -488,11 +520,21 @@
   },
   "list_sync": {
     "additionalProperties": false,
+    "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      }
+    },
     "type": "object"
   },
   "list_versions": {
     "additionalProperties": false,
     "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      },
       "path": {
         "description": "the app path, like /myapp or example.com:/myapp",
         "type": "string"
@@ -506,6 +548,10 @@
   "list_webhooks": {
     "additionalProperties": false,
     "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      },
       "path": {
         "description": "the app path, like /myapp or example.com:/myapp",
         "type": "string"
@@ -1118,6 +1164,12 @@
   },
   "user_list": {
     "additionalProperties": false,
+    "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      }
+    },
     "type": "object"
   },
   "version_switch": {

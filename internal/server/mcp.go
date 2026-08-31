@@ -7,8 +7,12 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -123,6 +127,64 @@ func addMCPTool[In any](s *Server, srv *mcp.Server, operation API_NAME,
 		// audit event, matching the REST path
 		cs := &ContextShared{}
 		ctx = context.WithValue(ctx, types.SHARED, cs)
+
+		// Destructive-op confirmation (SEP-2322 multi round-trip): without an
+		// explicit dry_run, capable clients get a dry-run preview and an
+		// elicitation to accept before anything changes. The handler runs
+		// twice - the first pass is the side-effect-free preview, the retry
+		// (carrying the user's answer) is the real run - so nothing with
+		// side effects may be added ahead of this block
+		if entry.Destructive && !s.Config().Api.MCP.SkipDestructiveConfirm &&
+			!mcpInputDryRun(in) && mcpConfirmSupported(req) {
+			if response, answered := req.Params.InputResponses[mcpConfirmKey]; answered {
+				elicit, ok := response.(*mcp.ElicitResult)
+				if !ok || elicit.Action != "accept" {
+					event.Detail += " confirm=declined"
+					if auditErr := s.InsertAuditEvent(&event); auditErr != nil {
+						s.Error().Err(auditErr).Msg("error inserting audit event for declined MCP call")
+					}
+					return nil, map[string]any{
+						"confirmed": false,
+						"detail":    "declined by the user, no changes were made",
+					}, nil
+				}
+				event.Detail += " confirm=accepted"
+				// fall through to the real run
+			} else {
+				// Preview pass: run the operation in dry-run mode when it
+				// supports one, then ask for confirmation
+				var preview any
+				if dryIn, ok := mcpInputWithDryRun(in); ok {
+					dryOut, dryErr := handler(ctx, dryIn.(In))
+					if dryErr != nil {
+						// RBAC/scope/validation failures surface before any
+						// confirmation is requested
+						if auditErr := s.InsertAuditEvent(&event); auditErr != nil {
+							s.Error().Err(auditErr).Msg("error inserting audit event for MCP preview")
+						}
+						return nil, nil, dryErr
+					}
+					preview, _ = toJSONValue(dryOut)
+				}
+				event.Operation += "_dryrun"
+				event.Detail += " confirm=requested"
+				event.Status = string(types.EventStatusSuccess)
+				if auditErr := s.InsertAuditEvent(&event); auditErr != nil {
+					s.Error().Err(auditErr).Msg("error inserting audit event for MCP preview")
+				}
+				return &mcp.CallToolResult{
+					InputRequests: mcp.InputRequestMap{
+						mcpConfirmKey: &mcp.ElicitParams{
+							Message: mcpConfirmMessage(operation, entry, mcpInputTarget(in), preview),
+							RequestedSchema: map[string]any{
+								"type": "object", "properties": map[string]any{},
+							},
+						},
+					},
+				}, nil, nil
+			}
+		}
+
 		out, err := handler(ctx, in)
 		if err == nil {
 			event.Status = string(types.EventStatusSuccess)
@@ -147,6 +209,13 @@ func addMCPTool[In any](s *Server, srv *mcp.Server, operation API_NAME,
 		// the SDK skips schema inference (the rich DTOs use conditional
 		// fields and custom encodings that make poor generated schemas)
 		generic, err := toJSONValue(out)
+		if err == nil {
+			// List tools (inputs carrying a FullOutput field) return a
+			// compact projection by default; full_output=true opts out
+			if hasFull, full := mcpInputFullOutput(in); hasFull && !full {
+				generic = mcpSummarizeOutput(generic)
+			}
+		}
 		return nil, generic, err
 	})
 }
@@ -155,7 +224,8 @@ func addMCPTool[In any](s *Server, srv *mcp.Server, operation API_NAME,
 // query params and conditional fields that make poor tool schemas
 type (
 	mcpAppGlobIn struct {
-		PathGlob string `json:"path_glob,omitzero" jsonschema:"app path glob to match, like /myapp, example.com:/**, or all. Empty matches all apps across all domains"`
+		PathGlob   string `json:"path_glob,omitzero" jsonschema:"app path glob to match, like /myapp, example.com:/**, or all. Empty matches all apps across all domains"`
+		FullOutput bool   `json:"full_output,omitzero" jsonschema:"return complete objects instead of the default compact summary"`
 	}
 	mcpAppPathIn struct {
 		Path string `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
@@ -189,21 +259,35 @@ type (
 		DryRun  bool   `json:"dry_run,omitzero" jsonschema:"preview without applying"`
 	}
 	mcpListServicesIn struct {
-		Type string `json:"type,omitzero" jsonschema:"filter by service type, like postgres"`
-		Name string `json:"name,omitzero" jsonschema:"filter by service name"`
+		Type       string `json:"type,omitzero" jsonschema:"filter by service type, like postgres"`
+		Name       string `json:"name,omitzero" jsonschema:"filter by service name"`
+		FullOutput bool   `json:"full_output,omitzero" jsonschema:"return complete objects instead of the default compact summary"`
 	}
 	mcpListBindingsIn struct {
-		Source string `json:"source,omitzero" jsonschema:"filter by binding source"`
+		Source     string `json:"source,omitzero" jsonschema:"filter by binding source"`
+		FullOutput bool   `json:"full_output,omitzero" jsonschema:"return complete objects instead of the default compact summary"`
 	}
 	mcpListSecretsIn struct {
-		Provider string `json:"provider,omitzero" jsonschema:"secret provider name, empty for the default"`
-		NameGlob string `json:"name_glob,omitzero" jsonschema:"secret name glob"`
+		Provider   string `json:"provider,omitzero" jsonschema:"secret provider name, empty for the default"`
+		NameGlob   string `json:"name_glob,omitzero" jsonschema:"secret name glob"`
+		FullOutput bool   `json:"full_output,omitzero" jsonschema:"return complete objects instead of the default compact summary"`
 	}
 	mcpSecretGetIn struct {
 		Provider string `json:"provider,omitzero" jsonschema:"secret provider name, empty for the default"`
 		Name     string `json:"name" jsonschema:"the secret name"`
 	}
-	mcpEmptyIn        struct{}
+	mcpEmptyIn struct{}
+	// mcpListIn is the input for parameterless list tools: only the
+	// summarization opt-out
+	mcpListIn struct {
+		FullOutput bool `json:"full_output,omitzero" jsonschema:"return complete objects instead of the default compact summary"`
+	}
+	// mcpAppPathListIn is the input for per-app list tools (versions,
+	// webhooks); get_app keeps the plain path input and full detail output
+	mcpAppPathListIn struct {
+		Path       string `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		FullOutput bool   `json:"full_output,omitzero" jsonschema:"return complete objects instead of the default compact summary"`
+	}
 	mcpUpdateParamsIn struct {
 		PathGlob string `json:"path_glob" jsonschema:"app path glob to update"`
 		Name     string `json:"name" jsonschema:"the parameter name"`
@@ -218,8 +302,9 @@ type (
 		DryRun  bool   `json:"dry_run,omitzero" jsonschema:"preview without applying"`
 	}
 	mcpListFilesIn struct {
-		Path    string `json:"path" jsonschema:"the app path"`
-		Version string `json:"version,omitzero" jsonschema:"the version to list files of; empty for current"`
+		Path       string `json:"path" jsonschema:"the app path"`
+		Version    string `json:"version,omitzero" jsonschema:"the version to list files of; empty for current"`
+		FullOutput bool   `json:"full_output,omitzero" jsonschema:"return complete objects instead of the default compact summary"`
 	}
 	mcpWebhookIn struct {
 		Path   string `json:"path" jsonschema:"the app path"`
@@ -390,7 +475,7 @@ func (s *Server) buildMCPServer() *mcp.Server {
 		})
 
 	addMCPTool(s, srv, API_LIST_VERSIONS,
-		func(ctx context.Context, in mcpAppPathIn) (any, error) {
+		func(ctx context.Context, in mcpAppPathListIn) (any, error) {
 			return s.VersionList(ctx, in.Path)
 		})
 
@@ -441,7 +526,7 @@ func (s *Server) buildMCPServer() *mcp.Server {
 		})
 
 	addMCPTool(s, srv, API_LIST_SYNC,
-		func(ctx context.Context, _ mcpEmptyIn) (any, error) {
+		func(ctx context.Context, _ mcpListIn) (any, error) {
 			return s.ListSyncEntries(ctx)
 		})
 
@@ -461,7 +546,7 @@ func (s *Server) buildMCPServer() *mcp.Server {
 		})
 
 	addMCPTool(s, srv, API_LIST_APIKEYS,
-		func(ctx context.Context, _ mcpEmptyIn) (any, error) {
+		func(ctx context.Context, _ mcpListIn) (any, error) {
 			return s.ListApiKeys(ctx, false)
 		})
 
@@ -496,7 +581,7 @@ func (s *Server) buildMCPServer() *mcp.Server {
 		})
 
 	addMCPTool(s, srv, API_LIST_WEBHOOKS,
-		func(ctx context.Context, in mcpAppPathIn) (any, error) {
+		func(ctx context.Context, in mcpAppPathListIn) (any, error) {
 			return s.TokenList(ctx, in.Path)
 		})
 
@@ -593,7 +678,7 @@ func (s *Server) buildMCPServer() *mcp.Server {
 		})
 
 	addMCPTool(s, srv, API_LIST_PROVIDERS,
-		func(ctx context.Context, _ mcpEmptyIn) (any, error) {
+		func(ctx context.Context, _ mcpListIn) (any, error) {
 			return s.ListProviders(ctx)
 		})
 
@@ -738,7 +823,7 @@ func (s *Server) buildMCPServer() *mcp.Server {
 		})
 
 	addMCPTool(s, srv, API_USER_LIST,
-		func(ctx context.Context, _ mcpEmptyIn) (any, error) {
+		func(ctx context.Context, _ mcpListIn) (any, error) {
 			// ListUsers enforces config:read internally (via GetConfigEntries)
 			return s.ListUsers(ctx)
 		})
@@ -802,6 +887,134 @@ func mcpInputTarget(in any) string {
 	return ""
 }
 
+// mcpConfirmKey is the input-request id used for destructive-op confirmation
+const mcpConfirmKey = "confirm"
+
+// mcpConfirmSupported reports whether the calling client can complete an
+// MRTR confirmation round trip in stateless mode: protocol 2026-07-28+ (the
+// input_required retry is client-driven; older clients would need the
+// server-side live-elicit bridge, which stateless mode cannot serve) and a
+// declared elicitation capability. Older or non-eliciting clients skip
+// confirmation entirely and keep today's direct-execute behavior
+func mcpConfirmSupported(req *mcp.CallToolRequest) bool {
+	iparams := req.Session.InitializeParams()
+	return iparams != nil && iparams.ProtocolVersion >= "2026-07-28" &&
+		iparams.Capabilities != nil && iparams.Capabilities.Elicitation != nil
+}
+
+// mcpInputWithDryRun returns a copy of the tool input with DryRun set true,
+// for the preview pass of a destructive-op confirmation. ok is false when
+// the input has no DryRun field (stop_server, delete_apikey, ...)
+func mcpInputWithDryRun(in any) (any, bool) {
+	value := reflect.ValueOf(in)
+	if value.Kind() != reflect.Struct {
+		return in, false
+	}
+	copyValue := reflect.New(value.Type()).Elem()
+	copyValue.Set(value)
+	field := copyValue.FieldByName("DryRun")
+	if !field.IsValid() || field.Kind() != reflect.Bool {
+		return in, false
+	}
+	field.SetBool(true)
+	return copyValue.Interface(), true
+}
+
+// mcpConfirmMessage builds the elicitation prompt: the operation, its
+// target and the list of items the dry run reports as affected (not the raw
+// preview JSON)
+func mcpConfirmMessage(operation API_NAME, entry apiOperation, target string, preview any) string {
+	msg := fmt.Sprintf("Confirm %s", operation)
+	if target != "" {
+		msg += " on " + target
+	}
+	msg += ": " + entry.Description
+	if summary := mcpConfirmSummary(preview); summary != "" {
+		msg += "\n" + "Will affect:" + "\n" + summary
+	}
+	return msg + "\n" + "Accept to apply the change, decline to leave everything unchanged."
+}
+
+// mcpConfirmSummary renders a dry-run preview as the affected items: every
+// non-empty array field becomes one "key: item, item, ..." line with items
+// identified by their path/name/id, and identifying scalar fields are shown
+// as key=value. Returns "" when the preview carries nothing identifiable
+func mcpConfirmSummary(preview any) string {
+	root, ok := preview.(map[string]any)
+	if !ok {
+		return ""
+	}
+	keys := make([]string, 0, len(root))
+	for key := range root {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	const maxItems = 8
+	var lines []string
+	var scalars []string
+	for _, key := range keys {
+		if key == "dry_run" || key == "DryRun" {
+			continue
+		}
+		switch value := root[key].(type) {
+		case []any:
+			items := make([]string, 0, len(value))
+			for _, element := range value {
+				if item := mcpItemIdentifier(element); item != "" {
+					items = append(items, item)
+				}
+			}
+			if len(items) == 0 {
+				continue
+			}
+			if len(items) > maxItems {
+				items = append(items[:maxItems], fmt.Sprintf("... and %d more", len(items)-maxItems))
+			}
+			lines = append(lines, "  "+key+": "+strings.Join(items, ", "))
+		case string:
+			if slices.Contains([]string{"id", "Id", "name", "Name", "path", "Path", "user", "username"}, key) && value != "" {
+				scalars = append(scalars, key+"="+value)
+			}
+		case float64:
+			if strings.Contains(key, "version") {
+				scalars = append(scalars, fmt.Sprintf("%s=%v", key, value))
+			}
+		}
+	}
+	if len(scalars) > 0 {
+		lines = append(lines, "  "+strings.Join(scalars, ", "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// mcpItemIdentifier picks a human identifier out of one preview list
+// element: domain-qualified path, name, id or username; plain strings are
+// their own identifier
+func mcpItemIdentifier(element any) string {
+	switch value := element.(type) {
+	case string:
+		return value
+	case map[string]any:
+		str := func(keys ...string) string {
+			for _, key := range keys {
+				if s, ok := value[key].(string); ok && s != "" {
+					return s
+				}
+			}
+			return ""
+		}
+		if path := str("path", "Path"); path != "" {
+			if domain := str("domain", "Domain"); domain != "" {
+				return domain + ":" + path
+			}
+			return path
+		}
+		return str("name", "Name", "id", "Id", "username")
+	}
+	return ""
+}
+
 // mcpInputDryRun reports whether the tool input carries DryRun=true, so
 // dry-run MCP calls audit with the _dryrun suffix like the REST path
 func mcpInputDryRun(in any) bool {
@@ -818,4 +1031,106 @@ func boolToBoolValue(value bool) types.BoolValue {
 		return types.BoolValueTrue
 	}
 	return types.BoolValueFalse
+}
+
+// mcpInputFullOutput reports whether the tool input declares a FullOutput
+// field (marking it a summarizable list tool) and its value
+func mcpInputFullOutput(in any) (bool, bool) {
+	value := reflect.ValueOf(in)
+	if value.Kind() != reflect.Struct {
+		return false, false
+	}
+	field := value.FieldByName("FullOutput")
+	if !field.IsValid() || field.Kind() != reflect.Bool {
+		return false, false
+	}
+	return true, field.Bool()
+}
+
+// mcpSummaryFields are the response keys kept by the compact list
+// projection: identifiers, type/status and small operational facts. Both
+// lowercase-tagged and untagged-capitalized forms appear because some API
+// types marshal without json tags
+var mcpSummaryFields = map[string]bool{
+	"path": true, "Path": true, "domain": true, "Domain": true,
+	"id": true, "Id": true, "name": true, "Name": true,
+	"username": true, "Username": true, "user": true, "user_id": true, "UserId": true,
+	"type": true, "Type": true, "service_type": true, "ServiceType": true,
+	"source": true, "Source": true, "source_url": true, "SourceUrl": true,
+	"status": true, "Status": true, "error": true, "Error": true,
+	"version": true, "Version": true, "active": true, "Active": true,
+	"spec": true, "Spec": true, "auth": true, "Auth": true,
+	"is_dev": true, "IsDev": true, "main_app": true, "MainApp": true,
+	"staging": true, "Staging": true, "is_default": true, "IsDefault": true,
+	"url": true, "Url": true, "git_branch": true, "GitBranch": true,
+	"schedule_frequency": true, "expires_at": true, "last_used_at": true,
+	"created_by": true, "CreatedBy": true, "groups": true, "Groups": true,
+	"scopes": true, "resources": true, "description": true, "Description": true,
+}
+
+// mcpSummarizeOutput projects a list-tool response to its compact form:
+// array elements keep only the mcpSummaryFields scalars (and small string
+// lists), nested objects are dropped, and wrapper objects have their array
+// fields summarized in place. full_output=true skips this entirely
+func mcpSummarizeOutput(value any) any {
+	switch typed := value.(type) {
+	case []any:
+		result := make([]any, 0, len(typed))
+		for _, element := range typed {
+			result = append(result, mcpSummarizeElement(element))
+		}
+		return result
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, field := range typed {
+			if list, isList := field.([]any); isList {
+				result[key] = mcpSummarizeOutput(list)
+			} else if _, isMap := field.(map[string]any); !isMap {
+				result[key] = field
+			}
+		}
+		return result
+	}
+	return value
+}
+
+func mcpSummarizeElement(element any) any {
+	object, ok := element.(map[string]any)
+	if !ok {
+		return element
+	}
+	result := make(map[string]any, len(object))
+	for key, field := range object {
+		if !mcpSummaryFields[key] {
+			continue
+		}
+		switch typed := field.(type) {
+		case map[string]any:
+			// nested objects are what makes the full output large
+		case []any:
+			// keep small scalar lists (groups, scopes), drop object lists
+			scalars := true
+			for _, item := range typed {
+				if _, isMap := item.(map[string]any); isMap {
+					scalars = false
+					break
+				}
+			}
+			if scalars {
+				result[key] = field
+			}
+		case string:
+			if typed != "" {
+				result[key] = field
+			}
+		default:
+			result[key] = field
+		}
+	}
+	if len(result) == 0 {
+		if id := mcpItemIdentifier(element); id != "" {
+			return id
+		}
+	}
+	return result
 }

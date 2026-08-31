@@ -396,3 +396,195 @@ func TestMCPBindingResponsesRedactAccount(t *testing.T) {
 		t.Fatalf("binding_show_account must be absent by default, got %v", err)
 	}
 }
+
+// mcpConnectWithElicit dials an in-memory MCP session whose client declares
+// the elicitation capability with the given handler, enabling the MRTR
+// destructive-op confirmation flow
+func mcpConnectWithElicit(t *testing.T, server *Server, principal string, groups []string,
+	action string, sawMessage *string) *mcp.ClientSession {
+	t.Helper()
+	serverCtx := server.apiTokenRequestContext(context.Background(), principal, groups, nil, InvokerMCP, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.getMCPServer().Connect(serverCtx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("mcp server connect: %v", err)
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "elicit-client", Version: "0.0.1"}, &mcp.ClientOptions{
+		ElicitationHandler: func(_ context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+			if sawMessage != nil {
+				*sawMessage = req.Params.Message
+			}
+			return &mcp.ElicitResult{Action: action}, nil
+		},
+	})
+	clientSession, err := client.Connect(context.Background(), clientTransport, nil)
+	if err != nil {
+		t.Fatalf("mcp client connect: %v", err)
+	}
+	t.Cleanup(func() { _ = clientSession.Close() })
+	return clientSession
+}
+
+// TestMCPDestructiveConfirmation covers the SEP-2322 confirmation flow:
+// destructive tools run a dry-run preview and require an accepted
+// elicitation before applying; declining leaves state untouched; clients
+// without the elicitation capability keep the direct-execute behavior
+func TestMCPDestructiveConfirmation(t *testing.T) {
+	server, connect := newMCPTestServer(t)
+
+	// Apply two extra apps to destroy
+	ctx := system.WithTrustedOperation(context.Background())
+	for _, path := range []string{"/apps/confirm-accept", "/apps/confirm-decline"} {
+		applyPath := filepath.Join(t.TempDir(), "app.ace")
+		writeSyncApplyFile(t, applyPath, path)
+		if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all",
+			false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+			t.Fatalf("apply %s: %v", path, err)
+		}
+	}
+	server.apps.ResetAllAppCache()
+
+	appExists := func(path string) bool {
+		apps, err := server.GetApps(ctx, path, false)
+		if err != nil {
+			t.Fatalf("get apps: %v", err)
+		}
+		return len(apps) > 0
+	}
+
+	// Declined: the app survives, the result says so
+	var declineMsg string
+	declineSession := mcpConnectWithElicit(t, server, "admin", nil, "decline", &declineMsg)
+	result, err := declineSession.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "delete_apps", Arguments: map[string]any{"path_glob": "/apps/confirm-decline"}})
+	if err != nil {
+		t.Fatalf("declined delete: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("declined delete errored: %s", callToolText(t, result))
+	}
+	if !strings.Contains(callToolText(t, result), "no changes were made") {
+		t.Fatalf("declined result must say nothing changed: %s", callToolText(t, result))
+	}
+	if !strings.Contains(declineMsg, "delete_apps") || !strings.Contains(declineMsg, "Will affect:") ||
+		!strings.Contains(declineMsg, "/apps/confirm-decline") {
+		t.Fatalf("elicitation message must list the affected items: %s", declineMsg)
+	}
+	if strings.Contains(declineMsg, "{") {
+		t.Fatalf("elicitation message must not dump raw JSON: %s", declineMsg)
+	}
+	if !appExists("/apps/confirm-decline") {
+		t.Fatal("declined delete must not remove the app")
+	}
+
+	// Accepted: the app is gone after one client-side CallTool
+	acceptSession := mcpConnectWithElicit(t, server, "admin", nil, "accept", nil)
+	result, err = acceptSession.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "delete_apps", Arguments: map[string]any{"path_glob": "/apps/confirm-accept"}})
+	if err != nil {
+		t.Fatalf("accepted delete: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("accepted delete errored: %s", callToolText(t, result))
+	}
+	if appExists("/apps/confirm-accept") {
+		t.Fatal("accepted delete must remove the app")
+	}
+
+	// Explicit dry_run skips the confirmation entirely (no elicitation)
+	var unexpected string
+	drySession := mcpConnectWithElicit(t, server, "admin", nil, "decline", &unexpected)
+	result, err = drySession.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "delete_apps", Arguments: map[string]any{"path_glob": "/apps/confirm-decline", "dry_run": true}})
+	if err != nil || result.IsError {
+		t.Fatalf("dry-run delete: %v %s", err, callToolText(t, result))
+	}
+	if unexpected != "" {
+		t.Fatalf("explicit dry_run must not elicit, got prompt: %s", unexpected)
+	}
+
+	// A client without the elicitation capability keeps direct-execute
+	// behavior: the plain connect helper declares no capability
+	plainSession := connect(t, "admin", nil, nil)
+	result, err = plainSession.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "delete_apps", Arguments: map[string]any{"path_glob": "/apps/confirm-decline"}})
+	if err != nil || result.IsError {
+		t.Fatalf("no-capability delete: %v %s", err, callToolText(t, result))
+	}
+	if appExists("/apps/confirm-decline") {
+		t.Fatal("no-capability client must execute directly (unchanged behavior)")
+	}
+}
+
+func TestMCPDestructiveConfirmationSkipToggle(t *testing.T) {
+	server, _ := newMCPTestServer(t)
+	server.staticConfig.Api.MCP.SkipDestructiveConfirm = true
+
+	var prompted string
+	session := mcpConnectWithElicit(t, server, "admin", nil, "decline", &prompted)
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "delete_apps", Arguments: map[string]any{"path_glob": "/apps/mcp-test"}})
+	if err != nil || result.IsError {
+		t.Fatalf("delete with confirmation disabled: %v %s", err, callToolText(t, result))
+	}
+	if prompted != "" {
+		t.Fatalf("skip_destructive_confirm must suppress elicitation, got prompt: %s", prompted)
+	}
+	apps, err := server.GetApps(system.WithTrustedOperation(context.Background()), "/apps/mcp-test", false)
+	if err != nil {
+		t.Fatalf("get apps: %v", err)
+	}
+	if len(apps) != 0 {
+		t.Fatal("delete must execute directly with confirmation disabled")
+	}
+}
+
+// TestMCPListSummarization: list tools return a compact projection by
+// default (identifiers and status, no nested metadata) and the complete
+// response with full_output=true
+func TestMCPListSummarization(t *testing.T) {
+	_, connect := newMCPTestServer(t)
+	session := connect(t, "builtin:alice", []string{"dev"}, nil)
+
+	// Default: summarized - the app path is present, the heavy nested
+	// metadata/settings objects are not
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "list_apps", Arguments: map[string]any{"path_glob": "/apps/**"}})
+	if err != nil || result.IsError {
+		t.Fatalf("list_apps: %v %s", err, callToolText(t, result))
+	}
+	text := callToolText(t, result)
+	if !strings.Contains(text, "/apps/mcp-test") {
+		t.Fatalf("summary must keep the app path: %s", text)
+	}
+	for _, heavy := range []string{"metadata", "settings", "audit_results", "param_values"} {
+		if strings.Contains(text, heavy) {
+			t.Fatalf("summary must drop nested %s: %s", heavy, text)
+		}
+	}
+
+	// full_output=true: the complete response, nested objects included
+	result, err = session.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "list_apps", Arguments: map[string]any{"path_glob": "/apps/**", "full_output": true}})
+	if err != nil || result.IsError {
+		t.Fatalf("list_apps full: %v %s", err, callToolText(t, result))
+	}
+	fullText := callToolText(t, result)
+	if !strings.Contains(fullText, "metadata") {
+		t.Fatalf("full output must include nested metadata: %s", fullText)
+	}
+	if len(fullText) <= len(text) {
+		t.Fatalf("full output (%d bytes) must be larger than the summary (%d bytes)", len(fullText), len(text))
+	}
+
+	// Wrapper-object lists summarize their inner arrays the same way
+	result, err = session.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "list_versions", Arguments: map[string]any{"path": "/apps/mcp-test"}})
+	if err != nil || result.IsError {
+		t.Fatalf("list_versions: %v %s", err, callToolText(t, result))
+	}
+	if !strings.Contains(callToolText(t, result), "Version") && !strings.Contains(callToolText(t, result), "version") {
+		t.Fatalf("version summary must keep version numbers: %s", callToolText(t, result))
+	}
+}
