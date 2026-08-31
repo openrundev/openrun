@@ -60,9 +60,9 @@ func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, appl
 	_, err = starlark.ExecFileOptions(&options, thread, fileName, data, builtins)
 	if err != nil {
 		if evalErr, ok := err.(*starlark.EvalError); ok {
-			s.Error().Err(evalErr).Msgf("Error loading app definitions: %s", evalErr.Backtrace())
+			s.Error().Err(evalErr).Msgf("Error loading app declarations: %s", evalErr.Backtrace())
 		}
-		return nil, nil, fmt.Errorf("error loading app definitions: %w", err)
+		return nil, nil, fmt.Errorf("error loading app declarations: %w", err)
 	}
 
 	retApp := make([]*types.CreateAppRequest, 0, len(applyBuiltins.appDefs))

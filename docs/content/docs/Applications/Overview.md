@@ -132,7 +132,7 @@ All other changes done to app metadata using `app update`, `app reload`, `param 
 
 ## Declarative App Management
 
-The CLI and management apps allow imperative management of OpenRun apps. OpenRun apps can also be managed declaratively. The app definition has to be defined in a file and OpenRun can apply the configuration. This works similar to the Kubernetes `apply` functionality.
+The CLI and management apps allow imperative management of OpenRun apps. OpenRun apps can also be managed declaratively. The apps have to be declared in an app declaration file and OpenRun can apply the configuration. This works similar to the Kubernetes `apply` functionality.
 
 To use this feature, create an app config file, with `.ace` extension. The config file should contain one or more `app` definitions. For example, in a file called `apps.ace`
 
@@ -178,7 +178,7 @@ By default, changes are applied to the stage app. Add the `--promote` option to 
 
 The `--reload` option controls whether new source code is loaded for apps during the apply operation. Setting it to `none` means no apps are reloaded, `updated` means apps which have a config update are reloaded. `matched` (the default) means all apps matched by the app glob are reloaded, even if there is no config update.
 
-Use the top-level `--verify` option to verify reloads for every matched app. Verification starts the reloaded app container before the metadata transaction is committed. If verification fails for any app, the apply operation fails and the changes are reverted. To verify specific apps in a declarative apply file, set `verify=True` on those app definitions:
+Use the top-level `--verify` option to verify reloads for every matched app. Verification starts the reloaded app container before the metadata transaction is committed. If verification fails for any app, the apply operation fails and the changes are reverted. To verify specific apps in a declarative apply file, set `verify=True` on those app declarations:
 
 ```python {filename="apps.ace"}
 app("/todo/admin", "github.com/example/todo", bindings=["/todo-data/admin"], verify=True)
@@ -244,7 +244,7 @@ Apps are identified by their path and source URL, so those cannot be changed. De
 
 ## Automated Sync
 
-OpenRun supports automatically syncing the app definition from Git. The commands to manage sync are:
+OpenRun supports automatically syncing the app declarations from Git. The commands to manage sync are:
 
 ```
 openrun sync

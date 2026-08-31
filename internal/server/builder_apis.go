@@ -1411,7 +1411,7 @@ func writeBuilderSourceZip(workspaceDir string, w io.Writer) error {
 // upsertMarkerBlockFile inserts or replaces the app's marker block in the
 // apps file, creating the file (with a header) if missing
 func upsertMarkerBlockFile(appsFile, appPath, stanza string) error {
-	content := "# Declarative app definitions published by the OpenRun app builder.\n" +
+	content := "# App declarations published by the OpenRun app builder.\n" +
 		"# Blocks between openrun-builder markers are managed by publish/unpublish;\n" +
 		"# content outside the markers is never modified.\n"
 	if data, err := os.ReadFile(appsFile); err == nil {
