@@ -22,12 +22,17 @@ import (
 // than an RBAC grant, so reveal authority must be visible in the token itself.
 
 // scopeLiteralOnly are the permissions a scope glob never matches; a
-// credential must name them literally to cover them
+// credential must name them literally to cover them. config:update is
+// included because it is admin-equivalent: rewriting the dynamic RBAC config
+// (or creating a builtin user with arbitrary groups, which shares the same
+// permission) can grant every other permission, so a "*"-scoped token must
+// not reach it implicitly
 var scopeLiteralOnly = map[types.RBACPermission]bool{
 	types.PermissionSecretReveal:  true,
 	types.PermissionBindingReveal: true,
 	types.PermissionApprove:       true,
 	types.PermissionAdmin:         true,
+	types.PermissionConfigUpdate:  true,
 }
 
 // ScopesAllow reports whether the scope ceiling covers perm. A nil/empty

@@ -178,11 +178,30 @@ func apiCallerPrincipal(ctx context.Context) string {
 	return cmp.Or(system.GetContextUserId(ctx), types.ADMIN_USER)
 }
 
+// apiCallerPrincipalChecked is apiCallerPrincipal for credential-issuing
+// paths: a remote (tcp/mcp) call always carries the credential's identity, so
+// an empty user id there indicates a context-propagation bug - fail closed
+// instead of silently attributing (and minting for) the admin principal
+func apiCallerPrincipalChecked(ctx context.Context) (string, error) {
+	userId := system.GetContextUserId(ctx)
+	if userId == "" {
+		if invoker := system.GetContextApiInvoker(ctx); invoker == InvokerTCP || invoker == InvokerMCP {
+			return "", types.CreateRequestError(
+				"internal error: remote API call carries no identity", http.StatusInternalServerError)
+		}
+		return types.ADMIN_USER, nil
+	}
+	return userId, nil
+}
+
 // CreateApiKey mints a new PAT. Minting for one's own identity requires
 // apikey:manage:self; minting for another user requires admin and audits as
 // create_apikey_other
 func (s *Server) CreateApiKey(ctx context.Context, req *types.ApiKeyCreateRequest) (*types.ApiKeyCreateResponse, error) {
-	caller := apiCallerPrincipal(ctx)
+	caller, err := apiCallerPrincipalChecked(ctx)
+	if err != nil {
+		return nil, err
+	}
 	target := cmp.Or(req.User, caller)
 
 	if target == caller {
@@ -229,6 +248,14 @@ func (s *Server) CreateApiKey(ctx context.Context, req *types.ApiKeyCreateReques
 				http.StatusBadRequest)
 		}
 	}
+	if scopes == nil && len(resources) == 1 && resources[0] == ApiResourceMCP {
+		// An MCP-only key with no explicit scopes defaults to read-only,
+		// matching the OAuth consent default for the MCP surface: an AI
+		// client should not receive the user's full write authority
+		// implicitly. Write-capable keys need an explicit --scopes (like
+		// "*"; reveal-class and config:update scopes stay literal-only)
+		scopes = []string{"*:read"}
+	}
 
 	// Attenuation: a bearer credential can only mint credentials at most as
 	// powerful as itself - scopes and resources must be subsets, and the new
@@ -270,13 +297,17 @@ func (s *Server) CreateApiKey(ctx context.Context, req *types.ApiKeyCreateReques
 		Id:        id,
 		Key:       wireToken,
 		User:      target,
+		Scopes:    scopes,
 		ExpiresAt: expiresAt,
 	}, nil
 }
 
 // ListApiKeys lists the caller's API keys, or every key with all=true (admin)
 func (s *Server) ListApiKeys(ctx context.Context, all bool) (*types.ApiKeyListResponse, error) {
-	principal := apiCallerPrincipal(ctx)
+	principal, err := apiCallerPrincipalChecked(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if all {
 		if err := s.enforceGlobalPerm(ctx, types.PermissionAdmin, ""); err != nil {
 			return nil, err
@@ -304,7 +335,10 @@ func (s *Server) DeleteApiKey(ctx context.Context, id string) (*types.ApiKeyDele
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusNotFound)
 	}
-	caller := apiCallerPrincipal(ctx)
+	caller, err := apiCallerPrincipalChecked(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if identity.PrincipalName == caller {
 		if err := s.enforceGlobalPerm(ctx, types.PermissionApiKeyManageSelf, ""); err != nil {
 			return nil, err
@@ -529,7 +563,15 @@ func (s *Server) authenticateApiRequest(w http.ResponseWriter, r *http.Request,
 	}
 	principal, groups, scopes, cred, err := s.verifyApiToken(r.Context(), token, surface)
 	if err != nil {
-		s.insertAuthFailureEvent(r, operation, err.Error())
+		// Name the failing credential id (public token half, never the
+		// secret) so audit rows and logs distinguish which token failed;
+		// the audit event dedupes per minute, the log line does not
+		detail := err.Error()
+		if _, id, _, parseErr := parseApiToken(token); parseErr == nil {
+			detail += " cred=" + id
+		}
+		s.Warn().Str("path", r.URL.Path).Str("surface", surface).Msg("API bearer auth failed: " + detail)
+		s.insertAuthFailureEvent(r, operation, detail)
 		w.Header().Add("WWW-Authenticate", s.apiAuthChallenge(surface))
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return nil, nil, false
@@ -543,6 +585,31 @@ func (s *Server) authenticateApiRequest(w http.ResponseWriter, r *http.Request,
 		invoker = InvokerMCP
 	}
 	return s.apiTokenRequestContext(r.Context(), principal, groups, scopes, invoker, cred), cred, true
+}
+
+// credentialRetention is how long expired or revoked credential rows are kept
+// before the hourly prune deletes them. The window preserves rotation replay
+// evidence (consumed refresh tokens) and revocation reasons for a full family
+// expiry cycle before the rows go away
+const credentialRetention = 30 * 24 * time.Hour
+
+// pruneApiCredentials deletes credential rows whose evidence-retention window
+// has passed: expired or revoked longer than credentialRetention ago.
+// Non-expiring, unrevoked PATs are never touched. Runs on the hourly
+// maintenance tick; errors are logged and retried on the next tick
+func (s *Server) pruneApiCredentials() {
+	if s.db == nil {
+		return
+	}
+	cutoff := time.Now().Add(-credentialRetention).UTC()
+	deleted, err := s.db.PruneCredentials(context.Background(), cutoff)
+	if err != nil {
+		s.Error().Err(err).Msg("error pruning credentials")
+		return
+	}
+	if deleted > 0 {
+		s.Info().Msgf("credential cleanup: deleted %d expired/revoked rows", deleted)
+	}
 }
 
 // apiAuditDetail builds the audit event detail for an API invocation:

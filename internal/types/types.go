@@ -239,17 +239,21 @@ type ApiConfig struct {
 	Enable []string `toml:"enable"`
 
 	// ExternalUrl is the canonical https origin for token resource URIs and
-	// (later) OAuth issuer/metadata. Never derived from the request Host.
-	// Defaults to security.callback_url when unset.
+	// the OAuth issuer/metadata documents. Never derived from the request
+	// Host. Defaults to security.callback_url when unset.
 	ExternalUrl string `toml:"external_url"`
 
-	// Auth lists the login mechanisms for interactive auth (phase 3 OAuth
-	// authorize / openrun login): "builtin", "admin", or an [auth.*]/[saml.*]
-	// entry name. Required once the OAuth flow ships; unused for PAT auth.
+	// Auth lists the login mechanisms for interactive auth (the OAuth
+	// authorize page / openrun login): "builtin", "admin", or an
+	// [auth.*]/[saml.*] entry name (federated entries are accepted but the
+	// federated login step is not implemented yet - they warn and are
+	// skipped at login). Required for openrun login and OAuth-based MCP
+	// clients; unused for PAT auth.
 	Auth []string `toml:"auth"`
 
-	AccessTokenTTL       string `toml:"access_token_ttl"`       // OAuth access token lifetime (phase 3), default 1h
-	RefreshTokenTTL      string `toml:"refresh_token_ttl"`      // OAuth refresh token lifetime (phase 3), default 720h
+	AccessTokenTTL       string `toml:"access_token_ttl"`       // OAuth access token lifetime, default 1h
+	RefreshTokenTTL      string `toml:"refresh_token_ttl"`      // OAuth refresh token lifetime per rotation, default 720h
+	GrantMaxTTL          string `toml:"grant_max_ttl"`          // absolute OAuth grant lifetime: refresh rotation slides within this bound, then a new login is required. Default 2160h (90d)
 	FederatedIdentityTTL string `toml:"federated_identity_ttl"` // provider-derived group snapshot max age, default 720h
 	PatDefaultTTL        string `toml:"pat_default_ttl"`        // default API key expiry, default 2160h (90d)
 

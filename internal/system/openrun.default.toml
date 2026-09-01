@@ -85,7 +85,9 @@ external_url = ""                # canonical https origin for API token resource
 auth = []                        # login mechanisms for interactive API auth (OAuth flow): "builtin",
                                  # "admin", or an [auth.*]/[saml.*] entry name
 access_token_ttl = "1h"          # OAuth access token lifetime
-refresh_token_ttl = "720h"       # OAuth refresh token lifetime (30d)
+refresh_token_ttl = "720h"       # OAuth refresh token lifetime per rotation (30d)
+grant_max_ttl = "2160h"          # absolute OAuth grant lifetime (90d): refresh rotation slides within
+                                 # this bound, after which a new interactive login is required
 federated_identity_ttl = "720h"  # provider-derived group snapshot max age; older snapshots are
                                  # dropped until the next interactive login
 pat_default_ttl = "2160h"        # default API key expiry (90d); --expires=never for non-expiring

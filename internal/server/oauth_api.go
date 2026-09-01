@@ -28,9 +28,9 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-// The OAuth 2.1 authorization server for the remote API surfaces (phase 3 of
-// the mcp-remote-auth design). OpenRun is its own minimal AS: the four
-// endpoints under /_openrun/oauth plus the well-known metadata documents.
+// The OAuth 2.1 authorization server for the remote API surfaces. OpenRun is
+// its own minimal AS: the four endpoints under /_openrun/oauth plus the
+// well-known metadata documents.
 // The login step reuses the configured api.auth mechanisms; access and
 // refresh tokens land in the same credentials table as PATs, so one verifier
 // covers everything and revocation is immediate.
@@ -182,6 +182,11 @@ func (h *Handler) serveOAuth() http.Handler {
 	mux.HandleFunc("POST "+prefix+"/token", h.oauthToken)
 	mux.HandleFunc("POST "+prefix+"/revoke", h.oauthRevoke)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every AS response either carries or concerns credentials: RFC 6749
+		// §5.1 requires no-store on token responses, and the login page must
+		// never be cached either
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Pragma", "no-cache")
 		if !h.server.oauthRateAllow(system.GetClientIP(r, h.server.Config().Security.TrustedProxies)) {
 			writeOAuthError(w, http.StatusTooManyRequests, "slow_down", "too many requests, retry later")
 			return
@@ -344,11 +349,15 @@ var oauthLoginTemplate = template.Must(template.New("login").Parse(`<!DOCTYPE ht
 body{font-family:system-ui,sans-serif;max-width:26rem;margin:4rem auto;padding:0 1rem;color:#222}
 input,button{width:100%;padding:.5rem;margin:.25rem 0 .75rem;box-sizing:border-box}
 button{background:#2563eb;color:#fff;border:0;border-radius:4px;padding:.6rem;cursor:pointer}
-.err{color:#b91c1c}.meta{color:#555;font-size:.9rem}
+.err{color:#b91c1c}.meta{color:#555;font-size:.9rem}.warn{color:#92400e;font-size:.9rem}
 </style></head><body>
 <h2>OpenRun Login</h2>
 <p class="meta">Application <b>{{.ClientName}}</b> is requesting access to the
 <b>{{.Surface}}</b> API with scope <b>{{.Scope}}</b>.</p>
+<p class="meta">After approval the access code is sent to <b>{{.RedirectUri}}</b>.</p>
+{{if .DynamicClient}}<p class="warn">This application registered itself dynamically;
+its name is self-reported and not verified. Check that the address above is the
+application you intend to authorize.</p>{{end}}
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 <form method="post" action="{{.Action}}">
 {{range $k, $v := .Params}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
@@ -395,14 +404,23 @@ func (h *Handler) renderOAuthLogin(w http.ResponseWriter, r *http.Request, get f
 		"code_challenge", "code_challenge_method", "resource"} {
 		params[name] = get(name)
 	}
+	// The page collects credentials: same hardening as the form login page
+	// (no scripts, no framing, no referrer, never cached). style-src allows
+	// the page's own inline style block; there is no injection surface for it
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = oauthLoginTemplate.Execute(w, map[string]any{
-		"ClientName": clientName,
-		"Surface":    surface,
-		"Scope":      scope,
-		"Error":      errMsg,
-		"Action":     types.INTERNAL_URL_PREFIX + "/oauth/authorize",
-		"Params":     params,
+		"ClientName":    clientName,
+		"Surface":       surface,
+		"Scope":         scope,
+		"RedirectUri":   get("redirect_uri"),
+		"DynamicClient": clientId != oauthCLIClientId,
+		"Error":         errMsg,
+		"Action":        types.INTERNAL_URL_PREFIX + "/oauth/authorize",
+		"Params":        params,
 	})
 }
 
@@ -561,8 +579,11 @@ func (h *Handler) oauthTokenCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	grantId := "grt_" + hex.EncodeToString(grantBytes)
+	// The absolute grant lifetime starts at consent; every token the grant
+	// ever mints is clamped to it (refresh rotation slides within the bound)
+	grantDeadline := time.Now().Add(h.server.apiGrantMaxTTL()).UTC()
 	response, err := h.server.mintOAuthTokens(r.Context(), entry.principal, clientId, grantId, grantId,
-		entry.scopes, entry.resource, "")
+		entry.scopes, entry.resource, "", grantDeadline)
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
@@ -571,10 +592,23 @@ func (h *Handler) oauthTokenCode(w http.ResponseWriter, r *http.Request) {
 	writeOAuthJSON(w, http.StatusOK, response)
 }
 
+// apiGrantMaxTTL returns the absolute OAuth grant lifetime
+// (api.grant_max_ttl, default 90 days): the hard bound refresh rotation
+// cannot slide past, after which a new interactive login is required
+func (s *Server) apiGrantMaxTTL() time.Duration {
+	ttl, err := time.ParseDuration(cmp.Or(s.Config().Api.GrantMaxTTL, "2160h"))
+	if err != nil || ttl <= 0 {
+		return 2160 * time.Hour
+	}
+	return ttl
+}
+
 // mintOAuthTokens creates the access + refresh token pair. rotateFrom names
-// the consumed refresh token id for a rotation ("" for the initial grant)
+// the consumed refresh token id for a rotation ("" for the initial grant).
+// notAfter is the grant's absolute deadline: minted expiries are clamped to
+// it so rotation cannot slide the grant past its lifetime
 func (s *Server) mintOAuthTokens(ctx context.Context, principal, clientId, grantId, familyId string,
-	scopes []string, surface string, rotateFrom string) (map[string]any, error) {
+	scopes []string, surface string, rotateFrom string, notAfter time.Time) (map[string]any, error) {
 	identity, err := s.resolveApiIdentity(ctx, principal)
 	if err != nil {
 		return nil, err
@@ -590,6 +624,15 @@ func (s *Server) mintOAuthTokens(ctx context.Context, principal, clientId, grant
 	// UTC strips the monotonic reading before the driver persists the time
 	accessExpiry := time.Now().Add(accessTTL).UTC()
 	refreshExpiry := time.Now().Add(refreshTTL).UTC()
+	if !notAfter.IsZero() {
+		if accessExpiry.After(notAfter) {
+			accessExpiry = notAfter
+			accessTTL = time.Until(notAfter)
+		}
+		if refreshExpiry.After(notAfter) {
+			refreshExpiry = notAfter
+		}
+	}
 
 	newCred := func(credType string, expiry time.Time) (*types.Credential, string, error) {
 		id, secret, _, err := generateApiKey()
@@ -678,6 +721,12 @@ func (h *Handler) oauthTokenRefresh(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh token is revoked or expired")
 		return
 	}
+	if identity.DisabledAt != nil {
+		// The identity kill-switch invalidates refresh too, not just the
+		// resource-endpoint verifier
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "identity is disabled")
+		return
+	}
 
 	// Refresh can never expand the grant: same client, same resource, at
 	// most the original scopes (a scope parameter may narrow, never add)
@@ -696,8 +745,32 @@ func (h *Handler) oauthTokenRefresh(w http.ResponseWriter, r *http.Request) {
 	if len(cred.Resources) > 0 {
 		surface = cred.Resources[0]
 	}
+	if !apiSurfaceEnabled(h.server.Config(), surface) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant",
+			fmt.Sprintf("the %s surface is no longer enabled", surface))
+		return
+	}
+
+	// Absolute grant lifetime: rotation slides the refresh window but never
+	// past grant start + api.grant_max_ttl. Past the deadline the grant is
+	// closed out and the user logs in again
+	grantStart, err := h.server.db.GetGrantStartTime(r.Context(), cred.GrantId)
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+	grantDeadline := grantStart.Add(h.server.apiGrantMaxTTL())
+	if time.Now().After(grantDeadline) {
+		if err := h.server.db.RevokeGrantCredentials(r.Context(), cred.GrantId, "grant_expired"); err != nil {
+			h.Error().Err(err).Msg("error revoking expired grant")
+		}
+		h.server.auditOAuthEvent(r.Context(), "oauth_grant_expired", identity.PrincipalName, false)
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant",
+			"the grant's maximum lifetime has passed, log in again")
+		return
+	}
 	response, err := h.server.mintOAuthTokens(r.Context(), identity.PrincipalName, cred.OAuthClientId,
-		cred.GrantId, cred.FamilyId, scopes, surface, cred.Id)
+		cred.GrantId, cred.FamilyId, scopes, surface, cred.Id, grantDeadline.UTC())
 	if err != nil {
 		if errors.Is(err, metadata.ErrRefreshConsumed) {
 			// A concurrent rotation won the race on this token: same

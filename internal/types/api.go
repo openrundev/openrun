@@ -634,6 +634,7 @@ type ApiKeyCreateResponse struct {
 	Id        string     `json:"id"`
 	Key       string     `json:"key"` // orun_pat_<id>_<secret>, shown once
 	User      string     `json:"user"`
+	Scopes    []string   `json:"scopes,omitempty"`     // applied scope ceiling; empty = unscoped
 	ExpiresAt *time.Time `json:"expires_at,omitempty"` // nil = never expires
 }
 

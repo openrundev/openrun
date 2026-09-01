@@ -41,7 +41,8 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		newStringFlag("expires", "e", "Key lifetime: a Go duration, <N>d for days, or \"never\"."+
 			" Default is the server's pat_default_ttl (90 days)", ""),
 		newStringFlag("scopes", "s", "Comma separated permission globs limiting the key (like app:*,sync:read)."+
-			" RBAC still applies; scopes are a ceiling. Default: unscoped", ""),
+			" RBAC still applies; scopes are a ceiling. Default: unscoped, except mcp-only keys which"+
+			" default to *:read (pass --scopes \"*\" for a write-capable MCP key)", ""),
 		newStringFlag("resource", "r", "API surface the key is valid for: rest, mcp or all", "rest"),
 		newStringFlag("desc", "d", "Description for the key", ""),
 	)
@@ -52,7 +53,8 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		Flags: flags,
 		UsageText: `Examples:
   Key for oneself (remote CLI):     openrun apikey create --desc "laptop"
-  Key for an MCP client:            openrun apikey create --resource mcp
+  Key for an MCP client (readonly): openrun apikey create --resource mcp
+  Write-capable MCP key:            openrun apikey create --resource mcp --scopes "*"
   Key for another user (admin):     openrun apikey create --user builtin:alice
   Non-expiring key (explicit):      openrun apikey create --expires never
   Read-only scoped key:             openrun apikey create --scopes "*:read"`,
@@ -85,6 +87,9 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			}
 
 			printStdout(cCtx, "API key created for %s (id %s)\n", response.User, response.Id)
+			if len(response.Scopes) > 0 {
+				printStdout(cCtx, "Scopes: %s\n", strings.Join(response.Scopes, ","))
+			}
 			if response.ExpiresAt != nil {
 				printStdout(cCtx, "Expires: %s\n", response.ExpiresAt.Format(time.RFC3339))
 			} else {

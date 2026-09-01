@@ -118,8 +118,17 @@ func newBoolFlag(name, alias, usage string, value bool) *cli.BoolFlag {
 // from OPENRUN_API_KEY, then client.api_key; over the unix socket no
 // credential is needed
 func newHttpClient(clientConfig *types.ClientConfig) *system.HttpClient {
+	remote := strings.HasPrefix(clientConfig.ServerUri, "https://") || strings.HasPrefix(clientConfig.ServerUri, "http://")
+	if clientConfig.Client.AsUser != "" && remote {
+		// The server honors --as impersonation only over the trusted unix
+		// socket; a remote call always runs as the credential's identity.
+		// Failing here beats silently executing (and auditing) as the wrong
+		// user
+		fmt.Fprintln(os.Stderr, "error: --as impersonation works only over the unix socket, not against a remote server")
+		os.Exit(1)
+	}
 	apiKey := cmp.Or(os.Getenv("OPENRUN_API_KEY"), clientConfig.Client.ApiKey)
-	if apiKey == "" && (strings.HasPrefix(clientConfig.ServerUri, "https://") || strings.HasPrefix(clientConfig.ServerUri, "http://")) {
+	if apiKey == "" && remote {
 		// Fall back to a stored openrun login for the server, refreshing the
 		// access token transparently when it is stale
 		apiKey = system.ResolveLoginToken(clientConfig.ServerUri, clientConfig.Client.SkipCertCheck)

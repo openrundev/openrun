@@ -53,7 +53,9 @@ func TestMCPConfirmationOverHTTP(t *testing.T) {
 	defer timedTs.Close()
 	_ = ts
 
-	adminKey := mintKey(t, &types.ApiKeyCreateRequest{User: "admin", Resources: []string{"mcp"}})
+	// Explicit scopes: an mcp-only key with no scopes defaults to the
+	// read-only ceiling, and this test exercises a destructive tool
+	adminKey := mintKey(t, &types.ApiKeyCreateRequest{User: "admin", Resources: []string{"mcp"}, Scopes: []string{"*"}})
 	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
 	httpClient.Transport = &bearerRoundTripper{inner: httpClient.Transport, token: adminKey}
 

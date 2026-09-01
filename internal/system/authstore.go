@@ -160,12 +160,31 @@ func ResolveLoginToken(serverUrl string, skipCertCheck bool) string {
 	return refreshed.AccessToken
 }
 
+// loginLockDir returns a per-user directory for the login lock files. The
+// shared system temp dir is only the last resort: there another local user
+// could pre-create the predictable lock path and stall every CLI refresh
+func loginLockDir() string {
+	if home := os.Getenv("OPENRUN_HOME"); home != "" {
+		dir := filepath.Join(home, "config")
+		if err := os.MkdirAll(dir, 0700); err == nil {
+			return dir
+		}
+	}
+	if cache, err := os.UserCacheDir(); err == nil {
+		dir := filepath.Join(cache, "openrun")
+		if err := os.MkdirAll(dir, 0700); err == nil {
+			return dir
+		}
+	}
+	return os.TempDir()
+}
+
 // acquireLoginLock takes a cross-process lock for one server's login store,
 // via an exclusively created lock file. A lock older than the stale window is
 // stolen (a crashed process must not wedge every future CLI call)
 func acquireLoginLock(serverUrl string) (func(), error) {
 	sum := sha256.Sum256([]byte(normalizeServerUrl(serverUrl)))
-	lockPath := filepath.Join(os.TempDir(), "openrun_login_"+hex.EncodeToString(sum[:8])+".lock")
+	lockPath := filepath.Join(loginLockDir(), "openrun_login_"+hex.EncodeToString(sum[:8])+".lock")
 	const staleAfter = 20 * time.Second
 	deadline := time.Now().Add(10 * time.Second)
 	for {

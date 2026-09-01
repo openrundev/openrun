@@ -107,14 +107,17 @@ func (m *Metadata) GetCredentialWithIdentity(ctx context.Context, id string) (*t
 }
 
 // ListCredentials returns credentials joined with their principal names.
-// principal "" lists all credentials; otherwise only that principal's
+// principal "" lists all credentials; otherwise only that principal's.
+// Revoked credentials and consumed rotation history are retained in the
+// table as evidence but are dead for use, so the listing excludes them
 func (m *Metadata) ListCredentials(ctx context.Context, principal string) ([]types.ApiKeyInfo, error) {
 	query := `select c.id, c.type, c.scopes, c.resources, c.description, c.expires_at, c.created_by,` +
 		` c.create_time, c.last_used_at, i.principal_name` +
-		` from credentials c join identities i on c.identity_id = i.id`
+		` from credentials c join identities i on c.identity_id = i.id` +
+		` where c.revoked_at is null and c.consumed_at is null`
 	args := []any{}
 	if principal != "" {
-		query += ` where i.principal_name = ?`
+		query += ` and i.principal_name = ?`
 		args = append(args, principal)
 	}
 	query += ` order by c.create_time desc`
@@ -346,6 +349,44 @@ func (m *Metadata) RevokeCredential(ctx context.Context, id string, reason strin
 		`update credentials set revoked_at = `+system.FuncNow(m.dbType)+`, revocation_reason = ?`+
 			` where id = ? and revoked_at is null`), reason, id)
 	return err
+}
+
+// GetGrantStartTime returns the creation time of the oldest credential minted
+// under the grant: the consent time, which anchors the absolute grant
+// lifetime (api.grant_max_ttl) that refresh rotation cannot slide past
+func (m *Metadata) GetGrantStartTime(ctx context.Context, grantId string) (time.Time, error) {
+	if grantId == "" {
+		return time.Time{}, fmt.Errorf("grant id is required")
+	}
+	// order by + limit instead of min(): an aggregate loses the column's
+	// declared type, which breaks the sqlite driver's time.Time scan
+	var start time.Time
+	err := m.db.QueryRowContext(ctx, system.RebindQuery(m.dbType,
+		`select create_time from credentials where grant_id = ? order by create_time asc limit 1`),
+		grantId).Scan(&start)
+	if err == sql.ErrNoRows {
+		return time.Time{}, fmt.Errorf("grant %s has no credentials", grantId)
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("error querying grant start time: %w", err)
+	}
+	return start, nil
+}
+
+// PruneCredentials deletes credential rows past use and past their
+// evidence-retention window: rows revoked before the cutoff, and expired rows
+// of any type (consumed rotation history included) whose expiry is before the
+// cutoff. Rotation replay evidence therefore survives until the whole family
+// is past its expiry window plus the retention grace. Non-expiring, unrevoked
+// PATs are never pruned
+func (m *Metadata) PruneCredentials(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`delete from credentials where (revoked_at is not null and revoked_at < ?)`+
+			` or (expires_at is not null and expires_at < ?)`), cutoff, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("error pruning credentials: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 // PruneUnusedOAuthClients deletes registered clients older than the cutoff

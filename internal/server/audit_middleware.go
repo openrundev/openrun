@@ -318,6 +318,7 @@ func (s *Server) auditCleanupLoop(cleanupTicker *time.Ticker) {
 	if err := s.cleanupEvents(); err != nil {
 		s.Error().Err(err).Msg("error cleaning up audit entries")
 	}
+	s.pruneApiCredentials()
 
 	for {
 		select {
@@ -329,6 +330,8 @@ func (s *Server) auditCleanupLoop(cleanupTicker *time.Ticker) {
 		if err := s.cleanupEvents(); err != nil {
 			s.Error().Err(err).Msg("error cleaning up audit entries")
 		}
+		// Credential-store hygiene shares the hourly maintenance tick
+		s.pruneApiCredentials()
 	}
 }
 
@@ -457,8 +460,11 @@ const AUTH_FAILURE_EVENT_INTERVAL = time.Minute
 
 // insertAuthFailureEvent inserts an audit event for a request which failed
 // authentication. Repeated failures are deduped: max one event per
-// AUTH_FAILURE_EVENT_INTERVAL for each unique operation/target/user combination,
-// so that repeated attempts cannot flood the audit DB.
+// AUTH_FAILURE_EVENT_INTERVAL for each unique operation/target/user/source-IP
+// combination, so that repeated attempts cannot flood the audit DB. The
+// client IP is part of the key so failures from different sources stay
+// distinguishable (spraying from many real addresses is bounded by the map
+// cap; the addresses cannot be spoofed on an established TCP connection)
 func (s *Server) insertAuthFailureEvent(r *http.Request, operation, detail string) {
 	if s.auditDB == nil {
 		// Audit DB is not initialized (Server built directly in tests)
@@ -466,9 +472,10 @@ func (s *Server) insertAuthFailureEvent(r *http.Request, operation, detail strin
 	}
 	target := r.Host + ":" + r.URL.Path
 	userId := system.GetContextUserId(r.Context())
+	clientIP := system.GetClientIP(r, s.Config().Security.TrustedProxies)
 	now := time.Now()
 
-	key := operation + "|" + target + "|" + userId
+	key := operation + "|" + target + "|" + userId + "|" + clientIP
 	s.authFailureMu.Lock()
 	last, seen := s.authFailureTimes[key]
 	if seen && now.Sub(last) < AUTH_FAILURE_EVENT_INTERVAL {
