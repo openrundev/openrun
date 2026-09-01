@@ -584,15 +584,20 @@ type HttpConfig struct {
 
 // HttpsConfig is the configuration for the HTTPs server
 type HttpsConfig struct {
-	Host               string `toml:"host"`
-	Port               int    `toml:"port"`
-	EnableCertLookup   bool   `toml:"enable_cert_lookup"`
-	MkcertPath         string `toml:"mkcert_path"`
-	ServiceEmail       string `toml:"service_email"`
-	UseStaging         bool   `toml:"use_staging"`
-	StorageLocation    string `toml:"storage_location"`
-	CertLocation       string `toml:"cert_location"`
-	DisableClientCerts bool   `toml:"disable_client_certs"`
+	Host                string `toml:"host"`
+	Port                int    `toml:"port"`
+	EnableCertLookup    bool   `toml:"enable_cert_lookup"`
+	MkcertPath          string `toml:"mkcert_path"`
+	ServiceEmail        string `toml:"service_email"`
+	UseStaging          bool   `toml:"use_staging"`
+	ACMECAUrl           string `toml:"acme_ca_url"`
+	ACMECACert          string `toml:"acme_ca_cert"`
+	ACMEEABKeyId        string `toml:"acme_eab_key_id"`
+	ACMEEABMacKey       string `toml:"acme_eab_mac_key"`
+	EnableHTTPChallenge bool   `toml:"enable_http_challenge"`
+	StorageLocation     string `toml:"storage_location"`
+	CertLocation        string `toml:"cert_location"`
+	DisableClientCerts  bool   `toml:"disable_client_certs"`
 }
 
 // SecurityConfig is the security related configuration

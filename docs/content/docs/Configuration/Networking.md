@@ -26,8 +26,13 @@ For HTTPS requests, the OpenRun service listens on port 25223 by default, on the
 host = "0.0.0.0" # bind to all interfaces (if port is >= 0)
 port = 25223 # port for HTTPS
 enable_cert_lookup = true # enable looking for domain specific certificate files on disk
-service_email = "" # email address for registering with Let's Encrypt. Set a value to enable automatic certs
-use_staging = true # use Let's Encrypt staging server
+service_email = "" # email address for registering with the ACME CA. Set a value to enable automatic certs
+use_staging = true # use Let's Encrypt staging server (ignored when acme_ca_url is set)
+acme_ca_url = "" # custom ACME CA directory URL, overrides Let's Encrypt. Set a value to enable automatic certs
+acme_ca_cert = "" # root CA cert (PEM file) to trust for the custom ACME CA endpoint
+acme_eab_key_id = "" # ACME External Account Binding key ID, required by some CAs
+acme_eab_mac_key = "" # ACME External Account Binding MAC key, required by some CAs
+enable_http_challenge = false # answer ACME HTTP-01 challenges on the HTTP port (in addition to TLS-ALPN)
 cert_location = "$OPENRUN_HOME/config/certificates" # where to look for existing certificate files
 storage_location = "$OPENRUN_HOME/run/certmagic" # where to cache dynamically created certificates
 
@@ -41,7 +46,7 @@ Using the HTTPS port is recommended even for the local environment. HTTP/2 works
 
 ## TLS Certificates
 
-In the default configuration, where service_email is empty, certmagic integration is disabled. The certificate handling behavior is:
+In the default configuration, where service_email and acme_ca_url are empty, certmagic integration is disabled. The certificate handling behavior is:
 
 - `$OPENRUN_HOME/config/certificates` is looked up for a crt and key file in the PEM format matching the domain name as passed to the server. If a matching certificate is found, that is used.
 - If no domain specific certificate is found, then the default certificate `default.crt` and `default.key` are looked up. If found, that is used.
@@ -76,7 +81,7 @@ OpenRun uses the [certmagic](https://github.com/caddyserver/certmagic) library f
 
 - The https config is using 443 as the port number. Running on privileged ports requires additional [setup](#privileged-ports)
 - There is an DNS entry created pointing your host name or domain wildcard to the IP address of the host running the OpenRun server. This has to be done in your DNS provider config.
-- Port 443 is reachable from the public internet. This has to be done in your infrastructure provider network settings.
+- Port 443 is reachable from the public internet. This has to be done in your infrastructure provider network settings. Alternatively, the HTTP-01 challenge on port 80 can be enabled, see [ACME Challenges](#acme-challenges).
 
 Once the pre-requisites are met, set the `service_email` config parameter to your email address. This enables certmagic based certificate creation. The config will look like:
 
@@ -95,6 +100,46 @@ storage_location = "$OPENRUN_HOME/run/certmagic"
 Test out the certificate creation by sending HTTPS requests to port 443. If the certificate is getting created, change `use_staging` to false. Let's Encrypt has strict rate limits, use the staging config to ensure that the pre-requisites are met before using the production config.
 
 With this config, certmagic is used to create certificates for all HTTPS requests. Self signed certificates and enable_cert_lookup property are not used when certmagic is enabled.
+
+## Custom ACME Server
+
+Instead of Let's Encrypt, certificates can be obtained from any ACME compatible CA, such as an internal [step-ca](https://smallstep.com/docs/step-ca/) server or a commercial CA like ZeroSSL. Set `acme_ca_url` to the CA's ACME directory URL. Setting `acme_ca_url` enables certmagic based certificate creation even if `service_email` is empty (many private CAs do not require an email address), and `use_staging` is ignored.
+
+```toml {filename="openrun.toml"}
+[https]
+host = "0.0.0.0"
+port = 443
+acme_ca_url = "https://ca.internal:8443/acme/acme/directory" # your CA's ACME directory URL
+acme_ca_cert = "/etc/ssl/internal_root_ca.crt" # root CA cert, if the CA endpoint uses a private root
+```
+
+`acme_ca_cert` points to a PEM file containing the root certificate(s) to trust when connecting to the ACME CA endpoint. This is required when a private CA's directory URL is itself served with a certificate that is not trusted by the system trust store.
+
+For CAs which require [External Account Binding](https://datatracker.ietf.org/doc/html/rfc8555#section-7.3.4) (such as ZeroSSL or Google Trust Services), set `acme_eab_key_id` and `acme_eab_mac_key` to the values provided by the CA. Both have to be set together.
+
+## ACME Challenges
+
+The [TLS-ALPN](https://github.com/caddyserver/certmagic#tls-alpn-challenge) challenge is always enabled when certmagic is enabled. It requires the CA to be able to reach the HTTPS port (port 443 for public CAs).
+
+The HTTP-01 challenge can additionally be enabled with `enable_http_challenge = true`. This works with Let's Encrypt as well as with a custom ACME CA. Challenge requests are answered on the HTTP port, before the [HTTP to HTTPS redirect](#redirect-from-http-to-https) and any authentication is applied. The HTTP listener must be enabled and reachable by the CA, on port 80 for public CAs (see [privileged ports](#privileged-ports)). For example, with Let's Encrypt:
+
+```toml {filename="openrun.toml"}
+[http]
+host = "0.0.0.0"
+port = 80
+redirect_to_https = true
+
+[https]
+host = "0.0.0.0"
+port = 443
+service_email = "MY_EMAIL@example.com" # CHANGE to your email address
+use_staging = true # CHANGE to false for production
+enable_http_challenge = true
+```
+
+With this config, certificates are created using either the TLS-ALPN challenge on port 443 or the HTTP-01 challenge on port 80, whichever the CA validates first.
+
+The DNS challenge is not supported currently.
 
 ## Default Domain
 
@@ -174,6 +219,6 @@ This would be required after any new build or update of the OpenRun binary.
 - Please provide a valid email address in service_email. This allows you to receive expiration emails and also allows the CA to contact you if required.
 - Start the configuration with staging `use_staging = true`, change to production config `use_staging = false` after ensuring that DNS and networking is working fine.
 - If port 0 is used, the service will bind to any available port. Look at the stdout or logs to find the port used. Clients would have to be updated after every server restarted to point to the new port.
-- Only the [TLS-ALPN](https://github.com/caddyserver/certmagic#tls-alpn-challenge) challenge is enabled in OpenRun. The HTTP and DNS based challenges are not supported currently.
+- The [TLS-ALPN](https://github.com/caddyserver/certmagic#tls-alpn-challenge) challenge is enabled by default; the HTTP-01 challenge can be enabled with `enable_http_challenge = true`. The DNS based challenge is not supported currently.
 - If OpenRun is running behind a load balancer, ensure that the load balancer is doing TLS pass-through. If TLS termination is done in the load balancer, then the automatic certificate management done by OpenRun through certmagic will not work.
 - If OpenRun is running behind a reverse proxy or load balancer that sets `X-Forwarded-For` or `X-Real-IP`, add that proxy IP or CIDR range to `security.trusted_proxies`. Otherwise OpenRun will ignore those headers and use the direct peer address for `req.RemoteIP`.

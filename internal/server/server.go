@@ -180,6 +180,7 @@ type Server struct {
 	syncTimer        *time.Ticker
 	syncStop         chan struct{}
 	tlsErrorLogger   *RateLimitedErrorLogger
+	acmeIssuer       *certmagic.ACMEIssuer
 	configMu         sync.RWMutex
 	dynamicConfig    *types.DynamicConfig
 	effectiveConfig  atomic.Pointer[types.ServerConfig]
@@ -1251,6 +1252,21 @@ func (s *Server) Start() error {
 
 	}
 
+	if s.Config().Https.EnableHTTPChallenge {
+		switch {
+		case s.acmeIssuer == nil:
+			s.Warn().Msg("enable_http_challenge is set but automatic certificates are not enabled " +
+				"(requires service_email or acme_ca_url and the HTTPS listener), HTTP-01 challenges will not be answered")
+		case s.httpServer == nil:
+			s.Warn().Msg("enable_http_challenge is set but the HTTP listener is disabled, HTTP-01 challenges will not be answered")
+		default:
+			// Answer ACME HTTP-01 challenges on the HTTP port. Wrapped outside
+			// the router so challenge requests bypass the host header check,
+			// the HTTPS redirect and auth
+			s.httpServer.Handler = s.acmeIssuer.HTTPChallengeHandler(s.httpServer.Handler)
+		}
+	}
+
 	generatedPass, err := s.setupAdminAccount()
 	if err != nil {
 		return err
@@ -1360,18 +1376,19 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 			os.ExpandEnv(s.Config().Https.CertLocation), err)
 	}
 
-	if s.Config().Https.ServiceEmail != "" {
+	if acmeEnabled(&s.Config().Https) {
 		// Certmagic is enabled
-		if s.Config().Https.UseStaging {
-			// Use Let's Encrypt staging server
-			certmagic.DefaultACME.CA = certmagic.LetsEncryptStagingCA
+		if err := configureACMEIssuer(&s.Config().Https, &certmagic.DefaultACME); err != nil {
+			return nil, err
 		}
-		certmagic.DefaultACME.Agreed = true
-		certmagic.DefaultACME.Email = s.Config().Https.ServiceEmail
-		certmagic.DefaultACME.DisableHTTPChallenge = true
 		certmagic.Default.Storage = s.db.GetCertStorage() // Use the database backed storage
 
 		magicConfig := certmagic.NewDefault()
+		if len(magicConfig.Issuers) > 0 {
+			if issuer, ok := magicConfig.Issuers[0].(*certmagic.ACMEIssuer); ok {
+				s.acmeIssuer = issuer // retained for answering HTTP-01 challenges on the HTTP port
+			}
+		}
 		magicConfig.OnDemand = &certmagic.OnDemandConfig{
 			DecisionFunc: func(ctx context.Context, name string) error {
 				if name == s.Config().System.DefaultDomain || name == "localhost" || name == "127.0.0.1" {

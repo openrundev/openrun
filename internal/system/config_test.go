@@ -52,6 +52,11 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsBool(t, "https cert lookup", true, c.Https.EnableCertLookup)
 	testutil.AssertEqualsString(t, "email", "", c.Https.ServiceEmail)
 	testutil.AssertEqualsBool(t, "https staging", true, c.Https.UseStaging)
+	testutil.AssertEqualsString(t, "acme ca url", "", c.Https.ACMECAUrl)
+	testutil.AssertEqualsString(t, "acme ca cert", "", c.Https.ACMECACert)
+	testutil.AssertEqualsString(t, "acme eab key id", "", c.Https.ACMEEABKeyId)
+	testutil.AssertEqualsString(t, "acme eab mac key", "", c.Https.ACMEEABMacKey)
+	testutil.AssertEqualsBool(t, "enable http challenge", false, c.Https.EnableHTTPChallenge)
 	testutil.AssertEqualsString(t, "storage", "$OPENRUN_HOME/run/certmagic", c.Https.StorageLocation)
 	testutil.AssertEqualsString(t, "cache", "$OPENRUN_HOME/config/certificates", c.Https.CertLocation)
 

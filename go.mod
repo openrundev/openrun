@@ -39,10 +39,11 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c
 	github.com/markbates/goth v1.82.0
+	github.com/mholt/acmez/v2 v2.0.3
 	github.com/moby/buildkit v0.31.2
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	github.com/openrundev/openrun/pkg/binding v0.19.2
-	github.com/openrundev/openrun/pkg/plugin v0.19.2
+	github.com/openrundev/openrun/pkg/binding v0.19.3
+	github.com/openrundev/openrun/pkg/plugin v0.19.3
 	github.com/pkg/profile v1.7.0
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/rs/zerolog v1.35.1
@@ -50,6 +51,7 @@ require (
 	github.com/russellhaering/goxmldsig v1.6.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/urfave/cli/v2 v2.27.5
+	github.com/zalando/go-keyring v0.2.6
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.44.0
@@ -183,7 +185,6 @@ require (
 	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	github.com/mholt/acmez/v2 v2.0.3 // indirect
 	github.com/miekg/dns v1.1.62 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
@@ -227,7 +228,6 @@ require (
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	github.com/zalando/go-keyring v0.2.6 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0 // indirect

@@ -7,6 +7,13 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.19.3] - 2026-09-01
+
+### Added
+
+- Automatic HTTPS certificates can now be obtained from any ACME compatible CA instead of only Let's Encrypt: `https.acme_ca_url` sets the CA's ACME directory URL (enables certmagic even without `service_email`, for private CAs like step-ca), `https.acme_ca_cert` points to a root CA PEM to trust for the CA endpoint, and `https.acme_eab_key_id`/`https.acme_eab_mac_key` configure External Account Binding for CAs that require it (e.g. ZeroSSL).
+- Added `https.enable_http_challenge`: answers ACME HTTP-01 challenges on the HTTP port (before the HTTPS redirect and auth), in addition to the always-on TLS-ALPN challenge. Works with Let's Encrypt and custom ACME CAs; the HTTP listener must be reachable by the CA, on port 80 for public CAs.
+
 ## [v0.19.2] - 2026-08-25
 
 ### Added
