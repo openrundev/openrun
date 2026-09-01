@@ -42,8 +42,8 @@ require (
 	github.com/mholt/acmez/v2 v2.0.3
 	github.com/moby/buildkit v0.31.2
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	github.com/openrundev/openrun/pkg/binding v0.19.2
-	github.com/openrundev/openrun/pkg/plugin v0.19.2
+	github.com/openrundev/openrun/pkg/binding v0.19.3
+	github.com/openrundev/openrun/pkg/plugin v0.19.3
 	github.com/pkg/profile v1.7.0
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/rs/zerolog v1.35.1
