@@ -133,12 +133,12 @@ func TestDynamicSecretBindFailureRejected(t *testing.T) {
 	// A rejected update must not leave the rejected request's RBAC rules
 	// live: updateDynamicConfigCache restores the previous RBAC config
 	server.dynamicConfig = &types.DynamicConfig{}
-	dyn.RBAC = types.RBACConfig{Enabled: true, Groups: map[string][]string{"g1": {"user1"}}}
+	dyn.RBAC = types.RBACConfig{Groups: map[string][]string{"g1": {"user1"}}}
 	err = server.updateDynamicConfigCache(ctx, dyn)
 	if err == nil || !strings.Contains(err.Error(), "rejecting config update") {
 		t.Fatalf("expected bind rejection, got %v", err)
 	}
-	if server.rbacManager.RbacConfig.Enabled || len(server.rbacManager.RbacConfig.Groups) != 0 {
+	if len(server.rbacManager.RbacConfig.Groups) != 0 {
 		t.Fatalf("rbac config not rolled back after rejected update: %+v", server.rbacManager.RbacConfig)
 	}
 

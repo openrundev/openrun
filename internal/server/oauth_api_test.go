@@ -36,7 +36,8 @@ func newOAuthTestServer(t *testing.T) (*Server, *httptest.Server, *http.Client) 
 	}
 	server.staticConfig.BuiltinAuth["alice"] = types.BuiltinAuthEntry{
 		Password: string(aliceHash), Groups: []string{"dev"}}
-	server.staticConfig.Api.Auth = []string{"builtin", "admin"}
+	server.staticConfig.Api.Rest.Auth = []string{"builtin", "admin"}
+	server.staticConfig.Api.MCP.Auth = []string{"builtin", "admin"}
 	server.staticConfig.Api.ExternalUrl = ts.URL
 	client := ts.Client()
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {

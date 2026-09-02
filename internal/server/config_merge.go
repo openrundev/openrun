@@ -113,6 +113,47 @@ func isConfigSettingsSection(section string) bool {
 	return fieldType.Kind() == reflect.Struct || isFlatKVSectionType(fieldType)
 }
 
+// staticOnlySettingKey reports whether a settings field is static-config
+// only: any component of the dotted key whose name starts with "unsafe_"
+// (a security escape hatch must not be settable through the API it weakens),
+// or any field along the path carrying the dynamic:"-" struct tag. Static-
+// only fields are rejected on write and skipped (with a warning) when a
+// previously persisted value is merged
+func staticOnlySettingKey(section, key string) bool {
+	fieldType, ok := configSectionField(section)
+	if !ok {
+		return false
+	}
+	t := fieldType
+	for part := range strings.SplitSeq(key, ".") {
+		if strings.HasPrefix(part, "unsafe_") {
+			return true
+		}
+		if t.Kind() != reflect.Struct {
+			// Flat key/value map sections (node_config) have literal keys
+			return false
+		}
+		next, found := reflect.Type(nil), false
+		for i := range t.NumField() {
+			field := t.Field(i)
+			if strings.Split(field.Tag.Get("toml"), ",")[0] != part {
+				continue
+			}
+			if field.Tag.Get("dynamic") == "-" {
+				return true
+			}
+			next, found = field.Type, true
+			break
+		}
+		if !found {
+			// Unknown field: the schema validation reports it
+			return false
+		}
+		t = next
+	}
+	return false
+}
+
 // isFlatKVSection reports whether a settings section is a flat key/value map
 // (node_config): its keys are literal, not dotted field paths
 func isFlatKVSection(section string) bool {
@@ -215,6 +256,9 @@ func validateConfigValue(section, key string, value any) error {
 	if !isConfigSettingsSection(section) {
 		return fmt.Errorf("unknown config settings section %q, valid sections are: %s",
 			section, strings.Join(listConfigSettingsSections(), ", "))
+	}
+	if staticOnlySettingKey(section, key) {
+		return fmt.Errorf("%s %s can only be set in the static openrun.toml config, not through the dynamic config API", section, key)
 	}
 	if value == nil {
 		return fmt.Errorf("config value cannot be empty")
@@ -658,6 +702,12 @@ func mergeDynamicConfig(logger *types.Logger, static *types.ServerConfig,
 			sort.Strings(keys)
 			for _, key := range keys {
 				if settings[section][key] == nil || undecoded[section+"."+key] {
+					continue
+				}
+				if staticOnlySettingKey(section, key) {
+					// A previously persisted value for a since-made
+					// static-only field must not apply
+					logger.Warn().Msgf("dynamic config setting %s %s is static config only, ignored", section, key)
 					continue
 				}
 				if err := applySettingField(logger, effectiveVal, overlayVal, section, key); err != nil {

@@ -207,7 +207,7 @@ type ServerConfig struct {
 	EnableInPlaceRestart bool `toml:"-"`
 }
 
-// ApiSurface names a remote API surface that can be listed in api.enable
+// ApiSurface names a remote API surface ([api.rest] / [api.mcp])
 type ApiSurface string
 
 const (
@@ -215,12 +215,27 @@ const (
 	ApiSurfaceMCP  ApiSurface = "mcp"  // the MCP endpoint (/_openrun/mcp)
 )
 
-// ApiInvokerOps is the per-invoker operation override lists: operation names
-// (the audit operation vocabulary, like create_app) enabled or disabled for
-// one invoker type, overriding the registry defaults
-type ApiInvokerOps struct {
-	Enable  []string `toml:"enable"`  // ops disabled by default for this invoker, opted back in
-	Disable []string `toml:"disable"` // ops turned off for this invoker
+// ApiSurfaceConfig is one remote surface's configuration ([api.rest] for
+// the management REST API over TCP, [api.mcp] for the MCP endpoint)
+type ApiSurfaceConfig struct {
+	// Enable turns the surface on. Default false: the surface does not
+	// exist (its paths are plain 404s)
+	Enable bool `toml:"enable"`
+
+	// Auth lists the login mechanisms for the surface's interactive auth
+	// (the OAuth authorize page / openrun login): "builtin", "admin", or an
+	// [auth.*]/[saml.*] entry name (federated entries are accepted but the
+	// federated login step is not implemented yet - they warn and are
+	// skipped at login). Default ["admin"]; an empty list is an invalid
+	// config. API keys work on any enabled surface regardless
+	Auth []string `toml:"auth"`
+
+	// EnableApis lists operations disabled by default for this surface
+	// (like secret_reveal on mcp), opted back in. DisableApis turns
+	// additional operations off. Names are the audit operation vocabulary
+	// (create_app, list_apps, ...)
+	EnableApis  []string `toml:"enable_apis"`
+	DisableApis []string `toml:"disable_apis"`
 
 	// SkipDestructiveConfirm turns off the dry-run + elicitation
 	// confirmation flow for destructive MCP tools. Useful for headless
@@ -229,27 +244,21 @@ type ApiInvokerOps struct {
 	SkipDestructiveConfirm bool `toml:"skip_destructive_confirm"`
 }
 
-// ApiConfig is the remote management API configuration ([api] in openrun.toml).
-// Remote surfaces (REST over TCP, MCP) are off by default: api.enable lists
-// which are on. Any enabled surface requires RBAC to be enabled and the
-// transport rules (HTTPS or a trusted TLS-terminating proxy)
-type ApiConfig struct {
-	// Enable lists the enabled remote surfaces: "rest" and/or "mcp"
-	// (case-insensitive). Default empty - neither surface exists.
-	Enable []string `toml:"enable"`
+// Enabled reports whether the surface is on
+func (c ApiSurfaceConfig) Enabled() bool {
+	return c.Enable
+}
 
+// ApiConfig is the remote management API configuration ([api] in openrun.toml).
+// Remote surfaces (REST over TCP, MCP) are off by default: each is turned on
+// by its [api.<surface>] enable flag. Any enabled surface requires RBAC
+// enforcement and the transport rules (HTTPS or a trusted TLS-terminating
+// proxy)
+type ApiConfig struct {
 	// ExternalUrl is the canonical https origin for token resource URIs and
 	// the OAuth issuer/metadata documents. Never derived from the request
 	// Host. Defaults to security.callback_url when unset.
 	ExternalUrl string `toml:"external_url"`
-
-	// Auth lists the login mechanisms for interactive auth (the OAuth
-	// authorize page / openrun login): "builtin", "admin", or an
-	// [auth.*]/[saml.*] entry name (federated entries are accepted but the
-	// federated login step is not implemented yet - they warn and are
-	// skipped at login). Required for openrun login and OAuth-based MCP
-	// clients; unused for PAT auth.
-	Auth []string `toml:"auth"`
 
 	AccessTokenTTL       string `toml:"access_token_ttl"`       // OAuth access token lifetime, default 1h
 	RefreshTokenTTL      string `toml:"refresh_token_ttl"`      // OAuth refresh token lifetime per rotation, default 720h
@@ -257,8 +266,20 @@ type ApiConfig struct {
 	FederatedIdentityTTL string `toml:"federated_identity_ttl"` // provider-derived group snapshot max age, default 720h
 	PatDefaultTTL        string `toml:"pat_default_ttl"`        // default API key expiry, default 2160h (90d)
 
-	MCP ApiInvokerOps `toml:"mcp"` // per-op overrides for the MCP invoker
-	TCP ApiInvokerOps `toml:"tcp"` // per-op overrides for the remote REST invoker
+	MCP  ApiSurfaceConfig `toml:"mcp"`  // the MCP endpoint (/_openrun/mcp)
+	Rest ApiSurfaceConfig `toml:"rest"` // the management REST API over TCP (remote CLI)
+}
+
+// Surface returns the config of the named surface ("rest"/"mcp",
+// case-insensitive); ok is false for any other name
+func (c *ApiConfig) Surface(name string) (ApiSurfaceConfig, bool) {
+	switch strings.ToLower(name) {
+	case string(ApiSurfaceRest):
+		return c.Rest, true
+	case string(ApiSurfaceMCP):
+		return c.MCP, true
+	}
+	return ApiSurfaceConfig{}, false
 }
 
 // RestartConfig controls zero downtime in-place restarts and shutdown drain
@@ -620,7 +641,7 @@ type SecurityConfig struct {
 	// auth.<default_domain>); a value without a trailing "." is used as a
 	// full domain. Ignored when DisableLoginForm is set
 	AuthCallbackDomain       string            `toml:"auth_callback_domain"`
-	TrustedProxies           []string          `toml:"trusted_proxies"`
+	TrustedProxies           []string          `toml:"trusted_proxies" dynamic:"-"`
 	CallbackUrl              string            `toml:"callback_url"`
 	DefaultGitAuth           string            `toml:"default_git_auth"`
 	StageEnableWriteAccess   bool              `toml:"stage_enable_write_access"`
@@ -653,6 +674,13 @@ type SecurityConfig struct {
 	// builder operations. The read-only openrun plugin is never gated. Enabling
 	// this is dev-only (e.g. the console running with none auth).
 	UnsafeAllowSystemPluginsAnon bool `toml:"unsafe_allow_system_plugins_anon"`
+
+	// UnsafeDisableRBAC turns off ALL RBAC enforcement. RBAC is on by
+	// default with no dynamic disable; this static flag is the dev/test
+	// escape hatch. Like every unsafe_ field it cannot be set through the
+	// dynamic config API, and it excludes the remote API surfaces
+	// (an enabled api.rest / api.mcp surface requires enforcement)
+	UnsafeDisableRBAC bool `toml:"unsafe_disable_rbac"`
 }
 
 // MetadataConfig is the configuration for the Metadata persistence layer
@@ -1551,11 +1579,13 @@ type ConfigHistoryEntry struct {
 	UpdateTime time.Time `json:"update_time"`
 }
 
+// RBACConfig is the dynamic RBAC configuration. Enforcement is always on:
+// there is no dynamic enable/disable, only the static
+// security.unsafe_disable_rbac escape hatch (dev/test)
 type RBACConfig struct {
-	Enabled bool                        `json:"enabled"` // whether rbac is enabled. When enabled, RBAC applies to every app
-	Groups  map[string][]string         `json:"groups"`  // groups names to user ids. These groups are appended to the groups info from SAML
-	Roles   map[string][]RBACPermission `json:"roles"`   // role names to permissions.
-	Grants  []RBACGrant                 `json:"grants"`  // grants are used to grant permissions to users/groups for specific apps
+	Groups map[string][]string         `json:"groups"` // groups names to user ids. These groups are appended to the groups info from SAML
+	Roles  map[string][]RBACPermission `json:"roles"`  // role names to permissions.
+	Grants []RBACGrant                 `json:"grants"` // grants are used to grant permissions to users/groups for specific apps
 
 	// OwnerPermissions overrides the default permissions granted to the creator of an
 	// asset. Keys are resource names (app, sync); values are the permissions the owner

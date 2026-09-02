@@ -123,11 +123,12 @@ func TestUrlDirectivesContextHelpers(t *testing.T) {
 	}
 }
 
-// newTestUrlManager builds a manager with RBAC config disabled, the state in
-// which test URL directives are honored
+// newTestUrlManager builds a manager with RBAC enforcement disabled
+// (security.unsafe_disable_rbac), the state in which test URL directives are
+// honored
 func newTestUrlManager(t *testing.T) *RBACManager {
 	t.Helper()
-	return newTestManager(t, &types.RBACConfig{Enabled: false})
+	return newDisabledTestManager(t, &types.RBACConfig{})
 }
 
 func TestUrlDirectivesManagementAPI(t *testing.T) {
@@ -206,7 +207,6 @@ func TestBuildUrlDirectivesRoles(t *testing.T) {
 	// Roles resolve even when the RBAC config is disabled (the state in which
 	// test URL directives are honored), with hierarchy flattened
 	rbacConfig := &types.RBACConfig{
-		Enabled: false,
 		Roles: map[string][]types.RBACPermission{
 			"viewer":   {"app:read", "custom:report_view"},
 			"editor":   {"role:viewer", "app:update", "custom:report_edit"},

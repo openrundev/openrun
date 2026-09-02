@@ -26,8 +26,7 @@ func TestFilterReplicationEntries(t *testing.T) {
 		},
 	}
 	rbacConfig := &types.RBACConfig{
-		Enabled: true,
-		Groups:  map[string][]string{},
+		Groups: map[string][]string{},
 		Roles: map[string][]types.RBACPermission{
 			"viewer": {types.PermissionRead},
 			"sys":    {types.PermissionConfigBasicRead},

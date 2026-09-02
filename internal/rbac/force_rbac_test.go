@@ -30,8 +30,7 @@ func TestRBACAppliesToAllApps(t *testing.T) {
 	t.Parallel()
 
 	config := &types.RBACConfig{
-		Enabled: true,
-		Roles:   map[string][]types.RBACPermission{"access": {types.PermissionAccess}},
+		Roles: map[string][]types.RBACPermission{"access": {types.PermissionAccess}},
 		Grants: []types.RBACGrant{
 			{Users: []string{"granted"}, Roles: []string{"access"}, Targets: []string{"all"}},
 		},
@@ -61,12 +60,19 @@ func TestRBACAppliesToAllApps(t *testing.T) {
 	}
 }
 
-// TestRBACDisabledAuthorizesAll verifies that a disabled config authorizes
-// everything and reports IsAppRBACEnabled false
+// TestRBACDisabledAuthorizesAll verifies that disabling enforcement via the
+// static security.unsafe_disable_rbac flag authorizes everything and reports
+// IsAppRBACEnabled false
 func TestRBACDisabledAuthorizesAll(t *testing.T) {
 	t.Parallel()
 
-	manager := forceTestManager(t, &types.RBACConfig{Enabled: false})
+	manager, err := NewRBACHandler(testutil.TestLogger(), &types.RBACConfig{}, &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+		Security:     types.SecurityConfig{UnsafeDisableRBAC: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	allowed, err := manager.AuthorizeInt("user1", types.AppPathDomain{Path: "/test"},
 		types.PermissionAccess, nil, false)
 	if err != nil {

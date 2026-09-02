@@ -8,6 +8,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/types"
@@ -88,6 +89,45 @@ func (c *openrunPlugin) GetConfigVersion(ctx context.Context, call *sdk.Call) (a
 		"version_id": snapshot.VersionId,
 		"json":       string(formatted),
 	})
+}
+
+// ListApiOperations returns the management API operation registry (the
+// audit operation vocabulary), sorted by name, with the per-surface policy
+// facts a config UI needs: read_only/destructive hints, whether the op is
+// disabled for MCP by default (a candidate for api.mcp enable_apis) and
+// whether it has no MCP tool at all (mcp_excluded reason). Gated on
+// config:basic_read like the other config pickers
+func (c *openrunPlugin) ListApiOperations(ctx context.Context, call *sdk.Call) (any, error) {
+	if err := sdk.UnpackArgs("list_api_operations", call); err != nil {
+		return nil, err
+	}
+
+	if err := c.server.enforceGlobalPerm(ctx, types.PermissionConfigBasicRead, ""); err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(apiRegistry))
+	for name := range apiRegistry {
+		names = append(names, string(name))
+	}
+	slices.Sort(names)
+	ret := make([]any, 0, len(names))
+	for _, name := range names {
+		entry := apiRegistry[API_NAME(name)]
+		value, err := structValue(map[string]any{
+			"name":         name,
+			"description":  entry.Description,
+			"read_only":    entry.ReadOnly,
+			"destructive":  entry.Destructive,
+			"mcp_disabled": entry.MCPDisabled,
+			"mcp_excluded": entry.MCPExcluded,
+		})
+		if err != nil {
+			return nil, err
+		}
+		ret = append(ret, value)
+	}
+	return ret, nil
 }
 
 // ListRBACPermissions returns the canonical RBAC permissions grouped by
@@ -279,21 +319,6 @@ func draftVersionResult(draft *types.ConfigDraft, err error) (any, error) {
 		return nil, err
 	}
 	return structValue(map[string]any{"draft_version": draft.DraftVersion})
-}
-
-// UpdateRBACEnabled sets the rbac enabled flag in the draft config
-func (c *openrunAdminPlugin) UpdateRBACEnabled(ctx context.Context, call *sdk.Call) (any, error) {
-	var enabled bool
-	var versionId string
-	if err := sdk.UnpackArgs("update_rbac_enabled", call, "enabled", &enabled, "draft_version", &versionId); err != nil {
-		return nil, err
-	}
-
-	return draftVersionResult(c.server.UpdateRBACDraft(ctx, versionId,
-		func(config *types.RBACConfig) error {
-			config.Enabled = enabled
-			return nil
-		}))
 }
 
 // SetRBACGroup creates or replaces one group in the draft config

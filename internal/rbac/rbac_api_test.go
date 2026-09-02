@@ -27,6 +27,21 @@ func newTestManager(t *testing.T, config *types.RBACConfig) *RBACManager {
 	return manager
 }
 
+// newDisabledTestManager builds a manager with enforcement off via the
+// static security.unsafe_disable_rbac flag, for disabled-behavior tests
+// (there is no dynamic disable)
+func newDisabledTestManager(t *testing.T, config *types.RBACConfig) *RBACManager {
+	t.Helper()
+	manager, err := NewRBACHandler(testutil.TestLogger(), config, &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+		Security:     types.SecurityConfig{UnsafeDisableRBAC: true},
+	})
+	if err != nil {
+		t.Fatalf("failed to create disabled RBACManager: %v", err)
+	}
+	return manager
+}
+
 func enforcedCtx(user string, groups ...string) context.Context {
 	ctx := context.WithValue(context.Background(), types.RBAC_ENABLED, true)
 	ctx = context.WithValue(ctx, types.USER_ID, user)
@@ -46,10 +61,9 @@ func testTarget() types.AppPathDomain {
 
 func grantConfig(roles map[string][]types.RBACPermission, grants ...types.RBACGrant) *types.RBACConfig {
 	return &types.RBACConfig{
-		Enabled: true,
-		Groups:  map[string][]string{},
-		Roles:   roles,
-		Grants:  grants,
+		Groups: map[string][]string{},
+		Roles:  roles,
+		Grants: grants,
 	}
 }
 
@@ -523,13 +537,17 @@ func TestLegacyPermissionAliases(t *testing.T) {
 		t.Errorf("expected unknown permission error, got %v", err)
 	}
 
-	// A disabled config is not validated, so server startup is never blocked
-	disabled := grantConfig(map[string][]types.RBACPermission{
+	// Validation is always on: even with enforcement disabled through
+	// security.unsafe_disable_rbac an invalid config is rejected (server
+	// startup handles this by falling back to the default config)
+	disabledServerConfig := &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+		Security:     types.SecurityConfig{UnsafeDisableRBAC: true},
+	}
+	if _, err := NewRBACHandler(logger, grantConfig(map[string][]types.RBACPermission{
 		"viewer": {"badperm"},
-	})
-	disabled.Enabled = false
-	if _, err := NewRBACHandler(logger, disabled, serverConfig); err != nil {
-		t.Errorf("disabled config must not be validated, got %v", err)
+	}), disabledServerConfig); err == nil || !strings.Contains(err.Error(), "unknown permission") {
+		t.Errorf("invalid config must be rejected even with enforcement disabled, got %v", err)
 	}
 }
 

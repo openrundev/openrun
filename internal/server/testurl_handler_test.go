@@ -158,17 +158,24 @@ func TestParseTestUrlDirectives(t *testing.T) {
 }
 
 // newTestUrlTestServer builds a minimal server with the testurl flag and RBAC
-// config set as specified
+// enforcement state set as specified (enforcement comes from the static
+// security.unsafe_disable_rbac flag)
 func newTestUrlTestServer(t *testing.T, enableTestUrl, rbacEnabled bool) *Handler {
 	t.Helper()
-	return newTestUrlTestServerConfig(t, enableTestUrl, &types.RBACConfig{Enabled: rbacEnabled})
+	return newTestUrlTestServerRBAC(t, enableTestUrl, rbacEnabled, &types.RBACConfig{})
 }
 
 func newTestUrlTestServerConfig(t *testing.T, enableTestUrl bool, rbacConfig *types.RBACConfig) *Handler {
 	t.Helper()
+	return newTestUrlTestServerRBAC(t, enableTestUrl, false, rbacConfig)
+}
+
+func newTestUrlTestServerRBAC(t *testing.T, enableTestUrl, rbacEnabled bool, rbacConfig *types.RBACConfig) *Handler {
+	t.Helper()
 	logger := testutil.TestLogger()
 	config := &types.ServerConfig{}
 	config.Security.UnsafeEnableTestUrlRbac = enableTestUrl
+	config.Security.UnsafeDisableRBAC = !rbacEnabled
 	config.Security.AppDefaultAuthType = "none"
 
 	rbacManager, err := rbac.NewRBACHandler(logger, rbacConfig, config)
@@ -280,9 +287,9 @@ func TestApplyTestUrlDirectives(t *testing.T) {
 }
 
 func TestApplyTestUrlDirectivesRoles(t *testing.T) {
-	// Roles resolve against the configured roles even with RBAC disabled
+	// Roles resolve against the configured roles even with RBAC enforcement
+	// disabled (test URL directives require the unsafe_disable_rbac state)
 	rbacConfig := &types.RBACConfig{
-		Enabled: false,
 		Roles: map[string][]types.RBACPermission{
 			"viewer": {"app:read", "custom:report_view"},
 			"editor": {"role:viewer", "app:update"},

@@ -13,30 +13,32 @@ tests:
     command: ../openrun app create --auth=rbac:none --approve ./rbac_app /rbacapp
     stdout: "App: /rbacapp"
     exit-code: 0
-  rbac0030: # RBAC disabled - no filtering, all apps visible through list_apps
+  rbac0030: # default RBAC config - the default grant gives anonymous app:read
+    # on all apps, so list_apps shows everything
     command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/list
     stdout:
       contains:
         - "/protected"
         - "/rbacapp"
     exit-code: 0
-  rbac0040: # RBAC disabled - get_permissions returns all permissions
+  rbac0040: # default RBAC config - get_permissions returns the openrun-user
+    # set (app:access, app:read) from the default grant, nothing more
     command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/perms
     stdout:
       contains:
+        - "app:access"
+        - "app:read"
+      not-contains:
         - "app:approve"
         - "server:stop"
     exit-code: 0
-  rbac0042: # RBAC disabled - server_info reports the in-memory server facts
+  rbac0042: # default RBAC config - server_info needs config:basic_read, which
+    # the default grant does not give the anonymous user
     command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/server_info
-    stdout:
-      contains:
-        - "SERVERINFO: db=sqlite"
-        - "leader=True"
-        - "uptime_ok=True"
-        - "repl=0"
+    stdout: "config:basic_read"
     exit-code: 0
-  rbac0044: # RBAC disabled - replication_status works (no litestream configured)
+  rbac0044: # default RBAC config - replication_status is per-caller filtered:
+    # app rows via app:read (none replicated), metadata needs config:basic_read
     command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/replication
     stdout: "REPLSTATUS: 0"
     exit-code: 0
@@ -46,7 +48,6 @@ tests:
       {
         "version_id": "force",
         "rbac": {
-          "enabled": true,
           "groups": {},
           "roles": {
             "viewer": ["app:access", "app:read"],
@@ -204,7 +205,6 @@ tests:
       {
         "version_id": "force",
         "rbac": {
-          "enabled": true,
           "groups": {},
           "roles": {
             "viewer": ["app:access", "app:read"],
@@ -241,22 +241,44 @@ tests:
     command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/replication
     stdout: "REPLSTATUS: 0"
     exit-code: 0
-  rbac0190: # disable RBAC again
+  rbac0188: # an empty grant list is rejected while RBAC is enforced: at least
+    # one grant is required (nothing is applied)
+    command: |
+      cat > rbac_config3.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {}, "grants": []}}
+      EOF
+      ../openrun server update-config --force rbac_config3.json
+    stderr: "at least one grant is required"
+    exit-code: 1
+  rbac0189: # the previous config is still live after the rejected update
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/server_info
+    stdout:
+      contains:
+        - "SERVERINFO: db=sqlite"
+    exit-code: 0
+  rbac0190: # restore the default RBAC config (RBAC is always on; the default
+    # grant gives every principal app access and read)
     command: |
       cat > rbac_config1.json <<EOF
       {
         "version_id": "force",
         "rbac": {
-          "enabled": false,
           "groups": {},
           "roles": {},
-          "grants": []
+          "grants": [
+            {
+              "description": "Default: authenticated principals can access and list apps",
+              "users": ["*"],
+              "roles": ["openrun-user"],
+              "targets": ["all"]
+            }
+          ]
         }
       }
       EOF
       ../openrun server update-config --force rbac_config1.json
     exit-code: 0
-  rbac0200: # with RBAC disabled, filtering is off again
+  rbac0200: # with the default grant, listing shows everything again
     command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/list
     stdout:
       contains:

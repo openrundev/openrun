@@ -4,11 +4,12 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
-
 	"strings"
 
 	"github.com/openrundev/openrun/internal/system"
@@ -16,7 +17,7 @@ import (
 )
 
 // API_NAME identifies one management API operation: the audit operation
-// name, the MCP tool name and the [api.mcp]/[api.tcp] config key
+// name, the MCP tool name and the [api.mcp]/[api.rest] config key
 type API_NAME string
 
 const (
@@ -91,7 +92,7 @@ const (
 // read-only/destructive flags (MCP tool annotations) and per-invoker default
 // availability. Operation names are the audit operation vocabulary
 // (create_app, list_apps, ...) and are the keys accepted in the
-// [api.mcp]/[api.tcp] enable/disable config lists.
+// [api.mcp]/[api.rest] enable_apis/disable_apis config lists.
 //
 // Dangerous request variants are separate logical operations (secret_reveal
 // vs secret_get, create_apikey_other vs create_apikey): the REST adapters
@@ -102,7 +103,7 @@ const (
 const (
 	InvokerPlugin = "plugin"
 	InvokerUDS    = "uds"
-	InvokerTCP    = "tcp"
+	InvokerRest   = "rest"
 	InvokerMCP    = "mcp"
 )
 
@@ -354,40 +355,36 @@ func init() {
 	}
 }
 
-// apiSurfaceEnabled reports whether the surface ("rest"/"mcp") is listed in
-// api.enable (case-insensitive)
+// apiSurfaceEnabled reports whether the surface ("rest"/"mcp") is enabled
+// ([api.<surface>] enable)
 func apiSurfaceEnabled(config *types.ServerConfig, surface string) bool {
-	for _, entry := range config.Api.Enable {
-		if strings.EqualFold(entry, surface) {
-			return true
-		}
-	}
-	return false
+	surfaceConfig, ok := config.Api.Surface(surface)
+	return ok && surfaceConfig.Enabled()
 }
 
 // apiOpEnabled reports whether the operation is enabled for the invoker,
-// combining the registry defaults with the [api.<invoker>] config overrides.
-// The uds and plugin invokers are always fully enabled: UDS is the recovery
-// path, and the console's in-process plugin calls carry the session identity
-// with RBAC as the gate
+// combining the registry defaults with the [api.<surface>] enable_apis /
+// disable_apis overrides. The uds and plugin invokers are always fully
+// enabled: UDS is the recovery path, and the console's in-process plugin
+// calls carry the session identity with RBAC as the gate
 func (s *Server) apiOpEnabled(invoker string, operation API_NAME) bool {
-	var ops types.ApiInvokerOps
+	var surface types.ApiSurfaceConfig
 	var defaultDisabled bool
 	switch invoker {
 	case InvokerMCP:
-		ops = s.Config().Api.MCP
+		surface = s.Config().Api.MCP
 		entry, known := apiRegistry[operation]
 		defaultDisabled = known && entry.MCPDisabled
-	case InvokerTCP:
-		ops = s.Config().Api.TCP
+	case InvokerRest:
+		surface = s.Config().Api.Rest
 	default:
 		return true
 	}
-	if slices.Contains(ops.Disable, string(operation)) {
+	if slices.Contains(surface.DisableApis, string(operation)) {
 		return false
 	}
 	if defaultDisabled {
-		return slices.Contains(ops.Enable, string(operation))
+		return slices.Contains(surface.EnableApis, string(operation))
 	}
 	return true
 }
@@ -408,20 +405,71 @@ func (s *Server) checkApiOpEnabled(ctx context.Context, operation API_NAME) erro
 	return nil
 }
 
-// validateApiConfig checks the [api] section at startup: surface names,
-// override op names, and the transport prerequisites for enabled surfaces
-func validateApiConfig(config *types.ServerConfig) error {
-	for _, surface := range config.Api.Enable {
-		if !strings.EqualFold(surface, string(types.ApiSurfaceRest)) && !strings.EqualFold(surface, string(types.ApiSurfaceMCP)) {
-			return fmt.Errorf("api.enable: unknown surface %q, valid values are rest and mcp", surface)
-		}
+// validateApiSurfaceConfig fully validates the [api] section: schema
+// (validateApiConfig) plus, when a surface is enabled, the RBAC and transport
+// prerequisites and the external url shape. Runs at startup on the static
+// config and again on every dynamic config update against the effective
+// config (the [api] section is dynamically settable)
+func validateApiSurfaceConfig(config *types.ServerConfig) error {
+	if err := validateApiConfig(config); err != nil {
+		return err
 	}
-	for section, ops := range map[string]types.ApiInvokerOps{"api.mcp": config.Api.MCP, "api.tcp": config.Api.TCP} {
-		for _, op := range append(append([]string{}, ops.Enable...), ops.Disable...) {
-			if _, ok := apiRegistry[API_NAME(op)]; !ok {
-				return fmt.Errorf("%s: unknown operation %q in enable/disable list", section, op)
+	if !apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) && !apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
+		return nil
+	}
+	if config.Security.UnsafeDisableRBAC {
+		return fmt.Errorf("an enabled remote API surface (api.rest / api.mcp enable) requires RBAC enforcement: unset security.unsafe_disable_rbac to use it")
+	}
+	if config.Https.Port == -1 && len(config.Security.TrustedProxies) == 0 {
+		return fmt.Errorf("an enabled remote API surface (api.rest / api.mcp enable) requires an HTTPS listener or security.trusted_proxies for a TLS-terminating proxy")
+	}
+	// The external url backs token resource URIs and the OAuth metadata; a
+	// config that would 404 discovery or fail login only after credentials
+	// are typed must be rejected
+	external := strings.TrimSuffix(cmp.Or(config.Api.ExternalUrl, config.Security.CallbackUrl), "/")
+	if external == "" {
+		return fmt.Errorf("an enabled remote API surface (api.rest / api.mcp enable) requires api.external_url (or security.callback_url): the canonical https origin for API tokens and OAuth metadata")
+	}
+	// OAuth endpoints and resource identifiers are built from this value by
+	// concatenation: it must be a plain https origin, or the discovery
+	// metadata comes out invalid
+	parsed, err := url.Parse(external)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return fmt.Errorf("api.external_url must be a plain https origin (https://host[:port], no path/query/fragment/userinfo), got %q", external)
+	}
+	for section, surface := range map[string]types.ApiSurfaceConfig{"api.mcp": config.Api.MCP, "api.rest": config.Api.Rest} {
+		for _, mechanism := range surface.Auth {
+			switch mechanism {
+			case "builtin", "admin":
+			default:
+				_, isOAuth := config.Auth[mechanism]
+				_, isSAML := config.SAML[mechanism]
+				if !isOAuth && !isSAML {
+					return fmt.Errorf("%s auth: unknown login mechanism %q (valid: builtin, admin, or an [auth.*]/[saml.*] entry name)", section, mechanism)
+				}
 			}
 		}
+	}
+	return nil
+}
+
+// validateApiConfig checks the [api] section schema: every surface names
+// at least one login mechanism (the default is admin), and the
+// enable_apis / disable_apis op names are known
+func validateApiConfig(config *types.ServerConfig) error {
+	for section, surface := range map[string]types.ApiSurfaceConfig{"api.mcp": config.Api.MCP, "api.rest": config.Api.Rest} {
+		if len(surface.Auth) == 0 {
+			return fmt.Errorf("%s auth: at least one login mechanism is required (builtin, admin, or an [auth.*]/[saml.*] entry name; the default is admin)", section)
+		}
+		for _, op := range append(append([]string{}, surface.EnableApis...), surface.DisableApis...) {
+			if _, ok := apiRegistry[API_NAME(op)]; !ok {
+				return fmt.Errorf("%s: unknown operation %q in enable_apis/disable_apis", section, op)
+			}
+		}
+	}
+	if config.Api.Rest.SkipDestructiveConfirm {
+		return fmt.Errorf("api.rest: skip_destructive_confirm applies to the mcp surface only")
 	}
 	return nil
 }

@@ -22,7 +22,6 @@ func TestServiceBindingRBAC(t *testing.T) {
 	registerApplyTestBinding(t, db, ctx)
 
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"dbops": {types.PermissionServiceManage, types.PermissionBindingManage},
 		},
@@ -98,7 +97,6 @@ func TestServiceBindingRBAC(t *testing.T) {
 		t.Fatalf("expected binding:reveal denial for show-account, got %v", err)
 	}
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"dbops":    {types.PermissionServiceManage, types.PermissionBindingManage},
 			"revealer": {types.PermissionBindingReveal},
@@ -139,7 +137,6 @@ func TestServiceBindingRBAC(t *testing.T) {
 	// Attaching a binding to an app requires binding:use on it: "other" holds
 	// app perms via a new grant but no binding:use on /apps/db1
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"appdev": {types.PermissionAppManage},
 			"dbops":  {types.PermissionServiceManage, types.PermissionBindingManage},
@@ -214,7 +211,6 @@ func TestServiceConfigSecretRefRBAC(t *testing.T) {
 	t.Setenv("CL_TEST_RBAC_SECRET", "resolved-value")
 
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"dbops":     {types.PermissionServiceManage},
 			"secretops": {types.PermissionServiceManage, types.PermissionSecretRead},
@@ -286,7 +282,6 @@ func TestBindingStagingServiceBindRBAC(t *testing.T) {
 
 	makeConfig := func(serviceTarget string) *types.RBACConfig {
 		return &types.RBACConfig{
-			Enabled: true,
 			Roles: map[string][]types.RBACPermission{
 				"binder": {types.PermissionBindingCreate, types.PermissionServiceBind},
 			},
@@ -344,7 +339,6 @@ func TestServiceDefaultDisplacementRBAC(t *testing.T) {
 
 	makeConfig := func(target string) *types.RBACConfig {
 		return &types.RBACConfig{
-			Enabled: true,
 			Roles: map[string][]types.RBACPermission{
 				"teamdev": {types.PermissionServiceManage},
 			},
@@ -446,7 +440,7 @@ func TestVersionSwitchBindingRBAC(t *testing.T) {
 	server.apps.ResetAllAppCache()
 
 	// The owner holds app:update through the owner rule but no binding:use
-	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{Enabled: true}); err != nil {
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{}); err != nil {
 		t.Fatalf("rbac config update: %v", err)
 	}
 	switcherCtx := rbacEnforcedCtx(ctx, "switcher")
@@ -457,7 +451,6 @@ func TestVersionSwitchBindingRBAC(t *testing.T) {
 
 	// With binding:use granted the switch is allowed
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"user-of-bindings": {types.PermissionBindingUse},
 		},
@@ -512,7 +505,7 @@ func TestPreviewAndBuilderBindingRBAC(t *testing.T) {
 
 	// The owner holds app:preview through the owner rule but no binding:use on
 	// the attached binding: preview creation is denied before any app is made
-	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{Enabled: true}); err != nil {
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{}); err != nil {
 		t.Fatalf("rbac config update: %v", err)
 	}
 	previewerCtx := rbacEnforcedCtx(ctx, "previewer")
@@ -524,7 +517,6 @@ func TestPreviewAndBuilderBindingRBAC(t *testing.T) {
 	// With binding:use granted the binding gate passes: the preview then fails
 	// on the non-git source, proving the denial above came from the gate
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"user-of-bindings": {types.PermissionBindingUse},
 		},

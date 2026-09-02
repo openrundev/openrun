@@ -32,7 +32,6 @@ tests:
       {
         "version_id": "force",
         "rbac": {
-          "enabled": true,
           "groups": {},
           "roles": {
             "viewer": ["app:access"]
@@ -117,22 +116,29 @@ tests:
     command: ../openrun user delete statictester
     stderr: "static entries cannot be deleted"
     exit-code: 1
-  builtin0210: # disable RBAC again
+  builtin0210: # restore the default RBAC config (RBAC is always on; the
+    # default grant gives every authenticated principal app access)
     command: |
       cat > builtin_rbac.json <<EOF
       {
         "version_id": "force",
         "rbac": {
-          "enabled": false,
           "groups": {},
           "roles": {},
-          "grants": []
+          "grants": [
+            {
+              "description": "Default: authenticated principals can access and list apps",
+              "users": ["*"],
+              "roles": ["openrun-user"],
+              "targets": ["all"]
+            }
+          ]
         }
       }
       EOF
       ../openrun server update-config --force builtin_rbac.json
     exit-code: 0
-  builtin0220: # with RBAC disabled, any builtin user can access the app again
+  builtin0220: # with the default grant, any builtin user can access the app again
     command: curl -s -u statictester:abcd localhost:${MAIN_HTTP_PORT}/builtin_app/
     stdout: "child ok"
     exit-code: 0

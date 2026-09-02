@@ -23,7 +23,7 @@ def forward_auth():
         "X-Forwarded-Host": os.environ["EXPECTED_FORWARD_HOST"],
         "X-Openrun-User": "admin",
         "X-Openrun-User-Stripped": "admin",
-        "X-Openrun-Rbac-Enabled": "false",
+        "X-Openrun-Rbac-Enabled": "true",
     }
     for header, expected in checks.items():
         got = request.headers.get(header, "")

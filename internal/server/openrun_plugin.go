@@ -64,6 +64,7 @@ func initOpenRunPlugin(server *Server) {
 					{Name: "system_plugins_allowed", Type: sdk.READ, Method: "SystemPluginsAllowed"},
 					{Name: "server_info", Type: sdk.READ, Method: "ServerInfo"},
 					{Name: "list_rbac_permissions", Type: sdk.READ, Method: "ListRBACPermissions"},
+					{Name: "list_api_operations", Type: sdk.READ, Method: "ListApiOperations"},
 					{Name: "list_auths", Type: sdk.READ, Method: "ListAuths"},
 					{Name: "list_git_auths", Type: sdk.READ, Method: "ListGitAuths"},
 				},

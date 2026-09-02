@@ -146,16 +146,21 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	if config.Builder.Mode == "delegate_server" {
 		logger.Warn().Msg("Delegated build server mode is enabled")
 		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveDelegatedBuild()))
-	} else if apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) || apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
+	} else {
 		// Remote API surfaces ([api] enable): bearer-authenticated REST
 		// management and/or MCP, served only over HTTPS or via a trusted
-		// TLS-terminating proxy (the transport gate inside)
-		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveRemoteInternal(config)))
+		// TLS-terminating proxy. Mounted unconditionally: the [api] section
+		// is dynamically settable, so surface enablement is checked per
+		// request (inside serveRemoteInternal and the well-known handlers).
+		// With both surfaces disabled every path here is a plain 404, same
+		// as the reserved-path handler this replaces
+		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveRemoteInternal()))
 		// OAuth well-known metadata documents (RFC 8414 / RFC 9728), behind
-		// the same transport gate. One PRM document per enabled surface
+		// the same transport gate. One PRM document per enabled surface;
+		// the handlers 404 while their surface is disabled
 		wellKnownGate := func(next http.HandlerFunc) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
-				if system.GetRequestScheme(r, config.Security.TrustedProxies) != "https" {
+				if system.GetRequestScheme(r, server.Config().Security.TrustedProxies) != "https" {
 					http.NotFound(w, r)
 					return
 				}
@@ -165,8 +170,6 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 		router.Get("/.well-known/oauth-authorization-server", wellKnownGate(handler.serveOAuthASMetadata))
 		router.Get("/.well-known/oauth-protected-resource/rest", wellKnownGate(handler.serveOAuthPRM(ApiResourceRest)))
 		router.Get("/.well-known/oauth-protected-resource/mcp", wellKnownGate(handler.serveOAuthPRM(ApiResourceMCP)))
-	} else {
-		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(http.NotFoundHandler())) // reserve the path
 	}
 
 	// Webhooks are always mounted, they are disabled at the app level by default
@@ -418,7 +421,7 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, remote bool
 			if !ok {
 				return
 			}
-			if !h.server.apiOpEnabled(InvokerTCP, API_NAME(operation)) {
+			if !h.server.apiOpEnabled(InvokerRest, API_NAME(operation)) {
 				// Refused attempts are audited: "what was tried and refused"
 				// is a first-class query on the invoker-tagged trail
 				refusedEvent := types.AuditEvent{
@@ -428,7 +431,7 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, remote bool
 					EventType:  types.EventTypeSystem,
 					Operation:  operation,
 					Status:     string(types.EventStatusFailure),
-					Detail:     "invoker=" + InvokerTCP + " cred=" + cred.Id + " refused=op_disabled",
+					Detail:     "invoker=" + InvokerRest + " cred=" + cred.Id + " refused=op_disabled",
 				}
 				if auditErr := h.server.InsertAuditEvent(&refusedEvent); auditErr != nil {
 					h.Error().Err(auditErr).Msg("error inserting audit event for refused call")
@@ -1944,32 +1947,43 @@ func (h *Handler) serveInternal(remote bool) http.Handler {
 // transport gate (HTTPS or trusted TLS-terminating proxy; anything else gets
 // a plain 404 - never a redirect and never auth metadata, a plaintext bearer
 // token is already leaked by the time a response is written), then dispatch
-// to the MCP endpoint or the REST management APIs per the enabled surfaces
-func (h *Handler) serveRemoteInternal(config *types.ServerConfig) http.Handler {
-	restHandler := http.NotFoundHandler()
-	if apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) {
-		restHandler = h.serveInternal(true)
-	}
-	mcpHandler := http.NotFoundHandler()
-	if apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
-		mcpHandler = h.server.mcpHTTPHandler()
-	}
+// to the MCP endpoint or the REST management APIs. Surface enablement is
+// checked per request against the effective config, so a dynamic [api]
+// update takes effect without a restart; a disabled surface is a plain 404
+func (h *Handler) serveRemoteInternal() http.Handler {
+	restHandler := h.serveInternal(true)
+	mcpHandler := h.server.mcpHTTPHandler()
 	oauthHandler := h.serveOAuth()
 	mcpPath := types.INTERNAL_URL_PREFIX + "/mcp"
 	oauthPrefix := types.INTERNAL_URL_PREFIX + "/oauth/"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		config := h.server.Config()
 		if system.GetRequestScheme(r, config.Security.TrustedProxies) != "https" {
 			http.NotFound(w, r)
 			return
 		}
 		if r.URL.Path == mcpPath {
+			if !apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
+				http.NotFound(w, r)
+				return
+			}
 			mcpHandler.ServeHTTP(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, oauthPrefix) {
 			// The OAuth AS endpoints are pre-authentication: they mint the
-			// credentials the other paths require
+			// credentials the other paths require. Mounted while any
+			// surface is enabled
+			if !apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) &&
+				!apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
+				http.NotFound(w, r)
+				return
+			}
 			oauthHandler.ServeHTTP(w, r)
+			return
+		}
+		if !apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) {
+			http.NotFound(w, r)
 			return
 		}
 		restHandler.ServeHTTP(w, r)

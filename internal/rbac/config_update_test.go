@@ -18,7 +18,6 @@ func TestRegexFullMatch(t *testing.T) {
 	t.Parallel()
 
 	manager := newTestManager(t, &types.RBACConfig{
-		Enabled: true,
 		Groups: map[string][]string{
 			"emails": {"regex:.*@example\\.com"},
 		},
@@ -79,13 +78,17 @@ func TestGrantTargetValidation(t *testing.T) {
 		t.Errorf("valid targets should be accepted, got %v", err)
 	}
 
-	// A disabled config is not validated, so server startup is never blocked
-	disabled := grantConfig(roles,
+	// Validation is always on: an invalid target is rejected even when
+	// enforcement is disabled via security.unsafe_disable_rbac
+	badTarget := grantConfig(roles,
 		types.RBACGrant{Description: "bad target", Users: []string{"user1"},
 			Roles: []string{"read"}, Targets: []string{"/app["}})
-	disabled.Enabled = false
-	if _, err := NewRBACHandler(logger, disabled, serverConfig); err != nil {
-		t.Errorf("disabled config must not be validated, got %v", err)
+	disabledServerConfig := &types.ServerConfig{
+		GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+		Security:     types.SecurityConfig{UnsafeDisableRBAC: true},
+	}
+	if _, err := NewRBACHandler(logger, badTarget, disabledServerConfig); err == nil {
+		t.Errorf("invalid target must be rejected even with enforcement disabled")
 	}
 }
 
@@ -125,13 +128,12 @@ func TestUpdateRBACConfigAtomic(t *testing.T) {
 	}
 	assertOldConfigLive(t)
 
-	// Failure in the first resolution step (undefined group reference), with
-	// the rejected config disabled: the enabled state must not flip
+	// Failure in the first resolution step (undefined group reference):
+	// no partially updated state may be published
 	badGroups := &types.RBACConfig{
-		Enabled: false,
-		Groups:  map[string][]string{"g1": {"group:undefined"}},
-		Roles:   map[string][]types.RBACPermission{},
-		Grants:  []types.RBACGrant{},
+		Groups: map[string][]string{"g1": {"group:undefined"}},
+		Roles:  map[string][]types.RBACPermission{},
+		Grants: []types.RBACGrant{},
 	}
 	if err := manager.UpdateRBACConfig(badGroups); err == nil {
 		t.Fatal("expected error for undefined group reference")

@@ -33,7 +33,7 @@ type RBACManager struct {
 	regexCache     map[string]*regexp.Regexp                // cache of compiled regex patterns
 	customPerms    []string                                 // custom permissions are permissions defined by the user. This list does not have the custom: prefix
 	ownerPerms     map[string]map[types.RBACPermission]bool // resource name to permissions granted to the asset owner
-	enabled        atomic.Bool                              // RbacConfig.Enabled, readable without taking mu (hot path checks)
+	enabled        atomic.Bool                              // !security.unsafe_disable_rbac, fixed at construction; readable without taking mu (hot path checks)
 }
 
 // resolvedGroup is a group's membership resolved into lookup structures at
@@ -49,12 +49,40 @@ type resolvedGrant struct {
 	targets []parsedTarget
 }
 
+// DefaultConfig returns the built-in default RBAC config: no groups or
+// roles, and the default grant giving every principal (anonymous included)
+// the openrun-user role (app:access + app:read) on all apps - so a user can
+// reach an app iff they can authenticate against it, matching the pre-RBAC
+// app serving behavior. Written into the dynamic config on fresh installs
+// and appended by the migration for stores that had RBAC disabled
+func DefaultConfig() *types.RBACConfig {
+	return &types.RBACConfig{
+		Groups: map[string][]string{},
+		Roles:  map[string][]types.RBACPermission{},
+		Grants: []types.RBACGrant{DefaultGrant()},
+	}
+}
+
+// DefaultGrant is the default all-principals app access grant of DefaultConfig
+func DefaultGrant() types.RBACGrant {
+	return types.RBACGrant{
+		Description: "Default: authenticated principals can access and list apps",
+		Users:       []string{"*"},
+		Roles:       []string{"openrun-user"},
+		Targets:     []string{"all"},
+	}
+}
+
+// NewRBACHandler builds the manager. Enforcement is on unless the static
+// security.unsafe_disable_rbac flag is set: enablement is fixed at startup
+// and never changes through dynamic config updates
 func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverConfig *types.ServerConfig) (*RBACManager, error) {
 	rbacManager := &RBACManager{
 		Logger:       logger,
 		RbacConfig:   rbacConfig,
 		serverConfig: serverConfig,
 	}
+	rbacManager.enabled.Store(!serverConfig.Security.UnsafeDisableRBAC)
 
 	err := rbacManager.UpdateRBACConfig(rbacConfig)
 	if err != nil {
@@ -82,8 +110,8 @@ func (h *RBACManager) AuthorizeInt(user string, appPathDomain types.AppPathDomai
 // take the lock once and call this)
 func (h *RBACManager) authorizeIntLocked(user string, appPathDomain types.AppPathDomain,
 	permission types.RBACPermission, groups []string, isAppLevelPermission bool) (bool, error) {
-	if !h.RbacConfig.Enabled {
-		// rbac is not enabled, authorize all requests
+	if !h.enabled.Load() {
+		// rbac is disabled (security.unsafe_disable_rbac), authorize all requests
 		return true, nil
 	}
 
@@ -116,8 +144,8 @@ func (h *RBACManager) GetCustomPermissionsInt(user string, appPathDomain types.A
 		return nil, nil
 	}
 
-	if !h.RbacConfig.Enabled {
-		// rbac is not enabled, authorize all requests
+	if !h.enabled.Load() {
+		// rbac is disabled (security.unsafe_disable_rbac), authorize all requests
 		return h.customPerms, nil
 	}
 
@@ -208,6 +236,11 @@ func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathD
 // a regex: pattern. Callers must hold h.mu
 func (h *RBACManager) grantUserMatchesLocked(grant types.RBACGrant, inputUser string, groups []string) (bool, error) {
 	for _, user := range grant.Users {
+		if user == "*" {
+			// Wildcard: any principal, the anonymous user included. Used by
+			// the default grant; patterns use the anchored regex: form
+			return true, nil
+		}
 		if strings.HasPrefix(user, RBAC_GROUP_PREFIX) {
 			refGroupName := user[len(RBAC_GROUP_PREFIX):]
 			if slices.Contains(groups, refGroupName) {
@@ -388,15 +421,13 @@ func (h *RBACManager) initGroupInfo(rbacConfig *types.RBACConfig, regexCache map
 // collects the custom permissions the roles define (without the custom:
 // prefix, sorted). Pure: on error no state has been published to the manager
 func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*resolvedRole, []string, error) {
-	// Permission name validation only applies when RBAC is enabled, so that a
-	// disabled config never blocks server startup
-	validate := rbacConfig.Enabled
-	if validate {
-		for name := range rbacConfig.Roles {
-			if isBuiltinRole(name) || strings.HasPrefix(name, ReservedRolePrefix) {
-				return nil, nil, fmt.Errorf("role name %q is reserved: the %q prefix is reserved for built-in roles",
-					name, ReservedRolePrefix)
-			}
+	// Validation is always on: RBAC has no dynamic disable, so there is no
+	// dormant state a config could hide in. Server startup handles an
+	// invalid stored config by falling back to the built-in default config
+	for name := range rbacConfig.Roles {
+		if isBuiltinRole(name) || strings.HasPrefix(name, ReservedRolePrefix) {
+			return nil, nil, fmt.Errorf("role name %q is reserved: the %q prefix is reserved for built-in roles",
+				name, ReservedRolePrefix)
 		}
 	}
 
@@ -431,10 +462,8 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*re
 				permissions = append(permissions, refPermissions...)
 			} else {
 				perm = normalizePermission(perm)
-				if validate {
-					if err := validatePermission(perm); err != nil {
-						return nil, fmt.Errorf("role %s: %w", roleName, err)
-					}
+				if err := validatePermission(perm); err != nil {
+					return nil, fmt.Errorf("role %s: %w", roleName, err)
 				}
 				permissions = append(permissions, perm)
 			}
@@ -490,7 +519,6 @@ func (h *RBACManager) initRoleInfo(rbacConfig *types.RBACConfig) (map[string]*re
 // initOwnerPerms resolves the owner permission sets: built-in defaults overridden by
 // the owner_permissions config, with implications expanded
 func (h *RBACManager) initOwnerPerms(rbacConfig *types.RBACConfig) (map[string]map[types.RBACPermission]bool, error) {
-	validate := rbacConfig.Enabled
 	ownerPerms := make(map[string]map[types.RBACPermission]bool, len(defaultOwnerPermissions))
 	for resource, perms := range defaultOwnerPermissions {
 		if configured, ok := rbacConfig.OwnerPermissions[resource]; ok {
@@ -502,9 +530,6 @@ func (h *RBACManager) initOwnerPerms(rbacConfig *types.RBACConfig) (map[string]m
 		}
 		perms = normalized
 		for _, perm := range perms {
-			if !validate {
-				break
-			}
 			if hasGlobMeta(string(perm)) {
 				return nil, fmt.Errorf("owner_permissions.%s: glob patterns are not allowed, got %q", resource, perm)
 			}
@@ -526,11 +551,9 @@ func (h *RBACManager) initOwnerPerms(rbacConfig *types.RBACConfig) (map[string]m
 		ownerPerms[resource] = permSet
 	}
 
-	if validate {
-		for resource := range rbacConfig.OwnerPermissions {
-			if _, ok := defaultOwnerPermissions[resource]; !ok {
-				return nil, fmt.Errorf("owner_permissions: unknown resource %q, valid resources are app, sync", resource)
-			}
+	for resource := range rbacConfig.OwnerPermissions {
+		if _, ok := defaultOwnerPermissions[resource]; !ok {
+			return nil, fmt.Errorf("owner_permissions: unknown resource %q, valid resources are app, sync", resource)
 		}
 	}
 
@@ -541,11 +564,6 @@ func (h *RBACManager) initOwnerPerms(rbacConfig *types.RBACConfig) (map[string]m
 // role references and target globs. Pure: on error no state has been
 // published to the manager
 func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig, regexCache map[string]*regexp.Regexp) error {
-	// Skip validation if RBAC is disabled
-	if !rbacConfig.Enabled {
-		return nil
-	}
-
 	for i, grant := range rbacConfig.Grants {
 		// groups can be passed dynamically (for SSO login), so we don't need to validate them
 		for _, user := range grant.Users {
@@ -630,6 +648,7 @@ func (h *RBACManager) UpdateRBACConfig(rbacConfig *types.RBACConfig) error {
 	h.hasAdminGrant = hasAdminGrant
 	h.customPerms = customPerms
 	h.ownerPerms = ownerPerms
-	h.enabled.Store(rbacConfig.Enabled)
+	// h.enabled is fixed at construction (static unsafe_disable_rbac):
+	// dynamic config updates cannot change enablement
 	return nil
 }

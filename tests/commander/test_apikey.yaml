@@ -1,8 +1,8 @@
 # Remote API auth e2e: openrun apikey (PATs), the remote CLI over HTTPS with
 # builtin auth users under RBAC, scope ceilings, resource binding, the MCP
 # endpoint, the OAuth code+PKCE flow, and openrun login/logout.
-# The main test server runs with [api] enable = ["rest", "mcp"] and
-# api.auth = ["builtin", "admin"] (see run_cli_tests.sh).
+# The main test server runs with [api.rest] and [api.mcp] enabled with
+# auth = ["builtin", "admin"] (see run_cli_tests.sh).
 config:
   env:
     CL_CONFIG_FILE: openrun.toml
@@ -20,20 +20,26 @@ tests:
       ../openrun apikey create --desc "admin key" | grep -o "orun_pat_[0-9a-f_]*" > apikey_admin.txt
       test -s apikey_admin.txt
     exit-code: 0
-  apikey0020: # the remote surface requires RBAC to be enabled
+  apikey0020: # RBAC is on by default, so the remote surface works immediately
+    # with just an admin key - no RBAC bootstrap step
     command: OPENRUN_API_KEY=$(cat apikey_admin.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list
-    stderr: "RBAC must be enabled"
-    exit-code: 1
-  apikey0030: # enable RBAC (alice gets openrun-developer on /apps/**), add builtin users
+    exit-code: 0
+  apikey0030: # grant alice openrun-developer on /apps/** (keeping the default
+    # grant), add builtin users
     command: |
       cat > apikey_rbac.json <<EOF
       {
         "version_id": "force",
         "rbac": {
-          "enabled": true,
           "groups": {},
           "roles": {},
           "grants": [
+            {
+              "description": "Default: authenticated principals can access and list apps",
+              "users": ["*"],
+              "roles": ["openrun-user"],
+              "targets": ["all"]
+            },
             {
               "description": "alice develops under /apps",
               "users": ["builtin:alice"],
@@ -70,11 +76,10 @@ tests:
     command: OPENRUN_API_KEY=$(cat apikey_alice.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list "/apps/**"
     stdout: "/apps/apikey_app"
     exit-code: 0
-  apikey0090: # bob authenticates but has no grants - the list is filtered empty
+  apikey0090: # bob has no explicit grants, but the default grant gives every
+    # authenticated principal app:read - the listing is visible to him
     command: OPENRUN_API_KEY=$(cat apikey_bob.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list "/apps/**"
-    stdout:
-      not-contains:
-        - "/apps/apikey_app"
+    stdout: "/apps/apikey_app"
     exit-code: 0
   apikey0100: # bob cannot delete the app
     command: OPENRUN_API_KEY=$(cat apikey_bob.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app delete --dry-run /apps/apikey_app
@@ -221,14 +226,14 @@ tests:
       OPENRUN_NO_KEYRING=1 CL_CONFIG_FILE=remote_client.toml ../openrun app list "/apps/**" 2>&1 || echo LOGGED_OUT_OK
     stdout: "LOGGED_OUT_OK"
     exit-code: 0
-  apikey0900: # cleanup: app, users, keys, RBAC off, working files
+  apikey0900: # cleanup: app, users, keys, restore the default RBAC config, working files
     command: |
       ../openrun app delete /apps/apikey_app
       ../openrun user delete alice
       ../openrun user delete bob
       for id in $(../openrun apikey list --all -f json | jq -r '.[].id'); do ../openrun apikey delete "$id" > /dev/null; done
       cat > apikey_rbac.json <<EOF
-      {"version_id": "force", "rbac": {"enabled": false, "groups": {}, "roles": {}, "grants": []}}
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {}, "grants": [{"description": "Default: authenticated principals can access and list apps", "users": ["*"], "roles": ["openrun-user"], "targets": ["all"]}]}}
       EOF
       ../openrun server update-config --force apikey_rbac.json
       rm -f apikey_admin.txt apikey_alice.txt apikey_alice_ro.txt apikey_bob.txt apikey_mcp.txt

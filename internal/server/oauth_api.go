@@ -31,7 +31,7 @@ import (
 // The OAuth 2.1 authorization server for the remote API surfaces. OpenRun is
 // its own minimal AS: the four endpoints under /_openrun/oauth plus the
 // well-known metadata documents.
-// The login step reuses the configured api.auth mechanisms; access and
+// The login step reuses the surface's configured [api.<surface>] auth mechanisms; access and
 // refresh tokens land in the same credentials table as PATs, so one verifier
 // covers everything and revocation is immediate.
 //
@@ -127,7 +127,10 @@ func (s *Server) apiAuthChallenge(surface string) string {
 // metadata, one document per enabled surface
 func (h *Handler) serveOAuthASMetadata(w http.ResponseWriter, r *http.Request) {
 	external := h.server.apiExternalUrl()
-	if external == "" {
+	config := h.server.Config()
+	if external == "" || (!apiSurfaceEnabled(config, ApiResourceRest) && !apiSurfaceEnabled(config, ApiResourceMCP)) {
+		// The AS exists only while a remote surface is enabled (checked per
+		// request: [api] is dynamically settable)
 		http.NotFound(w, r)
 		return
 	}
@@ -425,7 +428,7 @@ func (h *Handler) renderOAuthLogin(w http.ResponseWriter, r *http.Request, get f
 }
 
 // oauthAuthorizeSubmit authenticates the posted credentials against the
-// configured api.auth mechanisms, then issues a single-use authorization code
+// login mechanisms of the requested surface, then issues a single-use authorization code
 func (h *Handler) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -439,7 +442,7 @@ func (h *Handler) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal, err := h.server.oauthAuthenticateUser(get("or_username"), get("or_password"))
+	principal, err := h.server.oauthAuthenticateUser(surface, get("or_username"), get("or_password"))
 	if err != nil {
 		h.server.insertAuthFailureEvent(r, "oauth_authorize", err.Error())
 		h.renderOAuthLogin(w, r, get, err.Error())
@@ -503,13 +506,14 @@ func parseScopeParam(scope string) []string {
 	return scopes
 }
 
-// oauthAuthenticateUser verifies the posted credentials against the
-// configured api.auth mechanisms, returning the principal (provider:username
-// or admin)
-func (s *Server) oauthAuthenticateUser(username, password string) (string, error) {
-	mechanisms := s.Config().Api.Auth
+// oauthAuthenticateUser verifies the posted credentials against the login
+// mechanisms configured for the surface ([api.<surface>] auth), returning
+// the principal (provider:username or admin)
+func (s *Server) oauthAuthenticateUser(surface, username, password string) (string, error) {
+	surfaceConfig, _ := s.Config().Api.Surface(surface)
+	mechanisms := surfaceConfig.Auth
 	if len(mechanisms) == 0 {
-		return "", fmt.Errorf("api.auth is not configured: set the login mechanisms (builtin, admin) in the [api] section")
+		return "", fmt.Errorf("api.%s auth is not configured: set the login mechanisms (builtin, admin) for the surface", surface)
 	}
 	if username == "" || password == "" {
 		return "", fmt.Errorf("username and password are required")
@@ -527,7 +531,7 @@ func (s *Server) oauthAuthenticateUser(username, password string) (string, error
 			}
 		default:
 			// [auth.*]/[saml.*] federated login step is a follow-on
-			s.Warn().Msgf("api.auth mechanism %q is not supported yet for the OAuth login page", mechanism)
+			s.Warn().Msgf("api.%s auth mechanism %q is not supported yet for the OAuth login page", surface, mechanism)
 		}
 	}
 	return "", fmt.Errorf("invalid username or password")

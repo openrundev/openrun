@@ -372,23 +372,39 @@ func (s *Server) DeleteConfigValue(ctx context.Context, section, key string, ver
 	return s.UpdateDynamicConfig(ctx, config, false)
 }
 
+// validateRBACGrants rejects an empty grant list while RBAC is enforced:
+// with no grants every principal except admin loses every app and
+// management API, which is never an intended dynamic update (the default
+// config ships one grant; dev/test setups without enforcement use
+// security.unsafe_disable_rbac). Applies to dynamic updates only - a stored
+// config is never rewritten by this check
+func (s *Server) validateRBACGrants(candidate *types.RBACConfig) error {
+	if s.rbacManager.ConfigEnabled() && len(candidate.Grants) == 0 {
+		return fmt.Errorf("rbac.grants: at least one grant is required while RBAC is enforced - an empty grant list would lock every user except admin out of every app and management API")
+	}
+	return nil
+}
+
 // validateRBACCandidate runs the full config validation (the same checks the
 // file upload path runs) plus the lockout check: publishing a config which
 // removes the caller's own config:update permission requires force
 func (s *Server) validateRBACCandidate(ctx context.Context, candidate *types.RBACConfig, force bool) error {
+	if err := s.validateRBACGrants(candidate); err != nil {
+		return err
+	}
 	scratch, err := rbac.NewRBACHandler(s.Logger, candidate, s.Config())
 	if err != nil {
 		return fmt.Errorf("invalid rbac config: %w", err)
 	}
 
 	// The lockout check only applies when the caller would actually be subject
-	// to enforcement after publish: the candidate has RBAC enabled (it then
-	// applies to every app) and there is a calling app context. UDS calls have
-	// no app context and are not enforced; admin-over-TCP is checked as the
-	// built-in admin super-user and therefore cannot lock itself out
+	// to enforcement after publish: RBAC enforcement is active (always, unless
+	// security.unsafe_disable_rbac) and there is a calling app context. UDS
+	// calls have no app context and are not enforced; the admin identity is
+	// checked as the built-in super-user and therefore cannot lock itself out
 	user := system.GetContextUserId(ctx)
 	callerSubject := ctx.Value(types.APP_AUTH) != nil
-	if candidate.Enabled && callerSubject && user != "" && user != types.ADMIN_USER && !force {
+	if s.rbacManager.ConfigEnabled() && callerSubject && user != "" && user != types.ADMIN_USER && !force {
 		authorized, err := scratch.AuthorizeUserPerm(user, system.GetContextGroups(ctx), types.PermissionConfigUpdate)
 		if err != nil {
 			return err

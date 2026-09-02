@@ -10,7 +10,7 @@ OpenRun provides self-hosted, open-source role-based access control (RBAC) for e
 - **Platform level**: OpenRun checks whether a user is allowed to reach an app at all, using grants defined in the RBAC config. No app code is involved.
 - **App level**: OpenRun passes the user identity and the user's custom permissions to the app through HTTP headers on every request. The app uses these to implement its own app-specific RBAC, such as read-only versus editor roles inside the app.
 
-This guide walks through enabling RBAC, defining custom permissions and reading the permission headers in application code. See the [RBAC reference]({{< ref "docs/configuration/rbac/" >}}) for the full config format.
+This guide walks through configuring RBAC grants, defining custom permissions and reading the permission headers in application code. See the [RBAC reference]({{< ref "docs/configuration/rbac/" >}}) for the full config format.
 
 ## Scenario
 
@@ -23,15 +23,14 @@ This use case covers the scenario where you want to:
 
 Authentication comes from the [OAuth, OIDC or SAML provider]({{< ref "docs/configuration/authentication/" >}}) configured at the server level. RBAC then decides what each authenticated user can do.
 
-## Enabling RBAC
+## Configuring RBAC
 
-RBAC is part of the [dynamic config]({{< ref "docs/configuration/overview/#dynamic-config" >}}), so enabling or changing it does not require a server restart. A minimal config with app access rules:
+RBAC is always on: the default configuration grants every authenticated principal app access and read. The grants live in the [dynamic config]({{< ref "docs/configuration/overview/#dynamic-config" >}}), so changing them does not require a server restart. A minimal config with app access rules (replacing the default all-principals grant):
 
 ```json {filename="dynamic_config.json"}
 {
   "version_id": "ver_33erDLffhaXjgibPb5GRb3anN0V",
   "rbac": {
-    "enabled": true,
     "roles": {
       "user": ["app:access"]
     },
@@ -67,7 +66,6 @@ Define roles that carry custom permissions and grant them like any other role:
 {
   "version_id": "ver_33erDLffhaXjgibPb5GRb3anN0V",
   "rbac": {
-    "enabled": true,
     "roles": {
       "viewer": ["app:access", "custom:reports_read"],
       "editor": ["role:viewer", "custom:reports_write"]

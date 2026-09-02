@@ -21,12 +21,13 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgxlisten"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 25
+const CURRENT_DB_VERSION = 26
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -706,11 +707,105 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 	}
 
+	if version < 26 {
+		m.Info().Msg("Upgrading to version 26")
+		// RBAC is now always enabled (the dynamic enabled flag is removed;
+		// only the static security.unsafe_disable_rbac turns enforcement
+		// off). A store where RBAC was dynamically enabled keeps its config
+		// verbatim minus the removed field - no behavior change. A store
+		// where it was disabled gets the default all-principals app access
+		// grant appended, so app serving behavior does not change: whoever
+		// can authenticate against an app keeps access
+		var configStr sql.NullString
+		err := tx.QueryRowContext(ctx, `select config from config`).Scan(&configStr)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if err == nil && configStr.Valid && configStr.String != "" {
+			migrated, changed, migErr := migrateRBACDefaultConfig([]byte(configStr.String))
+			if migErr != nil {
+				// The upgrade must not be blocked on an unparseable stored
+				// config; server startup fails secure onto the built-in
+				// default RBAC config for that case
+				m.Error().Err(migErr).Msg("could not migrate stored dynamic config for the RBAC default-enable change")
+			} else if changed {
+				if _, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+					`update config set config = ?`), string(migrated)); err != nil {
+					return err
+				}
+				m.Info().Msg("RBAC default-enable migration: RBAC is now always on; the default app access grant was added to the dynamic config")
+			}
+		}
+
+		if _, err := tx.ExecContext(ctx, `update version set version=26, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// migrateRBACDefaultConfig rewrites the stored dynamic config JSON for the
+// always-on RBAC model: the legacy rbac.enabled field is dropped, and when it
+// was not true (RBAC was not being enforced) the default all-principals app
+// access grant is appended, unless an equivalent grant already exists
+// (idempotent). Operates on the raw JSON deliberately - the enabled field no
+// longer exists on types.RBACConfig
+func migrateRBACDefaultConfig(configJson []byte) ([]byte, bool, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(configJson, &doc); err != nil {
+		return nil, false, err
+	}
+	rbacMap, _ := doc["rbac"].(map[string]any)
+	if rbacMap == nil {
+		rbacMap = map[string]any{}
+		doc["rbac"] = rbacMap
+	}
+	enabled, hadEnabled := rbacMap["enabled"].(bool)
+	delete(rbacMap, "enabled")
+	changed := hadEnabled
+
+	if !enabled {
+		grants, _ := rbacMap["grants"].([]any)
+		defaultGrantPresent := false
+		for _, entry := range grants {
+			grant, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			users, _ := grant["users"].([]any)
+			roles, _ := grant["roles"].([]any)
+			if len(users) == 1 && users[0] == "*" && len(roles) == 1 && roles[0] == "openrun-user" {
+				defaultGrantPresent = true
+				break
+			}
+		}
+		if !defaultGrantPresent {
+			grantJson, err := json.Marshal(rbac.DefaultGrant())
+			if err != nil {
+				return nil, false, err
+			}
+			var grantMap map[string]any
+			if err := json.Unmarshal(grantJson, &grantMap); err != nil {
+				return nil, false, err
+			}
+			rbacMap["grants"] = append(grants, grantMap)
+			changed = true
+		}
+	}
+
+	if !changed {
+		return configJson, false, nil
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return nil, false, err
+	}
+	return out, true, nil
 }
 
 func (m *Metadata) initFileTables(ctx context.Context, tx types.Transaction) error {

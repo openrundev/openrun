@@ -136,7 +136,8 @@ func TestListAllAppsBreadcrumbGlobsCoverDisplayedBreadcrumbs(t *testing.T) {
 		System: types.SystemConfig{DefaultDomain: "utils.demo.clace.io"},
 		Http:   types.HttpConfig{Port: 80},
 	}
-	rbacManager, err := rbac.NewRBACHandler(testutil.TestLogger(), &types.RBACConfig{Enabled: false}, staticConfig)
+	staticConfig.Security.UnsafeDisableRBAC = true // listing is unfiltered in this test
+	rbacManager, err := rbac.NewRBACHandler(testutil.TestLogger(), &types.RBACConfig{}, staticConfig)
 	if err != nil {
 		t.Fatalf("new rbac manager: %v", err)
 	}

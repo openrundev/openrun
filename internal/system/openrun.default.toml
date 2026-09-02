@@ -80,15 +80,13 @@ cert_location = "$OPENRUN_HOME/config/certificates" # where to look for existing
 storage_location = "$OPENRUN_HOME/run/certmagic"    # where to cache dynamically created certificates
 disable_client_certs = true                    # disable client certs for HTTPS
 
-[api]
-enable = []                      # remote API surfaces: "rest" (management REST over TCP, remote CLI)
-                                 # and/or "mcp" (/_openrun/mcp). Default: neither. Enabled surfaces
-                                 # require RBAC to be enabled and HTTPS (or a trusted TLS-terminating
-                                 # proxy listed in security.trusted_proxies).
+[api]                            # remote management API surfaces: [api.mcp] (/_openrun/mcp) and
+                                 # [api.rest] (management REST over TCP, the remote CLI). Both are off
+                                 # by default (enable = false). Enabled surfaces require RBAC
+                                 # enforcement and HTTPS (or a trusted TLS-terminating proxy listed in
+                                 # security.trusted_proxies).
 external_url = ""                # canonical https origin for API token resource URIs; defaults to
                                  # security.callback_url when unset
-auth = []                        # login mechanisms for interactive API auth (OAuth flow): "builtin",
-                                 # "admin", or an [auth.*]/[saml.*] entry name
 access_token_ttl = "1h"          # OAuth access token lifetime
 refresh_token_ttl = "720h"       # OAuth refresh token lifetime per rotation (30d)
 grant_max_ttl = "2160h"          # absolute OAuth grant lifetime (90d): refresh rotation slides within
@@ -97,14 +95,19 @@ federated_identity_ttl = "720h"  # provider-derived group snapshot max age; olde
                                  # dropped until the next interactive login
 pat_default_ttl = "2160h"        # default API key expiry (90d); --expires=never for non-expiring
 
-[api.mcp]                        # per-operation overrides for the MCP invoker
-enable = []                      # ops disabled by default for MCP (like secret_reveal), opted back in
-disable = []                     # additional ops turned off for MCP
+[api.mcp]                        # the MCP endpoint
+enable = false                   # true serves the MCP endpoint
+auth = ["admin"]                 # login mechanisms for browser auth (MCP OAuth): "admin", "builtin", or
+                                 # an [auth.*]/[saml.*] entry name. At least one is required
+enable_apis = []                 # ops disabled by default for MCP (like secret_reveal), opted back in
+disable_apis = []                # additional ops turned off for MCP
 skip_destructive_confirm = false # true disables the dry-run + confirmation prompt on destructive MCP tools
 
-[api.tcp]                        # per-operation overrides for the remote REST invoker
-enable = []
-disable = []
+[api.rest]                       # the management REST API over TCP (remote CLI)
+enable = false                   # true serves the management API over HTTPS
+auth = ["admin"]                 # login mechanisms for openrun login; at least one is required
+enable_apis = []                 # ops disabled by default for the remote REST API, opted back in
+disable_apis = []                # additional ops turned off for the remote REST API
 
 [security]
 admin_password_bcrypt = ""       # the password bcrypt value
@@ -121,6 +124,10 @@ auth_required = false          # require authentication for all apps. This is ve
                                # If this is set to true, the app access will be denied if the app is not authenticated.
                                # "none" auth_type cannot be used if this is set to true.
 default_git_auth = ""            # default git auth entry to use
+unsafe_disable_rbac = false      # true disables ALL RBAC enforcement (dev/test only). RBAC is enabled by
+                                 # default: the dynamic config's default grant gives every principal app
+                                 # access, and enforcement cannot be turned off dynamically. Static config
+                                 # only; setting it excludes the remote api surfaces (api.rest / api.mcp enable)
 stage_enable_write_access = true # enable write plugin API call access for staging apps
 preview_enable_write_access = true #  enable write plugin API call access for preview apps
 allowed_container_args = { add-host = "regex:.*" } # the container args that are allowed to be used in the app config

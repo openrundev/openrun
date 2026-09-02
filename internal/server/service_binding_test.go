@@ -95,7 +95,9 @@ func TestServiceConfigSecretResolution(t *testing.T) {
 		db:           db,
 	}
 	server.secretsManager.Store(secretsManager)
-	rbacManager, err := rbac.NewRBACHandler(logger, &types.RBACConfig{Enabled: false}, config)
+	rbacDisabledConfig := *config
+	rbacDisabledConfig.Security.UnsafeDisableRBAC = true
+	rbacManager, err := rbac.NewRBACHandler(logger, &types.RBACConfig{}, &rbacDisabledConfig)
 	if err != nil {
 		t.Fatalf("new rbac manager: %v", err)
 	}

@@ -83,7 +83,10 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsString(t, "admin user", "admin", c.AdminUser)
 
 	// Security Settings
-	testutil.AssertEqualsInt(t, "api enable", 0, len(c.Api.Enable))
+	testutil.AssertEqualsBool(t, "api rest enable", false, c.Api.Rest.Enable)
+	testutil.AssertEqualsBool(t, "api mcp enable", false, c.Api.MCP.Enable)
+	testutil.AssertEqualsInt(t, "api rest auth", 1, len(c.Api.Rest.Auth))
+	testutil.AssertEqualsInt(t, "api mcp auth", 1, len(c.Api.MCP.Auth))
 	testutil.AssertEqualsString(t, "admin password bcrypt", "", c.Security.AdminPasswordBcrypt)
 	testutil.AssertEqualsInt(t, "trusted proxies", 0, len(c.Security.TrustedProxies))
 	testutil.AssertEqualsInt(t, "allowed mounts", 1, len(c.Security.AllowedMounts))

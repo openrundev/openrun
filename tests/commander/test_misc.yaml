@@ -164,6 +164,42 @@ tests:
   audit0200:
     command: curl localhost:${MAIN_HTTP_PORT}/audittestapp/audit
     stdout: OK
+  audit0250: # the app reads audit events as the anonymous user; grant
+    # audit:read on top of the default grant (RBAC is always on)
+    command: |
+      cat > audit_rbac.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "groups": {},
+          "roles": {"auditor": ["audit:read"]},
+          "grants": [
+            {
+              "description": "Default: authenticated principals can access and list apps",
+              "users": ["*"],
+              "roles": ["openrun-user"],
+              "targets": ["all"]
+            },
+            {
+              "description": "anonymous reads audit events",
+              "users": ["anonymous"],
+              "roles": ["auditor"],
+              "targets": ["all"]
+            }
+          ]
+        }
+      }
+      EOF
+      ../openrun server update-config --force audit_rbac.json
+    exit-code: 0
   audit0300:
     command: curl localhost:${MAIN_HTTP_PORT}/audittestapp
     stdout: OK
+  audit0400: # restore the default RBAC config
+    command: |
+      cat > audit_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {}, "grants": [{"description": "Default: authenticated principals can access and list apps", "users": ["*"], "roles": ["openrun-user"], "targets": ["all"]}]}}
+      EOF
+      ../openrun server update-config --force audit_rbac.json
+      rm -f audit_rbac.json
+    exit-code: 0

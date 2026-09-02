@@ -18,6 +18,12 @@ import (
 // newAsUserTestServer builds a minimal server with two builtin users and the
 // given RBAC config state
 func newAsUserTestServer(t *testing.T, rbacConfig *types.RBACConfig) *Server {
+	return newAsUserTestServerDisabled(t, rbacConfig, false)
+}
+
+// newAsUserTestServerDisabled optionally builds the server with RBAC
+// enforcement off (security.unsafe_disable_rbac)
+func newAsUserTestServerDisabled(t *testing.T, rbacConfig *types.RBACConfig, disableRBAC bool) *Server {
 	t.Helper()
 	logger := testutil.TestLogger()
 	config := &types.ServerConfig{
@@ -26,6 +32,7 @@ func newAsUserTestServer(t *testing.T, rbacConfig *types.RBACConfig) *Server {
 			"bob":   {Password: "unused"},
 		},
 	}
+	config.Security.UnsafeDisableRBAC = disableRBAC
 	rbacManager, err := rbac.NewRBACHandler(logger, rbacConfig, config)
 	if err != nil {
 		t.Fatalf("new rbac manager: %v", err)
@@ -38,7 +45,7 @@ func newAsUserTestServer(t *testing.T, rbacConfig *types.RBACConfig) *Server {
 }
 
 func TestAsUserRequiresRBAC(t *testing.T) {
-	server := newAsUserTestServer(t, &types.RBACConfig{Enabled: false})
+	server := newAsUserTestServerDisabled(t, &types.RBACConfig{}, true)
 
 	_, err := server.asUserRequestContext(context.Background(), "builtin:alice")
 	if err == nil || !strings.Contains(err.Error(), "RBAC is not enabled") {
@@ -47,7 +54,7 @@ func TestAsUserRequiresRBAC(t *testing.T) {
 }
 
 func TestAsUserContextAttribution(t *testing.T) {
-	server := newAsUserTestServer(t, &types.RBACConfig{Enabled: true})
+	server := newAsUserTestServer(t, &types.RBACConfig{})
 
 	ctx, err := server.asUserRequestContext(context.Background(), "builtin:alice")
 	if err != nil {
@@ -81,7 +88,7 @@ func TestAsUserContextAttribution(t *testing.T) {
 }
 
 func TestManagementHandlersEnforceConfigRead(t *testing.T) {
-	server := newAsUserTestServer(t, &types.RBACConfig{Enabled: true})
+	server := newAsUserTestServer(t, &types.RBACConfig{})
 	handler := &Handler{Logger: server.Logger, server: server}
 
 	ctx, err := server.asUserRequestContext(context.Background(), "builtin:bob")
@@ -108,7 +115,7 @@ func TestManagementHandlersEnforceConfigRead(t *testing.T) {
 }
 
 func TestSecretRevealRequiresCallerRBACPermission(t *testing.T) {
-	deniedServer := newAsUserTestServer(t, &types.RBACConfig{Enabled: true})
+	deniedServer := newAsUserTestServer(t, &types.RBACConfig{})
 	deniedCtx, err := deniedServer.asUserRequestContext(context.Background(), "builtin:bob")
 	if err != nil {
 		t.Fatalf("as user context: %v", err)
@@ -119,7 +126,6 @@ func TestSecretRevealRequiresCallerRBACPermission(t *testing.T) {
 	}
 
 	allowedServer := newAsUserTestServer(t, &types.RBACConfig{
-		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"revealer": {types.PermissionSecretReveal},
 		},
@@ -142,7 +148,7 @@ func TestSecretRevealRequiresCallerRBACPermission(t *testing.T) {
 
 	// With RBAC disabled, app approval remains the only permission gate, as it
 	// was before management API RBAC enforcement was enabled.
-	disabledServer := newAsUserTestServer(t, &types.RBACConfig{Enabled: false})
+	disabledServer := newAsUserTestServerDisabled(t, &types.RBACConfig{}, true)
 	plugin = &openrunAdminPlugin{server: disabledServer}
 	value, err = plugin.SecretReveal(system.WithTrustedOperation(context.Background()), pluginCall(types.ADMIN_USER, []any{"cleartext"}))
 	if err != nil || value != "cleartext" {
@@ -151,7 +157,7 @@ func TestSecretRevealRequiresCallerRBACPermission(t *testing.T) {
 }
 
 func TestAsUserValidation(t *testing.T) {
-	server := newAsUserTestServer(t, &types.RBACConfig{Enabled: true})
+	server := newAsUserTestServer(t, &types.RBACConfig{})
 
 	_, err := server.asUserRequestContext(context.Background(), "builtin:nosuchuser")
 	if err == nil || !strings.Contains(err.Error(), "is not configured") {
@@ -168,7 +174,6 @@ func TestAsUserValidation(t *testing.T) {
 
 func TestAsUserEnforcement(t *testing.T) {
 	server := newAsUserTestServer(t, &types.RBACConfig{
-		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"stopper": {types.PermissionServerStop},
 		},

@@ -44,7 +44,6 @@ func newMCPTestServer(t *testing.T) (*Server, func(t *testing.T, principal strin
 	})
 
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
 		Grants: []types.RBACGrant{
 			{Description: "alice dev", Users: []string{"builtin:alice"}, Roles: []string{"openrun-developer"},
 				Targets: []string{"/apps/**"}},
@@ -204,7 +203,7 @@ func TestMCPInvokerOpPolicy(t *testing.T) {
 	// invocation-time policy must refuse the call regardless of the cached
 	// tool list the client holds
 	server.getMCPServer()
-	server.staticConfig.Api.MCP.Disable = []string{"list_apps"}
+	server.staticConfig.Api.MCP.DisableApis = []string{"list_apps"}
 	session := connect(t, "builtin:alice", []string{"dev"}, nil)
 	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{
 		Name: "list_apps", Arguments: map[string]any{}})
@@ -214,11 +213,11 @@ func TestMCPInvokerOpPolicy(t *testing.T) {
 	if !result.IsError || !strings.Contains(callToolText(t, result), "disabled") {
 		t.Fatalf("disabled op must fail with a disabled error, got: %s", callToolText(t, result))
 	}
-	server.staticConfig.Api.MCP.Disable = nil
+	server.staticConfig.Api.MCP.DisableApis = nil
 }
 
 // TestMCPCatalogParity enforces that every registry operation is either an
-// MCP tool or an explicitly documented exclusion, so api.mcp enable works
+// MCP tool or an explicitly documented exclusion, so api.mcp enable_apis works
 // for every default-disabled op and the surface cannot silently drift
 func TestMCPCatalogParity(t *testing.T) {
 	server, _ := newMCPTestServer(t)
@@ -226,7 +225,7 @@ func TestMCPCatalogParity(t *testing.T) {
 	// Enable every default-disabled op so its tool registers
 	for op, entry := range apiRegistry {
 		if entry.MCPDisabled {
-			server.staticConfig.Api.MCP.Enable = append(server.staticConfig.Api.MCP.Enable, string(op))
+			server.staticConfig.Api.MCP.EnableApis = append(server.staticConfig.Api.MCP.EnableApis, string(op))
 		}
 	}
 	srv := server.buildMCPServer()
@@ -273,7 +272,7 @@ func TestMCPToolSchemasSnapshot(t *testing.T) {
 	server, _ := newMCPTestServer(t)
 	for op, entry := range apiRegistry {
 		if entry.MCPDisabled {
-			server.staticConfig.Api.MCP.Enable = append(server.staticConfig.Api.MCP.Enable, string(op))
+			server.staticConfig.Api.MCP.EnableApis = append(server.staticConfig.Api.MCP.EnableApis, string(op))
 		}
 	}
 	srv := server.buildMCPServer()

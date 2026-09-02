@@ -1011,8 +1011,12 @@ default_format = "table"
 # Remote API surfaces for commander/test_apikey.yaml: REST over TCP + MCP,
 # bearer authenticated (openrun apikey), HTTPS only. external_url defaults to
 # security.callback_url set above
-[api]
-enable = ["rest", "mcp"]
+[api.rest]
+enable = true
+auth = ["builtin", "admin"]
+
+[api.mcp]
+enable = true
 auth = ["builtin", "admin"]
 
 # Out-of-process Starlark plugin provider (store.ex), exercised by

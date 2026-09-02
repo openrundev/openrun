@@ -116,7 +116,7 @@ func runLoginFlow(cCtx *cli.Context, clientConfig *types.ClientConfig, serverUrl
 		Resource string `json:"resource"`
 	}
 	if err := fetchJSON(httpClient, serverUrl+"/.well-known/oauth-protected-resource/rest", &prm); err != nil {
-		return fmt.Errorf("server does not advertise the rest API surface (is [api] enable set?): %w", err)
+		return fmt.Errorf("server does not advertise the rest API surface (is [api.rest] enable set?): %w", err)
 	}
 	var metadata oauthServerMetadata
 	if err := fetchJSON(httpClient, serverUrl+"/.well-known/oauth-authorization-server", &metadata); err != nil {

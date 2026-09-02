@@ -62,11 +62,10 @@ tests:
           return f"<h1>Todo</h1><ul>{items}</ul>"
       EOF
 
-  todoflow0020: # --as fails while RBAC is not enabled: without enforcement the
-    # call would silently run with full admin authority (checked before the
-    # user lookup, so the user does not need to exist yet)
+  todoflow0020: # RBAC is always on, so --as is available immediately; an
+    # unknown builtin user is rejected at the user lookup
     command: ../openrun --as builtin:tododev app list
-    stderr: "RBAC is not enabled"
+    stderr: "is not configured"
     exit-code: 1
 
   todoflow0040: # enable RBAC: the todo-team group gets the flow's permissions,
@@ -78,7 +77,6 @@ tests:
       {
         "version_id": "force",
         "rbac": {
-          "enabled": true,
           "groups": {},
           "roles": {
             "todo-dev": ["app:create", "app:read", "app:reload",
@@ -207,25 +205,33 @@ tests:
     command: ../openrun --as builtin:tododev app delete /todo1
     exit-code: 0
 
-  todoflow0220: # disable RBAC again
+  todoflow0220: # restore the default RBAC config (RBAC is always on; the
+    # default grant gives every principal app access and read)
     command: |
       cat > todo_rbac.json <<EOF
       {
         "version_id": "force",
         "rbac": {
-          "enabled": false,
           "groups": {},
           "roles": {},
-          "grants": []
+          "grants": [
+            {
+              "description": "Default: authenticated principals can access and list apps",
+              "users": ["*"],
+              "roles": ["openrun-user"],
+              "targets": ["all"]
+            }
+          ]
         }
       }
       EOF
       ../openrun server update-config --force todo_rbac.json
     exit-code: 0
 
-  todoflow0230: # --as stops working as soon as RBAC is disabled
+  todoflow0230: # the config replacement wiped the dynamically added tododev
+    # user entry, so --as rejects it again
     command: ../openrun --as builtin:tododev app list
-    stderr: "RBAC is not enabled"
+    stderr: "is not configured"
     exit-code: 1
 
   todoflow9999: # cleanup (admin). The tododev user was already wiped by the

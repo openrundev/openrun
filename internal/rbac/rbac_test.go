@@ -22,7 +22,6 @@ func TestNewRBACHandler(t *testing.T) {
 		{
 			name: "valid config",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 					"admins":     {"group:developers", "user3"},
@@ -45,7 +44,6 @@ func TestNewRBACHandler(t *testing.T) {
 		{
 			name: "invalid group reference",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"group:nonexistent"},
 				},
@@ -57,8 +55,7 @@ func TestNewRBACHandler(t *testing.T) {
 		{
 			name: "invalid role reference",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {"role:nonexistent"},
 				},
@@ -69,17 +66,15 @@ func TestNewRBACHandler(t *testing.T) {
 		{
 			name: "nil config",
 			rbacConfig: &types.RBACConfig{
-				Enabled: false,
-				Groups:  nil,
-				Roles:   nil,
-				Grants:  nil,
+				Groups: nil,
+				Roles:  nil,
+				Grants: nil,
 			},
 			expectError: false,
 		},
 		{
 			name: "circular group reference",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"group1": {"group:group2"},
 					"group2": {"group:group1"},
@@ -92,8 +87,7 @@ func TestNewRBACHandler(t *testing.T) {
 		{
 			name: "circular role reference",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"role1": {"role:role2"},
 					"role2": {"role:role1"},
@@ -150,12 +144,11 @@ func TestAuthorizeAccess(t *testing.T) {
 		expectError    bool
 	}{
 		{
-			name: "rbac disabled - should authorize all",
-			rbacConfig: &types.RBACConfig{
-				Enabled: false,
-			},
+			name:       "rbac disabled - should authorize all",
+			rbacConfig: &types.RBACConfig{},
 			serverConfig: &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+				Security:     types.SecurityConfig{UnsafeDisableRBAC: true},
 			},
 			user:           "anyuser",
 			appPathDomain:  types.AppPathDomain{Path: "/test", Domain: ""},
@@ -166,10 +159,9 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "admin user - should always authorize",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
-				Roles:   map[string][]types.RBACPermission{},
-				Grants:  []types.RBACGrant{},
+				Groups: map[string][]string{},
+				Roles:  map[string][]types.RBACPermission{},
+				Grants: []types.RBACGrant{},
 			},
 			serverConfig: &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
@@ -185,10 +177,9 @@ func TestAuthorizeAccess(t *testing.T) {
 			// a non-prefixed app with no grant denies access
 			name: "non-rbac auth setting - enforced, no grant denies",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
-				Roles:   map[string][]types.RBACPermission{},
-				Grants:  []types.RBACGrant{},
+				Groups: map[string][]string{},
+				Roles:  map[string][]types.RBACPermission{},
+				Grants: []types.RBACGrant{},
 			},
 			serverConfig: &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
@@ -202,8 +193,7 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "valid user with matching grant",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -228,8 +218,7 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "user not in grant",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -254,7 +243,6 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "user in group with matching grant",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -282,8 +270,7 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "role hierarchy - user with inherited permission",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess, "role:read"},
@@ -309,8 +296,7 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "target glob matching",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -335,8 +321,7 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "target glob not matching",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -361,8 +346,7 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "domain matching",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -387,8 +371,7 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "domain not matching",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -413,8 +396,7 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "multiple grants - first match",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess},
@@ -446,8 +428,7 @@ func TestAuthorizeAccess(t *testing.T) {
 		{
 			name: "empty user",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -516,7 +497,6 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 		{
 			name: "user in nested group",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1"},
 					"seniors":    {"group:developers", "user2"},
@@ -542,7 +522,6 @@ func TestAuthorizeAccessWithGroupHierarchy(t *testing.T) {
 		{
 			name: "user not in nested group",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1"},
 					"seniors":    {"group:developers", "user2"},
@@ -608,8 +587,7 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 		{
 			name: "user with inherited role permission",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess, "role:read"},
@@ -632,8 +610,7 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 		{
 			name: "user with inherited role permission - access",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read":  {types.PermissionRead},
 					"write": {types.PermissionAccess, "role:read"},
@@ -656,8 +633,7 @@ func TestAuthorizeAccessWithRoleHierarchy(t *testing.T) {
 		{
 			name: "user without required permission",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -708,8 +684,7 @@ func TestAuthorizeAccessWithDynamicGroups(t *testing.T) {
 	t.Parallel()
 
 	rbacConfig := &types.RBACConfig{
-		Enabled: true,
-		Groups:  map[string][]string{},
+		Groups: map[string][]string{},
 		Roles: map[string][]types.RBACPermission{
 			"read": {types.PermissionRead},
 		},
@@ -763,7 +738,6 @@ func TestAuthorizeAccessWithDynamicAndConfiguredGroups(t *testing.T) {
 	t.Parallel()
 
 	rbacConfig := &types.RBACConfig{
-		Enabled: true,
 		Groups: map[string][]string{
 			"devs": {"user2"},
 		},
@@ -830,7 +804,6 @@ func TestUpdateRBACConfig(t *testing.T) {
 		{
 			name: "valid update",
 			initialConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1"},
 				},
@@ -840,7 +813,6 @@ func TestUpdateRBACConfig(t *testing.T) {
 				Grants: []types.RBACGrant{},
 			},
 			updateConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 					"admins":     {"user3"},
@@ -863,13 +835,11 @@ func TestUpdateRBACConfig(t *testing.T) {
 		{
 			name: "invalid group reference in update",
 			initialConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
-				Roles:   map[string][]types.RBACPermission{},
-				Grants:  []types.RBACGrant{},
+				Groups: map[string][]string{},
+				Roles:  map[string][]types.RBACPermission{},
+				Grants: []types.RBACGrant{},
 			},
 			updateConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"group:nonexistent"},
 				},
@@ -881,7 +851,6 @@ func TestUpdateRBACConfig(t *testing.T) {
 		{
 			name: "disable rbac",
 			initialConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1"},
 				},
@@ -891,10 +860,9 @@ func TestUpdateRBACConfig(t *testing.T) {
 				Grants: []types.RBACGrant{},
 			},
 			updateConfig: &types.RBACConfig{
-				Enabled: false,
-				Groups:  map[string][]string{},
-				Roles:   map[string][]types.RBACPermission{},
-				Grants:  []types.RBACGrant{},
+				Groups: map[string][]string{},
+				Roles:  map[string][]types.RBACPermission{},
+				Grants: []types.RBACGrant{},
 			},
 			expectError: false,
 		},
@@ -946,7 +914,6 @@ func TestAuthorizeAccessConcurrency(t *testing.T) {
 	t.Parallel()
 
 	rbacConfig := &types.RBACConfig{
-		Enabled: true,
 		Groups: map[string][]string{
 			"developers": {"user1", "user2"},
 		},
@@ -1012,7 +979,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 
 		// RBAC applies to every app when enabled, so a non-prefixed app with no
 		// grant denies app-level (custom) permissions too
-		rbacConfig := &types.RBACConfig{Enabled: true}
+		rbacConfig := &types.RBACConfig{}
 		rbacManager, err := NewRBACHandler(logger, rbacConfig, serverConfig)
 		if err != nil {
 			t.Fatalf("failed to create RBACManager: %v", err)
@@ -1032,8 +999,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 		t.Parallel()
 
 		rbacConfig := &types.RBACConfig{
-			Enabled: true,
-			Groups:  map[string][]string{},
+			Groups: map[string][]string{},
 			Roles: map[string][]types.RBACPermission{
 				"read": {types.PermissionRead},
 			},
@@ -1066,8 +1032,7 @@ func TestAuthorizeAppLevelPermissions(t *testing.T) {
 		t.Parallel()
 
 		rbacConfig := &types.RBACConfig{
-			Enabled: true,
-			Groups:  map[string][]string{},
+			Groups: map[string][]string{},
 			Roles: map[string][]types.RBACPermission{
 				"actor": {types.RBACPermission("custom:action_run")},
 			},
@@ -1109,7 +1074,6 @@ func TestValidateGrants(t *testing.T) {
 		{
 			name: "valid grants with direct users and roles",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 					"admins":     {"user3"},
@@ -1138,7 +1102,6 @@ func TestValidateGrants(t *testing.T) {
 		{
 			name: "valid grants with group references",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 					"admins":     {"user3"},
@@ -1161,7 +1124,6 @@ func TestValidateGrants(t *testing.T) {
 		{
 			name: "valid grants with mixed users and groups",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -1182,7 +1144,6 @@ func TestValidateGrants(t *testing.T) {
 		{
 			name: "valid grant - undefined group reference (no longer validated)",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -1203,7 +1164,6 @@ func TestValidateGrants(t *testing.T) {
 		{
 			name: "invalid grant - undefined role reference",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -1225,7 +1185,6 @@ func TestValidateGrants(t *testing.T) {
 		{
 			name: "valid grant - multiple undefined group references (no longer validated)",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -1246,7 +1205,6 @@ func TestValidateGrants(t *testing.T) {
 		{
 			name: "invalid grant - multiple undefined role references",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -1268,7 +1226,6 @@ func TestValidateGrants(t *testing.T) {
 		{
 			name: "valid grants - multiple grants with undefined group (no longer validated)",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -1295,7 +1252,6 @@ func TestValidateGrants(t *testing.T) {
 		{
 			name: "empty grants - should be valid",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -1309,7 +1265,6 @@ func TestValidateGrants(t *testing.T) {
 		{
 			name: "grants with empty users and roles - should be valid",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -1328,21 +1283,20 @@ func TestValidateGrants(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "rbac disabled - should be valid regardless of grants",
+			name: "invalid grant is rejected (validation is always on)",
 			rbacConfig: &types.RBACConfig{
-				Enabled: false,
-				Groups:  map[string][]string{},
-				Roles:   map[string][]types.RBACPermission{},
+				Groups: map[string][]string{},
+				Roles:  map[string][]types.RBACPermission{},
 				Grants: []types.RBACGrant{
 					{
-						Description: "invalid grant but rbac disabled",
+						Description: "invalid grant",
 						Users:       []string{"group:nonexistent"},
 						Roles:       []string{"nonexistent"},
 						Targets:     []string{"/test"},
 					},
 				},
 			},
-			expectError: false,
+			expectError: true,
 		},
 	}
 
@@ -1395,8 +1349,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "regex matches user in grant",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1418,8 +1371,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "regex does not match user in grant",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1441,8 +1393,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "regex with email pattern",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1464,8 +1415,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "regex with email pattern - no match",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1487,8 +1437,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "multiple regex patterns - first matches",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1510,8 +1459,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "multiple regex patterns - second matches",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1533,8 +1481,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "mixed regex and direct users",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1556,7 +1503,6 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "mixed regex, groups and direct users",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -1581,8 +1527,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "regex with special characters",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1604,8 +1549,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "case sensitive regex",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1627,8 +1571,7 @@ func TestRegexSupportInGrants(t *testing.T) {
 		{
 			name: "case insensitive regex",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1698,7 +1641,6 @@ func TestRegexSupportInGroups(t *testing.T) {
 		{
 			name: "regex in group definition",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"regex:^dev_.*", "user1"},
 				},
@@ -1723,7 +1665,6 @@ func TestRegexSupportInGroups(t *testing.T) {
 		{
 			name: "regex in nested group definition",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"juniors": {"regex:^jr_.*"},
 					"seniors": {"regex:^sr_.*", "group:juniors"},
@@ -1749,7 +1690,6 @@ func TestRegexSupportInGroups(t *testing.T) {
 		{
 			name: "regex in nested group - senior user",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"juniors": {"regex:^jr_.*"},
 					"seniors": {"regex:^sr_.*", "group:juniors"},
@@ -1775,7 +1715,6 @@ func TestRegexSupportInGroups(t *testing.T) {
 		{
 			name: "regex in group does not match",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"regex:^dev_.*"},
 				},
@@ -1800,7 +1739,6 @@ func TestRegexSupportInGroups(t *testing.T) {
 		{
 			name: "multiple regex patterns in group",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"staff": {"regex:^dev_.*", "regex:^qa_.*", "regex:^pm_.*"},
 				},
@@ -1870,8 +1808,7 @@ func TestRegexValidation(t *testing.T) {
 		{
 			name: "invalid regex in grant - missing closing bracket",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1890,8 +1827,7 @@ func TestRegexValidation(t *testing.T) {
 		{
 			name: "invalid regex in grant - unmatched parenthesis",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1910,7 +1846,6 @@ func TestRegexValidation(t *testing.T) {
 		{
 			name: "invalid regex in group",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"regex:^dev_[.*"},
 				},
@@ -1925,8 +1860,7 @@ func TestRegexValidation(t *testing.T) {
 		{
 			name: "valid complex regex in grant",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1944,7 +1878,6 @@ func TestRegexValidation(t *testing.T) {
 		{
 			name: "valid complex regex in group",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"emails": {"regex:^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
 				},
@@ -1958,8 +1891,7 @@ func TestRegexValidation(t *testing.T) {
 		{
 			name: "empty regex pattern in grant",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -1977,8 +1909,7 @@ func TestRegexValidation(t *testing.T) {
 		{
 			name: "multiple invalid regexes in grant",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -2035,7 +1966,6 @@ func TestRegexCaching(t *testing.T) {
 
 	// Test that regex patterns are compiled once and cached
 	rbacConfig := &types.RBACConfig{
-		Enabled: true,
 		Groups: map[string][]string{
 			"developers": {"regex:^dev_.*"},
 		},
@@ -2086,8 +2016,7 @@ func TestRegexWithDynamicGroups(t *testing.T) {
 	t.Parallel()
 
 	rbacConfig := &types.RBACConfig{
-		Enabled: true,
-		Groups:  map[string][]string{},
+		Groups: map[string][]string{},
 		Roles: map[string][]types.RBACPermission{
 			"read": {types.PermissionRead},
 		},
@@ -2149,7 +2078,6 @@ func TestRegexUpdateConfig(t *testing.T) {
 	t.Parallel()
 
 	initialConfig := &types.RBACConfig{
-		Enabled: true,
 		Groups: map[string][]string{
 			"developers": {"regex:^dev_.*"},
 		},
@@ -2187,7 +2115,6 @@ func TestRegexUpdateConfig(t *testing.T) {
 
 	// Update config with different regex
 	updatedConfig := &types.RBACConfig{
-		Enabled: true,
 		Groups: map[string][]string{
 			"developers": {"regex:^admin_.*"},
 		},
@@ -2234,6 +2161,7 @@ func TestGetCustomPermissions(t *testing.T) {
 	tests := []struct {
 		name          string
 		rbacConfig    *types.RBACConfig
+		disableRBAC   bool
 		user          string
 		appPathDomain types.AppPathDomain
 		groups        []string
@@ -2243,8 +2171,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "no custom permissions defined",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"read": {types.PermissionRead},
 				},
@@ -2257,10 +2184,10 @@ func TestGetCustomPermissions(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			name: "rbac disabled - returns all custom permissions",
+			name:        "rbac disabled - returns all custom permissions",
+			disableRBAC: true,
 			rbacConfig: &types.RBACConfig{
-				Enabled: false,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
 				},
@@ -2275,8 +2202,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "admin user - returns all custom permissions",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
 				},
@@ -2291,8 +2217,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user with all custom permissions granted",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
 				},
@@ -2314,8 +2239,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user with some custom permissions granted",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"runner":  {types.RBACPermission("custom:action_run")},
 					"deleter": {types.RBACPermission("custom:action_delete")},
@@ -2345,8 +2269,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user with no custom permissions granted",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
 				},
@@ -2368,7 +2291,6 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user in group with custom permissions",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
 				Groups: map[string][]string{
 					"developers": {"user1", "user2"},
 				},
@@ -2393,8 +2315,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user with custom permissions via dynamic groups",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
 				},
@@ -2416,8 +2337,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user with custom permissions via regex",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
 				},
@@ -2439,8 +2359,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user with custom permissions but wrong target",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
 				},
@@ -2462,8 +2381,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user with custom permissions - glob target matching",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"actor": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
 				},
@@ -2485,8 +2403,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user with mixed standard and custom permissions",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"reader": {types.PermissionRead, types.PermissionAccess},
 					"actor":  {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
@@ -2509,8 +2426,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "multiple roles with overlapping custom permissions",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"runner":  {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_delete")},
 					"updater": {types.RBACPermission("custom:action_run"), types.RBACPermission("custom:action_update")},
@@ -2539,8 +2455,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user with custom permissions and domain matching",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"actor": {types.RBACPermission("custom:action_run")},
 				},
@@ -2562,8 +2477,7 @@ func TestGetCustomPermissions(t *testing.T) {
 		{
 			name: "user with custom permissions but domain not matching",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"actor": {types.RBACPermission("custom:action_run")},
 				},
@@ -2591,6 +2505,7 @@ func TestGetCustomPermissions(t *testing.T) {
 			logger := testutil.TestLogger()
 			serverConfig := &types.ServerConfig{
 				GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+				Security:     types.SecurityConfig{UnsafeDisableRBAC: tt.disableRBAC},
 			}
 
 			rbacManager, err := NewRBACHandler(logger, tt.rbacConfig, serverConfig)
@@ -2638,8 +2553,7 @@ func TestGetCustomPermissionsWithRoleHierarchy(t *testing.T) {
 	t.Parallel()
 
 	rbacConfig := &types.RBACConfig{
-		Enabled: true,
-		Groups:  map[string][]string{},
+		Groups: map[string][]string{},
 		Roles: map[string][]types.RBACPermission{
 			"runner": {types.RBACPermission("custom:action_run")},
 			"editor": {types.RBACPermission("custom:action_edit"), "role:runner"},
@@ -2692,7 +2606,6 @@ func TestGetCustomPermissionsWithGroupHierarchy(t *testing.T) {
 	t.Parallel()
 
 	rbacConfig := &types.RBACConfig{
-		Enabled: true,
 		Groups: map[string][]string{
 			"juniors": {"user1"},
 			"seniors": {"group:juniors"},
@@ -2753,18 +2666,16 @@ func TestGetCustomPermissionsEmpty(t *testing.T) {
 		{
 			name: "no roles defined",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
-				Roles:   map[string][]types.RBACPermission{},
-				Grants:  []types.RBACGrant{},
+				Groups: map[string][]string{},
+				Roles:  map[string][]types.RBACPermission{},
+				Grants: []types.RBACGrant{},
 			},
 			user: "user1",
 		},
 		{
 			name: "only standard permissions, no custom",
 			rbacConfig: &types.RBACConfig{
-				Enabled: true,
-				Groups:  map[string][]string{},
+				Groups: map[string][]string{},
 				Roles: map[string][]types.RBACPermission{
 					"reader": {types.PermissionRead, types.PermissionAccess},
 				},

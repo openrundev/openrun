@@ -48,7 +48,7 @@ tests:
       printf '%s\n' 'load("exec.in", "exec")' '' 'def handler(req):' '    ret = exec.run("echo", ["permit-ok"])' '    if ret.error:' '        return ret.error' '    return ret.value' '' 'app = ace.app("permit plugin", routes=[ace.api("/", type=ace.TEXT)], permissions=[ace.permission("exec.in", "run", ["echo"], permit=["plugin_exec"])])' > ./perms_plugin_permit/app.star
   perms0121: # Enable RBAC with app access, but without custom plugin permission
     command: |
-      ../openrun server show-config | jq '.rbac = {"enabled": true, "groups": {}, "roles": {"accessor": ["access"], "plugin_runner": ["custom:plugin_exec"]}, "grants": [{"description": "permit app access", "users": ["anonymous"], "roles": ["accessor"], "targets": ["/perms_plugin_permit"]}]}' > perms_rbac_config.json && ../openrun server update-config --force perms_rbac_config.json
+      ../openrun server show-config | jq '.rbac = {"groups": {}, "roles": {"accessor": ["access"], "plugin_runner": ["custom:plugin_exec"]}, "grants": [{"description": "permit app access", "users": ["anonymous"], "roles": ["accessor"], "targets": ["/perms_plugin_permit"]}]}' > perms_rbac_config.json && ../openrun server update-config --force perms_rbac_config.json
   perms0122: # Create app with plugin permit
     command: ../openrun app create --auth=rbac:none --approve ./perms_plugin_permit /perms_plugin_permit
     stdout: "permit=plugin_exec"
@@ -63,7 +63,7 @@ tests:
     stdout: "permit-ok"
   perms0126: # Reset RBAC config
     command: |
-      ../openrun server show-config | jq '.rbac = {"enabled": false, "groups": {}, "roles": {}, "grants": []}' > perms_rbac_config.json && ../openrun server update-config --force perms_rbac_config.json
+      ../openrun server show-config | jq '.rbac = {"groups": {}, "roles": {}, "grants": [{"description": "Default: authenticated principals can access and list apps", "users": ["*"], "roles": ["openrun-user"], "targets": ["all"]}]}' > perms_rbac_config.json && ../openrun server update-config --force perms_rbac_config.json
 
   # Test preview app
   # These tests depend on a commit which has the disk usage app set to write type for the fs plugin. If the app requires

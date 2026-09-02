@@ -93,7 +93,6 @@ To set the RBAC config, change to the `openrun` account by running `sudo su -l o
 {
   "version_id": "ver_33erDLffhaXjgibPb5GRb3anN0V",
   "rbac": {
-    "enabled": true,
     "groups": {
       "admin": ["google:me@example.com"],
       "family": ["google:family1@example.com", "google:family2@example.com"],

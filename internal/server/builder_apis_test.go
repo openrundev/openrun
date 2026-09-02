@@ -408,6 +408,16 @@ func TestBuilderStarlarkAPIs(t *testing.T) {
 	server, db, ctx := newApplyTestServer(t)
 	defer db.Close()
 
+	// The Starlark builder app serves as builder-user (enforced path, RBAC
+	// is enforcing by default). This test covers the API surface, not RBAC
+	// nuances: grant the admin role
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
+		Grants: []types.RBACGrant{{Description: "builder", Users: []string{"builder-user"},
+			Roles: []string{"openrun-admin"}, Targets: []string{"all"}}},
+	}); err != nil {
+		t.Fatalf("rbac config: %v", err)
+	}
+
 	home := t.TempDir()
 	t.Setenv("OPENRUN_HOME", home)
 	workspaceRoot := filepath.Join(home, "builder-workspaces")
@@ -482,7 +492,11 @@ func TestBuilderStarlarkAPIs(t *testing.T) {
 	serve := func(path string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/test"+path, nil)
-		req = req.WithContext(context.WithValue(req.Context(), types.USER_ID, session.UserID))
+		// USER_ID plus the per-request RBAC enforcement marker, matching what
+		// a real app request context carries (RBAC is enforcing by default)
+		reqCtx := context.WithValue(req.Context(), types.USER_ID, session.UserID)
+		reqCtx = context.WithValue(reqCtx, types.RBAC_ENABLED, true)
+		req = req.WithContext(reqCtx)
 		response := httptest.NewRecorder()
 		application.ServeHTTP(response, req)
 		return response

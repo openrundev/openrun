@@ -26,7 +26,7 @@ func newRouterTestServer(apiEnabled, redirectToHTTPS bool) (*types.ServerConfig,
 		},
 	}
 	if apiEnabled {
-		config.Api.Enable = []string{"rest"}
+		config.Api.Rest = types.ApiSurfaceConfig{Enable: true, Auth: []string{"admin"}}
 	}
 	logger := types.NewLogger(&types.LogConfig{
 		Level: "WARN",

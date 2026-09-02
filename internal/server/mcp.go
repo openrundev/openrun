@@ -41,12 +41,26 @@ preview the outcome first.`
 
 // getMCPServer returns the lazily built *mcp.Server; tools not enabled for
 // the MCP invoker (registry defaults + [api.mcp] config) are not registered,
-// and every tool re-checks invocation-time policy anyway
+// and every tool re-checks invocation-time policy anyway. A dynamic [api]
+// config change invalidates the built server so the tool set follows the
+// effective policy (invalidateMCPServer)
 func (s *Server) getMCPServer() *mcp.Server {
-	s.mcpOnce.Do(func() {
+	s.mcpMu.Lock()
+	defer s.mcpMu.Unlock()
+	if s.mcpServer == nil {
 		s.mcpServer = s.buildMCPServer()
-	})
+	}
 	return s.mcpServer
+}
+
+// invalidateMCPServer drops the built MCP server so the next request rebuilds
+// the tool set from the current effective [api] config. In-flight requests
+// keep their server instance; the SDK emits tools/list_changed on rebuild for
+// clients that track it
+func (s *Server) invalidateMCPServer() {
+	s.mcpMu.Lock()
+	defer s.mcpMu.Unlock()
+	s.mcpServer = nil
 }
 
 // mcpHTTPHandler authenticates the bearer credential for the mcp surface and
@@ -68,9 +82,10 @@ func (s *Server) mcpHTTPHandler() http.Handler {
 	})
 }
 
-// mcpServerState holds the lazily built MCP server, embedded in Server
+// mcpServerState holds the lazily built MCP server, embedded in Server. The
+// server is rebuilt after dynamic [api] config changes
 type mcpServerState struct {
-	mcpOnce   sync.Once
+	mcpMu     sync.Mutex
 	mcpServer *mcp.Server
 }
 

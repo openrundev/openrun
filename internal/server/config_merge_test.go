@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -406,5 +407,54 @@ func TestStructEntryValues(t *testing.T) {
 	}
 	if values["user_id"] != "git" || values["key_file_path"] != "/keys/k1" || values["password"] != "pw" {
 		t.Errorf("unexpected values: %v", values)
+	}
+}
+
+// TestStaticOnlySettingKeys verifies the dynamic-config write path rejects
+// static-only fields: any unsafe_* field, and fields tagged dynamic:"-"
+func TestStaticOnlySettingKeys(t *testing.T) {
+	staticOnly := [][2]string{
+		{"security", "unsafe_disable_rbac"},
+		{"security", "unsafe_allow_system_plugins_anon"},
+		{"security", "trusted_proxies"}, // dynamic:"-" tag
+	}
+	for _, pair := range staticOnly {
+		if !staticOnlySettingKey(pair[0], pair[1]) {
+			t.Errorf("%s %s must be static only", pair[0], pair[1])
+		}
+		if err := validateConfigValue(pair[0], pair[1], true); err == nil ||
+			!strings.Contains(err.Error(), "static openrun.toml config") {
+			t.Errorf("%s %s write must be rejected as static only, got %v", pair[0], pair[1], err)
+		}
+	}
+	for _, pair := range [][2]string{
+		{"security", "default_git_auth"},
+		{"security", "allowed_mounts"},
+		{"system", "default_domain"},
+		{"api", "enable"},
+		{"api", "external_url"},
+	} {
+		if staticOnlySettingKey(pair[0], pair[1]) {
+			t.Errorf("%s %s must stay dynamically settable", pair[0], pair[1])
+		}
+	}
+}
+
+// TestMergeSkipsStaticOnlySettings verifies a previously persisted value for
+// a static-only field does not apply during the merge
+func TestMergeSkipsStaticOnlySettings(t *testing.T) {
+	static := &types.ServerConfig{}
+	dynamic := &types.DynamicConfig{Settings: map[string]map[string]any{
+		"security": {"unsafe_disable_rbac": true, "default_git_auth": "gh"},
+	}}
+	effective, err := mergeDynamicConfig(testutil.TestLogger(), static, dynamic, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.Security.UnsafeDisableRBAC {
+		t.Fatal("persisted unsafe_disable_rbac must not apply from dynamic settings")
+	}
+	if effective.Security.DefaultGitAuth != "gh" {
+		t.Fatal("regular security settings must still merge")
 	}
 }

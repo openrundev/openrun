@@ -10,9 +10,11 @@ Role based access controls (RBAC) allows fine-grained control on which users are
 
 ## Authentication versus Authorization
 
-RBAC is used for multiple authorization checks, like `app:read` (view app info), `app:access` (access the app) and various update related actions. When RBAC is enabled at the system level, it applies to **every app**: a user needs an `app:access` grant to reach an app, in addition to passing the app's authentication. For example, if an app uses `google` for auth, a user who can log into the Google account still needs an `app:access` grant on the app to reach it. The `admin` user, and any user holding the `admin` permission, always have access.
+RBAC is used for multiple authorization checks, like `app:read` (view app info), `app:access` (access the app) and various update related actions. RBAC is **always on** and applies to **every app**: a user needs an `app:access` grant to reach an app, in addition to passing the app's authentication. The default configuration ships a default grant giving every authenticated principal (the `anonymous` user of `none`-auth apps included) the `openrun-user` role — `app:access` and `app:read` on all apps — so out of the box, a user can reach an app iff they can authenticate against it. Removing or narrowing that grant locks apps down; for example, if an app uses `google` for auth, a user who can log into the Google account still needs an `app:access` grant on the app to reach it. The `admin` user, and any user holding the `admin` permission, always have access.
 
-Management API calls made by app Starlark code are authorized as the authenticated request user, including read/list operations and mutations. List APIs filter out apps, services and bindings for which that user lacks the corresponding read permission. CLI calls over the unix domain socket are the transport-level administrative exception and run as trusted admin unless `--as` is used. Remote API calls (REST over TCP and MCP, enabled via `[api] enable`) authenticate with an API key and run as the key's user identity with RBAC enforced; enabling RBAC is a prerequisite for the remote API surfaces.
+RBAC enforcement cannot be disabled through the dynamic config. The static config flag `security.unsafe_disable_rbac` turns all enforcement off for dev/test setups; it cannot be set through the dynamic config API and it excludes the remote API surfaces (`[api.rest]`/`[api.mcp]` `enable` is rejected while it is set).
+
+Management API calls made by app Starlark code are authorized as the authenticated request user, including read/list operations and mutations. List APIs filter out apps, services and bindings for which that user lacks the corresponding read permission. CLI calls over the unix domain socket are the transport-level administrative exception and run as trusted admin unless `--as` is used. Remote API calls (REST over TCP and MCP, enabled via `[api] enable`) authenticate with an API key and run as the key's user identity with RBAC enforced.
 
 ## RBAC Configuration
 
@@ -22,7 +24,6 @@ The RBAC configuration is managed through [dynamic config]({{< ref "docs/configu
 {
   "version_id": "ver_32wLWdqboA08eCRDO1KEznxBxka",
   "rbac": {
-    "enabled": true,
     "groups": {
       "group1": ["github_local:abc", "oidc_oktatest:def@example.com"],
       "group2": ["group:group1", "oidc_oktatest:xyz@example.com"]
@@ -50,7 +51,7 @@ The RBAC configuration is managed through [dynamic config]({{< ref "docs/configu
 }
 ```
 
-If `enabled` is `false` (default), RBAC is not used. `groups` is a map of group name to group members. Members are user ids, prefixed with the auth provider name. Group composition is supported, for example group2 includes all group1 users. `roles` is a map of role name to permissions. Roles also can be composed, for example role `fullaccess` gets all permissions of role `accessor`.
+`groups` is a map of group name to group members. Members are user ids, prefixed with the auth provider name. Group composition is supported, for example group2 includes all group1 users. `roles` is a map of role name to permissions. Roles also can be composed, for example role `fullaccess` gets all permissions of role `accessor`.
 
 ## Built-in Roles
 
@@ -67,7 +68,7 @@ In addition to any roles you define, OpenRun ships a set of built-in roles that 
 
 `secret:reveal` (reading back stored secret values) and `binding:reveal` (reading back binding account credentials with `binding show-account`) are not included in any built-in role other than `openrun-admin` (whose `admin` permission bypasses every check). Users who need to read these values back must be granted `secret:reveal` / `binding:reveal` explicitly.
 
-Users have no permissions by default. Grants have to be added for each permission. A grant has a:
+Beyond the default grant (the `openrun-user` role for every principal), users have no permissions. Grants have to be added for each additional permission. The grant list can never be emptied through a dynamic config update: at least one grant is required while RBAC is enforced (an empty list would lock every user except `admin` out of every app). A grant has a:
 
 - `description` which is a note about the grant
 - `users` which is list of users or groups
@@ -125,7 +126,7 @@ openrun --as builtin:alice app list
 openrun --as builtin:alice service create --config url=... postgres/teamdb
 ```
 
-The call is authorized against the named user's current grants instead of running as the trusted `admin`, and audit events record that user. `--as` requires RBAC to be enabled and works only over the unix domain socket (the caller is already the administrator; impersonation only ever narrows authority, no password is needed). For `builtin:` users the entry must exist and its groups feed `group:` matching; any other `<provider>:<username>` id (like `github:user1`) is taken literally with no groups, so grants for SSO identities can be tested without creating the users.
+The call is authorized against the named user's current grants instead of running as the trusted `admin`, and audit events record that user. `--as` works only over the unix domain socket (the caller is already the administrator; impersonation only ever narrows authority, no password is needed). For `builtin:` users the entry must exist and its groups feed `group:` matching; any other `<provider>:<username>` id (like `github:user1`) is taken literally with no groups, so grants for SSO identities can be tested without creating the users.
 
 ## Regex User Name
 
@@ -141,12 +142,12 @@ Permissions like `access`, `list`, `update` etc are OpenRun-defined permissions.
 - `X-Openrun-Perms`: The list of custom permissions available to this user on this app. The list is comma-separated, without the `custom:` prefix, like `appread,appdelete`.
 - `X-Openrun-Rbac-Enabled`: Whether RBAC is enabled for the app, `true` or `false`
 
-For [Action apps]({{< ref "Actions" >}}), custom perms can be used to limit which user can perform what operations. In the action definition, adding `permit=['appread']` means that the action will be available only to users who have any one of the custom permissions specified in the list. The default action should be available to everyone, other actions can be controlled using custom permissions. If no permits are set or if RBAC is not enabled for the app, then all actions are available to authenticated users.
+For [Action apps]({{< ref "Actions" >}}), custom perms can be used to limit which user can perform what operations. In the action definition, adding `permit=['appread']` means that the action will be available only to users who have any one of the custom permissions specified in the list. The default action should be available to everyone, other actions can be controlled using custom permissions. If no permits are set, all actions are available to authenticated users.
 
-Plugin calls can use the same custom permissions with `ace.permission(..., permit=['appread'])`. When RBAC is enabled for the app, the call is allowed only if the user has at least one listed custom permission. If the permit list is empty or RBAC is not enabled, plugin permissions behave normally.
+Plugin calls can use the same custom permissions with `ace.permission(..., permit=['appread'])`. The call is allowed only if the user has at least one listed custom permission. If the permit list is empty, plugin permissions behave normally. Custom permissions require grants like any other permission (with `security.unsafe_disable_rbac`, every custom permission is granted to everyone).
 
 ## Notes
 
-- When RBAC is enabled, it applies to every app: users need an `app:access` grant to reach an app. (The `rbac:` auth prefix is still accepted for backward compatibility but no longer has any special effect.)
+- RBAC applies to every app: users need an `app:access` grant to reach an app (the default grant provides it to every authenticated principal). The `rbac:` auth prefix is still accepted for backward compatibility but no longer has any special effect.
 - Updates using the CLI client are done as the `admin` system user. There are no RBAC restrictions on the `admin`.
 - For apps with no authentication (using `none` auth), the user ID to use in RBAC is `anonymous`, without the auth type prefix.

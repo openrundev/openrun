@@ -148,6 +148,10 @@ func TestMetadata_MigrateLinkedAppPathsBackfillsInternalApps(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	_, err = db.Exec(`create table app_files(appid text, version int, name text, sha text, uncompressed_size int, create_time datetime, primary key(appid, version, name))`)
 	testutil.AssertNoError(t, err)
+	// Real version 11 databases have the config table (created in the v6
+	// migration); the v26 RBAC migration reads it
+	_, err = db.Exec(`create table config(version_id text, user_id text, update_time datetime, config json)`)
+	testutil.AssertNoError(t, err)
 	_, err = db.Exec(`insert into apps(id, path, domain, source_url, is_dev, main_app, user_id, create_time, update_time, settings, metadata) values
 		('app_prd_1', '/prod', '', 'https://example.com/repo.git', false, '', 'u1', datetime('now'), datetime('now'), '{}', '{}'),
 		('app_prd_abc', '/abc', '', 'https://example.com/repo.git', false, '', 'u1', datetime('now'), datetime('now'), '{}', '{}'),
@@ -553,9 +557,7 @@ func TestMetadata_ConfigAndKV(t *testing.T) {
 
 	configV1 := &types.DynamicConfig{
 		VersionId: "v1",
-		RBAC: types.RBACConfig{
-			Enabled: true,
-		},
+		RBAC:      types.RBACConfig{},
 	}
 	testutil.AssertNoError(t, m.InitConfig(ctx, "u1", configV1))
 
@@ -566,9 +568,7 @@ func TestMetadata_ConfigAndKV(t *testing.T) {
 
 	configV2 := &types.DynamicConfig{
 		VersionId: "v2",
-		RBAC: types.RBACConfig{
-			Enabled: false,
-		},
+		RBAC:      types.RBACConfig{},
 	}
 	err = m.UpdateConfig(ctx, "u2", "missing-version", configV2)
 	testutil.AssertErrorContains(t, err, "no config entry found with version id for update")
@@ -731,8 +731,8 @@ func TestMetadata_ConfigHistoryDraftAndAtomicDelete(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	v1 := &types.DynamicConfig{VersionId: "history-v1", RBAC: types.RBACConfig{Enabled: true}}
-	v2 := &types.DynamicConfig{VersionId: "history-v2", RBAC: types.RBACConfig{Enabled: false}}
+	v1 := &types.DynamicConfig{VersionId: "history-v1", RBAC: types.RBACConfig{Groups: map[string][]string{"g1": {"u1"}}}}
+	v2 := &types.DynamicConfig{VersionId: "history-v2", RBAC: types.RBACConfig{}}
 	testutil.AssertNoError(t, m.InitConfig(ctx, "alice", v1))
 	testutil.AssertNoError(t, m.UpdateConfig(ctx, "bob", v1.VersionId, v2))
 
@@ -754,7 +754,7 @@ func TestMetadata_ConfigHistoryDraftAndAtomicDelete(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	draft := &types.ConfigDraft{
 		BaseVersion: v2.VersionId, DraftVersion: "draft-1", CreatedBy: "alice", UpdatedBy: "alice",
-		CreateTime: now, UpdateTime: now, RBAC: types.RBACConfig{Enabled: true},
+		CreateTime: now, UpdateTime: now, RBAC: types.RBACConfig{Groups: map[string][]string{"g1": {"u1"}}},
 	}
 	testutil.AssertNoError(t, m.SetConfigDraft(ctx, draft))
 	gotDraft, err := m.GetConfigDraft(ctx)

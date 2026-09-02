@@ -230,7 +230,10 @@ func (b *applyPendingGrantServiceBinding) RunCommand(context.Context, types.Bind
 
 func newApplyTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Context) {
 	t.Helper()
-	ctx := context.Background()
+	// Trusted context, matching the UDS path these credential-less test
+	// calls represent (RBAC is enforcing by default now; enforced-path tests
+	// build their own contexts)
+	ctx := system.WithTrustedOperation(context.Background())
 	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
 	config := &types.ServerConfig{
 		Metadata: types.MetadataConfig{
@@ -258,7 +261,7 @@ func newApplyTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Cont
 	}
 	server.secretsManager.Store(secretsManager)
 	server.apps = NewAppStore(logger, server)
-	rbacManager, err := rbac.NewRBACHandler(logger, &types.RBACConfig{Enabled: false}, config)
+	rbacManager, err := rbac.NewRBACHandler(logger, &types.RBACConfig{}, config)
 	if err != nil {
 		t.Fatalf("new rbac manager: %v", err)
 	}
@@ -1403,8 +1406,7 @@ func newSyncRBACTestServer(t *testing.T) (*Server, *metadata.Metadata, context.C
 	t.Helper()
 	server, db, ctx := newApplyTestServer(t)
 	rbacConfig := &types.RBACConfig{
-		Enabled: true,
-		Groups:  map[string][]string{},
+		Groups: map[string][]string{},
 		Roles: map[string][]types.RBACPermission{
 			"syncer": {types.PermissionSyncCreate, types.PermissionApply},
 			// apply+approve but no promote: a staging-first builder publisher
@@ -1529,8 +1531,7 @@ func TestSyncRBACSnapshotEnforcement(t *testing.T) {
 
 	// After the live config is widened, the frozen snapshot still denies
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
-		Roles:   map[string][]types.RBACPermission{"all": {"app:*", types.PermissionSyncCreate}},
+		Roles: map[string][]types.RBACPermission{"all": {"app:*", types.PermissionSyncCreate}},
 		Grants: []types.RBACGrant{{Description: "wide", Users: []string{"creator"},
 			Roles: []string{"all"}, Targets: []string{"all"}}},
 	}); err != nil {
@@ -1624,11 +1625,17 @@ func TestSyncRBACDisabledKillSwitch(t *testing.T) {
 		t.Fatal("expected snapshot to be stored")
 	}
 
-	// Disabling RBAC disables snapshot enforcement too: the same entry now
-	// runs unrestricted without being recreated
-	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{Enabled: false}); err != nil {
-		t.Fatalf("rbac config update: %v", err)
+	// Disabling enforcement (security.unsafe_disable_rbac) disables snapshot
+	// enforcement too: the same entry now runs unrestricted without being
+	// recreated. Enablement is fixed at construction, so swap in a manager
+	// built with the unsafe flag
+	disabledConfig := *server.staticConfig
+	disabledConfig.Security.UnsafeDisableRBAC = true
+	disabledManager, err := rbac.NewRBACHandler(server.Logger, &types.RBACConfig{}, &disabledConfig)
+	if err != nil {
+		t.Fatalf("disabled rbac manager: %v", err)
 	}
+	server.rbacManager = disabledManager
 	writeSyncApplyFile(t, applyPath, "/apps/allowed1", "/apps/denied")
 	jobCtx := server.attachSyncRBAC(newBackgroundOperationContext(entry.UserID), entry)
 	if server.rbacManager.APIEnforced(jobCtx) {
@@ -1688,7 +1695,6 @@ func TestApplyBindingRBAC(t *testing.T) {
 	registerApplyTestBinding(t, db, ctx)
 
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"apps-only": {types.PermissionApply},
 			"no-bind":   {types.PermissionApply, types.PermissionBindingCreate, types.PermissionBindingUpdate},
@@ -1756,7 +1762,6 @@ func TestBuilderPublishPathRBAC(t *testing.T) {
 	defer db.Close()
 
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
 		Roles: map[string][]types.RBACPermission{
 			"create-only": {types.PermissionCreate},
 			"manager":     {types.PermissionAppManage},
@@ -1910,8 +1915,7 @@ func TestBuilderEditableAppOwner(t *testing.T) {
 	// Create the app as an RBAC enforced user so it records the owner, then
 	// drop every grant: only the owner rule can authorize after this
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
-		Roles:   map[string][]types.RBACPermission{"applier": {types.PermissionApply}},
+		Roles: map[string][]types.RBACPermission{"applier": {types.PermissionApply}},
 		Grants: []types.RBACGrant{{Description: "applier", Users: []string{"owner-x"},
 			Roles: []string{"applier"}, Targets: []string{"all"}}},
 	}); err != nil {
@@ -1924,9 +1928,6 @@ func TestBuilderEditableAppOwner(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 	server.apps.ResetAllAppCache()
-	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{Enabled: true}); err != nil {
-		t.Fatalf("rbac config update: %v", err)
-	}
 
 	entry, err := server.builderEditableApp(rbacEnforcedCtx(ctx, "owner-x"), "/apps/owned1")
 	if err != nil {

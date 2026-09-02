@@ -32,7 +32,6 @@ func initAdminPlugin(server *Server) {
 					{Name: "create_sync", Type: sdk.WRITE, Method: "CreateSync"},
 					{Name: "run_sync", Type: sdk.WRITE, Method: "RunSync"},
 					{Name: "delete_sync", Type: sdk.WRITE, Method: "DeleteSync"},
-					{Name: "update_rbac_enabled", Type: sdk.WRITE, Method: "UpdateRBACEnabled"},
 					{Name: "set_rbac_group", Type: sdk.WRITE, Method: "SetRBACGroup"},
 					{Name: "delete_rbac_group", Type: sdk.WRITE, Method: "DeleteRBACGroup"},
 					{Name: "set_rbac_role", Type: sdk.WRITE, Method: "SetRBACRole"},

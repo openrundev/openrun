@@ -101,21 +101,24 @@ running container is counted in the containers tile:
 
 ## Role based access control
 
-The second flow enables RBAC from the console and walks a multi-team
+The second flow configures RBAC from the console and walks a multi-team
 setup: eng and finance teams with builtin-auth users, developers scoped
 to their team's paths, read-only users, and an operations group covering
 everything. Everything below is driven through the console UI.
 
 ### Configure and publish
 
-Without RBAC configured, every management call is admin-only:
+RBAC is always on. A fresh install has a single default grant giving
+every authenticated principal access to all apps, and every management
+call is admin-only:
 
 {{< theme-image light="/images/console_rbac/01-admin-rbac-initial-light.png" dark="/images/console_rbac/01-admin-rbac-initial-dark.png" alt="RBAC configuration page before any groups, roles or grants" >}}
 
-Groups, grants and the enable flag are staged as a draft: team developers
-get the openrun-developer role scoped to their team paths, domains,
-services and binding namespace; read-only users get openrun-user on the
-team apps; the ops group gets openrun-operator on all targets.
+The default grant is removed and the team grants are staged as a draft:
+team developers get the openrun-developer role scoped to their team
+paths, domains, services and binding namespace; read-only users get
+openrun-user on the team apps; the ops group gets openrun-operator on all
+targets.
 
 {{< theme-image light="/images/console_rbac/02-admin-rbac-staged-light.png" dark="/images/console_rbac/02-admin-rbac-staged-dark.png" alt="RBAC configuration with all grants staged as a draft" >}}
 

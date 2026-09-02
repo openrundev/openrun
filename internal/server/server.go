@@ -17,7 +17,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -261,48 +260,19 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	l.Info().Str("version", types.GetVersion()).Str("commit", types.GetCommit()).Msg("Initializing server")
 
 	// Validate the [api] section up front: surface names, override op names
-	// and the transport prerequisite for enabled remote surfaces
-	if err := validateApiConfig(config); err != nil {
+	// and the transport prerequisites for enabled remote surfaces. The same
+	// validation runs on every dynamic config update, since the [api]
+	// section is dynamically settable
+	if err := validateApiSurfaceConfig(config); err != nil {
 		return nil, err
 	}
-	if apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) || apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
-		if config.Https.Port == -1 && len(config.Security.TrustedProxies) == 0 {
-			return nil, fmt.Errorf("api.enable requires an HTTPS listener or security.trusted_proxies for a TLS-terminating proxy")
-		}
-		// The external url backs token resource URIs and the OAuth metadata;
-		// a server that would 404 discovery or fail login only after
-		// credentials are typed must not start
-		external := strings.TrimSuffix(cmp.Or(config.Api.ExternalUrl, config.Security.CallbackUrl), "/")
-		if external == "" {
-			return nil, fmt.Errorf("api.enable requires api.external_url (or security.callback_url): the canonical https origin for API tokens and OAuth metadata")
-		}
-		// OAuth endpoints and resource identifiers are built from this value
-		// by concatenation: it must be a plain https origin, or the
-		// discovery metadata comes out invalid
-		parsed, err := url.Parse(external)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
-			parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-			return nil, fmt.Errorf("api.external_url must be a plain https origin (https://host[:port], no path/query/fragment/userinfo), got %q", external)
-		}
-		for _, mechanism := range config.Api.Auth {
-			switch mechanism {
-			case "builtin", "admin":
-			default:
-				_, isOAuth := config.Auth[mechanism]
-				_, isSAML := config.SAML[mechanism]
-				if !isOAuth && !isSAML {
-					return nil, fmt.Errorf("api.auth: unknown login mechanism %q (valid: builtin, admin, or an [auth.*]/[saml.*] entry name)", mechanism)
-				}
-			}
-		}
-		if len(config.Api.Auth) == 0 {
-			l.Warn().Msg("api.auth is empty: the OAuth login flow (openrun login, MCP browser auth) is unavailable, API keys only")
-		}
-		if len(config.Api.MCP.Enable) > 0 {
-			// Operator opted dangerous operations back in for MCP: make it
-			// visible in the startup log
-			l.Warn().Strs("operations", config.Api.MCP.Enable).Msg("MCP default-disabled operations are ENABLED via api.mcp enable")
-		}
+	if apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) && len(config.Api.MCP.EnableApis) > 0 {
+		// Operator opted dangerous operations back in for MCP: make it
+		// visible in the startup log
+		l.Warn().Strs("operations", config.Api.MCP.EnableApis).Msg("MCP default-disabled operations are ENABLED via api.mcp enable_apis")
+	}
+	if config.Security.UnsafeDisableRBAC {
+		l.Warn().Msg("RBAC enforcement is DISABLED via security.unsafe_disable_rbac; every authenticated principal has full authority")
 	}
 
 	// Setup secrets manager
@@ -470,9 +440,11 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}
 
 	if server.dynamicConfig == nil || server.dynamicConfig.VersionId == "" {
-		// Initialize dynamic config if not already done
+		// Initialize dynamic config if not already done. A fresh install
+		// starts with the default RBAC config: enforcement is always on, and
+		// the default grant reproduces authenticated => app access
 		if server.dynamicConfig == nil {
-			server.dynamicConfig = &types.DynamicConfig{}
+			server.dynamicConfig = &types.DynamicConfig{RBAC: *rbac.DefaultConfig()}
 		}
 		server.dynamicConfig.VersionId = "ver_" + ksuid.New().String()
 		err = server.db.InitConfig(context.Background(), "admin", server.dynamicConfig)
@@ -507,7 +479,15 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 
 	server.rbacManager, err = rbac.NewRBACHandler(l, &server.dynamicConfig.RBAC, config)
 	if err != nil {
-		return nil, fmt.Errorf("error initializing rbac manager: %w", err)
+		// Fail secure, not fail open, and never block startup: enforcement
+		// stays on with the built-in default config (default grant +
+		// implicit admin) until the stored config is repaired over the UDS
+		// recovery path or as admin. The stored config is left untouched
+		l.Error().Err(err).Msg("stored RBAC config is INVALID; enforcing the built-in default RBAC config until it is repaired")
+		server.rbacManager, err = rbac.NewRBACHandler(l, rbac.DefaultConfig(), config)
+		if err != nil {
+			return nil, fmt.Errorf("error initializing rbac manager with the default config: %w", err)
+		}
 	}
 
 	// Start the sync runner (which includes the idle shutdown check) and the
@@ -741,6 +721,18 @@ func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicCo
 
 	previous := s.Config()
 
+	// The [api] section is dynamically settable and its surface checks run
+	// per request, so a dynamic update must satisfy the same prerequisites
+	// startup enforces (RBAC on, transport, external url, auth mechanisms).
+	// At startup a bad persisted value must not block the server: log and
+	// continue (the per-request gates keep the surface safe)
+	if err := validateApiSurfaceConfig(effective); err != nil {
+		if failOnBindError {
+			return fmt.Errorf("invalid api config, rejecting config update: %w", err)
+		}
+		s.Error().Err(err).Msg("dynamic api config is invalid, remote surfaces may be unavailable")
+	}
+
 	// The secret providers are initialized with their config, so a change
 	// rebuilds the manager. Building it validates the provider names and
 	// settings, so it runs first: a bad entry fails the whole update before
@@ -765,6 +757,13 @@ func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicCo
 	s.effectiveConfig.Store(effective)
 	if secretsManager != nil {
 		s.secretsManager.Store(secretsManager)
+	}
+
+	if !reflect.DeepEqual(previous.Api, effective.Api) {
+		// The MCP tool set snapshots [api.mcp] policy at build time: drop
+		// the built server so the next request rebuilds it with the new
+		// policy (invocation-time checks stay authoritative regardless)
+		s.invalidateMCPServer()
 	}
 
 	// If the auth callback domain changed to one that already has apps, those
@@ -854,6 +853,10 @@ func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.Dynam
 	if currentVersionId != newConfig.VersionId && !force {
 		// stale update
 		return nil, fmt.Errorf("config version id mismatch, expected %s, got %s", currentVersionId, newConfig.VersionId)
+	}
+
+	if err := s.validateRBACGrants(&newConfig.RBAC); err != nil {
+		return nil, err
 	}
 
 	newConfig.VersionId = "ver_" + ksuid.New().String()

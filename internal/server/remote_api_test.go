@@ -45,7 +45,8 @@ func newRemoteApiTestServer(t *testing.T) (*Server, *httptest.Server, func(t *te
 		"alice": {Password: "unused", Groups: []string{"dev"}},
 		"bob":   {Password: "unused"},
 	}
-	server.staticConfig.Api.Enable = []string{"rest", "mcp"}
+	server.staticConfig.Api.Rest = types.ApiSurfaceConfig{Enable: true, Auth: []string{"admin"}}
+	server.staticConfig.Api.MCP = types.ApiSurfaceConfig{Enable: true, Auth: []string{"admin"}}
 	server.staticConfig.System.DefaultDomain = "127.0.0.1"
 	if err := server.initAuditDB("sqlite:" + filepath.Join(t.TempDir(), "audit.db")); err != nil {
 		t.Fatalf("init audit db: %v", err)
@@ -67,7 +68,6 @@ func newRemoteApiTestServer(t *testing.T) (*Server, *httptest.Server, func(t *te
 	server.formLogin = formLogin
 
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
-		Enabled: true,
 		Grants: []types.RBACGrant{
 			{Description: "alice dev", Users: []string{"builtin:alice"}, Roles: []string{"openrun-developer"},
 				Targets: []string{"/apps/**"}},
@@ -204,30 +204,42 @@ func TestRemoteApiExpiredKey(t *testing.T) {
 }
 
 func TestRemoteApiRequiresRBAC(t *testing.T) {
-	server, ts, mintKey := newRemoteApiTestServer(t)
-
-	aliceKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:alice"})
-	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{Enabled: false}); err != nil {
-		t.Fatalf("rbac config update: %v", err)
+	// RBAC has no dynamic disable; the remote surfaces are excluded up
+	// front when the static security.unsafe_disable_rbac flag is set (the
+	// same validation runs at startup and on dynamic config updates)
+	config := &types.ServerConfig{}
+	config.Api.Rest = types.ApiSurfaceConfig{Enable: true, Auth: []string{"admin"}}
+	config.Api.MCP.Auth = []string{"admin"}
+	config.Api.ExternalUrl = "https://example.com"
+	config.Https.Port = 25223
+	config.Security.UnsafeDisableRBAC = true
+	err := validateApiSurfaceConfig(config)
+	if err == nil || !strings.Contains(err.Error(), "requires RBAC enforcement") {
+		t.Fatalf("an enabled surface with unsafe_disable_rbac must be rejected, got %v", err)
 	}
-	var response types.AppListResponse
-	err := remoteClient(ts, aliceKey).Get("/_openrun/apps", nil, &response)
-	if err == nil || !strings.Contains(err.Error(), "RBAC must be enabled") {
-		t.Fatalf("remote api without RBAC must be refused, got %v", err)
+	config.Security.UnsafeDisableRBAC = false
+	if err := validateApiSurfaceConfig(config); err != nil {
+		t.Fatalf("api config with RBAC enforcement must validate, got %v", err)
+	}
+	// Every surface needs at least one login mechanism, enabled or not
+	config.Api.MCP.Auth = nil
+	err = validateApiSurfaceConfig(config)
+	if err == nil || !strings.Contains(err.Error(), "api.mcp auth: at least one login mechanism") {
+		t.Fatalf("an empty auth list must be rejected, got %v", err)
 	}
 }
 
 func TestRemoteApiInvokerOpPolicy(t *testing.T) {
 	server, ts, mintKey := newRemoteApiTestServer(t)
 
-	server.staticConfig.Api.TCP.Disable = []string{"list_apps"}
+	server.staticConfig.Api.Rest.DisableApis = []string{"list_apps"}
 	aliceKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:alice"})
 	var response types.AppListResponse
 	err := remoteClient(ts, aliceKey).Get("/_openrun/apps", nil, &response)
 	if err == nil || !strings.Contains(err.Error(), "disabled") {
-		t.Fatalf("disabled op must be refused for tcp invoker, got %v", err)
+		t.Fatalf("disabled op must be refused for rest invoker, got %v", err)
 	}
-	server.staticConfig.Api.TCP.Disable = nil
+	server.staticConfig.Api.Rest.DisableApis = nil
 }
 
 func TestRemoteApiKeyManagement(t *testing.T) {

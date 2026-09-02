@@ -185,7 +185,7 @@ func apiCallerPrincipal(ctx context.Context) string {
 func apiCallerPrincipalChecked(ctx context.Context) (string, error) {
 	userId := system.GetContextUserId(ctx)
 	if userId == "" {
-		if invoker := system.GetContextApiInvoker(ctx); invoker == InvokerTCP || invoker == InvokerMCP {
+		if invoker := system.GetContextApiInvoker(ctx); invoker == InvokerRest || invoker == InvokerMCP {
 			return "", types.CreateRequestError(
 				"internal error: remote API call carries no identity", http.StatusInternalServerError)
 		}
@@ -576,11 +576,11 @@ func (s *Server) authenticateApiRequest(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return nil, nil, false
 	}
-	if !s.rbacManager.ConfigEnabled() {
-		http.Error(w, "RBAC must be enabled to use the remote management API", http.StatusForbidden)
-		return nil, nil, false
-	}
-	invoker := InvokerTCP
+	// RBAC enforcement is structurally guaranteed here: an enabled surface
+	// is rejected (startup and config update) when
+	// security.unsafe_disable_rbac is set, so an authenticated remote
+	// request always runs under RBAC
+	invoker := InvokerRest
 	if surface == ApiResourceMCP {
 		invoker = InvokerMCP
 	}

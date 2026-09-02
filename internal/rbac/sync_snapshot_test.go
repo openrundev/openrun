@@ -16,7 +16,6 @@ import (
 // entries, exercising everything the snapshot must capture
 func snapshotConfig() *types.RBACConfig {
 	return &types.RBACConfig{
-		Enabled: true,
 		Groups: map[string]([]string){
 			"devs":   {"user1", "regex:qa-.*"},
 			"nested": {"group:devs"},
@@ -50,7 +49,7 @@ func TestSnapshotUserGrants(t *testing.T) {
 		if err != nil || snap != nil {
 			t.Errorf("trusted ctx: expected nil snapshot, got %v err %v", snap, err)
 		}
-		disabledManager := newTestManager(t, &types.RBACConfig{Enabled: false})
+		disabledManager := newDisabledTestManager(t, &types.RBACConfig{})
 		snap, err = disabledManager.SnapshotUserGrants(context.Background())
 		if err != nil || snap != nil {
 			t.Errorf("rbac disabled: expected nil snapshot, got %v err %v", snap, err)

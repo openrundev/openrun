@@ -15,7 +15,6 @@ import (
 func benchManager(b *testing.B, enabled bool) *RBACManager {
 	b.Helper()
 	config := &types.RBACConfig{
-		Enabled: enabled,
 		Groups: map[string][]string{
 			"developers": {"user1", "user2", "user3", "regex:dev_.*"},
 			"ops":        {"user4", "group:developers"},
@@ -37,7 +36,8 @@ func benchManager(b *testing.B, enabled bool) *RBACManager {
 	// must not dominate the measurement
 	l := zerolog.Nop().Level(zerolog.WarnLevel)
 	logger := &types.Logger{Logger: &l}
-	serverConfig := &types.ServerConfig{GlobalConfig: types.GlobalConfig{AdminUser: "admin"}}
+	serverConfig := &types.ServerConfig{GlobalConfig: types.GlobalConfig{AdminUser: "admin"},
+		Security: types.SecurityConfig{UnsafeDisableRBAC: !enabled}}
 	manager, err := NewRBACHandler(logger, config, serverConfig)
 	if err != nil {
 		b.Fatalf("failed to create RBACManager: %v", err)
@@ -46,7 +46,7 @@ func benchManager(b *testing.B, enabled bool) *RBACManager {
 }
 
 // BenchmarkAuthorizeDisabled is the per-request app access check with RBAC
-// disabled (the default), run on every app request
+// enforcement disabled (security.unsafe_disable_rbac)
 func BenchmarkAuthorizeDisabled(b *testing.B) {
 	manager := benchManager(b, false)
 	target := types.AppPathDomain{Path: "/test/app1"}
