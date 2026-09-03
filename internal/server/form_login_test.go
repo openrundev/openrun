@@ -363,37 +363,37 @@ func TestSessionAuthPasswordChangeRevokes(t *testing.T) {
 
 	// valid sessions authenticate
 	sysReq := makeSession("system", "admin", true)
-	if userId, _, ok := manager.sessionAuth(sysReq, "system"); !ok || userId != types.ADMIN_USER {
+	if userId, _, ok := manager.sessionAuth(httptest.NewRecorder(), sysReq, "system"); !ok || userId != types.ADMIN_USER {
 		t.Fatalf("system sessionAuth = (%q, %v), want admin", userId, ok)
 	}
 	aliceReq := makeSession("builtin", "alice", true)
-	if userId, groups, ok := manager.sessionAuth(aliceReq, "builtin"); !ok ||
+	if userId, groups, ok := manager.sessionAuth(httptest.NewRecorder(), aliceReq, "builtin"); !ok ||
 		userId != "builtin:alice" || len(groups) != 1 || groups[0] != "dev" {
 		t.Fatalf("builtin sessionAuth = (%q, %v, %v)", userId, groups, ok)
 	}
 
 	// a session without a fingerprint never authenticates
-	if _, _, ok := manager.sessionAuth(makeSession("builtin", "alice", false), "builtin"); ok {
+	if _, _, ok := manager.sessionAuth(httptest.NewRecorder(), makeSession("builtin", "alice", false), "builtin"); ok {
 		t.Error("session without a credential fingerprint must not authenticate")
 	}
 
 	// password changes revoke the existing sessions immediately
 	cfg.Security.AdminPasswordBcrypt = "$2a$10$adminhash2"
-	if _, _, ok := manager.sessionAuth(sysReq, "system"); ok {
+	if _, _, ok := manager.sessionAuth(httptest.NewRecorder(), sysReq, "system"); ok {
 		t.Error("system session must be revoked after an admin password change")
 	}
 	cfg.BuiltinAuth["alice"] = types.BuiltinAuthEntry{Password: "$2a$10$alicehash2", Groups: []string{"dev"}}
-	if _, _, ok := manager.sessionAuth(aliceReq, "builtin"); ok {
+	if _, _, ok := manager.sessionAuth(httptest.NewRecorder(), aliceReq, "builtin"); ok {
 		t.Error("builtin session must be revoked after a password change")
 	}
 
 	// user delete revokes as well
 	bobReq := makeSession("builtin", "bob", true)
-	if _, _, ok := manager.sessionAuth(bobReq, "builtin"); !ok {
+	if _, _, ok := manager.sessionAuth(httptest.NewRecorder(), bobReq, "builtin"); !ok {
 		t.Fatal("bob's session should authenticate before the delete")
 	}
 	delete(cfg.BuiltinAuth, "bob")
-	if _, _, ok := manager.sessionAuth(bobReq, "builtin"); ok {
+	if _, _, ok := manager.sessionAuth(httptest.NewRecorder(), bobReq, "builtin"); ok {
 		t.Error("session for a deleted user must not authenticate")
 	}
 }
@@ -628,7 +628,7 @@ func TestLoginTemplateRenders(t *testing.T) {
 	// browser password managers keep the credentials distinct
 	for _, authType := range []string{"system", "builtin"} {
 		w := httptest.NewRecorder()
-		manager.render(w, authType, "state123", "")
+		manager.render(w, authType, "state123", "", "")
 		body := w.Body.String()
 		if !strings.Contains(body, `name="state" value="state123"`) {
 			t.Errorf("%s: rendered page is missing the state field", authType)
@@ -669,7 +669,7 @@ func TestLoginTemplateRenders(t *testing.T) {
 
 	// expired variant: no form
 	w := httptest.NewRecorder()
-	manager.render(w, "", "", "")
+	manager.render(w, "", "", "", "")
 	expiredBody := w.Body.String()
 	if strings.Contains(expiredBody, "<form") {
 		t.Error("expired page must not render the credentials form")
@@ -681,6 +681,6 @@ func TestLoginTemplateRenders(t *testing.T) {
 
 func renderContains(manager *FormLoginManager, authType, state, errorMsg, want string) bool {
 	w := httptest.NewRecorder()
-	manager.render(w, authType, state, errorMsg)
+	manager.render(w, authType, state, errorMsg, "")
 	return strings.Contains(w.Body.String(), want)
 }

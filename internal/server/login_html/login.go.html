@@ -38,9 +38,16 @@
             </div>
           {{ end }}
           {{ if not .Data.State }}
-            <p class="text-sm text-base-content/70">
-              Go back to the app and reload the page to sign in again.
-            </p>
+            {{ if .Data.BackURL }}
+              <a href="{{ .Data.BackURL }}"
+                class="btn btn-primary w-full transition-transform duration-150 active:scale-95">
+                Sign in again
+              </a>
+            {{ else }}
+              <p class="text-sm text-base-content/70">
+                Go back to the app and reload the page to sign in again.
+              </p>
+            {{ end }}
           {{ else }}
           {{/* The system and builtin forms present distinct identities
              (action URL, field names/ids, autocomplete section) so browser

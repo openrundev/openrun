@@ -226,6 +226,10 @@ type Server struct {
 
 	stopRequested chan struct{}
 	startTime     time.Time
+
+	// generatedAdminPassword is the random admin password generated at startup
+	// when security.admin_password_bcrypt is unset; printed once by Start
+	generatedAdminPassword string
 	// cleanupVersionsCtx cancels version/file cleanup SQL during shutdown.
 	// cleanupVersionsMu is both the single-flight guard and shutdown join: the
 	// worker holds it for its lifetime, and Stop waits by locking it.
@@ -467,6 +471,15 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	err = server.SaveDynamicConfig(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("error saving dynamic config: %w", err)
+	}
+
+	// The admin account is set up on the static config BEFORE the dynamic
+	// merge: the effective config is a copy of the static one, so a generated
+	// password hash written here is carried into every effective config built
+	// later (including rebuilds on dynamic config changes) and is also what
+	// AdminBasicAuth, which holds the static config, verifies against
+	if server.generatedAdminPassword, err = server.setupAdminAccount(); err != nil {
+		return nil, err
 	}
 
 	// Merge the dynamic config entries over the static config and register any
@@ -1062,13 +1075,18 @@ func (s *Server) handleAppClose() {
 // that means admin account is not enabled. If AdminPasswordBcrypt is set, it will be used as
 // the password hash for the admin account. If AdminPasswordBcrypt is not set, a random password
 // will be generated for that server startup. The generated password will be printed to stdout.
+//
+// The hash is written to the STATIC config, so it must run before the first
+// dynamic config merge (every effective config is derived from the static one)
+// and it is what the AdminBasicAuth handler, which holds the static config,
+// checks passwords against
 func (s *Server) setupAdminAccount() (string, error) {
-	if s.Config().AdminUser == "" {
+	if s.staticConfig.AdminUser == "" {
 		s.Warn().Msg("No admin username specified, skipping admin account setup")
 		return "", nil
 	}
 
-	if s.Config().Security.AdminPasswordBcrypt != "" {
+	if s.staticConfig.Security.AdminPasswordBcrypt != "" {
 		s.Info().Msgf("Using admin password bcrypt hash from configuration")
 		return "", nil
 	}
@@ -1085,7 +1103,7 @@ func (s *Server) setupAdminAccount() (string, error) {
 		return "", err
 	}
 
-	s.Config().Security.AdminPasswordBcrypt = string(bcryptHash)
+	s.staticConfig.Security.AdminPasswordBcrypt = string(bcryptHash)
 	return password, nil
 }
 
@@ -1270,13 +1288,9 @@ func (s *Server) Start() error {
 		}
 	}
 
-	generatedPass, err := s.setupAdminAccount()
-	if err != nil {
-		return err
-	}
-	if generatedPass != "" {
+	if s.generatedAdminPassword != "" {
 		fmt.Printf("Admin user    : %s\n", s.Config().AdminUser)
-		fmt.Printf("Admin password: %s\n", generatedPass)
+		fmt.Printf("Admin password: %s\n", s.generatedAdminPassword)
 	}
 
 	if s.httpServer != nil {

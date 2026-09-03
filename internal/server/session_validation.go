@@ -36,6 +36,26 @@ func stateValueString(stateMap map[string]any, key string) (string, bool) {
 	return value, true
 }
 
+// stateValueInt64 reads an integer from a state map. State maps round-trip
+// through JSON in the keystore, so a value written as int64 comes back as
+// float64; both forms are accepted
+func stateValueInt64(stateMap map[string]any, key string) (int64, bool) {
+	raw, ok := stateMap[key]
+	if !ok {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	default:
+		return 0, false
+	}
+}
+
 func stateValueBool(stateMap map[string]any, key string) (bool, bool) {
 	raw, ok := stateMap[key]
 	if !ok {

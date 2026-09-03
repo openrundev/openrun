@@ -53,7 +53,9 @@ func (s *InmemoryKVStore) StoreKV(ctx context.Context, key string, value map[str
 	if err != nil {
 		return fmt.Errorf("error marshalling value: %w", err)
 	}
+	s.ensureMaps()
 	s.store[key] = valueJson
+	s.deleteAt[key] = copyTime(expireAt)
 	return nil
 }
 

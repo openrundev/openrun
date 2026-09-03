@@ -892,6 +892,21 @@ EOF
   SERVER_PID=$!
   wait_for_http "$SERVER_HTTP_PORT"
   grep "Admin password" server.stdout
+  # The printed password must actually work: create a system-auth app and
+  # access it with basic auth (regression: the generated hash was written to
+  # the effective config only, so basic auth checked an empty hash)
+  NP_PASSWORD=$(grep "Admin password" server.stdout | awk '{print $NF}')
+  CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun app create --auth system --approve ./testapp /np_sysauth
+  NP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -u "admin:$NP_PASSWORD" "http://127.0.0.1:${SERVER_HTTP_PORT}/np_sysauth/")
+  if [[ "$NP_STATUS" != "200" ]]; then
+    echo "generated admin password rejected, status $NP_STATUS"
+    exit 1
+  fi
+  NP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -u "admin:wrong-$NP_PASSWORD" "http://127.0.0.1:${SERVER_HTTP_PORT}/np_sysauth/")
+  if [[ "$NP_STATUS" != "401" ]]; then
+    echo "wrong admin password accepted, status $NP_STATUS"
+    exit 1
+  fi
   CL_CONFIG_FILE=config_np.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
   SERVER_PID=""
   rm -f run/openrun.sock config_np.toml

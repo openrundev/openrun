@@ -192,6 +192,11 @@ func (s *SAMLManager) CheckSAMLAuth(w http.ResponseWriter, r *http.Request, appP
 		redirectCaller = true
 	}
 
+	if !redirectCaller && !sessionWithinAbsoluteLifetime(session, s.config.Security.SessionAbsoluteMaxAge, time.Now()) {
+		s.Debug().Msg("saml session past its absolute lifetime, redirecting to login")
+		redirectCaller = true
+	}
+
 	if redirectCaller {
 		// do the SAML login flow
 		s.login(w, r, appProvider, requestUrl)
@@ -216,6 +221,8 @@ func (s *SAMLManager) CheckSAMLAuth(w http.ResponseWriter, r *http.Request, appP
 			}
 		}
 	}
+
+	renewSession(s.Logger, w, r, session, s.config.Security.SessionAbsoluteMaxAge) // sliding expiry
 
 	return appProvider + ":" + userId, groups, nil
 }
@@ -514,7 +521,7 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 	stateMap[REQUEST_ID_KEY] = requestID
 
 	// Store the state map in the database with the session id as the key
-	expireAt := time.Now().Add(5 * time.Minute)
+	expireAt := time.Now().Add(preAuthStateMaxAge)
 	err = s.db.StoreKV(r.Context(), sessionId, stateMap, &expireAt)
 	if err != nil {
 		http.Error(w, "error storing state: "+err.Error(), http.StatusInternalServerError)
@@ -822,6 +829,7 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 	session.Values[GROUPS_KEY] = groups
 	session.Values[SESSION_INDEX_KEY] = sessionIndex
 	delete(session.Values, REDIRECT_URL)
+	markSessionLogin(session, s.config.Security.SessionAbsoluteMaxAge)
 	if err = session.Save(r, w); err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return

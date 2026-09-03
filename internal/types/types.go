@@ -629,6 +629,12 @@ type SecurityConfig struct {
 	SessionMaxAge       int    `toml:"session_max_age"`
 	SessionHttpsOnly    bool   `toml:"session_https_only"`
 
+	// SessionAbsoluteMaxAge caps the total lifetime of a login session in
+	// seconds, counted from the login. session_max_age is an idle timeout
+	// (sessions in use are renewed); this bounds how long renewals can keep a
+	// session alive. 0 disables the cap. Read at startup
+	SessionAbsoluteMaxAge int `toml:"session_absolute_max_age"`
+
 	// DisableLoginForm reverts the system/builtin auth types to the plain
 	// HTTP Basic challenge for browsers too, disabling the HTML login page.
 	// Off by default (browsers get the login page)

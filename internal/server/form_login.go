@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
@@ -82,7 +83,77 @@ const (
 	// CRED_FP_KEY stores a fingerprint of the bcrypt hash the session was
 	// authenticated against; a password change invalidates the session
 	CRED_FP_KEY = "cred_fp"
+
+	// LOGIN_DEADLINE_KEY holds the unix time (seconds) until which a login
+	// state entry can be used to sign in. The keystore row itself is kept for
+	// expiredStateRetention beyond that, so the expired page can still offer
+	// a link back to the app URL the login was started from
+	LOGIN_DEADLINE_KEY = "login_deadline"
+
+	// completeTokenMaxAge bounds the single-use completion token minted after
+	// a correct password; the completion redirect is followed immediately
+	completeTokenMaxAge = 1 * time.Minute
+
+	// expiredStateRetention is how long a login state row outlives its login
+	// deadline, only to serve the "sign in again" link on the expired page
+	expiredStateRetention = 24 * time.Hour
 )
+
+// loginState is a form login state entry loaded from the keystore
+type loginState struct {
+	key      string
+	authType string
+	values   map[string]any
+	// expired is set when the entry is past its login deadline: it can no
+	// longer be used to sign in, only to link back to the app
+	expired bool
+}
+
+// backURL returns the app URL the login was started from, for the expired
+// page's link back, or "" when the entry has no usable URL. The URL was
+// validated when stored (a request URL, or a same-host HX-Current-URL) and is
+// re-checked to be an absolute http(s) URL here
+func (st *loginState) backURL() string {
+	if st == nil {
+		return ""
+	}
+	raw, ok := stateValueString(st.values, REDIRECT_URL)
+	if !ok {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return ""
+	}
+	return raw
+}
+
+// loginStateExpiry returns the keystore expiry for a login state entry with
+// the given login deadline (the row outlives the deadline by
+// expiredStateRetention, see LOGIN_DEADLINE_KEY)
+func loginStateExpiry(deadline time.Time) time.Time {
+	return deadline.Add(expiredStateRetention)
+}
+
+// storeTombstone re-creates a consumed login state entry as an already
+// expired one holding only the auth type and the app URL. The consume itself
+// is the atomic delete (DeleteKVIfPresent), so only its single winner writes
+// the tombstone; it is never usable for signing in (deadline in the past,
+// nothing else stored) and only lets a duplicate submit of the same form, or
+// a Back navigation onto the complete URL, render the expired page with the
+// link back to the app instead of a bare one. Best effort: a failure leaves
+// the plain expired page, so the error is only logged
+func (s *FormLoginManager) storeTombstone(ctx context.Context, key, authType, redirectUrl string) {
+	tombstone := map[string]any{
+		PROVIDER_NAME_KEY:  authType,
+		REDIRECT_URL:       redirectUrl,
+		LOGIN_DEADLINE_KEY: int64(0),
+	}
+	expireAt := loginStateExpiry(time.Now())
+	if err := s.db.StoreKV(ctx, key, tombstone, &expireAt); err != nil {
+		s.Debug().Err(err).Msg("error storing consumed login state tombstone")
+	}
+}
 
 type FormLoginManager struct {
 	*types.Logger
@@ -108,6 +179,11 @@ type FormLoginManager struct {
 	// dynamically (which does not reconfigure the store). session_https_only
 	// and session_max_age are effectively restart-only for the cookie store
 	sessionHttpsOnly bool
+
+	// sessionAbsoluteMaxAge is the startup value of
+	// security.session_absolute_max_age, read once like the other session
+	// settings so all auth types cap sessions the same way
+	sessionAbsoluteMaxAge int
 }
 
 func NewFormLoginManager(logger *types.Logger, getConfig func() *types.ServerConfig, cookieStore sessions.Store,
@@ -141,6 +217,8 @@ func NewFormLoginManager(logger *types.Logger, getConfig func() *types.ServerCon
 		fontsEtag:        `"` + fontsHash + `"`,
 		fontEtags:        fontEtags,
 		sessionHttpsOnly: sessionHttpsOnly,
+
+		sessionAbsoluteMaxAge: getConfig().Security.SessionAbsoluteMaxAge,
 	}, nil
 }
 
@@ -403,8 +481,10 @@ func setSecurityHeaders(w http.ResponseWriter) {
 }
 
 // render writes the login page. An empty state renders the "sign-in request
-// has expired" variant without the credentials form
-func (s *FormLoginManager) render(w http.ResponseWriter, authType, state, errorMsg string) {
+// has expired" variant without the credentials form; backURL, used only by
+// that variant, links back to the app the login was started from (no link
+// when empty)
+func (s *FormLoginManager) render(w http.ResponseWriter, authType, state, errorMsg, backURL string) {
 	loginPath := ""
 	if authType != "" {
 		loginPath = formLoginPath + "/" + authType // form posts here (same origin)
@@ -418,6 +498,7 @@ func (s *FormLoginManager) render(w http.ResponseWriter, authType, state, errorM
 			"ExtraHref": s.extraHref,
 			"FontsHref": s.fontsHref,
 			"LoginPath": loginPath,
+			"BackURL":   backURL,
 		},
 	}
 	setSecurityHeaders(w)
@@ -476,13 +557,15 @@ func (s *FormLoginManager) beginLogin(w http.ResponseWriter, r *http.Request, au
 	}
 	sessionId = types.FORM_LOGIN_KV_PREFIX + sessionId
 
+	deadline := time.Now().Add(preAuthStateMaxAge)
 	stateMap := map[string]any{
-		AUTH_KEY:          false,
-		PROVIDER_NAME_KEY: authType,
-		REDIRECT_URL:      requestUrl,
-		NONCE_KEY:         nonce,
+		AUTH_KEY:           false,
+		PROVIDER_NAME_KEY:  authType,
+		REDIRECT_URL:       requestUrl,
+		NONCE_KEY:          nonce,
+		LOGIN_DEADLINE_KEY: deadline.Unix(),
 	}
-	expireAt := time.Now().Add(5 * time.Minute)
+	expireAt := loginStateExpiry(deadline)
 	if err := s.db.StoreKV(r.Context(), sessionId, stateMap, &expireAt); err != nil {
 		http.Error(w, "error storing state: "+err.Error(), http.StatusInternalServerError)
 		return true
@@ -522,27 +605,44 @@ func (s *FormLoginManager) authDomainURL(r *http.Request, authDomain, path strin
 }
 
 // loadState fetches and validates the KV state entry for a login page state
-// parameter, returning the KV key, the state's auth type and the state map
-func (s *FormLoginManager) loadState(r *http.Request, state string) (string, string, map[string]any, bool) {
+// parameter. Returns false for a missing, foreign or malformed entry. An entry
+// past its login deadline is returned with expired set: callers must treat it
+// like a missing entry for signing in, and may use it for the link back
+func (s *FormLoginManager) loadState(r *http.Request, state string) (*loginState, bool) {
 	sessionIdBytes, err := base64.URLEncoding.DecodeString(state)
 	if err != nil {
-		return "", "", nil, false
+		return nil, false
 	}
 	sessionId := string(sessionIdBytes)
 	if !strings.HasPrefix(sessionId, types.FORM_LOGIN_KV_PREFIX) {
 		// only form login state entries are valid here, a state token from
 		// another flow (OAuth/SAML) must not be readable through this page
-		return "", "", nil, false
+		return nil, false
 	}
 	stateMap, err := s.db.FetchKV(r.Context(), sessionId)
 	if err != nil {
-		return "", "", nil, false
+		return nil, false
 	}
 	authType, ok := stateValueString(stateMap, PROVIDER_NAME_KEY)
 	if !ok || !usesFormLogin(authType) {
-		return "", "", nil, false
+		return nil, false
 	}
-	return sessionId, authType, stateMap, true
+	// Entries without a deadline (written before the retention window was
+	// added) expired with their row, so they are still valid while present
+	expired := false
+	if deadline, ok := stateValueInt64(stateMap, LOGIN_DEADLINE_KEY); ok && time.Now().Unix() > deadline {
+		expired = true
+	}
+	return &loginState{key: sessionId, authType: authType, values: stateMap, expired: expired}, true
+}
+
+// renderExpired writes the "sign-in request has expired" page. When the state
+// entry is known, the page links back to the app URL the login was started
+// from so the user can sign in again without finding the app themselves. Used
+// on both the auth domain (login page and submit) and the app domain (the
+// complete step); the strict security headers apply on both
+func (s *FormLoginManager) renderExpired(w http.ResponseWriter, st *loginState) {
+	s.render(w, "", "", "", st.backURL())
 }
 
 func (s *FormLoginManager) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -551,12 +651,12 @@ func (s *FormLoginManager) loginPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := r.URL.Query().Get("state")
-	_, authType, _, ok := s.loadState(r, state)
-	if !ok {
-		s.render(w, "", "", "") // expired variant
+	st, ok := s.loadState(r, state)
+	if !ok || st.expired {
+		s.renderExpired(w, st)
 		return
 	}
-	s.render(w, authType, state, "")
+	s.render(w, st.authType, state, "", "")
 }
 
 func (s *FormLoginManager) loginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -575,15 +675,16 @@ func (s *FormLoginManager) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	state := r.PostFormValue("state")
-	sessionId, stateAuthType, stateMap, ok := s.loadState(r, state)
-	if !ok {
-		s.render(w, "", "", "") // expired variant
+	st, ok := s.loadState(r, state)
+	if !ok || st.expired {
+		s.renderExpired(w, st)
 		return
 	}
-	if stateAuthType != authType {
-		s.render(w, "", "", "") // state from the other auth type's flow
+	if st.authType != authType {
+		s.renderExpired(w, st) // state from the other auth type's flow
 		return
 	}
+	sessionId, stateMap := st.key, st.values
 
 	// The field names are per auth type, keeping browser password manager
 	// entries for the two form variants distinct
@@ -599,7 +700,7 @@ func (s *FormLoginManager) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		_, _, authOk = s.builtinAuth.authenticate(authHeader)
 	}
 	if !authOk {
-		s.render(w, authType, state, "Invalid username or password")
+		s.render(w, authType, state, "Invalid username or password", "")
 		return
 	}
 
@@ -631,9 +732,10 @@ func (s *FormLoginManager) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !consumed {
-		s.render(w, "", "", "") // already consumed by a concurrent submit
+		s.renderExpired(w, st) // already consumed by a concurrent submit
 		return
 	}
+	s.storeTombstone(r.Context(), sessionId, authType, redirectUrl)
 	completeKey, err := passwd.GenerateRandomKey(24)
 	if err != nil {
 		http.Error(w, "error generating state: "+err.Error(), http.StatusInternalServerError)
@@ -651,10 +753,12 @@ func (s *FormLoginManager) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error resolving credentials", http.StatusInternalServerError)
 		return
 	}
+	deadline := time.Now().Add(completeTokenMaxAge)
 	stateMap[AUTH_KEY] = true
 	stateMap[USER_KEY] = username
 	stateMap[CRED_FP_KEY] = credFp
-	expireAt := time.Now().Add(1 * time.Minute)
+	stateMap[LOGIN_DEADLINE_KEY] = deadline.Unix()
+	expireAt := loginStateExpiry(deadline)
 	if err := s.db.StoreKV(r.Context(), completeId, stateMap, &expireAt); err != nil {
 		http.Error(w, "error storing state: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -674,20 +778,21 @@ func (s *FormLoginManager) loginSubmit(w http.ResponseWriter, r *http.Request) {
 // redirects back to the original app URL
 func (s *FormLoginManager) complete(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
-	sessionId, authType, stateMap, ok := s.loadState(r, state)
-	if !ok {
-		s.renderExpiredOnAppDomain(w)
+	st, ok := s.loadState(r, state)
+	if !ok || st.expired {
+		s.renderExpired(w, st)
 		return
 	}
+	sessionId, authType, stateMap := st.key, st.authType, st.values
 
 	if auth, _ := stateValueBool(stateMap, AUTH_KEY); !auth {
-		s.renderExpiredOnAppDomain(w)
+		s.renderExpired(w, st)
 		return
 	}
 
 	session, err := s.cookieStore.Get(r, genCookieName(authType))
 	if err != nil || session == nil {
-		s.renderExpiredOnAppDomain(w)
+		s.renderExpired(w, st)
 		return
 	}
 
@@ -698,7 +803,7 @@ func (s *FormLoginManager) complete(w http.ResponseWriter, r *http.Request) {
 	nonceFromCookie, ok := sessionValueString(session, NONCE_KEY)
 	stateNonce, ok2 := stateValueString(stateMap, NONCE_KEY)
 	if !ok || !ok2 || subtle.ConstantTimeCompare([]byte(stateNonce), []byte(nonceFromCookie)) != 1 {
-		s.renderExpiredOnAppDomain(w)
+		s.renderExpired(w, st)
 		return
 	}
 
@@ -727,9 +832,10 @@ func (s *FormLoginManager) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !consumed {
-		s.renderExpiredOnAppDomain(w)
+		s.renderExpired(w, st)
 		return
 	}
+	s.storeTombstone(r.Context(), sessionId, authType, redirectUrl)
 
 	// Promote the pre-auth session to an authenticated one. The session id is
 	// rotated so a fixated pre-auth cookie does not remain valid. MaxAge is left
@@ -741,6 +847,7 @@ func (s *FormLoginManager) complete(w http.ResponseWriter, r *http.Request) {
 	session.Values[USER_KEY] = username
 	session.Values[CRED_FP_KEY] = credFp
 	delete(session.Values, NONCE_KEY)
+	markSessionLogin(session, s.sessionAbsoluteMaxAge)
 	if err := session.Save(r, w); err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -749,21 +856,15 @@ func (s *FormLoginManager) complete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectUrl, http.StatusFound)
 }
 
-// renderExpiredOnAppDomain shows the expired page for a failed complete. The
-// login page normally serves from the auth domain, but the complete endpoint
-// runs on the app domain; the strict security headers still apply
-func (s *FormLoginManager) renderExpiredOnAppDomain(w http.ResponseWriter) {
-	s.render(w, "", "", "")
-}
-
 // sessionAuth checks for an authenticated form login session for the system
 // or builtin auth type. The username AND the credential fingerprint stored in
 // the session are re-resolved against the current config on every request: a
 // deleted builtin user, a changed admin username or a password change
 // invalidates the session immediately, and builtin group changes take effect
 // without a re-login. Returns false when the login form is disabled, so a
-// stale cookie cannot outlive the feature
-func (s *FormLoginManager) sessionAuth(r *http.Request, authType string) (string, []string, bool) {
+// stale cookie cannot outlive the feature. A valid session past half of its
+// lifetime is re-issued on the response (sliding expiry, see renewSession)
+func (s *FormLoginManager) sessionAuth(w http.ResponseWriter, r *http.Request, authType string) (string, []string, bool) {
 	if !s.enabled() {
 		return "", nil, false
 	}
@@ -793,6 +894,11 @@ func (s *FormLoginManager) sessionAuth(r *http.Request, authType string) (string
 	if !ok || subtle.ConstantTimeCompare([]byte(sessionFp), []byte(currentFp)) != 1 {
 		return "", nil, false
 	}
+	if !sessionWithinAbsoluteLifetime(session, s.sessionAbsoluteMaxAge, time.Now()) {
+		return "", nil, false
+	}
+
+	renewSession(s.Logger, w, r, session, s.sessionAbsoluteMaxAge)
 
 	if authType == string(types.AppAuthnSystem) {
 		return types.ADMIN_USER, []string{}, true

@@ -111,7 +111,10 @@ disable_apis = []                # additional ops turned off for the remote REST
 
 [security]
 admin_password_bcrypt = ""       # the password bcrypt value
-session_max_age = 86400          # session max age in seconds (restart-only: applied to the shared cookie store at startup)
+session_max_age = 86400          # session idle lifetime in seconds; sessions in use are renewed, so this is the max time
+                                 # between requests before a re-login (restart-only: applied to the shared cookie store at startup)
+session_absolute_max_age = 604800 # max total session lifetime in seconds from login (1 week), regardless of activity;
+                                 # 0 disables the cap (restart-only)
 session_https_only = true        # session cookie is HTTPS only (restart-only: applied to the shared cookie store at startup)
 disable_login_form = false       # if true, system/builtin auth uses the HTTP Basic challenge for browsers too
                                  # (no HTML login page). Off by default.

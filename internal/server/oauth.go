@@ -75,10 +75,19 @@ const (
 	REQUEST_ID_KEY          = "request_id" // SAML AuthnRequest ID, used to enforce InResponseTo
 )
 
-// preAuthSessionMaxAge bounds the pre-auth handshake cookie/session to the same
-// window as the state map (5 minutes), so abandoned logins do not leave rows in
-// the keystore for the full session lifetime.
-const preAuthSessionMaxAge = 300
+// preAuthSessionMaxAge (seconds) is the window a login handshake stays valid:
+// the pre-auth nonce cookie and the keystore state row (the login page's state
+// token, the OAuth/SAML relay state) both expire after it. It bounds how long a
+// login page or IdP page can sit open before the submit is rejected as
+// expired. One hour keeps that from being a nuisance while still keeping
+// abandoned handshakes short-lived relative to the session lifetime: the state
+// token is a random single-use key bound to the browser's nonce cookie, so a
+// longer window does not widen the CSRF/fixation surface
+const preAuthSessionMaxAge = 3600
+
+// preAuthStateMaxAge is preAuthSessionMaxAge as a duration, for the keystore
+// state row expiry
+const preAuthStateMaxAge = preAuthSessionMaxAge * time.Second
 
 // OAuthManager manages the OAuth providers and their configurations (also OIDC)
 type OAuthManager struct {
@@ -333,6 +342,11 @@ func (s *OAuthManager) CheckAuthInfo(w http.ResponseWriter, r *http.Request, app
 		redirectCaller = true
 	}
 
+	if !redirectCaller && !sessionWithinAbsoluteLifetime(session, s.config.Security.SessionAbsoluteMaxAge, time.Now()) {
+		s.Debug().Msg("session past its absolute lifetime, redirecting to login")
+		redirectCaller = true
+	}
+
 	if redirectCaller {
 		// do the OAuth login flow
 		s.beginLogin(w, r, appProvider, requestUrl)
@@ -361,6 +375,8 @@ func (s *OAuthManager) CheckAuthInfo(w http.ResponseWriter, r *http.Request, app
 	userSubject, _ := sessionValueString(session, USER_ID_KEY)
 	userEmail, _ := sessionValueString(session, USER_EMAIL_KEY)
 
+	renewSession(s.Logger, w, r, session, s.config.Security.SessionAbsoluteMaxAge) // sliding expiry
+
 	return OAuthAuthInfo{
 		UserId:      appProvider + ":" + userId,
 		Groups:      groups,
@@ -383,7 +399,7 @@ func (s *OAuthManager) beginLogin(w http.ResponseWriter, r *http.Request, provid
 	stateMap[NONCE_KEY] = nonce
 
 	// Store the state map in the database with the session id as the key
-	expireAt := time.Now().Add(5 * time.Minute)
+	expireAt := time.Now().Add(preAuthStateMaxAge)
 	err = s.db.StoreKV(r.Context(), sessionId, stateMap, &expireAt)
 	if err != nil {
 		http.Error(w, "error storing state: "+err.Error(), http.StatusInternalServerError)
@@ -688,6 +704,7 @@ func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 		delete(session.Values, USER_EMAIL_KEY)
 	}
 	delete(session.Values, REDIRECT_URL)
+	markSessionLogin(session, s.config.Security.SessionAbsoluteMaxAge)
 	if err = session.Save(r, w); err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return

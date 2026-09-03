@@ -902,7 +902,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 				// basic auth against the [builtin_auth.*] entries
 				userId, groups, authOk = s.builtinAuth.authenticate(authHeader)
 			}
-		} else if userId, groups, authOk = s.formLogin.sessionAuth(r, strippedAuthStr); !authOk &&
+		} else if userId, groups, authOk = s.formLogin.sessionAuth(w, r, strippedAuthStr); !authOk &&
 			isBrowserNavigation(r) && s.formLogin.enabled() && s.formLogin.canStartFlow(r) {
 			// Cookie-based login must start on the app's configured host, so a
 			// fallback-matched unknown host does not receive the nonce/session
