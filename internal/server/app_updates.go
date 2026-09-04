@@ -181,13 +181,16 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	}
 	s.prefetchAppSources(ctx, appPaths, branch, commit, gitAuth, repoCache, forceReload)
 
-	if verify && s.Config().System.UseImagePreBuildStep {
-		// Build container images before the metadata transaction is opened.
-		// Image names are content-hashed, so the main loop's ImageExists check
-		// finds them and skips the (slow) in-transaction build. If anything
-		// diverges, the main loop builds in-transaction as before; this pass
-		// only warms the image cache and cannot change the deployed result.
-		if err := s.preBuildReloadImages(ctx, filteredApps, approve, branch, commit, gitAuth, repoCache, forceReload); err != nil {
+	// Pre-transaction pass: the new code is loaded under a throwaway
+	// transaction, its image built when verify (with the prebuild step) or a
+	// before_deploy job needs it, and the before_deploy jobs run against the
+	// stage instance (and, with promote, the prod instance). Image names are
+	// content-hashed, so the main loop's ImageExists check finds the built
+	// image and skips the in-transaction build. A gate failure ends the
+	// reload before anything is written. Skipped on a dry run: gates have
+	// real side effects
+	if !dryRun {
+		if err := s.prepareDeploys(ctx, appPaths, approve, promote, verify, branch, commit, gitAuth, repoCache, forceReload, "reload"); err != nil {
 			return nil, err
 		}
 	}
@@ -255,36 +258,6 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	}
 
 	return ret, nil
-}
-
-// preBuildReloadImages builds the container image for each app to be reloaded,
-// before the main reload transaction starts. Each app's new source is loaded
-// under a throwaway transaction that is rolled back once the build inputs have
-// been extracted to disk, so no DB locks are held while the (potentially slow)
-// image builds run.
-func (s *Server) preBuildReloadImages(ctx context.Context, filteredApps []types.AppInfo, approve bool,
-	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool) error {
-	for _, appInfo := range filteredApps {
-		if appInfo.IsDev {
-			// Dev apps build through DevReload from local disk, not pre-built
-			continue
-		}
-		application, plan, err := s.prepareAppImage(ctx, appInfo.AppPathDomain, approve, branch, commit, gitAuth, repoCache, forceReload)
-		if err != nil {
-			return err
-		}
-		if application == nil {
-			continue
-		}
-		// The throwaway transaction is closed at this point; the build reads
-		// only from the temp source dir captured in the plan
-		buildErr := application.ExecuteContainerBuild(ctx, plan)
-		application.Close() //nolint:errcheck // throwaway app object, stop its background tickers
-		if buildErr != nil {
-			return buildErr
-		}
-	}
-	return nil
 }
 
 // prepareAppImage loads the new app source for one app under a throwaway
@@ -517,6 +490,13 @@ func (s *Server) auditHandler(ctx context.Context, tx types.Transaction, appEntr
 	if err != nil {
 		return nil, appPathDomain, err
 	}
+	// Load the approved app (no container) so the app definition's jobs are
+	// persisted on the metadata with the approval. A definition that does
+	// not load keeps the lazy semantics of approve: the error surfaces on
+	// the first request, and the jobs are persisted by the next reload
+	if _, err := app.Reload(ctx, true, true, types.DryRunFalse, apppkg.ReloadOptions{SkipContainer: true}); err != nil {
+		s.Warn().Err(err).Msgf("app %s did not load at approve; its jobs apply on the next reload", appEntry)
+	}
 
 	return result, appPathDomain, nil
 }
@@ -564,6 +544,23 @@ func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun boo
 		return nil, err
 	}
 
+	// The prod before_deploy jobs of every app run before the transaction
+	// opens, from the stage code against the prod instance. The first
+	// failure ends the promote with the change still staged
+	gatedVersions := map[types.AppPathDomain]int{}
+	if !dryRun {
+		for _, appInfo := range filteredApps {
+			if !strings.HasPrefix(string(appInfo.Id), types.ID_PREFIX_APP_PROD) {
+				continue
+			}
+			version, err := s.preparePromote(ctx, appInfo.AppPathDomain)
+			if err != nil {
+				return nil, err
+			}
+			gatedVersions[appInfo.AppPathDomain] = version
+		}
+	}
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -580,6 +577,9 @@ func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun boo
 		prodAppEntry, err := s.GetAppEntry(ctx, tx, appInfo.AppPathDomain)
 		if err != nil {
 			return nil, fmt.Errorf("error getting prod app %s: %w", appInfo, err)
+		}
+		if version, ok := gatedVersions[appInfo.AppPathDomain]; ok && version != prodAppEntry.Metadata.VersionMetadata.Version {
+			return nil, fmt.Errorf("app %s changed while its before_deploy jobs ran, retry the promote", appInfo.AppPathDomain)
 		}
 
 		stagingApp, err := s.getStageApp(ctx, tx, prodAppEntry)
@@ -854,6 +854,52 @@ func canonicalSidecars(entries []string) ([]string, error) {
 	return ret, nil
 }
 
+// canonicalJobs validates job JSON documents (including the image allow
+// list) and returns them in canonical form
+func (s *Server) canonicalJobs(entries []string) ([]string, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	specs, err := types.ParseJobSpecs(entries)
+	if err != nil {
+		return nil, err
+	}
+	ret := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		ret = append(ret, spec.String())
+	}
+	if err := s.validateMetadataJobs(ret); err != nil {
+		return nil, err
+	}
+	return ret, nil
+}
+
+// validateMetadataJobs checks the operator-set job documents: no run jobs
+// (callables live in app.star) and foreign images on the allow list. The
+// rules that need the loaded app (sidecar names, params) are checked at load
+func (s *Server) validateMetadataJobs(entries []string) error {
+	specs, err := types.ParseJobSpecs(entries)
+	if err != nil {
+		return err
+	}
+	for _, spec := range specs {
+		if spec.IsRun() {
+			return fmt.Errorf("job %s: run is only supported in app.star", spec.Name)
+		}
+		if spec.IsAppImage() {
+			continue
+		}
+		allowed, err := types.JobImageAllowed(s.Config().Security.AllowedJobImages, spec.ImageRef())
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return fmt.Errorf("job %s image %s is not allowed by the server config security.allowed_job_images", spec.Name, spec.ImageRef())
+		}
+	}
+	return nil
+}
+
 // updateAppMetadataConfig updates the app metadata config.
 func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, configType types.AppMetadataConfigType,
 	configEntries []string, dryRun bool, accounts *bindingAccountManager) error {
@@ -882,6 +928,18 @@ func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transacti
 			return err
 		}
 		appEntry.Metadata.Sidecars = sidecars
+		return nil
+	case types.AppMetadataJobs:
+		if len(configEntries) == 1 && configEntries[0] == "-" {
+			// A single "-" clears all metadata jobs
+			appEntry.Metadata.Jobs = nil
+			return nil
+		}
+		jobs, err := s.canonicalJobs(configEntries)
+		if err != nil {
+			return err
+		}
+		appEntry.Metadata.Jobs = jobs
 		return nil
 	case types.AppMetadataBindings:
 		if len(configEntries) == 1 && configEntries[0] == "-" {

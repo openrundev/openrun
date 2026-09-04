@@ -81,7 +81,7 @@ func normalizeBindingRequest(req *types.CreateBindingRequest) {
 func boolPtr(b bool) *bool { return &b }
 
 // TestExportSidecarFormat verifies the metadata sidecars (stored as canonical
-// JSON documents) export as container.sidecar(...) calls - the app.star
+// JSON documents) export as sidecar(...) calls - the app.star
 // container config surface - with kwargs in SidecarSpec declaration order and
 // defaults omitted, one sidecar per line
 func TestExportSidecarFormat(t *testing.T) {
@@ -103,8 +103,8 @@ func TestExportSidecarFormat(t *testing.T) {
 		t.Fatalf("formatApp warnings = %v, want none", warnings)
 	}
 	want := `    sidecars=[
-        container.sidecar("cache", image="image:memcached:1.6-alpine", port=11211, health="http:/ready"),
-        container.sidecar("worker", command=["python", "worker.py"], args=["-v"], env={"Q": "1"}, inherit_env=False, volumes=["data:/data"], always_on=True, options={"kubernetes.cpus": "0.5"}),
+        sidecar("cache", image="image:memcached:1.6-alpine", port=11211, health="http:/ready"),
+        sidecar("worker", command=["python", "worker.py"], args=["-v"], env={"Q": "1"}, inherit_env=False, volumes=["data:/data"], always_on=True, options={"kubernetes.cpus": "0.5"}),
     ]`
 	if !strings.Contains(out, want) {
 		t.Errorf("sidecar export format mismatch\nwant block:\n%s\ngot:\n%s", want, out)
@@ -113,7 +113,7 @@ func TestExportSidecarFormat(t *testing.T) {
 	// A single short sidecar stays inline
 	req.Sidecars = []string{types.SidecarSpec{Name: "c", Image: "image:redis:7"}.String()}
 	out, _ = formatApp(req)
-	if !strings.Contains(out, `sidecars=[container.sidecar("c", image="image:redis:7")]`) {
+	if !strings.Contains(out, `sidecars=[sidecar("c", image="image:redis:7")]`) {
 		t.Errorf("short sidecar not inline:\n%s", out)
 	}
 }
@@ -360,8 +360,39 @@ app("/apps/declared", %q, bindings=["/apps/derived"], stage_at="path", params={"
 	}); err != nil {
 		t.Fatalf("create app: %v", err)
 	}
+	// Operator-set sidecars and jobs are metadata; set them directly (the
+	// test app has no container config, so a command job would fail its load)
+	setTx, err := db.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imperative, err := db.GetAppEntryTx(ctx, setTx, types.AppPathDomain{Path: "/apps/imperative"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imperative.Metadata.Sidecars = []string{types.SidecarSpec{Name: "cache", Image: "image:memcached:1.6-alpine", Port: 11211}.String()}
+	imperative.Metadata.Jobs = []string{types.JobSpec{Name: "nightly", Command: []string{"python", "report.py"},
+		Trigger: types.CronJobTrigger("0 3 * * *", "UTC"), Timeout: "30m"}.String()}
+	if err := db.UpdateAppMetadata(ctx, setTx, imperative); err != nil {
+		t.Fatal(err)
+	}
+	if err := setTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 
 	exported, err := server.Export(ctx, "all", types.ExportOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	// Operator-set sidecars and jobs export in their starlark builtin form
+	for _, want := range []string{
+		`sidecars=[sidecar("cache", image="image:memcached:1.6-alpine", port=11211)]`,
+		`job("nightly", command=["python", "report.py"], trigger=cron("0 3 * * *", timezone="UTC"), timeout="30m")`,
+	} {
+		if !strings.Contains(exported, want) {
+			t.Errorf("export missing %s:\n%s", want, exported)
+		}
+	}
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -485,7 +516,15 @@ app("/apps/complex", %q,
     stage_at="path",
     verify=True)
 
-app("/apps/devone", %q, dev=True, bindings=["applytest;dkey=dval"])
+app("/apps/devone", %q, dev=True, bindings=["applytest;dkey=dval"],
+    sidecars=[
+        sidecar("cache", image="image:memcached:1.6-alpine", port=11211, args=["-m", "32"]),
+        sidecar("worker", command=["python", "worker.py"], env={"ROLE": "w"}, always_on=True),
+    ],
+    jobs=[
+        job("migrate", command=["python", "manage.py", "migrate"], trigger=before_deploy(), timeout="10m"),
+        job("backup", command=["pg_dump"], shell=True, image="image:postgres:16", inherit_env=True, volumes=["backup:/backup"], trigger=cron("0 2 * * *"), enabled=False, params=["p1"], description="nightly"),
+    ])
 
 app("/apps/plain", %q)
 

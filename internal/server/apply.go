@@ -4,6 +4,7 @@
 package server
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json/v2"
@@ -14,13 +15,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 	apppkg "github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
-	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/rbac"
@@ -43,9 +44,14 @@ func (s *Server) loadApplyInfo(fileName string, data []byte, branch string, appl
 	}
 
 	builtins := starlark.StringDict{
-		APP:            applyBuiltins.createAppBuiltin,
-		BINDING:        applyBuiltins.createBindingBuiltin,
-		apptype.CONFIG: starlark.NewBuiltin(apptype.CONFIG, apptype.CreateConfigBuiltin(s.Config().NodeConfig, s.Config().System.AllowedEnv)),
+		APP:             applyBuiltins.createAppBuiltin,
+		BINDING:         applyBuiltins.createBindingBuiltin,
+		apptype.CONFIG:  starlark.NewBuiltin(apptype.CONFIG, apptype.CreateConfigBuiltin(s.Config().NodeConfig, s.Config().System.AllowedEnv)),
+		apptype.JOB:     apptype.CreateApplyJobBuiltin(),
+		apptype.SIDECAR: apptype.CreateApplySidecarBuiltin(),
+	}
+	for name, fn := range apptype.TriggerBuiltins() {
+		builtins[name] = fn
 	}
 
 	thread := &starlark.Thread{
@@ -155,6 +161,10 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	if err != nil {
 		return nil, err
 	}
+	jobs, err := jobEntries(appDef)
+	if err != nil {
+		return nil, err
+	}
 	bindings, err := apptype.GetListStringAttr(appDef, "bindings", true)
 	if err != nil {
 		return nil, err
@@ -191,52 +201,39 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 		ContainerArgs:    containerArgsStr,
 		ContainerVolumes: containerVols,
 		Sidecars:         sidecars,
+		Jobs:             jobs,
 		Bindings:         bindings,
 		StageAt:          stageAt,
 		Verify:           verify,
 	}, nil
 }
 
-// sidecarEntries reads the app entry's sidecars: JSON strings or dicts with
-// the SidecarSpec fields, normalized to canonical JSON strings.
+// sidecarEntries reads the app entry's sidecars: JSON strings, dicts with
+// the SidecarSpec fields or sidecar(...) structs, normalized to canonical
+// JSON strings.
 func sidecarEntries(appDef *starlarkstruct.Struct) ([]string, error) {
-	v, err := appDef.Attr("sidecars")
-	if err != nil {
-		return nil, nil
-	}
-	list, ok := v.(*starlark.List)
-	if !ok {
-		return nil, fmt.Errorf("sidecars is not a list")
-	}
-	if list.Len() == 0 {
-		// nil, not an empty slice: the omitempty ApplyInfo round trip makes
-		// the stored old info nil, and change detection compares the two
-		return nil, nil
-	}
-	ret := make([]string, 0, list.Len())
-	for i := 0; i < list.Len(); i++ {
-		var entry string
-		switch item := list.Index(i).(type) {
-		case starlark.String:
-			entry = item.GoString()
-		default:
-			goValue, err := starlark_type.ToGo(item)
-			if err != nil {
-				return nil, err
-			}
-			data, err := json.Marshal(goValue)
-			if err != nil {
-				return nil, fmt.Errorf("sidecars entry %d: %w", i, err)
-			}
-			entry = string(data)
-		}
-		spec, err := types.ParseSidecarSpec(entry)
+	return apptype.SpecEntries(appDef, "sidecars", apptype.SIDECAR_SPEC_ATTR, func(doc string) (string, error) {
+		spec, err := types.ParseSidecarSpec(doc)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
-		ret = append(ret, spec.String())
-	}
-	return ret, nil
+		return spec.String(), nil
+	})
+}
+
+// jobEntries reads the app entry's jobs: JSON strings, dicts with the
+// JobSpec fields or job(...) structs, normalized to canonical JSON strings.
+func jobEntries(appDef *starlarkstruct.Struct) ([]string, error) {
+	return apptype.SpecEntries(appDef, "jobs", apptype.JOB_SPEC_ATTR, func(doc string) (string, error) {
+		spec, err := types.ParseJobSpec(doc)
+		if err != nil {
+			return "", err
+		}
+		if spec.IsRun() {
+			return "", fmt.Errorf("job %s: run is only supported in app.star, use command in the declaration", spec.Name)
+		}
+		return spec.String(), nil
+	})
 }
 
 func (s *Server) setupSource(ctx context.Context, applyPath, branch, commit, gitAuth string, repoCache *RepoCache, isDev bool) (string, string, error) {
@@ -398,33 +395,6 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		}, nil, nil
 	}
 
-	if inputTx.Tx == nil {
-		tx, err = s.db.BeginTransaction(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		defer tx.Rollback() //nolint:errcheck
-	} else {
-		tx = inputTx
-		// No rollback here if transaction is passed in
-	}
-
-	// Operation-level rollback scope: apps that mutate their Kubernetes
-	// deployments in-place register on its stack and binding changes record the
-	// accounts and grants they create, so a failure anywhere reverts both the
-	// cluster and the external services along with the DB transaction. We own
-	// the scope only when we own the DB transaction; when a transaction is
-	// passed in, the caller owns the commit (and therefore the rollback) and we
-	// just register into its scope.
-	ctx, deployScope := s.beginDeployScope(ctx, inputTx.Tx == nil, dryRun)
-	defer func() { retErr = deployScope.finish(ctx, retErr) }()
-	bindingAccounts := deployScope.accounts
-
-	// Mark this operation as a declarative apply. App creation stores the
-	// ApplyInfo (for the three way merge on later applies) only in apply
-	// context; presence of ApplyInfo distinguishes declaratively managed apps
-	ctx = context.WithValue(ctx, types.APPLY_OPERATION, "true")
-
 	sourceFS, err := appfs.NewSourceFs(dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
 	if err != nil {
 		return nil, nil, err
@@ -451,6 +421,43 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		filteredApps = append(filteredApps, appPathDomain)
 	}
 	s.prefetchApplyAppSources(ctx, applyConfig, filteredApps, repoCache, isDev)
+
+	if inputTx.Tx == nil && !dryRun {
+		// Deploy gates (before_deploy jobs) of the apps being reloaded run
+		// before the transaction opens, from the new code's image; callers
+		// that pass a transaction in run this pass themselves beforehand
+		// (see prepareSyncDeploys). Never on a dry run: gates have side effects
+		if err := s.prepareApplyDeploys(ctx, applyConfig, filteredApps, approve, promote, verify, reload, repoCache, forceReload); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if inputTx.Tx == nil {
+		tx, err = s.db.BeginTransaction(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer tx.Rollback() //nolint:errcheck
+	} else {
+		tx = inputTx
+		// No rollback here if transaction is passed in
+	}
+
+	// Operation-level rollback scope: apps that mutate their Kubernetes
+	// deployments in-place register on its stack and binding changes record the
+	// accounts and grants they create, so a failure anywhere reverts both the
+	// cluster and the external services along with the DB transaction. We own
+	// the scope only when we own the DB transaction; when a transaction is
+	// passed in, the caller owns the commit (and therefore the rollback) and we
+	// just register into its scope.
+	ctx, deployScope := s.beginDeployScope(ctx, inputTx.Tx == nil, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+	bindingAccounts := deployScope.accounts
+
+	// Mark this operation as a declarative apply. App creation stores the
+	// ApplyInfo (for the three way merge on later applies) only in apply
+	// context; presence of ApplyInfo distinguishes declaratively managed apps
+	ctx = context.WithValue(ctx, types.APPLY_OPERATION, "true")
 
 	updateResults := make([]types.AppPathDomain, 0, len(filteredApps))
 	approveResults := make([]types.ApproveResult, 0, len(filteredApps))
@@ -838,6 +845,20 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		return nil, fmt.Errorf("merging sidecars for %s: %w", appPathDomain, err)
 	}
 
+	var oldJobs []string
+	if oldInfo != nil {
+		oldJobs = oldInfo.Jobs
+	}
+	jobsChanged, err := mergeJobs(oldJobs, newInfo.Jobs, &liveApp.Metadata.Jobs, clobber)
+	if err != nil {
+		return nil, fmt.Errorf("merging jobs for %s: %w", appPathDomain, err)
+	}
+	if jobsChanged {
+		if err := s.validateMetadataJobs(liveApp.Metadata.Jobs); err != nil {
+			return nil, err
+		}
+	}
+
 	var oldAppConfig map[string]string
 	if oldInfo != nil {
 		oldAppConfig = oldInfo.AppConfig
@@ -853,7 +874,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	var approvalResult *types.ApproveResult
 
 	updated := specChanged || gitBranchChanged || gitCommitChanged || paramsChanged ||
-		contConfigChanged || contArgsChanged || contVolsChanged || sidecarsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged
+		contConfigChanged || contArgsChanged || contVolsChanged || sidecarsChanged || jobsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged
 	updatedApps := make([]types.AppPathDomain, 0)
 	if updated {
 		liveApp.Metadata.VersionMetadata.ApplyInfo, err = json.Marshal(newInfo)
@@ -1301,6 +1322,29 @@ func mergeSlice(old, new []string, live *[]string, clobber bool) bool {
 // rejects on the next reload. Live declaration order (the start order) is
 // preserved; documents added by new append in their declared order.
 func mergeSidecars(old, new []string, live *[]string, clobber bool) (bool, error) {
+	return mergeNamedDocs(old, new, live, clobber, func(doc string) (string, error) {
+		spec, err := types.ParseSidecarSpec(doc)
+		if err != nil {
+			return "", err
+		}
+		return spec.Name, nil
+	})
+}
+
+// mergeJobs is mergeSidecars for job JSON documents
+func mergeJobs(old, new []string, live *[]string, clobber bool) (bool, error) {
+	return mergeNamedDocs(old, new, live, clobber, func(doc string) (string, error) {
+		spec, err := types.ParseJobSpec(doc)
+		if err != nil {
+			return "", err
+		}
+		return spec.Name, nil
+	})
+}
+
+// mergeNamedDocs merges JSON documents keyed by the name nameOf extracts,
+// with mergeMap's three way semantics
+func mergeNamedDocs(old, new []string, live *[]string, clobber bool, nameOf func(string) (string, error)) (bool, error) {
 	if clobber {
 		// nil and empty are the same absent value (see mergeSlice)
 		if len(*live) == 0 && len(new) == 0 || reflect.DeepEqual(*live, new) {
@@ -1314,12 +1358,12 @@ func mergeSidecars(old, new []string, live *[]string, clobber bool) (bool, error
 		m := make(map[string]string, len(docs))
 		order := make([]string, 0, len(docs))
 		for _, doc := range docs {
-			spec, err := types.ParseSidecarSpec(doc)
+			name, err := nameOf(doc)
 			if err != nil {
 				return nil, nil, err
 			}
-			m[spec.Name] = doc
-			order = append(order, spec.Name)
+			m[name] = doc
+			order = append(order, name)
 		}
 		return m, order, nil
 	}
@@ -1423,13 +1467,14 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 		var containerArgs = starlark.NewDict(0)
 		var containerVols = &starlark.List{}
 		var sidecars = &starlark.List{}
+		var jobs = &starlark.List{}
 		var bindings = &starlark.List{}
 
 		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "dev?", &dev,
 			"auth?", &auth, "git_auth?", &gitAuth, "git_branch?", &gitBranch, "git_commit?", &gitCommit,
 			"params?", &params, "spec?", &appSpec, "stage_at?", &stageAt, "app_config", &appConfig,
 			"container_opts?", &containerOpts, "container_args?", &containerArgs, "container_vols?", &containerVols,
-			"sidecars?", &sidecars, "bindings?", &bindings, "verify?", &verify,
+			"sidecars?", &sidecars, "bindings?", &bindings, "verify?", &verify, "jobs?", &jobs,
 		); err != nil {
 			return nil, err
 		}
@@ -1450,6 +1495,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 			"container_args": containerArgs,
 			"container_vols": containerVols,
 			"sidecars":       sidecars,
+			"jobs":           jobs,
 			"bindings":       bindings,
 			"verify":         verify,
 		}
@@ -1701,4 +1747,48 @@ func (s *Server) ApplyDelete(ctx context.Context, applyPath, appPathGlob string,
 		return ret, errors.Join(cleanupErrs...)
 	}
 	return ret, nil
+}
+
+// prepareApplyDeploys runs the deploy gate pre-pass for the existing apps an
+// apply will reload: every matched app with reload=matched, and the apps
+// whose declaration changed with reload=updated. Apps not yet created run
+// their gates inside the create transaction
+func (s *Server) prepareApplyDeploys(ctx context.Context, applyConfig map[types.AppPathDomain]*types.CreateAppRequest,
+	filteredApps []types.AppPathDomain, approve, promote, verify bool, reload types.AppReloadOption, repoCache *RepoCache, forceReload bool) error {
+	if reload == types.AppReloadOptionNone {
+		return nil
+	}
+	sorted := append([]types.AppPathDomain{}, filteredApps...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].String() < sorted[j].String() })
+	for _, appPathDomain := range sorted {
+		entry, err := s.db.GetAppEntry(ctx, appPathDomain)
+		if err != nil {
+			continue // a new app, created (and gated) inside the transaction
+		}
+		if entry.IsDev {
+			continue
+		}
+		newInfo := applyConfig[appPathDomain]
+		if reload == types.AppReloadOptionUpdated {
+			// reload=updated reloads only apps whose declaration changed; an
+			// unchanged stored apply info means no reload, so no gate
+			stageEntry, err := s.getStageAppNoTx(ctx, entry)
+			if err != nil {
+				return err
+			}
+			newInfoBytes, err := json.Marshal(newInfo)
+			if err != nil {
+				return err
+			}
+			if len(stageEntry.Metadata.VersionMetadata.ApplyInfo) > 0 && bytes.Equal(stageEntry.Metadata.VersionMetadata.ApplyInfo, newInfoBytes) {
+				continue
+			}
+		}
+		appVerify := verify || newInfo.Verify
+		if err := s.prepareDeploy(ctx, appPathDomain, approve, promote, appVerify, newInfo.GitBranch, newInfo.GitCommit,
+			newInfo.GitAuthName, repoCache, forceReload, "apply"); err != nil {
+			return err
+		}
+	}
+	return nil
 }

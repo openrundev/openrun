@@ -177,6 +177,7 @@ type Server struct {
 	authFailureTimes map[string]time.Time
 	accessLogger     *zerolog.Logger
 	syncTimer        *time.Ticker
+	jobRuns          jobRunRegistry // runs executing on this node
 	syncStop         chan struct{}
 	tlsErrorLogger   *RateLimitedErrorLogger
 	acmeIssuer       *certmagic.ACMEIssuer

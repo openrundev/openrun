@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/passwd"
 	"github.com/openrundev/openrun/internal/rbac"
@@ -56,6 +57,11 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 	if _, _, _, _, err := s.checkoutApplySource(ctx, path, sync.GitBranch, "", sync.GitAuth, "",
 		sync.ForceReload, types.AppReloadOption(sync.Reload), repoCache, false); err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error warming apply source for sync create %s", path)
+	}
+	if !dryRun {
+		if err := s.prepareSyncDeploys(ctx, &types.SyncEntry{Path: path, Metadata: *sync}, repoCache); err != nil {
+			return nil, err
+		}
 	}
 
 	tx, err := s.db.BeginTransaction(ctx)
@@ -156,6 +162,11 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.
 	if _, _, _, _, err := s.checkoutApplySource(ctx, syncEntry.Path, syncEntry.Metadata.GitBranch, "", syncEntry.Metadata.GitAuth, "",
 		syncEntry.Metadata.ForceReload, types.AppReloadOption(syncEntry.Metadata.Reload), repoCache, false); err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error warming apply source for sync run %s", id)
+	}
+	if !dryRun {
+		if err := s.prepareSyncDeploys(context.WithValue(ctx, types.SYNC_ID, id), syncEntry, repoCache); err != nil {
+			return nil, err
+		}
 	}
 
 	tx, err := s.db.BeginTransaction(ctx)
@@ -279,6 +290,9 @@ func (s *Server) syncRunner(timer *time.Ticker, stop <-chan struct{}) {
 		if err := s.db.CleanupExpiredKV(context.Background()); err != nil {
 			s.Error().Err(err).Msg("Error cleaning up expired KV entries")
 		}
+		// Job scheduling and run reconciliation share the leader's minute
+		// loop with the sync runner
+		s.jobsTick(context.Background())
 		err := s.runSyncJobs()
 		if err != nil {
 			s.Error().Err(err).Msg("Error running sync")
@@ -394,6 +408,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	dryRun, checkCommitHash bool, repoCache *RepoCache) (_ *types.SyncJobStatus, _ []types.AppPathDomain, retErr error) {
 	var tx types.Transaction
 	var err error
+	var prepErr error
 
 	s.Debug().Msgf("Running sync job %s", entry.Id)
 	if repoCache == nil {
@@ -424,6 +439,14 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 			s.prefetchAppSources(ctx, lastRunApps, "", "", "", repoCache, entry.Metadata.ForceReload)
 		}
 
+		// The deploy gates (before_deploy jobs) of the declared apps run
+		// before the transaction opens; a gate failure counts as a sync
+		// failure like an apply error. Callers passing a transaction in run
+		// this pass before opening it
+		if !dryRun {
+			prepErr = s.prepareSyncDeploys(context.WithValue(ctx, types.SYNC_ID, entry.Id), entry, repoCache)
+		}
+
 		tx, err = s.db.BeginTransaction(ctx)
 		if err != nil {
 			return nil, nil, err
@@ -448,8 +471,13 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	verify := entry.Metadata.Verify && !dryRun
-	applyInfo, updatedApps, applyErr := s.Apply(ctx, tx, entry.Path, "all", entry.Metadata.Approve, dryRun, entry.Metadata.Promote, types.AppReloadOption(entry.Metadata.Reload),
-		entry.Metadata.GitBranch, "", entry.Metadata.GitAuth, entry.Metadata.Clobber, entry.Metadata.ForceReload, verify, lastRunCommitId, repoCache, false)
+	var applyInfo *types.AppApplyResponse
+	var updatedApps []types.AppPathDomain
+	applyErr := prepErr
+	if applyErr == nil {
+		applyInfo, updatedApps, applyErr = s.Apply(ctx, tx, entry.Path, "all", entry.Metadata.Approve, dryRun, entry.Metadata.Promote, types.AppReloadOption(entry.Metadata.Reload),
+			entry.Metadata.GitBranch, "", entry.Metadata.GitAuth, entry.Metadata.Clobber, entry.Metadata.ForceReload, verify, lastRunCommitId, repoCache, false)
+	}
 
 	status := types.SyncJobStatus{
 		LastExecutionTime: time.Now(),
@@ -729,4 +757,38 @@ func (s *Server) pruneSyncResources(ctx context.Context, tx types.Transaction, e
 		}
 	}
 	return prunedAppPaths, prunedBindingPaths, nil
+}
+
+// prepareSyncDeploys runs the deploy gate pre-pass of a sync run before its
+// transaction opens: the apply file is loaded from the warmed repo cache and
+// the before_deploy jobs of the existing apps it declares run from their
+// new code (see prepareApplyDeploys). Skipped when the sync does not reload
+func (s *Server) prepareSyncDeploys(ctx context.Context, entry *types.SyncEntry, repoCache *RepoCache) error {
+	reload := types.AppReloadOption(cmp.Or(entry.Metadata.Reload, string(types.AppReloadOptionUpdated)))
+	if reload == types.AppReloadOptionNone {
+		return nil
+	}
+	branch := ""
+	if system.IsGit(entry.Path) {
+		branch = cmp.Or(entry.Metadata.GitBranch, "main")
+	}
+	dir, file, err := s.setupSource(ctx, entry.Path, branch, "", entry.Metadata.GitAuth, repoCache, false)
+	if err != nil {
+		return err
+	}
+	sourceFS, err := appfs.NewSourceFs(dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
+	if err != nil {
+		return err
+	}
+	defer sourceFS.Close() //nolint:errcheck
+	applyConfig, _, _, err := s.loadApplyConfigs(sourceFS, file, entry.Path, branch, false)
+	if err != nil {
+		return err
+	}
+	apps := make([]types.AppPathDomain, 0, len(applyConfig))
+	for appPathDomain := range applyConfig {
+		apps = append(apps, appPathDomain)
+	}
+	return s.prepareApplyDeploys(ctx, applyConfig, apps, entry.Metadata.Approve, entry.Metadata.Promote, entry.Metadata.Verify,
+		reload, repoCache, entry.Metadata.ForceReload)
 }

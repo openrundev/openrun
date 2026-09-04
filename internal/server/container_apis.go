@@ -924,6 +924,10 @@ func entryPorts(entry map[string]any) string {
 // failures are best effort: the caller reports them alongside the delete
 // result.
 func (s *Server) removeAppRuntimeResources(ctx context.Context, appIds []types.AppId) error {
+	// Job run records of the deleted apps; their containers carry the app
+	// id label and are removed with the app's other containers below
+	s.removeAppJobRuns(ctx, appIds)
+
 	var errs []error
 	command := s.Config().System.ContainerCommand
 	if command == types.CONTAINER_KUBERNETES {
@@ -936,6 +940,9 @@ func (s *Server) removeAppRuntimeResources(ctx context.Context, appIds []types.A
 			for _, appId := range appIds {
 				if err := k8sCM.RemoveAppResources(ctx, appId); err != nil {
 					errs = append(errs, fmt.Errorf("removing runtime resources of app %s: %w", appId, err))
+				}
+				if err := k8sCM.RemoveAppJobs(ctx, string(appId)); err != nil {
+					errs = append(errs, fmt.Errorf("removing jobs of app %s: %w", appId, err))
 				}
 			}
 		}

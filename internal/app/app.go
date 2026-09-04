@@ -80,6 +80,7 @@ type App struct {
 	appRouter    *chi.Mux               // router for the app
 	newAppRouter *chi.Mux               // router built by the reload in progress, published to appRouter under renderMu
 	actions      []*action.Action       // actions defined for the app
+	jobs         []jobDef               // ace.job entries of the loaded app definition
 
 	// renderMu guards appRouter and the parsed templates: a reload (dev
 	// watcher or API triggered) publishes them while request handlers on
@@ -294,6 +295,17 @@ func (a *App) PrepareContainerBuild(ctx context.Context) (*BuildPlan, error) {
 
 // ExecuteContainerBuild builds the image described by the plan returned from
 // PrepareContainerBuild. It touches no DB state, so no transaction is needed.
+// DiscardContainerBuild releases a plan from PrepareContainerBuild that will
+// not be executed (its extracted temp source dir)
+func (a *App) DiscardContainerBuild(plan *BuildPlan) {
+	if plan == nil || plan.SourceDir == "" {
+		return
+	}
+	if err := os.RemoveAll(plan.SourceDir); err != nil {
+		a.Warn().Err(err).Msgf("error removing temp source dir for app %s", a.Id)
+	}
+}
+
 func (a *App) ExecuteContainerBuild(ctx context.Context, plan *BuildPlan) error {
 	if a.containerHandler == nil || plan == nil {
 		return nil

@@ -78,7 +78,7 @@ var (
 func createAppBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var customLayout, staticOnly, singleFile, redirectBarePath starlark.Bool
 	var name, index starlark.String
-	var routes, actions *starlark.List
+	var routes, actions, jobs *starlark.List
 	var settings *starlark.Dict
 	var permissions, libraries *starlark.List
 	var style *starlarkstruct.Struct
@@ -86,7 +86,8 @@ func createAppBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tup
 	if err := starlark.UnpackArgs(APP, args, kwargs, "name", &name,
 		"routes?", &routes, "style?", &style, "permissions?", &permissions, "libraries?", &libraries, "settings?",
 		&settings, "custom_layout?", &customLayout, "container?", &containerConfig, "actions?", &actions,
-		"static_only?", &staticOnly, "index?", &index, "single_file?", &singleFile, "redirect_bare_path?", &redirectBarePath); err != nil {
+		"static_only?", &staticOnly, "index?", &index, "single_file?", &singleFile, "redirect_bare_path?", &redirectBarePath,
+		"jobs?", &jobs); err != nil {
 		return nil, fmt.Errorf("error unpacking app args: %w", err)
 	}
 
@@ -95,6 +96,9 @@ func createAppBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tup
 	}
 	if actions == nil {
 		actions = starlark.NewList([]starlark.Value{})
+	}
+	if jobs == nil {
+		jobs = starlark.NewList([]starlark.Value{})
 	}
 	if libraries == nil {
 		libraries = starlark.NewList([]starlark.Value{})
@@ -115,6 +119,7 @@ func createAppBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tup
 		"permissions":        permissions,
 		"libraries":          libraries,
 		"actions":            actions,
+		"jobs":               jobs,
 		"static_only":        staticOnly,
 		"index":              index,
 		"single_file":        singleFile,
@@ -564,6 +569,7 @@ func CreateBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) starlark.St
 					AUDIT:      starlark.NewBuiltin(AUDIT, createAuditBuiltin),
 					OUTPUT:     starlark.NewBuiltin(OUTPUT, createOutputBuiltin),
 					CONFIG:     starlark.NewBuiltin(CONFIG, CreateConfigBuiltin(nodeConfig, allowedEnv)),
+					JOB:        starlark.NewBuiltin(JOB, createJobBuiltin),
 
 					GET:             starlark.String(GET),
 					POST:            starlark.String(POST),
@@ -580,6 +586,10 @@ func CreateBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) starlark.St
 					"CONTAINER_URL": starlark.String(CONTAINER_URL),
 				},
 			},
+		}
+		module := builtin[DEFAULT_MODULE].(*starlarkstruct.Module)
+		for name, fn := range TriggerBuiltins() {
+			module.Members[name] = fn
 		}
 	})
 

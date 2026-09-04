@@ -351,6 +351,23 @@ type (
 		Id     string `json:"id" jsonschema:"the sync entry id"`
 		DryRun bool   `json:"dry_run,omitzero" jsonschema:"preview without applying"`
 	}
+	mcpJobRunIn struct {
+		Path  string            `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		Job   string            `json:"job" jsonschema:"the job name"`
+		Stage bool              `json:"stage,omitzero" jsonschema:"run on the stage instance instead of prod"`
+		Wait  bool              `json:"wait,omitzero" jsonschema:"wait for the run to finish and return its status"`
+		Force bool              `json:"force,omitzero" jsonschema:"run a disabled job, or run alongside an active run"`
+		Args  map[string]string `json:"args,omitzero" jsonschema:"run arguments, param name to value, for the job's declared params"`
+	}
+	mcpJobRunsIn struct {
+		Path   string `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		Job    string `json:"job,omitzero" jsonschema:"filter by job name"`
+		Status string `json:"status,omitzero" jsonschema:"filter by run status: running, succeeded, failed, timed_out, canceled, lost"`
+		Limit  int    `json:"limit,omitzero" jsonschema:"maximum number of runs to return (default 50)"`
+	}
+	mcpJobRunIdIn struct {
+		Id string `json:"id" jsonschema:"the job run id"`
+	}
 	mcpServiceIn struct {
 		Name   string            `json:"name" jsonschema:"the service name"`
 		Type   string            `json:"type" jsonschema:"the service type, like postgres"`
@@ -637,6 +654,31 @@ func (s *Server) buildMCPServer() *mcp.Server {
 	addMCPTool(s, srv, API_SYNC_RUN,
 		func(ctx context.Context, in mcpSyncIdIn) (any, error) {
 			return s.RunSync(ctx, in.Id, in.DryRun)
+		})
+
+	addMCPTool(s, srv, API_LIST_JOBS,
+		func(ctx context.Context, in mcpAppGlobIn) (any, error) {
+			return s.ListJobs(ctx, cmp.Or(in.PathGlob, "all"))
+		})
+
+	addMCPTool(s, srv, API_RUN_JOB,
+		func(ctx context.Context, in mcpJobRunIn) (any, error) {
+			return s.RunJob(ctx, in.Path, in.Job, in.Stage, in.Wait, in.Force, in.Args)
+		})
+
+	addMCPTool(s, srv, API_LIST_JOB_RUNS,
+		func(ctx context.Context, in mcpJobRunsIn) (any, error) {
+			return s.ListJobRuns(ctx, in.Path, in.Job, in.Status, in.Limit)
+		})
+
+	addMCPTool(s, srv, API_JOB_LOGS,
+		func(ctx context.Context, in mcpJobRunIdIn) (any, error) {
+			return s.JobLogs(ctx, in.Id)
+		})
+
+	addMCPTool(s, srv, API_CANCEL_JOB,
+		func(ctx context.Context, in mcpJobRunIdIn) (any, error) {
+			return s.CancelJobRun(ctx, in.Id)
 		})
 
 	addMCPTool(s, srv, API_SYNC_DELETE,

@@ -112,9 +112,12 @@ func formatApp(req *types.CreateAppRequest) (string, []string) {
 		args = append(args, strArg("container_vols="+formatStringList(req.ContainerVolumes)))
 	}
 	if len(req.Sidecars) > 0 {
-		// Stored as canonical JSON docs, exported as container.sidecar(...)
-		// calls (the app.star container config surface)
+		// Stored as canonical JSON docs, exported as sidecar(...) calls
 		args = append(args, listArg("sidecars", sidecarLiterals(req.Sidecars)))
+	}
+	if len(req.Jobs) > 0 {
+		// Stored as canonical JSON docs, exported as job(...) calls
+		args = append(args, listArg("jobs", jobLiterals(req.Jobs)))
 	}
 	if len(req.Bindings) > 0 {
 		args = append(args, strArg("bindings="+formatStringList(req.Bindings)))
@@ -170,7 +173,7 @@ func listArg(key string, entries []string) callArg {
 }
 
 // sidecarLiterals renders the stored sidecar JSON documents as
-// container.sidecar(...) calls, kwargs in the SidecarSpec declaration order
+// sidecar(...) calls, kwargs in the SidecarSpec declaration order
 // with defaults omitted - the same starlark surface app.star uses in
 // container.config(sidecars=)
 func sidecarLiterals(docs []string) []string {
@@ -227,7 +230,80 @@ func sidecarLiteral(doc string) string {
 	if len(spec.Options) > 0 {
 		add("options", "{"+strings.Join(stringDictEntries(spec.Options), ", ")+"}")
 	}
-	return "container.sidecar(" + strings.Join(args, ", ") + ")"
+	return "sidecar(" + strings.Join(args, ", ") + ")"
+}
+
+// jobLiterals renders the stored job JSON documents as job(...) calls
+func jobLiterals(docs []string) []string {
+	literals := make([]string, 0, len(docs))
+	for _, doc := range docs {
+		literals = append(literals, jobLiteral(doc))
+	}
+	return literals
+}
+
+func jobLiteral(doc string) string {
+	spec, err := types.ParseJobSpec(doc)
+	if err != nil {
+		return quoteStarlark(doc)
+	}
+	args := []string{quoteStarlark(spec.Name)}
+	add := func(key, literal string) {
+		args = append(args, key+"="+literal)
+	}
+	boolLit := func(b bool) string {
+		if b {
+			return "True"
+		}
+		return "False"
+	}
+	if len(spec.Command) > 0 {
+		add("command", formatStringList(spec.Command))
+	}
+	if len(spec.Args) > 0 {
+		add("args", formatStringList(spec.Args))
+	}
+	if spec.Shell {
+		add("shell", "True")
+	}
+	if spec.Image != "" {
+		add("image", quoteStarlark(spec.Image))
+	}
+	if len(spec.Env) > 0 {
+		add("env", "{"+strings.Join(stringDictEntries(spec.Env), ", ")+"}")
+	}
+	if spec.InheritEnv != nil {
+		add("inherit_env", boolLit(*spec.InheritEnv))
+	}
+	if len(spec.Volumes) > 0 {
+		add("volumes", formatStringList(spec.Volumes))
+	}
+	if len(spec.Options) > 0 {
+		add("options", "{"+strings.Join(stringDictEntries(spec.Options), ", ")+"}")
+	}
+	switch spec.TriggerType() {
+	case types.JobTriggerCron:
+		cronArgs := []string{quoteStarlark(spec.Trigger.Schedule)}
+		if spec.Trigger.Timezone != "" {
+			cronArgs = append(cronArgs, "timezone="+quoteStarlark(spec.Trigger.Timezone))
+		}
+		add("trigger", "cron("+strings.Join(cronArgs, ", ")+")")
+	case types.JobTriggerBeforeDeploy:
+		add("trigger", "before_deploy()")
+	}
+	if spec.Timeout != "" {
+		add("timeout", quoteStarlark(spec.Timeout))
+	}
+	if spec.Enabled != nil {
+		add("enabled", boolLit(*spec.Enabled))
+	}
+	if len(spec.Params) > 0 {
+		add("params", formatStringList(spec.Params))
+	}
+	if spec.Description != "" {
+		add("description", quoteStarlark(spec.Description))
+	}
+	return "job(" + strings.Join(args, ", ") + ")"
 }
 
 // stringDictEntries renders a string valued map as sorted dict entries

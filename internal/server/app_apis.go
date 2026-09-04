@@ -216,6 +216,10 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 	if err != nil {
 		return nil, err
 	}
+	appEntry.Metadata.Jobs, err = s.canonicalJobs(appRequest.Jobs)
+	if err != nil {
+		return nil, err
+	}
 	appEntry.Metadata.AppConfig = appRequest.AppConfig
 	// Set when the create is driven by a sync entry, empty for imperative creates.
 	// CreatedBySyncId is stamped only here (never on update): a prune-enabled
@@ -412,6 +416,21 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	auditResult, err := s.auditApp(ctx, tx, application, approve)
 	if err != nil {
 		return nil, fmt.Errorf("app %s audit failed: %s", workEntry.Id, err)
+	}
+	if !workEntry.IsDev && (!auditResult.NeedsApproval || approve) {
+		// Load the app (no container) so the app definition's jobs are
+		// persisted with the create, then run its before_deploy jobs. A gate
+		// failure fails the create, which rolls the app back. A definition
+		// that does not load keeps the create's lazy semantics: the error
+		// surfaces on the first request as before, and the jobs are
+		// persisted by the next reload
+		if _, err := application.Reload(ctx, true, true, types.DryRun(dryRun), app.ReloadOptions{SkipContainer: true}); err != nil {
+			s.Warn().Err(err).Msgf("app %s did not load at create; its jobs and before_deploy gates apply on the next reload", workEntry)
+		} else if !dryRun {
+			if err := s.runCreateGates(ctx, tx, application, workEntry); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Persist the source url

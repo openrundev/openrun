@@ -1691,6 +1691,8 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 			h.stateLock.Lock()
 			h.imageDigest = digest
 			h.stateLock.Unlock()
+			// Persisted with the reload's metadata write; job runs use it
+			h.app.Metadata.VersionMetadata.ImageDigest = digest
 		} else {
 			h.stateLock.RLock()
 			prevDigest := h.imageDigest
@@ -2104,7 +2106,12 @@ func (h *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []strin
 func (h *ContainerHandler) getBindingEnv() (map[string]string, error) {
 	// stage, dev and preview apps use staging binding
 	useProdAccount := strings.HasPrefix(string(h.app.Id), types.ID_PREFIX_APP_PROD)
+	return h.bindingEnvForAccount(useProdAccount), nil
+}
 
+// bindingEnvForAccount returns the binding env vars for the prod or the
+// staging account of each binding
+func (h *ContainerHandler) bindingEnvForAccount(useProdAccount bool) map[string]string {
 	env := make(map[string]string)
 	serviceTypeCount := make(map[string]int)
 	for _, binding := range h.bindings {
@@ -2125,7 +2132,7 @@ func (h *ContainerHandler) getBindingEnv() (map[string]string, error) {
 			env[envPrefix+"_"+strings.ToUpper(k)] = v
 		}
 	}
-	return env, nil
+	return env
 }
 
 // sqliteVolumeKey is the volume naming key for one sqlite binding. Keyed by

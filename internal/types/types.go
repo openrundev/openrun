@@ -506,6 +506,7 @@ type AppConfig struct {
 	FS         FS           `toml:"fs"`
 	Audit      Audit        `toml:"audit"`
 	Security   Security     `toml:"security"`
+	Jobs       JobsConfig   `toml:"jobs"`
 	StarBase   string       `toml:"star_base"` // The base directory for starlark config files
 	// StaticFromDisk serves the app files directly from the local disk source
 	// directory instead of copying them into the metadata database. Requires a
@@ -520,6 +521,13 @@ type AppConfig struct {
 
 type ActionConfig struct {
 	MaxRequestBodyBytes int64 `toml:"max_request_body_bytes"`
+}
+
+// JobsConfig holds the job run settings of an app
+type JobsConfig struct {
+	// RetainRuns is the number of run records (and their finished containers)
+	// kept per job; older runs are deleted when a run finishes
+	RetainRuns int `toml:"retain_runs"`
 }
 type Security struct {
 	DefaultSecretsProvider string `toml:"default_secrets_provider"`
@@ -660,6 +668,10 @@ type SecurityConfig struct {
 	// definition sidecars are bounded by the app's approved container.in
 	// sidecar permission instead
 	AllowedSidecarImages []string `toml:"allowed_sidecar_images"`
+	// AllowedJobImages bounds the foreign images jobs may run, from the app
+	// definition and from metadata alike: "*" (the default) allows every
+	// image, other entries are exact references or regex: entries
+	AllowedJobImages []string `toml:"allowed_job_images"`
 
 	// UnsafeAgentWithoutSandbox runs app builder agents as plain host
 	// processes instead of container sandboxes. The sandbox is the safety
@@ -1134,8 +1146,12 @@ type VersionMetadata struct {
 	GitBranch       string `json:"git_branch"`
 	GitCommit       string `json:"git_commit"`
 	GitMessage      string `json:"git_message"`
-	ApplyInfo       []byte `json:"apply_info"`
-	AppliedSyncId   string `json:"applied_sync_id"`
+	// ImageDigest is the upstream image digest an image spec app resolved at
+	// its last deploy; jobs run the app image at this digest, not at whatever
+	// the tag points to later
+	ImageDigest   string `json:"image_digest,omitempty,omitzero"`
+	ApplyInfo     []byte `json:"apply_info"`
+	AppliedSyncId string `json:"applied_sync_id"`
 }
 
 // AppEntry is the application configuration in the DB
@@ -1187,7 +1203,14 @@ type AppMetadata struct {
 	// Sidecars are the operator-set sidecar definitions (JSON SidecarSpec
 	// documents), merged by name over the app definition's container.config
 	// sidecars. See SidecarSpec
-	Sidecars         []string          `json:"sidecars,omitempty,omitzero"`
+	Sidecars []string `json:"sidecars,omitempty,omitzero"`
+	// DefinitionJobs are the app definition's ace.job entries (JSON JobSpec
+	// documents), persisted when the app loads so the scheduler and the job
+	// APIs read the database only. Jobs are the operator-set jobs (apps.ace
+	// jobs, --job, app update jobs), replacing same-name definition jobs.
+	// See JobSpec
+	DefinitionJobs   []string          `json:"definition_jobs,omitempty,omitzero"`
+	Jobs             []string          `json:"jobs,omitempty,omitzero"`
 	AppConfig        map[string]string `json:"appconfig"`
 	AuthnType        AppAuthnType      `json:"authn_type"`
 	GitAuthName      string            `json:"git_auth_name"`
@@ -1301,6 +1324,7 @@ const (
 	AppMetadataContainerArgs    AppMetadataConfigType = "container_args"
 	AppMetadataContainerVolumes AppMetadataConfigType = "container_volumes"
 	AppMetadataSidecars         AppMetadataConfigType = "sidecars"
+	AppMetadataJobs             AppMetadataConfigType = "jobs"
 	AppMetadataAuthnType        AppMetadataConfigType = "auth"
 	AppMetadataGitAuthName      AppMetadataConfigType = "git_auth"
 	AppMetadataBindings         AppMetadataConfigType = "bindings"
@@ -1364,6 +1388,7 @@ const (
 	EventTypeSystem EventType = "system"
 	EventTypeHTTP   EventType = "http"
 	EventTypeAction EventType = "action"
+	EventTypeJob    EventType = "job"
 	EventTypeCustom EventType = "custom"
 )
 

@@ -1,0 +1,151 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    OPENRUN_HOME: .
+    PATH: ${PATH}
+    HOME: ${HOME}
+    HTTP_PORT: ${HTTP_PORT}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    KUBE_TEST_NAMESPACE: ${KUBE_TEST_NAMESPACE}
+tests:
+  # Jobs on kubernetes: each run is a batch/v1 Job in the apps namespace from
+  # the app image in the registry. Same flow as container_jobs.yaml: the
+  # before_deploy gate on create, promote and reload, the cron tick, manual
+  # runs with arguments, cancel and a failing gate.
+  kjobs0010: # setup app source
+    command: rm -rf ./kjobs_star && cp -r jobs_app kjobs_star
+  kjobs0020: # create: the gate runs on stage inside the create, from the pushed image
+    command: ../openrun app create --approve --stage-at path --copt cpus=0.05 --copt memory=0.5g ./kjobs_star /kjobs_star
+  kjobs0021:
+    command: ../openrun job list /kjobs_star
+    stdout:
+      contains:
+        - "migrate"
+        - "before_deploy"
+        - "cron * * * * *"
+  kjobs0022: # the create gate ran on stage and succeeded
+    command: ../openrun job runs --job migrate --format csv /kjobs_star
+    stdout: "stage,before_deploy,succeeded"
+  kjobs0023: # the gate pod's output is read through the Job's pod
+    command: bash -c 'id=$(../openrun job runs --job migrate --format csv /kjobs_star | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout:
+      contains:
+        - "CL_DEPLOY_REASON=create"
+        - "CL_JOB_TRIGGER=before_deploy"
+        - "CL_APP_STAGE=stage"
+        - "migrate done"
+  kjobs0024: # stage app serves
+    command: curl -sS localhost:${HTTP_PORT}/kjobs_star_cl_stage
+    stdout: hello
+  kjobs0030: # promote runs the gate against prod first
+    command: ../openrun app promote /kjobs_star
+  kjobs0031:
+    command: ../openrun job runs --job migrate --format csv /kjobs_star
+    stdout: "prod,before_deploy,succeeded"
+  kjobs0032:
+    command: bash -c 'id=$(../openrun job runs --job migrate --format csv /kjobs_star | grep ",prod," | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout:
+      contains:
+        - "CL_DEPLOY_REASON=promote"
+        - "CL_APP_STAGE=prod"
+  kjobs0033:
+    command: curl -sS localhost:${HTTP_PORT}/kjobs_star
+    stdout: hello
+
+  # --- manual runs ---
+  kjobs0040: # command job with an argument, waited
+    command: ../openrun job run --wait --arg greeting=hola hello /kjobs_star
+    stdout: "succeeded"
+  kjobs0041:
+    command: bash -c 'id=$(../openrun job runs --job hello --format csv /kjobs_star | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout:
+      contains:
+        - "CL_JOB_ARG_GREETING=hola"
+        - "CL_JOB_TRIGGER=manual"
+        - "greeting=hi"
+        - "hello done"
+  kjobs0042: # the run is a Job object, labeled, without a service account token, kept for its logs
+    command: kubectl get jobs -n ${KUBE_TEST_NAMESPACE}-apps -l dev.openrun.job=hello -o go-template='{{range .items}}{{.metadata.name}} automount={{.spec.template.spec.automountServiceAccountToken}} restart={{.spec.template.spec.restartPolicy}} succeeded={{.status.succeeded}}{{"\n"}}{{end}}'
+    stdout:
+      contains:
+        - "clj-app-prd-"
+        - "automount=false restart=Never succeeded=1"
+  kjobs0043: # a foreign image job
+    command: ../openrun job run --wait shell /kjobs_star
+    stdout: "succeeded"
+  kjobs0044:
+    command: bash -c 'id=$(../openrun job runs --job shell --format csv /kjobs_star | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout: "shell=shell image=foreign"
+  kjobs0045: # a Starlark run job
+    command: ../openrun job run --wait --arg greeting=yo star /kjobs_star
+    stdout: "succeeded (star ok greeting=yo)"
+
+  # --- cron ---
+  kjobs0050: # the scheduler runs the every-minute tick
+    command: bash -c '../openrun job runs --job tick --status succeeded --format csv /kjobs_star | grep -q succeeded && echo found'
+    stdout: found
+    config:
+      retries: 60
+      interval: 3s
+  kjobs0051:
+    command: bash -c 'id=$(../openrun job runs --job tick --status succeeded --format csv /kjobs_star | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout:
+      contains:
+        - "CL_JOB_TRIGGER=cron"
+        - "CL_JOB_SCHEDULED_AT="
+        - "tick done"
+
+  # --- cancel ---
+  kjobs0060: # cancel deletes the Job; the run is recorded canceled
+    command: bash -c 'id=$(../openrun job run sleep /kjobs_star | grep -o "run_[A-Za-z0-9]*" | head -1); sleep 5; ../openrun job cancel $id'
+    stdout: "Cancel requested"
+  kjobs0061:
+    command: bash -c '../openrun job runs --job sleep --format csv /kjobs_star | head -1'
+    stdout: "canceled"
+    config:
+      retries: 15
+      interval: 2s
+  kjobs0062: # the canceled run's Job is gone
+    command: kubectl get jobs -n ${KUBE_TEST_NAMESPACE}-apps -l dev.openrun.job=sleep -o name
+    stdout:
+      not-contains:
+        - "job.batch"
+    config:
+      retries: 15
+      interval: 2s
+
+  # --- a failing gate stops the deploy ---
+  kjobs0070:
+    command: ../openrun app update jobs '{"name":"bad-gate","command":["python","jobs.py","fail"],"trigger":{"type":"before_deploy"}}' /kjobs_star
+    stdout: "1 app(s) updated"
+  kjobs0071: # the reload stops on the failing gate
+    command: ../openrun app reload --force-reload /kjobs_star
+    stderr:
+      contains:
+        - "before_deploy job bad-gate"
+        - "failed"
+        - "failing on purpose"
+    exit-code: 1
+  kjobs0072:
+    command: ../openrun job runs --job bad-gate --format csv /kjobs_star
+    stdout: "stage,before_deploy,failed"
+  kjobs0073: # clear the metadata jobs; the reload passes again
+    command: ../openrun app update jobs - /kjobs_star
+    stdout: "1 app(s) updated"
+  kjobs0074:
+    command: ../openrun app reload --force-reload /kjobs_star
+  kjobs0075:
+    command: bash -c 'id=$(../openrun job runs --job migrate --format csv /kjobs_star | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout: "CL_DEPLOY_REASON=reload"
+
+  kjobs0080: # record the sanitized prod app id for the delete cleanup check
+    command: bash -c '../openrun app list --internal --format csv /kjobs_star | grep -o "app_prd_[a-z0-9]*" | head -1 | tr "_" "-" > kjobs_id.txt && [ -s kjobs_id.txt ]'
+  kjobs0090: # cleanup
+    command: ../openrun app delete /kjobs_star && rm -rf ./kjobs_star
+    stdout: "app(s) deleted"
+  kjobs0091: # delete removed the Jobs of both instances
+    command: bash -c 'id=$(cat kjobs_id.txt); rm -f kjobs_id.txt; n=$(kubectl get jobs -n ${KUBE_TEST_NAMESPACE}-apps -o name | grep -c "${id#app-prd-}"); echo "jobs=$n"'
+    stdout: "jobs=0"
+    config:
+      retries: 10
+      interval: 2s

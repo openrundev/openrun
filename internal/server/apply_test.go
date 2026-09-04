@@ -243,6 +243,8 @@ func newApplyTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Cont
 		System: types.SystemConfig{
 			DefaultDomain: "localhost",
 		},
+		// The default config allows any job image
+		Security: types.SecurityConfig{AllowedJobImages: []string{"*"}},
 	}
 	db, err := metadata.NewMetadata(logger, config)
 	if err != nil {

@@ -88,7 +88,13 @@ func (s *Server) cleanupStaleContainers(ctx context.Context) error {
 			appIds[string(appInfo.Id)] = true
 		}
 	}
+	// Job containers run in the foreground for an active run record; one
+	// whose run is no longer active belongs to a lost run and is stopped
+	activeRuns := s.activeJobRunIds(ctx)
 	keep := func(cont container.Container) bool {
+		if runId := cont.LabelValue(container.LABEL_PREFIX + container.JobRunLabel); runId != "" {
+			return activeRuns == nil || activeRuns[runId]
+		}
 		return cont.HasLabel(container.SidecarAlwaysOnLabelKey, "true") &&
 			appIds[cont.LabelValue(container.LABEL_PREFIX+"app.id")]
 	}

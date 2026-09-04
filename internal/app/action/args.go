@@ -14,6 +14,11 @@ type Args struct {
 	members starlark.StringDict
 }
 
+// NewArgs builds an Args value from the given members
+func NewArgs(members starlark.StringDict) *Args {
+	return &Args{members: members}
+}
+
 func (a *Args) Attr(name string) (starlark.Value, error) {
 	v, ok := a.members[name]
 	if !ok {

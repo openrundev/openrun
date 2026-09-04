@@ -139,6 +139,12 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 		return err
 	}
 
+	// Load the job definitions; needs the container config (sidecar names)
+	// and the params
+	if err = a.loadJobs(); err != nil {
+		return fmt.Errorf("error loading jobs: %w", err)
+	}
+
 	if a.containerHandler != nil {
 		// Container handler is present, reload the container
 		if a.IsDev {

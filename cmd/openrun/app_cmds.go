@@ -6,11 +6,9 @@ package main
 import (
 	"bytes"
 	"cmp"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
@@ -95,6 +93,12 @@ func appCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			Name:    "sidecar",
 			Aliases: []string{"sc"},
 			Usage:   "Add a sidecar container: a JSON object with name, image (image:<ref>, omit for the app image), command, args, env, port, health, volumes, inherit_env, always_on, options; or @file holding an object or a list",
+		})
+	flags = append(flags,
+		&cli.StringSliceFlag{
+			Name:    "job",
+			Aliases: []string{"jb"},
+			Usage:   "Add a job: a JSON object with name, command, args, image (image:<ref>, omit for the app image), env, inherit_env, volumes, options, trigger ({\"type\": \"cron\", \"schedule\": ..., \"timezone\": ...}, {\"type\": \"before_deploy\"} or {\"type\": \"manual\"}), timeout, enabled, params, description; or @file holding an object or a list",
 		})
 	flags = append(flags,
 		&cli.StringSliceFlag{
@@ -187,6 +191,10 @@ Examples:
 			if err != nil {
 				return err
 			}
+			jobs, err := parseJobArgs(cCtx.StringSlice("job"))
+			if err != nil {
+				return err
+			}
 
 			appConfig := cCtx.StringSlice("app-config")
 			confMap := make(map[string]string)
@@ -226,6 +234,7 @@ Examples:
 				ContainerArgs:    cargMap,
 				ContainerVolumes: containerVolumes,
 				Sidecars:         sidecars,
+				Jobs:             jobs,
 				AppConfig:        confMap,
 				Bindings:         bindings,
 				StageAt:          cCtx.String("stage-at"),
@@ -251,42 +260,13 @@ Examples:
 // a JSON object or list of objects. Each entry is validated client side and
 // returned in canonical form.
 func parseSidecarArgs(values []string) ([]string, error) {
-	var ret []string
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "-" {
-			ret = append(ret, value)
-			continue
+	return parseSpecArgs(values, "sidecar", func(doc string) (string, error) {
+		spec, err := types.ParseSidecarSpec(doc)
+		if err != nil {
+			return "", err
 		}
-		docs := []string{value}
-		if strings.HasPrefix(value, "@") {
-			data, err := os.ReadFile(value[1:])
-			if err != nil {
-				return nil, fmt.Errorf("error reading sidecar file %s: %w", value[1:], err)
-			}
-			trimmed := strings.TrimSpace(string(data))
-			if strings.HasPrefix(trimmed, "[") {
-				var items []jsontext.Value
-				if err := json.Unmarshal([]byte(trimmed), &items); err != nil {
-					return nil, fmt.Errorf("error parsing sidecar file %s: %w", value[1:], err)
-				}
-				docs = docs[:0]
-				for _, item := range items {
-					docs = append(docs, string(item))
-				}
-			} else {
-				docs = []string{trimmed}
-			}
-		}
-		for _, doc := range docs {
-			spec, err := types.ParseSidecarSpec(doc)
-			if err != nil {
-				return nil, err
-			}
-			ret = append(ret, spec.String())
-		}
-	}
-	return ret, nil
+		return spec.String(), nil
+	})
 }
 
 func printCreateResult(cCtx *cli.Context, createResult types.AppCreateResponse) {

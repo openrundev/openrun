@@ -248,6 +248,19 @@
     ],
     "type": "object"
   },
+  "cancel_job": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "description": "the job run id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "type": "object"
+  },
   "config_get": {
     "additionalProperties": false,
     "type": "object"
@@ -413,6 +426,19 @@
     ],
     "type": "object"
   },
+  "job_logs": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "description": "the job run id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "type": "object"
+  },
   "list_apikeys": {
     "additionalProperties": false,
     "properties": {
@@ -470,6 +496,45 @@
     "required": [
       "path"
     ],
+    "type": "object"
+  },
+  "list_job_runs": {
+    "additionalProperties": false,
+    "properties": {
+      "job": {
+        "description": "filter by job name",
+        "type": "string"
+      },
+      "limit": {
+        "description": "maximum number of runs to return (default 50)",
+        "type": "integer"
+      },
+      "path": {
+        "description": "the app path, like /myapp or example.com:/myapp",
+        "type": "string"
+      },
+      "status": {
+        "description": "filter by run status: running, succeeded, failed, timed_out, canceled, lost",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "list_jobs": {
+    "additionalProperties": false,
+    "properties": {
+      "full_output": {
+        "description": "return complete objects instead of the default compact summary",
+        "type": "boolean"
+      },
+      "path_glob": {
+        "description": "app path glob to match, like /myapp, example.com:/**, or all. Empty matches all apps across all domains",
+        "type": "string"
+      }
+    },
     "type": "object"
   },
   "list_providers": {
@@ -659,6 +724,43 @@
   },
   "restart_server": {
     "additionalProperties": false,
+    "type": "object"
+  },
+  "run_job": {
+    "additionalProperties": false,
+    "properties": {
+      "args": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "run arguments, param name to value, for the job's declared params",
+        "type": "object"
+      },
+      "force": {
+        "description": "run a disabled job, or run alongside an active run",
+        "type": "boolean"
+      },
+      "job": {
+        "description": "the job name",
+        "type": "string"
+      },
+      "path": {
+        "description": "the app path, like /myapp or example.com:/myapp",
+        "type": "string"
+      },
+      "stage": {
+        "description": "run on the stage instance instead of prod",
+        "type": "boolean"
+      },
+      "wait": {
+        "description": "wait for the run to finish and return its status",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path",
+      "job"
+    ],
     "type": "object"
   },
   "secret_create": {

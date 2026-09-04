@@ -20,8 +20,11 @@ App declaration files (any name, `apps.star` or `apps.ace` by convention) declar
 |   `app`     |      Declares one app: install path, source url, params, config, bindings    |     [App Configuration]({{< ref "docs/applications/overview/#app-configuration" >}})      |
 |  `binding`  |            Declares one service binding: path, source, grants, config        |   [Declarative Apply]({{< ref "docs/applications/servicebindings/#declarative-apply" >}}) |
 |  `config`   | Reads a value from the server `[node_config]` in `openrun.toml`, with a default | [Config Access from Code]({{< ref "docs/configuration/overview/#config-access-from-code" >}}) |
+|  `sidecar`  |   Declares one sidecar container for an app, passed in `app(sidecars=[...])`    |      [Sidecar Containers]({{< ref "docs/container/overview/#sidecar-containers" >}})       |
+|    `job`    |  Declares one job (command, image, trigger, params) for an app, passed in `app(jobs=[...])` | [Jobs and Deploy Hooks]({{< ref "docs/applications/jobs/#declaring-jobs-in-appsace-and-on-the-cli" >}}) |
+| `cron`, `before_deploy`, `manual` |            Job triggers, passed as the `trigger` of `job`             |               [Jobs and Deploy Hooks]({{< ref "docs/applications/jobs" >}})               |
 
-The `config` function supports the special keys `_branch` (the git branch the declaration file was loaded from) and `_dev` (whether the apply is running in dev mode).
+Sidecars and jobs are also accepted as dict literals or JSON strings with the same fields. The `config` function supports the special keys `_branch` (the git branch the declaration file was loaded from) and `_dev` (whether the apply is running in dev mode).
 
 ## App Definition (`app.star`)
 
@@ -42,6 +45,8 @@ The `app.star` file defines the app and its handler functions. The predefined bu
 |   `ace.style`    |         Configures the CSS library and themes for the app              |                    [Styling]({{< ref "docs/app/styling" >}})                           |
 |  `ace.library`   |           Imports a JavaScript library as an ECMAScript module         |       [JavaScript Modules]({{< ref "docs/app/javascript/#javascript-modules" >}})      |
 |   `ace.action`   |            Defines an action with an auto-generated form UI            |         [Action Definition]({{< ref "docs/actions/#action-definition" >}})             |
+|    `ace.job`     | Defines a job: a command run in a container from the app image, or a Starlark `run` function | [Jobs and Deploy Hooks]({{< ref "docs/applications/jobs/#declaring-jobs-in-appstar" >}}) |
+| `ace.cron`, `ace.before_deploy`, `ace.manual` |        Job triggers, passed as the `trigger` of `ace.job`        |        [Jobs and Deploy Hooks]({{< ref "docs/applications/jobs" >}})                  |
 |   `ace.result`   |              Returns the result from an action run handler             |             [Action Result]({{< ref "docs/actions/#action-result" >}})                 |
 |   `ace.audit`    |            Sets the audit event details from a handler                 |         [Custom Events]({{< ref "docs/applications/audit/#custom-events" >}})          |
 |   `ace.output`   |          Wraps a value or error returned by a Starlark function        | [Returning Errors]({{< ref "docs/plugins/overview/#returning-errors-from-functions" >}}) |
@@ -58,7 +63,7 @@ Handler functions are plain Starlark functions defined in `app.star` (or in file
 |   `handler(req)`  |                    The default request handler, used when a route defines no handler                   |               [Structure]({{< ref "docs/develop/#structure" >}})                     |
 | `error_handler(req, ret)` |       Defining this enables automatic error handling for plugin calls                          | [Automatic Error Handling]({{< ref "docs/plugins/overview/#automatic-error-handling" >}}) |
 
-All other handlers are regular functions with no special name, referenced from the definition: route handlers through the `handler` property of [`ace.html`/`ace.api`/`ace.fragment`]({{< ref "docs/app/routing" >}}), the action run handler (called as `run(dry_run, args)`) through the `run` property of [`ace.action`]({{< ref "docs/actions/#action-definition" >}}), and the action [suggest handler]({{< ref "docs/actions/#suggest-handler" >}}) through its `suggest` property.
+All other handlers are regular functions with no special name, referenced from the definition: route handlers through the `handler` property of [`ace.html`/`ace.api`/`ace.fragment`]({{< ref "docs/app/routing" >}}), the action run handler (called as `run(dry_run, args)`) through the `run` property of [`ace.action`]({{< ref "docs/actions/#action-definition" >}}), the action [suggest handler]({{< ref "docs/actions/#suggest-handler" >}}) through its `suggest` property, and a Starlark job function (the same `run(dry_run, args)` shape) through the `run` property of [`ace.job`]({{< ref "docs/applications/jobs/#declaring-jobs-in-appstar" >}}).
 
 ### Plugins
 

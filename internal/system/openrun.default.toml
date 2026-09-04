@@ -139,6 +139,7 @@ allowed_container_args = { add-host = "regex:.*" } # the container args that are
                                  # non-empty values must match exactly, or can use regex:.* to allow all values
 allowed_mounts = ["$OPENRUN_HOME/mounts"] # host paths that app volume sources are allowed to mount
 allowed_sidecar_images = [] # foreign images operator-set sidecars (--sidecar, app update sidecars, apps.star) may use; empty allows any, entries are exact refs or regex:
+allowed_job_images = ["*"]  # foreign images jobs (app.star ace.job, --job, app update jobs, apps.ace) may use; "*" allows any, entries are exact refs or regex:
 unsafe_agent_without_sandbox = false # run app builder agents directly on the host instead of inside a container sandbox.
                                  # NOT RECOMMENDED: the sandbox is the safety boundary for the agent's auto-approved
                                  # tool calls; without it the agent runs with full access as the server user.
@@ -299,6 +300,9 @@ plugin = "exec.in"
 
 # Action related settings
 action.max_request_body_bytes = 33554432
+
+# Jobs related settings
+jobs.retain_runs = 50 # run records (and their finished containers) kept per job
 
 # ==== CORS related Config ====
 # CORS is disabled by default. Containerized apps are normally accessed through

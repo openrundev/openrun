@@ -923,7 +923,7 @@ done
 POSTGRES_FILES="test_service.yaml test_bindings.yaml test_app_update_bindings.yaml test_postgres.yaml test_postgres_container.yaml test_todo_flow.yaml"
 MYSQL_FILES="test_mysql.yaml"
 REDIS_FILES="test_redis.yaml"
-CONTAINER_FILES="test_containers.yaml container_sidecar.yaml test_postgres_container.yaml test_todo_flow.yaml"
+CONTAINER_FILES="test_containers.yaml container_sidecar.yaml container_jobs.yaml test_postgres_container.yaml test_todo_flow.yaml"
 LITESTREAM_FILES="test_sqlite_litestream.yaml test_replication_status.yaml test_metadata_litestream.yaml test_metadata_litestream_verify.yaml"
 
 if [[ -n "$ENABLE_POSTGRES" ]] && contains_any "$POSTGRES_FILES"; then
@@ -1200,6 +1200,10 @@ EOF
     if is_selected container_sidecar.yaml; then
         commander test $VERBOSE container_sidecar.yaml
         MATCHED_TESTS+=(container_sidecar.yaml)
+    fi
+    if is_selected container_jobs.yaml; then
+        commander test $VERBOSE container_jobs.yaml
+        MATCHED_TESTS+=(container_jobs.yaml)
     fi
     if is_selected test_postgres_container.yaml; then
         if [[ -n "$TEST_POSTGRES_URL" ]]; then
@@ -1569,7 +1573,7 @@ EOF
   rm -rf sqlite_drk_tmp
 fi
 
-if [[ -n "$KUBE_REGISTRY_URL" ]] && contains_any "test_kubernetes.yaml kubernetes_sidecar.yaml"; then
+if [[ -n "$KUBE_REGISTRY_URL" ]] && contains_any "test_kubernetes.yaml kubernetes_sidecar.yaml kubernetes_jobs.yaml"; then
   # test kubernetes container manager
   if [[ -z "$KUBE_TEST_NAMESPACE" ]]; then
     KUBE_TEST_NAMESPACE="openrun-cli-test-$$"
@@ -1694,6 +1698,10 @@ EOF
     if is_selected kubernetes_sidecar.yaml; then
         commander test $VERBOSE kubernetes_sidecar.yaml
         MATCHED_TESTS+=(kubernetes_sidecar.yaml)
+    fi
+    if is_selected kubernetes_jobs.yaml; then
+        commander test $VERBOSE kubernetes_jobs.yaml
+        MATCHED_TESTS+=(kubernetes_jobs.yaml)
     fi
     CL_CONFIG_FILE=config_k8s.toml GOCOVERDIR=$GOCOVERDIR/../client ../openrun server stop
     SERVER_PID=""

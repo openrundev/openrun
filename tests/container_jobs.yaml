@@ -1,0 +1,199 @@
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    HTTP_PORT: ${HTTP_PORT}
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    OPENRUN_CONTAINER_COMMAND: ${OPENRUN_CONTAINER_COMMAND}
+    PATH: ${PATH}
+tests:
+  # Jobs on docker/podman: a before_deploy gate run on create, promote and
+  # reload, a cron job claimed by the scheduler, manual runs (command,
+  # foreign image and Starlark) with arguments, cancel, the one active run
+  # rule and a failing gate stopping a reload. Runs and their output are
+  # inspected through the job CLI; containers through the runtime.
+  jobs0010: # setup app source
+    command: rm -rf ./jobs_star && cp -r jobs_app jobs_star
+  jobs0020: # create: the app definition's before_deploy job runs on the stage instance inside the create
+    command: ../openrun app create --approve --stage-at path ./jobs_star /jobs_star
+  jobs0021: # job list shows the definition jobs with their triggers
+    command: ../openrun job list /jobs_star
+    stdout:
+      contains:
+        - "migrate"
+        - "before_deploy"
+        - "cron * * * * *"
+        - "star"
+        - "definition"
+  jobs0022: # the create gate ran on stage and succeeded (csv: run,app,job,stage,trigger,status,...)
+    command: ../openrun job runs --job migrate --format csv /jobs_star
+    stdout: "stage,before_deploy,succeeded"
+  jobs0023: # the gate container got the deploy env; its output is read from the container
+    command: bash -c 'id=$(../openrun job runs --job migrate --format csv /jobs_star | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout:
+      contains:
+        - "CL_DEPLOY_REASON=create"
+        - "CL_JOB_TRIGGER=before_deploy"
+        - "CL_APP_STAGE=stage"
+        - "CL_JOB_NAME=migrate"
+        - "migrate done"
+  jobs0024: # stage app serves
+    command: curl -sS localhost:${HTTP_PORT}/jobs_star_cl_stage
+    stdout: hello
+  jobs0030: # promote runs the gate against the prod instance before the promote
+    command: ../openrun app promote /jobs_star
+  jobs0031:
+    command: ../openrun job runs --job migrate --format csv /jobs_star
+    stdout:
+      contains:
+        - "prod,before_deploy,succeeded"
+        - "stage,before_deploy,succeeded"
+  jobs0032: # the prod gate run carries the promote reason and the prod identity
+    command: bash -c 'id=$(../openrun job runs --job migrate --format csv /jobs_star | grep ",prod," | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout:
+      contains:
+        - "CL_DEPLOY_REASON=promote"
+        - "CL_APP_STAGE=prod"
+        - "CL_APP_PATH=/jobs_star"
+  jobs0033: # prod app serves
+    command: curl -sS localhost:${HTTP_PORT}/jobs_star
+    stdout: hello
+
+  # --- manual runs ---
+  jobs0040: # run a command job on prod, wait for it, with a run argument
+    command: ../openrun job run --wait --arg greeting=hola hello /jobs_star
+    stdout: "succeeded"
+  jobs0041: # the argument reaches the container as CL_JOB_ARG_*, the app param keeps its configured value
+    command: bash -c 'id=$(../openrun job runs --job hello --format csv /jobs_star | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout:
+      contains:
+        - "CL_JOB_ARG_GREETING=hola"
+        - "CL_JOB_TRIGGER=manual"
+        - "CL_APP_STAGE=prod"
+        - "greeting=hi"
+        - "hello done"
+  jobs0042: # an argument the job does not declare is rejected
+    command: ../openrun job run --wait --arg nope=1 hello /jobs_star
+    stderr: "does not accept argument"
+    exit-code: 1
+  jobs0043: # a foreign image job (shell wrapped)
+    command: ../openrun job run --wait shell /jobs_star
+    stdout: "succeeded"
+  jobs0044:
+    command: bash -c 'id=$(../openrun job runs --job shell --format csv /jobs_star | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout: "shell=shell image=foreign"
+  jobs0045: # a Starlark run job, called in the OpenRun process with the typed argument
+    command: ../openrun job run --wait --arg greeting=yo star /jobs_star
+    stdout: "succeeded (star ok greeting=yo)"
+  jobs0046: # job containers are labeled, run from the app image and left in place for their logs
+    command: bash -c '${OPENRUN_CONTAINER_COMMAND} ps -a --filter "label=dev.openrun.job=hello" --filter "label=dev.openrun.app.path=/jobs_star" --format "{{.Names}} {{.Status}}"'
+    stdout:
+      contains:
+        - "clj-app_prd_"
+        - "Exited (0)"
+  jobs0047: # a run on the stage instance
+    command: ../openrun job run --wait --stage hello /jobs_star
+    stdout: "succeeded"
+  jobs0048:
+    command: ../openrun job runs --job hello --format csv /jobs_star
+    stdout:
+      contains:
+        - "stage,manual,succeeded"
+        - "prod,manual,succeeded"
+
+  # --- cron ---
+  jobs0050: # the scheduler claims the every-minute tick on the leader and runs it
+    command: bash -c '../openrun job runs --job tick --status succeeded --format csv /jobs_star | grep -q succeeded && echo found'
+    stdout: found
+    config:
+      retries: 45
+      interval: 3s
+  jobs0051: # the cron run carries the tick and the trigger
+    command: bash -c 'id=$(../openrun job runs --job tick --status succeeded --format csv /jobs_star | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout:
+      contains:
+        - "CL_JOB_TRIGGER=cron"
+        - "CL_JOB_SCHEDULED_AT="
+        - "tick done"
+  jobs0052: # job list shows the last run and the next tick
+    command: ../openrun job list /jobs_star
+    stdout:
+      contains:
+        - "succeeded"
+
+  # --- cancel and concurrency ---
+  jobs0060: # a second run of a job with an active run is refused without --force
+    command: bash -c '../openrun job run sleep /jobs_star | grep -o "run_[A-Za-z0-9]*" | head -1 > sleep_run.txt; ../openrun job run sleep /jobs_star'
+    stderr: "already has an active run"
+    exit-code: 1
+  jobs0060a: # the run's container is up
+    command: bash -c '${OPENRUN_CONTAINER_COMMAND} ps --filter "label=dev.openrun.job=sleep" --format "{{.Status}}"'
+    stdout: "Up"
+    config:
+      retries: 15
+      interval: 2s
+  jobs0060b: # cancel stops it
+    command: bash -c 'id=$(cat sleep_run.txt); rm -f sleep_run.txt; ../openrun job cancel $id'
+    stdout: "Cancel requested"
+  jobs0061: # the canceled run is recorded as canceled and its container stopped
+    command: bash -c '../openrun job runs --job sleep --format csv /jobs_star | head -1'
+    stdout: "canceled"
+    config:
+      retries: 15
+      interval: 2s
+  jobs0062:
+    command: bash -c '${OPENRUN_CONTAINER_COMMAND} ps -a --filter "label=dev.openrun.job=sleep" --format "{{.Status}}"'
+    stdout: "Exited"
+  jobs0063: # cancel of a finished run is refused
+    command: bash -c 'id=$(../openrun job runs --job sleep --format csv /jobs_star | head -1 | cut -d, -f1); ../openrun job cancel $id'
+    stderr: "is not active"
+    exit-code: 1
+
+  # --- a failing gate stops the deploy ---
+  jobs0070: # an operator job added through metadata (staged) with the before_deploy trigger
+    command: ../openrun app update jobs '{"name":"bad-gate","command":["python","jobs.py","fail"],"trigger":{"type":"before_deploy"}}' /jobs_star
+    stdout: "1 app(s) updated"
+  jobs0071: # the staged metadata job shows for the stage instance with its origin
+    command: ../openrun job list --format csv /jobs_star
+    stdout:
+      contains:
+        - "/jobs_star,stage,bad-gate,metadata"
+  jobs0072: # a dry run reload does not run gates
+    command: ../openrun app reload --dry-run --force-reload /jobs_star
+  jobs0073: # the reload stops on the failing gate, with the run id and the output tail
+    command: ../openrun app reload --force-reload /jobs_star
+    stderr:
+      contains:
+        - "before_deploy job bad-gate"
+        - "failed"
+        - "failing on purpose"
+    exit-code: 1
+  jobs0074: # the failed gate run is recorded
+    command: ../openrun job runs --job bad-gate --format csv /jobs_star
+    stdout: "stage,before_deploy,failed"
+  jobs0075: # the app is unchanged: still serving
+    command: curl -sS localhost:${HTTP_PORT}/jobs_star_cl_stage
+    stdout: hello
+  jobs0076: # clear the metadata jobs; the reload passes its gate again
+    command: ../openrun app update jobs - /jobs_star
+    stdout: "1 app(s) updated"
+  jobs0077:
+    command: ../openrun app reload --force-reload /jobs_star
+  jobs0078: # the reload gate ran with the reload reason and the new version
+    command: bash -c 'id=$(../openrun job runs --job migrate --format csv /jobs_star | head -1 | cut -d, -f1); ../openrun job logs $id'
+    stdout:
+      contains:
+        - "CL_DEPLOY_REASON=reload"
+        - "CL_PREVIOUS_VERSION="
+
+  jobs0080: # record the prod app id for the delete cleanup check
+    command: bash -c '../openrun app list --internal --format csv /jobs_star | grep -o "app_prd_[a-z0-9]*" | head -1 > jobs_id.txt && [ -s jobs_id.txt ]'
+  jobs0090: # cleanup
+    command: ../openrun app delete /jobs_star && rm -rf ./jobs_star
+    stdout: "app(s) deleted"
+  jobs0091: # delete removed the job containers of both instances with the app's other containers
+    command: bash -c 'id=$(cat jobs_id.txt); rm -f jobs_id.txt; p=$(${OPENRUN_CONTAINER_COMMAND} ps -aq --filter "label=dev.openrun.app.id=$id" | wc -l | tr -d " "); s=$(${OPENRUN_CONTAINER_COMMAND} ps -aq --filter "label=dev.openrun.app.id=app_stg_${id#app_prd_}" | wc -l | tr -d " "); echo "prod=$p stage=$s"'
+    stdout: "prod=0 stage=0"
+  jobs0092: # the deleted app's runs are gone
+    command: ../openrun job runs /jobs_star
+    stderr: "not found"
+    exit-code: 1

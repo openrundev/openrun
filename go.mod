@@ -46,6 +46,7 @@ require (
 	github.com/openrundev/openrun/pkg/plugin v0.19.3
 	github.com/pkg/profile v1.7.0
 	github.com/redis/go-redis/v9 v9.21.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.35.1
 	github.com/russellhaering/gosaml2 v0.11.0
 	github.com/russellhaering/goxmldsig v1.6.0

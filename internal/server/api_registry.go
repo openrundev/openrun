@@ -52,6 +52,11 @@ const (
 	API_SYNC_RUN             API_NAME = "sync_run"
 	API_SYNC_DELETE          API_NAME = "sync_delete"
 	API_LIST_SYNC            API_NAME = "list_sync"
+	API_LIST_JOBS            API_NAME = "list_jobs"
+	API_RUN_JOB              API_NAME = "run_job"
+	API_LIST_JOB_RUNS        API_NAME = "list_job_runs"
+	API_JOB_LOGS             API_NAME = "job_logs"
+	API_CANCEL_JOB           API_NAME = "cancel_job"
 	API_SERVICE_CREATE       API_NAME = "service_create"
 	API_SERVICE_UPDATE       API_NAME = "service_update"
 	API_SERVICE_DELETE       API_NAME = "service_delete"
@@ -239,6 +244,23 @@ func init() {
 		API_LIST_SYNC: {Description: "List the sync entries (declarative git sync schedules)",
 			Scope: types.PermissionSyncRead, ReadOnly: true,
 			Method: http.MethodGet, Path: "/sync", ApiFunc: (*Handler).listSyncEntries},
+
+		// Jobs
+		API_LIST_JOBS: {Description: "List the jobs (scheduled, manual and before_deploy) of the apps matching a path glob, with their last run",
+			Scope: types.PermissionRead, ReadOnly: true,
+			Method: http.MethodGet, Path: "/jobs", ApiFunc: (*Handler).listJobs},
+		API_RUN_JOB: {Description: "Run a job of an app now, on its prod (or stage) instance; optionally wait for the run to finish",
+			Scope:  types.PermissionUpdate,
+			Method: http.MethodPost, Path: "/jobs/run", ApiFunc: (*Handler).runJob},
+		API_LIST_JOB_RUNS: {Description: "List the job runs of an app (prod and stage instances), newest first",
+			Scope: types.PermissionRead, ReadOnly: true,
+			Method: http.MethodGet, Path: "/jobs/runs", ApiFunc: (*Handler).listJobRuns},
+		API_JOB_LOGS: {Description: "Get the output of a job run, read from its container while it exists",
+			Scope: types.PermissionRead, ReadOnly: true,
+			Method: http.MethodGet, Path: "/jobs/logs", ApiFunc: (*Handler).jobLogs},
+		API_CANCEL_JOB: {Description: "Cancel an active job run",
+			Scope: types.PermissionUpdate, Destructive: true,
+			Method: http.MethodPost, Path: "/jobs/cancel", ApiFunc: (*Handler).cancelJobRun},
 
 		// Services
 		API_SERVICE_CREATE: {Description: "Create a managed service (postgres, redis, ...)",
