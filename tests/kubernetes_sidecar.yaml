@@ -19,6 +19,9 @@ tests:
   ksidecar0021: # stage app is up
     command: curl -sS localhost:${HTTP_PORT}/ksc_cli_cl_stage
     stdout: hello
+    config:
+      retries: 15
+      interval: 2s
   ksidecar0022: # app reaches the cache on localhost inside the pod
     command: curl -sS localhost:${HTTP_PORT}/ksc_cli_cl_stage/env
     stdout: "cache_addr=localhost:11211"
@@ -47,6 +50,9 @@ tests:
   ksidecar0031: # prod works
     command: curl -sS localhost:${HTTP_PORT}/ksc_cli/cache
     stdout: "cache ok: v1"
+    config:
+      retries: 15
+      interval: 2s
   ksidecar0032: # prod worker
     command: curl -sS localhost:${HTTP_PORT}/ksc_cli/worker
     stdout: "alive role=cli"
@@ -76,6 +82,9 @@ tests:
   ksidecar0062: # stage works
     command: curl -sS localhost:${HTTP_PORT}/ksc_star_cl_stage/cache
     stdout: "cache ok: v1"
+    config:
+      retries: 15
+      interval: 2s
   ksidecar0063: # worker env from container.sidecar
     command: curl -sS localhost:${HTTP_PORT}/ksc_star_cl_stage/worker
     stdout: "alive role=star"

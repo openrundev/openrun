@@ -37,6 +37,9 @@ tests:
   kjobs0024: # stage app serves
     command: curl -sS localhost:${HTTP_PORT}/kjobs_star_cl_stage
     stdout: hello
+    config:
+      retries: 15
+      interval: 2s
   kjobs0030: # promote runs the gate against prod first
     command: ../openrun app promote /kjobs_star
   kjobs0031:
@@ -51,6 +54,9 @@ tests:
   kjobs0033:
     command: curl -sS localhost:${HTTP_PORT}/kjobs_star
     stdout: hello
+    config:
+      retries: 15
+      interval: 2s
 
   # --- manual runs ---
   kjobs0040: # command job with an argument, waited

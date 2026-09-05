@@ -13,8 +13,13 @@ config:
     KUBE_PLUGIN_IMAGE: ${KUBE_PLUGIN_IMAGE}
     KUBE_TEST_NAMESPACE: ${KUBE_TEST_NAMESPACE}
 tests:
+  # The flask source is copied to a kubernetes-only dir: test_containers.yaml
+  # bind-mounts ./flaskapp into a dev container which leaves a __pycache__
+  # owned by the container user, so a plain rm -rf of ./flaskapp fails for the
+  # runner user on rootful docker (leaving a dir without app.py behind). The
+  # kubernetes manager never bind-mounts, so this dir stays user-owned.
   kubernetes010: # setup flask app
-    command: rm -rf ./flaskapp && mkdir flaskapp && cp flask.py flaskapp/app.py
+    command: rm -rf ./kube_flaskapp && mkdir kube_flaskapp && cp flask.py kube_flaskapp/app.py
   kubernetes020: # db provider uses the namespace-scoped Kubernetes master key
     command: ../openrun secret create --name kube_db_secret --value kube-secret-value
     stdout: "Secret created: kube_db_secret"
@@ -22,17 +27,27 @@ tests:
     command: ../openrun secret show --reveal kube_db_secret
     stdout: "kube-secret-value"
   kubernetes030: # setup flask prod app
-    command: ../openrun app create --stage-at path --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpus=0.05 --copt memory=0.5g --approve ./flaskapp /kube_flaskprod
+    command: ../openrun app create --stage-at path --spec python-flask --carg PYTHON_VERSION='{{secret_from "env" "PYTHON_VERSION"}}' --copt cpus=0.05 --copt memory=0.5g --approve ./kube_flaskapp /kube_flaskprod
   kubernetes031:
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
+  # Content checks after a create/reload/promote retry: the app create waits
+  # for the Deployment rollout, but Service endpoint propagation (and a
+  # terminating pod of the previous version lingering in the endpoints after a
+  # rollout) can make the first requests fail or hit the old version.
   kubernetes032: # check curl
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
     stdout: hello
+    config:
+      retries: 15
+      interval: 2s
   kubernetes050: # update app code
-    command: perl -i -pe 's/"hello"/"updated"/g' flaskapp/app.py
+    command: perl -i -pe 's/"hello"/"updated"/g' kube_flaskapp/app.py
   kubernetes070: # stage is not yet updated
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod_cl_stage
     stdout: "hello"
+    config:
+      retries: 15
+      interval: 2s
   kubernetes080: # do reload
     command: ../openrun app reload /kube_flaskprod
   kubernetes081:
@@ -40,6 +55,9 @@ tests:
   kubernetes090: # stage is updated
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod_cl_stage
     stdout: "updated"
+    config:
+      retries: 15
+      interval: 2s
   kubernetes100: # prod is not yet updated
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
     stdout: "hello"
@@ -48,24 +66,39 @@ tests:
   kubernetes120: # prod is updated
     command: curl -sS localhost:${HTTP_PORT}/kube_flaskprod
     stdout: "updated"
+    config:
+      retries: 15
+      interval: 2s
 
   kubernetes200: # setup streamlit app
     command: ../openrun app create --stage-at path --spec python-streamlit --branch master --approve --copt cpus=0.05 --copt kubernetes.memory=300m --copt max_replicas=2 github.com/streamlit/streamlit-example /kube_streamlit
   kubernetes210: # check stage
     command: curl -sS localhost:${HTTP_PORT}/kube_streamlit_cl_stage/_stcore/health
     stdout: ok
+    config:
+      retries: 15
+      interval: 2s
   kubernetes220: # check prod
     command: curl -sS localhost:${HTTP_PORT}/kube_streamlit/_stcore/health
     stdout: ok
+    config:
+      retries: 15
+      interval: 2s
 
   kubernetes400: # setup nginx image
     command: ../openrun app create --stage-at path --spec image --approve --param image=nginx --param port=80 - /kube_image_nginx
   kubernetes410: # check stage
     command: curl -sS localhost:${HTTP_PORT}/kube_image_nginx_cl_stage
     stdout: Welcome to nginx
+    config:
+      retries: 15
+      interval: 2s
   kubernetes420: # check prod
     command: curl -sS localhost:${HTTP_PORT}/kube_image_nginx
     stdout: Welcome to nginx
+    config:
+      retries: 15
+      interval: 2s
   kubernetes430: # error check
     command: ../openrun app create --spec image --approve --param image=nginx - /kube_image_error
     stderr: param port is a required param, a value has to be provided
@@ -77,9 +110,15 @@ tests:
   kubernetes510: # check curl
     command: curl -sS localhost:${HTTP_PORT}/kube_fh
     stdout: '"v1":"hello"'
+    config:
+      retries: 15
+      interval: 2s
   kubernetes520: # check curl
     command: curl -sS localhost:${HTTP_PORT}/kube_fh
     stdout: '"v2":"xyz"'
+    config:
+      retries: 15
+      interval: 2s
 
   # Test go spec
   kubernetes600: # setup app
@@ -87,6 +126,9 @@ tests:
   kubernetes610: # check curl
     command: curl -sS localhost:${HTTP_PORT}/kube_goapp
     stdout: "Hello, Gopher!"
+    config:
+      retries: 15
+      interval: 2s
 
   # Test volumes
   kubernetes700: # setup flask app
@@ -96,6 +138,9 @@ tests:
   kubernetes702: # check version
     command: curl -sS localhost:${HTTP_PORT}/kube_sql/version
     stdout: "VERSION1"
+    config:
+      retries: 15
+      interval: 2s
   kubernetes703: # update val
     command: |
       curl -X POST "localhost:${HTTP_PORT}/kube_sql/value" -H "Content-Type: application/json" -d '{"value": "testval1"}'
@@ -109,9 +154,15 @@ tests:
   kubernetes707: # check version is updated
     command: curl -sS localhost:${HTTP_PORT}/kube_sql/version
     stdout: "VERSION2"
+    config:
+      retries: 15
+      interval: 2s
   kubernetes708: # check new val is retained after reload (mount was used)
     command: curl -sS localhost:${HTTP_PORT}/kube_sql/value
     stdout: "testval1"
+    config:
+      retries: 15
+      interval: 2s
 
   # Test app reload --verify: a passing reload updates the app, a failing one
   # (health check returns 500) is rolled back and the old version keeps serving.
@@ -122,6 +173,9 @@ tests:
   kubernetes802: # check initial version
     command: curl -sS localhost:${HTTP_PORT}/kube_verify/version
     stdout: "V1"
+    config:
+      retries: 15
+      interval: 2s
   kubernetes810: # update app code to a valid new version
     command: perl -i -pe 's/"V1"/"V2"/g' verifyapp_tmp/app.py
   kubernetes811: # reload --verify succeeds
@@ -130,18 +184,11 @@ tests:
   kubernetes812: # version is updated
     # A terminating pod can remain in the Service endpoints briefly after the
     # verified rollout succeeds, so wait until routing converges on V2.
-    command: |
-      for attempt in $(seq 1 20); do
-        body=$(curl -sS localhost:${HTTP_PORT}/kube_verify/version)
-        if [[ "$body" == *V2* ]]; then
-          echo "$body"
-          exit 0
-        fi
-        sleep 1
-      done
-      echo "$body"
-      exit 1
+    command: curl -sS localhost:${HTTP_PORT}/kube_verify/version
     stdout: "V2"
+    config:
+      retries: 20
+      interval: 1s
   kubernetes820: # break the health endpoint (returns 500) and bump version
     command: perl -i -pe 's/return "ok", 200/return "broken", 500/g; s/"V2"/"V3"/g' verifyapp_tmp/app.py
   kubernetes821: # reload --verify fails health and is reverted
@@ -151,9 +198,15 @@ tests:
   kubernetes822: # version is unchanged (rolled back, old version kept serving)
     command: curl -sS localhost:${HTTP_PORT}/kube_verify/version
     stdout: "V2"
+    config:
+      retries: 15
+      interval: 2s
   kubernetes823: # health endpoint still serves the old, working version
     command: curl -sS localhost:${HTTP_PORT}/kube_verify
     stdout: "ok"
+    config:
+      retries: 15
+      interval: 2s
 
   # Out-of-process binding providers, OCI distribution path: the harness built
   # the fixture provider into bindings.preinstalled_dir (as the Helm chart's

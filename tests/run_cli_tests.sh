@@ -443,7 +443,7 @@ cleanup() {
   remove_session_containers
 
   force_rm metadata app_src config1.json config2.json config_k8s.toml sync_test_id.tmp sqlite_tmp verifyapp_tmp kube_plugins versionstest disk_usage/config_gen.lock flaskhttp/config_gen.lock testapp/openrun_gen.go.html
-  force_rm config/ logs/ openrun.toml config_container.toml server.stdout flaskapp testauthapp pg_flaskapp todo_flaskapp todo_rbac.json streamlitdev stdev_started.txt plugin_ext storeex_app/config_gen.lock
+  force_rm config/ logs/ openrun.toml config_container.toml server.stdout flaskapp kube_flaskapp testauthapp pg_flaskapp todo_flaskapp todo_rbac.json streamlitdev stdev_started.txt plugin_ext storeex_app/config_gen.lock
 
   if [[ -n "$POSTGRES_TEST_CONTAINER_ID" ]]; then
     $CONTAINER_TOOL rm -f "$POSTGRES_TEST_CONTAINER_ID" >/dev/null 2>&1 || true
