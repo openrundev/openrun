@@ -38,10 +38,16 @@ type ContainerInfo struct {
 	// CreatedAt is the container/pod creation time, date-first formatted so
 	// it sorts lexicographically (used by the console for recency ordering)
 	CreatedAt string `json:"created_at"`
-	// Role is "sidecar" for an app sidecar container and "litestream" for
-	// the replication companion (docker/podman, from the role label); empty
-	// for app containers and pods
+	// Role is "sidecar" for an app sidecar container, "litestream" for
+	// the replication companion (docker/podman, from the role label) and
+	// "job" for a job run container (both runtimes, from the job labels);
+	// empty for app containers and pods
 	Role string `json:"role"`
+	// Job / JobRun are the job name and the run id of a job run container
+	// (docker/podman labels, pod labels/annotations on kubernetes); empty
+	// otherwise
+	Job    string `json:"job"`
+	JobRun string `json:"job_run"`
 	// Sidecar is the sidecar name for role sidecar containers
 	Sidecar string `json:"sidecar"`
 	// SidecarOf is the app container a sidecar belongs to (docker/podman)
@@ -166,6 +172,26 @@ func runContainerCmd(ctx context.Context, runtime string, args ...string) ([]byt
 const containerAppIdLabel = container.LABEL_PREFIX + "app.id"
 const containerAppPathLabel = container.LABEL_PREFIX + "app.path"
 const containerAppVersionLabel = container.LABEL_PREFIX + "app.version"
+const containerJobLabel = container.LABEL_PREFIX + container.JobNameLabel
+const containerJobRunLabel = container.LABEL_PREFIX + container.JobRunLabel
+
+// ContainerRoleJob is the Role of a job run container
+const ContainerRoleJob = "job"
+
+// setContainerLabelFields fills the label derived fields of a docker/podman
+// container, shared by the listing and the inspect paths: the sidecar and
+// job run identity, and the role - sidecars and litestream companions carry
+// the role label, job containers the job labels and no role label
+func setContainerLabelFields(info *ContainerInfo, labels map[string]string) {
+	info.Role = labels[container.RoleLabelKey]
+	info.Sidecar = labels[container.SidecarNameLabelKey]
+	info.SidecarOf = labels[container.SidecarAppLabelKey]
+	info.Job = labels[containerJobLabel]
+	info.JobRun = labels[containerJobRunLabel]
+	if info.Job != "" {
+		info.Role = ContainerRoleJob
+	}
+}
 
 func (s *Server) containerRuntime() string {
 	command := strings.TrimSpace(s.Config().System.ContainerCommand)
@@ -253,7 +279,7 @@ func (s *Server) ListManagedContainers(ctx context.Context) ([]ContainerInfo, er
 			continue
 		}
 		labels := entryLabels(entry)
-		infos = append(infos, ContainerInfo{
+		info := ContainerInfo{
 			Id:        entryString(entry, "ID", "Id"),
 			Name:      name,
 			AppId:     labels[containerAppIdLabel],
@@ -264,10 +290,9 @@ func (s *Server) ListManagedContainers(ctx context.Context) ([]ContainerInfo, er
 			Ports:     entryPorts(entry),
 			Runtime:   filepath.Base(runtime),
 			CreatedAt: entryCreatedAt(entry),
-			Role:      labels[container.RoleLabelKey],
-			Sidecar:   labels[container.SidecarNameLabelKey],
-			SidecarOf: labels[container.SidecarAppLabelKey],
-		})
+		}
+		setContainerLabelFields(&info, labels)
+		infos = append(infos, info)
 	}
 	s.resolveContainerApps(infos)
 	sort.Slice(infos, func(i, j int) bool {
@@ -391,16 +416,13 @@ func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats b
 
 	detail := &ContainerDetail{
 		ContainerInfo: ContainerInfo{
-			Id:        entryString(entry, "Id", "ID"),
-			Name:      strings.TrimPrefix(entryString(entry, "Name"), "/"),
-			AppId:     labels[containerAppIdLabel],
-			AppPath:   labels[containerAppPathLabel],
-			Image:     entryString(config, "Image"),
-			State:     entryString(state, "Status"),
-			Runtime:   filepath.Base(runtime),
-			Role:      labels[container.RoleLabelKey],
-			Sidecar:   labels[container.SidecarNameLabelKey],
-			SidecarOf: labels[container.SidecarAppLabelKey],
+			Id:      entryString(entry, "Id", "ID"),
+			Name:    strings.TrimPrefix(entryString(entry, "Name"), "/"),
+			AppId:   labels[containerAppIdLabel],
+			AppPath: labels[containerAppPathLabel],
+			Image:   entryString(config, "Image"),
+			State:   entryString(state, "Status"),
+			Runtime: filepath.Base(runtime),
 		},
 		Command:      command,
 		StartedAt:    entryString(state, "StartedAt"),
@@ -412,6 +434,7 @@ func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats b
 		SizeRw:       int64(entryFloat(entry, "SizeRw")),
 		SizeRootFs:   int64(entryFloat(entry, "SizeRootFs")),
 	}
+	setContainerLabelFields(&detail.ContainerInfo, labels)
 
 	if detail.AppId != "" {
 		// Resolve the app path/env like the listing does (the raw path
@@ -714,7 +737,7 @@ func kubernetesPodInfo(pod *container.WorkloadPod) ContainerInfo {
 			status = "Running (not ready)"
 		}
 	}
-	return ContainerInfo{
+	info := ContainerInfo{
 		Id:        pod.Name,
 		Name:      pod.Name,
 		AppId:     pod.AppId,
@@ -727,7 +750,13 @@ func kubernetesPodInfo(pod *container.WorkloadPod) ContainerInfo {
 		CreatedAt: pod.CreatedAt,
 		Sidecars:  pod.Sidecars,
 		StartedAt: pod.StartedAt,
+		Job:       pod.Job,
+		JobRun:    pod.JobRun,
 	}
+	if info.Job != "" {
+		info.Role = ContainerRoleJob
+	}
+	return info
 }
 
 func (s *Server) getKubernetesContainer(ctx context.Context, id string) (*ContainerDetail, error) {

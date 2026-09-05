@@ -270,3 +270,38 @@ func TestContainerAPIParsingAndKubernetesPodInfo(t *testing.T) {
 		t.Fatalf("not-ready pod info = %#v", notReady)
 	}
 }
+
+// Job run containers are classified by their job labels (docker/podman) or
+// the job label/annotation of their pod (kubernetes): role job, with the
+// job name and the run id exposed for the console's links
+func TestContainerJobRole(t *testing.T) {
+	var info ContainerInfo
+	setContainerLabelFields(&info, map[string]string{
+		containerAppIdLabel:  "app_prd_x",
+		containerJobLabel:    "nightly",
+		containerJobRunLabel: "run_abc",
+	})
+	if info.Role != ContainerRoleJob || info.Job != "nightly" || info.JobRun != "run_abc" {
+		t.Fatalf("job container fields %+v", info)
+	}
+	info = ContainerInfo{}
+	setContainerLabelFields(&info, map[string]string{container.RoleLabelKey: "sidecar",
+		container.SidecarNameLabelKey: "cache", container.SidecarAppLabelKey: "clc-app"})
+	if info.Role != "sidecar" || info.Sidecar != "cache" || info.SidecarOf != "clc-app" || info.Job != "" {
+		t.Fatalf("sidecar fields %+v", info)
+	}
+	info = ContainerInfo{}
+	setContainerLabelFields(&info, map[string]string{containerAppIdLabel: "app_prd_x"})
+	if info.Role != "" {
+		t.Fatalf("app container role %q, want empty", info.Role)
+	}
+
+	info = kubernetesPodInfo(&container.WorkloadPod{Name: "clj-app-nightly-abc-x1", AppId: "app_prd_x",
+		Phase: "Succeeded", Job: "nightly", JobRun: "run_abc"})
+	if info.Role != ContainerRoleJob || info.Job != "nightly" || info.JobRun != "run_abc" || info.State != "succeeded" {
+		t.Fatalf("job pod info %+v", info)
+	}
+	if info := kubernetesPodInfo(&container.WorkloadPod{Name: "app-pod", AppId: "app_prd_x", Phase: "Running"}); info.Role != "" {
+		t.Fatalf("app pod role %q, want empty", info.Role)
+	}
+}

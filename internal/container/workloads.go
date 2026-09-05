@@ -36,6 +36,10 @@ type WorkloadPod struct {
 	// Sidecars are the app's sidecar container names (native sidecars in
 	// the pod, excluding the litestream companion)
 	Sidecars []string
+	// Job / JobRun identify a job run pod (batch/v1 Job pods carry the job
+	// name label and the run id annotation); empty for app pods
+	Job    string
+	JobRun string
 }
 
 // podSidecarNames returns the names of the app sidecars of a pod: the native
@@ -93,6 +97,13 @@ func podToWorkload(pod *core.Pod) WorkloadPod {
 		PodIP:      pod.Status.PodIP,
 		CreatedAt:  pod.CreationTimestamp.Format(time.RFC3339),
 		Sidecars:   podSidecarNames(pod),
+		Job:        pod.Labels[LABEL_PREFIX+JobNameLabel],
+		// The run id label is trimmed to the label value grammar; the
+		// annotation carries it verbatim
+		JobRun: pod.Annotations[LABEL_PREFIX+JobRunLabel],
+	}
+	if wl.JobRun == "" {
+		wl.JobRun = pod.Labels[LABEL_PREFIX+JobRunLabel]
 	}
 	if len(pod.Spec.Containers) > 0 {
 		wl.Image = pod.Spec.Containers[0].Image

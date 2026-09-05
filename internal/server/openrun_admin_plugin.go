@@ -31,6 +31,8 @@ func initAdminPlugin(server *Server) {
 					{Name: "update_bindings", Type: sdk.WRITE, Method: "UpdateBindings"},
 					{Name: "create_sync", Type: sdk.WRITE, Method: "CreateSync"},
 					{Name: "run_sync", Type: sdk.WRITE, Method: "RunSync"},
+					{Name: "run_job", Type: sdk.WRITE, Method: "RunJob"},
+					{Name: "cancel_job", Type: sdk.WRITE, Method: "CancelJob"},
 					{Name: "delete_sync", Type: sdk.WRITE, Method: "DeleteSync"},
 					{Name: "set_rbac_group", Type: sdk.WRITE, Method: "SetRBACGroup"},
 					{Name: "delete_rbac_group", Type: sdk.WRITE, Method: "DeleteRBACGroup"},
@@ -332,6 +334,43 @@ func (c *openrunAdminPlugin) DeleteService(ctx context.Context, call *sdk.Call) 
 // StartContainer starts a stopped OpenRun managed container
 func (c *openrunAdminPlugin) StartContainer(ctx context.Context, call *sdk.Call) (any, error) {
 	return c.containerLifecycle(ctx, call, "start_container")
+}
+
+// RunJob starts a manual run of a job on the app's prod (or stage, or dev)
+// instance and returns the run record. wait returns the finished run; force
+// runs a disabled job or runs alongside an active run. args are the run
+// arguments for the job's declared params. Needs app:update on the app
+func (c *openrunAdminPlugin) RunJob(ctx context.Context, call *sdk.Call) (any, error) {
+	var path, job string
+	var stage, wait, force bool
+	var args map[string]any
+	if err := sdk.UnpackArgs("run_job", call, "path", &path, "job", &job, "stage?", &stage,
+		"wait?", &wait, "force?", &force, "args?", &args); err != nil {
+		return nil, err
+	}
+	argValues, err := dictToStringMap(args, "args")
+	if err != nil {
+		return nil, err
+	}
+	result, err := c.server.RunJob(ctx, path, job, stage, wait, force, argValues)
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
+}
+
+// CancelJob cancels an active job run executing on this node. Needs
+// app:update on the run's app
+func (c *openrunAdminPlugin) CancelJob(ctx context.Context, call *sdk.Call) (any, error) {
+	var runId string
+	if err := sdk.UnpackArgs("cancel_job", call, "run_id", &runId); err != nil {
+		return nil, err
+	}
+	result, err := c.server.CancelJobRun(ctx, runId)
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
 }
 
 // StopContainer stops a running OpenRun managed container

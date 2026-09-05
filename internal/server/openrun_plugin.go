@@ -35,6 +35,9 @@ func initOpenRunPlugin(server *Server) {
 					{Name: "analytics_summary", Type: sdk.READ, Method: "AnalyticsSummary"},
 					{Name: "list_operations", Type: sdk.READ, Method: "ListOperations"},
 					{Name: "list_sync", Type: sdk.READ, Method: "ListSync"},
+					{Name: "list_jobs", Type: sdk.READ, Method: "ListJobs"},
+					{Name: "list_job_runs", Type: sdk.READ, Method: "ListJobRuns"},
+					{Name: "job_logs", Type: sdk.READ, Method: "JobLogs"},
 					{Name: "list_bindings", Type: sdk.READ, Method: "ListBindings"},
 					{Name: "replication_status", Type: sdk.READ, Method: "ReplicationStatus"},
 					{Name: "get_app", Type: sdk.READ, Method: "GetApp"},
@@ -739,7 +742,77 @@ func (c *openrunPlugin) GetApp(ctx context.Context, call *sdk.Call) (any, error)
 	}
 	v["stage_path"] = stagePath
 	v["stage_url"] = stageUrl
+	// The number of distinct effective jobs across the prod (or dev)
+	// instance and its stage instance, for the console's Jobs tab (shown
+	// only for apps that have jobs); the jobs themselves come from list_jobs
+	v["job_count"] = c.server.appJobCount(ctx, &entry.AppEntry)
 	return v, nil
+}
+
+// appJobCount counts the distinct job names of an app instance and, for a
+// prod app, its stage instance (a staged job change shows before promote).
+// Metadata that fails to parse counts as zero
+func (s *Server) appJobCount(ctx context.Context, entry *types.AppEntry) int {
+	names := map[string]bool{}
+	instances := []*types.AppEntry{entry}
+	if stageEntry, err := s.getStageAppNoTx(ctx, entry); err == nil {
+		instances = append(instances, stageEntry)
+	}
+	for _, instance := range instances {
+		jobs, _, err := types.EffectiveJobs(&instance.Metadata)
+		if err != nil {
+			continue
+		}
+		for _, job := range jobs {
+			names[job.Name] = true
+		}
+	}
+	return len(names)
+}
+
+// ListJobs lists the effective jobs of the apps matching the path glob
+// (default all), with the next scheduled run and the last run of each. Reads
+// need app:read on the app
+func (c *openrunPlugin) ListJobs(ctx context.Context, call *sdk.Call) (any, error) {
+	var path string
+	if err := sdk.UnpackArgs("list_jobs", call, "path?", &path); err != nil {
+		return nil, err
+	}
+	result, err := c.server.ListJobs(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
+}
+
+// ListJobRuns lists the job runs of an app (prod and stage instances),
+// newest first, optionally filtered by job name and status. limit defaults
+// to 50
+func (c *openrunPlugin) ListJobRuns(ctx context.Context, call *sdk.Call) (any, error) {
+	var path, job, status string
+	var limit int64
+	if err := sdk.UnpackArgs("list_job_runs", call, "path", &path, "job?", &job, "status?", &status, "limit?", &limit); err != nil {
+		return nil, err
+	}
+	result, err := c.server.ListJobRuns(ctx, path, job, status, int(limit))
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
+}
+
+// JobLogs returns a job run's output (read from its container while the
+// container exists; a run job's result message otherwise) with the run
+func (c *openrunPlugin) JobLogs(ctx context.Context, call *sdk.Call) (any, error) {
+	var runId string
+	if err := sdk.UnpackArgs("job_logs", call, "run_id", &runId); err != nil {
+		return nil, err
+	}
+	result, err := c.server.JobLogs(ctx, runId)
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
 }
 
 // ListVersions returns the versions for the app at the given path. Use the
