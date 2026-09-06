@@ -252,6 +252,13 @@ func (m *LitestreamManager) Start(ctx context.Context) error {
 		db.SetLogger(m.slog.With("litestream_db", m.names[db]))
 	}
 	if err := store.Open(ctx); err != nil {
+		// Open can start some database monitors before another database fails.
+		// The manager has not taken ownership yet, so unwind the partial store.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if closeErr := store.Close(cleanupCtx); closeErr != nil {
+			m.logger.Warn().Err(closeErr).Msg("Error cleaning up failed litestream startup")
+		}
 		return fmt.Errorf("error starting litestream replication: %w", err)
 	}
 	m.store = store

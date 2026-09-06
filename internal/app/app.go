@@ -74,13 +74,15 @@ type App struct {
 	containerHandler *ContainerHandler
 	serverConfig     *types.ServerConfig
 
-	globals      starlark.StringDict    // global variables defined in starlark code
-	appDef       *starlarkstruct.Struct // app starlark definition
-	errorHandler starlark.Callable      // error handler function
-	appRouter    *chi.Mux               // router for the app
-	newAppRouter *chi.Mux               // router built by the reload in progress, published to appRouter under renderMu
-	actions      []*action.Action       // actions defined for the app
-	jobs         []jobDef               // ace.job entries of the loaded app definition
+	globals            starlark.StringDict    // global variables defined in starlark code
+	appDef             *starlarkstruct.Struct // app starlark definition
+	errorHandler       starlark.Callable      // error handler function
+	appRouter          *chi.Mux               // router for the app
+	newAppRouter       *chi.Mux               // router built by the reload in progress, published to appRouter under renderMu
+	proxyTransports    []*proxyTransport      // owned by the published router; guarded by initMutex
+	newProxyTransports []*proxyTransport      // staged by Reload, retired on failure
+	actions            []*action.Action       // actions defined for the app
+	jobs               []jobDef               // ace.job entries of the loaded app definition
 
 	// renderMu guards appRouter and the parsed templates: a reload (dev
 	// watcher or API triggered) publishes them while request handlers on
@@ -240,6 +242,10 @@ func (a *App) Close() error {
 		return nil
 	}
 	a.closed = true
+	retireProxyTransports(a.proxyTransports)
+	retireProxyTransports(a.newProxyTransports)
+	a.proxyTransports = nil
+	a.newProxyTransports = nil
 	a.extProcs.shutdown()
 	a.localHosts.shutdown()
 	var closeErr error
@@ -416,6 +422,12 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 		time.Sleep(time.Duration(a.systemConfig.FileWatcherDebounceMillis) * time.Millisecond)
 	}
 	a.reloadStartTime = time.Now()
+	defer func() {
+		// A failed reload leaves the published router alive, but must release
+		// any transports allocated while constructing its replacement.
+		retireProxyTransports(a.newProxyTransports)
+		a.newProxyTransports = nil
+	}()
 
 	var err error
 	a.Info().Msg("Reloading app definition")
@@ -581,6 +593,9 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 	a.templateMap = newTemplateMap
 	a.renderMu.Unlock()
 	a.newAppRouter = nil
+	retireProxyTransports(a.proxyTransports)
+	a.proxyTransports = a.newProxyTransports
+	a.newProxyTransports = nil
 
 	a.initialized = true
 	a.updateActiveContainerNameLocked()

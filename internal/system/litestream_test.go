@@ -5,14 +5,52 @@ package system
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/benbjohnson/litestream"
+	lsfile "github.com/benbjohnson/litestream/file"
 	"github.com/openrundev/openrun/internal/types"
 )
+
+func TestLitestreamFailedStartClosesPartialStore(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := NewLitestreamManager(types.NewLogger(&types.LogConfig{Level: "WARN"}), "", "test",
+		types.LitestreamConfig{Type: LitestreamReplicaTypeFile, Path: filepath.Join(dir, "replica")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Open limits concurrency to 50: at least one valid database must open
+	// before the final invalid database can fail startup.
+	for i := range 51 {
+		db := litestream.NewDB(filepath.Join(dir, fmt.Sprintf("%d.db", i)))
+		db.MonitorInterval = time.Hour
+		if i < 50 {
+			db.Replica = litestream.NewReplicaWithClient(db, lsfile.NewReplicaClient(filepath.Join(dir, "replica")))
+		}
+		mgr.dbs = append(mgr.dbs, db)
+		mgr.names[db] = fmt.Sprint(i)
+		t.Cleanup(func() { _ = db.Close(context.Background()) })
+	}
+	if err := mgr.Start(context.Background()); err == nil {
+		t.Fatal("expected missing replica to fail startup")
+	}
+	if mgr.store != nil {
+		t.Fatal("failed store was published")
+	}
+	for _, db := range mgr.dbs {
+		if db.IsOpen() {
+			t.Errorf("database monitor left open: %s", db.Path())
+		}
+		if db.SQLDB() != nil {
+			t.Errorf("database pool left open: %s", db.Path())
+		}
+	}
+}
 
 func TestValidateLitestreamConfig(t *testing.T) {
 	t.Parallel()

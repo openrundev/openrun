@@ -852,6 +852,8 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	customTransport.IdleConnTimeout = time.Duration(a.AppConfig.Proxy.IdleConnTimeoutSecs) * time.Second
 	customTransport.DisableCompression = a.AppConfig.Proxy.DisableCompression
 	proxy.Transport = telemetry.WrapTransport(customTransport)
+	ownedTransport := &proxyTransport{transport: customTransport}
+	a.newProxyTransports = append(a.newProxyTransports, ownedTransport)
 
 	// resolveProxyTarget returns the upstream for the current request. For
 	// container.URL the container address is re-resolved on every request
@@ -1004,7 +1006,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	if stripApp {
 		stripPath = path.Join(a.Path, stripPath)
 	}
-	router.Mount(pathStr, http.StripPrefix(stripPath, permsHandler(proxyWrapper)))
+	router.Mount(pathStr, ownedTransport.wrap(http.StripPrefix(stripPath, permsHandler(proxyWrapper))))
 	return rootWildcard, nil
 }
 
