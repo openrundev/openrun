@@ -48,6 +48,7 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("plugin", cCtx.Args().Get(0))
 			values.Add("account", cCtx.Args().Get(1))
@@ -110,6 +111,7 @@ func accountListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 
@@ -171,6 +173,7 @@ func updateParamsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("paramName", cCtx.Args().Get(0))
 			values.Add("paramValue", cCtx.Args().Get(1))
@@ -233,6 +236,7 @@ func paramListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 

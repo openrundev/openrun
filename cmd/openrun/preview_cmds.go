@@ -47,6 +47,7 @@ func previewCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().Get(1))
 			values.Add("commitId", cCtx.Args().Get(0))

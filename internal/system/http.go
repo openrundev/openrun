@@ -58,8 +58,6 @@ func NewHttpClient(serverUri, apiKey string, skipCertCheck bool) *HttpClient {
 		transport := &Transport{}
 		// Using unix domain sockets
 		transport.RegisterLocation(OpenRunServiceLocation, serverUri)
-		t := &http.Transport{}
-		t.RegisterProtocol(Scheme, transport)
 		client = &http.Client{
 			Transport: transport,
 			Timeout:   time.Duration(180) * time.Second,
@@ -90,6 +88,11 @@ func NewPlainHttpClient(skipCertCheck bool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: skipCertCheck}
 	return &http.Client{Transport: transport, Timeout: 30 * time.Second}
+}
+
+// CloseIdleConnections releases pooled connections when the client is no longer needed.
+func (h *HttpClient) CloseIdleConnections() {
+	h.client.CloseIdleConnections()
 }
 
 // SetHeader adds a header sent with every request made by this client

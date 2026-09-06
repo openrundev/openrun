@@ -63,6 +63,7 @@ Examples:
 			values.Add("name", name)
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response map[string]any
 			if err := client.Get("/_openrun/service/health", values, &response); err != nil {
 				return err
@@ -148,6 +149,7 @@ Examples:
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.Service
 			if err := client.Post("/_openrun/service", values, &service, &response); err != nil {
 				return err
@@ -199,6 +201,7 @@ Examples:
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 
 			// Fetch the existing service to merge changes onto
 			fetchValues := url.Values{}
@@ -284,6 +287,7 @@ Examples:
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response map[string]any
 			if err := client.Delete("/_openrun/service", values, &response); err != nil {
 				return err
@@ -340,6 +344,7 @@ Examples:
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response []types.Service
 			if err := client.Get("/_openrun/services", values, &response); err != nil {
 				return err

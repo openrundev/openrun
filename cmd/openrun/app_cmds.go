@@ -241,6 +241,7 @@ Examples:
 			}
 			var createResult types.AppCreateResponse
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			err = client.Post("/_openrun/app", values, body, &createResult)
 			if err != nil {
 				return err
@@ -329,6 +330,7 @@ Examples:
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var appListResponse types.AppListResponse
 			err := client.Get("/_openrun/apps", values, &appListResponse)
 			if err != nil {
@@ -487,6 +489,7 @@ Examples:
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().Get(0))
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -537,6 +540,7 @@ func appApproveCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().Get(0))
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -624,6 +628,7 @@ func appReloadCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().First())
 			values.Add("approve", strconv.FormatBool(cCtx.Bool("approve")))
@@ -723,6 +728,7 @@ func appPromoteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().First())
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))

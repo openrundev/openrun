@@ -90,6 +90,11 @@ func (t *Transport) RegisterLocation(loc string, path string) {
 
 var _ http.RoundTripper = (*Transport)(nil)
 
+// CloseIdleConnections releases idle Unix socket connections and their transport goroutines.
+func (t *Transport) CloseIdleConnections() {
+	t.getTransport().CloseIdleConnections()
+}
+
 // RoundTrip executes a single HTTP transaction. See
 // net/http.RoundTripper.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {

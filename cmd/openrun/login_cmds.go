@@ -75,6 +75,7 @@ func initLogoutCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 				form := url.Values{}
 				form.Set("token", login.RefreshToken)
 				client := system.NewHttpClient(revokeEndpoint, "", clientConfig.Client.SkipCertCheck)
+				defer client.CloseIdleConnections()
 				if _, err := client.PostForm("", form); err != nil {
 					fmt.Fprintf(cCtx.App.ErrWriter, "Warning: server-side revocation failed: %s\n", err) //nolint:errcheck
 				}
@@ -110,6 +111,7 @@ func fetchJSON(client *http.Client, fetchUrl string, out any) error {
 
 func runLoginFlow(cCtx *cli.Context, clientConfig *types.ClientConfig, serverUrl string) error {
 	httpClient := system.NewPlainHttpClient(clientConfig.Client.SkipCertCheck)
+	defer httpClient.CloseIdleConnections()
 
 	// Discover the resource and the AS endpoints from the well-known docs
 	var prm struct {
@@ -205,6 +207,7 @@ func runLoginFlow(cCtx *cli.Context, clientConfig *types.ClientConfig, serverUrl
 	form.Set("client_id", "openrun-cli")
 	form.Set("code_verifier", verifier)
 	tokenClient := system.NewHttpClient(metadata.TokenEndpoint, "", clientConfig.Client.SkipCertCheck)
+	defer tokenClient.CloseIdleConnections()
 	tokenResp, err := tokenClient.PostForm("", form)
 	if err != nil {
 		return fmt.Errorf("token exchange failed: %w", err)

@@ -63,6 +63,7 @@ Examples:
 			values.Add("excludeDeclarative", strconv.FormatBool(cCtx.Bool("exclude-declarative")))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.AppExportResponse
 			if err := client.Get("/_openrun/export", values, &response); err != nil {
 				return err
@@ -114,6 +115,7 @@ Examples:
 			values.Add("applyPath", filePath)
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.AppExportResponse
 			if err := client.Get("/_openrun/pretty_print", values, &response); err != nil {
 				return err

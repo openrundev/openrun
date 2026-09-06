@@ -49,6 +49,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().Get(1))
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -110,6 +111,7 @@ The second required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().Get(1))
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -191,6 +193,7 @@ The last required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPathGlob", cCtx.Args().Get(1))
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -256,6 +259,7 @@ The initial argument are strings. The last argument is <appPathGlob>. `+PATH_SPE
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 
 			values.Add("appPathGlob", cCtx.Args().Get(cCtx.NArg()-1))

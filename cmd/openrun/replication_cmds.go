@@ -44,6 +44,7 @@ func replicationStatusCommand(commonFlags []cli.Flag, clientConfig *types.Client
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			// An explicit CLI invocation expects current state, not the
 			// server's brief status cache
 			values := url.Values{}

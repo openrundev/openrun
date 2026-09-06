@@ -54,6 +54,7 @@ func jobListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 				return fmt.Errorf("expected at most one arg: <appPathGlob>")
 			}
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPathGlob", cmp.Or(cCtx.Args().First(), "all"))
 
@@ -176,6 +177,7 @@ func jobRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cl
 				args[key] = value
 			}
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("job", cCtx.Args().Get(0))
 			values.Add("appPath", cCtx.Args().Get(1))
@@ -228,6 +230,7 @@ func jobRunsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 				return fmt.Errorf("expected one arg: <appPath>")
 			}
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 			values.Add("job", cCtx.String("job"))
@@ -308,6 +311,7 @@ func jobLogsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 				return fmt.Errorf("expected one arg: <runId>")
 			}
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("id", cCtx.Args().First())
 
@@ -340,6 +344,7 @@ func jobCancelCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 				return fmt.Errorf("expected one arg: <runId>")
 			}
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("id", cCtx.Args().First())
 

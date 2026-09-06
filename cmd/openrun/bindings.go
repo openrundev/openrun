@@ -71,6 +71,7 @@ Examples:
 			values.Add("staging", strconv.FormatBool(cCtx.Bool(STAGING_FLAG)))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response map[string]any
 			if err := client.Get("/_openrun/binding/health", values, &response); err != nil {
 				return err
@@ -140,6 +141,7 @@ Examples:
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.Binding
 			if err := client.Post("/_openrun/binding", values, &createRequest, &response); err != nil {
 				return err
@@ -211,6 +213,7 @@ Examples:
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.Binding
 			if err := client.Put("/_openrun/binding", values, updateRequest, &response); err != nil {
 				return err
@@ -253,6 +256,7 @@ Examples:
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response map[string]any
 			if err := client.Delete("/_openrun/binding", values, &response); err != nil {
 				return err
@@ -294,6 +298,7 @@ Examples:
 			values.Add("path", path)
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var binding types.Binding
 			if err := client.Get("/_openrun/binding", values, &binding); err != nil {
 				return err
@@ -334,6 +339,7 @@ Examples:
 			values.Add(STAGING_FLAG, strconv.FormatBool(cCtx.Bool(STAGING_FLAG)))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var account map[string]string
 			if err := client.Get("/_openrun/binding/account", values, &account); err != nil {
 				return err
@@ -371,6 +377,7 @@ func bindingListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response []types.Binding
 			if err := client.Get("/_openrun/bindings", values, &response); err != nil {
 				return err
@@ -415,6 +422,7 @@ Examples:
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response map[string]any
 			if err := client.Post("/_openrun/binding/run-command", nil, request, &response); err != nil {
 				return err

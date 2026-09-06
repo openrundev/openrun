@@ -103,6 +103,7 @@ Examples:
 			values.Add(SECRET_UPDATE_FLAG, strconv.FormatBool(cCtx.Bool(SECRET_UPDATE_FLAG)))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.SecretCreateResponse
 			if err := client.Post("/_openrun/secret", values, &createRequest, &response); err != nil {
 				return err
@@ -191,6 +192,7 @@ func secretListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.SecretListResponse
 			if err := client.Get("/_openrun/secrets", values, &response); err != nil {
 				return err
@@ -231,6 +233,7 @@ func secretShowCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.SecretGetResponse
 			if err := client.Get("/_openrun/secret", values, &response); err != nil {
 				return err
@@ -285,6 +288,7 @@ func secretDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.SecretDeleteResponse
 			if err := client.Delete("/_openrun/secret", values, &response); err != nil {
 				return err
@@ -322,6 +326,7 @@ Examples:
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.SecretRekeyResponse
 			if err := client.Post("/_openrun/secret/rekey", values, nil, &response); err != nil {
 				return err

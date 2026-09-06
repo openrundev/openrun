@@ -89,6 +89,7 @@ Examples:
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var syncResponse types.SyncCreateResponse
 			err = client.Post("/_openrun/sync", values, sync, &syncResponse)
 			if err != nil {
@@ -131,6 +132,7 @@ func syncListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 
@@ -165,6 +167,7 @@ func syncRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("id", cCtx.Args().First())
 			values.Add(DRY_RUN_ARG, strconv.FormatBool(cCtx.Bool(DRY_RUN_FLAG)))
@@ -208,6 +211,7 @@ func syncDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("id", cCtx.Args().First())
 

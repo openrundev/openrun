@@ -41,9 +41,10 @@ type Manager struct {
 	// to create/refresh the preview app
 	OnTurnDone func(sessionId string)
 
-	mu     sync.Mutex
-	live   map[string]*liveSession
-	stopCh chan struct{}
+	mu      sync.Mutex
+	live    map[string]*liveSession
+	stopCh  chan struct{}
+	stopped bool
 }
 
 func NewManager(logger *types.Logger, config func() *types.ServerConfig, db *metadata.Metadata,
@@ -203,8 +204,13 @@ func (m *Manager) Start(ctx context.Context) error {
 
 // Stop stops all live sandboxes (server shutdown)
 func (m *Manager) Stop() {
-	close(m.stopCh)
 	m.mu.Lock()
+	if m.stopped {
+		m.mu.Unlock()
+		return
+	}
+	m.stopped = true
+	close(m.stopCh)
 	sessions := make([]*liveSession, 0, len(m.live))
 	for _, ls := range m.live {
 		sessions = append(sessions, ls)
@@ -306,6 +312,10 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 	}
 
 	m.mu.Lock()
+	if m.stopped {
+		m.mu.Unlock()
+		return nil, errors.New("builder manager stopped")
+	}
 	liveCount := len(m.live)
 	m.mu.Unlock()
 	if maxSessions := config.AppBuilder.MaxSessions; maxSessions > 0 && liveCount >= maxSessions {
@@ -322,6 +332,13 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 		return nil, fmt.Errorf("creating workspace: %w", err)
 	}
 
+	keepWorkspace := false
+	defer func() {
+		if !keepWorkspace {
+			_ = os.RemoveAll(workspace)
+		}
+	}()
+
 	session := &types.BuilderSession{
 		Id:           id,
 		UserID:       userID,
@@ -337,7 +354,6 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 
 	if seed != nil {
 		if err := seed(session); err != nil {
-			os.RemoveAll(workspace) //nolint:errcheck
 			return nil, err
 		}
 	}
@@ -368,6 +384,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 		return nil, err
 	}
 
+	keepWorkspace = true // the committed session now owns the workspace
 	m.appendActivity(id, userID, "lifecycle", "session created", map[string]any{"agent": agentName, "spec": spec, "name": name})
 	m.appendActivity(id, userID, "prompt", prompt, nil)
 
@@ -376,6 +393,12 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 	// working" during launch instead of racing (and dropping) the first prompt
 	ls.turnActive = true
 	m.mu.Lock()
+	if m.stopped {
+		m.mu.Unlock()
+		m.stopLive(ls, types.BuilderSessionDetached)
+		session.Status = types.BuilderSessionDetached
+		return session, nil
+	}
 	m.live[id] = ls
 	m.mu.Unlock()
 
@@ -398,7 +421,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 // launch builds the profile image if needed, starts the sandbox container
 // and performs the ACP handshake
 func (m *Manager) launch(ls *liveSession) error {
-	session, err := m.db.GetBuilderSession(context.Background(), types.Transaction{}, ls.id)
+	session, err := m.db.GetBuilderSession(ls.ctx, types.Transaction{}, ls.id)
 	if err != nil {
 		return err
 	}
@@ -453,7 +476,7 @@ func (m *Manager) launch(ls *liveSession) error {
 			return err
 		}
 		ls.emit(Event{Kind: "status", Status: "building image"})
-		image, err := buildImage(context.Background(), cli, p)
+		image, err := buildImage(ls.ctx, cli, p)
 		if err != nil {
 			return err
 		}
@@ -464,9 +487,20 @@ func (m *Manager) launch(ls *liveSession) error {
 		}
 	}
 
+	// Until handoff, launch owns the process even if the session is stopped.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			sb.stop()
+		}
+	}()
+	if err := ls.ctx.Err(); err != nil {
+		return err
+	}
+
 	conn := acp.NewClientSideConnection(&driverClient{manager: m, session: ls}, sb.stdin, sb.stdout)
 
-	handshakeCtx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
+	handshakeCtx, cancel := context.WithTimeout(ls.ctx, handshakeTimeout)
 	defer cancel()
 	initResp, err := conn.Initialize(handshakeCtx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
@@ -476,14 +510,12 @@ func (m *Manager) launch(ls *liveSession) error {
 		ClientCapabilities: acp.ClientCapabilities{Auth: acp.AuthCapabilities{Terminal: false}},
 	})
 	if err != nil {
-		sb.stop()
 		return fmt.Errorf("ACP initialize failed: %w (agent stderr: %s)", err, sb.stderr())
 	}
 	// Version negotiation: the agent echoes our version if it supports it,
 	// otherwise it answers with its own latest. The client must disconnect
 	// when it does not support the returned version
 	if initResp.ProtocolVersion != acp.ProtocolVersionNumber {
-		sb.stop()
 		return fmt.Errorf("agent %s uses unsupported ACP protocol version %v (supported: %v)",
 			session.Agent, initResp.ProtocolVersion, acp.ProtocolVersionNumber)
 	}
@@ -498,7 +530,7 @@ func (m *Manager) launch(ls *liveSession) error {
 	acpSessionId := acp.SessionId(session.AcpSessionId)
 	restored := false
 	if session.AcpSessionId != "" {
-		restoreCtx, restoreCancel := context.WithTimeout(context.Background(), handshakeTimeout)
+		restoreCtx, restoreCancel := context.WithTimeout(ls.ctx, handshakeTimeout)
 		caps := initResp.AgentCapabilities
 		if caps.SessionCapabilities.Resume != nil {
 			_, err := conn.ResumeSession(restoreCtx, acp.ResumeSessionRequest{
@@ -531,18 +563,17 @@ func (m *Manager) launch(ls *liveSession) error {
 	}
 
 	if !restored {
-		newSession, err := m.newSessionWithAuth(context.Background(), conn, sb, acpCwd, session.Agent,
+		newSession, err := m.newSessionWithAuth(ls.ctx, conn, sb, acpCwd, session.Agent,
 			initResp.AuthMethods, func(msg string) {
 				m.appendActivity(ls.id, ls.userID, "lifecycle", msg, nil)
 				ls.emit(Event{Kind: "status", Status: msg})
 			})
 		if err != nil {
-			sb.stop()
 			return err
 		}
 		// Fresh timeout: handshakeCtx may be near expiry when an interactive
 		// authentication flow ran before the session was created
-		configCtx, configCancel := context.WithTimeout(context.Background(), handshakeTimeout)
+		configCtx, configCancel := context.WithTimeout(ls.ctx, handshakeTimeout)
 		defer configCancel()
 		for _, warning := range applySessionConfig(configCtx, conn, newSession.SessionId,
 			newSession.ConfigOptions, agentConfig.Model, agentConfig.Effort) {
@@ -554,13 +585,18 @@ func (m *Manager) launch(ls *liveSession) error {
 		// restored on the next resume
 		if string(acpSessionId) != session.AcpSessionId {
 			session.AcpSessionId = string(acpSessionId)
-			if err := m.updateSession(context.Background(), session); err != nil {
+			if err := m.updateSession(ls.ctx, session); err != nil {
 				m.Warn().Err(err).Str("session", ls.id).Msg("Error persisting ACP session id")
 			}
 		}
 	}
 
 	ls.mu.Lock()
+	if err := ls.ctx.Err(); err != nil {
+		ls.mu.Unlock()
+		return err
+	}
+	handedOff = true
 	ls.sandbox = sb
 	ls.conn = conn
 	ls.acpSessionId = acpSessionId
@@ -628,7 +664,7 @@ func (m *Manager) runTurn(ls *liveSession, text string, claimed bool) {
 		ls.mu.Unlock()
 		return
 	}
-	turnCtx, cancel := context.WithTimeout(context.Background(), turnTimeout)
+	turnCtx, cancel := context.WithTimeout(ls.ctx, turnTimeout)
 	ls.turnActive = true
 	ls.turnCancel = cancel
 	ls.turnCancelled = false
@@ -769,6 +805,10 @@ func (m *Manager) ResumeSession(ctx context.Context, id, userID string) error {
 		return err
 	}
 	m.mu.Lock()
+	if m.stopped {
+		m.mu.Unlock()
+		return errors.New("builder manager stopped")
+	}
 	if _, exists := m.live[id]; exists {
 		m.mu.Unlock()
 		return fmt.Errorf("session %s is already live", id)
@@ -980,6 +1020,12 @@ func (m *Manager) requireLive(id string) (*liveSession, error) {
 // persists the final status
 func (m *Manager) stopLive(ls *liveSession, status types.BuilderSessionStatus) {
 	ls.mu.Lock()
+	if ls.stopped {
+		ls.mu.Unlock()
+		return
+	}
+	ls.stopped = true
+	ls.cancel()
 	sb := ls.sandbox
 	ls.sandbox = nil
 	ls.conn = nil
@@ -995,7 +1041,9 @@ func (m *Manager) stopLive(ls *liveSession, status types.BuilderSessionStatus) {
 	}
 
 	m.mu.Lock()
-	delete(m.live, ls.id)
+	if m.live[ls.id] == ls {
+		delete(m.live, ls.id)
+	}
 	m.mu.Unlock()
 
 	m.setStatus(ls, status)
@@ -1004,6 +1052,9 @@ func (m *Manager) stopLive(ls *liveSession, status types.BuilderSessionStatus) {
 }
 
 func (m *Manager) failSession(ls *liveSession, failure error) {
+	if ls.ctx.Err() != nil {
+		return
+	}
 	m.Error().Err(failure).Str("session", ls.id).Msg("Builder session failed")
 	m.appendActivity(ls.id, ls.userID, "error", failure.Error(), nil)
 	ls.emit(Event{Kind: "error", Text: failure.Error()})

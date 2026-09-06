@@ -213,6 +213,7 @@ func RefreshLogin(login *StoredLogin, skipCertCheck bool) (*StoredLogin, error) 
 	form.Set("client_id", "openrun-cli")
 
 	client := NewHttpClient(login.TokenEndpoint, "", skipCertCheck)
+	defer client.CloseIdleConnections()
 	resp, err := client.PostForm("", form)
 	if err != nil {
 		return nil, err

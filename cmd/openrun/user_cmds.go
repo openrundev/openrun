@@ -136,6 +136,7 @@ Examples:
 			values.Add("update", strconv.FormatBool(update))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.UserUpdateResponse
 			if err := client.Post("/_openrun/user", values, &updateRequest, &response); err != nil {
 				return err
@@ -180,6 +181,7 @@ func userDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			values.Add("username", cCtx.Args().Get(0))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.UserDeleteResponse
 			if err := client.Delete("/_openrun/user", values, &response); err != nil {
 				return err
@@ -208,6 +210,7 @@ func userListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.UserListResponse
 			if err := client.Get("/_openrun/users", nil, &response); err != nil {
 				return err

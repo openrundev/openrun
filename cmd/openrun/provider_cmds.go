@@ -79,6 +79,7 @@ Examples:
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.BindingProvider
 			if err := client.Post("/_openrun/provider", url.Values{}, &request, &response); err != nil {
 				return err
@@ -112,6 +113,7 @@ func providerUninstallCommand(commonFlags []cli.Flag, clientConfig *types.Client
 			values.Add("force", strconv.FormatBool(cCtx.Bool("force")))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response map[string]any
 			if err := client.Delete("/_openrun/provider", values, &response); err != nil {
 				return err
@@ -134,6 +136,7 @@ func providerListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		Flags: flags,
 		Action: func(cCtx *cli.Context) error {
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response []types.BindingProvider
 			if err := client.Get("/_openrun/providers", url.Values{}, &response); err != nil {
 				return err

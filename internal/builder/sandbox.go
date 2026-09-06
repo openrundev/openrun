@@ -165,10 +165,14 @@ func startAgentCmd(cli, containerName string, cmd *exec.Cmd) (*sandbox, error) {
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		_ = stdin.Close()
+		_ = cmd.Stdin.(io.Closer).Close()
 		return nil, err
 	}
 
 	s := &sandbox{cli: cli, containerName: containerName, cmd: cmd, stdin: stdin, stdout: stdout, exited: make(chan struct{})}
+	// Bound Wait when a descendant inherits stderr after the agent exits.
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Stderr = &boundedWriter{buf: &s.stderrTail, mu: &s.stderrMu, limit: 16 * 1024}
 
 	if err := cmd.Start(); err != nil {
@@ -203,18 +207,22 @@ func envValues(env map[string]string) []string {
 // ACP agents exit when their stdio stream closes) and waits for the process
 func (s *sandbox) stop() {
 	if s.containerName != "" {
-		cmd := exec.Command(s.cli, "rm", "-f", s.containerName)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, s.cli, "rm", "-f", s.containerName)
 		cmd.Stdout = io.Discard
 		cmd.Stderr = io.Discard
 		_ = cmd.Run()
 	}
-	s.stdin.Close() //nolint:errcheck
+	s.stdin.Close()  //nolint:errcheck
+	s.stdout.Close() //nolint:errcheck // release ACP readers even if descendants hold stdout
 	select {
 	case <-s.exited:
 	case <-time.After(10 * time.Second):
 		if s.cmd.Process != nil {
 			_ = s.cmd.Process.Kill()
 		}
+		<-s.exited
 	}
 }
 

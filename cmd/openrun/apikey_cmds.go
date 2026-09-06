@@ -81,6 +81,7 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.ApiKeyCreateResponse
 			if err := client.Post("/_openrun/apikey", nil, &req, &response); err != nil {
 				return err
@@ -137,6 +138,7 @@ func apiKeyListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			values.Add("all", strconv.FormatBool(cCtx.Bool("all")))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.ApiKeyListResponse
 			if err := client.Get("/_openrun/apikey", values, &response); err != nil {
 				return err
@@ -199,6 +201,7 @@ func apiKeyDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			values.Add("id", cCtx.Args().Get(0))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var response types.ApiKeyDeleteResponse
 			if err := client.Delete("/_openrun/apikey", values, &response); err != nil {
 				return err

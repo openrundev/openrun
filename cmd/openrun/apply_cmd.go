@@ -78,6 +78,7 @@ Examples:
 			values.Add("dev", strconv.FormatBool(cCtx.Bool("dev")))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var applyResponse types.AppApplyResponse
 			err = client.Post("/_openrun/apply", values, nil, &applyResponse)
 			if err != nil {
@@ -284,6 +285,7 @@ Examples:
 			values.Add("gitAuth", cCtx.String("git-auth"))
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			var deleteResponse types.ApplyDeleteResponse
 			err = client.Delete("/_openrun/apply", values, &deleteResponse)
 			if err != nil {

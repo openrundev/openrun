@@ -49,6 +49,7 @@ func versionListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 
@@ -134,6 +135,7 @@ func versionFilesCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 			if cCtx.NArg() > 1 {
@@ -212,6 +214,7 @@ func versionSwitchCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().Get(1))
 			values.Add("version", cCtx.Args().Get(0))
@@ -258,6 +261,7 @@ func versionRevertCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 			values.Add("version", "revert") // Use revert as the switch API version

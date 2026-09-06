@@ -48,6 +48,7 @@ func webhookListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
 
@@ -120,6 +121,7 @@ func webhookCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("webhookType", cCtx.Args().Get(0))
 			values.Add("appPath", cCtx.Args().Get(1))
@@ -166,6 +168,7 @@ func webhookDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			}
 
 			client := newHttpClient(clientConfig)
+			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("webhookType", cCtx.Args().Get(0))
 			values.Add("appPath", cCtx.Args().Get(1))

@@ -40,8 +40,11 @@ type Event struct {
 // liveSession is the in-memory state for a session with a running (or
 // recently stopped) sandbox
 type liveSession struct {
-	id     string
-	userID string
+	id      string
+	userID  string
+	ctx     context.Context
+	cancel  context.CancelFunc
+	stopped bool // guarded by mu
 
 	mu            sync.Mutex
 	sandbox       *sandbox
@@ -61,7 +64,10 @@ type liveSession struct {
 }
 
 func newLiveSession(id, userID string) *liveSession {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &liveSession{
+		ctx:         ctx,
+		cancel:      cancel,
 		id:          id,
 		userID:      userID,
 		lastActive:  time.Now(),

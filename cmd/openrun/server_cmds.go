@@ -232,6 +232,7 @@ func waitForShutdownSignal(server *api.Server) {
 
 func stopServer(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
+	defer client.CloseIdleConnections()
 
 	var response types.ServerStopResponse
 	err := client.Post("/_openrun/stop", nil, nil, &response)
@@ -295,6 +296,7 @@ func waitForServerExit(clientConfig *types.ClientConfig, pid int) error {
 
 func serverStatus(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
+	defer client.CloseIdleConnections()
 
 	var response types.ServerStatusResponse
 	err := client.Get("/_openrun/server_status", nil, &response)
@@ -307,6 +309,7 @@ func serverStatus(_ *cli.Context, clientConfig *types.ClientConfig) error {
 
 func serverVersion(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
+	defer client.CloseIdleConnections()
 
 	var response types.ServerVersionResponse
 	err := client.Get("/_openrun/server_version", nil, &response)
@@ -319,6 +322,7 @@ func serverVersion(_ *cli.Context, clientConfig *types.ClientConfig) error {
 
 func metadataStatus(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
+	defer client.CloseIdleConnections()
 
 	var response types.MetadataHealthResponse
 	if err := client.Get("/_openrun/metadata_health", nil, &response); err != nil {
@@ -347,6 +351,7 @@ func printMetadataStatus(cCtx *cli.Context, response types.MetadataHealthRespons
 
 func restartServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
+	defer client.CloseIdleConnections()
 
 	// The API blocks until the new process is serving or the restart failed
 	// (the old process then keeps running)
@@ -361,6 +366,7 @@ func restartServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
 
 func showConfig(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
+	defer client.CloseIdleConnections()
 
 	var response types.ConfigResponse
 	err := client.Get("/_openrun/config", nil, &response)
@@ -377,6 +383,7 @@ func showConfig(_ *cli.Context, clientConfig *types.ClientConfig) error {
 
 func updateConfig(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
+	defer client.CloseIdleConnections()
 
 	if cCtx.NArg() != 1 {
 		return fmt.Errorf("expected one argument: <configFilePath>")

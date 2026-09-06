@@ -335,6 +335,7 @@ func (f *FileStore) compressSourceFiles(ctx context.Context, fsys fs.FS, filePat
 
 	// done is closed on early return to unblock goroutines and prevent leaks.
 	done := make(chan struct{})
+	defer close(done)
 	// work feeds paths to workers, results is bounded to numWorkers
 	// so at most numWorkers compressed files are held in memory at once.
 	work := make(chan string, numWorkers)
@@ -346,6 +347,8 @@ func (f *FileStore) compressSourceFiles(ctx context.Context, fsys fs.FS, filePat
 		for _, p := range filePaths {
 			select {
 			case work <- p:
+			case <-ctx.Done():
+				return
 			case <-done:
 				return
 			}
@@ -357,6 +360,9 @@ func (f *FileStore) compressSourceFiles(ctx context.Context, fsys fs.FS, filePat
 		go func() {
 			defer wg.Done()
 			for path := range work {
+				if ctx.Err() != nil {
+					return
+				}
 				buf, readErr := fs.ReadFile(fsys, path)
 				if readErr != nil {
 					select {
@@ -415,18 +421,25 @@ func (f *FileStore) compressSourceFiles(ctx context.Context, fsys fs.FS, filePat
 		close(results)
 	}()
 
-	for entry := range results {
-		if entry.err != nil {
-			close(done)
-			return entry.err
-		}
-		if err := consume(entry); err != nil {
-			close(done)
-			return err
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case entry, ok := <-results:
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if !ok {
+				return nil
+			}
+			if entry.err != nil {
+				return entry.err
+			}
+			if err := consume(entry); err != nil {
+				return err
+			}
 		}
 	}
-
-	return nil
 }
 
 func (f *FileStore) GetFileBySha(sha string) ([]byte, string, error) {
