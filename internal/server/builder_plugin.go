@@ -206,12 +206,15 @@ func (c *builderPlugin) SessionEvents(ctx context.Context, call *sdk.Call) (any,
 	if err != nil {
 		return nil, err
 	}
-	events, cancel, err := c.server.builderManager.Subscribe(session.Id)
-	if err != nil {
+	if err := c.server.builderManager.CheckLiveSession(session.Id); err != nil {
 		return nil, err
 	}
-
-	stream := func(yield func(any, error) bool) {
+	stream := func(ctx context.Context, yield func(any, error) bool) {
+		events, cancel, err := c.server.builderManager.Subscribe(session.Id)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
 		defer cancel()
 		for {
 			select {
@@ -231,7 +234,7 @@ func (c *builderPlugin) SessionEvents(ctx context.Context, call *sdk.Call) (any,
 			}
 		}
 	}
-	return sdk.PushCursor("session_events", fmt.Sprintf("session_events_%p", &stream), true, stream), nil
+	return sdk.PushCursor(ctx, "session_events", fmt.Sprintf("session_events_%p", &stream), true, stream), nil
 }
 
 func (c *builderPlugin) ListFiles(ctx context.Context, call *sdk.Call) (any, error) {

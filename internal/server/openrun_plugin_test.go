@@ -198,6 +198,7 @@ func TestOpenRunPluginManagementReads(t *testing.T) {
 	defer func() {
 		server.stopAuditWriter()
 		_ = server.auditDB.Close()
+		_ = server.auditDBOwner.Close()
 	}()
 	initOpenRunPlugin(server)
 	c := &openrunPlugin{server: server}
@@ -347,6 +348,7 @@ func TestOpenRunPluginAuditQueries(t *testing.T) {
 	defer func() {
 		server.stopAuditWriter()
 		_ = server.auditDB.Close()
+		_ = server.auditDBOwner.Close()
 	}()
 	c := &openrunPlugin{server: server}
 

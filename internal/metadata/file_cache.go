@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,18 +19,27 @@ const CURRENT_FILE_CACHE_VERSION = 1
 // TODO : add file cleanup logic
 
 type FileCache struct {
-	db *sql.DB
+	db    *sql.DB
+	owner *system.SQLiteMaintenanceOwner
 	*types.Logger
 }
 
 func InitFileCache(logger *types.Logger, config *types.ServerConfig) (*FileCache, error) {
-	db, _, err := system.InitDBConnection(logger, config.Metadata.FileCacheConnection, "filecache", system.DB_SQLITE, &config.Metadata)
+	owner := &system.SQLiteMaintenanceOwner{}
+	initialized := false
+	defer func() {
+		if !initialized {
+			_ = owner.Close()
+		}
+	}()
+	db, _, err := system.InitDBConnection(logger, config.Metadata.FileCacheConnection, "filecache", system.DB_SQLITE, &config.Metadata, owner)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing db: %w", err)
 	}
 
 	fc := FileCache{
 		db:     db,
+		owner:  owner,
 		Logger: logger,
 	}
 
@@ -38,12 +48,13 @@ func InitFileCache(logger *types.Logger, config *types.ServerConfig) (*FileCache
 		db.Close() //nolint:errcheck
 		return nil, err
 	}
+	initialized = true
 	return &fc, nil
 }
 
 // Close closes the file cache database connection pool.
 func (f *FileCache) Close() error {
-	return f.db.Close()
+	return errors.Join(f.db.Close(), f.owner.Close())
 }
 
 func (f *FileCache) VersionUpgrade(config *types.ServerConfig) error {

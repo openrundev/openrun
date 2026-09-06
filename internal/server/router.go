@@ -348,6 +348,10 @@ func (h *Handler) callApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		// A config update may retire this app. Keep it alive until this
+		// request has finished authentication, plugin calls and streaming.
+		h.server.listAppsMu.RLock()
+		defer h.server.listAppsMu.RUnlock()
 		serveApp, err = h.server.GetListAppsApp(r.Context())
 		if err != nil {
 			h.Error().Err(err).Str("path", r.URL.Path).Msg("Error getting list_apps app")

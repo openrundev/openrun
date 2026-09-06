@@ -68,68 +68,65 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 		return nil, err
 	}
 
-	app, err := s.setupApp(ctx, appEntry, tx)
-	if err != nil {
-		return nil, fmt.Errorf("error setting up app %s: %w", appEntry, err)
-	}
+	return withTemporaryApp(s, ctx, appEntry, tx, func(app *apppkg.App) (*types.AppReloadResult, error) {
 
-	auditResult, err := app.Audit()
-	if err != nil {
-		return nil, fmt.Errorf("error auditing app %s: %w", appEntry, err)
-	}
-
-	var approvalResult *types.ApproveResult
-	if auditResult.NeedsApproval && !approve {
-		return nil, fmt.Errorf("app %s needs approval", appEntry)
-	}
-	if approve {
-		s.approveAuditResult(app, auditResult)
-		if err := s.db.UpdateAppMetadata(ctx, tx, app.AppEntry); err != nil {
-			return nil, err
-		}
-		if auditResult.NeedsApproval {
-			approvalResult = auditResult
-		}
-	}
-	reloadResults := make([]types.AppPathDomain, 0)
-	promoteResults := make([]types.AppPathDomain, 0)
-	if err := s.reloadInstanceOpts(ctx, app, dryRun, instanceReloadOptions(appEntry, verify, prep)); err != nil {
-		return nil, err
-	}
-	// Persist name in metadata
-	if err := s.db.UpdateAppMetadata(ctx, tx, appEntry); err != nil {
-		return nil, err
-	}
-
-	reloadResults = append(reloadResults, appEntry.AppPathDomain())
-	if promote && !appEntry.IsDev {
-		if err = s.promoteApp(ctx, tx, appEntry, prodAppEntry); err != nil {
-			return nil, err
-		}
-		promoteResults = append(promoteResults, appEntry.AppPathDomain())
-		prodApp, err := s.setupApp(ctx, prodAppEntry, tx)
+		auditResult, err := app.Audit()
 		if err != nil {
-			return nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
+			return nil, fmt.Errorf("error auditing app %s: %w", appEntry, err)
 		}
 
-		if err := s.reloadInstance(ctx, prodApp, dryRun, verify); err != nil {
+		var approvalResult *types.ApproveResult
+		if auditResult.NeedsApproval && !approve {
+			return nil, fmt.Errorf("app %s needs approval", appEntry)
+		}
+		if approve {
+			s.approveAuditResult(app, auditResult)
+			if err := s.db.UpdateAppMetadata(ctx, tx, app.AppEntry); err != nil {
+				return nil, err
+			}
+			if auditResult.NeedsApproval {
+				approvalResult = auditResult
+			}
+		}
+		reloadResults := make([]types.AppPathDomain, 0)
+		promoteResults := make([]types.AppPathDomain, 0)
+		if err := s.reloadInstanceOpts(ctx, app, dryRun, instanceReloadOptions(appEntry, verify, prep)); err != nil {
 			return nil, err
 		}
 		// Persist name in metadata
-		if err := s.db.UpdateAppMetadata(ctx, tx, prodAppEntry); err != nil {
+		if err := s.db.UpdateAppMetadata(ctx, tx, appEntry); err != nil {
 			return nil, err
 		}
-		reloadResults = append(reloadResults, prodAppEntry.AppPathDomain())
-	}
 
-	ret := &types.AppReloadResult{
-		DryRun:         dryRun,
-		ApproveResult:  approvalResult,
-		ReloadResults:  reloadResults,
-		PromoteResults: promoteResults,
-		SkippedResults: []types.AppPathDomain{},
-	}
-	return ret, nil
+		reloadResults = append(reloadResults, appEntry.AppPathDomain())
+		if promote && !appEntry.IsDev {
+			if err = s.promoteApp(ctx, tx, appEntry, prodAppEntry); err != nil {
+				return nil, err
+			}
+			promoteResults = append(promoteResults, appEntry.AppPathDomain())
+			_, err = withTemporaryApp(s, ctx, prodAppEntry, tx, func(prodApp *apppkg.App) (bool, error) {
+				return false, s.reloadInstance(ctx, prodApp, dryRun, verify)
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			// Persist name in metadata
+			if err := s.db.UpdateAppMetadata(ctx, tx, prodAppEntry); err != nil {
+				return nil, err
+			}
+			reloadResults = append(reloadResults, prodAppEntry.AppPathDomain())
+		}
+
+		ret := &types.AppReloadResult{
+			DryRun:         dryRun,
+			ApproveResult:  approvalResult,
+			ReloadResults:  reloadResults,
+			PromoteResults: promoteResults,
+			SkippedResults: []types.AppPathDomain{},
+		}
+		return ret, nil
+	})
 }
 
 // reloadInstance reloads an app instance with its container, the traffic
@@ -455,11 +452,7 @@ func (s *Server) StagedUpdateAppsTx(ctx context.Context, tx types.Transaction, a
 			}
 
 			// prod app audit result is not added to results, since it will be same as the staging app
-			prodApp, err := s.setupApp(ctx, prodAppEntry, tx)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
-			}
-			entries = append(entries, prodApp.AppPathDomain())
+			entries = append(entries, prodAppEntry.AppPathDomain())
 			promoteResults = append(promoteResults, prodAppEntry.AppPathDomain())
 		}
 
@@ -472,23 +465,22 @@ func (s *Server) StagedUpdateAppsTx(ctx context.Context, tx types.Transaction, a
 
 func (s *Server) auditHandler(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, args map[string]any) (any, types.AppPathDomain, error) {
 	appPathDomain := appEntry.AppPathDomain()
-	app, err := s.setupApp(ctx, appEntry, tx)
-	if err != nil {
-		return nil, appPathDomain, err
-	}
-	result, err := s.auditApp(ctx, tx, app, true)
-	if err != nil {
-		return nil, appPathDomain, err
-	}
-	// Load the approved app (no container) so the app definition's jobs are
-	// persisted on the metadata with the approval. A definition that does
-	// not load keeps the lazy semantics of approve: the error surfaces on
-	// the first request, and the jobs are persisted by the next reload
-	if _, err := app.Reload(ctx, true, true, types.DryRunFalse, apppkg.ReloadOptions{SkipContainer: true}); err != nil {
-		s.Warn().Err(err).Msgf("app %s did not load at approve; its jobs apply on the next reload", appEntry)
-	}
+	result, err := withTemporaryApp(s, ctx, appEntry, tx, func(app *apppkg.App) (any, error) {
+		result, err := s.auditApp(ctx, tx, app, true)
+		if err != nil {
+			return nil, err
+		}
+		// Load the approved app (no container) so the app definition's jobs are
+		// persisted on the metadata with the approval. A definition that does
+		// not load keeps the lazy semantics of approve: the error surfaces on
+		// the first request, and the jobs are persisted by the next reload
+		if _, err := app.Reload(ctx, true, true, types.DryRunFalse, apppkg.ReloadOptions{SkipContainer: true}); err != nil {
+			s.Warn().Err(err).Msgf("app %s did not load at approve; its jobs apply on the next reload", appEntry)
+		}
 
-	return result, appPathDomain, nil
+		return result, nil
+	})
+	return result, appPathDomain, err
 }
 
 // ApproveApps approves the plugin and permission usage for apps matching the
@@ -581,12 +573,12 @@ func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun boo
 			return nil, err
 		}
 
-		prodApp, err := s.setupApp(ctx, prodAppEntry, tx)
+		_, err = withTemporaryApp(s, ctx, prodAppEntry, tx, func(prodApp *apppkg.App) (bool, error) {
+			_, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun), apppkg.ReloadOptions{ReloadContainer: false, Verify: false})
+			return false, err
+		})
 		if err != nil {
-			return nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
-		}
-		if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun), apppkg.ReloadOptions{ReloadContainer: false, Verify: false}); err != nil {
-			return nil, fmt.Errorf("error reloading prod app %s: %w", prodApp.AppEntry, err)
+			return nil, fmt.Errorf("error reloading prod app %s: %w", prodAppEntry, err)
 		}
 		result = append(result, appInfo.AppPathDomain)
 	}

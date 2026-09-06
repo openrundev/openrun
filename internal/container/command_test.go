@@ -10,10 +10,27 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 )
+
+func TestExecTailNDrainsStderr(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// More than a pipe buffer of stderr while stdout remains open. Sequential
+	// stdout/stderr readers deadlock until the context kills this command.
+	script := `i=0; while [ "$i" -lt 20000 ]; do echo stderr-line >&2; i=$((i+1)); done; echo final-stdout`
+	manager := &CommandCM{}
+	lines, err := manager.ExecTailN(ctx, "sh", []string{"-c", script}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(lines, []string{"stderr-line", "final-stdout"}) {
+		t.Fatalf("unexpected tail: %q", lines)
+	}
+}
 
 func TestCommandOptionArgsAllowedExactAndRegex(t *testing.T) {
 	got, err := CommandOptionArgs(CommandOptions{

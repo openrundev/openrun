@@ -292,33 +292,22 @@ func (s *Server) ListSyncEntries(ctx context.Context) (*types.SyncListResponse, 
 	return &ret, nil
 }
 
-func (s *Server) syncRunner(timer *time.Ticker, stop <-chan struct{}) {
-	s.Info().Msg("Starting sync runner loop")
-	for {
-		select {
-		case <-stop:
-			s.Info().Msg("Sync runner stopped")
-			return
-		case <-timer.C:
-		}
-
-		if !s.db.IsLeader() {
-			s.Trace().Msg("Not leader, skipping sync")
-			continue
-		} else {
-			s.Trace().Msg("Leader, running sync jobs")
-		}
-		if err := s.db.CleanupExpiredKV(context.Background()); err != nil {
-			s.Error().Err(err).Msg("Error cleaning up expired KV entries")
-		}
-		// Job scheduling and run reconciliation share the leader's minute
-		// loop with the sync runner
-		s.jobsTick(context.Background())
-		err := s.runSyncJobs()
-		if err != nil {
-			s.Error().Err(err).Msg("Error running sync")
-			continue
-		}
+func (s *Server) syncPass(ctx context.Context) {
+	if ctx.Err() != nil || !s.db.IsLeader() {
+		return
+	}
+	if err := s.db.CleanupExpiredKV(ctx); err != nil && ctx.Err() == nil {
+		s.Error().Err(err).Msg("Error cleaning up expired KV entries")
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	s.jobsTick(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	if err := s.runSyncJobs(ctx); err != nil && ctx.Err() == nil {
+		s.Error().Err(err).Msg("Error running sync")
 	}
 }
 
@@ -362,8 +351,7 @@ func (s *Server) enforceSyncReloadPerms(ctx context.Context, entry *types.SyncEn
 	return nil
 }
 
-func (s *Server) runSyncJobs() error {
-	ctx := context.Background()
+func (s *Server) runSyncJobs(ctx context.Context) error {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return err
@@ -388,6 +376,9 @@ func (s *Server) runSyncJobs() error {
 
 	updatedAnyApps := false
 	for _, entry := range scheduleEntries {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if !entry.IsScheduled || entry.Metadata.ScheduleFrequency <= 0 {
 			continue
 		}
@@ -407,7 +398,7 @@ func (s *Server) runSyncJobs() error {
 		// trace id even though there is no HTTP request behind the run. The
 		// run is attributed to the user who created the sync and authorized
 		// against the creator's frozen RBAC snapshot when one is present
-		jobCtx := s.attachSyncRBAC(newBackgroundOperationContext(cmp.Or(entry.UserID, "scheduler")), entry)
+		jobCtx := s.attachSyncRBAC(backgroundOperationContext(ctx, cmp.Or(entry.UserID, "scheduler")), entry)
 		_, updatedApps, err := s.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, repoCache) // each sync runs in its own transaction
 		if err != nil {
 			s.Error().Err(err).Msgf("Error running sync job %s", entry.Id)

@@ -54,6 +54,7 @@ func newRemoteApiTestServer(t *testing.T) (*Server, *httptest.Server, func(t *te
 	t.Cleanup(func() {
 		server.stopAuditWriter()
 		_ = server.auditDB.Close()
+		_ = server.auditDBOwner.Close()
 	})
 	server.csrfMiddleware = http.NewCrossOriginProtection()
 	server.authHandler = NewAdminBasicAuth(server.Logger, server.staticConfig)

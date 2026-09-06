@@ -268,6 +268,16 @@ func newApplyTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Cont
 		t.Fatalf("new rbac manager: %v", err)
 	}
 	server.rbacManager = rbacManager
+	t.Cleanup(func() {
+		server.jobRuns.stop()
+		server.jobRuns.wait()
+		server.stopAuditWriter()
+		if server.auditDB != nil {
+			_ = server.auditDB.Close()
+		}
+		_ = server.auditDBOwner.Close()
+		server.apps.CloseAll()
+	})
 	return server, db, ctx
 }
 

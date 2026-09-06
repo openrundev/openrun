@@ -973,22 +973,20 @@ func (s *Server) appNeedsApproval(ctx context.Context, tx types.Transaction, app
 	if err != nil {
 		return false, err
 	}
-	auditApp, err := s.setupApp(ctx, appEntry, tx)
-	if err != nil {
-		return false, err
-	}
-	result, err := auditApp.Audit()
-	if err != nil {
-		return false, err
-	}
-	if !appInfo.IsDev {
-		s.approvalCache.Store(appInfo.Id, approvalCacheEntry{
-			version:       appEntry.Metadata.VersionMetadata.Version,
-			gen:           gen,
-			needsApproval: result.NeedsApproval,
-		})
-	}
-	return result.NeedsApproval, nil
+	return withTemporaryApp(s, ctx, appEntry, tx, func(auditApp *app.App) (bool, error) {
+		result, err := auditApp.Audit()
+		if err != nil {
+			return false, err
+		}
+		if !appInfo.IsDev {
+			s.approvalCache.Store(appInfo.Id, approvalCacheEntry{
+				version:       appEntry.Metadata.VersionMetadata.Version,
+				gen:           gen,
+				needsApproval: result.NeedsApproval,
+			})
+		}
+		return result.NeedsApproval, nil
+	})
 }
 
 // AuditApp audits the app's code and returns the requested plugin loads and
@@ -1030,15 +1028,13 @@ func (c *openrunPlugin) AuditApp(ctx context.Context, call *sdk.Call) (any, erro
 		}
 	}
 
-	auditApp, err := c.server.setupApp(ctx, appEntry, tx)
-	if err != nil {
-		return nil, err
-	}
-	result, err := auditApp.Audit()
-	if err != nil {
-		return nil, err
-	}
-	return structValue(result)
+	return withTemporaryApp(c.server, ctx, appEntry, tx, func(auditApp *app.App) (any, error) {
+		result, err := auditApp.Audit()
+		if err != nil {
+			return nil, err
+		}
+		return structValue(result)
+	})
 }
 
 // ListServices lists the service entries. Config values are redacted, only
@@ -1259,11 +1255,15 @@ func (c *openrunPlugin) GetContainerLogsStream(ctx context.Context, call *sdk.Ca
 		return nil, err
 	}
 
-	stream, err := c.server.GetManagedContainerLogsStream(ctx, id, int(tail), follow)
-	if err != nil {
-		return nil, err
+	stream := func(ctx context.Context, yield func(any, error) bool) {
+		stream, err := c.server.GetManagedContainerLogsStream(ctx, id, int(tail), follow)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		stream(yield)
 	}
-	return sdk.PushCursor("container_logs", fmt.Sprintf("container_logs_%p", &stream), true, stream), nil
+	return sdk.PushCursor(ctx, "container_logs", fmt.Sprintf("container_logs_%p", &stream), true, stream), nil
 }
 
 // GetPermissions returns the management API permissions the current user holds.

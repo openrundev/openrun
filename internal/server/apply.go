@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	apppkg "github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/metadata"
@@ -1066,11 +1067,10 @@ func (s *Server) verifyCreatedApp(ctx context.Context, tx types.Transaction, app
 	}
 
 	verifyApp := func(entry *types.AppEntry) error {
-		application, err := s.setupApp(ctx, entry, tx)
-		if err != nil {
-			return fmt.Errorf("error setting up app %s: %w", entry.AppPathDomain(), err)
-		}
-		return s.reloadInstanceOpts(ctx, application, false, instanceReloadOptions(entry, true, prep))
+		_, err := withTemporaryApp(s, ctx, entry, tx, func(application *apppkg.App) (bool, error) {
+			return false, s.reloadInstanceOpts(ctx, application, false, instanceReloadOptions(entry, true, prep))
+		})
+		return err
 	}
 
 	if !appEntry.IsDev {

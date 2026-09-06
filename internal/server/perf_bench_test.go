@@ -132,6 +132,11 @@ func newBenchAuditServer(b *testing.B) *Server {
 	if err := server.initAuditDB("sqlite:" + dbPath); err != nil {
 		b.Fatalf("error initializing audit db: %s", err)
 	}
+	b.Cleanup(func() {
+		server.stopAuditWriter()
+		_ = server.auditDB.Close()
+		_ = server.auditDBOwner.Close()
+	})
 	return server
 }
 

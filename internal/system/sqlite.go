@@ -174,9 +174,14 @@ var (
 // InitDBConnection opens a database connection pool. sqliteCfg carries the
 // sqlite self-maintenance settings from the [metadata] config section; nil
 // uses the built-in defaults (app data stores, tests). It is ignored for
-// postgres.
+// postgres. The caller must close its pools and owner when the component stops.
 func InitDBConnection(logger *types.Logger, connectString string, invoker string, supportedDBs []DBType,
-	sqliteCfg *types.MetadataConfig) (*sql.DB, DBType, error) {
+	sqliteCfg *types.MetadataConfig, owner *SQLiteMaintenanceOwner) (*sql.DB, DBType, error) {
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
+	if owner.closed {
+		return nil, "", errors.New("database owner is closed")
+	}
 	if logger == nil {
 		nop := zerolog.Nop()
 		logger = &types.Logger{Logger: &nop}
@@ -222,7 +227,7 @@ func InitDBConnection(logger *types.Logger, connectString string, invoker string
 		// under concurrent reads costs more than the idle handles
 		db.SetMaxIdleConns(10)
 		db.SetConnMaxIdleTime(sqliteConnMaxIdleTime)
-		initSQLiteSelfMaintenance(logger, db, invoker, dbFilePath, maint, driver, connectString)
+		initSQLiteSelfMaintenance(logger, db, invoker, dbFilePath, maint, driver, connectString, owner)
 	} else if dbType == DB_TYPE_POSTGRES {
 		// Configure connection pool settings for Postgres. The server opens
 		// multiple pools (metadata, audit, file store, per-app stores), so the
@@ -250,20 +255,68 @@ func InitDBConnection(logger *types.Logger, connectString string, invoker string
 // sqliteMaintFiles tracks the database files already maintained by this
 // process. Multiple application pools can open the same file, especially as
 // apps reload, so the maintenance loop never retains one of those pools. The
-// first open creates one dedicated, process-lifetime maintenance pool per file;
-// later opens do not add owners or standby references.
+// first open creates one dedicated maintenance pool per file;
+// Owners share that pool without retaining application database pools.
 var (
 	sqliteMaintMu    sync.Mutex
 	sqliteMaintFiles = map[string]*sqliteMaintenanceState{}
 )
 
 type sqliteMaintenanceState struct {
+	owners               int // guarded by sqliteMaintMu
+	initDone             chan struct{}
 	mu                   sync.RWMutex
 	status               types.SQLiteMetadataMetrics
 	vacuumDeferredPasses int
 	maintenanceDB        *sql.DB            // guarded by sqliteMaintMu
 	maintenanceCancel    context.CancelFunc // guarded by sqliteMaintMu
 	maintenanceDone      <-chan struct{}    // guarded by sqliteMaintMu
+}
+
+// SQLiteMaintenanceOwner holds a reference to each database file used by one
+// component. Closing it rejects late opens and releases only its references.
+// The last owner cancels and joins the file's worker and closes its pool.
+// The zero value is ready to use.
+type SQLiteMaintenanceOwner struct {
+	mu     sync.Mutex
+	closed bool
+	files  map[string]*sqliteMaintenanceState
+}
+
+func (o *SQLiteMaintenanceOwner) Close() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.closed {
+		return nil
+	}
+	o.closed = true
+	var last []*sqliteMaintenanceState
+	sqliteMaintMu.Lock()
+	for key, state := range o.files {
+		state.owners--
+		if state.owners == 0 {
+			if sqliteMaintFiles[key] == state {
+				delete(sqliteMaintFiles, key)
+			}
+			last = append(last, state)
+		}
+	}
+	o.files = nil
+	sqliteMaintMu.Unlock()
+	var closeErr error
+	for _, state := range last {
+		<-state.initDone
+		if state.maintenanceCancel != nil {
+			state.maintenanceCancel()
+		}
+		if state.maintenanceDone != nil {
+			<-state.maintenanceDone
+		}
+		if state.maintenanceDB != nil {
+			closeErr = errors.Join(closeErr, state.maintenanceDB.Close())
+		}
+	}
+	return closeErr
 }
 
 func sqliteMaintenanceKey(dbFilePath string) string {
@@ -397,20 +450,30 @@ func (s *sqliteMaintenanceState) recordVacuumSkipped() {
 // the WAL checkpointed and returns freed pages to the OS. Everything here is
 // best-effort: a failure is logged and normal operation continues.
 func initSQLiteSelfMaintenance(logger *types.Logger, db *sql.DB, invoker, dbFilePath string, maint sqliteMaintenanceSettings,
-	driverName, connectString string) {
+	driverName, connectString string, owner *SQLiteMaintenanceOwner) {
 	maintKey := sqliteMaintenanceKey(dbFilePath)
-	state := &sqliteMaintenanceState{status: types.SQLiteMetadataMetrics{
+	state := &sqliteMaintenanceState{initDone: make(chan struct{}), status: types.SQLiteMetadataMetrics{
 		DatabasePath:       maintKey,
 		MaintenanceEnabled: maint.interval > 0,
 		LitestreamManaged:  isLitestreamManaged(dbFilePath),
 	}}
 	sqliteMaintMu.Lock()
-	if _, exists := sqliteMaintFiles[maintKey]; exists {
-		sqliteMaintMu.Unlock()
-		return // one dedicated pool already maintains this database file
+	if owner.files == nil {
+		owner.files = make(map[string]*sqliteMaintenanceState)
 	}
+	if existing, exists := sqliteMaintFiles[maintKey]; exists {
+		if owner.files[maintKey] != existing {
+			existing.owners++
+			owner.files[maintKey] = existing
+		}
+		sqliteMaintMu.Unlock()
+		return
+	}
+	state.owners = 1
+	owner.files[maintKey] = state
 	sqliteMaintFiles[maintKey] = state
 	sqliteMaintMu.Unlock()
+	defer close(state.initDone)
 
 	ctx := context.Background()
 
@@ -465,7 +528,7 @@ func initSQLiteSelfMaintenance(logger *types.Logger, db *sql.DB, invoker, dbFile
 	// Never tie file-wide maintenance to an application pool. App reloads can
 	// create many pools for the same SQLite file, and retaining them as fallback
 	// owners prevents garbage collection and grows without bound. A single
-	// dedicated pool is stable for the process lifetime and needs no handoff.
+	// dedicated pool survives until the last owner closes and needs no handoff.
 	maintenanceDB, err := sql.Open(driverName, sqliteDSNWithCanonicalPath(connectString, maintKey))
 	if err != nil {
 		logger.Warn().Err(err).Str("db", invoker).Msg("sqlite dedicated maintenance pool failed")

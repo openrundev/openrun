@@ -4,18 +4,88 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openrundev/openrun/internal/types"
 )
+
+func TestDelegateBuildContinuesAfterSenderCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell command fixture")
+	}
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "build.tar.gz")
+	if err := writeTarGz(archive, []testTarEntry{{name: "Dockerfile", body: "FROM scratch", typ: tar.TypeReg, mode: 0600}}); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "started")
+	t.Setenv("DELEGATE_TEST_MARKER", marker)
+	command := filepath.Join(dir, "builder")
+	// Fail deliberately after proving the build command ran, avoiding a real
+	// container engine or registry dependency.
+	if err := os.WriteFile(command, []byte("#!/bin/sh\npwd > \"$DELEGATE_TEST_MARKER\"\nexit 17\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := &types.ServerConfig{}
+	config.System.ContainerCommand = command
+	config.System.MaxConcurrentBuilds = 1
+	config.System.MaxBuildWaitSecs = 5
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := delegateBuild(ctx, types.NewLogger(&types.LogConfig{Level: "ERROR"}), config,
+		DelegateRequest{ImageTag: "test-canceled-sender", ContainerFile: "Dockerfile"}, archive)
+	if err == nil || !strings.Contains(err.Error(), "exit status 17") {
+		t.Fatalf("build did not finish its command: %v", err)
+	}
+	workDir, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("build did not start: %v", err)
+	}
+	if _, err := os.Stat(strings.TrimSpace(string(workDir))); !os.IsNotExist(err) {
+		t.Fatalf("build working directory was not removed: %v", err)
+	}
+}
+
+func TestSendDelegateBuildCancellation(t *testing.T) {
+	started, released := make(chan struct{}), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-released
+	}))
+	defer srv.Close()
+	defer close(released)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	srcDir := t.TempDir()
+	go func() { done <- sendDelegateBuild(ctx, srv.URL, DelegateRequest{}, srcDir, "test") }()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("delegate request did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected cancellation, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("delegate request ignored cancellation")
+	}
+}
 
 func TestSendDelegateBuild(t *testing.T) {
 	t.Run("streams meta and build context", func(t *testing.T) {
@@ -106,7 +176,7 @@ func TestSendDelegateBuild(t *testing.T) {
 			},
 		}
 
-		if err := sendDelegateBuild(srv.URL, req, srcDir, "test-token"); err != nil {
+		if err := sendDelegateBuild(context.Background(), srv.URL, req, srcDir, "test-token"); err != nil {
 			t.Fatalf("sendDelegateBuild returned error: %v", err)
 		}
 
@@ -136,7 +206,7 @@ func TestSendDelegateBuild(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		err := sendDelegateBuild(srv.URL, DelegateRequest{
+		err := sendDelegateBuild(context.Background(), srv.URL, DelegateRequest{
 			ImageTag:      "sample:latest",
 			ContainerFile: "Dockerfile",
 		}, srcDir, "test-token")

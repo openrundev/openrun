@@ -435,83 +435,78 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	}
 
 	// Create the in memory app object
-	application, err := s.setupApp(ctx, workEntry, tx)
-	if err != nil {
-		return nil, err
-	}
+	return withTemporaryApp(s, ctx, workEntry, tx, func(application *app.App) (*types.AppCreateResponse, error) {
 
-	s.Debug().Msgf("Created app %s %s", workEntry.Path, workEntry.Id)
-	auditResult, err := s.auditApp(ctx, tx, application, approve)
-	if err != nil {
-		return nil, fmt.Errorf("app %s audit failed: %s", workEntry.Id, err)
-	}
-	if !workEntry.IsDev && (!auditResult.NeedsApproval || approve) {
-		if prep != nil && prep.loaded {
-			// The pre-pass loaded the definition and ran the before_deploy
-			// gates outside the transaction; persist the jobs it found
-			workEntry.Metadata.DefinitionJobs = prep.definitionJobs
-		} else if prep == nil || !prep.gatesHandled {
-			// Load the app (no container) so the app definition's jobs are
-			// persisted with the create, then run its before_deploy jobs. A gate
-			// failure fails the create, which rolls the app back. A definition
-			// that does not load keeps the create's lazy semantics: the error
-			// surfaces on the first request as before, and the jobs are
-			// persisted by the next reload
-			if _, err := application.Reload(ctx, true, true, types.DryRun(dryRun), app.ReloadOptions{SkipContainer: true}); err != nil {
-				s.Warn().Err(err).Msgf("app %s did not load at create; its jobs and before_deploy gates apply on the next reload", workEntry)
-			} else if !dryRun {
-				if err := s.runCreateGates(ctx, tx, application, workEntry); err != nil {
-					return nil, err
+		s.Debug().Msgf("Created app %s %s", workEntry.Path, workEntry.Id)
+		auditResult, err := s.auditApp(ctx, tx, application, approve)
+		if err != nil {
+			return nil, fmt.Errorf("app %s audit failed: %s", workEntry.Id, err)
+		}
+		if !workEntry.IsDev && (!auditResult.NeedsApproval || approve) {
+			if prep != nil && prep.loaded {
+				// The pre-pass loaded the definition and ran the before_deploy
+				// gates outside the transaction; persist the jobs it found
+				workEntry.Metadata.DefinitionJobs = prep.definitionJobs
+			} else if prep == nil || !prep.gatesHandled {
+				// Load the app (no container) so the app definition's jobs are
+				// persisted with the create, then run its before_deploy jobs. A gate
+				// failure fails the create, which rolls the app back. A definition
+				// that does not load keeps the create's lazy semantics: the error
+				// surfaces on the first request as before, and the jobs are
+				// persisted by the next reload
+				if _, err := application.Reload(ctx, true, true, types.DryRun(dryRun), app.ReloadOptions{SkipContainer: true}); err != nil {
+					s.Warn().Err(err).Msgf("app %s did not load at create; its jobs and before_deploy gates apply on the next reload", workEntry)
+				} else if !dryRun {
+					if err := s.runCreateGates(ctx, tx, application, workEntry); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
-	}
 
-	// Persist the source url
-	if err := s.db.UpdateSourceUrl(ctx, tx, workEntry); err != nil {
-		return nil, err
-	}
-
-	// Persist the metadata so that any git info is saved
-	if err := s.db.UpdateAppMetadata(ctx, tx, workEntry); err != nil {
-		return nil, err
-	}
-
-	// Persist the settings
-	if err := s.db.UpdateAppSettings(ctx, tx, workEntry); err != nil {
-		return nil, err
-	}
-
-	results := []types.ApproveResult{*auditResult}
-	if !workEntry.IsDev {
-		// Update the prod app metadata, promote from stage
-		if err = s.promoteApp(ctx, tx, stageAppEntry, appEntry); err != nil {
+		// Persist the source url
+		if err := s.db.UpdateSourceUrl(ctx, tx, workEntry); err != nil {
 			return nil, err
 		}
 
-		prodApp, err := s.setupApp(ctx, appEntry, tx)
-		if err != nil {
+		// Persist the metadata so that any git info is saved
+		if err := s.db.UpdateAppMetadata(ctx, tx, workEntry); err != nil {
 			return nil, err
 		}
 
-		prodAuditResult, err := s.auditApp(ctx, tx, prodApp, approve)
-		if err != nil {
-			return nil, fmt.Errorf("app %s audit failed: %s", appEntry.Id, err)
+		// Persist the settings
+		if err := s.db.UpdateAppSettings(ctx, tx, workEntry); err != nil {
+			return nil, err
 		}
-		results = append(results, *prodAuditResult)
-	}
 
-	ret := &types.AppCreateResponse{
-		AppPathDomain:  appEntry.AppPathDomain(),
-		HttpUrl:        s.getAppHttpUrl(appEntry),
-		HttpsUrl:       s.getAppHttpsUrl(appEntry),
-		DryRun:         dryRun,
-		ApproveResults: results,
-		OrigSourceUrl:  appEntry.Settings.OrigSourceUrl,
-		SourceUrl:      appEntry.SourceUrl,
-	}
+		results := []types.ApproveResult{*auditResult}
+		if !workEntry.IsDev {
+			// Update the prod app metadata, promote from stage
+			if err = s.promoteApp(ctx, tx, stageAppEntry, appEntry); err != nil {
+				return nil, err
+			}
 
-	return ret, nil
+			prodAuditResult, err := withTemporaryApp(s, ctx, appEntry, tx, func(prodApp *app.App) (*types.ApproveResult, error) {
+				return s.auditApp(ctx, tx, prodApp, approve)
+			})
+			if err != nil {
+				return nil, fmt.Errorf("app %s audit failed: %s", appEntry.Id, err)
+			}
+			results = append(results, *prodAuditResult)
+		}
+
+		ret := &types.AppCreateResponse{
+			AppPathDomain:  appEntry.AppPathDomain(),
+			HttpUrl:        s.getAppHttpUrl(appEntry),
+			HttpsUrl:       s.getAppHttpsUrl(appEntry),
+			DryRun:         dryRun,
+			ApproveResults: results,
+			OrigSourceUrl:  appEntry.Settings.OrigSourceUrl,
+			SourceUrl:      appEntry.SourceUrl,
+		}
+
+		return ret, nil
+	})
 }
 
 func (s *Server) prepareStageAppEntry(ctx context.Context, appEntry *types.AppEntry, applyInfo *types.CreateAppRequest) (*types.AppEntry, error) {
@@ -622,6 +617,7 @@ func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx type
 
 	bindings, err := s.getAppBindings(ctx, tx, appEntry)
 	if err != nil {
+		_ = sourceFS.Close()
 		return nil, err
 	}
 	return s.newApp(appEntry, sourceFS, bindings)
@@ -656,9 +652,14 @@ func (s *Server) newApp(appEntry *types.AppEntry, sourceFS *appfs.SourceFs, bind
 		})
 
 	merged := s.Config()
-	return app.NewApp(sourceFS, workFS, appLogger, appEntry, &merged.System,
+	application, err := app.NewApp(sourceFS, workFS, appLogger, appEntry, &merged.System,
 		merged.Plugins, merged.AppConfig, s.notifyClose, s.AppEvalTemplate,
 		s.InsertAuditEvent, merged, s.rbacManager, bindings)
+	if err != nil {
+		_ = sourceFS.Close()
+		_ = workFS.Close()
+	}
+	return application, err
 }
 
 func (s *Server) getAppBindings(ctx context.Context, inpTx types.Transaction, appEntry *types.AppEntry) ([]*types.Binding, error) {
@@ -2040,48 +2041,57 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	}
 
 	// Create the in memory app object
-	application, err := s.setupApp(ctx, &previewAppEntry, tx)
-	if err != nil {
-		return nil, err
-	}
+	return withTemporaryApp(s, ctx, &previewAppEntry, tx, func(application *app.App) (*types.AppPreviewResponse, error) {
 
-	s.Debug().Msgf("Created preview app %s %s", previewAppEntry.Path, previewAppEntry.Id)
-	auditResult, err := s.auditApp(ctx, tx, application, approve)
-	if err != nil {
-		return nil, fmt.Errorf("app %s audit failed: %s", previewAppEntry.Id, err)
-	}
+		s.Debug().Msgf("Created preview app %s %s", previewAppEntry.Path, previewAppEntry.Id)
+		auditResult, err := s.auditApp(ctx, tx, application, approve)
+		if err != nil {
+			return nil, fmt.Errorf("app %s audit failed: %s", previewAppEntry.Id, err)
+		}
 
-	// Persist the metadata so that any git info is saved
-	if err := s.db.UpdateAppMetadata(ctx, tx, &previewAppEntry); err != nil {
-		return nil, err
-	}
+		// Persist the metadata so that any git info is saved
+		if err := s.db.UpdateAppMetadata(ctx, tx, &previewAppEntry); err != nil {
+			return nil, err
+		}
 
-	// Persist the settings
-	if err := s.db.UpdateAppSettings(ctx, tx, &previewAppEntry); err != nil {
-		return nil, err
-	}
+		// Persist the settings
+		if err := s.db.UpdateAppSettings(ctx, tx, &previewAppEntry); err != nil {
+			return nil, err
+		}
 
-	ret := &types.AppPreviewResponse{
-		DryRun:        dryRun,
-		HttpUrl:       s.getAppHttpUrl(&previewAppEntry),
-		HttpsUrl:      s.getAppHttpsUrl(&previewAppEntry),
-		ApproveResult: *auditResult,
-		Success:       true,
-	}
+		ret := &types.AppPreviewResponse{
+			DryRun:        dryRun,
+			HttpUrl:       s.getAppHttpUrl(&previewAppEntry),
+			HttpsUrl:      s.getAppHttpsUrl(&previewAppEntry),
+			ApproveResult: *auditResult,
+			Success:       true,
+		}
 
-	if auditResult.NeedsApproval && !approve {
-		ret.Success = false // Needs approval but not approved, do not create the preview app
+		if auditResult.NeedsApproval && !approve {
+			ret.Success = false // Needs approval but not approved, do not create the preview app
+			return ret, nil
+		}
+
+		if dryRun {
+			return ret, nil
+		}
+
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
+
+		s.apps.ResetAllAppCache() // Clear the cache so that the new app is loaded next time
 		return ret, nil
-	}
+	})
+}
 
-	if dryRun {
-		return ret, nil
+// withTemporaryApp bounds an operation's app lifetime, including setup failures.
+func withTemporaryApp[T any](s *Server, ctx context.Context, entry *types.AppEntry, tx types.Transaction, run func(*app.App) (T, error)) (T, error) {
+	application, err := s.setupApp(ctx, entry, tx)
+	if err != nil {
+		var zero T
+		return zero, fmt.Errorf("error setting up app %s: %w", entry.AppPathDomain(), err)
 	}
-
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-
-	s.apps.ResetAllAppCache() // Clear the cache so that the new app is loaded next time
-	return ret, nil
+	defer application.Close() //nolint:errcheck
+	return run(application)
 }

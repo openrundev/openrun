@@ -559,11 +559,14 @@ func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, t
 		tail = 500
 	}
 	if runtime == types.CONTAINER_KUBERNETES {
-		stream, err := container.GetWorkloadPodLogsStream(ctx, s.Config(), id, tail, follow)
-		if err != nil {
-			return nil, err
-		}
-		return streamLogLines(stream, nil), nil
+		return func(yield func(any, error) bool) {
+			stream, err := container.GetWorkloadPodLogsStream(ctx, s.Config(), id, tail, follow)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			streamLogLines(stream, nil)(yield)
+		}, nil
 	}
 
 	// Verify the container is OpenRun managed before exposing logs
@@ -576,22 +579,27 @@ func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, t
 		args = append(args, "--follow")
 	}
 	args = append(args, id)
-	cmd := exec.CommandContext(ctx, runtime, args...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	// The runtime CLI emits the container's stderr stream on its own stderr;
-	// share the stdout pipe so both are streamed
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	reap := func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	}
-	return streamLogLines(stdout, reap), nil
+	// Allocate pipes and start the process only when the stream is consumed.
+	// An abandoned range function has no way to run a deferred cleanup.
+	return func(yield func(any, error) bool) {
+		cmd := exec.CommandContext(ctx, runtime, args...)
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		// Include the container's stderr in the same pipe.
+		cmd.Stderr = cmd.Stdout
+		if err := cmd.Start(); err != nil {
+			yield(nil, err)
+			return
+		}
+		reap := func() {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+		streamLogLines(stdout, reap)(yield)
+	}, nil
 }
 
 // streamLogLines converts a log reader into a range func yielding chunks of

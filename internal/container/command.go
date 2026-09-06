@@ -173,7 +173,7 @@ func (c *CommandCM) BuildImage(ctx context.Context, imgName ImageName, sourceUrl
 		if c.config.System.BuilderAuthToken == "" {
 			return fmt.Errorf("system.builder_auth_token must be set when using delegated builds")
 		}
-		err := sendDelegateBuild(targetUrl, DelegateRequest{
+		err := sendDelegateBuild(ctx, targetUrl, DelegateRequest{
 			ImageTag:       string(imgName),
 			ContainerFile:  containerFile,
 			ContainerArgs:  containerArgs,
@@ -802,27 +802,27 @@ func (c *CommandCM) ImageExists(ctx context.Context, name ImageName) (bool, erro
 
 // ExecTailN executes a command and returns the last n lines of output
 func (c *CommandCM) ExecTailN(ctx context.Context, command string, args []string, n int) ([]string, error) {
+	if n <= 0 {
+		return nil, fmt.Errorf("line count must be positive")
+	}
 	cmd := exec.CommandContext(ctx, command, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("error creating stdout pipe: %s", err)
 	}
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("error creating stderr pipe: %s", err)
-	}
+	// Share one pipe so stderr is drained even while stdout remains open.
+	// Reading separate pipes sequentially can deadlock a child writing stderr.
+	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("error starting command: %s", err)
 	}
 
-	multi := bufio.NewReader(io.MultiReader(stdout, stderr))
-
-	// Create a ring buffer to hold the last 1000 lines of output
+	// Create a ring buffer to hold the last n lines of output
 	ringBuffer := ring.New(n)
 
-	scanner := bufio.NewScanner(multi)
+	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		// Push the latest line into the ring buffer, displacing the oldest line if necessary
 		ringBuffer.Value = scanner.Text()

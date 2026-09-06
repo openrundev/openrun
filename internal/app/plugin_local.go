@@ -401,15 +401,18 @@ func (a *App) localPluginFunc(pluginInfo *plugin.PluginInfo, modulePath, account
 		}
 
 		if result.Cursor != nil && result.Cursor.Stream {
-			// Stream cursor: the app returns it from the handler as a
-			// streaming HTTP response, consumed after the request's plugin
-			// cleanup has run. Detach it from the session so session end does
-			// not close it; the range function owns closing it.
-			cursor, err := host.DetachCursor(sessionId, result.Cursor.CursorId)
-			if err != nil {
-				return nil, err
+			// Keep unused streams under session cleanup. Only the stream
+			// selected as the response outlives the request's plugin calls.
+			response := NewStreamResponse(nil)
+			response.startStream = func() error {
+				cursor, err := host.DetachCursor(sessionId, result.Cursor.CursorId)
+				if err != nil {
+					return err
+				}
+				response.value, response.closeStream = cursorRangeFunc(ctx, cursor)
+				return nil
 			}
-			return NewStreamResponse(cursorRangeFunc(cursor)), nil
+			return response, nil
 		}
 
 		if result.Cursor != nil {
@@ -486,19 +489,26 @@ func (a *App) localFuncRefFn(host *sdk.Host, pluginInfo *plugin.PluginInfo, acco
 // shape handleStreamResponse consumes: items are yielded as plain Go values
 // and the cursor is closed when the consumer stops early or a batch fails.
 // A cursor that reports done has already closed itself.
-func cursorRangeFunc(cursor *sdk.Cursor) func(yield func(any, error) bool) {
-	return func(yield func(any, error) bool) {
-		closed := false
-		defer func() {
-			if !closed && cursor.Close != nil {
+func cursorRangeFunc(ctx context.Context, cursor *sdk.Cursor) (func(yield func(any, error) bool), func()) {
+	closed := false
+	cleanup := func() {
+		if !closed {
+			closed = true
+			if cursor.Close != nil {
 				cursor.Close(context.Background()) //nolint:errcheck
 			}
-		}()
+		}
+	}
+	return func(yield func(any, error) bool) {
+		defer cleanup()
 		for {
-			items, done, err := cursor.Next(context.Background(), cursorBatchSize)
+			items, done, err := cursor.Next(ctx, cursorBatchSize)
 			if err != nil {
 				yield(nil, err)
 				return
+			}
+			if done {
+				closed = true // Next released the cursor, including its final batch.
 			}
 			for _, item := range items {
 				if !yield(item, nil) {
@@ -506,11 +516,10 @@ func cursorRangeFunc(cursor *sdk.Cursor) func(yield func(any, error) bool) {
 				}
 			}
 			if done {
-				closed = true
 				return
 			}
 		}
-	}
+	}, cleanup
 }
 
 func (a *App) buildSDKThreadState(thread *starlark.Thread) sdk.ThreadState {

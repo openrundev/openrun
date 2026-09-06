@@ -33,6 +33,8 @@ type SqlStore struct {
 	*types.Logger
 	sync.Mutex
 	isInitialized bool
+	closed        bool
+	owner         system.SQLiteMaintenanceOwner
 	pluginContext *types.PluginContext
 	db            *sql.DB
 	prefix        string
@@ -179,6 +181,9 @@ func (s *SqlStore) initialize(ctx context.Context) error {
 	s.Lock()
 	defer s.Unlock()
 
+	if s.closed {
+		return errors.New("SQL store is closed")
+	}
 	if s.isInitialized {
 		// Already initialized
 		return nil
@@ -196,14 +201,19 @@ func (s *SqlStore) initialize(ctx context.Context) error {
 // for both the in-process and out-of-process plugin builds.
 func (s *SqlStore) Close() error {
 	s.Lock()
-	db := s.db
-	s.db = nil
-	s.isInitialized = false
-	s.Unlock()
-	if db == nil {
+	defer s.Unlock()
+	if s.closed {
 		return nil
 	}
-	return db.Close()
+	s.closed = true
+	db := s.db
+	s.isInitialized = false
+	// Keep the closed pool pointer stable for operations that already passed
+	// initialize. database/sql safely rejects queries racing with Close.
+	if db == nil {
+		return s.owner.Close()
+	}
+	return errors.Join(db.Close(), s.owner.Close())
 }
 
 func (s *SqlStore) Begin(ctx context.Context) (*sql.Tx, error) {
@@ -214,16 +224,12 @@ func (s *SqlStore) Begin(ctx context.Context) (*sql.Tx, error) {
 }
 
 func (s *SqlStore) Commit(ctx context.Context, tx *sql.Tx) error {
-	if err := s.initialize(ctx); err != nil {
-		return err
-	}
+	// Finalization belongs to the existing transaction, even if the store
+	// has since closed. Reinitialization can fail and strand the transaction.
 	return tx.Commit()
 }
 
 func (s *SqlStore) Rollback(ctx context.Context, tx *sql.Tx) error {
-	if err := s.initialize(ctx); err != nil {
-		return err
-	}
 	return tx.Rollback()
 }
 

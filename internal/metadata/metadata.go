@@ -39,6 +39,7 @@ type Metadata struct {
 	leaderElection     *LeaderElection
 	config             *types.ServerConfig
 	db                 *sql.DB
+	dbOwner            *system.SQLiteMaintenanceOwner
 	dbType             system.DBType
 	sqliteDBPath       string
 	pgListener         *pgxlisten.Listener
@@ -51,16 +52,24 @@ type Metadata struct {
 	// fileCache is the shared file cache, created lazily on first use. A single
 	// instance is shared by all FileStores since each cache instance holds its
 	// own sqlite connection pool.
-	fileCacheOnce sync.Once
-	fileCache     *FileCache
-	fileCacheErr  error
+	fileCacheMu  sync.Mutex // serializes lazy initialization with Close
+	closed       bool
+	fileCache    *FileCache
+	fileCacheErr error
 }
 
 const pg_listen_channel = "openrun_events"
 
 // NewMetadata creates a new metadata persistence layer
 func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, error) {
-	db, dbType, err := system.InitDBConnection(logger, config.Metadata.DBConnection, "metadata", system.DB_SQLITE_POSTGRES, &config.Metadata)
+	owner := &system.SQLiteMaintenanceOwner{}
+	initializedOwner := false
+	defer func() {
+		if !initializedOwner {
+			_ = owner.Close()
+		}
+	}()
+	db, dbType, err := system.InitDBConnection(logger, config.Metadata.DBConnection, "metadata", system.DB_SQLITE_POSTGRES, &config.Metadata, owner)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing db: %w", err)
 	}
@@ -77,6 +86,7 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 		Logger:       logger,
 		config:       config,
 		db:           db,
+		dbOwner:      owner,
 		dbType:       dbType,
 		sqliteDBPath: sqliteDBPath,
 	}
@@ -192,6 +202,7 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 	// step has completed, so an error cannot orphan the leader loop.
 	m.leaderElection.StartLoop(context.Background())
 	initialized = true
+	initializedOwner = true
 	return m, nil
 }
 
@@ -246,6 +257,12 @@ func (m *Metadata) DBType() system.DBType {
 // Close stops background goroutines owned by Metadata (leader election and
 // the postgres listener) and closes the database connection pools.
 func (m *Metadata) Close() {
+	m.fileCacheMu.Lock()
+	defer m.fileCacheMu.Unlock()
+	if m.closed {
+		return
+	}
+	m.closed = true
 	m.leaderElection.Stop()
 	if m.pgListenerCancel != nil {
 		m.pgListenerCancel()
@@ -257,13 +274,21 @@ func (m *Metadata) Close() {
 		m.fileCache.Close() //nolint:errcheck
 	}
 	m.db.Close() //nolint:errcheck
+	if m.dbOwner != nil {
+		_ = m.dbOwner.Close()
+	}
 }
 
 // getFileCache returns the shared file cache, creating it on first use.
 func (m *Metadata) getFileCache() (*FileCache, error) {
-	m.fileCacheOnce.Do(func() {
+	m.fileCacheMu.Lock()
+	defer m.fileCacheMu.Unlock()
+	if m.closed {
+		return nil, errors.New("metadata is closed")
+	}
+	if m.fileCache == nil && m.fileCacheErr == nil {
 		m.fileCache, m.fileCacheErr = InitFileCache(m.Logger, m.config)
-	})
+	}
 	return m.fileCache, m.fileCacheErr
 }
 

@@ -36,9 +36,37 @@ const (
 // jobRunRegistry tracks the runs executing on this node, by run id, so a
 // cancel request can stop them
 type jobRunRegistry struct {
-	mu     sync.Mutex
-	active map[string]context.CancelFunc
+	mu        sync.Mutex
+	active    map[string]context.CancelFunc
+	ctx       context.Context
+	cancelAll context.CancelFunc
+	closed    bool
+	wg        sync.WaitGroup
 }
+
+// begin registers work before it can touch the database, so shutdown can
+// reject new runs and wait for every claimed run to finish cleanup.
+func (r *jobRunRegistry) begin() (context.Context, func(), error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return nil, nil, errors.New("job runner is stopped")
+	}
+	if r.ctx == nil {
+		r.ctx, r.cancelAll = context.WithCancel(context.Background())
+	}
+	r.wg.Add(1)
+	return r.ctx, r.wg.Done, nil
+}
+func (r *jobRunRegistry) stop() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed = true
+	if r.cancelAll != nil {
+		r.cancelAll()
+	}
+}
+func (r *jobRunRegistry) wait() { r.wg.Wait() }
 
 func (r *jobRunRegistry) add(id string, cancel context.CancelFunc) {
 	r.mu.Lock()
@@ -146,27 +174,57 @@ func (s *Server) claimJobRun(ctx context.Context, exec *jobExecution) (*types.Jo
 
 // startJobRun claims the run and executes it in the background
 func (s *Server) startJobRun(ctx context.Context, exec *jobExecution) (*types.JobRun, error) {
-	run, err := s.claimJobRun(ctx, exec)
+	parent, done, err := s.jobRuns.begin()
 	if err != nil {
 		if exec.closeApp != nil {
 			exec.closeApp()
 		}
 		return nil, err
 	}
-	go s.performJobRun(exec, run)
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			done()
+		}
+	}()
+	claimCtx, cancel := context.WithCancel(ctx)
+	stopCancel := context.AfterFunc(parent, cancel)
+	defer stopCancel()
+	defer cancel()
+	run, err := s.claimJobRun(claimCtx, exec)
+	if err != nil {
+		if exec.closeApp != nil {
+			exec.closeApp()
+		}
+		return nil, err
+	}
+	handedOff = true
+	go func() { defer done(); s.performJobRun(parent, exec, run) }()
 	return run, nil
 }
 
 // executeJobRun claims the run and executes it, returning the finished run
 func (s *Server) executeJobRun(ctx context.Context, exec *jobExecution) (*types.JobRun, error) {
-	run, err := s.claimJobRun(ctx, exec)
+	parent, done, err := s.jobRuns.begin()
 	if err != nil {
 		if exec.closeApp != nil {
 			exec.closeApp()
 		}
 		return nil, err
 	}
-	return s.performJobRun(exec, run), nil
+	defer done()
+	claimCtx, cancel := context.WithCancel(ctx)
+	stopCancel := context.AfterFunc(parent, cancel)
+	defer stopCancel()
+	defer cancel()
+	run, err := s.claimJobRun(claimCtx, exec)
+	if err != nil {
+		if exec.closeApp != nil {
+			exec.closeApp()
+		}
+		return nil, err
+	}
+	return s.performJobRun(claimCtx, exec, run), nil
 }
 
 func truncateMessage(msg string) string {
@@ -180,12 +238,12 @@ func truncateMessage(msg string) string {
 // or the job container, under the job timeout, with the liveness stamp
 // renewed while it runs. Records the outcome, writes the audit event and
 // prunes the job's old runs
-func (s *Server) performJobRun(exec *jobExecution, run *types.JobRun) *types.JobRun {
+func (s *Server) performJobRun(parent context.Context, exec *jobExecution, run *types.JobRun) *types.JobRun {
 	if exec.closeApp != nil {
 		defer exec.closeApp()
 	}
 	spec := exec.spec
-	baseCtx := context.WithValue(context.Background(), types.REQUEST_ID, exec.request)
+	baseCtx := context.WithValue(parent, types.REQUEST_ID, exec.request)
 	baseCtx = context.WithValue(baseCtx, types.USER_ID, exec.actor)
 	baseCtx = system.WithTrustedOperation(baseCtx)
 	runCtx, cancel := context.WithTimeout(baseCtx, spec.TimeoutDuration())
@@ -193,10 +251,10 @@ func (s *Server) performJobRun(exec *jobExecution, run *types.JobRun) *types.Job
 	s.jobRuns.add(run.Id, cancel)
 	defer s.jobRuns.remove(run.Id)
 
+	var lease *system.BackgroundTask
 	if !exec.tx.IsInitialized() {
-		stop := make(chan struct{})
-		defer close(stop)
-		go s.renewJobLease(run.Id, stop)
+		lease = system.StartPeriodicTask(runCtx, jobLeaseRenewal, false, func(ctx context.Context) { s.renewJobLease(ctx, run.Id) })
+		defer lease.Stop()
 	}
 
 	var status, message string
@@ -224,8 +282,11 @@ func (s *Server) performJobRun(exec *jobExecution, run *types.JobRun) *types.Job
 			exitCode = &code
 		}
 	}
+	lease.Stop()
+	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(baseCtx), 10*time.Second)
+	defer finishCancel()
 	message = truncateMessage(message)
-	if err := s.db.FinishJobRun(context.Background(), exec.tx, run.Id, status, exitCode, message); err != nil {
+	if err := s.db.FinishJobRun(finishCtx, exec.tx, run.Id, status, exitCode, message); err != nil {
 		s.Error().Err(err).Msgf("error recording job run %s finish", run.Id)
 	}
 	run.Status = status
@@ -237,7 +298,7 @@ func (s *Server) performJobRun(exec *jobExecution, run *types.JobRun) *types.Job
 	s.insertJobAudit(run)
 
 	if !exec.tx.IsInitialized() {
-		s.pruneJobRuns(context.Background(), exec.target, spec.Name, exec.app.AppConfig.Jobs.RetainRuns)
+		s.pruneJobRuns(finishCtx, exec.target, spec.Name, exec.app.AppConfig.Jobs.RetainRuns)
 	}
 	return run
 }
@@ -323,21 +384,12 @@ func (s *Server) runJobContainer(ctx context.Context, exec *jobExecution, run *t
 	})
 }
 
-// renewJobLease renews the run's liveness stamp until stop is closed
-func (s *Server) renewJobLease(runId string, stop <-chan struct{}) {
-	ticker := time.NewTicker(jobLeaseRenewal)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := s.db.UpdateJobRunLease(ctx, runId, time.Now().Add(jobLeaseValidity)); err != nil {
-				s.Warn().Err(err).Msgf("error renewing job run %s lease", runId)
-			}
-			cancel()
-		}
+// renewJobLease renews the run's liveness stamp with a bounded query.
+func (s *Server) renewJobLease(parent context.Context, runId string) {
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
+	if err := s.db.UpdateJobRunLease(ctx, runId, time.Now().Add(jobLeaseValidity)); err != nil && ctx.Err() == nil {
+		s.Warn().Err(err).Msgf("error renewing job run %s lease", runId)
 	}
 }
 
@@ -543,6 +595,21 @@ func (s *Server) scheduleCronJobs(ctx context.Context) {
 
 // startCronRun claims one cron tick and starts its run
 func (s *Server) startCronRun(ctx context.Context, entry *types.AppEntry, spec types.JobSpec, tick time.Time) {
+	parent, done, err := s.jobRuns.begin()
+	if err != nil {
+		return
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			done()
+		}
+	}()
+	ctx, cancel := context.WithCancel(ctx)
+	stopCancel := context.AfterFunc(parent, cancel)
+	defer stopCancel()
+	defer cancel()
+
 	exec := &jobExecution{
 		target:   entry,
 		spec:     spec,
@@ -575,7 +642,8 @@ func (s *Server) startCronRun(ctx context.Context, entry *types.AppEntry, spec t
 	exec.app = application
 	exec.closeApp = closeApp
 	s.Info().Str("run", run.Id).Str("job", spec.Name).Str("app", run.AppPath).Msg("starting scheduled job run")
-	go s.performJobRun(exec, run)
+	handedOff = true
+	go func() { defer done(); s.performJobRun(parent, exec, run) }()
 }
 
 // resolveJobInstance returns the app instance a job command targets: the

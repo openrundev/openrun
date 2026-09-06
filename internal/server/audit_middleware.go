@@ -29,7 +29,7 @@ func init() {
 
 func (s *Server) initAuditDB(connectString string) error {
 	var err error
-	s.auditDB, s.auditDbType, err = system.InitDBConnection(s.Logger, connectString, "audit", system.DB_SQLITE_POSTGRES, &s.Config().Metadata)
+	s.auditDB, s.auditDbType, err = system.InitDBConnection(s.Logger, connectString, "audit", system.DB_SQLITE_POSTGRES, &s.Config().Metadata, &s.auditDBOwner)
 	if err != nil {
 		return err
 	}
@@ -37,6 +37,7 @@ func (s *Server) initAuditDB(connectString string) error {
 	if err := s.versionUpgradeAuditDB(); err != nil {
 		s.auditDB.Close() //nolint:errcheck
 		s.auditDB = nil
+		_ = s.auditDBOwner.Close()
 		return err
 	}
 
@@ -46,8 +47,7 @@ func (s *Server) initAuditDB(connectString string) error {
 	s.auditDone = make(chan struct{})
 	go s.auditWriterLoop()
 
-	cleanupTicker := time.NewTicker(1 * time.Hour)
-	go s.auditCleanupLoop(cleanupTicker)
+	s.auditCleanup = system.StartPeriodicTask(context.Background(), time.Hour, true, s.auditCleanupPass)
 	return nil
 }
 
@@ -190,7 +190,10 @@ func (s *Server) stopAuditWriter() {
 	if s.auditStop == nil {
 		return
 	}
-	close(s.auditStop)
+	s.auditStopOnce.Do(func() {
+		s.auditCleanup.Stop()
+		close(s.auditStop)
+	})
 	<-s.auditDone
 	// Drain events enqueued by writers that raced with the shutdown
 	s.writeAllQueuedAuditEvents(nil)
@@ -282,12 +285,12 @@ func (s *Server) writeAuditBatch(batch []*types.AuditEvent) {
 	}
 }
 
-func (s *Server) cleanupEvents() error {
+func (s *Server) cleanupEvents(ctx context.Context) error {
 	// A retention setting of zero or less disables cleanup for that event class
 	var httpDeleted, nonHttpDeleted int64
 	if days := s.Config().System.HttpEventRetentionDays; days > 0 {
 		cleanupTime := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
-		result, err := s.auditDB.Exec(system.RebindQuery(s.auditDbType, `delete from audit where event_type = 'http' and create_time < ?`), cleanupTime)
+		result, err := s.auditDB.ExecContext(ctx, system.RebindQuery(s.auditDbType, `delete from audit where event_type = 'http' and create_time < ?`), cleanupTime)
 		if err != nil {
 			return err
 		}
@@ -298,7 +301,7 @@ func (s *Server) cleanupEvents() error {
 
 	if days := s.Config().System.NonHttpEventRetentionDays; days > 0 {
 		cleanupTime := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
-		result, err := s.auditDB.Exec(system.RebindQuery(s.auditDbType, `delete from audit where event_type != 'http' and create_time < ?`), cleanupTime)
+		result, err := s.auditDB.ExecContext(ctx, system.RebindQuery(s.auditDbType, `delete from audit where event_type != 'http' and create_time < ?`), cleanupTime)
 		if err != nil {
 			return err
 		}
@@ -311,28 +314,18 @@ func (s *Server) cleanupEvents() error {
 	return nil
 }
 
-func (s *Server) auditCleanupLoop(cleanupTicker *time.Ticker) {
-	defer cleanupTicker.Stop()
-
-	// Errors are logged and cleanup is retried on the next tick
-	if err := s.cleanupEvents(); err != nil {
+func (s *Server) auditCleanupPass(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	err := s.cleanupEvents(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	if err != nil {
 		s.Error().Err(err).Msg("error cleaning up audit entries")
 	}
-	s.pruneApiCredentials()
-
-	for {
-		select {
-		case <-s.auditStop:
-			// Server shutdown; stopAuditWriter closes auditStop
-			return
-		case <-cleanupTicker.C:
-		}
-		if err := s.cleanupEvents(); err != nil {
-			s.Error().Err(err).Msg("error cleaning up audit entries")
-		}
-		// Credential-store hygiene shares the hourly maintenance tick
-		s.pruneApiCredentials()
-	}
+	s.pruneApiCredentials(ctx)
 }
 
 type ContextShared struct {
@@ -374,8 +367,12 @@ var requestCounter uint64
 // is authorized by the operation that scheduled it (a sync run additionally
 // attaches the creator's frozen snapshot, which takes precedence over trust)
 func newBackgroundOperationContext(userId string) context.Context {
+	return backgroundOperationContext(context.Background(), userId)
+}
+
+func backgroundOperationContext(parent context.Context, userId string) context.Context {
 	rid := ridPrefix + strconv.FormatUint(atomic.AddUint64(&requestCounter, 1), 10)
-	ctx := context.WithValue(context.Background(), types.REQUEST_ID, rid)
+	ctx := context.WithValue(parent, types.REQUEST_ID, rid)
 	ctx = context.WithValue(ctx, types.USER_ID, userId)
 	return system.WithTrustedOperation(ctx)
 }

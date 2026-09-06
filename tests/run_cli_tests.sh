@@ -199,9 +199,11 @@ export GOCOVERDIR="$COVERDIR"
 if [[ -n "$SKIP_BUILD" ]]; then
   echo "Skipping build, reusing existing ./openrun binary"
 else
-  # Setup app specs
+  # Bundle the local specs used by the CLI tests. Placeholder-only source
+  # trees may contain either dummy/ or just README, so do not use the
+  # placeholder's name to decide whether specs need to be staged.
   rm -rf appspecs_bk
-  if [[ -d internal/server/appspecs/dummy ]]; then
+  if [[ -d config/appspecs ]]; then
     mv internal/server/appspecs appspecs_bk
     cp -r config/appspecs internal/server/
   fi

@@ -90,7 +90,7 @@ func TestResumeBackgroundNoOpAfterStopRequested(t *testing.T) {
 	close(s.stopRequested)
 
 	s.ResumeBackground()
-	if s.syncStop != nil {
+	if s.syncLoop != nil {
 		t.Fatal("expected ResumeBackground to be a no-op once shutdown was requested")
 	}
 
@@ -101,7 +101,7 @@ func TestResumeBackgroundNoOpAfterStopRequested(t *testing.T) {
 		stopRequested: make(chan struct{}),
 	}
 	active.ResumeBackground()
-	if active.syncStop == nil {
+	if active.syncLoop == nil {
 		t.Fatal("expected ResumeBackground to restart the sync runner before shutdown")
 	}
 	active.PauseBackground()
@@ -140,12 +140,7 @@ func TestPauseBackgroundAbortsInFlightSweep(t *testing.T) {
 
 	// Wire the runner the way startStaleContainerCleanup does, but with a
 	// fast ticker so the sweep starts promptly
-	runCtx, cancel := context.WithCancel(context.Background())
-	s.staleContainerCleanupTicker = time.NewTicker(10 * time.Millisecond)
-	s.staleContainerCleanupStop = make(chan struct{})
-	s.staleContainerCleanupCancel = cancel
-	s.staleContainerCleanupDone = make(chan struct{})
-	go s.staleContainerCleanupRunner(s.staleContainerCleanupTicker, s.staleContainerCleanupStop, runCtx, s.staleContainerCleanupDone)
+	s.staleContainerCleanup = system.StartPeriodicTask(context.Background(), 10*time.Millisecond, false, s.staleContainerCleanupPass)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -170,7 +165,7 @@ func TestPauseBackgroundAbortsInFlightSweep(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("PauseBackground did not join the in-flight sweep")
 	}
-	if s.staleContainerCleanupDone != nil || s.staleContainerCleanupCancel != nil {
+	if s.staleContainerCleanup != nil {
 		t.Fatal("expected PauseBackground to clear the sweep runner fields")
 	}
 }

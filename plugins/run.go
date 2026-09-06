@@ -48,6 +48,9 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 	if parse == "json" && stream {
 		return nil, errors.New("stream response is not supported for JSON output")
 	}
+	if stdoutToFile && stream {
+		return nil, errors.New("stream response cannot be combined with stdout_file")
+	}
 
 	var cmd *exec.Cmd
 	var err error
@@ -91,6 +94,7 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 
 	var buf bytes.Buffer
 	var tempFile *os.File
+	keepTempFile := false
 
 	if stdoutToFile {
 		tempFile, err = os.CreateTemp("", "openrun-exec-stdout-*")
@@ -98,12 +102,17 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 			reap()
 			return nil, fmt.Errorf("error creating temporary file: %w", err)
 		}
-		defer tempFile.Close() //nolint:errcheck
+		// Ownership passes to the caller only when the file name is returned.
+		defer func() {
+			if !keepTempFile {
+				_ = os.Remove(tempFile.Name())
+			}
+		}()
+		defer tempFile.Close() //nolint:errcheck // close before removal, including on Windows
 		_, err = io.Copy(tempFile, stdout)
 
 		if err != nil && err != io.EOF {
 			reap()
-			os.Remove(tempFile.Name()) //nolint:errcheck
 			return nil, err
 		}
 	}
@@ -134,6 +143,7 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 	}
 
 	if stdoutToFile {
+		keepTempFile = true
 		return tempFile.Name(), nil
 	}
 

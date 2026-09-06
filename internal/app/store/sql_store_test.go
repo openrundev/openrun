@@ -4,12 +4,52 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 )
+
+func TestTransactionFinalizationAfterStoreClose(t *testing.T) {
+	for _, commit := range []bool{false, true} {
+		name := "rollback"
+		if commit {
+			name = "commit"
+		}
+		t.Run(name, func(t *testing.T) {
+			db, err := sql.Open("sqlite", ":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close() //nolint:errcheck
+			tx, err := db.Begin()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback() //nolint:errcheck
+			store := &SqlStore{db: db, isInitialized: true}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if commit {
+				err = store.Commit(context.Background(), tx)
+			} else {
+				err = store.Rollback(context.Background(), tx)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if db.Stats().InUse != 0 {
+				t.Fatal("transaction retained a connection")
+			}
+			if store.db != db {
+				t.Fatal("transaction finalization reopened the store")
+			}
+		})
+	}
+}
 
 func TestSqlStoreCloseClosesPool(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
@@ -24,8 +64,11 @@ func TestSqlStoreCloseClosesPool(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if store.db != nil || store.isInitialized {
+	if store.db != db || store.isInitialized || !store.closed {
 		t.Fatal("store retained initialized database after close")
+	}
+	if err := store.initialize(context.Background()); err == nil {
+		t.Fatal("closed store initialized again")
 	}
 	if err := db.Ping(); err == nil {
 		t.Fatal("database pool remained usable after store close")

@@ -19,6 +19,9 @@ type PluginResponse struct {
 	value     any
 	isStream  bool
 	thread    *starlark.Thread
+	// A stream stays session-owned until selected as the HTTP response.
+	startStream func() error
+	closeStream func()
 }
 
 func NewErrorResponse(err error, thread *starlark.Thread) *PluginResponse {
@@ -103,12 +106,11 @@ func (r *PluginResponse) Attr(name string) (starlark.Value, error) {
 			return nil, r.err
 		}
 
-		if r.value == nil {
-			return starlark.None, nil
-		}
-
 		if r.isStream {
 			return starlark.None, errors.New("stream value cannot be accessed in Starlark, return the response object instead")
+		}
+		if r.value == nil {
+			return starlark.None, nil
 		}
 
 		if v, ok := r.value.(starlark.Value); ok {

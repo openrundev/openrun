@@ -65,7 +65,7 @@ func TestLitestreamManagerReplicateAndRestore(t *testing.T) {
 		t.Fatal("db file not marked litestream managed")
 	}
 
-	db, _, err := InitDBConnection(logger, "sqlite:"+dbPath, "litestream_test", DB_SQLITE, nil)
+	db, _, err := InitDBConnection(logger, "sqlite:"+dbPath, "litestream_test", DB_SQLITE, nil, testSQLiteOwner(t))
 	if err != nil {
 		t.Fatalf("InitDBConnection: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestLitestreamManagerReplicateAndRestore(t *testing.T) {
 		t.Fatalf("database not restored: %v", err)
 	}
 
-	db2, _, err := InitDBConnection(logger, "sqlite:"+dbPath, "litestream_test2", DB_SQLITE, nil)
+	db2, _, err := InitDBConnection(logger, "sqlite:"+dbPath, "litestream_test2", DB_SQLITE, nil, testSQLiteOwner(t))
 	if err != nil {
 		t.Fatalf("InitDBConnection after restore: %v", err)
 	}

@@ -41,6 +41,7 @@ func newMCPTestServer(t *testing.T) (*Server, func(t *testing.T, principal strin
 	t.Cleanup(func() {
 		server.stopAuditWriter()
 		_ = server.auditDB.Close()
+		_ = server.auditDBOwner.Close()
 	})
 
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{

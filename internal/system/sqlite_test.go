@@ -43,6 +43,61 @@ func stopSQLiteMaintenanceForTest(dbFilePath string) {
 	}
 }
 
+func testSQLiteOwner(t *testing.T) *SQLiteMaintenanceOwner {
+	t.Helper()
+	owner := &SQLiteMaintenanceOwner{}
+	t.Cleanup(func() {
+		if err := owner.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return owner
+}
+
+func TestSQLiteMaintenanceOwnerLifetime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "owners.db")
+	first, second := testSQLiteOwner(t), testSQLiteOwner(t)
+	open := func(owner *SQLiteMaintenanceOwner) *sql.DB {
+		db, _, err := InitDBConnection(nil, "sqlite:"+path, "test", DB_SQLITE, nil, owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
+	}
+	open(first)
+	open(second)
+	sqliteMaintMu.Lock()
+	state := sqliteMaintFiles[path]
+	sqliteMaintMu.Unlock()
+	if state == nil {
+		t.Fatal("missing maintenance state")
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-state.maintenanceDone:
+		t.Fatal("first owner stopped shared maintenance")
+	default:
+	}
+	if _, _, err := InitDBConnection(nil, "sqlite:"+path, "late", DB_SQLITE, nil, first); err == nil {
+		t.Fatal("closed owner reopened")
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-state.maintenanceDone:
+	default:
+		t.Fatal("last owner did not join maintenance")
+	}
+	if state.maintenanceDB.Stats().OpenConnections != 0 {
+		t.Fatal("maintenance pool leaked")
+	}
+	open(testSQLiteOwner(t))
+}
+
 func TestAddSQLitePragmas(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -88,7 +143,7 @@ func TestAddSQLitePragmas(t *testing.T) {
 func TestSQLitePragmasPerConnection(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "pragma_test.db")
 	t.Cleanup(func() { stopSQLiteMaintenanceForTest(dbPath) })
-	db, dbType, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil)
+	db, dbType, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil, testSQLiteOwner(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +190,7 @@ func TestSQLitePragmasPerConnection(t *testing.T) {
 func TestSQLiteMaintenanceRestoresZeroBusyTimeout(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "zero_timeout.db")
 	t.Cleanup(func() { stopSQLiteMaintenanceForTest(dbPath) })
-	db, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil)
+	db, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil, testSQLiteOwner(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +235,7 @@ func TestSQLiteMaintenanceRestoresZeroBusyTimeout(t *testing.T) {
 func TestSQLiteAutoVacuumMigration(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "vacuum_test.db")
 	t.Cleanup(func() { stopSQLiteMaintenanceForTest(dbPath) })
-	db, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil)
+	db, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil, testSQLiteOwner(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +260,7 @@ func TestSQLiteAutoVacuumMigration(t *testing.T) {
 	}
 
 	// Reopen: the persisted auto_vacuum setting survives and data is intact
-	db, _, err = InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil)
+	db, _, err = InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, nil, testSQLiteOwner(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +283,7 @@ func TestSQLiteMaintenanceSkipsVacuumUntilCheckpointCaughtUp(t *testing.T) {
 		SQLiteTruncateCheckpointEvery: 1,
 		SQLiteVacuumPages:             10,
 	}
-	db, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, cfg)
+	db, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "test", DB_SQLITE, cfg, testSQLiteOwner(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,9 +409,9 @@ func TestSQLiteDedicatedMaintenanceSurvivesApplicationPoolClose(t *testing.T) {
 
 	db1 := openDB()
 	dsn := AddSQLitePragmas(dbPath, sqliteJournalSizeLimit)
-	initSQLiteSelfMaintenance(logger, db1, "owner", dbPath, maint, "sqlite", dsn)
+	initSQLiteSelfMaintenance(logger, db1, "owner", dbPath, maint, "sqlite", dsn, testSQLiteOwner(t))
 	db2 := openDB()
-	initSQLiteSelfMaintenance(logger, db2, "second_pool", dbPath, maint, "sqlite", dsn)
+	initSQLiteSelfMaintenance(logger, db2, "second_pool", dbPath, maint, "sqlite", dsn, testSQLiteOwner(t))
 	if err := db1.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +522,7 @@ func TestSQLiteStartupCheckpointUsesConnectionBusyTimeout(t *testing.T) {
 	result := make(chan initResult, 1)
 	started := time.Now()
 	go func() {
-		opened, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "startup", DB_SQLITE, cfg)
+		opened, _, err := InitDBConnection(nil, "sqlite:"+dbPath, "startup", DB_SQLITE, cfg, testSQLiteOwner(t))
 		result <- initResult{db: opened, err: err}
 	}()
 

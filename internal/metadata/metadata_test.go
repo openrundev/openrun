@@ -19,6 +19,18 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
+func TestFileCacheCannotOpenAfterMetadataClose(t *testing.T) {
+	m, closeMetadata := setupTestMetadata(t)
+	defer closeMetadata()
+	m.Close()
+	if _, err := m.getFileCache(); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("late file cache open: %v", err)
+	}
+	if m.fileCache != nil {
+		t.Fatal("closed metadata created a file cache pool")
+	}
+}
+
 func setupTestMetadata(t *testing.T) (*Metadata, func()) {
 	t.Helper()
 

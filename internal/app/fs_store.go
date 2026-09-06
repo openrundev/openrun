@@ -21,6 +21,7 @@ import (
 var (
 	mu       sync.RWMutex
 	fsDB     *sql.DB
+	fsOwner  *system.SQLiteMaintenanceOwner
 	fsDBType system.DBType
 	fsCancel context.CancelFunc
 	fsDone   chan struct{}
@@ -41,7 +42,14 @@ func InitFileStore(connectString string) error {
 		return nil
 	}
 
-	db, dbType, err := system.InitDBConnection(nil, connectString, "fs_store", system.DB_SQLITE_POSTGRES, nil)
+	owner := &system.SQLiteMaintenanceOwner{}
+	initialized := false
+	defer func() {
+		if !initialized {
+			_ = owner.Close()
+		}
+	}()
+	db, dbType, err := system.InitDBConnection(nil, connectString, "fs_store", system.DB_SQLITE_POSTGRES, nil, owner)
 	if err != nil {
 		return err
 	}
@@ -50,7 +58,8 @@ func InitFileStore(connectString string) error {
 		db.Close() //nolint:errcheck
 		return err
 	}
-	fsDB, fsDBType = db, dbType
+	fsDB, fsDBType, fsOwner = db, dbType, owner
+	initialized = true
 
 	// The file store is shared by all apps, so its context is server-scoped
 	// rather than request-scoped. CloseFileStore cancels it during shutdown.
@@ -73,6 +82,7 @@ func CloseFileStore() error {
 	mu.Lock()
 	defer mu.Unlock()
 	db, cancel, done := fsDB, fsCancel, fsDone
+	owner := fsOwner
 	if cancel != nil {
 		cancel()
 	}
@@ -84,14 +94,19 @@ func CloseFileStore() error {
 	// initializer from replacing the globals while that loop still uses them.
 	if fsDB == db {
 		fsDB = nil
+		fsOwner = nil
 		fsDBType = ""
 		fsCancel = nil
 		fsDone = nil
 	}
+	var closeErr error
 	if db != nil {
-		return db.Close()
+		closeErr = db.Close()
 	}
-	return nil
+	if owner != nil {
+		closeErr = errors.Join(closeErr, owner.Close())
+	}
+	return closeErr
 }
 
 func initFileStoreSchema(db *sql.DB, dbType system.DBType) error {
@@ -177,7 +192,7 @@ func GetUserFile(ctx context.Context, id string) (*types.UserFile, error) {
 		return nil, fmt.Errorf("error preparing statement: %w", err)
 	}
 	defer stmt.Close() //nolint:errcheck
-	row := stmt.QueryRow(id)
+	row := stmt.QueryRowContext(ctx, id)
 	var file types.UserFile
 	var metadata sql.NullString
 	err = row.Scan(&file.Id, &file.AppId, &file.FileName, &file.FilePath, &file.MimeType, &file.CreateTime, &file.ExpireAt,
@@ -205,7 +220,7 @@ func DeleteUserFile(ctx context.Context, id string) error {
 		return fmt.Errorf("error preparing statement: %w", err)
 	}
 	defer stmt.Close() //nolint:errcheck
-	_, err = stmt.Exec(id)
+	_, err = stmt.ExecContext(ctx, id)
 	if err != nil {
 		return fmt.Errorf("error deleting file: %w", err)
 	}
@@ -225,7 +240,7 @@ func listExpiredFile(ctx context.Context) ([]expiredFile, error) {
 
 	defer stmt.Close() //nolint:errcheck
 
-	rows, err := stmt.Query(time.Now().UTC())
+	rows, err := stmt.QueryContext(ctx, time.Now().UTC())
 	if err != nil {
 		return nil, fmt.Errorf("error querying files: %w", err)
 	}
@@ -257,7 +272,7 @@ func deleteExpiredFiles(ctx context.Context) error {
 	}
 	defer stmt.Close() //nolint:errcheck
 
-	_, err = stmt.Exec(time.Now().UTC())
+	_, err = stmt.ExecContext(ctx, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("error deleting files: %w", err)
 	}

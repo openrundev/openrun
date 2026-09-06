@@ -156,8 +156,10 @@ type Server struct {
 	// manager (or one of its method values) in a long-lived object
 	secretsManager atomic.Pointer[system.SecretManager]
 	listAppsApp    *app.App
+	listAppsMu     sync.RWMutex // requests hold a read lease through response completion
 	mu             sync.RWMutex
 	auditDB        *sql.DB
+	auditDBOwner   system.SQLiteMaintenanceOwner
 	auditDbType    system.DBType
 	litestream     *system.LitestreamManager
 
@@ -170,15 +172,16 @@ type Server struct {
 	auditFlush             chan chan struct{}
 	auditStop              chan struct{}
 	auditDone              chan struct{}
+	auditCleanup           *system.BackgroundTask
+	auditStopOnce          sync.Once
 
 	// authFailureTimes tracks the last audit event time per unique auth
 	// failure, to rate limit the events inserted for repeated failures
 	authFailureMu    sync.Mutex
 	authFailureTimes map[string]time.Time
 	accessLogger     *zerolog.Logger
-	syncTimer        *time.Ticker
 	jobRuns          jobRunRegistry // runs executing on this node
-	syncStop         chan struct{}
+	syncLoop         *system.BackgroundTask
 	tlsErrorLogger   *RateLimitedErrorLogger
 	acmeIssuer       *certmagic.ACMEIssuer
 	configMu         sync.RWMutex
@@ -195,15 +198,7 @@ type Server struct {
 	gitCacheMu            sync.Mutex
 	gitCache              *sharedRepoCache
 
-	staleContainerCleanupTicker *time.Ticker
-	staleContainerCleanupStop   chan struct{}
-	// staleContainerCleanupCancel aborts a sweep already in flight and
-	// staleContainerCleanupDone is closed when the runner goroutine returns:
-	// PauseBackground must not return while a sweep can still stop
-	// containers, since during an in-place restart the new process may
-	// already be starting containers this process would classify as stale
-	staleContainerCleanupCancel context.CancelFunc
-	staleContainerCleanupDone   chan struct{}
+	staleContainerCleanup *system.BackgroundTask
 
 	// deployTxnMu guards activeDeployTxns: the deploy transactions of
 	// operations currently in flight, whose containers must not be treated as
@@ -251,7 +246,7 @@ type Server struct {
 	upgrader    *system.Upgrader
 	connTracker connTracker
 	restartMu   sync.Mutex // single-flights RequestRestart pause/resume
-	bgMu        sync.Mutex // guards the background job fields (syncStop, staleContainerCleanupStop) across pause/resume/stop
+	bgMu        sync.Mutex // guards background tasks across pause/resume/stop
 }
 
 // NewServer creates a new instance of the OpenRun Server
@@ -514,14 +509,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 }
 
 func (s *Server) startSyncRunner() {
-	s.syncTimer = time.NewTicker(time.Minute) // run sync every minute
-	s.syncStop = make(chan struct{})
-	// syncTimer and syncStop are passed in rather than read from s inside the
-	// loop: PauseBackground/ResumeBackground reassign these fields (under
-	// bgMu) to pause and restart the loop across an in-place restart, and the
-	// running goroutine must keep observing the instances it was started
-	// with, not race against those reassignments on every loop iteration
-	go s.syncRunner(s.syncTimer, s.syncStop)
+	s.syncLoop = system.StartPeriodicTask(context.Background(), time.Minute, false, s.syncPass)
 }
 
 // PauseBackground stops the timer driven background jobs (sync runner and
@@ -535,24 +523,10 @@ func (s *Server) startSyncRunner() {
 func (s *Server) PauseBackground() {
 	s.bgMu.Lock()
 	defer s.bgMu.Unlock()
-	if s.syncStop != nil {
-		s.syncTimer.Stop()
-		close(s.syncStop)
-		s.syncStop = nil
-	}
-	if s.staleContainerCleanupStop != nil {
-		s.staleContainerCleanupTicker.Stop()
-		close(s.staleContainerCleanupStop)
-		s.staleContainerCleanupStop = nil
-		// Abort any sweep already in flight and wait for the runner to
-		// return: closing the stop channel only affects the runner's next
-		// select, and a sweep running concurrently with a restart handoff
-		// could stop containers the new process is starting to use
-		s.staleContainerCleanupCancel()
-		s.staleContainerCleanupCancel = nil
-		<-s.staleContainerCleanupDone
-		s.staleContainerCleanupDone = nil
-	}
+	s.syncLoop.Stop()
+	s.syncLoop = nil
+	s.staleContainerCleanup.Stop()
+	s.staleContainerCleanup = nil
 	if s.apps != nil {
 		s.apps.PauseIdleShutdown()
 	}
@@ -572,10 +546,10 @@ func (s *Server) ResumeBackground() {
 		return
 	default:
 	}
-	if s.syncStop == nil {
+	if s.syncLoop == nil {
 		s.startSyncRunner()
 	}
-	if s.staleContainerCleanupStop == nil {
+	if s.staleContainerCleanup == nil {
 		s.startStaleContainerCleanup()
 	}
 	if s.apps != nil {
@@ -806,9 +780,7 @@ func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicCo
 		!reflect.DeepEqual(previous.NodeConfig, effective.NodeConfig) {
 		// The list-apps app bakes in the title/domain/auth settings at build
 		// time; drop it so the next request rebuilds it with the new values
-		s.mu.Lock()
-		s.listAppsApp = nil
-		s.mu.Unlock()
+		s.closeListAppsApp()
 	}
 	return nil
 }
@@ -1576,6 +1548,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.stopOnce.Do(func() {
 		s.Info().Msg("Stopping service")
 		s.blockRestarts()
+		s.jobRuns.stop()
 		s.PauseBackground()
 		if s.builderManager != nil {
 			s.builderManager.Stop()
@@ -1583,13 +1556,13 @@ func (s *Server) Stop(ctx context.Context) error {
 
 		var err1, err2, err3 error
 		if s.httpServer != nil {
-			err1 = s.httpServer.Shutdown(ctx)
+			err1 = shutdownHTTPServer(ctx, s.httpServer)
 		}
 		if s.httpsServer != nil {
-			err2 = s.httpsServer.Shutdown(ctx)
+			err2 = shutdownHTTPServer(ctx, s.httpsServer)
 		}
 		if s.udsServer != nil {
-			err3 = s.udsServer.Shutdown(ctx)
+			err3 = shutdownHTTPServer(ctx, s.udsServer)
 		}
 		// Shutdown does not wait for hijacked (websocket) connections; wait
 		// for them to finish and force-close any left when ctx expires
@@ -1604,12 +1577,14 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.cleanupVersionsMu.Lock() //nolint:staticcheck // lock acquisition waits for cleanup
 		//lint:ignore SA2001 acquiring and releasing this mutex is the worker join operation
 		s.cleanupVersionsMu.Unlock() //nolint:staticcheck // paired join lock has no protected body
+		s.jobRuns.wait()
 		// Close the apps after the HTTP servers have drained: stops dev-mode
 		// child processes (tailwind watcher) which would otherwise be
 		// orphaned when this process exits
 		if s.apps != nil {
 			s.apps.CloseAll()
 		}
+		s.closeListAppsApp()
 		if err := app.CloseFileStore(); err != nil {
 			s.Warn().Err(err).Msg("Error closing shared file store")
 		}
@@ -1626,7 +1601,8 @@ func (s *Server) Stop(ctx context.Context) error {
 			}
 		}
 		if s.auditDB != nil {
-			s.auditDB.Close() //nolint:errcheck
+			s.auditDB.Close()      //nolint:errcheck
+			s.auditDBOwner.Close() //nolint:errcheck
 		}
 		if s.tlsErrorLogger != nil {
 			s.tlsErrorLogger.Stop()
@@ -1648,6 +1624,15 @@ func (s *Server) RequestStop() {
 	})
 }
 
+// Shutdown leaves active connections open when its deadline expires. Close
+// them before releasing the databases and other resources used by requests.
+func shutdownHTTPServer(ctx context.Context, server *http.Server) error {
+	if err := server.Shutdown(ctx); err != nil {
+		return errors.Join(err, server.Close())
+	}
+	return nil
+}
+
 func (s *Server) StopNotify() <-chan struct{} {
 	return s.stopRequested
 }
@@ -1655,8 +1640,9 @@ func (s *Server) StopNotify() <-chan struct{} {
 func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 	s.mu.RLock()
 	if s.listAppsApp != nil {
+		listApp := s.listAppsApp
 		s.mu.RUnlock()
-		return s.listAppsApp, nil
+		return listApp, nil
 	}
 	s.mu.RUnlock()
 
@@ -1707,18 +1693,20 @@ func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 
 	subLogger := s.Logger.With().Str("id", string(appEntry.Id)).Logger()
 	appLogger := types.Logger{Logger: &subLogger}
-	s.listAppsApp, err = app.NewApp(sourceFS, nil, &appLogger, &appEntry, &merged.System,
+	listApp, err := app.NewApp(sourceFS, nil, &appLogger, &appEntry, &merged.System,
 		merged.Plugins, merged.AppConfig, s.notifyClose, s.AppEvalTemplate,
 		s.InsertAuditEvent, merged, s.rbacManager, []*types.Binding{})
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = s.listAppsApp.Reload(ctx, true, true, types.DryRunFalse, app.ReloadOptions{ReloadContainer: true, Verify: false})
+	_, err = listApp.Reload(ctx, true, true, types.DryRunFalse, app.ReloadOptions{ReloadContainer: true, Verify: false})
 	if err != nil {
+		_ = listApp.Close()
 		return nil, err
 	}
 
+	s.listAppsApp = listApp
 	return s.listAppsApp, nil
 }
 
@@ -1878,4 +1866,19 @@ type KVStore interface {
 	UpdateKVBlob(ctx context.Context, key string, value []byte) error
 	DeleteKV(ctx context.Context, key string) error
 	DeleteKVIfPresent(ctx context.Context, key string) (bool, error)
+}
+
+// closeListAppsApp waits for listing requests before retiring the cached app.
+func (s *Server) closeListAppsApp() {
+	s.listAppsMu.Lock()
+	defer s.listAppsMu.Unlock()
+	s.mu.Lock()
+	previous := s.listAppsApp
+	s.listAppsApp = nil
+	s.mu.Unlock()
+	if previous != nil {
+		if err := previous.Close(); err != nil {
+			s.Warn().Err(err).Msg("Error closing app listing")
+		}
+	}
 }

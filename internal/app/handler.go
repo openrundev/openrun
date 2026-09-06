@@ -402,6 +402,15 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			}
 
 			if ret != nil {
+				if response, ok := ret.(*PluginResponse); ok && response.startStream != nil {
+					if err := response.startStream(); err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					// Also close on cleanup errors or a writer without flushing,
+					// where the stream's range function is never invoked.
+					defer response.closeStream()
+				}
 				// Response from handler, or if handler failed, response from error_handler if defined
 				handlerResponse, err = starlark_type.ToGo(ret)
 				if err != nil {
@@ -830,8 +839,22 @@ func (a *App) handleStreamResponse(w http.ResponseWriter, r *http.Request, rtype
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	for v := range retSeq {
+	wroteData := false
+	for v, streamErr := range retSeq {
+		if streamErr != nil {
+			if r.Context().Err() != nil {
+				return
+			}
+			a.Error().Err(streamErr).Msg("error producing stream response")
+			if !wroteData {
+				http.Error(w, streamErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			// Headers and data are already on the wire. Abort the response so
+			// clients can distinguish truncation from successful completion.
+			panic(http.ErrAbortHandler)
+		}
+		wroteData = true
 		if rtype == apptype.TEXT || (rtype == apptype.HTML_TYPE && (fragment == "" || fragment == "-")) {
 			vStr, ok := v.(string)
 			if !ok {

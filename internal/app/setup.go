@@ -628,6 +628,7 @@ func (a *App) addStaticRoot(router *chi.Mux) error {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			defer f.Close() //nolint:errcheck
 
 			seeker, ok := f.(io.ReadSeeker)
 			if !ok {

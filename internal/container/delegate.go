@@ -34,10 +34,11 @@ type DelegateRequest struct {
 	RegistryConfig *types.RegistryConfig
 }
 
-func sendDelegateBuild(url string, data DelegateRequest, sourcePath string, builderAuthToken string) error {
+func sendDelegateBuild(ctx context.Context, url string, data DelegateRequest, sourcePath string, builderAuthToken string) error {
 	url += "/_openrun/delegate_build"
 	// Create a pipe: writer feeds the HTTP request, reader is used as the body
 	pr, pw := io.Pipe()
+	defer pr.Close() //nolint:errcheck // unblock the producer on every return path
 	writer := multipart.NewWriter(pw)
 
 	// We need the content-type string for the request header *before* we close the writer.
@@ -93,7 +94,7 @@ func sendDelegateBuild(url string, data DelegateRequest, sourcePath string, buil
 	}()
 
 	// Create the request with the pipe reader as body
-	req, err := http.NewRequest("POST", url, pr)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
 	if err != nil {
 		// Unblock the streaming goroutine, which is writing to the pipe
 		_ = pr.CloseWithError(err)
@@ -222,6 +223,9 @@ func DelegateHandler(r *http.Request, config *types.ServerConfig, logger *types.
 }
 
 func delegateBuild(ctx context.Context, logger *types.Logger, config *types.ServerConfig, data DelegateRequest, filePath string) error {
+	// The sender may disconnect while the builder finishes and pushes its
+	// image. Abruptly killing buildah can orphan its working containers.
+	ctx = context.WithoutCancel(ctx)
 	destDir, err := extractTarGzToTemp(filePath)
 	if err != nil {
 		return fmt.Errorf("extract tar.gz: %w", err)
@@ -233,7 +237,7 @@ func delegateBuild(ctx context.Context, logger *types.Logger, config *types.Serv
 		return fmt.Errorf("invalid container file path %q: %w", data.ContainerFile, err)
 	}
 
-	releaseLock, err := acquireBuildLock(context.Background(), &config.System, data.ImageTag)
+	releaseLock, err := acquireBuildLock(ctx, &config.System, data.ImageTag)
 	if err != nil {
 		return fmt.Errorf("error acquiring build lock: %w", err)
 	}
@@ -247,7 +251,7 @@ func delegateBuild(ctx context.Context, logger *types.Logger, config *types.Serv
 	}
 
 	args = append(args, ".")
-	cmd := exec.Command(config.System.ContainerCommand, args...)
+	cmd := exec.CommandContext(ctx, config.System.ContainerCommand, args...)
 
 	logger.Debug().Msgf("Running command: %s %s", config.System.ContainerCommand, cmd.String())
 	cmd.Dir = destDir

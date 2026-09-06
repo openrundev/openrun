@@ -19,26 +19,35 @@ type streamItem struct {
 // Next; it stops when it returns, yields an error, or the cursor is closed.
 // Next returns the first available item promptly (it does not wait to fill a
 // batch), so live streams flush without delay.
-func PushCursor(typeName, leakKey string, stream bool, seq func(yield func(any, error) bool)) *Cursor {
+// Close cancels the producer context and waits for it to return. Producers
+// must use that context for blocking work and stop when yield returns false.
+func PushCursor(parent context.Context, typeName, leakKey string, stream bool, seq func(context.Context, func(any, error) bool)) *Cursor {
+	producerCtx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
 	ch := make(chan streamItem)
 	stopped := make(chan struct{})
 	var startOnce, stopOnce sync.Once
 
 	start := func() {
 		go func() {
+			defer close(done)
 			defer close(ch)
-			seq(func(v any, err error) bool {
+			defer cancel()
+			seq(producerCtx, func(v any, err error) bool {
 				select {
 				case ch <- streamItem{value: v, err: err}:
 					return err == nil
 				case <-stopped:
+					return false
+				case <-producerCtx.Done():
 					return false
 				}
 			})
 		}()
 	}
 	stop := func() {
-		stopOnce.Do(func() { close(stopped) })
+		stopOnce.Do(func() { cancel(); close(stopped) })
+		startOnce.Do(func() { close(ch); close(done) })
 	}
 
 	return &Cursor{
@@ -46,6 +55,14 @@ func PushCursor(typeName, leakKey string, stream bool, seq func(yield func(any, 
 		LeakKey:  leakKey,
 		Stream:   stream,
 		Next: func(ctx context.Context, max int) ([]any, bool, error) {
+			select {
+			case <-stopped:
+				return nil, true, nil
+			case <-ctx.Done():
+				stop()
+				return nil, false, ctx.Err()
+			default:
+			}
 			startOnce.Do(start)
 			if max <= 0 {
 				max = 100
@@ -55,6 +72,8 @@ func PushCursor(typeName, leakKey string, stream bool, seq func(yield func(any, 
 			// available up to max
 			var items []any
 			select {
+			case <-stopped:
+				return nil, true, nil
 			case item, ok := <-ch:
 				if !ok {
 					return nil, true, nil
@@ -88,6 +107,7 @@ func PushCursor(typeName, leakKey string, stream bool, seq func(yield func(any, 
 		},
 		Close: func(ctx context.Context) error {
 			stop()
+			<-done
 			return nil
 		},
 	}

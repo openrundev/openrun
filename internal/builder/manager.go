@@ -834,7 +834,13 @@ func (m *Manager) DeleteSession(ctx context.Context, id, userID string) error {
 	return nil
 }
 
-// Subscribe returns the event stream for a session (live sessions only)
+// CheckLiveSession validates a session without allocating a subscription.
+func (m *Manager) CheckLiveSession(id string) error {
+	_, err := m.requireLive(id)
+	return err
+}
+
+// Subscribe returns the event stream for a session (live sessions only).
 func (m *Manager) Subscribe(id string) (<-chan Event, func(), error) {
 	ls, err := m.requireLive(id)
 	if err != nil {

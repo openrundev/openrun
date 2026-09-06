@@ -597,12 +597,15 @@ const credentialRetention = 30 * 24 * time.Hour
 // has passed: expired or revoked longer than credentialRetention ago.
 // Non-expiring, unrevoked PATs are never touched. Runs on the hourly
 // maintenance tick; errors are logged and retried on the next tick
-func (s *Server) pruneApiCredentials() {
-	if s.db == nil {
+func (s *Server) pruneApiCredentials(ctx context.Context) {
+	if s.db == nil || ctx.Err() != nil {
 		return
 	}
 	cutoff := time.Now().Add(-credentialRetention).UTC()
-	deleted, err := s.db.PruneCredentials(context.Background(), cutoff)
+	deleted, err := s.db.PruneCredentials(ctx, cutoff)
+	if ctx.Err() != nil {
+		return
+	}
 	if err != nil {
 		s.Error().Err(err).Msg("error pruning credentials")
 		return
