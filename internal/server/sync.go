@@ -58,10 +58,26 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 		sync.ForceReload, types.AppReloadOption(sync.Reload), repoCache, false); err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error warming apply source for sync create %s", path)
 	}
+	// The pre-pass results are released last, after the scope's rollback has
+	// stopped the containers the pre-pass started
+	committed := false // whether the transaction below committed, for the pre-pass cleanup
+	var preps deployPreps
+	defer func() { preps.finish(ctx, s, committed) }()
+
+	// Own the operation-level rollback scope for the sync job below: if the job
+	// or this transaction's commit fails, in-place Kubernetes changes, the
+	// containers started by the pre-pass and the binding accounts/grants
+	// created on external services are reverted along with the DB
+	// transaction (rolled back first, the scope is opened before it)
+	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+
 	if !dryRun {
-		if err := s.prepareSyncDeploys(ctx, &types.SyncEntry{Path: path, Metadata: *sync}, repoCache); err != nil {
+		preps, err = s.prepareSyncDeploys(ctx, &types.SyncEntry{Path: path, Metadata: *sync}, repoCache)
+		if err != nil {
 			return nil, err
 		}
+		ctx = withDeployPreps(ctx, preps)
 	}
 
 	tx, err := s.db.BeginTransaction(ctx)
@@ -69,13 +85,6 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-
-	// Own the operation-level rollback scope for the sync job below: if the job
-	// or this transaction's commit fails, in-place Kubernetes changes and the
-	// binding accounts/grants created on external services are reverted along
-	// with the DB transaction.
-	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
-	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	genId, err := ksuid.NewRandom()
 	if err != nil {
@@ -128,6 +137,7 @@ func (s *Server) CreateSyncEntry(ctx context.Context, path string, scheduled, dr
 	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "create_sync"); err != nil {
 		return nil, err
 	}
+	committed = !dryRun
 	if err := deployScope.commit(ctx); err != nil {
 		return nil, err
 	}
@@ -163,10 +173,24 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.
 		syncEntry.Metadata.ForceReload, types.AppReloadOption(syncEntry.Metadata.Reload), repoCache, false); err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error warming apply source for sync run %s", id)
 	}
+	// The pre-pass results are released last, after the scope's rollback has
+	// stopped the containers the pre-pass started
+	committed := false // whether the transaction below committed, for the pre-pass cleanup
+	var preps deployPreps
+	defer func() { preps.finish(ctx, s, committed) }()
+
+	// Own the operation-level rollback scope for the sync job below, opened
+	// before the pre-pass (whose containers register on it) and before the
+	// transaction, so the transaction is rolled back first
+	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+
 	if !dryRun {
-		if err := s.prepareSyncDeploys(context.WithValue(ctx, types.SYNC_ID, id), syncEntry, repoCache); err != nil {
+		preps, err = s.prepareSyncDeploys(context.WithValue(ctx, types.SYNC_ID, id), syncEntry, repoCache)
+		if err != nil {
 			return nil, err
 		}
+		ctx = withDeployPreps(ctx, preps)
 	}
 
 	tx, err := s.db.BeginTransaction(ctx)
@@ -174,10 +198,6 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-
-	// Own the operation-level rollback scope for the sync job below.
-	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
-	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	syncStatus, updatedApps, err := s.runSyncJob(ctx, tx, syncEntry, dryRun, true, repoCache)
 	if err != nil {
@@ -191,6 +211,7 @@ func (s *Server) RunSync(ctx context.Context, id string, dryRun bool) (_ *types.
 	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "sync_run"); err != nil {
 		return nil, err
 	}
+	committed = !dryRun
 	if err := deployScope.commit(ctx); err != nil {
 		return nil, err
 	}
@@ -409,6 +430,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 	var tx types.Transaction
 	var err error
 	var prepErr error
+	appsCommitted := false // whether the app changes committed (a failed run commits only its status)
 
 	s.Debug().Msgf("Running sync job %s", entry.Id)
 	if repoCache == nil {
@@ -426,25 +448,51 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		lastRunCommitId = entry.Status.CommitId
 	}
 
+	// Apps created/reloaded by this job are stamped with the sync id in their
+	// metadata (AppliedSyncId)
+	ctx = context.WithValue(ctx, types.SYNC_ID, entry.Id)
+
+	// origCtx is the context before the rollback scope is attached; it is used
+	// for the recursive full-apply call so that nested call owns a fresh scope.
+	origCtx := ctx
+	// The pre-pass results are released when the run is done, after the
+	// scope's rollback has stopped the containers the pre-pass started; a
+	// failed run commits only its status, not the apps
+	var preps deployPreps
+	defer func() { preps.finish(ctx, s, appsCommitted) }()
+	// Own the rollback scope only when we own the DB transaction (the
+	// runSyncJobs path passes an empty transaction). When a transaction is
+	// passed in, the caller (CreateSyncEntry/RunSync) owns it. The scope is
+	// opened before the pre-pass, whose containers register on it, and
+	// before the transaction so the transaction is rolled back before the
+	// external cleanup runs
+	ctx, deployScope := s.beginDeployScope(ctx, inputTx.Tx == nil, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+
 	if inputTx.Tx == nil {
 		// Warm the git caches before the transaction is opened, so the apply
 		// (and a possible reload=matched pass) run no network git operations
 		// while holding a database transaction. Best-effort: errors are left
-		// for the apply itself to report through the failure count/backoff
-		if _, _, _, _, err := s.checkoutApplySource(ctx, entry.Path, entry.Metadata.GitBranch, "", entry.Metadata.GitAuth,
-			lastRunCommitId, entry.Metadata.ForceReload, types.AppReloadOption(entry.Metadata.Reload), repoCache, false); err != nil {
+		// for the apply itself to report through the failure count/backoff.
+		// skipped reports that the apply below will skip (apply file commit
+		// unchanged), so there is nothing to prepare
+		_, _, _, skipped, err := s.checkoutApplySource(ctx, entry.Path, entry.Metadata.GitBranch, "", entry.Metadata.GitAuth,
+			lastRunCommitId, entry.Metadata.ForceReload, types.AppReloadOption(entry.Metadata.Reload), repoCache, false)
+		if err != nil {
 			s.Debug().Err(err).Msgf("git prefetch: error warming apply source for sync %s", entry.Id)
+			skipped = false
 		}
 		if types.AppReloadOption(entry.Metadata.Reload) == types.AppReloadOptionMatched {
 			s.prefetchAppSources(ctx, lastRunApps, "", "", "", repoCache, entry.Metadata.ForceReload)
 		}
 
-		// The deploy gates (before_deploy jobs) of the declared apps run
-		// before the transaction opens; a gate failure counts as a sync
-		// failure like an apply error. Callers passing a transaction in run
-		// this pass before opening it
-		if !dryRun {
-			prepErr = s.prepareSyncDeploys(context.WithValue(ctx, types.SYNC_ID, entry.Id), entry, repoCache)
+		// The deploy gates (before_deploy jobs) of the declared apps run and
+		// their containers start before the transaction opens; a failure
+		// counts as a sync failure like an apply error. Callers passing a
+		// transaction in run this pass before opening it
+		if !dryRun && !skipped {
+			preps, prepErr = s.prepareSyncDeploys(ctx, entry, repoCache)
+			ctx = withDeployPreps(ctx, preps)
 		}
 
 		tx, err = s.db.BeginTransaction(ctx)
@@ -456,19 +504,6 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		tx = inputTx
 		// No rollback here if transaction is passed in
 	}
-
-	// Apps created/reloaded by this job are stamped with the sync id in their
-	// metadata (AppliedSyncId)
-	ctx = context.WithValue(ctx, types.SYNC_ID, entry.Id)
-
-	// origCtx is the context before the rollback scope is attached; it is used
-	// for the recursive full-apply call so that nested call owns a fresh scope.
-	origCtx := ctx
-	// Own the rollback scope only when we own the DB transaction (the
-	// runSyncJobs path passes an empty transaction). When a transaction is
-	// passed in, the caller (CreateSyncEntry/RunSync) owns it.
-	ctx, deployScope := s.beginDeployScope(ctx, inputTx.Tx == nil, dryRun)
-	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	verify := entry.Metadata.Verify && !dryRun
 	var applyInfo *types.AppApplyResponse
@@ -574,7 +609,8 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 				app := appMap[appPath]
 				var reloadResult *types.AppReloadResult
 				reloadResult, reloadErr = s.ReloadApp(ctx, tx, app, nil, entry.Metadata.Approve, false, entry.Metadata.Promote,
-					app.Metadata.VersionMetadata.GitBranch, "", app.Metadata.GitAuthName, repoCache, entry.Metadata.ForceReload, verify)
+					app.Metadata.VersionMetadata.GitBranch, "", app.Metadata.GitAuthName, repoCache, entry.Metadata.ForceReload, verify,
+					deployPrepsFromContext(ctx)[appPath])
 				if reloadErr != nil {
 					s.Error().Err(reloadErr).Msgf("Error reloading app %s sync job %s", appPath, entry.Id)
 					break
@@ -637,6 +673,7 @@ func (s *Server) runSyncJob(ctx context.Context, inputTx types.Transaction, entr
 		if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "sync"); err != nil {
 			return nil, nil, err
 		}
+		appsCommitted = !dryRun
 		if err := deployScope.commit(ctx); err != nil {
 			return nil, nil, err
 		}
@@ -759,36 +796,33 @@ func (s *Server) pruneSyncResources(ctx context.Context, tx types.Transaction, e
 	return prunedAppPaths, prunedBindingPaths, nil
 }
 
-// prepareSyncDeploys runs the deploy gate pre-pass of a sync run before its
+// prepareSyncDeploys runs the pre-transaction pass of a sync run before its
 // transaction opens: the apply file is loaded from the warmed repo cache and
 // the before_deploy jobs of the existing apps it declares run from their
 // new code (see prepareApplyDeploys). Skipped when the sync does not reload
-func (s *Server) prepareSyncDeploys(ctx context.Context, entry *types.SyncEntry, repoCache *RepoCache) error {
+func (s *Server) prepareSyncDeploys(ctx context.Context, entry *types.SyncEntry, repoCache *RepoCache) (deployPreps, error) {
 	reload := types.AppReloadOption(cmp.Or(entry.Metadata.Reload, string(types.AppReloadOptionUpdated)))
-	if reload == types.AppReloadOptionNone {
-		return nil
-	}
 	branch := ""
 	if system.IsGit(entry.Path) {
 		branch = cmp.Or(entry.Metadata.GitBranch, "main")
 	}
 	dir, file, err := s.setupSource(ctx, entry.Path, branch, "", entry.Metadata.GitAuth, repoCache, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sourceFS, err := appfs.NewSourceFs(dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer sourceFS.Close() //nolint:errcheck
 	applyConfig, _, _, err := s.loadApplyConfigs(sourceFS, file, entry.Path, branch, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	apps := make([]types.AppPathDomain, 0, len(applyConfig))
 	for appPathDomain := range applyConfig {
 		apps = append(apps, appPathDomain)
 	}
 	return s.prepareApplyDeploys(ctx, applyConfig, apps, entry.Metadata.Approve, entry.Metadata.Promote, entry.Metadata.Verify,
-		reload, repoCache, entry.Metadata.ForceReload)
+		reload, repoCache, entry.Metadata.ForceReload, false)
 }

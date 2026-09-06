@@ -18,8 +18,13 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
+// ReloadApp reloads one app's code on the caller's transaction: the new
+// source is loaded as a new version of the stage (or dev) instance, which is
+// audited and reloaded with its container, and promoted to prod when asked.
+// prep, from prepareDeploy, holds the source already hashed and compressed by
+// the pre-pass, leaving only the inserts for the transaction; nil loads it here
 func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, stageAppEntry *types.AppEntry,
-	approve, dryRun, promote bool, branch, commit, gitAuth string, repoCache *RepoCache, forceReload, verify bool) (*types.AppReloadResult, error) {
+	approve, dryRun, promote bool, branch, commit, gitAuth string, repoCache *RepoCache, forceReload, verify bool, prep *appPrep) (*types.AppReloadResult, error) {
 	verify = verify && !dryRun
 	prodAppEntry := appEntry
 	var err error
@@ -35,7 +40,7 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 	}
 
 	var reloaded bool
-	if reloaded, err = s.loadAppCode(ctx, tx, appEntry, branch, commit, gitAuth, repoCache, forceReload); err != nil {
+	if reloaded, err = s.loadAppCode(ctx, tx, appEntry, branch, commit, gitAuth, repoCache, forceReload, prep); err != nil {
 		return nil, err
 	}
 	if !reloaded {
@@ -88,14 +93,8 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 	}
 	reloadResults := make([]types.AppPathDomain, 0)
 	promoteResults := make([]types.AppPathDomain, 0)
-	if _, err := app.Reload(ctx, true, true, types.DryRun(dryRun), apppkg.ReloadOptions{ReloadContainer: true, Verify: verify}); err != nil {
-		if verify {
-			if container.ClusterRollbackClean(err) {
-				return nil, fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", appEntry.AppPathDomain(), err)
-			}
-			return nil, fmt.Errorf("verify failed for app %s: %w", appEntry.AppPathDomain(), err)
-		}
-		return nil, fmt.Errorf("error reloading app %s: %w", appEntry, err)
+	if err := s.reloadInstanceOpts(ctx, app, dryRun, instanceReloadOptions(appEntry, verify, prep)); err != nil {
+		return nil, err
 	}
 	// Persist name in metadata
 	if err := s.db.UpdateAppMetadata(ctx, tx, appEntry); err != nil {
@@ -113,14 +112,8 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 			return nil, fmt.Errorf("error setting up prod app %s: %w", prodAppEntry, err)
 		}
 
-		if _, err := prodApp.Reload(ctx, true, true, types.DryRun(dryRun), apppkg.ReloadOptions{ReloadContainer: true, Verify: verify}); err != nil {
-			if verify {
-				if container.ClusterRollbackClean(err) {
-					return nil, fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", prodAppEntry.AppPathDomain(), err)
-				}
-				return nil, fmt.Errorf("verify failed for app %s: %w", prodAppEntry.AppPathDomain(), err)
-			}
-			return nil, fmt.Errorf("error reloading prod app %s: %w", appEntry, err)
+		if err := s.reloadInstance(ctx, prodApp, dryRun, verify); err != nil {
+			return nil, err
 		}
 		// Persist name in metadata
 		if err := s.db.UpdateAppMetadata(ctx, tx, prodAppEntry); err != nil {
@@ -137,6 +130,51 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 		SkippedResults: []types.AppPathDomain{},
 	}
 	return ret, nil
+}
+
+// reloadInstance reloads an app instance with its container, the traffic
+// switch to the new version, verifying the new version first when asked. A
+// verify failure reports whether the cluster changes were rolled back. When
+// the deploy pre-pass prepared the version (prepareInstance), the container
+// is found running and reused, so no container work runs here
+func (s *Server) reloadInstance(ctx context.Context, application *apppkg.App, dryRun, verify bool) error {
+	return s.reloadInstanceOpts(ctx, application, dryRun, apppkg.ReloadOptions{ReloadContainer: true, Verify: verify})
+}
+
+// instanceReloadOptions returns the options of an instance's in-transaction
+// reload: a prod instance reloads with its container (found running and
+// reused when the pre-pass prepared it); a dev instance whose container the
+// pre-pass built and started skips the container, a dev reload has no reuse
+func instanceReloadOptions(entry *types.AppEntry, verify bool, prep *appPrep) apppkg.ReloadOptions {
+	opts := apppkg.ReloadOptions{ReloadContainer: true, Verify: verify}
+	if entry.IsDev && prep != nil && prep.devPrepared {
+		opts.SkipContainer = true
+	}
+	return opts
+}
+
+// prepareInstance is the deploy pre-pass counterpart of reloadInstance, run on
+// the pre-pass app object before the operation's transaction opens: the
+// image is built if missing and the new version's container is started and
+// health checked, registered on the operation's deploy transaction for
+// rollback. Needs the deploy scope in ctx
+func (s *Server) prepareInstance(ctx context.Context, application *apppkg.App, verify bool) error {
+	return s.reloadInstanceOpts(ctx, application, false, apppkg.ReloadOptions{ReloadContainer: true, Verify: verify, Prepare: true})
+}
+
+func (s *Server) reloadInstanceOpts(ctx context.Context, application *apppkg.App, dryRun bool, opts apppkg.ReloadOptions) error {
+	_, err := application.Reload(ctx, true, true, types.DryRun(dryRun), opts)
+	if err == nil {
+		return nil
+	}
+	verify := opts.Verify
+	if verify {
+		if container.ClusterRollbackClean(err) {
+			return fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", application.AppPathDomain(), err)
+		}
+		return fmt.Errorf("verify failed for app %s: %w", application.AppPathDomain(), err)
+	}
+	return fmt.Errorf("error reloading app %s: %w", application.AppEntry, err)
 }
 
 func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dryRun, promote bool,
@@ -181,16 +219,26 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	}
 	s.prefetchAppSources(ctx, appPaths, branch, commit, gitAuth, repoCache, forceReload)
 
-	// Pre-transaction pass: the new code is loaded under a throwaway
-	// transaction, its image built when verify (with the prebuild step) or a
-	// before_deploy job needs it, and the before_deploy jobs run against the
-	// stage instance (and, with promote, the prod instance). Image names are
-	// content-hashed, so the main loop's ImageExists check finds the built
-	// image and skips the in-transaction build. A gate failure ends the
-	// reload before anything is written. Skipped on a dry run: gates have
-	// real side effects
+	// Pre-transaction pass: the new code is checked out, hashed and
+	// compressed, its image built, the before_deploy jobs run against the
+	// stage instance (and, with promote, the prod instance), and the new
+	// version's containers started and health checked. The transaction then
+	// finds the image and the running containers and reuses them, so it
+	// holds only the metadata writes. A gate or health failure ends the
+	// reload before anything is written. Skipped on a dry run: gates and
+	// container starts have real side effects
+	// Operation-level cluster rollback: if any app fails after earlier apps
+	// already deployed (in the pre-pass below or in-place in the transaction),
+	// roll those earlier changes back too, so the cluster matches the
+	// rolled-back DB transaction. Opened before the pre-pass, whose
+	// containers register on it, and before the transaction, so the rollback
+	// of the transaction runs before the cluster rollback
+	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+
+	var preps deployPreps
 	if !dryRun {
-		if err := s.prepareDeploys(ctx, appPaths, approve, promote, verify, branch, commit, gitAuth, repoCache, forceReload, "reload"); err != nil {
+		if preps, err = s.prepareDeploys(ctx, appPaths, approve, promote, verify, branch, commit, gitAuth, repoCache, forceReload, "reload"); err != nil {
 			return nil, err
 		}
 	}
@@ -200,12 +248,6 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-
-	// Operation-level cluster rollback: if any app fails after earlier apps
-	// already mutated their Kubernetes deployments in-place, roll those earlier
-	// changes back too, so the cluster matches the rolled-back DB transaction.
-	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
-	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	reloadResults := make([]types.AppPathDomain, 0, len(filteredApps))
 	approveResults := make([]types.ApproveResult, 0, len(filteredApps))
@@ -226,7 +268,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 			}
 		}
 		ret, err := s.ReloadApp(ctx, tx, appEntry, stageAppEntry, approve, dryRun, promote,
-			branch, commit, gitAuth, repoCache, forceReload, verify)
+			branch, commit, gitAuth, repoCache, forceReload, verify, preps[appInfo.AppPathDomain])
 		if err != nil {
 			return nil, err
 		}
@@ -260,103 +302,50 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	return ret, nil
 }
 
-// prepareAppImage loads the new app source for one app under a throwaway
-// transaction and returns the app along with its container build plan (with
-// the build inputs already extracted to a temp dir). The transaction is always
-// rolled back; the main reload pass redoes the metadata work under the real
-// transaction. Returns a nil app when there is nothing to reload.
-func (s *Server) prepareAppImage(ctx context.Context, appPathDomain types.AppPathDomain, approve bool,
-	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool) (*apppkg.App, *apppkg.BuildPlan, error) {
-	tx, err := s.db.BeginTransaction(ctx)
+// appCodeUpToDate reports whether a reload of the app's code can be skipped:
+// a git source already at the requested commit, or at the latest commit of
+// the branch when no commit is requested. A disk source always reloads
+func (s *Server) appCodeUpToDate(ctx context.Context, appEntry *types.AppEntry, branch, commit, gitAuth string,
+	repoCache *RepoCache, forceReload bool) (bool, error) {
+	if forceReload || !system.IsGit(appEntry.SourceUrl) {
+		return false, nil
+	}
+	currentSha := appEntry.Metadata.VersionMetadata.GitCommit
+	if currentSha == "" {
+		return false, nil
+	}
+	if currentSha == commit {
+		// Commit is specified and matches the current version, skip reload
+		s.Info().Msgf("App %s already at requested commit %s, skipping reload", appEntry.AppPathDomain(), currentSha)
+		return true, nil
+	}
+	branch = checkoutBranch(branch, appEntry)
+	gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
+	newSha, err := repoCache.GetSha(ctx, appEntry.SourceUrl, branch, gitAuth)
 	if err != nil {
-		return nil, nil, err
+		return false, fmt.Errorf("error getting git commit sha for %s: %w", appEntry.SourceUrl, err)
 	}
-	defer tx.Rollback() //nolint:errcheck
-
-	appEntry, err := s.GetAppEntry(ctx, tx, appPathDomain)
-	if err != nil {
-		return nil, nil, err
+	if newSha == currentSha && (commit == "" || commit == currentSha) {
+		// If no commit is specified, and the current version is the same as the latest commit, skip reload
+		s.Debug().Msgf("App %s already at latest commit %s, skipping reload", appEntry.AppPathDomain(), newSha)
+		return true, nil
 	}
-	if !appEntry.IsDev {
-		appEntry, err = s.getStageApp(ctx, tx, appEntry)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	reloaded, err := s.loadAppCode(ctx, tx, appEntry, branch, commit, gitAuth, repoCache, forceReload)
-	if err != nil || !reloaded {
-		return nil, nil, err
-	}
-
-	application, err := s.setupApp(ctx, appEntry, tx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error setting up app %s: %w", appEntry, err)
-	}
-	fail := func(err error) (*apppkg.App, *apppkg.BuildPlan, error) {
-		application.Close() //nolint:errcheck // throwaway app object, stop its background tickers
-		return nil, nil, err
-	}
-
-	// Mirror the audit/approval sequence of ReloadApp so the app loads with the
-	// same (in-memory) approvals it will have in the main pass, and so apps
-	// needing approval fail here, before any state has been mutated
-	auditResult, err := application.Audit()
-	if err != nil {
-		return fail(fmt.Errorf("error auditing app %s: %w", appEntry, err))
-	}
-	if auditResult.NeedsApproval && !approve {
-		return fail(fmt.Errorf("app %s needs approval", appEntry))
-	}
-	if approve {
-		s.approveAuditResult(application, auditResult)
-	}
-
-	if _, err := application.Reload(ctx, true, true, types.DryRunFalse, apppkg.ReloadOptions{SkipContainer: true}); err != nil {
-		return fail(fmt.Errorf("error reloading app %s: %w", appEntry, err))
-	}
-
-	plan, err := application.PrepareContainerBuild(ctx)
-	if err != nil {
-		return fail(err)
-	}
-	return application, plan, nil
+	return false, nil
 }
 
-func (s *Server) loadAppCode(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool) (bool, error) {
+// loadAppCode loads the app's current source into the database as a new
+// version, unless the code is up to date (see appCodeUpToDate). Returns
+// whether the code was loaded. prep is as for ReloadApp
+func (s *Server) loadAppCode(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, branch, commit, gitAuth string,
+	repoCache *RepoCache, forceReload bool, prep *appPrep) (bool, error) {
 	s.Debug().Msgf("Reloading app code %v", appEntry)
-
-	if system.IsGit(appEntry.SourceUrl) {
-		currentSha := appEntry.Metadata.VersionMetadata.GitCommit
-		if !forceReload && currentSha != "" && currentSha == commit {
-			// Commit is specified and matches the current version, skip reload
-			s.Info().Msgf("App %s already at requested commit %s, skipping reload", appEntry.AppPathDomain(), currentSha)
-			return false, nil
-		}
-
-		branch = cmp.Or(branch, appEntry.Metadata.VersionMetadata.GitBranch, "main")
-		gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
-		newSha, err := repoCache.GetSha(ctx, appEntry.SourceUrl, branch, gitAuth)
-		if err != nil {
-			return false, fmt.Errorf("error getting git commit sha for %s: %w", appEntry.SourceUrl, err)
-		}
-		if !forceReload && currentSha != "" && newSha == currentSha && (commit == "" || commit == currentSha) {
-			// If no commit is specified, and the current version is the same as the latest commit, skip reload
-			s.Debug().Msgf("App %s already at latest commit %s, skipping reload", appEntry.AppPathDomain(), newSha)
-			return false, nil
-		}
-
-		// Checkout the git repo locally and load into database
-		if err := s.loadSourceFromGit(ctx, tx, appEntry, branch, commit, gitAuth, repoCache); err != nil {
-			return false, err
-		}
-	} else {
-		// App is loaded from disk (not git), load files into DB
-		if err := s.loadSourceFromDisk(ctx, tx, appEntry); err != nil {
-			return false, err
-		}
+	upToDate, err := s.appCodeUpToDate(ctx, appEntry, branch, commit, gitAuth, repoCache, forceReload)
+	if err != nil || upToDate {
+		return false, err
 	}
-
+	if err := s.loadAppSource(ctx, tx, appEntry, branch, commit, gitAuth, repoCache, prep); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 
@@ -381,17 +370,18 @@ func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, p
 		}
 	}
 
+	// Handlers that touch bindings (update-metadata with bindings) create binding
+	// accounts through the scope's account manager (carried in ctx), so the
+	// accounts are removed from the service if this transaction rolls back
+	// (which happens first, the scope is opened before the transaction)
+	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-
-	// Handlers that touch bindings (update-metadata with bindings) create binding
-	// accounts through the scope's account manager (carried in ctx), so the
-	// accounts are removed from the service if this transaction rolls back.
-	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
-	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	result, entries, promoteResults, err := s.StagedUpdateAppsTx(ctx, tx, appPathGlob, promote, handler, args)
 	if err != nil {

@@ -105,7 +105,118 @@ type fileEntry struct {
 	err            error
 }
 
+// PreparedFiles holds an app source directory's files, hashed and compressed
+// by PrepareAppFiles outside of any database transaction, ready to be
+// inserted by AddAppVersionPrepared. The compressed content of every file is
+// kept (files whose sha already exists are not skipped at prepare time), so
+// the insert stays correct even if the orphan file cleanup removed a row
+// between the prepare and the insert
+type PreparedFiles struct {
+	entries []fileEntry
+}
+
+// Len returns the number of prepared files
+func (p *PreparedFiles) Len() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.entries)
+}
+
+// AddAppVersionDisk records a new app version and loads the files under
+// checkoutDir into the database, hashing and compressing them while the
+// transaction is held. Callers that can afford it should use PrepareAppFiles
+// before the transaction and AddAppVersionPrepared inside it instead
 func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction, metadata types.AppMetadata, checkoutDir string) error {
+	if err := f.insertAppVersion(ctx, tx, metadata); err != nil {
+		return err
+	}
+
+	if checkoutDir == types.NO_SOURCE {
+		return nil
+	}
+
+	fsys := os.DirFS(checkoutDir)
+	filePaths, err := f.listSourceFiles(checkoutDir)
+	if err != nil {
+		return err
+	}
+	if len(filePaths) == 0 {
+		return nil
+	}
+
+	existingSHAs, err := f.existingSHAs(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	inserter, err := f.newFileInserter(ctx, tx, metadata.VersionMetadata.Version, existingSHAs)
+	if err != nil {
+		return err
+	}
+	defer inserter.close()
+
+	// Insert into the DB as the compressed files arrive, so at most numWorkers
+	// compressed files are held in memory at once
+	return f.compressSourceFiles(ctx, fsys, filePaths, existingSHAs, inserter.insert)
+}
+
+// PrepareAppFiles walks checkoutDir and hashes and compresses its files, with
+// no transaction held. The result is inserted later by AddAppVersionPrepared.
+// The whole compressed source is held in memory until then
+func (f *FileStore) PrepareAppFiles(ctx context.Context, checkoutDir string) (*PreparedFiles, error) {
+	prepared := &PreparedFiles{}
+	if checkoutDir == types.NO_SOURCE {
+		return prepared, nil
+	}
+	fsys := os.DirFS(checkoutDir)
+	filePaths, err := f.listSourceFiles(checkoutDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(filePaths) == 0 {
+		return prepared, nil
+	}
+	prepared.entries = make([]fileEntry, 0, len(filePaths))
+	if err := f.compressSourceFiles(ctx, fsys, filePaths, nil, func(entry fileEntry) error {
+		prepared.entries = append(prepared.entries, entry)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+// AddAppVersionPrepared records a new app version and inserts the files
+// prepared by PrepareAppFiles. Only the inserts run inside the transaction;
+// the content of files already present in the files table is not re-sent
+func (f *FileStore) AddAppVersionPrepared(ctx context.Context, tx types.Transaction, metadata types.AppMetadata, prepared *PreparedFiles) error {
+	if err := f.insertAppVersion(ctx, tx, metadata); err != nil {
+		return err
+	}
+	if prepared.Len() == 0 {
+		return nil
+	}
+
+	existingSHAs, err := f.existingSHAs(ctx, tx)
+	if err != nil {
+		return err
+	}
+	inserter, err := f.newFileInserter(ctx, tx, metadata.VersionMetadata.Version, existingSHAs)
+	if err != nil {
+		return err
+	}
+	defer inserter.close()
+	for _, entry := range prepared.entries {
+		if err := inserter.insert(entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// insertAppVersion inserts the app_versions row for the version in metadata
+func (f *FileStore) insertAppVersion(ctx context.Context, tx types.Transaction, metadata types.AppMetadata) error {
 	metadataJson, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("error marshalling metadata: %w", err)
@@ -115,84 +226,108 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 		f.appId, metadata.VersionMetadata.PreviousVersion, metadata.VersionMetadata.Version, metadataJson, versionUser(ctx)); err != nil {
 		return fmt.Errorf("error inserting app version: %w", err)
 	}
+	return nil
+}
 
-	if checkoutDir == types.NO_SOURCE {
-		return nil
-	}
-
-	fsys := os.DirFS(checkoutDir)
-
-	// Collect all file paths first
+// listSourceFiles returns the app source file paths under checkoutDir (see
+// appfs.WalkSourceFiles)
+func (f *FileStore) listSourceFiles(checkoutDir string) ([]string, error) {
 	var filePaths []string
-	if err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, inErr error) error {
-		if inErr != nil {
-			return fmt.Errorf("file walk on %s failed for path %s: %w", checkoutDir, path, inErr)
-		}
-		if d.IsDir() && path == ".git" {
-			return fs.SkipDir
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if d.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("symlinks are not allowed in app sources: %s", path)
-		}
-		if d.Type().Type() != 0 {
-			f.metadata.Debug().Str("path", path).Str("type", d.Type().String()).Msg("skipping non-regular app source entry")
-			return nil
-		}
-		cleanPath, err := system.CleanRelativePath(path)
-		if err != nil {
-			return fmt.Errorf("invalid app source path %s: %w", path, err)
-		}
-		filePaths = append(filePaths, cleanPath)
+	err := appfs.WalkSourceFiles(checkoutDir, func(_ fs.FS, name string) error {
+		filePaths = append(filePaths, name)
 		return nil
-	}); err != nil {
-		return err
-	}
+	})
+	return filePaths, err
+}
 
-	if len(filePaths) == 0 {
-		return nil
-	}
-
-	// Build set of existing SHAs in the files table
+// existingSHAs returns the set of shas present in the files table, as seen
+// by the transaction
+func (f *FileStore) existingSHAs(ctx context.Context, tx types.Transaction) (map[string]struct{}, error) {
 	existingSHAs := make(map[string]struct{})
 	rows, err := tx.QueryContext(ctx, "SELECT sha FROM files")
 	if err != nil {
-		return fmt.Errorf("error querying existing shas: %w", err)
+		return nil, fmt.Errorf("error querying existing shas: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck
 	for rows.Next() {
 		var sha string
 		if err := rows.Scan(&sha); err != nil {
-			return fmt.Errorf("error scanning sha: %w", err)
+			return nil, fmt.Errorf("error scanning sha: %w", err)
 		}
 		existingSHAs[sha] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating existing shas: %w", err)
+		return nil, fmt.Errorf("error iterating existing shas: %w", err)
 	}
 	if err := rows.Close(); err != nil {
-		return fmt.Errorf("error closing sha rows: %w", err)
+		return nil, fmt.Errorf("error closing sha rows: %w", err)
 	}
+	return existingSHAs, nil
+}
 
-	// Prepare insert statements upfront
+// fileInserter inserts file entries for one app version using prepared
+// statements on the transaction. existingSHAs (the shas present when the load
+// started) is read only, it is shared with the compression workers; inserted
+// tracks the content written by this inserter
+type fileInserter struct {
+	ctx               context.Context
+	appId             types.AppId
+	version           int
+	existingSHAs      map[string]struct{}
+	inserted          map[string]struct{}
+	insertFileStmt    *sql.Stmt
+	insertAppFileStmt *sql.Stmt
+}
+
+func (f *FileStore) newFileInserter(ctx context.Context, tx types.Transaction, version int, existingSHAs map[string]struct{}) (*fileInserter, error) {
 	insertFileStmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType,
 		system.InsertIgnorePrefix(f.metadata.dbType)+" into files (sha, compression_type, content, create_time) values (?, ?, ?, "+
 			system.FuncNow(f.metadata.dbType)+") "+system.InsertIgnoreSuffix(f.metadata.dbType)))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer insertFileStmt.Close() //nolint:errcheck
 
 	insertAppFileStmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType,
 		`insert into app_files (appid, version, name, sha, uncompressed_size, create_time) values (?, ?, ?, ?, ?, `+
 			system.FuncNow(f.metadata.dbType)+")"))
 	if err != nil {
-		return err
+		insertFileStmt.Close() //nolint:errcheck
+		return nil, err
 	}
-	defer insertAppFileStmt.Close() //nolint:errcheck
+	return &fileInserter{ctx: ctx, appId: f.appId, version: version, existingSHAs: existingSHAs,
+		inserted: map[string]struct{}{}, insertFileStmt: insertFileStmt, insertAppFileStmt: insertAppFileStmt}, nil
+}
 
+// insert writes the file content (unless its sha is already present, either
+// as seen by the transaction or as recorded at compression time) and the
+// app_files row
+func (i *fileInserter) insert(entry fileEntry) error {
+	_, exists := i.existingSHAs[entry.sha]
+	_, done := i.inserted[entry.sha]
+	if !exists && !done && !entry.shaExists {
+		if _, err := i.insertFileStmt.ExecContext(i.ctx, entry.sha, entry.compression, entry.compressed); err != nil {
+			return fmt.Errorf("error inserting file: %w", err)
+		}
+		// A later entry with the same content needs no second insert
+		i.inserted[entry.sha] = struct{}{}
+	}
+	if _, err := i.insertAppFileStmt.ExecContext(i.ctx, i.appId, i.version, entry.path, entry.sha, entry.uncompressedSz); err != nil {
+		return fmt.Errorf("error inserting app file: %w", err)
+	}
+	return nil
+}
+
+func (i *fileInserter) close() {
+	i.insertFileStmt.Close()    //nolint:errcheck
+	i.insertAppFileStmt.Close() //nolint:errcheck
+}
+
+// compressSourceFiles reads, hashes and compresses filePaths under fsys with a
+// worker pool and hands each entry to consume, in arrival order. Files whose
+// sha is in existingSHAs are hashed but not compressed (their content is
+// already stored); pass nil to keep every file's content. consume runs on the
+// calling goroutine; an error from it or from a worker stops the pipeline
+func (f *FileStore) compressSourceFiles(ctx context.Context, fsys fs.FS, filePaths []string, existingSHAs map[string]struct{}, consume func(fileEntry) error) error {
 	numWorkers := f.metadata.config.System.FileWorkers
 	if numWorkers <= 0 {
 		numWorkers = 4
@@ -280,21 +415,14 @@ func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction,
 		close(results)
 	}()
 
-	// Consume results and insert into DB as they arrive
 	for entry := range results {
 		if entry.err != nil {
 			close(done)
 			return entry.err
 		}
-		if !entry.shaExists {
-			if _, err := insertFileStmt.ExecContext(ctx, entry.sha, entry.compression, entry.compressed); err != nil {
-				close(done)
-				return fmt.Errorf("error inserting file: %w", err)
-			}
-		}
-		if _, err := insertAppFileStmt.ExecContext(ctx, f.appId, metadata.VersionMetadata.Version, entry.path, entry.sha, entry.uncompressedSz); err != nil {
+		if err := consume(entry); err != nil {
 			close(done)
-			return fmt.Errorf("error inserting app file: %w", err)
+			return err
 		}
 	}
 

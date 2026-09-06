@@ -70,13 +70,8 @@ func (s *Server) prefetchAppSources(ctx context.Context, appPaths []types.AppPat
 			continue
 		}
 		if strings.HasPrefix(string(appEntry.Id), types.ID_PREFIX_APP_PROD) {
-			// The reload works on the staging app, mirror getStageApp without
-			// holding a transaction
-			stagePath, err := parseLinkedAppPathDomain(appEntry.LinkedAppPath)
-			if err != nil {
-				stagePath = pathBasedStageApp(appEntry)
-			}
-			if appEntry, err = s.db.GetAppEntry(ctx, stagePath); err != nil {
+			// The reload works on the staging app
+			if appEntry, err = s.getStageAppNoTx(ctx, appEntry); err != nil {
 				s.Debug().Err(err).Msgf("git prefetch: error reading stage app for %s", appPath)
 				continue
 			}
@@ -93,21 +88,16 @@ func (s *Server) prefetchAppSource(ctx context.Context, appEntry *types.AppEntry
 	if !system.IsGit(appEntry.SourceUrl) {
 		return
 	}
-	currentSha := appEntry.Metadata.VersionMetadata.GitCommit
-	if !forceReload && currentSha != "" && currentSha == commit {
-		return // already at the requested commit, the reload will skip
-	}
-	branch = cmp.Or(branch, appEntry.Metadata.VersionMetadata.GitBranch, "main")
-	gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
-	newSha, err := repoCache.GetSha(ctx, appEntry.SourceUrl, branch, gitAuth)
+	upToDate, err := s.appCodeUpToDate(ctx, appEntry, branch, commit, gitAuth, repoCache, forceReload)
 	if err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error getting sha for %s", appEntry.SourceUrl)
 		return
 	}
-	if !forceReload && currentSha != "" && newSha == currentSha && (commit == "" || commit == currentSha) {
-		return // already at the latest commit, the reload will skip without a checkout
+	if upToDate {
+		return // the reload will skip without a checkout
 	}
-	if _, _, _, _, err := repoCache.CheckoutRepo(ctx, appEntry.SourceUrl, branch, commit, gitAuth, appEntry.IsDev); err != nil {
+	if _, _, _, _, err := repoCache.CheckoutRepo(ctx, appEntry.SourceUrl, checkoutBranch(branch, appEntry), commit,
+		cmp.Or(gitAuth, appEntry.Metadata.GitAuthName), appEntry.IsDev); err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error checking out %s", appEntry.SourceUrl)
 	}
 }

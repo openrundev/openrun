@@ -12,17 +12,15 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-// TestReloadAppsImagePreBuildStep runs a verified reload with the image
-// pre-build step enabled and disabled. For both settings the reload must
-// succeed with identical results, and the pre-build pass (which loads the new
-// source under a throwaway transaction) must leave no trace in the committed
-// state: the app version is incremented exactly once, by the main reload pass.
-func TestReloadAppsImagePreBuildStep(t *testing.T) {
-	for _, preBuild := range []bool{true, false} {
-		t.Run(fmt.Sprintf("useImagePreBuildStep=%v", preBuild), func(t *testing.T) {
+// TestReloadAppsVerifiedPrePass runs a verified reload with promote. The
+// pre-pass (which loads the new source and prepares the app before the
+// transaction) must leave no trace in the committed state: the app version
+// is incremented exactly once, by the transaction's reload.
+func TestReloadAppsVerifiedPrePass(t *testing.T) {
+	{
+		{
 			server, db, ctx := newApplyTestServer(t)
 			defer db.Close()
-			server.staticConfig.System.UseImagePreBuildStep = preBuild
 			if err := server.initAuditDB("sqlite:" + filepath.Join(t.TempDir(), "audit.db")); err != nil {
 				t.Fatalf("init audit db: %v", err)
 			}
@@ -86,6 +84,6 @@ func TestReloadAppsImagePreBuildStep(t *testing.T) {
 			if entry.Metadata.Name != "preBuildAppUpdated" {
 				t.Fatalf("app name = %q, want updated source to be live", entry.Metadata.Name)
 			}
-		})
+		}
 	}
 }

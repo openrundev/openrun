@@ -148,8 +148,12 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 	if a.containerHandler != nil {
 		// Container handler is present, reload the container
 		if a.IsDev {
-			if err = a.containerHandler.DevReload(ctx, bool(dryRun)); err != nil {
-				return err
+			// SkipContainer: the deploy pre-pass already built and started
+			// the dev container (or the operation does not deploy)
+			if !opts.SkipContainer {
+				if err = a.containerHandler.DevReload(ctx, bool(dryRun)); err != nil {
+					return err
+				}
 			}
 		} else if !opts.SkipContainer && (opts.ReloadContainer || a.containerHandler.IsImageSpec()) {
 			// In prod mode, reload when initializing an app. Image-spec apps
@@ -157,7 +161,7 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 			// image digest is resolved and the container is recreated if the
 			// tag has moved; build-spec apps rely on the source-content hash
 			// to detect changes and so only need reload on Initialize.
-			if err := a.containerHandler.ProdReload(ctx, bool(dryRun), opts.Verify); err != nil {
+			if err := a.containerHandler.ProdReload(ctx, bool(dryRun), opts.Verify, opts.Prepare); err != nil {
 				return err
 			}
 		}

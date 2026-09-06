@@ -1141,7 +1141,7 @@ func TestCreateAppRollbackRemovesAutoBindingAccount(t *testing.T) {
 	_, err = server.CreateAppTx(ctx, appTx, "/apps/auto-rollback", false, false, &types.CreateAppRequest{
 		SourceUrl: filepath.Join(t.TempDir(), "does-not-exist"),
 		Bindings:  []string{"autoacct"},
-	}, nil, accounts)
+	}, nil, accounts, nil)
 	if err == nil {
 		t.Fatal("create app with missing source did not fail")
 	}

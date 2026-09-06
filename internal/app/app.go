@@ -374,9 +374,17 @@ type ReloadOptions struct {
 	Verify bool
 	// SkipContainer skips the prod container reload entirely, including for
 	// image-spec apps (which ReloadContainer=false alone does not skip). Used
-	// by the image pre-build pass, which needs the app fully configured but
-	// must not touch containers.
+	// by the deploy pre-pass steps that need the app fully configured but
+	// must not touch containers (the gate runs).
 	SkipContainer bool
+	// Prepare marks the deploy pre-pass reload, run before the operation's
+	// metadata transaction on a throwaway app object: the image is built and
+	// the new version's container is started and health checked, registered
+	// on the operation's deploy transaction for rollback only. The
+	// transaction's reload then finds the version running, reuses it and
+	// registers the commit time switch, so it holds the transaction for no
+	// container work
+	Prepare bool
 }
 
 func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.DryRun, opts ReloadOptions) (bool, error) {

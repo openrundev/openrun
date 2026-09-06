@@ -1646,8 +1646,10 @@ func (h *ContainerHandler) ExecuteBuild(ctx context.Context, plan *BuildPlan) er
 // commit the app's superseded version containers are stopped immediately
 // instead of lingering until the periodic stale container sweeper. Registering
 // also shields the container from the sweeper while the operation is in
-// flight. No-op outside an operation (e.g. lazy app initialization).
-func (h *ContainerHandler) registerDeployTxn(ctx context.Context, containerName container.ContainerName, stopOnRollback bool) {
+// flight. No-op outside an operation (e.g. lazy app initialization). The
+// pre-pass (prepare) registers no commit action: the operation's
+// in-transaction reload of the same version does
+func (h *ContainerHandler) registerDeployTxn(ctx context.Context, containerName container.ContainerName, stopOnRollback, prepare bool) {
 	dt := container.DeployTxnFromContext(ctx)
 	if dt == nil {
 		return
@@ -1659,7 +1661,7 @@ func (h *ContainerHandler) registerDeployTxn(ctx context.Context, containerName 
 		}
 	}
 	var onCommit func(context.Context) error
-	if stopper, ok := container.AsAppContainerStopper(h.manager); ok {
+	if stopper, ok := container.AsAppContainerStopper(h.manager); ok && !prepare {
 		onCommit = func(c context.Context) error {
 			return stopper.StopAppContainersExcept(c, h.app.Id, containerName)
 		}
@@ -1671,8 +1673,10 @@ func (h *ContainerHandler) registerDeployTxn(ctx context.Context, containerName 
 // update to be verified and rollback-capable; for in-place managers this makes
 // a snapshot failure fatal (we refuse to mutate the live Deployment when we
 // cannot capture the state needed to roll it back), rather than proceeding with
-// an irreversible update.
-func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify bool) error {
+// an irreversible update. prepare marks the deploy pre-pass (see
+// ReloadOptions.Prepare): the version is started and registered for rollback
+// only, the later reload of the same version registers the commit actions
+func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify bool, prepare bool) error {
 	var err error
 
 	// For image-spec apps (where the operator supplied an upstream image
@@ -1741,7 +1745,7 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 	}
 
 	if h.isKubernetes {
-		return h.prodReloadKubernetes(ctx, fullHash, verify)
+		return h.prodReloadKubernetes(ctx, fullHash, verify, prepare)
 	}
 
 	containerName := container.GenContainerName(h.app.Id, fullHash, false)
@@ -1770,7 +1774,7 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 			}
 			// Nothing was started, so nothing to roll back; still register so
 			// superseded version containers are stopped at operation commit
-			h.registerDeployTxn(ctx, containerName, false)
+			h.registerDeployTxn(ctx, containerName, false, prepare)
 			return nil
 		}
 		if hostNamePort != "" && !running {
@@ -1785,7 +1789,7 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 			startedExisting = true
 			// Register before the health wait below, so a later failure in
 			// this operation stops the container again on rollback
-			h.registerDeployTxn(ctx, containerName, true)
+			h.registerDeployTxn(ctx, containerName, true, prepare)
 		}
 	}
 
@@ -1853,7 +1857,7 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 		}
 		// Register before the health wait, so a health failure (or a later
 		// app's failure in the same operation) stops this container on rollback
-		h.registerDeployTxn(ctx, containerName, true)
+		h.registerDeployTxn(ctx, containerName, true, prepare)
 	}
 
 	if h.health != "" {
@@ -1898,7 +1902,7 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool, verify b
 	return nil
 }
 
-func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash string, verify bool) error {
+func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash string, verify bool, prepare bool) error {
 	containerName := container.GenContainerName(h.app.Id, fullHash, true)
 
 	sourceDir := ""
@@ -1966,6 +1970,7 @@ func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash st
 		IsImageSpec:        h.IsImageSpec(),
 		HealthProbe:        h.buildHealthProbe(),
 		Verify:             verify,
+		Prepare:            prepare,
 		DeployAttempts:     h.containerConfig.DeployHealthAttempts,
 		LogLinesToShow:     h.containerConfig.LogLinesToShow,
 		ShowLogsForFailure: h.containerConfig.ShowLogsForFailure,

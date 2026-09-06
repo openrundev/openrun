@@ -19,10 +19,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	apppkg "github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
-	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
@@ -422,14 +420,38 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	}
 	s.prefetchApplyAppSources(ctx, applyConfig, filteredApps, repoCache, isDev)
 
+	// The pre-transaction pass: the source of the apps being created or
+	// reloaded is checked out and compressed, and their deploy gates
+	// (before_deploy jobs) run from the new code's image, before the
+	// transaction opens. Callers that pass a transaction in run this pass
+	// themselves beforehand (see prepareSyncDeploys) and hand the results
+	// over in the context. Never on a dry run: gates have side effects
+	preps := deployPrepsFromContext(ctx)
+	committed := false // whether the transaction below committed, for the pre-pass cleanup
+	// The pre-pass results this apply owns are released last, after the
+	// scope's rollback has stopped the containers the pre-pass started
+	var ownPreps deployPreps
+	defer func() { ownPreps.finish(ctx, s, committed) }()
+
+	// Operation-level rollback scope: the containers the pre-pass starts and
+	// the apps that mutate their Kubernetes deployments in-place register on
+	// its stack and binding changes record the accounts and grants they
+	// create, so a failure anywhere reverts both the cluster and the external
+	// services along with the DB transaction. We own the scope only when we
+	// own the DB transaction; when a transaction is passed in, the caller owns
+	// the commit (and therefore the rollback) and we just register into its
+	// scope. The scope is opened before the transaction so the transaction is
+	// rolled back before the external cleanup runs
+	ctx, deployScope := s.beginDeployScope(ctx, inputTx.Tx == nil, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+	bindingAccounts := deployScope.accounts
+
 	if inputTx.Tx == nil && !dryRun {
-		// Deploy gates (before_deploy jobs) of the apps being reloaded run
-		// before the transaction opens, from the new code's image; callers
-		// that pass a transaction in run this pass themselves beforehand
-		// (see prepareSyncDeploys). Never on a dry run: gates have side effects
-		if err := s.prepareApplyDeploys(ctx, applyConfig, filteredApps, approve, promote, verify, reload, repoCache, forceReload); err != nil {
+		ownPreps, err = s.prepareApplyDeploys(ctx, applyConfig, filteredApps, approve, promote, verify, reload, repoCache, forceReload, isDev)
+		if err != nil {
 			return nil, nil, err
 		}
+		preps = ownPreps
 	}
 
 	if inputTx.Tx == nil {
@@ -442,17 +464,6 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		tx = inputTx
 		// No rollback here if transaction is passed in
 	}
-
-	// Operation-level rollback scope: apps that mutate their Kubernetes
-	// deployments in-place register on its stack and binding changes record the
-	// accounts and grants they create, so a failure anywhere reverts both the
-	// cluster and the external services along with the DB transaction. We own
-	// the scope only when we own the DB transaction; when a transaction is
-	// passed in, the caller owns the commit (and therefore the rollback) and we
-	// just register into its scope.
-	ctx, deployScope := s.beginDeployScope(ctx, inputTx.Tx == nil, dryRun)
-	defer func() { retErr = deployScope.finish(ctx, retErr) }()
-	bindingAccounts := deployScope.accounts
 
 	// Mark this operation as a declarative apply. App creation stores the
 	// ApplyInfo (for the three way merge on later applies) only in apply
@@ -474,31 +485,13 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		allAppsMap[appInfo.AppPathDomain] = appInfo
 	}
 
-	// app:apply gates the app side of the declarative apply, for every affected
-	// app path, including apps the plan would create. approve additionally needs
-	// approve and promote additionally needs app:promote. Bindings declared in
-	// the apply file are enforced separately below (binding:create/binding:update),
-	// with the same authority the direct binding APIs require
-	if s.rbacManager.APIEnforced(ctx) {
-		for _, appPath := range filteredApps {
-			owner := ""
-			if appInfo, ok := allAppsMap[appPath]; ok {
-				owner = appInfo.UserID
-			}
-			if err := s.enforceAppPerm(ctx, types.PermissionApply, appPath, owner); err != nil {
-				return nil, nil, err
-			}
-			if approve {
-				if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPath, owner); err != nil {
-					return nil, nil, err
-				}
-			}
-			if promote {
-				if err := s.enforceAppPerm(ctx, types.PermissionPromote, appPath, owner); err != nil {
-					return nil, nil, err
-				}
-			}
-		}
+	// The app permissions were already enforced before the pre-pass ran
+	// (see prepareApplyDeploys); enforced again here against the app owners
+	// as seen by the transaction. Bindings declared in the apply file are
+	// enforced separately below (binding:create/binding:update), with the
+	// same authority the direct binding APIs require
+	if err := s.enforceApplyAppPerms(ctx, filteredApps, allAppsMap, approve, promote); err != nil {
+		return nil, nil, err
 	}
 
 	newApps := make([]types.AppPathDomain, 0, len(filteredApps))
@@ -601,12 +594,12 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 			applyInfo.IsDev = isDev // Override the dev status from the apply command cli
 		}
 		appVerify := verify || applyInfo.Verify
-		res, err := s.CreateAppTx(ctx, tx, newApp.String(), approve, dryRun, applyInfo, repoCache, bindingAccounts)
+		res, err := s.CreateAppTx(ctx, tx, newApp.String(), approve, dryRun, applyInfo, repoCache, bindingAccounts, preps[newApp])
 		if err != nil {
 			return nil, nil, err
 		}
 		if appVerify && !dryRun {
-			if err := s.verifyCreatedApp(ctx, tx, newApp); err != nil {
+			if err := s.verifyCreatedApp(ctx, tx, newApp, preps[newApp]); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -619,7 +612,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		applyInfo := applyConfig[updateApp]
 		appVerify := verify || applyInfo.Verify
 		applyResult, err := s.applyAppUpdate(ctx, tx, updateApp, applyInfo, approve, dryRun,
-			promote, reload, clobber, repoCache, forceReload, appVerify, bindingAccounts)
+			promote, reload, clobber, repoCache, forceReload, appVerify, bindingAccounts, preps[updateApp])
 		if err != nil {
 			return nil, nil, err
 		}
@@ -662,6 +655,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		if err := s.CompleteTransaction(ctx, tx, allUpdatedApps, dryRun, "apply"); err != nil {
 			return nil, nil, err
 		}
+		committed = !dryRun
 	}
 	// Apply succeeded and (if we own it) the DB transaction has committed: keep
 	// the binding accounts and grants created on the services, run the deferred
@@ -729,9 +723,13 @@ func convertToStringMap(input map[string]any) (map[string]string, error) {
 	return ret, nil
 }
 
+// applyAppUpdate applies a declaration to an existing app: the declared
+// properties are merged onto the stage instance (three way, against the
+// previously applied declaration), and the code reloaded when the reload
+// option asks for it. prep is the pre-pass result for the app's reload
 func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPathDomain types.AppPathDomain, newInfo *types.CreateAppRequest,
 	approve, dryRun, promote bool, reload types.AppReloadOption, clobber bool, repoCache *RepoCache, forceReload, verify bool,
-	bindingAccounts *bindingAccountManager) (*types.AppApplyResult, error) {
+	bindingAccounts *bindingAccountManager, prep *appPrep) (*types.AppApplyResult, error) {
 	verify = verify && !dryRun
 	liveApp, err := s.GetAppEntry(ctx, tx, appPathDomain)
 	if err != nil {
@@ -897,7 +895,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	if reloadApp {
 		// Reload does the version increment and promotion
 		reloadResult, err := s.ReloadApp(ctx, tx, prodApp, liveApp, approve, dryRun, promote,
-			newInfo.GitBranch, newInfo.GitCommit, newInfo.GitAuthName, repoCache, forceReload, verify)
+			newInfo.GitBranch, newInfo.GitCommit, newInfo.GitAuthName, repoCache, forceReload, verify, prep)
 		if err != nil {
 			return nil, err
 		}
@@ -1056,7 +1054,12 @@ func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, b
 	return updated, promoted, nil
 }
 
-func (s *Server) verifyCreatedApp(ctx context.Context, tx types.Transaction, appPathDomain types.AppPathDomain) error {
+// verifyCreatedApp starts the created app's instances with their containers
+// and waits for their health, on the create's transaction. The pre-pass
+// (prepareCreate with verify) has started them already when it could: the
+// prod instances are then found running and reused, a dev instance skips the
+// container
+func (s *Server) verifyCreatedApp(ctx context.Context, tx types.Transaction, appPathDomain types.AppPathDomain, prep *appPrep) error {
 	appEntry, err := s.GetAppEntry(ctx, tx, appPathDomain)
 	if err != nil {
 		return err
@@ -1067,13 +1070,7 @@ func (s *Server) verifyCreatedApp(ctx context.Context, tx types.Transaction, app
 		if err != nil {
 			return fmt.Errorf("error setting up app %s: %w", entry.AppPathDomain(), err)
 		}
-		if _, err := application.Reload(ctx, true, true, types.DryRun(false), apppkg.ReloadOptions{ReloadContainer: true, Verify: true}); err != nil {
-			if container.ClusterRollbackClean(err) {
-				return fmt.Errorf("verify failed for app %s: %w. All changes have been reverted", entry.AppPathDomain(), err)
-			}
-			return fmt.Errorf("verify failed for app %s: %w", entry.AppPathDomain(), err)
-		}
-		return nil
+		return s.reloadInstanceOpts(ctx, application, false, instanceReloadOptions(entry, true, prep))
 	}
 
 	if !appEntry.IsDev {
@@ -1749,23 +1746,85 @@ func (s *Server) ApplyDelete(ctx context.Context, applyPath, appPathGlob string,
 	return ret, nil
 }
 
-// prepareApplyDeploys runs the deploy gate pre-pass for the existing apps an
-// apply will reload: every matched app with reload=matched, and the apps
-// whose declaration changed with reload=updated. Apps not yet created run
-// their gates inside the create transaction
-func (s *Server) prepareApplyDeploys(ctx context.Context, applyConfig map[types.AppPathDomain]*types.CreateAppRequest,
-	filteredApps []types.AppPathDomain, approve, promote, verify bool, reload types.AppReloadOption, repoCache *RepoCache, forceReload bool) error {
-	if reload == types.AppReloadOptionNone {
+// enforceApplyAppPerms enforces the app side of a declarative apply: app:apply
+// on every affected app path, including apps the plan would create (no owner
+// yet), plus app:approve with approve and app:promote with promote. Called
+// before the pre-pass, which runs the apps' before_deploy jobs, and again
+// inside the transaction
+func (s *Server) enforceApplyAppPerms(ctx context.Context, appPaths []types.AppPathDomain,
+	allAppsMap map[types.AppPathDomain]types.AppInfo, approve, promote bool) error {
+	if !s.rbacManager.APIEnforced(ctx) {
 		return nil
 	}
+	for _, appPath := range appPaths {
+		owner := ""
+		if appInfo, ok := allAppsMap[appPath]; ok {
+			owner = appInfo.UserID
+		}
+		if err := s.enforceAppPerm(ctx, types.PermissionApply, appPath, owner); err != nil {
+			return err
+		}
+		if approve {
+			if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPath, owner); err != nil {
+				return err
+			}
+		}
+		if promote {
+			if err := s.enforceAppPerm(ctx, types.PermissionPromote, appPath, owner); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// prepareApplyDeploys runs the pre-transaction pass of an apply, in app path
+// order: prepareCreate for the apps not yet created, and prepareDeploy for
+// the existing apps the apply will reload: every matched app with
+// reload=matched, and the apps whose declaration changed with reload=updated.
+// The caller's app permissions are enforced first. The results are returned
+// for the transaction, on error as well (partial): the caller owns them (see
+// deployPreps.finish) and releases them after the deploy scope's rollback
+func (s *Server) prepareApplyDeploys(ctx context.Context, applyConfig map[types.AppPathDomain]*types.CreateAppRequest,
+	filteredApps []types.AppPathDomain, approve, promote, verify bool, reload types.AppReloadOption, repoCache *RepoCache,
+	forceReload, isDev bool) (deployPreps, error) {
+	// The pass loads and runs code from the declared apps (their
+	// before_deploy jobs, approved in memory with approve), so the caller's
+	// authority over every affected app is checked first
+	allApps, err := s.apps.GetAllAppsInfo()
+	if err != nil {
+		return nil, err
+	}
+	allAppsMap := make(map[types.AppPathDomain]types.AppInfo, len(allApps))
+	for _, appInfo := range allApps {
+		allAppsMap[appInfo.AppPathDomain] = appInfo
+	}
+	if err := s.enforceApplyAppPerms(ctx, filteredApps, allAppsMap, approve, promote); err != nil {
+		return nil, err
+	}
+
+	preps := deployPreps{}
 	sorted := append([]types.AppPathDomain{}, filteredApps...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].String() < sorted[j].String() })
 	for _, appPathDomain := range sorted {
 		entry, err := s.db.GetAppEntry(ctx, appPathDomain)
 		if err != nil {
-			continue // a new app, created (and gated) inside the transaction
+			// A new app. The apply create runs under the apply context marker
+			// (see Apply); the pre-pass app object needs no apply info
+			applyInfo := applyConfig[appPathDomain]
+			if isDev {
+				applyInfo.IsDev = true // Override the dev status from the apply command cli, as the create does
+			}
+			prep, err := s.prepareCreate(ctx, appPathDomain.String(), approve, false, verify || applyInfo.Verify, applyInfo, repoCache)
+			if prep != nil {
+				preps[appPathDomain] = prep
+			}
+			if err != nil {
+				return preps, err
+			}
+			continue
 		}
-		if entry.IsDev {
+		if reload == types.AppReloadOptionNone || entry.IsDev {
 			continue
 		}
 		newInfo := applyConfig[appPathDomain]
@@ -1774,21 +1833,25 @@ func (s *Server) prepareApplyDeploys(ctx context.Context, applyConfig map[types.
 			// unchanged stored apply info means no reload, so no gate
 			stageEntry, err := s.getStageAppNoTx(ctx, entry)
 			if err != nil {
-				return err
+				return preps, err
 			}
 			newInfoBytes, err := json.Marshal(newInfo)
 			if err != nil {
-				return err
+				return preps, err
 			}
 			if len(stageEntry.Metadata.VersionMetadata.ApplyInfo) > 0 && bytes.Equal(stageEntry.Metadata.VersionMetadata.ApplyInfo, newInfoBytes) {
 				continue
 			}
 		}
 		appVerify := verify || newInfo.Verify
-		if err := s.prepareDeploy(ctx, appPathDomain, approve, promote, appVerify, newInfo.GitBranch, newInfo.GitCommit,
-			newInfo.GitAuthName, repoCache, forceReload, "apply"); err != nil {
-			return err
+		prep, err := s.prepareDeploy(ctx, appPathDomain, approve, promote, appVerify, newInfo.GitBranch, newInfo.GitCommit,
+			newInfo.GitAuthName, repoCache, forceReload, "apply")
+		if err != nil {
+			return preps, err
+		}
+		if prep != nil {
+			preps[appPathDomain] = prep
 		}
 	}
-	return nil
+	return preps, nil
 }

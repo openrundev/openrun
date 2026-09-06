@@ -5,19 +5,14 @@ package metadata
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/andybalholm/brotli"
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -169,8 +164,7 @@ func (fi *DbFileInfo) Sys() any {
 }
 
 func computeSha(data string) string {
-	hash := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(hash[:])
+	return appfs.ContentSha([]byte(data))
 }
 
 func (d *DbFs) Open(name string) (fs.File, error) {
@@ -271,117 +265,34 @@ func (d *DbFs) StaticFiles() []string {
 
 // GlobMatch returns true if the file name matches any of the patterns
 func GlobMatch(patterns []string, fileName string) (bool, error) {
-	for _, pattern := range patterns {
-		matched, err := doublestar.Match(pattern, fileName)
-		if err != nil {
-			return false, err
-		}
-		if matched {
-			return true, nil
-		}
-	}
-
-	return false, nil
+	return appfs.GlobMatch(patterns, fileName)
 }
 
-// FileHash returns a hash of the file names and their corresponding sha256 hashes
+// FileHash returns a hash of the file names and their corresponding sha256
+// hashes (see appfs.SourceFileHash)
 func (d *DbFs) FileHash(excludeGlob []string) (string, error) {
-	fileNames := []string{}
-	for name := range d.fileInfo {
-		matched, err := GlobMatch(excludeGlob, name)
-		if err != nil {
-			return "", err
-		}
-		if matched {
-			// Name is excluded from the hash, must be a file used by the openrun hypermedia based UI
-			// We don't want a UI only change to cause a container rebuild
-			continue
-		}
-		fileNames = append(fileNames, name)
+	files := make(map[string]string, len(d.fileInfo))
+	for name, info := range d.fileInfo {
+		files[name] = info.sha
 	}
-	slices.Sort(fileNames)
-
-	hashBuilder := strings.Builder{}
-	for _, name := range fileNames {
-		hashBuilder.WriteString(name)
-		hashBuilder.WriteByte(0)
-		hashBuilder.WriteString(d.fileInfo[name].sha)
-		hashBuilder.WriteByte(0)
-	}
-
-	specFileNames := []string{}
-	for name := range d.specFiles {
-		matched, err := GlobMatch(excludeGlob, name)
-		if err != nil {
-			return "", err
-		}
-		if matched {
-			// Name is excluded from the hash, must be a file used by the openrun hypermedia based UI
-			// We don't want a UI only change to cause a container rebuild
-			continue
-		}
-
-		specFileNames = append(specFileNames, name)
-	}
-	slices.Sort(specFileNames)
-
-	for _, name := range specFileNames {
-		if _, ok := d.fileInfo[name]; !ok {
-			// Only include spec files that are not already in the file info
-			hashBuilder.WriteString(name)
-			hashBuilder.WriteByte(0)
-			hashBuilder.WriteString(computeSha(d.specFiles[name]))
-			hashBuilder.WriteByte(0)
-		}
-	}
-
-	sha := sha256.New()
-	if _, err := sha.Write([]byte(hashBuilder.String())); err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(sha.Sum(nil)), nil
+	return appfs.SourceFileHash(files, d.specFiles, excludeGlob)
 }
 
 func (d *DbFs) CreateTempSourceDir() (string, error) {
-	tmpDir, err := os.MkdirTemp("", "cl_source")
-	if err != nil {
-		return "", fmt.Errorf("error creating temp source dir: %w", err)
-	}
-
-	for name := range d.fileInfo {
-		fileBytes, err := d.ReadFile(name)
-		if err != nil {
-			return "", err
+	return appfs.WriteSourceTempDir(d.specFiles, func(writeFile func(name string, data []byte) error) (map[string]bool, error) {
+		written := make(map[string]bool, len(d.fileInfo))
+		for name := range d.fileInfo {
+			fileBytes, err := d.ReadFile(name)
+			if err != nil {
+				return nil, err
+			}
+			if err := writeFile(name, fileBytes); err != nil {
+				return nil, err
+			}
+			written[name] = true
 		}
-		filePath := path.Join(tmpDir, name)
-
-		if err := os.MkdirAll(path.Dir(filePath), 0700); err != nil {
-			return "", fmt.Errorf("error creating directory %s : %w", path.Dir(filePath), err)
-		}
-
-		if err := os.WriteFile(filePath, fileBytes, 0700); err != nil {
-			return "", fmt.Errorf("error writing file %s : %w", filePath, err)
-		}
-	}
-
-	for name := range d.specFiles {
-		if _, ok := d.fileInfo[name]; ok {
-			// Skip files that are already in the file info
-			continue
-		}
-
-		filePath := path.Join(tmpDir, name)
-		if err := os.MkdirAll(path.Dir(filePath), 0700); err != nil {
-			return "", fmt.Errorf("error creating directory %s : %w", path.Dir(filePath), err)
-		}
-
-		if err := os.WriteFile(filePath, []byte(d.specFiles[name]), 0700); err != nil {
-			return "", fmt.Errorf("error writing file %s : %w", filePath, err)
-		}
-	}
-
-	return tmpDir, nil
+		return written, nil
+	})
 }
 
 func (d *DbFs) Reset() {

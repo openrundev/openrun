@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -96,18 +95,6 @@ type jobExecution struct {
 
 func (s *Server) jobNodeId() string {
 	return string(types.CurrentServerId)
-}
-
-// getStageAppNoTx is getStageApp outside a transaction
-func (s *Server) getStageAppNoTx(ctx context.Context, appEntry *types.AppEntry) (*types.AppEntry, error) {
-	if !strings.HasPrefix(string(appEntry.Id), types.ID_PREFIX_APP_PROD) {
-		return nil, fmt.Errorf("cannot get stage for non-prod app %s", appEntry.AppPathDomain())
-	}
-	stageAppPath, err := parseLinkedAppPathDomain(appEntry.LinkedAppPath)
-	if err != nil {
-		stageAppPath = pathBasedStageApp(appEntry)
-	}
-	return s.db.GetAppEntry(ctx, stageAppPath)
 }
 
 // claimJobRun inserts the run record, which is the concurrency and cron
@@ -900,131 +887,11 @@ func (s *Server) runDeployGates(ctx context.Context, tx types.Transaction, appli
 	return nil
 }
 
-// prepareDeploy is the pre-transaction pass of a code deploy (reload, apply
-// with reload, sync): the new source is loaded under a throwaway
-// transaction, the image is built when the gates or verify need it, and the
-// stage before_deploy jobs run from that image against the stage instance.
-// With promote, the prod gates run right after, from the same image against
-// the prod instance, so a failing prod gate stops the operation before
-// anything is written. Nothing has been committed when this returns
-func (s *Server) prepareDeploy(ctx context.Context, appPathDomain types.AppPathDomain, approve, promote, verify bool,
-	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool, reason string) error {
-	current, err := s.db.GetAppEntry(ctx, appPathDomain)
-	if err != nil {
-		return err
-	}
-	if current.IsDev {
-		return nil
-	}
-	stageEntry, err := s.getStageAppNoTx(ctx, current)
-	if err != nil {
-		return err
-	}
-	previousVersion := stageEntry.Metadata.VersionMetadata.Version
-
-	application, plan, err := s.prepareAppImage(ctx, appPathDomain, approve, branch, commit, gitAuth, repoCache, forceReload)
-	if err != nil {
-		return err
-	}
-	if application == nil {
-		return nil
-	}
-	defer application.Close() //nolint:errcheck
-
-	gates, err := application.BeforeDeployJobs()
-	if err != nil {
-		return err
-	}
-	needsImage := false
-	for _, spec := range gates {
-		if !spec.IsRun() {
-			needsImage = true
-		}
-	}
-	if (verify && s.Config().System.UseImagePreBuildStep) || needsImage {
-		// The throwaway transaction is closed at this point; the build reads
-		// only from the temp source dir captured in the plan
-		if err := application.ExecuteContainerBuild(ctx, plan); err != nil {
-			return err
-		}
-	} else {
-		application.DiscardContainerBuild(plan)
-	}
-	if len(gates) == 0 {
-		return nil
-	}
-	// The version the reload allocated for the new code (the highest
-	// version plus one, not necessarily the current version plus one)
-	newVersion := application.Metadata.VersionMetadata.Version
-	if newVersion <= previousVersion {
-		newVersion = previousVersion + 1
-	}
-	if err := s.runDeployGates(ctx, types.Transaction{}, application, stageEntry, reason, newVersion, previousVersion); err != nil {
-		return err
-	}
-	if promote {
-		if err := s.runDeployGates(ctx, types.Transaction{}, application, current, "promote", newVersion, current.Metadata.VersionMetadata.Version); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// prepareDeploys runs prepareDeploy for each app, in app path order
-func (s *Server) prepareDeploys(ctx context.Context, apps []types.AppPathDomain, approve, promote, verify bool,
-	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool, reason string) error {
-	sorted := append([]types.AppPathDomain{}, apps...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].String() < sorted[j].String() })
-	for _, appPathDomain := range sorted {
-		if err := s.prepareDeploy(ctx, appPathDomain, approve, promote, verify, branch, commit, gitAuth, repoCache, forceReload, reason); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// preparePromote runs the prod before_deploy jobs of the stage code against
-// the prod instance, before the promote transaction opens. Returns the prod
-// version the gates ran against, for the transaction's change check
-func (s *Server) preparePromote(ctx context.Context, appPathDomain types.AppPathDomain) (int, error) {
-	prodEntry, err := s.db.GetAppEntry(ctx, appPathDomain)
-	if err != nil {
-		return 0, err
-	}
-	if !strings.HasPrefix(string(prodEntry.Id), types.ID_PREFIX_APP_PROD) {
-		return prodEntry.Metadata.VersionMetadata.Version, nil
-	}
-	stageEntry, err := s.getStageAppNoTx(ctx, prodEntry)
-	if err != nil {
-		return 0, err
-	}
-	stageJobs, _, err := types.EffectiveJobs(&stageEntry.Metadata)
-	if err != nil {
-		return 0, err
-	}
-	hasGate := false
-	for _, spec := range stageJobs {
-		if spec.IsEnabled() && spec.TriggerType() == types.JobTriggerBeforeDeploy {
-			hasGate = true
-		}
-	}
-	if !hasGate {
-		return prodEntry.Metadata.VersionMetadata.Version, nil
-	}
-	application, closeApp, err := s.loadJobApp(ctx, types.Transaction{}, stageEntry)
-	if err != nil {
-		return 0, err
-	}
-	defer closeApp()
-	err = s.runDeployGates(ctx, types.Transaction{}, application, prodEntry, "promote",
-		stageEntry.Metadata.VersionMetadata.Version, prodEntry.Metadata.VersionMetadata.Version)
-	return prodEntry.Metadata.VersionMetadata.Version, err
-}
-
 // runCreateGates runs the before_deploy jobs of a just created app inside
-// the create transaction: the image is built from the loaded code and the
-// gates run against the stage (or dev) instance. A failure fails the
-// create, which rolls the app back
+// the create transaction, when the create pre-pass could not run them (see
+// prepareCreate): the image is built from the loaded code and the gates run
+// against the stage instance. A failure fails the create, which rolls the
+// app back
 func (s *Server) runCreateGates(ctx context.Context, tx types.Transaction, application *apppkg.App, entry *types.AppEntry) error {
 	if entry.IsDev {
 		return nil
@@ -1036,20 +903,8 @@ func (s *Server) runCreateGates(ctx context.Context, tx types.Transaction, appli
 	if len(gates) == 0 {
 		return nil
 	}
-	needsImage := false
-	for _, spec := range gates {
-		if !spec.IsRun() {
-			needsImage = true
-		}
-	}
-	if needsImage {
-		plan, err := application.PrepareContainerBuild(ctx)
-		if err != nil {
-			return err
-		}
-		if err := application.ExecuteContainerBuild(ctx, plan); err != nil {
-			return err
-		}
+	if err := s.buildGateImage(ctx, application, nil, gates, false); err != nil {
+		return err
 	}
 	return s.runDeployGates(ctx, tx, application, entry, "create", entry.Metadata.VersionMetadata.Version, 0)
 }

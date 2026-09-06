@@ -263,7 +263,7 @@ func TestStaticDiskSpecServesFromDiskWithoutPersistingSourceFiles(t *testing.T) 
 			"index": "index.html",
 		},
 		StageAt: "path",
-	}, nil, server.newBindingAccountManager(false))
+	}, nil, server.newBindingAccountManager(false), nil)
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("create static disk app: %v", err)
@@ -371,7 +371,7 @@ func TestStaticFromDiskConfigServesFromDiskWithoutSpec(t *testing.T) {
 		SourceUrl: sourceDir,
 		AppConfig: map[string]string{"static_from_disk": "true"},
 		StageAt:   "path",
-	}, nil, server.newBindingAccountManager(false))
+	}, nil, server.newBindingAccountManager(false), nil)
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("create static_from_disk app: %v", err)
@@ -442,7 +442,7 @@ func TestStaticFromDiskConfigRejectsNonDiskSource(t *testing.T) {
 			SourceUrl: sourceUrl,
 			AppConfig: map[string]string{"static_from_disk": "true"},
 			StageAt:   "path",
-		}, nil, server.newBindingAccountManager(false))
+		}, nil, server.newBindingAccountManager(false), nil)
 		if err == nil {
 			t.Fatalf("expected error for source %q", sourceUrl)
 		}
@@ -478,7 +478,7 @@ func TestCreateAppRejectsStageDomainRouteOverlap(t *testing.T) {
 
 	_, err = server.CreateAppTx(ctx, types.Transaction{}, "example.com:/foo", false, false, &types.CreateAppRequest{
 		SourceUrl: t.TempDir(),
-	}, nil, server.newBindingAccountManager(false))
+	}, nil, server.newBindingAccountManager(false), nil)
 	if err == nil {
 		t.Fatal("expected stage route overlap error")
 	}

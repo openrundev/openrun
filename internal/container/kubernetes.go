@@ -101,19 +101,25 @@ type KubernetesOptions struct {
 }
 
 type DeployRequest struct {
-	AppEntry           *types.AppEntry
-	SourceDir          string
-	ContainerName      ContainerName
-	ImageName          ImageName
-	Port               int32
-	EnvMap             map[string]string
-	Volumes            []*VolumeInfo
-	ContainerOptions   map[string]string
-	ParamMap           map[string]string
-	VersionHash        string
-	IsImageSpec        bool
-	HealthProbe        *HealthProbe
-	Verify             bool
+	AppEntry         *types.AppEntry
+	SourceDir        string
+	ContainerName    ContainerName
+	ImageName        ImageName
+	Port             int32
+	EnvMap           map[string]string
+	Volumes          []*VolumeInfo
+	ContainerOptions map[string]string
+	ParamMap         map[string]string
+	VersionHash      string
+	IsImageSpec      bool
+	HealthProbe      *HealthProbe
+	Verify           bool
+	// Prepare marks a deploy run before the operation's metadata transaction
+	// (the deploy pre-pass): the new version is deployed and made ready, and
+	// registered on the deploy transaction for rollback only. The traffic
+	// switch to it is registered by the operation's later (in-transaction)
+	// deploy, which finds the version ready and reuses it
+	Prepare            bool
 	DeployAttempts     int
 	LogLinesToShow     int
 	ShowLogsForFailure bool
@@ -1213,10 +1219,12 @@ func (k *KubernetesCM) DeployContainer(ctx context.Context, req DeployRequest) (
 	k.sidecars = req.Sidecars
 	k.sidecarAddrEnv = req.SidecarAddrEnv
 	appID := k.deployAppID(req.AppEntry)
-	if hostNamePort, running, err := k.GetContainerState(ctx, req.ContainerName, req.VersionHash); err != nil {
+	hostNamePort, running, err := k.GetContainerState(ctx, req.ContainerName, req.VersionHash)
+	if err != nil {
 		k.cleanupSourceDir(req.SourceDir, appID)
 		return DeployResult{}, fmt.Errorf("error getting running containers: %w", err)
-	} else if hostNamePort != "" && running && k.isActiveVersion(ctx, req.ContainerName, req.VersionHash) {
+	}
+	if hostNamePort != "" && running && k.isActiveVersion(ctx, req.ContainerName, req.VersionHash) {
 		k.cleanupSourceDir(req.SourceDir, appID)
 		k.Debug().Msgf("app %s already on version %s, reusing", appID, req.VersionHash)
 		return DeployResult{
@@ -1229,7 +1237,9 @@ func (k *KubernetesCM) DeployContainer(ctx context.Context, req DeployRequest) (
 	if k.hasPersistentVolume(req.Volumes) {
 		return k.deployInPlace(ctx, req)
 	}
-	return k.deployBlueGreen(ctx, req)
+	// A ready but not yet active version workload was deployed by the
+	// operation's pre-pass (Prepare): only the traffic switch is left
+	return k.deployBlueGreen(ctx, req, hostNamePort != "" && running)
 }
 
 func (k *KubernetesCM) isActiveVersion(ctx context.Context, name ContainerName, versionHash string) bool {
@@ -1242,18 +1252,23 @@ func (k *KubernetesCM) isActiveVersion(ctx context.Context, name ContainerName, 
 
 // deployBlueGreen stands up the new stateless version as a separate workload,
 // waits for Kubernetes readiness, then flips the stable Service selector.
-func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest) (DeployResult, error) {
+// prepared reports that the version workload already exists and is ready
+// (deployed by the operation's pre-pass), so only the readiness check and the
+// traffic switch are left
+func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest, prepared bool) (DeployResult, error) {
 	serviceName := req.ContainerName
 	appID := k.deployAppID(req.AppEntry)
 
-	if err := k.RunContainer(ctx, req.AppEntry, req.SourceDir, serviceName,
-		req.ImageName, req.Port, req.EnvMap, req.Volumes, req.ContainerOptions, req.ParamMap,
-		req.VersionHash, req.IsImageSpec, req.HealthProbe); err != nil {
-		if rmErr := k.RemoveVersion(ctx, serviceName, req.VersionHash); rmErr != nil {
-			k.Error().Err(rmErr).Msgf("failed to remove partially-created version for app %s", appID)
+	if !prepared {
+		if err := k.RunContainer(ctx, req.AppEntry, req.SourceDir, serviceName,
+			req.ImageName, req.Port, req.EnvMap, req.Volumes, req.ContainerOptions, req.ParamMap,
+			req.VersionHash, req.IsImageSpec, req.HealthProbe); err != nil {
+			if rmErr := k.RemoveVersion(ctx, serviceName, req.VersionHash); rmErr != nil {
+				k.Error().Err(rmErr).Msgf("failed to remove partially-created version for app %s", appID)
+			}
+			k.cleanupSourceDir(req.SourceDir, appID)
+			return DeployResult{}, fmt.Errorf("error creating new version for app %s: %w", appID, err)
 		}
-		k.cleanupSourceDir(req.SourceDir, appID)
-		return DeployResult{}, fmt.Errorf("error creating new version for app %s: %w", appID, err)
 	}
 	k.cleanupSourceDir(req.SourceDir, appID)
 
@@ -1280,10 +1295,20 @@ func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest) (
 		// version until then. A later app failing verification never exposes
 		// this app's uncommitted version; rollback just deletes the still-dark
 		// new workload, with no selector to restore.
-		dt.Register(appID, serviceName,
-			func(c context.Context) error {
-				return k.deleteWorkloadObjects(c, activeName)
-			},
+		onRollback := func(c context.Context) error {
+			return k.deleteWorkloadObjects(c, activeName)
+		}
+		if req.Prepare {
+			// The pre-pass owns the rollback; the operation's in-transaction
+			// deploy finds the version ready and registers the switch
+			dt.Register(appID, serviceName, onRollback, nil)
+			return DeployResult{
+				ContainerName: serviceName,
+				VersionHash:   req.VersionHash,
+				HostNamePort:  hostNamePort,
+			}, nil
+		}
+		dt.Register(appID, serviceName, onRollback,
 			func(c context.Context) error {
 				if _, _, err := k.PromoteVersion(c, serviceName, req.VersionHash); err != nil {
 					return fmt.Errorf("switching traffic to the new version: %w", err)

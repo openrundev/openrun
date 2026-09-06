@@ -564,7 +564,7 @@ func TestProdReloadKubernetesSkipsSourceDirWhenImageAlreadyExistsWithoutSourceBa
 		},
 	}
 
-	if err := h.prodReloadKubernetes(context.Background(), "deploy-hash", false); err != nil {
+	if err := h.prodReloadKubernetes(context.Background(), "deploy-hash", false, false); err != nil {
 		t.Fatalf("prodReloadKubernetes returned error: %v", err)
 	}
 	if manager.deployReq == nil {
@@ -607,7 +607,7 @@ func TestProdReloadKubernetesKeepsSourceDirForSecretVolumeWhenImageAlreadyExists
 		},
 	}
 
-	if err := h.prodReloadKubernetes(context.Background(), "deploy-hash", false); err != nil {
+	if err := h.prodReloadKubernetes(context.Background(), "deploy-hash", false, false); err != nil {
 		t.Fatalf("prodReloadKubernetes returned error: %v", err)
 	}
 	if manager.deployReq == nil {
@@ -649,7 +649,7 @@ func TestProdReloadKubernetesKeepsSourceDirForConfigMapVolumeWhenImageAlreadyExi
 		},
 	}
 
-	if err := h.prodReloadKubernetes(context.Background(), "deploy-hash", false); err != nil {
+	if err := h.prodReloadKubernetes(context.Background(), "deploy-hash", false, false); err != nil {
 		t.Fatalf("prodReloadKubernetes returned error: %v", err)
 	}
 	if manager.deployReq == nil {
@@ -689,7 +689,7 @@ func TestProdReloadCommandKeepsSourceDirForSecretVolumeWhenImageAlreadyExists(t 
 		},
 	}
 
-	if err := h.ProdReload(context.Background(), false, false); err != nil {
+	if err := h.ProdReload(context.Background(), false, false, false); err != nil {
 		t.Fatalf("ProdReload returned error: %v", err)
 	}
 	if manager.runSourceDir != sourceDir {

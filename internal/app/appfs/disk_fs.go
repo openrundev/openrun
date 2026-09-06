@@ -205,12 +205,41 @@ func (d *DiskReadFS) StaticFiles() []string {
 	return staticFiles
 }
 
+// FileHash returns the source identity hash of the directory's files and the
+// spec files (see SourceFileHash): the same hash the database backed FS
+// returns once these files are loaded, so an app built from its source
+// directory (the deploy pre-pass) and from the database share one image
 func (d *DiskReadFS) FileHash(excludeGlob []string) (string, error) {
-	return "", fmt.Errorf("FileHash not implemented for dev apps : DiskReadFS")
+	files := map[string]string{}
+	err := WalkSourceFiles(d.root, func(fsys fs.FS, name string) error {
+		data, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return err
+		}
+		files[name] = ContentSha(data)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return SourceFileHash(files, d.specFiles, excludeGlob)
 }
 
+// CreateTempSourceDir copies the directory's files and the spec files it does
+// not contain into a temp directory, for a container build
 func (d *DiskReadFS) CreateTempSourceDir() (string, error) {
-	return "", fmt.Errorf("CreateTempSourceDir not implemented for dev apps : DiskReadFS")
+	return WriteSourceTempDir(d.specFiles, func(writeFile func(name string, data []byte) error) (map[string]bool, error) {
+		written := map[string]bool{}
+		err := WalkSourceFiles(d.root, func(fsys fs.FS, name string) error {
+			data, err := fs.ReadFile(fsys, name)
+			if err != nil {
+				return err
+			}
+			written[name] = true
+			return writeFile(name, data)
+		})
+		return written, err
+	})
 }
 
 func (d *DiskReadFS) Reset() {

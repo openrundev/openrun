@@ -97,16 +97,25 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 	}
 	defer repoCache.Cleanup()
 
-	// Check out the app source before the transaction is opened, so the git
-	// network operations do not run while the transaction below is held; the
-	// in-transaction load then hits the repo cache. Best-effort: errors are
-	// left for CreateAppTx to report
-	if sourceUrl := strings.Split(appRequest.SourceUrl, "#")[0]; system.IsGit(sourceUrl) {
-		branch := cmp.Or(appRequest.GitBranch, "main")
-		if _, _, _, _, err := repoCache.CheckoutRepo(ctx, sourceUrl, branch, appRequest.GitCommit,
-			appRequest.GitAuthName, appRequest.IsDev); err != nil {
-			s.Debug().Err(err).Msgf("git prefetch: error checking out %s", sourceUrl)
-		}
+	// The pre-pass result owns the cleanup of an uncommitted create; released
+	// last, after the scope's rollback has stopped what the pre-pass started
+	committed := false
+	var prep *appPrep
+	defer func() { prep.finish(ctx, s, committed) }()
+
+	// The scope's account manager tracks auto binding accounts created for the
+	// app, so they are removed from the service if this transaction rolls back,
+	// and the pre-pass registers the containers it starts on it. The scope is
+	// opened before the transaction so that, on failure, the transaction is
+	// rolled back before the external cleanup runs
+	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	defer func() { retErr = deployScope.finish(ctx, retErr) }()
+
+	// The source checkout, file compression, definition load, image build
+	// and before_deploy gates run before the transaction is opened, so the
+	// transaction holds only the database writes
+	if prep, err = s.prepareCreate(ctx, appPath, approve, dryRun, false, appRequest, repoCache); err != nil {
+		return nil, err
 	}
 
 	tx, err := s.db.BeginTransaction(ctx)
@@ -115,12 +124,7 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	// The scope's account manager tracks auto binding accounts created for the
-	// app, so they are removed from the service if this transaction rolls back
-	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
-	defer func() { retErr = deployScope.finish(ctx, retErr) }()
-
-	result, err := s.CreateAppTx(ctx, tx, appPath, approve, dryRun, appRequest, repoCache, deployScope.accounts)
+	result, err := s.CreateAppTx(ctx, tx, appPath, approve, dryRun, appRequest, repoCache, deployScope.accounts, prep)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +136,7 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	committed = true
 	if err := deployScope.commit(ctx); err != nil {
 		return nil, err
 	}
@@ -140,9 +145,47 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 	return result, nil
 }
 
+// CreateAppTx creates an app on the caller's transaction. prep, when not nil,
+// holds the result of prepareCreate: the app id it was run with, the app's
+// source files hashed and compressed, and the before_deploy gate outcome, so
+// the work left inside the transaction is the database writes (see
+// prepareCreate). A nil prep runs every step inside the transaction
 func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, appPath string,
 	approve, dryRun bool, appRequest *types.CreateAppRequest, repoCache *RepoCache,
-	bindingAccounts *bindingAccountManager) (*types.AppCreateResponse, error) {
+	bindingAccounts *bindingAccountManager, prep *appPrep) (*types.AppCreateResponse, error) {
+	appEntry, err := s.newCreateAppEntry(ctx, appPath, appRequest)
+	if err != nil {
+		return nil, err
+	}
+	if prep != nil {
+		appEntry.Id = prep.appId
+		prep.consumed = true
+	} else {
+		appEntry.Id, err = newAppID(appEntry.IsDev)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	appEntry.Metadata.Bindings, err = s.resolveAppBindings(ctx, currentTx, appEntry.Id, appRequest.Bindings, nil, dryRun, bindingAccounts)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	appRequest.Bindings = append([]string{}, appEntry.Metadata.Bindings...)
+
+	auditResult, err := s.createApp(ctx, currentTx, appEntry, approve, dryRun, appRequest.GitBranch, appRequest.GitCommit, appRequest.GitAuthName, appRequest, repoCache, prep)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+
+	return auditResult, nil
+}
+
+// newCreateAppEntry validates the create request and builds the app entry
+// for it, without the app id and the resolved bindings (which need the
+// transaction). Shared by the create transaction and its pre-pass. The
+// request's SourceUrl star base suffix (after #) is moved into the app config
+func (s *Server) newCreateAppEntry(ctx context.Context, appPath string, appRequest *types.CreateAppRequest) (*types.AppEntry, error) {
 	appPathDomain, err := parseAppPath(appPath)
 	if err != nil {
 		return nil, err
@@ -227,23 +270,7 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 	appEntry.Metadata.AppliedSyncId = system.GetContextValue(ctx, types.SYNC_ID)
 	appEntry.Metadata.CreatedBySyncId = appEntry.Metadata.AppliedSyncId
 	appEntry.UserID = system.GetContextUserId(ctx)
-	appEntry.Id, err = newAppID(appEntry.IsDev)
-	if err != nil {
-		return nil, err
-	}
-
-	appEntry.Metadata.Bindings, err = s.resolveAppBindings(ctx, currentTx, appEntry.Id, appRequest.Bindings, nil, dryRun, bindingAccounts)
-	if err != nil {
-		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
-	}
-	appRequest.Bindings = append([]string{}, appEntry.Metadata.Bindings...)
-
-	auditResult, err := s.createApp(ctx, currentTx, &appEntry, approve, dryRun, appRequest.GitBranch, appRequest.GitCommit, appRequest.GitAuthName, appRequest, repoCache)
-	if err != nil {
-		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
-	}
-
-	return auditResult, nil
+	return &appEntry, nil
 }
 
 func (s *Server) validateAppAuthnType(authStr string) error {
@@ -326,10 +353,12 @@ func (s *Server) validateStaticFromDisk(appEntry *types.AppEntry) error {
 	return nil
 }
 
-func (s *Server) createApp(ctx context.Context, tx types.Transaction,
-	appEntry *types.AppEntry, approve, dryRun bool, branch, commit, gitAuth string, applyInfo *types.CreateAppRequest, repoCache *RepoCache) (*types.AppCreateResponse, error) {
+// validateCreateSource checks the source url of an app being created and makes
+// a disk source path absolute. Shared by the create transaction and its
+// pre-pass
+func (s *Server) validateCreateSource(appEntry *types.AppEntry) error {
 	if err := s.validateStaticFromDisk(appEntry); err != nil {
-		return nil, err
+		return err
 	}
 
 	if !system.IsGit(appEntry.SourceUrl) {
@@ -338,39 +367,36 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 			var err error
 			appEntry.SourceUrl, err = filepath.Abs(appEntry.SourceUrl)
 			if err != nil {
-				return nil, err
+				return err
 			}
 		} else if appEntry.IsDev {
-			return nil, fmt.Errorf("cannot create dev mode app with no source url")
+			return fmt.Errorf("cannot create dev mode app with no source url")
 		}
 	}
+	return nil
+}
 
+func (s *Server) createApp(ctx context.Context, tx types.Transaction,
+	appEntry *types.AppEntry, approve, dryRun bool, branch, commit, gitAuth string, applyInfo *types.CreateAppRequest, repoCache *RepoCache, prep *appPrep) (*types.AppCreateResponse, error) {
+	if err := s.validateCreateSource(appEntry); err != nil {
+		return nil, err
+	}
+
+	var err error
 	if appEntry.Id == "" {
-		var err error
-		appEntry.Id, err = newAppID(appEntry.IsDev)
-		if err != nil {
+		if appEntry.Id, err = newAppID(appEntry.IsDev); err != nil {
 			return nil, err
 		}
 	}
 
-	if appEntry.Metadata.Spec != "" {
-		specFiles := s.GetAppSpec(appEntry.Metadata.Spec)
-		if specFiles == nil {
-			return nil, fmt.Errorf("invalid app spec %s", appEntry.Metadata.Spec)
-		}
-
-		appEntry.Metadata.SpecFiles = &specFiles
-	} else {
-		tf := make(types.SpecFiles)
-		appEntry.Metadata.SpecFiles = &tf
+	if appEntry.Metadata.SpecFiles, err = s.specFilesFor(appEntry.Metadata.Spec); err != nil {
+		return nil, err
 	}
 
 	var stageAppEntry *types.AppEntry
 	workEntry := appEntry
 	if !appEntry.IsDev {
-		var err error
-		stageAppEntry, err = s.prepareStageAppEntry(ctx, appEntry, applyInfo)
-		if err != nil {
+		if stageAppEntry, err = s.prepareStageAppEntry(ctx, appEntry, applyInfo); err != nil {
 			return nil, err
 		}
 	}
@@ -393,15 +419,17 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 		workEntry = stageAppEntry
 	}
 
+	// Load the source into the database: a git source (checked out into the
+	// repo cache by the pre-pass) for every app, a disk source unless in dev
+	// mode (a dev app serves from its source dir). The pre-pass has hashed
+	// and compressed the files, leaving the inserts for here
 	if system.IsGit(workEntry.SourceUrl) {
-		// Checkout the git repo locally and load into database
-		if err := s.loadSourceFromGit(ctx, tx, workEntry, branch, commit, gitAuth, repoCache); err != nil {
+		if err := s.loadAppSource(ctx, tx, workEntry, branch, commit, gitAuth, repoCache, prep); err != nil {
 			return nil, fmt.Errorf("failed to load source %s from git: %w. Wrong org/repo name can show as auth error."+
 				" Use --git-auth for private repos, --branch to change branch", workEntry.SourceUrl, err)
 		}
 	} else if !workEntry.IsDev {
-		// App is loaded from disk (not git) and not in dev mode, load files into DB
-		if err := s.loadSourceFromDisk(ctx, tx, workEntry); err != nil {
+		if err := s.loadAppSource(ctx, tx, workEntry, "", "", "", repoCache, prep); err != nil {
 			return nil, fmt.Errorf("failed to read source %s: %w", workEntry.SourceUrl, err)
 		}
 	}
@@ -418,17 +446,23 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 		return nil, fmt.Errorf("app %s audit failed: %s", workEntry.Id, err)
 	}
 	if !workEntry.IsDev && (!auditResult.NeedsApproval || approve) {
-		// Load the app (no container) so the app definition's jobs are
-		// persisted with the create, then run its before_deploy jobs. A gate
-		// failure fails the create, which rolls the app back. A definition
-		// that does not load keeps the create's lazy semantics: the error
-		// surfaces on the first request as before, and the jobs are
-		// persisted by the next reload
-		if _, err := application.Reload(ctx, true, true, types.DryRun(dryRun), app.ReloadOptions{SkipContainer: true}); err != nil {
-			s.Warn().Err(err).Msgf("app %s did not load at create; its jobs and before_deploy gates apply on the next reload", workEntry)
-		} else if !dryRun {
-			if err := s.runCreateGates(ctx, tx, application, workEntry); err != nil {
-				return nil, err
+		if prep != nil && prep.loaded {
+			// The pre-pass loaded the definition and ran the before_deploy
+			// gates outside the transaction; persist the jobs it found
+			workEntry.Metadata.DefinitionJobs = prep.definitionJobs
+		} else if prep == nil || !prep.gatesHandled {
+			// Load the app (no container) so the app definition's jobs are
+			// persisted with the create, then run its before_deploy jobs. A gate
+			// failure fails the create, which rolls the app back. A definition
+			// that does not load keeps the create's lazy semantics: the error
+			// surfaces on the first request as before, and the jobs are
+			// persisted by the next reload
+			if _, err := application.Reload(ctx, true, true, types.DryRun(dryRun), app.ReloadOptions{SkipContainer: true}); err != nil {
+				s.Warn().Err(err).Msgf("app %s did not load at create; its jobs and before_deploy gates apply on the next reload", workEntry)
+			} else if !dryRun {
+				if err := s.runCreateGates(ctx, tx, application, workEntry); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
@@ -499,7 +533,7 @@ func (s *Server) prepareStageAppEntry(ctx context.Context, appEntry *types.AppEn
 	stageAppEntry := *appEntry
 	stageAppEntry.Path = stagePathDomain.Path
 	stageAppEntry.Domain = stagePathDomain.Domain
-	stageAppEntry.Id = types.AppId(types.ID_PREFIX_APP_STAGE + string(appEntry.Id)[len(types.ID_PREFIX_APP_PROD):])
+	stageAppEntry.Id = stageAppId(appEntry.Id)
 	stageAppEntry.MainApp = appEntry.Id
 	stageAppEntry.LinkedAppPath = appEntry.AppPathDomain().String()
 	stageAppEntry.Metadata.VersionMetadata.Version = 1
@@ -527,6 +561,11 @@ func (s *Server) prepareStageAppEntry(ctx context.Context, appEntry *types.AppEn
 	return &stageAppEntry, nil
 }
 
+// stageAppId returns the stage app id of a prod app id
+func stageAppId(prodId types.AppId) types.AppId {
+	return types.AppId(types.ID_PREFIX_APP_STAGE + string(prodId)[len(types.ID_PREFIX_APP_PROD):])
+}
+
 // getAppHttpUrl returns the HTTP URL for accessing the app
 func (s *Server) getAppHttpUrl(appEntry *types.AppEntry) string {
 	if s.Config().Http.Port <= 0 {
@@ -546,13 +585,12 @@ func (s *Server) getAppHttpsUrl(appEntry *types.AppEntry) string {
 }
 
 func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx types.Transaction) (*app.App, error) {
-	subLogger := s.With().Str("id", string(appEntry.Id)).Str("path", appEntry.Path).Logger()
-	appLogger := types.Logger{Logger: &subLogger}
+	appLogger := s.appLogger(appEntry)
 	var sourceFS *appfs.SourceFs
 	if !appEntry.IsDev && s.staticServeFromDisk(appEntry) {
 		var err error
 		sourceFS, err = appfs.NewSourceFs(appEntry.SourceUrl,
-			appfs.NewDiskReadFS(&appLogger, appEntry.SourceUrl, *appEntry.Metadata.SpecFiles),
+			appfs.NewDiskReadFS(appLogger, appEntry.SourceUrl, *appEntry.Metadata.SpecFiles),
 			false)
 		if err != nil {
 			return nil, err
@@ -575,25 +613,50 @@ func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx type
 		// Dev mode, use local disk as source
 		var err error
 		sourceFS, err = appfs.NewSourceFs(appEntry.SourceUrl,
-			&appfs.DiskWriteFS{DiskReadFS: appfs.NewDiskReadFS(&appLogger, appEntry.SourceUrl, *appEntry.Metadata.SpecFiles)},
+			&appfs.DiskWriteFS{DiskReadFS: appfs.NewDiskReadFS(appLogger, appEntry.SourceUrl, *appEntry.Metadata.SpecFiles)},
 			appEntry.IsDev)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	appPath := fmt.Sprintf(os.ExpandEnv("$OPENRUN_HOME/run/app/%s"), appEntry.Id)
-	workFS := appfs.NewWorkFs(appPath,
-		&appfs.DiskWriteFS{
-			DiskReadFS: appfs.NewDiskReadFS(&appLogger, appPath, *appEntry.Metadata.SpecFiles),
-		})
-
 	bindings, err := s.getAppBindings(ctx, tx, appEntry)
 	if err != nil {
 		return nil, err
 	}
+	return s.newApp(appEntry, sourceFS, bindings)
+}
+
+// setupAppFromDir builds the app object of a prod app over the source
+// directory its files are loaded from, instead of the database: used by the
+// create pre-pass, before the app's files exist in the database. bindings
+// are the app's bindings, resolved by the caller
+func (s *Server) setupAppFromDir(appEntry *types.AppEntry, dir string, bindings []*types.Binding) (*app.App, error) {
+	sourceFS, err := appfs.NewSourceFs(dir,
+		appfs.NewDiskReadFS(s.appLogger(appEntry), dir, *appEntry.Metadata.SpecFiles), false)
+	if err != nil {
+		return nil, err
+	}
+	return s.newApp(appEntry, sourceFS, bindings)
+}
+
+func (s *Server) appLogger(appEntry *types.AppEntry) *types.Logger {
+	subLogger := s.With().Str("id", string(appEntry.Id)).Str("path", appEntry.Path).Logger()
+	return &types.Logger{Logger: &subLogger}
+}
+
+// newApp creates the in memory app object over sourceFS, with the app's work
+// dir under $OPENRUN_HOME/run/app
+func (s *Server) newApp(appEntry *types.AppEntry, sourceFS *appfs.SourceFs, bindings []*types.Binding) (*app.App, error) {
+	appLogger := s.appLogger(appEntry)
+	appPath := fmt.Sprintf(os.ExpandEnv("$OPENRUN_HOME/run/app/%s"), appEntry.Id)
+	workFS := appfs.NewWorkFs(appPath,
+		&appfs.DiskWriteFS{
+			DiskReadFS: appfs.NewDiskReadFS(appLogger, appPath, *appEntry.Metadata.SpecFiles),
+		})
+
 	merged := s.Config()
-	return app.NewApp(sourceFS, workFS, &appLogger, appEntry, &merged.System,
+	return app.NewApp(sourceFS, workFS, appLogger, appEntry, &merged.System,
 		merged.Plugins, merged.AppConfig, s.notifyClose, s.AppEvalTemplate,
 		s.InsertAuditEvent, merged, s.rbacManager, bindings)
 }
@@ -1409,6 +1472,8 @@ func (s *Server) CompleteTransaction(ctx context.Context, tx types.Transaction, 
 	return nil
 }
 
+// getStageApp returns the stage app of a prod app. tx may be empty, the
+// entry is then read outside a transaction
 func (s *Server) getStageApp(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry) (*types.AppEntry, error) {
 	if !strings.HasPrefix(string(appEntry.Id), types.ID_PREFIX_APP_PROD) {
 		return nil, fmt.Errorf("cannot get stage for non-prod app %s", appEntry.AppPathDomain())
@@ -1418,7 +1483,15 @@ func (s *Server) getStageApp(ctx context.Context, tx types.Transaction, appEntry
 	if err != nil {
 		stageAppPath = pathBasedStageApp(appEntry)
 	}
+	if !tx.IsInitialized() {
+		return s.db.GetAppEntry(ctx, stageAppPath)
+	}
 	return s.db.GetAppEntryTx(ctx, tx, stageAppPath)
+}
+
+// getStageAppNoTx is getStageApp outside a transaction
+func (s *Server) getStageAppNoTx(ctx context.Context, appEntry *types.AppEntry) (*types.AppEntry, error) {
+	return s.getStageApp(ctx, types.Transaction{}, appEntry)
 }
 
 func pathBasedStageApp(appEntry *types.AppEntry) types.AppPathDomain {
@@ -1621,28 +1694,40 @@ func (s *Server) loadGitKey(gitAuth string) (*gitAuthEntry, error) {
 	}, nil
 }
 
-func (s *Server) loadSourceFromGit(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, branch, commit, gitAuth string, repoCache *RepoCache) error {
-	gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
-	branch = cmp.Or(branch, appEntry.Metadata.VersionMetadata.GitBranch, "main")
+// checkoutAppSource resolves the directory an app's code is loaded from and
+// records the source's git info on the entry: for a git source the checkout
+// (a repo cache hit when prefetched), with the commit, message and branch
+// stored on the version metadata; for a disk source the source dir, with the
+// git info cleared. Returns NO_SOURCE when no files are to be loaded (no
+// source, or an app served from disk). No database access
+func (s *Server) checkoutAppSource(ctx context.Context, appEntry *types.AppEntry, branch, commit, gitAuth string, repoCache *RepoCache) (string, error) {
+	if !system.IsGit(appEntry.SourceUrl) {
+		appEntry.Metadata.VersionMetadata.GitBranch = ""
+		appEntry.Metadata.VersionMetadata.GitCommit = ""
+		appEntry.Metadata.GitAuthName = ""
+		appEntry.Metadata.VersionMetadata.GitMessage = ""
+		return s.diskLoadDir(appEntry)
+	}
 
+	gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
+	branch = checkoutBranch(branch, appEntry)
 	repo, folder, message, hash, err := repoCache.CheckoutRepo(ctx, appEntry.SourceUrl, branch, commit, gitAuth, appEntry.IsDev)
 	if err != nil {
-		return err
+		return "", err
+	}
+	checkoutFolder := repo
+	if folder != "" {
+		checkoutFolder = path.Join(repo, folder)
 	}
 
-	if system.IsGit(appEntry.SourceUrl) && appEntry.IsDev {
+	if appEntry.IsDev {
 		// Dev app from git, we need to point the app to the local checkout location
-		sourcePath := repo
-		if folder != "" {
-			sourcePath = path.Join(repo, folder)
-		}
-		// App metadata points to the local checkout location
 		appEntry.Settings.OrigSourceUrl = appEntry.SourceUrl
-		appEntry.SourceUrl = sourcePath
+		appEntry.SourceUrl = checkoutFolder
 	}
 
-	// Update the git info into the appEntry, the caller needs to persist it into the app metadata
-	// This function will persist it into the app_version metadata
+	// The git info is persisted into the app_version metadata with the load,
+	// and into the app metadata by the caller
 	appEntry.Metadata.VersionMetadata.GitCommit = hash
 	appEntry.Metadata.VersionMetadata.GitMessage = message
 	if commit != "" {
@@ -1654,41 +1739,34 @@ func (s *Server) loadSourceFromGit(ctx context.Context, tx types.Transaction, ap
 
 	s.Info().Msgf("Cloned git repo %s %s:%s folder %s to %s, commit %s: %s", repo,
 		appEntry.Metadata.VersionMetadata.GitBranch, appEntry.Metadata.VersionMetadata.GitCommit, folder, repo, hash, message)
-	checkoutFolder := repo
-	if folder != "" {
-		checkoutFolder = path.Join(repo, folder)
-	}
-
-	s.Info().Msgf("Loading app sources from %s", checkoutFolder)
-	// Walk the local directory and add all files to the database
-	fileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
-	if err != nil {
-		return err
-	}
-	highestVersion, err := fileStore.GetHighestVersion(ctx, tx, appEntry.Id)
-	if err != nil {
-		return err
-	}
-	prevVersion := appEntry.Metadata.VersionMetadata.Version
-	if highestVersion == 0 {
-		prevVersion = 0 // No previous version, start at 0
-	}
-	appEntry.Metadata.VersionMetadata.PreviousVersion = prevVersion
-	appEntry.Metadata.VersionMetadata.Version = highestVersion + 1
-	if err := fileStore.AddAppVersionDisk(ctx, tx, appEntry.Metadata, checkoutFolder); err != nil {
-		return err
-	}
-
-	return nil
+	return checkoutFolder, nil
 }
 
-func (s *Server) loadSourceFromDisk(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry) error {
-	s.Info().Msgf("Loading app sources from %s", appEntry.SourceUrl)
-	appEntry.Metadata.VersionMetadata.GitBranch = ""
-	appEntry.Metadata.VersionMetadata.GitCommit = ""
-	appEntry.Metadata.GitAuthName = ""
-	appEntry.Metadata.VersionMetadata.GitMessage = ""
+// diskLoadDir returns the directory whose files are loaded into the database
+// for a disk sourced app: the source dir, or NO_SOURCE for an app served
+// from disk (its files are not copied into the database)
+func (s *Server) diskLoadDir(appEntry *types.AppEntry) (string, error) {
+	if s.staticServeFromDisk(appEntry) {
+		if err := validateStaticDiskSource(appEntry.SourceUrl); err != nil {
+			return "", err
+		}
+		return types.NO_SOURCE, nil
+	}
+	return appEntry.SourceUrl, nil
+}
 
+// assignNextVersion sets the entry's version metadata for the code being
+// loaded: the app's highest stored version plus one, with the current version
+// as the previous one (zero for an app with no versions). tx may be empty, a
+// read transaction is then opened
+func (s *Server) assignNextVersion(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry) error {
+	if !tx.IsInitialized() {
+		var err error
+		if tx, err = s.db.BeginTransaction(ctx); err != nil {
+			return err
+		}
+		defer tx.Rollback() //nolint:errcheck
+	}
 	fileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
 	if err != nil {
 		return err
@@ -1699,23 +1777,55 @@ func (s *Server) loadSourceFromDisk(ctx context.Context, tx types.Transaction, a
 	}
 	prevVersion := appEntry.Metadata.VersionMetadata.Version
 	if highestVersion == 0 {
-		prevVersion = 0 // No previous version, set to 0
+		prevVersion = 0 // No previous version
 	}
-
 	appEntry.Metadata.VersionMetadata.PreviousVersion = prevVersion
 	appEntry.Metadata.VersionMetadata.Version = highestVersion + 1
-	// Walk the local directory and add all files to the database
-	checkoutDir := appEntry.SourceUrl
-	if s.staticServeFromDisk(appEntry) {
-		if err := validateStaticDiskSource(appEntry.SourceUrl); err != nil {
-			return err
-		}
-		checkoutDir = types.NO_SOURCE
-	}
-	if err := fileStore.AddAppVersionDisk(ctx, tx, appEntry.Metadata, checkoutDir); err != nil {
+	return nil
+}
+
+// loadAppFiles records the next app version and loads the files under
+// loadDir (from checkoutAppSource) into the database as that version. prep,
+// when it holds the files of this source already hashed and compressed by the
+// pre-pass, leaves only the inserts to run here
+func (s *Server) loadAppFiles(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, loadDir string, prep *appPrep) error {
+	s.Info().Msgf("Loading app sources from %s", loadDir)
+	if err := s.assignNextVersion(ctx, tx, appEntry); err != nil {
 		return err
 	}
-	return nil
+	fileStore, err := metadata.NewFileStore(appEntry.Id, appEntry.Metadata.VersionMetadata.Version, s.db, tx)
+	if err != nil {
+		return err
+	}
+	if prepared := prep.preparedFiles(loadDir, appEntry.Metadata.VersionMetadata.GitCommit); prepared != nil {
+		return fileStore.AddAppVersionPrepared(ctx, tx, appEntry.Metadata, prepared)
+	}
+	return fileStore.AddAppVersionDisk(ctx, tx, appEntry.Metadata, loadDir)
+}
+
+// loadAppSource checks out the app's source and loads it into the database as
+// a new version: checkoutAppSource followed by loadAppFiles
+func (s *Server) loadAppSource(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, branch, commit, gitAuth string,
+	repoCache *RepoCache, prep *appPrep) error {
+	loadDir, err := s.checkoutAppSource(ctx, appEntry, branch, commit, gitAuth, repoCache)
+	if err != nil {
+		return err
+	}
+	return s.loadAppFiles(ctx, tx, appEntry, loadDir, prep)
+}
+
+// specFilesFor returns the files of the named app spec, an empty set for no
+// spec
+func (s *Server) specFilesFor(spec types.AppSpec) (*types.SpecFiles, error) {
+	if spec == "" {
+		tf := make(types.SpecFiles)
+		return &tf, nil
+	}
+	specFiles := s.GetAppSpec(spec)
+	if specFiles == nil {
+		return nil, fmt.Errorf("invalid app spec %s", spec)
+	}
+	return &specFiles, nil
 }
 
 func validateStaticDiskSource(sourceUrl string) error {
@@ -1925,7 +2035,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	}
 
 	// Checkout the git repo locally and load into database
-	if err := s.loadSourceFromGit(ctx, tx, &previewAppEntry, "", commitId, previewAppEntry.Metadata.GitAuthName, repoCache); err != nil {
+	if err := s.loadAppSource(ctx, tx, &previewAppEntry, "", commitId, previewAppEntry.Metadata.GitAuthName, repoCache, nil); err != nil {
 		return nil, fmt.Errorf("failed to load source %s from git: %w", previewAppEntry.SourceUrl, err)
 	}
 
