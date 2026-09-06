@@ -32,7 +32,7 @@ func TestUnixClientClosesIdleConnections(t *testing.T) {
 		},
 	}
 	go func() { _ = server.Serve(listener) }()
-	defer server.Close()
+	defer server.Close() //nolint:errcheck
 	t.Setenv("OPENRUN_HOME", "")
 	client := NewHttpClient(socket, "", false)
 	defer client.CloseIdleConnections()
