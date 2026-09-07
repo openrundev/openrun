@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/types"
@@ -176,5 +177,26 @@ func TestDeployScopeRollbackUsesDetachedContext(t *testing.T) {
 	}
 	if !rolled {
 		t.Fatal("rollback did not run")
+	}
+}
+
+// The commit/rollback time budget grows with the deploy entries and with the
+// commit budget registered by rollouts run at commit (in-place Kubernetes
+// updates).
+func TestDeployScopeOpTimeoutIncludesCommitBudget(t *testing.T) {
+	s := testServer()
+	ctx, scope := s.beginDeployScope(context.Background(), true, false)
+	base := scope.opTimeout()
+	txn := container.DeployTxnFromContext(ctx)
+	txn.Register("app1", "clc-app1", nil, nil)
+	if got := scope.opTimeout(); got != base+time.Minute {
+		t.Fatalf("opTimeout with one entry = %v, want %v", got, base+time.Minute)
+	}
+	txn.AddCommitBudget(3 * time.Minute)
+	if got := scope.opTimeout(); got != base+4*time.Minute {
+		t.Fatalf("opTimeout with commit budget = %v, want %v", got, base+4*time.Minute)
+	}
+	if err := scope.commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 }

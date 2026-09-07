@@ -164,6 +164,70 @@ tests:
       retries: 15
       interval: 2s
 
+  # Atomic multi-app update with a persistent volume app: the PV app's
+  # in-place (Recreate) rollout runs only when the operation commits, so a
+  # second app failing verification in the same reload leaves the PV app on
+  # its current version with its stable Deployment untouched. The PV app
+  # sorts first in the operation ("/kube_sql" < "/kube_sqlx"), so its pre-pass
+  # runs before the failing app's.
+  kubernetes710: # setup a second app, to be broken later
+    command: rm -rf ./pvverify_tmp && cp -rf verifyapp pvverify_tmp
+  kubernetes711: # create it under a path the glob below matches along with the PV app
+    command: ../openrun app create --stage-at path --spec python-flask --approve ./pvverify_tmp /kube_sqlx
+  kubernetes712: # it serves
+    command: curl -sS localhost:${HTTP_PORT}/kube_sqlx/version
+    stdout: "V1"
+    config:
+      retries: 15
+      interval: 2s
+  kubernetes713: # record the PV app's prod Deployment generation (a dry run does not bump it, a rollout does)
+    command: |
+      kubectl get deploy -n ${KUBE_TEST_NAMESPACE}-apps -o json | jq -r '.items[] | select(.metadata.annotations["dev.openrun.app.path"]=="/kube_sql" and (.metadata.annotations["dev.openrun.app.id"]|startswith("app_prd_"))) | .metadata.generation' > pv_generation.txt && grep -qE '^[0-9]+$' pv_generation.txt && echo recorded
+    stdout: "recorded"
+  kubernetes714: # bump the PV app code and break the second app's health check
+    command: perl -i -pe 's/"VERSION2"/"VERSION3"/g' sqlite_tmp/app.py && perl -i -pe 's/return "ok", 200/return "broken", 500/g; s/"V1"/"V2"/g' pvverify_tmp/app.py
+  kubernetes715: # the multi-app reload fails on the second app
+    command: ../openrun app reload --verify --promote "/kube_sql*"
+    exit-code: 1
+    stderr: "verify failed"
+  kubernetes716: # the PV app still serves its current version, immediately (no rollout happened)
+    command: curl -sS localhost:${HTTP_PORT}/kube_sql/version
+    stdout: "VERSION2"
+  kubernetes717: # its stable Deployment was never touched: same generation
+    command: |
+      test "$(kubectl get deploy -n ${KUBE_TEST_NAMESPACE}-apps -o json | jq -r '.items[] | select(.metadata.annotations["dev.openrun.app.path"]=="/kube_sql" and (.metadata.annotations["dev.openrun.app.id"]|startswith("app_prd_"))) | .metadata.generation')" = "$(cat pv_generation.txt)" && echo same
+    stdout: "same"
+  kubernetes718: # the second app kept its version too
+    command: curl -sS localhost:${HTTP_PORT}/kube_sqlx/version
+    stdout: "V1"
+  kubernetes720: # fix the second app's health check
+    command: perl -i -pe 's/return "broken", 500/return "ok", 200/g' pvverify_tmp/app.py
+  kubernetes721: # the multi-app reload succeeds, the PV app rolls out at commit
+    command: ../openrun app reload --verify --promote "/kube_sql*"
+    exit-code: 0
+  kubernetes722: # the PV app is on the new version
+    command: curl -sS localhost:${HTTP_PORT}/kube_sql/version
+    stdout: "VERSION3"
+    config:
+      retries: 20
+      interval: 2s
+  kubernetes723: # the Deployment was rolled out exactly once
+    command: |
+      test "$(kubectl get deploy -n ${KUBE_TEST_NAMESPACE}-apps -o json | jq -r '.items[] | select(.metadata.annotations["dev.openrun.app.path"]=="/kube_sql" and (.metadata.annotations["dev.openrun.app.id"]|startswith("app_prd_"))) | .metadata.generation')" = "$(($(cat pv_generation.txt) + 1))" && echo once
+    stdout: "once"
+  kubernetes724: # the data on the volume survived the in-place rollout
+    command: curl -sS localhost:${HTTP_PORT}/kube_sql/value
+    stdout: "testval1"
+    config:
+      retries: 15
+      interval: 2s
+  kubernetes725: # the second app is updated too
+    command: curl -sS localhost:${HTTP_PORT}/kube_sqlx/version
+    stdout: "V2"
+    config:
+      retries: 15
+      interval: 2s
+
   # Test app reload --verify: a passing reload updates the app, a failing one
   # (health check returns 500) is rolled back and the old version keeps serving.
   kubernetes800: # setup verify test app (no volume)

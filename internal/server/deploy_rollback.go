@@ -82,9 +82,10 @@ func (s *Server) beginDeployScope(ctx context.Context, ownsDB, dryRun bool) (con
 
 // opTimeout scales the commit/rollback time budget with the operation size:
 // each app's commit can wait on endpoint convergence after a traffic switch,
-// and each rollback on a pod rollout.
+// and each rollback on a pod rollout. Deploys whose commit action is itself a
+// rollout (in-place Kubernetes updates) add their wait budget on top.
 func (d *operationScope) opTimeout() time.Duration {
-	return 2*time.Minute + time.Duration(d.txn.Len())*time.Minute
+	return 2*time.Minute + time.Duration(d.txn.Len())*time.Minute + d.txn.CommitBudget()
 }
 
 // commit marks the operation as successfully committed (so finish becomes a

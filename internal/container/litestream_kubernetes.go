@@ -69,7 +69,7 @@ func (k *KubernetesCM) applyLitestreamObjects(ctx context.Context, wlName string
 	configMapApply := corev1apply.ConfigMap(objName, k.appNamespace).
 		WithLabels(ownershipLabels(wlName)).
 		WithData(map[string]string{LitestreamConfigFileName: spec.ConfigYAML})
-	if _, err := k.clientSet.CoreV1().ConfigMaps(k.appNamespace).Apply(ctx, configMapApply, applyOptions()); err != nil {
+	if _, err := k.clientSet.CoreV1().ConfigMaps(k.appNamespace).Apply(ctx, configMapApply, k.applyOptions(ctx)); err != nil {
 		return "", fmt.Errorf("apply litestream configmap %s: %w", objName, err)
 	}
 
@@ -80,7 +80,7 @@ func (k *KubernetesCM) applyLitestreamObjects(ctx context.Context, wlName string
 	secretApply := corev1apply.Secret(objName, k.appNamespace).
 		WithLabels(ownershipLabels(wlName)).
 		WithData(secretData)
-	if _, err := k.clientSet.CoreV1().Secrets(k.appNamespace).Apply(ctx, secretApply, applyOptions()); err != nil {
+	if _, err := k.clientSet.CoreV1().Secrets(k.appNamespace).Apply(ctx, secretApply, k.applyOptions(ctx)); err != nil {
 		return "", fmt.Errorf("apply litestream secret %s: %w", objName, err)
 	}
 	return objName, nil

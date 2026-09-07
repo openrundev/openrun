@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -23,6 +24,10 @@ type DeployTxn struct {
 	mu      sync.Mutex
 	entries []deployEntry
 	names   []ContainerName
+	// commitBudget is the extra time the commit actions need beyond the
+	// per-entry allowance, added by deploys whose commit action is a rollout
+	// rather than a traffic switch (see AddCommitBudget)
+	commitBudget time.Duration
 }
 
 type deployEntry struct {
@@ -61,6 +66,23 @@ func (d *DeployTxn) ContainerNames() []ContainerName {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return slices.Clone(d.names)
+}
+
+// AddCommitBudget adds to the time the operation's commit actions are given.
+// A deploy whose commit action rolls a workload out (an in-place Kubernetes
+// update, which waits for the new pod) registers the rollout's wait budget,
+// so the owner sizes its commit timeout to it. Not drained by CommitAll
+func (d *DeployTxn) AddCommitBudget(budget time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.commitBudget += budget
+}
+
+// CommitBudget returns the extra commit time registered with AddCommitBudget
+func (d *DeployTxn) CommitBudget() time.Duration {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.commitBudget
 }
 
 func (d *DeployTxn) drain() []deployEntry {

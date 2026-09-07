@@ -178,7 +178,7 @@ By default, changes are applied to the stage app. Add the `--promote` option to 
 
 The `--reload` option controls whether new source code is loaded for apps during the apply operation. Setting it to `none` means no apps are reloaded, `updated` means apps which have a config update are reloaded. `matched` (the default) means all apps matched by the app glob are reloaded, even if there is no config update.
 
-Use the top-level `--verify` option to verify reloads for every matched app. Verification starts the reloaded app container and waits for it to become healthy before the metadata transaction opens; traffic switches to it only when the transaction commits. If verification fails for any app, the apply operation fails and the changes are reverted. To verify specific apps in a declarative apply file, set `verify=True` on those app declarations:
+Use the top-level `--verify` option to verify reloads for every matched app. Verification starts the reloaded app container and waits for it to become healthy before the metadata transaction opens; traffic switches to it only when the transaction commits. If verification fails for any app, the apply operation fails and the changes are reverted. Kubernetes apps with persistent volumes cannot start a second version: their objects are validated before the transaction and the rollout runs when it commits, see [Kubernetes]({{< ref "docs/container/kubernetes/" >}}). To verify specific apps in a declarative apply file, set `verify=True` on those app declarations:
 
 ```python {filename="apps.ace"}
 app("/todo/admin", "github.com/example/todo", bindings=["/todo-data/admin"], verify=True)

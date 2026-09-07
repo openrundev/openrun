@@ -57,8 +57,32 @@ const (
 	MANAGED_BY_VALUE = "openrun"
 )
 
-func applyOptions() meta.ApplyOptions {
-	return meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER, Force: true}
+// serverDryRunKey marks a context whose Kubernetes writes run as server-side
+// dry runs: the API server validates and runs admission on the objects but
+// persists nothing. The deploy pre-pass of a persistent volume app uses it to
+// validate the new version's objects without touching the live workload
+type serverDryRunKey struct{}
+
+func withServerDryRun(ctx context.Context) context.Context {
+	return context.WithValue(ctx, serverDryRunKey{}, true)
+}
+
+func isServerDryRun(ctx context.Context) bool {
+	v, _ := ctx.Value(serverDryRunKey{}).(bool)
+	return v
+}
+
+// dryRunOption returns the DryRun value for the write options of a request on
+// ctx: a server-side dry run when the context asks for one, nil otherwise
+func dryRunOption(ctx context.Context) []string {
+	if isServerDryRun(ctx) {
+		return []string{meta.DryRunAll}
+	}
+	return nil
+}
+
+func (k *KubernetesCM) applyOptions(ctx context.Context) meta.ApplyOptions {
+	return meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER, Force: true, DryRun: dryRunOption(ctx)}
 }
 
 // hasPersistentVolume reports whether the app or any of its sidecars mounts a
@@ -115,10 +139,14 @@ type DeployRequest struct {
 	HealthProbe      *HealthProbe
 	Verify           bool
 	// Prepare marks a deploy run before the operation's metadata transaction
-	// (the deploy pre-pass): the new version is deployed and made ready, and
-	// registered on the deploy transaction for rollback only. The traffic
-	// switch to it is registered by the operation's later (in-transaction)
-	// deploy, which finds the version ready and reuses it
+	// (the deploy pre-pass). Stateless (blue-green) apps: the new version is
+	// deployed and made ready, and registered on the deploy transaction for
+	// rollback only; the traffic switch to it is registered by the
+	// operation's later (in-transaction) deploy, which finds the version
+	// ready and reuses it. Persistent volume (in-place) apps: the new
+	// version's objects are validated with a server-side dry run, the live
+	// workload is untouched; the in-transaction deploy registers the rollout
+	// as the operation's commit action
 	Prepare            bool
 	DeployAttempts     int
 	LogLinesToShow     int
@@ -666,7 +694,7 @@ func (k *KubernetesCM) VolumeCreate(ctx context.Context, name VolumeName, reques
 
 	_, err = k.clientSet.CoreV1().
 		PersistentVolumeClaims(k.appNamespace).
-		Apply(ctx, pvc, applyOptions())
+		Apply(ctx, pvc, k.applyOptions(ctx))
 	if err != nil {
 		return fmt.Errorf("apply PersistentVolumeClaim %s: %w", pvcName, err)
 	}
@@ -716,7 +744,7 @@ func (k *KubernetesCM) processVolumes(ctx context.Context, name, owner string, v
 				WithData(map[string][]byte{fileName: secretData})
 
 			if _, err := k.clientSet.CoreV1().Secrets(k.appNamespace).Apply(
-				ctx, secretApply, applyOptions()); err != nil {
+				ctx, secretApply, k.applyOptions(ctx)); err != nil {
 				return nil, nil, fmt.Errorf("apply secret %s: %w", secretName, err)
 			}
 
@@ -750,7 +778,7 @@ func (k *KubernetesCM) processVolumes(ctx context.Context, name, owner string, v
 				WithData(map[string]string{fileName: string(data)})
 
 			if _, err := k.clientSet.CoreV1().ConfigMaps(k.appNamespace).Apply(
-				ctx, configMapApply, applyOptions()); err != nil {
+				ctx, configMapApply, k.applyOptions(ctx)); err != nil {
 				return nil, nil, fmt.Errorf("apply configmap %s: %w", configMapName, err)
 			}
 
@@ -1098,7 +1126,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 				WithAnnotations(annotations).
 				WithSpec(podSpec)))
 
-	if _, err := k.clientSet.AppsV1().Deployments(k.appNamespace).Apply(ctx, dep, applyOptions()); err != nil {
+	if _, err := k.clientSet.AppsV1().Deployments(k.appNamespace).Apply(ctx, dep, k.applyOptions(ctx)); err != nil {
 		return "", fmt.Errorf("apply deployment: %w", err)
 	}
 
@@ -1141,7 +1169,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 				WithMetrics(metric))
 
 		if _, err := k.clientSet.AutoscalingV2().HorizontalPodAutoscalers(k.appNamespace).Apply(
-			ctx, hpa, applyOptions()); err != nil {
+			ctx, hpa, k.applyOptions(ctx)); err != nil {
 			return "", fmt.Errorf("apply hpa: %w", err)
 		}
 		k.Logger.Info().Msgf("created HPA for %s with min=%d max=%d", wlName, minReplicas, kubernetesOptions.MaxReplicas)
@@ -1151,7 +1179,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 		// version so it does not keep scaling a workload the new code assumes is
 		// single-replica.
 		if err := k.clientSet.AutoscalingV2().HorizontalPodAutoscalers(k.appNamespace).Delete(
-			ctx, wlName, meta.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			ctx, wlName, meta.DeleteOptions{DryRun: dryRunOption(ctx)}); err != nil && !apierrors.IsNotFound(err) {
 			return "", fmt.Errorf("delete stale hpa %s: %w", wlName, err)
 		}
 	}
@@ -1183,7 +1211,7 @@ func (k *KubernetesCM) applyService(ctx context.Context, serviceName string, sel
 				WithTargetPort(intstr.FromInt(int(port))).
 				WithProtocol(protocol)))
 
-	svc, err := k.clientSet.CoreV1().Services(k.appNamespace).Apply(ctx, svcApply, applyOptions())
+	svc, err := k.clientSet.CoreV1().Services(k.appNamespace).Apply(ctx, svcApply, k.applyOptions(ctx))
 	if err != nil {
 		return "", fmt.Errorf("apply service: %w", err)
 	}
@@ -1351,25 +1379,116 @@ func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest, p
 	}, nil
 }
 
-// deployInPlace mutates the stable Kubernetes workload. It snapshots first so
-// a failed verified reload can restore the previous Deployment and owned
-// ConfigMaps/Secrets.
+// deployInPlace updates the stable Kubernetes workload of a persistent volume
+// app. A ReadWriteOnce claim cannot be mounted by two pods, so there is no
+// dark second version to switch traffic to: the Deployment is mutated in
+// place, with a Recreate rollout.
+//
+// Inside an operation (a DeployTxn in ctx) the live workload is left untouched
+// until the operation's metadata transaction commits, as the blue-green path
+// leaves its Service selector: the pre-pass (Prepare) validates the new
+// version's objects with a server-side dry run, and the in-transaction deploy
+// snapshots the workload and registers the rollout as the commit action, which
+// restores the snapshot when the rollout fails. A failure of any other app in
+// the operation therefore never exposes this app's new version. Outside an
+// operation (the lazy initialization after a commit, or a promote) the rollout
+// runs immediately, joining a rollout of the same version already in progress
 func (k *KubernetesCM) deployInPlace(ctx context.Context, req DeployRequest) (DeployResult, error) {
 	appID := k.deployAppID(req.AppEntry)
-	var rollbackSnap any
-	snap, snapErr := k.Snapshot(ctx, req.ContainerName)
-	if snapErr != nil {
-		if req.Verify {
-			k.cleanupSourceDir(req.SourceDir, appID)
-			return DeployResult{}, fmt.Errorf("cannot safely reload app %s: failed to capture rollback snapshot before update: %w", appID, snapErr)
-		}
-		k.Warn().Err(snapErr).Msgf("could not snapshot app %s before reload; rollback on failure unavailable", appID)
-	} else {
-		rollbackSnap = snap
+	dt := DeployTxnFromContext(ctx)
+	if dt == nil {
+		return k.deployInPlaceNow(ctx, req)
 	}
 
+	// Inside an operation the snapshot is the only rollback of a rollout that
+	// fails after the metadata has committed, so the deploy refuses to proceed
+	// without one, verify or not
+	snap, err := k.Snapshot(ctx, req.ContainerName)
+	if err != nil {
+		k.cleanupSourceDir(req.SourceDir, appID)
+		return DeployResult{}, fmt.Errorf("cannot safely reload app %s: failed to capture rollback snapshot before update: %w", appID, err)
+	}
+	hostNamePort := k.snapshotHostNamePort(snap)
+	result := DeployResult{ContainerName: req.ContainerName, VersionHash: req.VersionHash, HostNamePort: hostNamePort}
+
+	if req.Prepare {
+		defer k.cleanupSourceDir(req.SourceDir, appID)
+		if err := k.dryRunDeploy(ctx, req); err != nil {
+			return DeployResult{}, fmt.Errorf("validating the new version of app %s: %w", appID, err)
+		}
+		return result, nil
+	}
+
+	// The source dir (mounted config rendered at rollout time) lives until the
+	// operation ends, either way
+	onRollback := func(context.Context) error {
+		k.cleanupSourceDir(req.SourceDir, appID)
+		return nil
+	}
+	onCommit := func(c context.Context) error {
+		if _, err := k.rollOutInPlace(c, req, snap, false); err != nil {
+			if ClusterRollbackClean(err) {
+				return fmt.Errorf("rollout of the new version of app %s failed, the previous version was restored: %w", appID, err)
+			}
+			return fmt.Errorf("rollout of the new version of app %s failed: %w", appID, err)
+		}
+		return k.cleanupInactiveWorkloads(c, req.ContainerName)
+	}
+	dt.AddCommitBudget(k.inPlaceRolloutBudget(req.DeployAttempts))
+	dt.Register(appID, req.ContainerName, onRollback, onCommit)
+	return result, nil
+}
+
+// deployInPlaceNow rolls the stable workload out to the requested version
+// immediately (no operation in progress). The workload is snapshotted first so
+// a failed rollout can restore the previous version; with verify a snapshot
+// failure is fatal (the live Deployment is not mutated when it cannot be
+// rolled back), otherwise the rollout proceeds without rollback. A rollout of
+// the same version already in progress (the commit of an operation that is
+// still waiting, or a prior deploy that did not finish its wait) is joined:
+// the same spec is re-applied (a no-op for the rollout) and waited for, with
+// nothing to restore
+func (k *KubernetesCM) deployInPlaceNow(ctx context.Context, req DeployRequest) (DeployResult, error) {
+	appID := k.deployAppID(req.AppEntry)
+	joined, err := k.deploymentAtVersion(ctx, req.ContainerName, req.VersionHash)
+	if err != nil {
+		k.cleanupSourceDir(req.SourceDir, appID)
+		return DeployResult{}, err
+	}
+	var snap any
+	if joined {
+		k.Debug().Msgf("app %s workload is already rolling out version %s, joining the rollout", appID, req.VersionHash)
+	} else {
+		snapshot, snapErr := k.Snapshot(ctx, req.ContainerName)
+		if snapErr != nil {
+			if req.Verify {
+				k.cleanupSourceDir(req.SourceDir, appID)
+				return DeployResult{}, fmt.Errorf("cannot safely reload app %s: failed to capture rollback snapshot before update: %w", appID, snapErr)
+			}
+			k.Warn().Err(snapErr).Msgf("could not snapshot app %s before reload; rollback on failure unavailable", appID)
+		} else {
+			snap = snapshot
+		}
+	}
+	result, err := k.rollOutInPlace(ctx, req, snap, joined)
+	if err != nil {
+		return DeployResult{}, err
+	}
+	k.cleanupInactiveWorkloadsAsync(req.ContainerName, appID, "after in-place deployment")
+	return result, nil
+}
+
+// rollOutInPlace applies the requested version to the stable workload and
+// waits for the rollout to complete. On failure the snapshot (when not nil)
+// is restored and the error reports the rollback status; joined marks a
+// rollout this call did not start, whose failure is reported as is
+func (k *KubernetesCM) rollOutInPlace(ctx context.Context, req DeployRequest, snap any, joined bool) (DeployResult, error) {
+	appID := k.deployAppID(req.AppEntry)
 	fail := func(err error) error {
-		return k.failWithRollback(ctx, appID, rollbackSnap, err)
+		if joined {
+			return err
+		}
+		return k.failWithRollback(ctx, appID, snap, err)
 	}
 
 	if err := k.RunContainer(ctx, req.AppEntry, req.SourceDir, req.ContainerName,
@@ -1392,24 +1511,62 @@ func (k *KubernetesCM) deployInPlace(ctx context.Context, req DeployRequest) (De
 	}
 	k.waitForNodePortConnectivity(ctx, hostNamePort)
 
-	onCommit := func(c context.Context) error {
-		return k.cleanupInactiveWorkloads(c, req.ContainerName)
-	}
-	if dt := DeployTxnFromContext(ctx); dt != nil {
-		var onRollback func(context.Context) error
-		if rollbackSnap != nil {
-			onRollback = func(c context.Context) error { return k.Restore(c, rollbackSnap) }
-		}
-		dt.Register(appID, req.ContainerName, onRollback, onCommit)
-	} else {
-		k.cleanupInactiveWorkloadsAsync(req.ContainerName, appID, "after in-place deployment")
-	}
-
 	return DeployResult{
 		ContainerName: req.ContainerName,
 		VersionHash:   req.VersionHash,
 		HostNamePort:  hostNamePort,
 	}, nil
+}
+
+// dryRunDeploy submits the requested version's objects as server-side dry
+// runs: the API server validates them and runs admission, persisting nothing.
+// The rendered mounted config files are written to the app run dir as a real
+// deploy writes them
+func (k *KubernetesCM) dryRunDeploy(ctx context.Context, req DeployRequest) error {
+	return k.RunContainer(withServerDryRun(ctx), req.AppEntry, req.SourceDir, req.ContainerName,
+		req.ImageName, req.Port, req.EnvMap, req.Volumes, req.ContainerOptions, req.ParamMap,
+		req.VersionHash, req.IsImageSpec, req.HealthProbe)
+}
+
+// deploymentAtVersion reports whether the stable Deployment's pod template
+// already carries the version hash, i.e. a rollout to that version has been
+// submitted (and may still be in progress). A missing Deployment is not at
+// any version
+func (k *KubernetesCM) deploymentAtVersion(ctx context.Context, name ContainerName, versionHash string) (bool, error) {
+	n := sanitizeContainerName(string(name))
+	dep, err := k.clientSet.AppsV1().Deployments(k.appNamespace).Get(ctx, n, meta.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("get deployment %s/%s: %w", k.appNamespace, n, err)
+	}
+	return dep.Spec.Template.Labels[VERSION_HASH_LABEL] == TrimLabelValue(versionHash), nil
+}
+
+// snapshotHostNamePort returns the address of the app's stable Service as
+// captured in the snapshot, empty when the app has no Service yet (a first
+// deploy). An in-place rollout does not change the Service address
+func (k *KubernetesCM) snapshotHostNamePort(snapshot any) string {
+	snap, ok := snapshot.(*k8sDeploySnapshot)
+	if !ok || snap == nil || snap.service == nil || len(snap.service.Spec.Ports) == 0 {
+		return ""
+	}
+	return k.serviceHostNamePort(snap.service)
+}
+
+// inPlaceRolloutBudget is the time an in-place rollout run at operation commit
+// may take: the deploy readiness budget, plus the termination of the previous
+// pod that a Recreate rollout waits for before starting the new one
+func (k *KubernetesCM) inPlaceRolloutBudget(attempts int) time.Duration {
+	if attempts <= 0 {
+		attempts = 30
+	}
+	probePeriodSecs := k.appConfig.Container.DeployProbePeriodSecs
+	if probePeriodSecs <= 0 {
+		probePeriodSecs = 1
+	}
+	return deployReadyBudget(attempts, probePeriodSecs) + time.Duration(probePeriodSecs)*time.Second + 90*time.Second
 }
 
 // isDeploymentReady reports whether a Deployment has fully rolled out the
@@ -1792,7 +1949,7 @@ func (k *KubernetesCM) failWithRollback(ctx context.Context, appID types.AppId, 
 	if snap == nil {
 		return &DeployRollbackError{Err: origErr, Available: false}
 	}
-	k.Info().Msgf("verification failed for app %s, rolling back deployment", appID)
+	k.Info().Msgf("deploy of app %s failed, rolling back deployment", appID)
 	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
 	rbErr := k.Restore(rbCtx, snap)

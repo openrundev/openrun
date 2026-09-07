@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -139,5 +140,24 @@ func TestClusterRollbackClean(t *testing.T) {
 	de := &DeployRollbackError{Err: base, Available: false}
 	if !errors.Is(de, base) {
 		t.Fatal("DeployRollbackError should unwrap to the base error")
+	}
+}
+
+func TestDeployTxnCommitBudgetAccumulatesAndSurvivesDrain(t *testing.T) {
+	d := NewDeployTxn()
+	if d.CommitBudget() != 0 {
+		t.Fatalf("new txn budget = %v, want 0", d.CommitBudget())
+	}
+	d.AddCommitBudget(30 * time.Second)
+	d.AddCommitBudget(45 * time.Second)
+	if got := d.CommitBudget(); got != 75*time.Second {
+		t.Fatalf("budget = %v, want 75s", got)
+	}
+	d.Register("app1", "clc-app1", nil, func(context.Context) error { return nil })
+	if err := d.CommitAll(context.Background()); err != nil {
+		t.Fatalf("CommitAll: %v", err)
+	}
+	if got := d.CommitBudget(); got != 75*time.Second {
+		t.Fatalf("budget after CommitAll = %v, want 75s (not drained)", got)
 	}
 }
