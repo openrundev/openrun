@@ -7,7 +7,7 @@ summary: "JavaScript dependency handling, esbuild config"
 OpenRun supports importing JavaScript libraries as [JavaScript Modules](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules). To use this feature, add
 
 ```python {filename="app.star"}
-    libraries=[ace.library("d3", "7.8.5")]
+libraries=[ace.library("d3", "7.8.5")]
 ```
 
 in the app definition. The fields in the `ace.library` structure are:
@@ -23,7 +23,7 @@ The args array uses the [esbuild cli syntax](https://pkg.go.dev/github.com/evanw
 To directly download a library from a CDN to the static folder, add the URL directly. For example,
 
 ```python {filename="app.star"}
-    libraries=["https://unpkg.com/jquery@3.3.1/dist/jquery.min.js"]
+libraries=["https://unpkg.com/jquery@3.3.1/dist/jquery.min.js"]
 ```
 
 The HTMX library and its SSE extension are automatically downloaded.

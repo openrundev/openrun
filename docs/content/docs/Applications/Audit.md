@@ -8,16 +8,16 @@ OpenRun automatically creates audit events for all operations. See [demo](https:
 
 ## Introduction
 
-All operations against the OpenRun server are automatically logged in a database. The default location for this database is `$OPENRUN_HOME/metadata/openrun_audit.db`. This can be configured by setting the property
+All operations against the OpenRun server are automatically logged in a database. The default location for this database is `$OPENRUN_HOME/metadata/clace_audit.db`. This can be configured by setting the property
 
 ```toml {filename="openrun.toml"}
 [metadata]
-audit_db_connection = "sqlite:$OPENRUN_HOME/metadata/openrun_audit.db"
+audit_db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_audit.db"
 ```
 
 The events which are logged are
 
-- All HTTP request except GET, HEAD and OPTIONS
+- All HTTP requests except GET, HEAD and OPTIONS
 - System events, like app updates and any metadata changes
 - Action invocations (suggest, validate and exec)
 - Custom events, as defined in app code
@@ -53,10 +53,10 @@ HTTP, System and Action events are generated automatically. Apps can also define
 For example, the dictionary app [does](https://github.com/openrundev/apps/blob/4e7722235b62c1d22308dc55ce8b65c812354177/misc/dictionary/app.star#L18):
 
 ```python
-   ace.audit("word_lookup", args.word)
+ace.audit("word_lookup", args.word)
 ```
 
-This will enable [searching](https://audit.demo.clace.io/?operation=word_lookup) the audit events (using the Viewer app) for all operation of type "word_lookup".
+This will enable [searching](https://audit.demo.clace.io/?operation=word_lookup) the audit events (using the Viewer app) for all operations of type "word_lookup".
 
 Only the last call to `ace.audit` from a handler function is logged.
 
@@ -65,7 +65,7 @@ Only the last call to `ace.audit` from a handler function is logged.
 Events can be viewed by admin using the Event Viewer app [code](https://github.com/openrundev/apps/tree/main/openrun/audit_viewer): [demo](https://audit.demo.clace.io/). To install the app on your instance, run
 
 ```sh
-openrun app create --approve github.com/openrundev/apps/openrun/audit_viewer /events
+openrun app create --approve --auth system github.com/openrundev/apps/openrun/audit_viewer /events
 ```
 
 The event viewer shows events for all apps. This app can be installed with access by admins only.

@@ -12,11 +12,11 @@ Two extra functions `static` and `fileNonEmpty` are added for handling static fi
 
 ## static function
 
-This function takes a file name and returns the url for a file in the static folder with a sha256 hash included in the file name. This approach is similar to the [hashfs library](https://github.com/benbjohnson/hashfs). If the `static` folder contains a file `file1` with the content `file1data`, then a call to `static "file"` will return `/test/static/file1-ca9e40772ef9119c13100a8258bc38a665a0a1976bf81c96e69a353b6605f5a7`, assuming the app is installed at `/test`.
+This function takes a file name and returns the url for a file in the static folder with a sha256 hash included in the file name. This approach is similar to the [hashfs library](https://github.com/benbjohnson/hashfs). If the `static` folder contains a file `file1` with the content `file1data`, then a call to `static "file1"` will return `/test/static/file1-ca9e40772ef9119c13100a8258bc38a665a0a1976bf81c96e69a353b6605f5a7`, assuming the app is installed at `/test`.
 
 The returned file name has a hash based on the file contents. The file server used by OpenRun will serve aggressive cache headers `Cache-Control: public, max-age=31536000` when this file is referenced by the browser. When the file contents change, the content hash will change and the file name will change. The files on disk are not renamed, only the filesystem used by the OpenRun server in memory sees the hashed file names.
 
-This approach allows for a build-less system with aggressive static asset caching. The usual approach for this requires the static file to be renamed to have the hash value in the file name on disk. This require a build step to do the file renaming. The hashfs approach can avoid the build step. The file hash computation and compression are done once, during app installation in prod mode. There is no runtime penalty for this. In dev mode, the file hashing is done during the api serving.
+This approach allows for a build-less system with aggressive static asset caching. The usual approach for this requires the static file to be renamed to have the hash value in the file name on disk. This requires a build step to do the file renaming. The hashfs approach can avoid the build step. The file hash computation and compression are done once, during app installation in prod mode. There is no runtime penalty for this. In dev mode, the file hashing is done during the api serving.
 
 ## fileNonEmpty function
 
@@ -41,15 +41,15 @@ The path passed to `static` and `fileNonEmpty` functions should not include stat
 
 ## Template File Location
 
-Templates are loaded once on app initialization. In dev mode, they are automatically reload on file updates. By default, the app source home directory is searched for template files. This can be changed by adding this directive in the `ace.app` config.
+Templates are loaded once on app initialization. In dev mode, they are automatically reloaded on file updates. By default, the app source home directory is searched for template files. This can be changed by adding this directive in the `ace.app` config.
 
-```json
+```python {filename="app.star"}
 settings={
     "routing": {"template_locations": ["*.go.html", "templates/*.go.html"]}
 }
 ```
 
-the default is `["*.go.html"]`. If additional directories are added, `"*.go.html"` still needs to present in the list since generated files are created in the app home directory. Also, all folders in the list need to contains at least one template file. File names have to be unique across folders. Files are referenced by their name, without the folder name, when used in template import directives.
+the default is `["*.go.html"]`. If additional directories are added, `"*.go.html"` still needs to be present in the list since generated files are created in the app home directory. Also, all folders in the list need to contain at least one template file. File names have to be unique across folders. Files are referenced by their name, without the folder name, when used in template import directives.
 
 ## Structured Template Layout
 
@@ -60,6 +60,7 @@ If there is a `base_templates` folder in the app main folder with one or more `*
 This has the advantage that the main templates can have duplicate templates, with no conflicts because they are loaded individually. For example, if there is a `base_templates/base.go.html` file with
 
 ```html
+{{define "full"}}
 <html>
   <head></head>
   {{block "body" .}} {{end}}
@@ -80,13 +81,13 @@ and a `help.go.html` file with
 {{define "body"}} My Help Body {{end}} {{- template "full" . -}}
 ```
 
-then a route using `index.go.html` will get the HTML for the index page and route using `help.go.html` with get HTML help page. Although the `body` is defined in two template files, there is no conflict since the root level template files are loaded independently.
+then a route using `index.go.html` will get the HTML for the index page and route using `help.go.html` will get the HTML help page. Although the `body` is defined in two template files, there is no conflict since the root level template files are loaded independently.
 
-Without structured template layout, if a duplicate block is found, the one to be used depends on the order in which the files are loaded. To change the folders used for base templates, set:
+Without structured template layout, if a duplicate block is found, the one to be used depends on the order in which the files are loaded. To use a different base-template directory, set `base_templates` to a single directory name:
 
-```json
+```python {filename="app.star"}
 settings={
-    "routing": {"base_templates": ["base_templates", "template_helpers"]}
+    "routing": {"base_templates": "template_helpers"}
 }
 ```
 
@@ -98,7 +99,7 @@ When using custom layout with `custom_layout=True`, the app developer has to cre
 {{ template "openrun_gen_import" . }}
 ```
 
-in the head section to ensure that the auto generated `openrun_gen_import` directives are loaded in the . This will include the style files, HTMX library and the live reload functionality in dev mode.
+in the head section to ensure that the auto generated `openrun_gen_import` directives are loaded in the page. This will include the style files, HTMX library and the live reload functionality in dev mode.
 
 In the default layout mode, the auto generated `index_gen.go.html` file is used. The app developer has to provide a `openrun_body` block. It can be in any template file, the convention is to use `app.go.html`. For example:
 
@@ -127,11 +128,10 @@ For example:
 
 <!-- prettier-ignore-end -->
 
-shared across both apps.
 
 ## Static Root Files
 
-The `static` folder is used for file which are served under the `/static` path. Content based hashing is supported for these files.
+The `static` folder is used for files which are served under the `/static` path. Content based hashing is supported for these files.
 
 For files which need to be served under the root level, the `static_root` folder is used. Files in this folder are served at the root path. For example, if an app is installed at `example.com:` and a robots.txt file needs to be served, a file `static_root/robots.txt` can be added to the app. This will be automatically served at `example.com/robots.txt`. Note that the static folder path is stripped from the route name. The file name should not conflict with any of the API routes defined in the app. Nested folders are looked up in the static root folder.
 

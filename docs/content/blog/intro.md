@@ -41,7 +41,7 @@ The sandbox will ensure that the apps can do only authorized operations. This ma
 
 ## Current Status
 
-OpenRun is in a beta state currently. Custom application support is functional. Support for loading plugins dynamically is in progress. You can try out OpenRun (on OSX, Linux or Windows with WSL) by doing:
+OpenRun is working towards a 1.0 release. There are multiple production users of OpenRun. You can try out OpenRun (on macOS, Linux or Windows with WSL) by doing:
 
 ```shell
 curl -sSL https://openrun.dev/install.sh | sh

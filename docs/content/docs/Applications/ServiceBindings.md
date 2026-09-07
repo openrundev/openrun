@@ -409,7 +409,7 @@ Postgres bindings support one create-time binding config key:
 
 | Key               | Default | Description                                                                         |
 | :---------------- | :------ | :---------------------------------------------------------------------------------- |
-| `inherit_default` | `true`  | Whether the generated role inherits privileges from other roles, including `PUBLIC` |
+| `inherit_default` | `true`  | Whether the generated role is created with `INHERIT` rather than `NOINHERIT` |
 
 For example:
 
@@ -420,7 +420,7 @@ openrun binding create \
   /apps/reporting-db
 ```
 
-If `inherit_default` is set to `false`, the generated role is created with `NOINHERIT`.
+If `inherit_default` is set to `false`, the generated role is created with `NOINHERIT`. This does not remove privileges granted to `PUBLIC`, which apply to every role. Review database-wide `PUBLIC` grants separately when configuring isolation; see the [PostgreSQL GRANT documentation](https://www.postgresql.org/docs/current/sql-grant.html).
 
 For a base binding, OpenRun creates a schema and a login role. The generated account includes `url` and `url_direct`. `url` uses the service URL with the generated username and password, replacing the hostname with `binding_hostname` when that service option is set. If `binding_hostname` is omitted, the service URL hostname is `localhost` or `127.0.0.1`, and OpenRun is not running in Kubernetes mode, OpenRun automatically uses `host.docker.internal` for Docker and `host.containers.internal` for other local container runtimes. Set `binding_hostname=disable` to opt out of both explicit hostname substitution and automatic mapping. `url_direct` uses the original service URL hostname. Containers receive both values as environment variables, for example `POSTGRES_URL` and `POSTGRES_URL_DIRECT`. `binding run-command` uses `url_direct`. OpenRun sets the generated role's default `search_path` to the binding schema.
 
@@ -562,7 +562,7 @@ Differences from Postgres/MySQL bindings:
 - `binding run-command` is not supported: the database file is only reachable inside the app container.
 - `binding show-account` shows the computed paths; there are no credentials.
 - SQLite bindings are not available for preview apps.
-- Deleting a binding or app keeps the volume and any replicated data. SQLite bindings have no backend accounts to remove, so unlike Postgres/MySQL nothing is dropped on delete.
+- Deleting an app removes its managed Docker/Podman volumes or Kubernetes PVCs, including SQLite data volumes. Deleting a detached SQLite binding does not remove volumes or object-storage replicas: SQLite bindings have no backend accounts to drop. App deletion does not remove the replica, but recreating a deleted binding gives it a new identity and therefore a different replica location.
 
 A [staging service]({{< ref "/docs/applications/servicebindings/#staging-services" >}}) can be linked like any other service type. Staged apps then follow the staging service's config: its own `litestream_config` (or none), `path_prefix` and `volume_size`, so staged data can replicate to a separate location or skip replication entirely.
 

@@ -15,14 +15,14 @@ helm repo add openrun https://openrundev.github.io/openrun-helm-charts/
 helm install openrun1 openrun/openrun \
   --namespace openrun --create-namespace --set registry.enabled=true
 
-# Install with a external registry (recommended)
+# Install with an external registry (recommended)
 helm install openrun1 openrun/openrun \
-  --namespace openrun --create-namespace --set config.registry.url=<registry_url>
+  --namespace openrun --create-namespace --set config.registry.url=<registry_url> --set config.registry.insecure=false
 ```
 
 Running the Helm chart creates:
 
-- An service which run the OpenRun API server
+- A service which runs the OpenRun API server
 - Optionally, a Postgres database for metadata. An external Postgres database can be used instead.
 - Optionally, a container registry is installed. An external registry can be used instead.
 
@@ -36,7 +36,7 @@ A container registry is required for Kubernetes based OpenRun install. The regis
 
 ## Registry Config
 
-OpenRun on Kubernetes requires a registry to which Kaniko built images can be pushed and from which pods can pull. Image pulls by default require an HTTPS-protected registry; self-signed certificates are not valid. Creating a signed certificate is not trivial on dev installations. The workaround for dev installs is to enable HTTP endpoints for pod creation. Details depend on the Kubernetes installation being used. For K3S, install the `registry:2` images as a service. If registry is started at `registry.svc.cluster.local:5000`, edit `/etc/rancher/k3s/registries.yaml` to add:
+OpenRun on Kubernetes requires a registry to which Kaniko built images can be pushed and from which pods can pull. Image pulls require a registry trusted by the node container runtime. A private CA can be configured on each node; for example, K3s supports `ca_file` in its [private registry configuration](https://docs.k3s.io/installation/private-registry). An alternative for local testing is an explicitly configured HTTP registry. Details depend on the Kubernetes installation being used. For K3S, install the `registry:2` images as a service. If registry is started at `registry.svc.cluster.local:5000`, edit `/etc/rancher/k3s/registries.yaml` to add:
 
 ```{filename="/etc/rancher/k3s/registries.yaml"}
 mirrors:
@@ -81,7 +81,7 @@ To install a production-ready OpenRun installation on AWS, with EKS cluster, ECR
 
 Save the password for the admin user using `terraform output openrun_admin_password`. Add the DNS entries as output under `openrun_dns_records`. The `root_a` and `wildcard_a` DNS entries enable installing apps at the domain level. Wait for the DNS entries to propagate before attempting to access the url (to allow TLS cert creation to work).
 
-After install is done, SSH to the OpenRun instance and run the `sync schedule` to set up the sync. All subsequent operations are done by checking in config updates to the app config in Git.
+After installation, run the CLI inside an OpenRun server pod with `kubectl exec -n openrun -it <openrun-pod> -- openrun sync schedule --approve --promote <git-config-path>` to set up sync. All subsequent operations are done by checking in config updates to the app config in Git.
 
 To destroy the resource created,
 
@@ -95,9 +95,34 @@ To destroy the resource created,
 container_command = "kubernetes"
 ```
 
-is the main config which enables Kubernetes mode. By default. Kaniko based builds are used. Delegated builds can be configured instead, see [delegated builds]({{< ref "/docs/container/build/#delegated-build-mode" >}}). See [registry]({{< ref "/docs/container/build/#config" >}}) for registry config.
+is the main config which enables Kubernetes mode. By default, Kaniko based builds are used. Delegated builds can be configured instead, see [delegated builds]({{< ref "/docs/container/build/#delegated-build-mode" >}}). See [registry]({{< ref "/docs/container/build/#builder-and-registry-config" >}}) for registry config.
 
 OpenRun service and Kaniko jobs run in the main namespace (default `openrun`). Applications are started in the `<main_ns>-apps` namespace (default `openrun-apps`), which is automatically created by the Helm chart. To clear all apps (including any volume data), run `kubectl delete namespace openrun-apps; kubectl create namespace openrun-apps`.
+
+## Resources and Autoscaling
+
+Set resource requests and replica counts with `container_opts` in an app declaration:
+
+```python {filename="apps.ace"}
+app("/api", "github.com/myorg/api", spec="container",
+    container_opts={
+        "cpus": "0.5",
+        "memory": "512m",
+        "kubernetes.min_replicas": "2",
+        "kubernetes.max_replicas": "5",
+    },
+    app_config={"container.idle_shutdown_secs": 0})
+```
+
+`cpus` sets the app container's CPU request, without a CPU limit. `memory` sets both its memory request and limit. Kubernetes-specific options can use the `kubernetes.` prefix so they are ignored by Docker and Podman.
+
+For stateless apps, `min_replicas` sets the initial replica count (default `1`). When `max_replicas` is greater than `1`, OpenRun creates a HorizontalPodAutoscaler with a minimum of at least one replica. It targets CPU utilization relative to the CPU request, using `app_config.kubernetes.scaling_threshold_cpu` (default `80` percent). With app sidecars, the metric measures the main app container's CPU. Memory limits do not enable memory-based autoscaling.
+
+Configure a CPU request and ensure the cluster provides resource metrics, typically through Metrics Server. See the [Kubernetes HPA documentation](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/) for metrics requirements.
+
+OpenRun's idle shutdown still applies independently of replica minimums. The example disables it with `container.idle_shutdown_secs = 0` to keep the app running after startup. Keep the default idle timeout if the app should scale to zero without traffic. Resources are created on first access or deployment verification.
+
+Apps with persistent volumes, including SQLite bindings, always run with one replica and the `Recreate` strategy. OpenRun ignores higher replica counts and does not create an HPA for these apps.
 
 ## Binding Providers
 
@@ -157,7 +182,7 @@ With either declarative path, `bindings.disableInstall: true` additionally rejec
 
 OpenRun is installed as a Kubernetes Deployment, with a Service for routing API calls. For each containerized app installed on OpenRun, a ClusterIP Service is created for app traffic. API calls to the OpenRun API Server are routed to the app-specific Service using its cluster IP.
 
-All Kubernetes resources are created lazily, on the first API call to the app (or when create/reload is done with the verify option). If an app is running version 1, and a code/config change updates it to version 2, the deployment update happens on the next API call to the app. That API call is blocked while the container image is rebuilt if required and the Kubernetes resources are updated using Server Side Apply API calls.
+All Kubernetes resources are created lazily, on the first API call to the app (or when reload/apply is done with the verify option). If an app is running version 1, and a code/config change updates it to version 2, the deployment update happens on the next API call to the app. That API call is blocked while the container image is rebuilt if required and the Kubernetes resources are updated using Server Side Apply API calls.
 
 OpenRun waits until Kubernetes reports the expected new version rollout is complete before processing further API calls. It watches Deployment rollout status so readiness and Kubernetes-declared rollout failures are detected without waiting for the next polling interval, while still honoring the `container.deploy_health_attempts` deployment wait budget.
 

@@ -11,7 +11,7 @@ enableInlineShortcodes = true
 [outputs]
 home = ["html", "llms"]
 page = ["html", "markdown"]
-section = ["html", "markdown"]
+section = ["html", "markdown", "rss"]
 
 [[module.imports]]
 path = 'github.com/imfing/hextra'
@@ -41,10 +41,6 @@ displayTitle = false
 path = "openrun_anim.svg"
 width = 180
 height = 50
-
-[params.editurl]
-enable = false
-base = "https://github.com/openrundev/docs/edit/main/content"
 
 [params.footer]
 displayCopyright = true

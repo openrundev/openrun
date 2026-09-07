@@ -9,9 +9,9 @@ OpenRun is an Apache-2.0 licensed, self-hosted GitOps platform and PaaS alternat
 
 ## Installation
 
-### Install OpenRun On OSX/Linux
+### Install OpenRun On macOS/Linux
 
-To install on OSX/Linux, run
+To install on macOS/Linux, run
 
 ```shell
 curl -sSL https://openrun.dev/install.sh | sh
@@ -50,29 +50,31 @@ Start a new command window (to get the updated env) and run `openrun server star
 Once OpenRun server is running, to install apps declaratively, open a new window and run
 
 ```
-openrun apply --approve github.com/openrundev/openrun/examples/utils.star
+openrun apply --approve github.com/openrundev/openrun/examples/utils.star /utils/bookmarks
 ```
 
-#### Setup Dev Environment
+Apps use `none` authentication by default. To require login for new apps, set `security.app_default_auth_type = "system"` in `openrun.toml` before starting the server, or specify `auth="system"` in each app declaration. See [authentication]({{< ref "configuration/authentication" >}}) for other login options.
+
+#### Set Up a Dev Environment
 
 To instead setup a dev environment for apps, run
 
 ```
-openrun apply --dev --approve github.com/openrundev/openrun/examples/utils.star
+openrun apply --dev --approve github.com/openrundev/openrun/examples/utils.star /utils/bookmarks
 ```
 
 This creates a local copy of the source code and sets up a live reload url for each app.
 
-#### Setup GitOps Pipeline
+#### Set Up a GitOps Pipeline
 
-To setup an automatic GitOps sync, run
+To set up automatic GitOps sync, commit your app declarations to a repository, then schedule the file (replace the example URL with yours):
 
 ```
 openrun sync schedule --approve --promote \
-    github.com/openrundev/openrun/examples/utils.star
+    github.com/myorg/platform/apps.star
 ```
 
-This starts a background sync which automatically creates new apps and updates existing apps, reading latest app config and code from Git.
+This starts a background sync that creates apps and updates existing apps using the latest declarations and source code from Git. Sync processes the whole declaration file; it does not accept an app filter.
 
 #### Install Apps using CLI
 
@@ -94,21 +96,21 @@ openrun app create --approve --auth system \
     github.com/openrundev/console /console
 ```
 
-The console is available at https://localhost:25223/console. Log in as `admin`, using the password printed during the OpenRun installation. Using `system` auth (the server default) is recommended for the console; management operations are blocked for anonymous users, so do not use `none` auth. The `enable_*` params control which feature areas are enabled; the default install is a read-only console. See [console install]({{< ref "installation/#install-the-console-app" >}}) for the full param list.
+The console is available at https://localhost:25223/console. Log in as `admin`, using the password printed during installation. The command explicitly selects `system` auth because management operations require an authenticated user. The `enable_*` params control which feature areas are enabled; write operations also require `enable_updates=true`. See [console install]({{< ref "installation/#install-the-console-app" >}}) for the full parameter list and [AI App Builder]({{< ref "appbuilder" >}}) for builder setup.
 
 ## App Types
 
 OpenRun allows easy management of multiple apps on one OpenRun server installation. There are three main types of OpenRun apps:
 
-- **Containerized Apps** - App backend (in any language/framework) runs in a container. OpenRun acts as an application server doing reverse proxying for the app APIs. This allows OpenRun to install and manage apps built in frameworks like Streamlit/Gradio/FastHTML/FastAPI/Flask etc. Frameworks which have a `appspec` defined for OpenRun can be used without any further manual configuration. AppSpecs define how the container should be built and started and also how the request routing should be done to the app. For other frameworks, a Dockerfile is required in the app sources.
-- **Action apps** - App backend is defined in Starlark and an auto generated form UI and report is created by OpenRun. These apps can be use dto related Rundeck/Jenkins type of operational automation use cases.
+- **Containerized Apps** - App backend (in any language/framework) runs in a container. OpenRun acts as an application server doing reverse proxying for the app APIs. This allows OpenRun to install and manage apps built in frameworks like Streamlit/Gradio/FastHTML/FastAPI/Flask etc. Frameworks which have an `appspec` defined for OpenRun can be used without any further manual configuration. AppSpecs define how the container should be built and started and also how the request routing should be done to the app. For other frameworks, a Dockerfile is required in the app sources.
+- **Action apps** - The backend is defined in Starlark, and OpenRun generates a form UI and report. These apps support operational automation, such as running a command or querying an API.
 - **Hypermedia apps** - The app is completely customizable, allowing combining containerized apps with actions and custom API handlers, building Hypermedia driven UIs.
 
 For all apps, OpenRun provides blue-green staged deployment, OAuth access controls, secrets management, TLS cert management etc.
 
 ## Containerized Applications
 
-OpenRun can run any app which run in a container. OpenRun works with Docker and Podman. Using an [app spec]({{< ref "app/overview/#building-apps-from-spec" >}}) allows you to use OpenRun without requiring any changes to your app. No container file is even required. For example, the command
+OpenRun can run web apps in Docker or Podman containers. An [app spec]({{< ref "develop/#building-apps-from-spec" >}}) supplies the container configuration for supported frameworks. For example, the command
 
 ```
 openrun app create --spec python-streamlit --branch master --approve \
@@ -123,7 +125,7 @@ does the following:
 
 When the first API call is done to the app (lazy-loading), the OpenRun server will build the container image from the `Dockerfile` defined in the spec, start the container and set up the proxy for the app APIs.
 
-Any env params which need to be passed to the app can be configured as [app params]({{< ref "app/overview/#app-parameters" >}}). Params are set during app creation using `app create --param port=9000` or after creation using `param update port 9000 /myapp`.
+Environment variables for the app can be configured as [app parameters]({{< ref "develop/#app-parameters" >}}). Set them during creation using `app create --param port=9000` or afterward using `param update port 9000 /myapp`.
 
 If the source repo has a `Containerfile` or `Dockerfile`, the `container` spec can be used. It is a generic spec which works with any language or framework. If the container file defines a port using the `EXPOSE` directive, then port is not required. Otherwise, specify a port, for example
 
@@ -136,7 +138,7 @@ See [containerized apps]({{< ref "container/overview/" >}}) for details.
 
 ## Managing Applications
 
-Multiple applications can be installed on an OpenRun server. Each app has a unique path and can be managed separately. The app path is made up of domain_name:url_path. If no domain_name is specified during app creation, the app is created in the default domain. The default domain is looked up when no specific domain match is found. See [app routing]({{< ref "applications/routing/" >}}) for details about routing.
+Each app has a unique `domain:path`. If no domain is specified during creation, the app uses `system.default_domain` (`localhost` by default). Requests for unknown hostnames return 404 unless `system.fallback_unknown_domains` is enabled. See [app routing]({{< ref "applications/routing/" >}}).
 
 For local env, URL-based routing can be used or `*.localhost` domain can be used for domain-based paths. For production deployment, if wildcard DNS is set up, domain-based routing can be used without new DNS entries being required per app. Apps can be hosted on multiple unrelated domains on one OpenRun server.
 
@@ -145,10 +147,10 @@ For local env, URL-based routing can be used or `*.localhost` domain can be used
 To install apps, run `openrun app create --approve <source_url> <[domain:]app_path>`. For example,
 
 ```shell
-openrun app create --approve github.com/openrundev/apps/system/disk_usage /disk_usage
+openrun app create --approve --auth system github.com/openrundev/apps/system/disk_usage /disk_usage
 ```
 
-This is installing the `system/disk_usage` app from the main branch of the `openrundev/apps` repo on GitHub. The app is installed for the default domain, to the `/disk_usage` path. Opening [https://127.0.0.1:25223/disk_usage](https://127.0.0.1:25223/disk_usage) will initialize the app and show the app home page.
+After enabling `exec.in` as described above, this installs the `system/disk_usage` app from the main branch of the `openrundev/apps` repo on GitHub. The app is installed for the default domain, to the `/disk_usage` path. Opening [https://localhost:25223/disk_usage](https://localhost:25223/disk_usage) will initialize the app and show the app home page.
 
 {{<callout type="warning" >}}
 The `/disk_usage/*` path is now reserved for APIs under this app. No new apps can be installed under the `/disk_usage/` path, but `/disk_usage2` is available. Similarly, installing an app under `/` path means no new apps can be installed for the default domain.
@@ -157,13 +159,13 @@ The `/disk_usage/*` path is now reserved for APIs under this app. No new apps ca
 If the app code is available on the OpenRun server node, the `app create` can be done directly with the local disk path:
 
 ```shell
-openrun app create --approve ./diskapp /disk_usage_local
+openrun app create --approve --auth system ./diskapp /disk_usage_local
 ```
 
 When developing an app, the source code for the app has to be present locally. To install an app in dev mode, add the `--dev` option.
 
 ```shell
-openrun app create --dev --approve ./diskapp /disk_usage_dev
+openrun app create --dev --approve --auth system ./diskapp /disk_usage_dev
 ```
 
 If an app is created in dev mode with git as the source path, the git repo is checked out automatically into `$OPENRUN_HOME/app_src` and the app is created from the local source.

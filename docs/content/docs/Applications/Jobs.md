@@ -21,12 +21,9 @@ Jobs are declared with `ace.job` and passed to `ace.app` in `jobs=`:
 ```python {filename="app.star"}
 load("container.in", "container")
 load("proxy.in", "proxy")
-load("store.in", "store")
 
-def expire_sessions(dry_run, args):
-    # the action handler shape: a job can call the same function an action uses
-    n = store.delete(table.sessions, {"expires": {"$lt": args.cutoff}}).value
-    return ace.result("Deleted %d sessions" % n)
+def report_region(dry_run, args):
+    return ace.result("Configured region: " + args.region)
 
 app = ace.app("orders",
     routes=[ace.proxy("/", proxy.config(container.URL))],
@@ -38,16 +35,23 @@ app = ace.app("orders",
             trigger=ace.cron("0 3 * * *", timezone="America/Los_Angeles"),
             timeout="1h", params=["region"], description="Emails the daily orders summary"),
         ace.job("db-backup", image="image:postgres:16", inherit_env=True, shell=True,
-            command=["pg_dump $POSTGRES_URL | gzip > /backup/$(date +%F).sql.gz"],
+            command=['pg_dump --dbname="$POSTGRES_URL" --format=custom --file=/backup/$(date +%F).dump'],
             trigger=ace.cron("@daily"), volumes=["backup:/backup"]),
-        ace.job("expire-sessions", run=expire_sessions, trigger=ace.cron("@hourly"), params=["cutoff"]),
+        ace.job("report-region", run=report_region, trigger=ace.cron("@hourly"), params=["region"]),
     ],
     permissions=[
         ace.permission("proxy.in", "config", [container.URL]),
         ace.permission("container.in", "config", [container.AUTO]),
-        ace.permission("store.in", "delete", [table.sessions]),
     ])
 ```
+
+The example assumes an app image containing `manage.py` and the named management commands, plus a PostgreSQL binding providing `POSTGRES_URL`. Define the parameter used by the jobs in `params.star`:
+
+```python {filename="params.star"}
+param("region", default="us", description="Report region")
+```
+
+The `db-backup` job uses a local named volume on Docker/Podman. Copy those backups off the host separately. Using `pg_dump` directly preserves its exit status so a failed dump fails the job.
 
 `ace.job(name, command=[], args=[], shell=False, image="", run=None, env={}, inherit_env=None, volumes=[], options={}, trigger=ace.manual(), timeout="1h", enabled=True, params=[], description="")`:
 
@@ -91,7 +95,7 @@ A run executes on the node that started it. If that node stops, the run is marke
 
 A `before_deploy` job runs when a new version deploys to an app instance: on the stage instance for `app reload`, `apply` and sync runs (before the reload transaction opens, from the image just built), and on the prod instance for `app promote` (from the stage code, with the prod binding accounts). With `--promote` on a reload or apply, the stage gate and then the prod gate run before the operation writes anything. On `app create` the gate runs on the stage instance before the create transaction opens, so a failure stops the create before anything is written; when the gate needs a binding the same operation creates (an auto binding, or a binding declared in the same apply file), it runs inside the create instead and a failure rolls the create back. Gates run in declaration order, and the first failure stops the operation with the run id and the tail of its output. Dry runs skip gates: they have real side effects. The previous version keeps serving during a gate, so migrations must be backward compatible with it (expand/contract). Preview and dev apps run no gates; a gate job can still be run manually on them.
 
-`app version switch` and metadata-only updates like `param update --promote` run no gates.
+`openrun version switch` and metadata-only updates like `param update --promote` run no gates.
 
 ## Declaring jobs in apps.ace and on the CLI
 
@@ -99,10 +103,10 @@ The same fields are accepted as `job(...)` calls, dict literals or JSON strings 
 
 ```python {filename="apps.ace"}
 backup = job("db-backup", image="image:postgres:16", inherit_env=True, shell=True,
-             command=["pg_dump $POSTGRES_URL | gzip > /backup/$(date +%F).sql.gz"],
+             command=['pg_dump --dbname="$POSTGRES_URL" --format=custom --file=/backup/$(date +%F).dump'],
              trigger=cron("0 2 * * *"), volumes=["backup:/backup"], timeout="30m")
 
-app("/orders", "github.com/acme/orders", spec="python-django", bindings=["/db/orders"],
+app("/orders", "github.com/acme/orders", spec="container", bindings=["/db/orders"],
     sidecars=[sidecar("cache", image="image:memcached:1.6-alpine", port=11211)],
     jobs=[
         job("migrate", command=["python", "manage.py", "migrate", "--noinput", "--database", "primary"],
@@ -112,11 +116,11 @@ app("/orders", "github.com/acme/orders", spec="python-django", bindings=["/db/or
 
 # the same job attached to several apps
 for p in ["/billing", "/inventory"]:
-    app(p, "github.com/acme" + p, spec="python-django", bindings=["/db" + p], jobs=[backup])
+    app(p, "github.com/acme" + p, spec="container", bindings=["/db" + p], jobs=[backup])
 ```
 
 ```sh
-openrun app create --spec python-django --bind /db/orders \
+openrun app create --spec container --bind /db/orders \
   --job '{"name":"nightly-report","command":["python","manage.py","send_report"],"trigger":{"type":"cron","schedule":"0 3 * * *","timezone":"UTC"}}' \
   github.com/acme/orders /orders
 
@@ -133,7 +137,7 @@ openrun job list [appPathGlob]                                # jobs, next sched
 openrun job run nightly-report /orders                        # start on prod, returns the run id
 openrun job run --stage --wait migrate /orders                # run on stage and wait for the result
 openrun job run --arg region=eu nightly-report /orders        # run arguments for the job's params
-openrun job run --force expire-sessions /orders               # run a disabled job, or alongside an active run
+openrun job run --force report-region /orders                 # run a disabled job, or alongside an active run
 openrun job runs [--job name] [--status failed] /orders       # run history of the prod and stage instances
 openrun job logs <run-id>                                     # output, while the run's container exists
 openrun job cancel <run-id>                                   # stop an active run (on the node executing it)

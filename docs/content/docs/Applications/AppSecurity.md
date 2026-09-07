@@ -10,7 +10,7 @@ OpenRun applications run in a sandbox environment with no direct access to the s
 
 The security model used by OpenRun is:
 
-- The application code written in Starlark(python) and HTML templates is untrusted.
+- The application code written in Starlark (a language with Python-like syntax) and HTML templates is untrusted.
 - The OpenRun service and plugin code (in Go) are trusted.
 - The admin can audit and approve the access required by the untrusted application code when the app is being installed.
 - After installation, further application code updates do not require any further audit, as long as no new permissions are required. If the updated app code requires any new permission, the new plugin call will fail at runtime with a permission error.
@@ -49,7 +49,7 @@ app = ace.app("Disk Usage",
 It requests permission to use the `exec.in` plugin to `run` two CLI commands, first being `du` and other being `readlink`. When installing the app
 
 ```bash
-$ openrun app create ./examples/disk_usage/ /utils/disk_usage
+$ openrun app create --auth system ./examples/disk_usage/ /utils/disk_usage
 App audit results /utils/disk_usage : app2WPQHwr5ZpKELqh0TvP5YMSnbab
   Plugins :
     exec.in
@@ -72,10 +72,10 @@ App audit: /utils/disk_usage
 App permissions have been approved.
 ```
 
-The approval can be done during the app create itself, in that case the app is installed and approved immediately. None of the plugin code runs during the app creation, even for calls at the global scope. If the audit report does not match expectations, the app can be deleted.
+The approval can be done during the app create itself, in that case the app is installed and approved immediately. Plugin calls at global scope are deferred until the app is initialized. Apps with [before-deploy jobs]({{< ref "jobs/#deploy-gates" >}}) can run deployment commands during creation; review those commands before approving an install. If the audit report does not match expectations, the app can be deleted.
 
 ```bash
-$ openrun app create --approve ./examples/disk_usage/ /utils/disk_usage
+$ openrun app create --approve --auth system ./examples/disk_usage/ /utils/disk_usage
 App audit results /utils/disk_usage : app2WPQpws6C1mWb6BujYGOdWMnF1C
   Plugins :
     exec.in
@@ -91,13 +91,13 @@ App deleted /utils/disk_usage
 Once the app is created, if the application code is updated to change [the line](https://github.com/openrundev/openrun/blob/8b8975cea2d650c9f80dab6eb70cc5b2ddbe5c40/examples/disk_usage/app.star#L9) from
 
 ```python {filename="app.star"}
-    ret = exec.run("readlink", ["-f", current], process_partial=True)
+ret = exec.run("readlink", ["-f", current], process_partial=True)
 ```
 
 to
 
 ```python {filename="app.star"}
-    ret = exec.run("rm", ["-f", current], process_partial=True)
+ret = exec.run("rm", ["-f", current], process_partial=True)
 ```
 
 The app will fail at runtime with an error like

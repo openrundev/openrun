@@ -6,9 +6,9 @@ description: "Compare OpenRun with self-hosted PaaS platforms like Coolify, CapR
 summary: "OpenRun compared with self-hosted PaaS platforms like Coolify, CapRover, Kamal and Dokku."
 ---
 
-Coolify, CapRover, Kamal and Dokku are popular self-hosted alternatives to Heroku-style platforms. They let you deploy web apps to your own servers using Docker. OpenRun serves the same self-hosting need with a different design: apps are managed declaratively through Git, every app gets SSO and RBAC, idle apps scale to zero and the same config deploys to a VPS or to Kubernetes.
+Coolify, CapRover, Kamal and Dokku are popular self-hosted alternatives to Heroku-style platforms. They let you deploy web apps to your own servers using Docker. OpenRun serves the same self-hosting need with a different design: apps are managed declaratively through Git, apps can use built-in SSO and RBAC, idle apps scale to zero and the same config deploys to a VPS or to Kubernetes.
 
-**Summary**: Choose OpenRun for internal tools and team web apps that need GitOps management, authentication, access control and audit logs. Choose Coolify, CapRover or Dokku when you want to self-host multi-container Docker Compose stacks or one-click packaged software. Choose Kamal when you want a deployent tool for a small number of apps whose servers you script directly.
+**Summary**: Choose OpenRun for internal tools and team web apps that need GitOps management, authentication, access control and audit logs. Consider Coolify for Docker Compose stacks, CapRover for its one-click apps and supported Compose subset, or Dokku for buildpack deployments and service plugins. Choose Kamal when you want a deployment tool for a small number of apps whose servers you script directly.
 
 ## True GitOps vs Git-Triggered Code Deploys
 
@@ -81,11 +81,7 @@ Coolify, CapRover, Kamal and Dokku are built around Docker on individual servers
 
 OpenRun focuses on web apps and internal tools, and that focus comes with a real limitation: **OpenRun does not support Docker Compose stacks**. An OpenRun app is a single container plus optional [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}); multi-container applications defined in a compose file cannot be deployed as-is. Apps that need a database use service bindings to an externally managed database instead of a bundled database container.
 
-This means Coolify, CapRover or Dokku are better choices when you want to:
-
-- Self-host packaged third-party software distributed as Docker Compose stacks (Supabase, Plausible, WordPress and similar one-click installs)
-- Run an app together with its own dedicated database, cache and worker containers as one unit
-- Manage databases and other services from the same dashboard as apps
+[Coolify supports Docker Compose stacks](https://coolify.io/docs/knowledge-base/docker/compose), including apps with their own database, cache and workers. [CapRover supports a subset of Compose fields](https://caprover.com/docs/docker-compose.html) and offers one-click apps. Dokku offers a CLI and service plugins; its [Git deployment workflow](https://dokku.com/docs/deployment/methods/git/) should not be confused with deploying an arbitrary Compose stack.
 
 Kamal is a good fit when a small team deploys a few production apps to servers they manage directly and wants a simple, scriptable deploy tool rather than a platform.
 

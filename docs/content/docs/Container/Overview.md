@@ -6,7 +6,7 @@ summary: "Overview of OpenRun containerized apps"
 
 OpenRun builds the image and manages the container lifecycle for containerized apps. OpenRun fetches the source code, creates the image, starts the container, proxies the API calls, does health checks on the container and stops the container when idle. Appspecs allow existing source code to be used with OpenRun with no code changes required. OpenRun supports both `Dockerfile` and `Containerfile` as the file name for the container specification file.
 
-For single node installations, OpenRun works with a local container manager (Docker/Podman/Orbstack etc). For multi-node installation on Kubernetes, OpenRun uses Kubernetes deployments to run each app.
+For single node installations, OpenRun works with a local container manager (Docker/Podman/OrbStack etc). For multi-node installation on Kubernetes, OpenRun uses Kubernetes deployments to run each app.
 
 <picture  class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
   <img alt="OpenRun Components" src="/d2/container_overview.svg">
@@ -19,7 +19,7 @@ Containers are initialized lazily, when the app API is accessed. The request flo
 
 ## App Environment Params
 
-For containerized apps, all params specified for the app (including ones specified in `params.star` spec) are passed to the container at runtime as environment parameters. `CL_APP_PATH` is a special param passed to the container with the app installation path (without the domain name). `PORT` is also set with the value of the port number the app is expected to bind to within the container.
+For containerized apps, all params specified for the app (including ones not declared in the spec's `params.star`) are passed to the container at runtime as environment parameters. `CL_APP_PATH` is a special param passed to the container with the app installation path (without the domain name). `CL_APP_URL` contains the full app URL, including scheme, host and path. `PORT` is also set with the value of the port number the app is expected to bind to within the container.
 
 For example, the command
 
@@ -102,11 +102,10 @@ Additional Docker/Podman runtime flags are disabled by default, except `add-host
 
 ```toml {filename="openrun.toml"}
 [security]
-allowed_container_args = {
-  "init" = "",
-  "label" = "regex:^team=.+$",
-  "security-opt" = "label=disable",
-}
+[security.allowed_container_args]
+init = ""
+label = "regex:^team=.+$"
+security-opt = "label=disable"
 ```
 
 The map key is the container runtime flag name without the leading `--`. An empty value allows only a valueless flag, such as `--init`. A non-empty value must match exactly unless it starts with `regex:`, in which case OpenRun matches the user-provided value against that regular expression.
@@ -147,10 +146,10 @@ the params are generated in the ini file format. See [streamlit spec](https://gi
 
 To define the volume in the app config, add
 
-```{filename="secret.tmpl"}
-    container=container.config(container.AUTO, port=param.port, volumes=[
-        "cl_secret:secret.tmpl:/app/secret.ini",
-    ]),
+```python {filename="app.star"}
+container=container.config(container.AUTO, port=param.port, volumes=[
+    "cl_secret:secret.tmpl:/app/secret.ini",
+]),
 ```
 
 To set the volume info in the app metadata, run
@@ -204,4 +203,4 @@ openrun app create --spec python-flask \
 openrun app update sidecars --promote @sidecars.json /myapp
 ```
 
-`--sidecar` and `app update sidecars` accept a JSON object, or `@file` holding a JSON object or a list of objects. In `apps.ace` declarations, use `sidecars=[sidecar("cache", image="image:memcached:1.6-alpine", port=11211), ...]` with the same fields (dict literals and JSON strings are accepted too); `openrun app export` renders sidecars in this form. Finite work that runs from the app image on a schedule or before a deploy is a [job](/docs/applications/jobs/), not a sidecar. Sidecars are not service bindings: a sidecar cache is per app and per version (per replica on Kubernetes) and its data does not survive a deploy; use a `redis` service binding for a shared or durable cache.
+`--sidecar` and `app update sidecars` accept a JSON object, or `@file` holding a JSON object or a list of objects. In `apps.ace` declarations, use `sidecars=[sidecar("cache", image="image:memcached:1.6-alpine", port=11211), ...]` with the same fields (dict literals and JSON strings are accepted too); `openrun export` renders sidecars in this form. Finite work that runs from the app image on a schedule or before a deploy is a [job](/docs/applications/jobs/), not a sidecar. Sidecars are not service bindings: a sidecar cache is per app and per version (per replica on Kubernetes) and its data does not survive a deploy; use a `redis` service binding for a shared or durable cache.

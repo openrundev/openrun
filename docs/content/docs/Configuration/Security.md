@@ -7,10 +7,10 @@ summary: "OpenRun Security related configuration"
 The default configuration for the OpenRun server is:
 
 - Application management (admin APIs) are accessible over unix domain sockets only (not accessible remotely). Since UDS enforces file permissions checks, no additional authentication is needed for admin APIs.
-- Admin user account is used to access applications, default `auth` for apps is `system`
-- The admin user password bcrypt hash has to be added to the server config file, or a random password is generated every time the server is restarted
-- Applications can be changed to not require any authentication, `auth` can be `none` or use OAuth2 based auth.
-- There is no user management support in OpenRun currently. The system account is present by default (which can be disabled) or OAuth based auth can be used.
+- Apps use `none` authentication by default. Set `--auth system` to require the admin account, or select another configured authentication provider.
+- Installers and first-start setup save a generated admin password hash in the config file. If an existing config omits the hash, the server generates a temporary password on each restart.
+- [Builtin users]({{< ref "authentication/#builtin-users" >}}), OAuth/OIDC, SAML and client certificate authentication are supported. Builtin users can be managed through `openrun user` without restarting the server.
+- RBAC is enforced for app access and management operations. The default grant allows every principal, including `anonymous`, to access and list apps; additional management permissions require grants or resource ownership.
 
 ## Admin Account Password
 
@@ -21,7 +21,7 @@ When the OpenRun server is started, it looks for the entry
 admin_password_bcrypt = "" # the password bcrypt value
 ```
 
-in the config file. If the value is undefined or empty, then a random password is generated and is used as the admin password for that server session. The password being used is displayed on the stdout of the server startup. This will change on every restart.
+in the config file. If the value is undefined or empty in an existing config, a random password is generated for that server session and printed during startup. This temporary password changes on every restart. Normal installation and first-start setup persist the hash, so the generated password remains valid across restarts.
 
 To configure a value for the admin user password, use the `password` helper command:
 
@@ -229,7 +229,7 @@ user_id = "myid"
 password = "github_pat_11A7FXXXXXXX"
 ```
 
-The `user_id` needs to be set to an non-empty value like the github id even though it is ignored for the auth.
+The `user_id` needs to be set to a non-empty value like the github id even though it is ignored for the auth.
 
 When running `app create`, add `--git-auth mykey` or `--git-auth mypat` option. The private key specified will be used for accessing the repository. `app reload` command will automatically use the same key as specified during the create. To set the default git key to use, add in config:
 

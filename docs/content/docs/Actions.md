@@ -59,7 +59,7 @@ An action is defined using the `ace.action` struct. The fields in this structure
 |    suggest    |   true   |   function   |  none   |                                     The function to run on suggest                                     |
 |  description  |   true   |    string    |  none   |                                     The description for the action                                     |
 |    hidden     |   true   | list strings |  none   |                      The params which should be hidden in the UI for this Action                       |
-| show_validate |   true   |   boolean    |  False  |                           Whether to show an Validate option for this action                           |
+| show_validate |   true   |   boolean    |  False  |                           Whether to show a Validate option for this action                           |
 |    permit     |   true   | list string  |   []    | List of custom RBAC permissions, any one of which need to be granted for the user to allow this action |
 
 The name and description are shown in the app UI. The app params are displayed in a form. `BOOLEAN` types are checkboxes, others are text boxes.
@@ -67,7 +67,7 @@ The name and description are shown in the app UI. The app params are displayed i
 When the form is submitted, the `run` function is called. The params are passed as an `args` argument. The response as returned by the handler is shown on the UI.
 
 {{<callout type="warning" >}}
-In the action handler function, use `args` argument to get the values from the form. Referencing `params` will give the default values for the parameters, not the actual values passed in.
+In the action handler function, use `args` argument to get the values from the form. Referencing `param` gives the app’s configured parameter values, not the values submitted in the form.
 {{</callout>}}
 
 The `hidden` property can be used to hide params for specific Actions. Set it to the list of params to hide, for example `hidden=["param1"]`.
@@ -88,13 +88,13 @@ The handler returns an `ace.result` struct. The fields in this structure are:
 The `run` handler can validate the parameters. If there are errors, it can return a validation error like
 
 ```python {filename="app.star"}
-  def run(dry_run, args):
-    if args.dir == "." or args.dir.startswith("./") or args.dir == ".." or args.dir.startswith("../"):
-       return ace.result("Validation failed", param_errors={"dir": "relative paths not supported"})
-    if dry_run:
-       return ace.result("Validation successful")
+def run(dry_run, args):
+  if args.dir == "." or args.dir.startswith("./") or args.dir == ".." or args.dir.startswith("../"):
+     return ace.result("Validation failed", param_errors={"dir": "relative paths not supported"})
+  if dry_run:
+     return ace.result("Validation successful")
 
-    # Actual code for run handler
+  # Actual code for run handler
 ```
 
 Errors can be reported for multiple params. If the action definition has `show_validate=True`, then a Validate option will show up in the UI. Calling that will invoke the run handler with `dry_run=True`. The run handler should return after the param validation when dry_run is true.
@@ -131,7 +131,7 @@ For TABLE report, the fields from the first row are used as columns. Extra field
 
 ## Custom Templates
 
-If the `report` type is set to any value other than `ace.AUTO/TEXT/JSON/TABLE`, that is treated as a custom template to use. The template should be defined in a `*.go.html` file. Either the file name can be used or a template/block name can be used. See [template]({{< ref "docs/app/templates/#template-file-location" >}}) for details.
+If the `report` type is set to any value other than `ace.AUTO`, `ace.TEXT`, `ace.JSON`, `ace.TABLE`, `ace.DOWNLOAD` or `ace.IMAGE`, that is treated as a custom template to use. The template should be defined in a `*.go.html` file. Either the file name can be used or a template/block name can be used. See [template]({{< ref "docs/app/templates/#template-file-location" >}}) for details.
 
 For styling, OpenRun uses DaisyUI by default, so default styles are reset. The custom template can use inline styles or it can use TailwindCSS/DaisyUI. For DaisyUI, the app has to be run in dev mode first for the style.css to be generated. See [styling]({{< ref "docs/app/styling/#tailwindcss" >}}) for details.
 
@@ -173,7 +173,7 @@ For string type params, the `display_type` property can be set to `FILE`, `PASSW
 
 ## File Handling
 
-For `FILE` display type, the Action app user can upload a file. The file is uploaded to a temp file on the server and the file name is available through the `args.param_name`. The file can be process as required from disk. Multiple `FILE` type params are supported, each param can upload one file only. The temp files are deleted at the end of the handler function execution.
+For `FILE` display type, the Action app user can upload a file. The file is uploaded to a temp file on the server and the file name is available through the `args.param_name`. The file can be processed as required from disk. Multiple `FILE` type params are supported, each param can upload one file only. The temp files are deleted at the end of the handler function execution.
 
 Action request bodies are capped by default at `33554432` bytes. To change this globally, update `app_config.action.max_request_body_bytes` in `openrun.toml`. To override it for one app, run:
 
@@ -181,7 +181,7 @@ Action request bodies are capped by default at `33554432` bytes. To change this 
 openrun app update conf --promote 'action.max_request_body_bytes=67108864' /myapp
 ```
 
-To return file as output for the Action, using the [`fs.serve_tmp_file`]({{< ref "/docs/plugins/catalog/#serve_tmp_file" >}}) API. This makes a file on disk available through an API.
+To return a file as output for the action, use the [`fs.serve_tmp_file`]({{< ref "/docs/plugins/catalog/#serve_tmp_file" >}}) API. This makes a file on disk available through an API.
 
 See number_lines app [code](https://github.com/openrundev/apps/blob/main/misc/num_lines/app.star):[demo](https://utils.demo.clace.io/num_lines) for an example of using this API. Use `report=ace.DOWNLOAD` property in the `ace.result` to generate a file download link.
 

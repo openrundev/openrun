@@ -6,7 +6,7 @@ summary: "A visual tour of the OpenRun management console"
 A visual tour of the OpenRun management console, in two parts. First the
 deploy flow: creating a database service with its connection url stored as
 a secret, binding an app to it, deploying a containerized app from a git
-repo, and the operational pages. Then the RBAC flow: enabling role based
+repo, and the operational pages. Then the RBAC flow: configuring role-based
 access control from the console and working with team-scoped grants.
 The screenshots follow the site theme - toggle light/dark to see the
 console in the other theme. A live [demo](https://utils.demo.clace.io/console/)
@@ -85,7 +85,7 @@ Declarative GitOps sources keep apps synced from a repo on a schedule:
 
 {{< theme-image light="/images/console/12-syncs-light.png" dark="/images/console/12-syncs-dark.png" alt="Syncs page with declarative sources" >}}
 
-The AI app builder creates apps from a prompt in an agent session:
+The [AI app builder]({{< ref "docs/appbuilder" >}}) creates apps from a prompt in an agent session:
 
 {{< theme-image light="/images/console/13-builder-light.png" dark="/images/console/13-builder-dark.png" alt="App builder page" >}}
 

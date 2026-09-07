@@ -4,7 +4,7 @@ weight: 50
 summary: "Overview of managing OpenRun applications"
 ---
 
-The various commands for managing OpenRun apps are
+Use `openrun --help` for the full command list and `openrun <command> --help` for current options. The main app-management commands include:
 
 ```shell
 $ openrun
@@ -44,7 +44,7 @@ COMMANDS:
    help, h          Shows a list of commands or help for one command
 ```
 
-The app management subcommands are under the `app` command. The `preview` command manages preview apps for an app and `version` command manages versions for an app. The `account` command is for managing accounts for an app.
+The app management subcommands are under `app`. The `preview` and `version` commands manage previews and versions, and `account` manages saved app login accounts. Other workflows include declarative `apply`/`delete`, scheduled `sync`, [export and formatting]({{< ref "export" >}}), [service bindings]({{< ref "servicebindings" >}}), [jobs]({{< ref "jobs" >}}) and [webhooks]({{< ref "webhooks" >}}).
 
 ## App Management
 
@@ -56,7 +56,7 @@ The `reload/delete/promote/approve/list/update` commands accept a glob pattern. 
 
 The default for `app list` command is to list all apps. All other commands require a glob pattern to be specified explicitly.
 
-When multiple apps are being updated, if any one app fails, the whole operation is rolled back. This allows for atomic updates across multiple applications.
+Multi-app operations commit app metadata atomically: if an app fails before the transaction commits, metadata changes for the operation are rolled back. This does not roll back external effects such as database migrations or commands run by deployment hooks.
 
 ## App Listing
 
@@ -134,12 +134,11 @@ All other changes done to app metadata using `app update`, `app reload`, `param 
 
 The CLI and management apps allow imperative management of OpenRun apps. OpenRun apps can also be managed declaratively. The apps have to be declared in an app declaration file and OpenRun can apply the configuration. This works similar to the Kubernetes `apply` functionality.
 
-To use this feature, create an app config file, with `.ace` extension. The config file should contain one or more `app` definitions. For example, in a file called `apps.ace`
+Create a Starlark declaration file containing one or more `app` definitions. Any filename is accepted; `apps.ace` and `apps.star` are conventions. For example, in `apps.ace`:
 
 ```python {filename="apps.ace"}
-app("/myapps/disk_usage", "github.com/openrundev/apps/system/disk_usage")
-app("/myapps/memory_usage", "github.com/openrundev/apps/system/memory_usage")
-app("/myapps/list_files", "github.com/openrundev/apps/system/list_files")
+for name in ["team1", "team2", "team3"]:
+    app("/myapps/" + name, "github.com/openrundev/apps/utils/bookmarks", auth="system")
 ```
 
 defines three apps. Running
@@ -224,6 +223,7 @@ The declarative app configuration uses Starlark syntax. An app is defined using 
 |    stage_at    |   true   |   string    | system  | Staging location for new prod apps: `domain`, `path`, or a staging domain |
 |    sidecars    |   true   |  list dict  |         | The [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}) for the app, same JSON fields as `--sidecar` |
 |    bindings    |   true   | list string |         | The paths of the [service bindings]({{< ref "docs/applications/servicebindings" >}}) to attach to the app |
+|      jobs      |   true   |    list     |   []    | [Jobs and deploy hooks]({{< ref "jobs" >}}), declared with `job(...)`, dictionaries or JSON strings |
 |     verify     |   true   |    bool     |  false  |                   Verify reload for this app only                   |
 
 For example, a definition like
@@ -231,15 +231,15 @@ For example, a definition like
 ```python
 app("/streamlit", "github.com/streamlit/streamlit-example",
     git_branch="master", spec="python-streamlit",
-    params={"p1":["1", "2"]}, container_opts={"cpus": 1},
-    container_vols=["/v1", "/v2"], app_config={"ac1": 11}
+    params={"app_file": "streamlit_app.py"}, container_opts={"cpus": 1},
+    container_vols=["/data"], app_config={"container.idle_shutdown_secs": 600}
 )
 ```
 
-defines a Streamlit based app. Applying this file will create the app. Config can be updated through the CLI or UI. Subsequent runs of apply will not overwrite the imperative changes. For example, if a new param "p2" is defined using the CLI, that will be retained during subsequent runs. If the value of "p1" is updated in the config file, the next apply run will modify the value.
+defines a Streamlit app. Config can also be updated through the CLI or UI. Subsequent applies retain those imperative changes unless the same property changes in the declaration or `--clobber` is used. For example, a new parameter added through the CLI is retained. Changing `app_file` in the declaration updates that parameter on the next apply.
 
 {{<callout type="warning" >}}
-Apps are identified by their path and source URL, so those cannot be changed. Dev mode is set during app creation and cannot be updated. App auth and git_auth are settings which are directly applied without being staged. They can be updated through the CLI but not through the config file. All other properties are metadata changes which are staged. They can be updated through the app config. New app versions are created during apply and versions can be reverted at the app level.
+Apps are identified by their path and source URL; apply rejects an existing path with a different source. Dev mode and staging location are chosen at creation. Other metadata, including `auth` and `git_auth`, can be updated declaratively and is staged before promotion. New versions can be reverted with `openrun version revert`. Only `app settings` changes, such as staging write access, apply immediately without versioning.
 {{</callout>}}
 
 ## Automated Sync
@@ -257,6 +257,7 @@ USAGE:
 COMMANDS:
    schedule  Create scheduled sync job for updating app config
    list      List the sync jobs
+   run       Run a sync immediately
    delete    Delete specified sync job
    help, h   Shows a list of commands or help for one command
 ```
@@ -300,17 +301,17 @@ Scheduled sync takes all the same options as the `apply` command except `--dev` 
 
 If `--prune` is set, each sync run deletes the apps and bindings this sync itself created that are no longer present in the apply file, making the file the full source of truth for the resources it manages. Only resources originally created by the sync are pruned: apps and bindings created imperatively (or by another sync), even if they were later updated by this sync, are left alone. Pruned apps are fully deleted, containers, images, volumes and networks included; pruned bindings drop their backend objects the same way `binding delete` does. Pruning runs in the same transaction as the apply, so a blocked delete (for example a pruned base binding that still has derived bindings created outside the sync) fails and rolls back that sync run.
 
-Use `openrun sync list` to list all jobs and `openrun sync delete <sync_id>` to delete a sync job.
+Use `openrun sync list` to list syncs, `openrun sync run <sync_id>` to run one immediately, and `openrun sync delete <sync_id>` to remove its schedule. Deleting a sync does not delete its deployed apps or bindings.
 
 ## Sync Frequency
 
 The default sync frequency is every 15 minutes. This can be changed for each sync by passing `--minutes 10` during sync creation. To change the default globally, for any new sync being created, set
 
-```python {filename="openrun.toml"}
+```toml {filename="openrun.toml"}
 [system]
 default_schedule_mins = 10
 ```
 
-GitHub imposes a [rate limit](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) for API calls. Every sync run make one list API call to the apply file repo and one API call to each source file repo. So if apply files and source files are in the same repo, there is just one API call in total. If there are multiple sync operation, each runs independently. If there a new commit found, then a clone is done on the repo.
+GitHub imposes a [rate limit](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) for API calls. Every sync run makes one list API call to the apply file repo and one API call to each source file repo. So if apply files and source files are in the same repo, there is just one API call in total. If there are multiple sync operations, each runs independently. If a new commit is found, then a clone is done on the repo.
 
 Sync can be run more frequently, making sure rate limits are respected. If a [default git auth]({{< ref "/docs/configuration/security/#private-repository-access" >}}) entry is added, that will be used for all list API calls. The rate limits are higher for authenticated requests.

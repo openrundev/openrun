@@ -24,7 +24,7 @@ To get OpenRun running, the initial setup involves:
 
 - Create a Linux machine, accessible by your team through the VPN on port 443.
 - Create a DNS entry pointing to the machine's IP address, for example an `A` record for `apps.example.com`. A wildcard DNS entry `*.apps.example.com` will make it easier to install apps at the domain level.
-- Create a [OIDC]({{< ref "docs/configuration/authentication/#openid-connect-oidc" >}}) app in the IdP console. Set up `groups` scope such that [group info]({{< ref "docs/configuration/rbac/#group-info" >}}) is available. Note the client ID and secret. The callback URL would be `https://apps.example.com/_openrun/auth/oidc/callback`. Note the client ID and secret.
+- Create an [OIDC]({{< ref "docs/configuration/authentication/#openid-connect-oidc" >}}) app in the IdP console. Set up `groups` scope such that [group info]({{< ref "docs/configuration/rbac/#group-info" >}}) is available. Note the client ID and secret. The callback URL would be `https://apps.example.com/_openrun/auth/oidc/callback`.
 - Create a GitHub Personal Access Token in [GitHub settings](https://github.com/settings/personal-access-tokens). Set the scope to the repositories you want to use for your apps. Note the token. SSH key based auth is an alternative.
 
 ## Installation
@@ -84,7 +84,7 @@ This sets the default ports to 80 and 443, sets the apps to use OIDC for auth, r
 
 ## TLS Certificates
 
-OpenRun can automatically create [TLS certs]({{< ref "docs/configuration/networking/#enable-automatic-signed-certificate" >}}) when an app is created for a domain. That requires the node to be accessible over the public internet, since only the [TLS-ALPN](https://github.com/caddyserver/certmagic#tls-alpn-challenge) based cert is currently supported.
+OpenRun supports automatic [TLS certificates]({{< ref "docs/configuration/networking/#enable-automatic-signed-certificate" >}}) using TLS-ALPN on port 443 or HTTP-01 on port 80. Public certificate authorities must be able to reach the selected challenge port. For private deployments, use your own certificates or an [internal ACME CA]({{< ref "docs/configuration/networking/#custom-acme-server" >}}) that can reach the server.
 
 In this scenario, since the node is behind a VPN, TLS certs will have to be [managed manually]({{< ref "docs/configuration/networking/#tls-certificates" >}}). Create the cert files and place them in `/var/lib/openrun/config/certificates`. Files with the name `default.crt` and `default.key` are used as the default certificate file and key file for all domains. If a file is found with the name `example.com.pem` and `example.com.key`, that is used as the cert for the `example.com` domain.
 
@@ -164,7 +164,7 @@ For both OIDC and SAML, in addition to the group info coming from the IdP, addit
 
 OpenRun supports installing apps using the imperative [CLI interface]({{< ref "docs/applications/overview/#app-management" >}}) or using the [declarative]({{< ref "docs/applications/overview/#declarative-app-management" >}}) config files. We will use the declarative approach here.
 
-In one of the GitHub repos which is accessible using the PAT created above, create a app config file like
+In one of the GitHub repos which is accessible using the PAT created above, create an app config file like
 
 ```python {filename="apps.star"}
 # Admin apps

@@ -202,7 +202,7 @@ function copyCode(codeId, buttonElem) {
 {{< hextra/feature-card title="Container management" link="docs/quickstart/#containerized-applications" subtitle="Build and deploy containerized web applications declaratively across Docker, Podman or Kubernetes using one consistent platform configuration."  icon="docker" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Declarative GitOps" link="docs/quickstart/#lifecycle-with-git" subtitle="Manage staged deployments, versioned releases and preview environments through declarative GitOps workflows connected to GitHub or GitLab."  icon="github" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="Declarative GitOps" link="docs/applications/lifecycle/#github-reload" subtitle="Manage staged deployments, versioned releases and preview environments through declarative GitOps workflows connected to GitHub or GitLab."  icon="github" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
 {{< hextra/feature-card title="Scale down to zero" link="/docs/container/overview/" subtitle="Initialize applications lazily on their first request, then automatically stop idle containers and reduce resource usage to zero."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}

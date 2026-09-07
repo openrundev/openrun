@@ -26,6 +26,7 @@ The `app` global is created by calling the `ace.app` builtin. `name` is the only
 |        name        |  False   |                   string                    |           |                                                                  The display name for the app                                                                  |
 |       routes       |   True   | list of `ace.html`, `ace.api` , `ace.proxy` |    []     |                                          The [routes]({{< ref "docs/app/routing" >}}) exposed by the application                                               |
 |      actions       |   True   |            list of `ace.action`             |    []     |                                     The [actions]({{< ref "actions" >}}) exposed by the app, with an auto-generated UI                                         |
+|        jobs        |   True   | list of `ace.job` | [] | [Scheduled jobs and deploy hooks]({{< ref "applications/jobs" >}}) |
 |    permissions     |   True   |           list of `ace.permission`          |    []     |                          The plugin calls the app is allowed to make, see [App Permissions]({{< relref "#app-permissions" >}})                                 |
 |     container      |   True   |             `container.config`              |           |                        The container configuration, for [containerized apps]({{< relref "#containerized-app" >}})                                              |
 |       style        |   True   |                 `ace.style`                 |           |                                       The CSS [styling]({{< ref "docs/app/styling" >}}) configuration for the app                                              |
@@ -129,7 +130,7 @@ $ curl localhost:25222/hello
 hello world
 ```
 
-The default response type is `ace.HTML`. `ace.TEXT` and `ace.JSON` are the other options. The data returned by the handler function is converted to the type format specified in the API.
+The default for `ace.api` is `ace.JSON`; set `type=ace.TEXT` for plain text. `ace.html` routes render HTML. The data returned by the handler function is converted to the type format specified in the API.
 
 ## Building Apps from Spec
 
@@ -173,12 +174,12 @@ This is defining three parameters. The type can be one of `STRING`(default), `IN
 
 |   Property   | Optional |                    Type                    |         Default         |                                                        Notes                                                        |
 | :----------: | :------: | :----------------------------------------: | :---------------------: | :-----------------------------------------------------------------------------------------------------------------: |
-|     name     |  False   |                   string                   |                         |                                         Has to be a valid starlark keyword                                          |
+|     name     |  False   |                   string                   |                         |                                         Should be a valid Starlark identifier                                          |
 |     type     |   True   | `STRING`, `INT`, `BOOLEAN`, `LIST`or`DICT` |        `STRING`         |                                                    The data type                                                    |
 |   default    |   True   |           Type as set for `type`           | Zero value for the type |                                                                                                                     |
 | description  |   True   |                   string                   |                         |                                            The description for the param                                            |
 |   required   |   True   |                    bool                    |          True           |                    If required is True and default value is not specified, then validation fails                    |
-| display_type |   True   |                   string                   |                         | How this param should be displayed in the UI. Options are `FILE`, `PASSWORD` and `TEXTAREA`, default is text input. |
+| display_type |   True   |                   string                   |                         | How this param should be displayed in the UI. Options are `FILE`, `PASSWORD`, `TEXTAREA` and `COMBO`, default is text input. |
 
 The parameters are available in the app Starlark code, through the `param` namespace. For example, `param.port`, `param.app_name` etc. See https://github.com/openrundev/appspecs/blob/main/python-flask/app.star for an example of how this can be used.
 
@@ -257,7 +258,7 @@ For plugin calls made by the app, the plugin permissions normally have to be spe
 |  plugin   |  False   |         string         |           |                                             The plugin name                                             |
 |  method   |  False   |         string         |           |                                             The method name                                             |
 | arguments |   True   |      list string       |           |                                   The arguments allowed for the call                                    |
-|   type    |   True   |         string         | ace.WRITE |                                The call type, `ace.READ` or `ace.WRITE`                                 |
+|   type    |   True   |         string         | plugin default |                                Override the plugin call type with `ace.READ` or `ace.WRITE`                                 |
 |  secrets  |   True   | list of list of string |           |                                 The secrets the plugin call can access                                  |
 |  permit   |   True   |      list string       |    []     | Custom RBAC permissions, any one of which is required to make the call when RBAC is enabled for the app |
 
@@ -265,7 +266,7 @@ For example `ace.permission("proxy.in", "config", [container.URL])` is a plugin 
 
 The default server config already allows `proxy.config(container.URL, ...)` and `container.config(...)`, so these two calls do not need an explicit permission entry unless the app wants to narrow the default access or allow specific secrets for `container.config(...)`.
 
-If `permit` is set, the plugin call is available only to users who have at least one of those custom RBAC permissions when RBAC is enabled for the app. If RBAC is not enabled or `permit` is empty, plugin calls is allowed.
+If `permit` is set, the plugin call is available only to users who have at least one of those custom RBAC permissions when RBAC is enabled for the app. If RBAC is not enabled or `permit` is empty, plugin calls follow the usual approval rules.
 
 See [secrets]({{< ref "/docs/configuration/secrets/#plugin-access-to-secrets" >}}) for details on specifying the secrets which can be accessed by the plugin call.
 

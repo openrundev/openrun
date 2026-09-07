@@ -41,13 +41,13 @@ The `config` API supports the following parameters:
 - **lifetime** (string, optional) : the lifetime for the container, default is to start a service when the app is initialized. Set to `container.COMMAND` to allow running commands against the container using `container.run` without starting a service.
 - **build_dir** (string, optional) : the build directory for the build, `/` by default
 - **volumes** (list of strings, optional) : the [volumes]({{< ref "docs/container/overview/#volumes" >}}) to mount in the container. Supports named volumes (`myvolume:/data`), bind mounts (`./config.yaml:/app/config.yaml`) and generated secret mounts (`cl_secret:secret.tmpl:/app/secret.ini`)
-- **cargs** (dict, optional) : the container build arguments, `Containerfile` `ARG` values passed as `--build-arg` during the image build. Values set in the app metadata with `openrun app create/update --container-arg key=value` (alias `--carg`) override values set here
+- **cargs** (dict, optional) : the container build arguments, `Containerfile` `ARG` values passed as `--build-arg` during the image build. Values set in the app metadata with `openrun app create --carg key=value` or `openrun app update carg key=value /myapp` override values set here
 - **dev_settings** (dict, optional) : settings for the dev mode [fast reload]({{< ref "docs/container/devreload" >}}) flow. The allowed keys are `target`, `command`, `dir`, `reload`, `env_files`, `additional_mounts`, `port`, `dev_stage` and `disable`. These settings apply in dev mode only
 - **sidecars** (list, optional) : the [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}) for the app. Each entry must be created with `container.sidecar(...)`, a plain dict is not accepted
 
 When the `src` is auto, the container file is auto detected. It checks for presence of either `Containerfile` or `Dockerfile`. If the value begins with `image:` (`container.IMAGE_PREFIX`), the subsequent portion is treated as the image to download. No image build is done in that case. Any other value for `src` is treated as the file name to use as the container file.
 
-`port` can be specified in the container file, using a EXPOSE directive. If a value other than zero is specified in the config, that takes precedence over the value in the Expose.
+`port` can be specified in the container file, using an EXPOSE directive. If a value other than zero is specified in the config, that takes precedence over the value in the Expose.
 
 A sample program using the container `config` is
 

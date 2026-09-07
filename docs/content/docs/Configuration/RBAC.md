@@ -6,15 +6,15 @@ summary: "Controlling access to applications using RBAC"
 
 ## RBAC Overview
 
-Role based access controls (RBAC) allows fine-grained control on which users are allowed to view, access and update apps. RBAC is supported using [OAuth]({{< ref "/docs/configuration/authentication/#oauth-authentication" >}}) based auth (like GitHub, GitLab etc). When using OAuth, users have to be explicitly added to groups in the OpenRun RBAC config. RBAC is also supported for [OpenID Connect]({{< ref "/docs/configuration/authentication/#openid-connect-oidc" >}}) and [SAML]({{< ref "/docs/configuration/authentication/#saml" >}}), like Okta and Microsoft Entra etc. With OIDC, the group information can be detected automatically through the user profile information or it can be explicitly configured in the OpenRun config.
+Role-based access control (RBAC) allows fine-grained control on which users are allowed to view, access and update apps. RBAC is supported using [OAuth]({{< ref "/docs/configuration/authentication/#oauth-authentication" >}}) based auth (like GitHub, GitLab etc). When using OAuth, users have to be explicitly added to groups in the OpenRun RBAC config. RBAC is also supported for [OpenID Connect]({{< ref "/docs/configuration/authentication/#openid-connect-oidc" >}}) and [SAML]({{< ref "/docs/configuration/authentication/#saml" >}}), like Okta and Microsoft Entra etc. With OIDC, the group information can be detected automatically through the user profile information or it can be explicitly configured in the OpenRun config.
 
 ## Authentication versus Authorization
 
-RBAC is used for multiple authorization checks, like `app:read` (view app info), `app:access` (access the app) and various update related actions. RBAC is **always on** and applies to **every app**: a user needs an `app:access` grant to reach an app, in addition to passing the app's authentication. The default configuration ships a default grant giving every authenticated principal (the `anonymous` user of `none`-auth apps included) the `openrun-user` role — `app:access` and `app:read` on all apps — so out of the box, a user can reach an app iff they can authenticate against it. Removing or narrowing that grant locks apps down; for example, if an app uses `google` for auth, a user who can log into the Google account still needs an `app:access` grant on the app to reach it. The `admin` user, and any user holding the `admin` permission, always have access.
+RBAC is used for multiple authorization checks, like `app:read` (view app info), `app:access` (access the app) and various update related actions. RBAC is **always on** and applies to **every app**: a user needs an `app:access` grant to reach an app, in addition to passing the app's authentication. The default configuration ships a default grant giving every principal (including the `anonymous` user of `none`-auth apps) the `openrun-user` role — `app:access` and `app:read` on all apps — so out of the box, a user can reach an app if they can authenticate against it. Removing or narrowing that grant locks apps down; for example, if an app uses `google` for auth, a user who can log into the Google account still needs an `app:access` grant on the app to reach it. The `admin` user, and any user holding the `admin` permission, always have access.
 
 RBAC enforcement cannot be disabled through the dynamic config. The static config flag `security.unsafe_disable_rbac` turns all enforcement off for dev/test setups; it cannot be set through the dynamic config API and it excludes the remote API surfaces (`[api.rest]`/`[api.mcp]` `enable` is rejected while it is set).
 
-Management API calls made by app Starlark code are authorized as the authenticated request user, including read/list operations and mutations. List APIs filter out apps, services and bindings for which that user lacks the corresponding read permission. CLI calls over the unix domain socket are the transport-level administrative exception and run as trusted admin unless `--as` is used. Remote API calls (REST over TCP and MCP, enabled via `[api] enable`) authenticate with an API key and run as the key's user identity with RBAC enforced.
+Management API calls made by app Starlark code are authorized as the authenticated request user, including read/list operations and mutations. List APIs filter out apps, services and bindings for which that user lacks the corresponding read permission. CLI calls over the unix domain socket are the transport-level administrative exception and run as trusted admin unless `--as` is used. Remote API calls authenticate with an API key or an OAuth token from browser login and run as that credential’s user identity with RBAC enforced. Enable REST with `[api.rest] enable = true` and MCP with `[api.mcp] enable = true`; see [Remote API and MCP]({{< ref "remoteaccess" >}}).
 
 ## RBAC Configuration
 
@@ -29,9 +29,9 @@ The RBAC configuration is managed through [dynamic config]({{< ref "docs/configu
       "group2": ["group:group1", "oidc_oktatest:xyz@example.com"]
     },
     "roles": {
-      "accessor": ["access"],
-      "viewer": ["list"],
-      "fullaccess": ["role:accessor", "list"]
+      "accessor": ["app:access"],
+      "viewer": ["app:read"],
+      "fullaccess": ["role:accessor", "app:read"]
     },
     "grants": [
       {
@@ -63,7 +63,7 @@ In addition to any roles you define, OpenRun ships a set of built-in roles that 
 | `openrun-operator` | Runs the platform | full app lifecycle, `app:approve`, sync, services, bindings, provider management, container management, config, secrets (no reveal), audit, server stop, builder |
 | `openrun-developer` | Builds and deploys apps | `app:manage`, services/bindings (no delete), `container:read`, `sync:run`/`read`, `secret:create`/`read`, `config:basic_read` (for the create/update forms) — no `app:approve`, full config, audit, secret delete/reveal, server stop, or builder |
 | `openrun-builder` | A developer who also uses the AI app builder | everything in `openrun-developer` plus `builder:*` |
-| `openrun-user` | Baseline authenticated user | `access` and `read` |
+| `openrun-user` | Baseline authenticated user | `app:access` and `app:read` |
 | `openrun-monitor` | Read-only observability | read access across apps, audit, containers, sync, services, bindings, providers, config, and secret metadata (no reveal, no writes) |
 
 `secret:reveal` (reading back stored secret values) and `binding:reveal` (reading back binding account credentials with `binding show-account`) are not included in any built-in role other than `openrun-admin` (whose `admin` permission bypasses every check). Users who need to read these values back must be granted `secret:reveal` / `binding:reveal` explicitly.
@@ -87,7 +87,7 @@ Every other permission is **global** (`builder:*`, `sync:*`, `container:*`, `pro
 
 The creator of a service or binding holds the configured owner permissions on it (default `service:manage` / `binding:manage`) without needing a grant, like app and sync owners. Override with `owner_permissions.service` / `owner_permissions.binding`.
 
-The `builder:*` permissions are global because a builder session is not bound to an app path until it publishes. The app a session publishes, edits or removes is enforced separately with the app permissions on that path: publishing to a new path needs `app:create`, republishing an existing app needs `app:update`, and unpublishing needs `app:delete` (local mode publishes also run through the declarative apply, which enforces `app:apply`, `app:promote` and `app:approve` before any file is staged). The preview dev app a session creates under the configured `preview_path` is authorized by `builder:create` itself — no app permission is needed for the preview mount — and is owned by the session creator, so the owner rule covers viewing the preview and deleting it with the session.
+The `builder:*` permissions are global because a builder session is not bound to an app path until it publishes. The app a session publishes, edits or removes is enforced separately with the app permissions on that path: publishing to a new path needs `app:create`, republishing an existing app needs `app:update`, and unpublishing needs `app:delete` (local mode publishes also run through the declarative apply, which enforces `app:apply` and `app:approve` before any file is staged). The preview dev app a session creates under the configured `preview_path` is authorized by `builder:create` itself — no app permission is needed for the preview mount — and is owned by the session creator, so the owner rule covers viewing the preview and deleting it with the session.
 
 `app:approve` is the operator-only permission that authorizes approving an app's plugin permissions (which run server-side code). It is scoped like the other `app:*` permissions — a grant confers it only on the apps matched by its `targets` — but it always needs an explicit grant: it is never implied by `app:manage`, never matched by a permission glob and never granted through ownership; it has to be granted by its literal name (or held via the `admin` super-user permission, e.g. the `openrun-admin` role). Setting the `--approve` flag on a create/reload/apply, or calling approve directly, requires this permission on every matched app. Creating a sync entry with `approve` set requires `app:approve` granted with target `all`, since the entry's glob can match apps created later.
 
@@ -134,7 +134,7 @@ In the `groups.<group_name>` property and in `grant.users`, the username can be 
 
 ## Custom Permissions
 
-Permissions like `access`, `list`, `update` etc are OpenRun-defined permissions. They control what actions can be performed by the user in OpenRun. In addition to these, custom permissions are supported. Custom permissions are defined in the config with the `custom:` prefix. These permissions are ignored by OpenRun. They are passed to the app. For apps where requests are proxied through OpenRun (like containerized apps), these permissions are available in the HTTP headers
+Permissions like `app:access`, `app:read`, `app:update` are OpenRun-defined permissions. They control what actions can be performed by the user in OpenRun. In addition to these, custom permissions are supported. Custom permissions are defined in the config with the `custom:` prefix. These permissions are ignored by OpenRun. They are passed to the app. For apps where requests are proxied through OpenRun (like containerized apps), these permissions are available in the HTTP headers
 
 - `X-Openrun-User`: This is the user performing the request. The user ID is prefixed with the provider name (like `google:test@example.com`). The username is `anonymous` for anonymous requests and `admin` for admin requests.
 - `X-Openrun-User-Id`: The provider user ID claim, when available. For OIDC providers this is the `sub` claim.
@@ -149,5 +149,5 @@ Plugin calls can use the same custom permissions with `ace.permission(..., permi
 ## Notes
 
 - RBAC applies to every app: users need an `app:access` grant to reach an app (the default grant provides it to every authenticated principal). The `rbac:` auth prefix is still accepted for backward compatibility but no longer has any special effect.
-- Updates using the CLI client are done as the `admin` system user. There are no RBAC restrictions on the `admin`.
+- Local CLI calls over the Unix domain socket run as `admin` unless `--as` is used. Remote CLI calls run as the authenticated credential’s user, with RBAC enforced.
 - For apps with no authentication (using `none` auth), the user ID to use in RBAC is `anonymous`, without the auth type prefix.

@@ -17,10 +17,12 @@ OpenRun is an Apache-2.0 licensed, self-hosted PaaS alternative for declarative 
 {{< card link="applications" title="Managing apps" subtitle="Install, route, secure and manage applications across development, staging and production" icon="document-duplicate" >}}
 {{< card link="applications/servicebindings" title="Database Service Bindings" subtitle="Provision isolated PostgreSQL, MySQL, SQLite and Redis access with unique app credentials; SQL Server, Oracle, MongoDB, Snowflake and ClickHouse via binding providers" icon="database_plain" >}}
 {{< card link="applications/litestream" title="SQLite + Litestream" subtitle="Deploy persistent SQLite applications with Litestream replication and automatic recovery from S3" icon="cloud-upload" >}}
-{{< card link="app" title="Developing apps" subtitle="Build secure hypermedia applications with routes, templates, styling and reusable JavaScript components" icon="sparkles" >}}
+{{< card link="develop" title="Developing apps" subtitle="Build secure hypermedia applications with routes, templates, styling and reusable JavaScript components" icon="sparkles" >}}
 {{< card link="actions" title="Action apps" subtitle="Generate secure interfaces for backend functions and operational scripts without custom frontend development" icon="terminal" >}}
 {{< card link="container" title="Containerized apps" subtitle="Build and deploy containerized applications consistently across Docker, Podman and Kubernetes" icon="docker_plain" >}}
 {{< card link="app" title="Hypermedia apps" subtitle="Develop server-driven hypermedia applications with HTML routes, templates and minimal JavaScript" icon="html5_plain" >}}
 {{< card link="plugins" title="Plugins" subtitle="Extend sandboxed applications with controlled APIs for storage, HTTP, containers and external services" icon="template" >}}
+{{< card link="appbuilder" title="AI App Builder" subtitle="Configure agent sessions, preview apps and publish locally or through Git" icon="sparkles" >}}
+{{< card link="configuration/remoteaccess" title="Remote API and MCP" subtitle="Connect remote CLI and AI clients with scoped credentials and RBAC" icon="terminal" >}}
 {{< card link="reference" title="Reference" subtitle="Index of all Starlark functions and constants, grouped by where they are used" icon="book-open" >}}
 {{< /cards >}}

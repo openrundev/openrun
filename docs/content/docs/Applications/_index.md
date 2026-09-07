@@ -15,4 +15,7 @@ Details on how to install and manage OpenRun apps.
 {{< card link="audit" title="Audit Events" subtitle="Capture and review application operations, API calls and custom business events automatically" icon="view-list" >}}
 {{< card link="servicebindings" title="Database Service Bindings" subtitle="Provision isolated PostgreSQL, MySQL, SQLite and Redis access with unique application credentials; SQL Server, Oracle, MongoDB, Snowflake and ClickHouse via binding providers" icon="table" >}}
 {{< card link="litestream" title="SQLite + Litestream" subtitle="Deploy persistent SQLite applications with Litestream replication and automatic recovery from S3" icon="cloud-upload" >}}
+{{< card link="export" title="Export Configuration" subtitle="Bring existing apps and bindings into declarative GitOps management" icon="document-duplicate" >}}
+{{< card link="webhooks" title="App Webhooks" subtitle="Trigger reloads and promotions from CI and GitHub pushes" icon="terminal" >}}
+{{< card link="jobs" title="Jobs and Deploy Hooks" subtitle="Run scheduled tasks, manual jobs and deployment gates" icon="terminal" >}}
 {{< /cards >}}

@@ -14,7 +14,7 @@ Two types of SQLite data can be replicated:
 - **App data**: the SQLite databases behind [SQLite service bindings]({{< ref "/docs/applications/servicebindings/#sqlite-config-and-behavior" >}}).
 - **Server metadata**: OpenRun's own metadata and audit databases (single node, SQLite metadata).
 
-Replication is continuous (changes upload within about a second) and restore is automatic: a new node, a lost volume or a re-attached binding is repopulated from the replica before the app starts. Together this gives disaster recovery for a complete node loss — start a new server with the same config file and everything comes back from object storage.
+Replication is continuous (changes upload within about a second) and restore is automatic: a new node, a lost volume or a re-attached binding is repopulated from the replica before the app starts. With metadata and app replication configured, a replacement server can recover the replicated databases. It also needs the server config, credentials and encryption keys described below.
 
 ## Automatic SQLite Backup and Restore
 
@@ -103,7 +103,7 @@ Every `*.db` file the app creates in its binding directory is replicated, includ
 How it runs:
 
 - **Docker/Podman**: a per-app companion container (`clc-<app-id>-ls`) runs `litestream replicate` sharing the app's data volume. Before the app container starts on an empty volume, one-shot restore containers pull any replicated databases back. The sidecar survives app version updates, stops gently (after a final sync) when the app is idle-shut-down, and restarts with the app.
-- **Kubernetes**: restore init containers plus a native sidecar (init container with `restartPolicy: Always`) run inside the app's pod. Requires Kubernetes 1.29 or newer. The sidecar starts before the app container and is terminated after it, so the final changes are always synced.
+- **Kubernetes**: restore init containers plus a native sidecar (init container with `restartPolicy: Always`) run inside the app's pod. Requires Kubernetes 1.29 or newer. The sidecar starts before the app container and is terminated after it, so it can perform a final sync during graceful shutdown. Abrupt node loss or an unavailable object store can prevent that sync.
 
 Replica locations are keyed by binding identity and environment:
 
@@ -148,11 +148,13 @@ App states combine the replica listing in object storage with the replication co
 
 ## Operational Notes
 
-- **Data loss window**: replication is asynchronous. On a catastrophic failure, up to the last `sync_interval` of writes (1s by default) can be lost.
+For disaster recovery, preserve `openrun.toml`, object-store credentials and the encryption key for the embedded secrets store (`$OPENRUN_HOME/config/secret.key` when using the default). Metadata replication does not back up that key, local dev source directories, arbitrary mounted files or the `store.in` database. Keep separate backups of those assets as needed. Restore the configuration and keys before starting a replacement server against the replicas.
+
+- **Data loss window**: replication is asynchronous. `sync_interval` (1s by default) is an upload interval, not a guaranteed recovery point. Network failures, object-store outages or replication lag can increase the amount of data lost on host failure.
 - **Restore window**: bounded by `retention`. Increase it (and consider `snapshot_interval`) if you need to restore older states.
 - **Storage**: app volumes are Docker named volumes or block-backed PVCs. Network filesystems (NFS/SMB) are not supported for SQLite data, and NFS-backed PVCs may delay discovery of new database files.
 - **Volume permissions**: fresh volumes and restored files are made writable for non-root app users with a `chmod` that runs using the Litestream image, so distroless app images work with replication enabled. Kubernetes pods additionally get `fsGroup: 65532`.
-- **Deletes keep data**: deleting an app or binding keeps the volume and the replica. Replica history ages out per `retention`.
+- **App deletion removes local data**: deleting an app removes its managed volumes or PVCs. Object-storage replicas are not deleted. Preserve the binding if it will be reattached to another app; a newly created binding has a different ID and does not automatically find a deleted binding’s replica.
 - **Image pinning**: `sidecar_image` and the embedded Litestream are on the 0.5 series (LTX replica format). Upgrades are an operator action.
 - **Windows**: fully supported. App replication runs in Linux containers; metadata replication runs on the host through the embedded library.
 

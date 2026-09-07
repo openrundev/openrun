@@ -168,7 +168,7 @@ Secrets can be accessed using the syntax `{{secret_from "PROVIDER_NAME" "KEY_NAM
 
 Secrets are always resolved late. Starlark code does not get access to the plain text secrets, except through an explicitly approved `secret_reveal` permission as described below. The secret lookup happens when the call to the plugin API is done. In case of params, the lookup happens when the param is passed to the container.
 
-For git_auth config, an example secret usage is
+For OAuth configuration, an example secret reference is
 
 ```toml {filename="openrun.toml"}
 [auth.google_prod]
@@ -228,7 +228,7 @@ param("key", description="The secret reference for the page API key")
 with `index.go.html` referencing `{{ .Data.key }}`, and the app created with
 
 ```shell
-openrun app create --approve --param key='{{secret_from "db" "myapp_api_key"}}' ./mysite /mysite
+openrun app create --approve --auth system --param key='{{secret_from "db" "myapp_api_key"}}' ./mysite /mysite
 ```
 
 This is disabled by default and is gated like any other plugin secret access:

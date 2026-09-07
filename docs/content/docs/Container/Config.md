@@ -43,6 +43,8 @@ In the running state, a status check is done on the app every `container.status_
 
 If an app does not receive any REST API request for 180 seconds and the total data transfer from/to the app is below 1500 bytes over 180 seconds, the app is assumed to be idle and the container is stopped. The idle shutdown does not apply for dev apps, only for prod mode apps. For frameworks like Streamlit where WebSockets is used for communication between the UI and app, there will not be any REST API calls. The data transfer is used to determine whether the app is idle.
 
+Set `container.idle_shutdown_secs = 0` to disable idle shutdown. Dev apps skip idle shutdown by default; set `container.idle_shutdown_dev_apps = true` to enable it for them. Kubernetes replica minimums do not override idle shutdown; see [resources and autoscaling]({{< ref "docs/container/kubernetes/#resources-and-autoscaling" >}}).
+
 ## Changing Config
 
 The `openrun.toml` can be updated to have a different value for any of the properties. After the server restart, the config change will apply for all apps.
@@ -65,7 +67,7 @@ container_command = "auto"
 stale_container_cleanup_interval_mins = 5
 ```
 
-`auto` means that OpenRun will look for `podman` executable in the path. If found, it will use that. Else it will use `docker` as the container manager command. If the value for `container_command` is set to any other value (except `kubernetes`), that will be used as the command to use. Orbstack implements the Docker CLI interface, so Orbstack also works fine with OpenRun.
+`auto` means that OpenRun will look for `podman` executable in the path. If found, it will use that. Else it will use `docker` as the container manager command. If the value for `container_command` is set to any other value (except `kubernetes`), that will be used as the command to use. OrbStack implements the Docker CLI interface, so OrbStack also works fine with OpenRun.
 
 Setting `container_command = "kubernetes"` enables Kubernetes mode. In Kubernetes mode, the Kubernetes APIs are used to manage the container lifecycle. No CLI commands are used in Kubernetes mode.
 

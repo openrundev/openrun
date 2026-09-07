@@ -4,7 +4,7 @@ weight: 100
 summary: "Overview of how plugins work, how to use them"
 ---
 
-Plugins provide an API for OpenRun Starlark code to call out to external systems. Plugins are implemented in Go. Every plugin API call must be approved before it is permitted, either in the app metadata or through server level defaults in `openrun.toml`. See [security]({{< ref "appsecurity#sample-application" >}}/) for an overview of the security model.
+Plugins provide an API for OpenRun Starlark code to call out to external systems. Plugins are implemented in Go. Every plugin API call must be approved before it is permitted, either in the app metadata or through server level defaults in `openrun.toml`. See [security]({{< ref "appsecurity#sample-application" >}}) for an overview of the security model.
 
 Each plugin is identified by a unique name, like `store.in` or `exec.in`. Apps always load plugins with the `.in` suffix: resolution prefers a plugin compiled into the OpenRun binary and falls back to an installed [external plugin provider]({{< ref "docs/plugins/external-plugins" >}}) serving that module, so apps do not change when a plugin moves between the two. The `.ex` suffix explicitly requires the external build. Both run the same plugin implementation, built with the OpenRun plugin SDK.
 
@@ -19,10 +19,10 @@ load("http.in", "http")
 This adds `http` to the namespace for the app. To make a call to the plugin, first add the permissions to the app config unless the server config already allows that call by default.
 
 ```python {filename="app.star"}
-    permissions=[
-        ace.permission("http.in", "get"),
-        ace.permission("http.in", "post")
-    ],
+permissions=[
+    ace.permission("http.in", "get"),
+    ace.permission("http.in", "post")
+],
 ```
 
 Run `openrun app approve /myapp` to authorize the app to call the `get` and `post` methods on the http plugin.
@@ -30,9 +30,9 @@ Run `openrun app approve /myapp` to authorize the app to call the `get` and `pos
 In the app handler code, do
 
 ```python {filename="app.star"}
-    ret = http.get(SERVICE_URL + "/api/challenge/" + challenge_id)
-    if not ret:
-        return ace.response(ret.error, "invalid_challenge_id", code=404)
+ret = http.get(SERVICE_URL + "/api/challenge/" + challenge_id)
+if not ret:
+    return ace.response(ret.error, "invalid_challenge_id", code=404)
 ```
 
 At runtime, OpenRun will check if the `get` call is authorized. If so, the call to the plugin will be performed.
@@ -53,25 +53,25 @@ To check the error status of an API call:
 For example,
 
 ```python {filename="app.star"}
-    ret = http.get("https://localhost:9999/test")
-    if not ret:
-        # error condition
-        return ace.response(ret, "error_block")
+ret = http.get("https://localhost:9999/test")
+if not ret:
+    # error condition
+    return ace.response(ret, "error_block")
 
-    # success
-    print(ret.value.json()) # ret.value is the return value. The http plugin response has a json() function
+# success
+print(ret.value.json()) # ret.value is the return value. The http plugin response has a json() function
 ```
 
 An alternate way to write the error check is
 
 ```python {filename="app.star"}
-    ret = http.get("https://localhost:9999/test")
-    if ret.error:
-        # error condition
-        return ace.response(ret, "error_block")
+ret = http.get("https://localhost:9999/test")
+if ret.error:
+    # error condition
+    return ace.response(ret, "error_block")
 
-    # Success
-    print(ret.value.json())
+# Success
+print(ret.value.json())
 ```
 
 ## Automatic Error Handling
@@ -99,8 +99,8 @@ When no explicit error checks are done, the automatic error handling happens in 
 If the handler code is
 
 ```python {filename="app.star"}
-    ret = http.get("https://localhost:9999/test")
-    print(ret.value.json())
+ret = http.get("https://localhost:9999/test")
+print(ret.value.json())
 ```
 
 If the `get` API had succeeded, then the `value` property access will work as usual. But if the `get` API had failed, then the `value` access will fail and the `error_handler` will be called with the original request and the error response.
@@ -110,8 +110,8 @@ If the `get` API had succeeded, then the `value` property access will work as us
 If the `value` is not being accessed, then the next plugin call will raise the error. For example, if the handler code is
 
 ```python {filename="app.star"}
-    store.begin()
-    bookmark = store.select_one(table.bookmark, {"url": url}).value
+store.begin()
+bookmark = store.select_one(table.bookmark, {"url": url}).value
 ```
 
 The response of the `begin` API is not checked. When the next `select_one` API is called, if the previous `begin` had failed, the `select_one` API will raise the previous API call's error, the `select_one` will not run.
@@ -121,11 +121,11 @@ The response of the `begin` API is not checked. When the next `select_one` API i
 If the handler code is
 
 ```python {filename="app.star"}
-    def insert(req):
-        store.begin()
-        book = doc.bookmark("abc", [])
-        store.insert(table.bookmark, book)
-        store.commit()
+def insert(req):
+    store.begin()
+    book = doc.bookmark("abc", [])
+    store.insert(table.bookmark, book)
+    store.commit()
 ```
 
 Assume all the API calls had succeeded and then the `commit` fails. Since the `value` is not accessed and there is no plugin API call after the `commit` call, the OpenRun platform will raise the error after the handler completes since the `commit` had failed.

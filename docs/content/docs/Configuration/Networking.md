@@ -65,7 +65,7 @@ port = 80
 redirect_to_https = true
 ```
 
-All requests to the HTTP port will 308 redirect to the HTTPS port.
+App requests to the HTTP port receive a 308 redirect to HTTPS. Management and webhook endpoints reject plaintext requests instead of redirecting; enabled ACME HTTP-01 challenge requests are handled before the redirect.
 
 ## Dev Env Certificates
 
@@ -80,7 +80,7 @@ mkcert -install
 OpenRun uses the [certmagic](https://github.com/caddyserver/certmagic) library for fully-managed TLS certificate issuance and renewal for production deployment. Certmagic is disabled by default. To enable, the pre-requisites are:
 
 - The https config is using 443 as the port number. Running on privileged ports requires additional [setup](#privileged-ports)
-- There is an DNS entry created pointing your host name or domain wildcard to the IP address of the host running the OpenRun server. This has to be done in your DNS provider config.
+- There is a DNS entry created pointing your host name or domain wildcard to the IP address of the host running the OpenRun server. This has to be done in your DNS provider config.
 - Port 443 is reachable from the public internet. This has to be done in your infrastructure provider network settings. Alternatively, the HTTP-01 challenge on port 80 can be enabled, see [ACME Challenges](#acme-challenges).
 
 Once the pre-requisites are met, set the `service_email` config parameter to your email address. This enables certmagic based certificate creation. The config will look like:

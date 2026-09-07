@@ -15,13 +15,13 @@ For a complete public VPS setup with DNS, TLS and OAuth, follow the [self-hosted
 
 ## Install Release Build
 
-OpenRun manages TLS cert using LetsEncrypt for prod environments. For dev environment, it is recommended to install [mkcert](https://github.com/FiloSottile/mkcert). OpenRun will automatically create local certs using mkcert if it is present. Install mkcert and run `mkcert -install` before starting OpenRun server.
+OpenRun manages TLS cert using Let's Encrypt for prod environments. For dev environment, it is recommended to install [mkcert](https://github.com/FiloSottile/mkcert). OpenRun will automatically create local certs using mkcert if it is present. Install mkcert and run `mkcert -install` before starting OpenRun server.
 
-For container based apps, Docker or Podman or Orbstack should be installed and running on the machine. OpenRun automatically detects the container manager to use.
+For container based apps, Docker or Podman or OrbStack should be installed and running on the machine. OpenRun automatically detects the container manager to use.
 
-OpenRun uses an `admin` user account as the default authentication for accessing apps. A random password is generated for this account during initial OpenRun server installation. Note down this password for accessing apps.
+OpenRun creates an `admin` account during installation or first server start. Save the generated password for the console and apps configured with `system` authentication. Apps use `none` authentication by default; see [default authentication]({{< ref "configuration/authentication/#default-authentication-type" >}}) to change this.
 
-To install the latest release build on Linux, OSX or Windows with WSL, run the install script. Note down the password printed. Add the env variables as prompted and then start the service.
+To install the latest release build on Linux, macOS or Windows with WSL, run the install script. Note down the password printed. Add the env variables as prompted and then start the service.
 
 ```shell
 curl -sSL https://openrun.dev/install.sh | sh
@@ -36,7 +36,7 @@ openrun server start
 To install apps declaratively, run
 
 ```
-openrun apply --approve github.com/openrundev/openrun/examples/utils.star all
+openrun apply --approve github.com/openrundev/openrun/examples/utils.star /utils/bookmarks
 ```
 
 Open https://localhost:25223 to access the app listing UI.
@@ -113,7 +113,7 @@ Open a new terminal so `openrun` is on the PATH, then run:
 openrun server start
 ```
 
-On the first server start, OpenRun creates its config file under `$HOME\openrun` (or `$env:OPENRUN_HOME` if set) and generates an admin password. Note down the password printed.
+If no home or config path is configured and no existing installation is found, the first server start creates `$HOME\openrun\openrun.toml` and generates an admin password. Note down the password printed. When setting a custom `$env:OPENRUN_HOME`, create the directory and initialize the config with `openrun password > "$env:OPENRUN_HOME\openrun.toml"` before starting the server.
 
 Alternatively, install using the install script:
 
@@ -199,8 +199,8 @@ The release binaries are available at [releases](https://github.com/openrundev/o
 
 To install from source
 
-- Ensure that a recent version of [Go](https://go.dev/doc/install) is available, version 1.21.0 or newer.
-- Checkout the OpenRun repo.
+- Install the Go toolchain required by the checked-out revision's [go.mod](https://github.com/openrundev/openrun/blob/main/go.mod). The current source requires Go 1.27.0 or newer.
+- Check out the OpenRun repo.
 - The below instructions assume you are using $HOME/clhome/openrun.toml as the config file and $HOME/clhome as the work directory location.
 
 First add the below env variables to your shell .profile or .bash_profile:
@@ -210,7 +210,7 @@ export OPENRUN_HOME=$HOME/clhome
 export PATH=$OPENRUN_HOME/bin/:$PATH
 ```
 
-Source the update profile file, like `source ~/.bash_profile`. Build the OpenRun binary
+Source the updated profile file, for example `source ~/.bash_profile`, then build the OpenRun binary:
 
 ```shell
 # Ensure go is in the $PATH
@@ -222,21 +222,23 @@ go build -o $OPENRUN_HOME/bin/openrun ./cmd/openrun/
 
 ## Certs and Default password
 
-OpenRun manages TLS cert using LetsEncrypt for prod environments. For dev environment, it is recommended to install [mkcert](https://github.com/FiloSottile/mkcert). OpenRun will automatically create local certs using mkcert if it is present. Install mkcert and run `mkcert -install` before starting OpenRun server. Installing OpenRun using brew will automatically install mkcert.
+OpenRun manages TLS cert using Let's Encrypt for prod environments. For dev environment, it is recommended to install [mkcert](https://github.com/FiloSottile/mkcert). OpenRun will automatically create local certs using mkcert if it is present. Install mkcert and run `mkcert -install` before starting OpenRun server. Installing OpenRun using brew will automatically install mkcert.
 
-For container based apps, Docker or Podman or Orbstack should be installed and running on the machine. OpenRun automatically detects the container manager to use.
+For container based apps, Docker or Podman or OrbStack should be installed and running on the machine. OpenRun automatically detects the container manager to use.
 
-OpenRun uses an `admin` user account as the default authentication for accessing apps. A random password is generated for this account during initial OpenRun server installation. Note down this password for accessing apps if using `system` auth.
+Apps configured with `system` authentication use the `admin` account. Save the password generated during installation or first server start. New apps use `none` authentication unless the server default or app configuration selects another auth type.
 
 ## Initial Configuration
 
-To use the openrun service, you need an initial config file with the service password and a work directory. Create the openrun.toml file, and create a randomly generate password for the **admin** user account
+The install scripts and native packages initialize the config. When no home or config path is configured and no installation is found, the first server start initializes `$HOME/openrun/openrun.toml`.
+
+For the source installation above, or any custom `OPENRUN_HOME`, initialize the config explicitly. Run the following once for a new installation, before adding other settings; it overwrites the destination file:
 
 ```shell
-openrun password > $OPENRUN_HOME/openrun.toml
+openrun password > "$OPENRUN_HOME/openrun.toml"
 ```
 
-This will print a random password on the screen, note that down as the password to use for accessing the applications.
+This prints a random admin password to the terminal and saves its hash in the config. Save the password for the console and apps using `system` authentication.
 
 ## Start the service
 
@@ -246,14 +248,21 @@ To start the OpenRun server, run
 openrun server start
 ```
 
-The service logs will be going to $OPENRUN_HOME/logs. The service will be started on [https://localhost:25223](https://127.0.0.1:25223) by default.
+The service logs will be going to $OPENRUN_HOME/logs. The service will be started on [https://localhost:25223](https://localhost:25223) by default.
 
 ## Load an App
 
-To create an app, ensure that code is available locally and then run the OpenRun client
+The disk-usage example uses `exec.in`, which is blocked by default. To run this example, enable it explicitly in `openrun.toml` and restart the server:
+
+```toml {filename="openrun.toml"}
+[permissions]
+disallow = []
+```
+
+This removes the server-wide block; each command still needs app-level approval. See [default plugin permissions]({{< ref "configuration/security/#default-plugin-permissions" >}}). Then create the app with authentication:
 
 ```shell
-openrun app create --dev $HOME/openrun_source/openrun/examples/disk_usage /disk_usage
+openrun app create --dev --auth system "$HOME/openrun_source/openrun/examples/disk_usage" /disk_usage
 ```
 
 To audit and approve the app's security policies, run
@@ -280,7 +289,7 @@ openrun app create --approve --auth system \
 
 Open https://localhost:25223/console and log in as `admin`, using the password printed during the OpenRun installation.
 
-Since the console performs management operations, it should always run with an auth type that requires login. Using `system` auth is recommended: it needs no additional setup, the `admin` account with the password printed during installation is used to login. `system` is the server's default auth type, the `--auth system` option makes the choice explicit. OAuth/OIDC/SAML based [authentication]({{< ref "configuration/authentication" >}}) can also be used. Do not use `none` auth for the console: management operations are blocked for anonymous users.
+The console requires an authenticated user for management operations. `--auth system` selects the admin account created during installation. OAuth/OIDC/SAML and builtin-user [authentication]({{< ref "configuration/authentication" >}}) can also be used with appropriate RBAC grants. Do not use `none` auth for the console: management operations are blocked for anonymous users.
 
 The console features are controlled through app params, set with `--param name=value` during create:
 
@@ -297,5 +306,7 @@ The default install (no params) is a read-only console covering apps, syncs, bin
 Params can be changed after install. Enabling a new area adds plugin permissions, which require re-approval; the change is staged and goes live on promotion:
 
 ```shell
-openrun param update --promote enable_builder true /console
+openrun param update enable_builder true /console
 ```
+
+After enabling a new area, review and approve the added plugin permissions with `openrun app approve --promote /console`. The AI builder also requires server-side [builder configuration]({{< ref "appbuilder" >}}); enabling the console area alone does not start it.

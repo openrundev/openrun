@@ -113,7 +113,7 @@ The auth request includes these request context headers:
 
 OpenRun also sends trusted identity and authorization context headers to the auth server:
 
-- `X-Openrun-User` : The user making teh API call, prefixed with provider name, like `google:test@example.com`
+- `X-Openrun-User` : The user making the API call, prefixed with provider name, like `google:test@example.com`
 - `X-Openrun-User-Stripped` : The user without the provider name prefix, like `test@example.com`
 - `X-Openrun-User-Id`
 - `X-Openrun-User-Email`
@@ -231,7 +231,7 @@ The IdP has to be configured to return the group information in the user profile
 
 ## SAML
 
-To configure an SAML based provider, add in config
+To configure a SAML based provider, add in config
 
 ```toml {filename="openrun.toml"}
 [saml."testokta"]
@@ -262,4 +262,4 @@ The format for the Single Sign-on URL is `<CALLBACK_URL>/_openrun/sso/<PROVIDER>
 
 If using RBAC, ensure that the group info is available under the `groups` attribute, or set `groups_attr` as required.
 
-The service provide metadata is available for download at the `https://example.com:25223/_openrun/sso/saml_testokta/metadata` endpoint if the key and cert have been specified.
+The service provider metadata is available for download at the `https://example.com:25223/_openrun/sso/saml_testokta/metadata` endpoint if the key and cert have been specified.

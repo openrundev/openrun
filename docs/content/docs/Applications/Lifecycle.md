@@ -50,7 +50,7 @@ openrun app create --dev --approve /home/user/mycode /myapp
 
 ## Production Apps
 
-Without the `--dev` option, apps are created as production apps by default. Production apps can be created from source on GitHub or from local disk. In either case, the source code for the app is uploaded to the OpenRun metadata database. For example:
+Without the `--dev` option, apps are created as production apps by default. Production apps can be created from Git sources or from local disk. In either case, the source code for the app is uploaded to the OpenRun metadata database. For example:
 
 ```sh
 openrun app create --approve /home/user/mycode example.com:/
@@ -120,7 +120,7 @@ app_stg_2aMvX3fc9fH18n6i2Jew0tNxnky STG  2                                      
 
 If the application code change requires new permissions, the reload operation will fail unless `--approve` is added.
 
-To do the reload, approval and promotion is one step, do `openrun app reload --approve --promote example.com:/`.
+To reload, approve and promote in one step, run `openrun app reload --approve --promote example.com:/`.
 
 Add `--verify` to check that the reloaded app container starts successfully before promotion:
 
@@ -132,9 +132,9 @@ For production apps, reload updates the staging app first. With `--verify`, Open
 
 ## GitHub Reload
 
-The rules for fetching source code from local disk and GitHub are:
+OpenRun supports GitHub, GitLab and other Git hosts, as well as local disk sources. The rules for fetching source code are:
 
-- If the source URL starts with `http://`, `https://` or `github.com`, the source is assumed to be from a GitHub API endpoint. Otherwise the source is assumed to be local disk on the OpenRun server.
+- Sources starting with `http://`, `https://` or `git@`, and host paths such as `github.com/org/repo`, are treated as Git sources. Paths starting with `/`, `.` or `~` are local to the OpenRun server. See [Git configuration]({{< ref "docs/configuration/security/#private-repository-access" >}}) for authentication and host-specific URL formats.
 - If OpenRun client and server are on different machines and local disk is being used, the code needs to be copied to the server node first.
 - For GitHub source, the format is https://domain_name/org_name/repo_name/sub/folder, like `github.com/openrundev/openrun/examples/disk_usage`. The sub_folder should contain the `app.star` config file.
 - During `app create` and `app reload`, the commit id takes precedence over the branch name if both are specified.
@@ -142,7 +142,7 @@ The rules for fetching source code from local disk and GitHub are:
 
 ## Preview Apps
 
-Preview allows the creation of any number of linked preview apps for a main app. This is supported for apps created from GitHub source. The commit id to use needs to be specified when creating the preview. For example,
+Preview allows the creation of any number of linked preview apps for a main app. This is supported for apps created from Git sources. The commit id to use needs to be specified when creating the preview. For example,
 
 ```sh
 openrun preview create 49182d4ca1cacbd8e3463a77c2174a6da1fb66c9 /myapp
@@ -154,10 +154,14 @@ Preview apps cannot be changed once they are created. If preview app requires ne
 
 ## Write Mode Access
 
-Staging and Preview apps have read-only access by default to plugin APIs. This means that when they make calls to plugin APIs, only APIs defined as READ by the plugin are permitted. The HTTP plugin defines GET/OPTIONS/HEAD requests as READ type, POST/PUT/DELETE are defined as WRITE. For the CLI Exec plugin, the run API is defined as WRITE since the CLI command run might do write operations.
+Staging and preview apps allow approved WRITE plugin calls by default, controlled by `security.stage_enable_write_access` and `security.preview_enable_write_access`. To create new apps with read-only staging and preview plugin access, set both options to `false` in `openrun.toml`. Plugin permissions and server-level restrictions still apply in either mode.
+
+In read-only mode, only calls classified as READ are permitted. The HTTP plugin classifies GET/OPTIONS/HEAD as READ and POST/PUT/DELETE/PATCH as WRITE. The Exec plugin classifies `run` as WRITE because the command may modify data.
 
 For cases where the plugin defines an API as Write, the app permission can overwrite the default type and define the operation to be a READ operation. For example, the disk_usage app runs the `du` command, which is a read operation. The [app config defines](https://github.com/openrundev/openrun/blob/49182d4ca1cacbd8e3463a77c2174a6da1fb66c9/examples/disk_usage/app.star#L45) the run plugin call as `type="READ"`, over-riding the default WRITE type defined in the plugin. If no type is specified in the permission, the type defined in the plugin takes effect.
 
-Staging and Preview apps are allowed only READ calls by default, even if the app permissions allow WRITE operations. To allow stage apps access to WRITE operations, run `openrun app settings stage-write-access true all`. Change `all` to the desired app glob pattern.
+To restrict existing apps, run `openrun app settings stage-write-access false all` and `openrun app settings preview-write-access false all`. Change `all` to the desired app glob pattern. These settings apply immediately and are not staged. Use `true` to allow approved WRITE calls again.
 
 To allow preview apps access to WRITE operation, run `openrun app settings preview-write-access true example.com:/`. This changes the existing preview apps and any new preview apps created for example.com:/ to allow write operations, if the permissions have been approved.
+
+These controls apply to Starlark plugin calls. They do not make a proxied container or its database read-only. Use separate staging credentials and appropriately restricted [service bindings]({{< ref "servicebindings" >}}) to control database access.

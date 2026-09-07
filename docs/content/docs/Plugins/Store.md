@@ -1,20 +1,40 @@
 ---
 title: "Store Plugin"
 weight: 300
-summary: "Store plugin provides a document store interface for SQLite and Postgres"
+summary: "Store plugin provides a managed document store interface for SQLite and PostgreSQL"
 ---
 
-The `store.in` plugin provides a document store interface to work with SQLite tables (PostgreSQL support is coming soon). The goal for the store plugin is to support a full managed interface, creating the app automatically creates the tables required for the app.
+The `store.in` plugin provides a document store interface backed by SQLite or PostgreSQL. OpenRun creates the tables and indexes declared in `schema.star` when the store is initialized.
 
 ## Introduction
 
-The `store.in` plugins automatically creates tables with the specified schema. The tables are created on first load unless they are already present. The tables are linked to the app. The tables use a document store interface. The data is stored as JSON(B) data types. To query the data, a structured interface is used similar to the one provided by MongoDB. The advantage of this approach is that SQL injection is not possible, even if the application code is incorrectly written.
+The `store.in` plugin automatically creates tables with the specified schema. The tables are created on first load unless they are already present. The tables are linked to the app. The tables use a document store interface. The data is stored as JSON(B) data types. To query the data, a structured interface is used similar to the one provided by MongoDB. The advantage of this approach is that SQL injection is not possible, even if the application code is incorrectly written.
+
+## Database Configuration
+
+The default store database is separate from the server metadata database:
+
+```toml {filename="openrun.toml"}
+[plugin."store.in"]
+db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_app_store.db"
+```
+
+To use an existing PostgreSQL database, configure a connection whose account can create tables and indexes:
+
+```toml {filename="openrun.toml"}
+[plugin."store.in"]
+db_connection = "postgres://openrun:password@db.example.com:5432/app_store?sslmode=require"
+```
+
+The same Starlark store APIs work with either backend. Changing this setting selects another database; it does not migrate existing data. Back up the store database separately from the server metadata. Store tables are distinct from container app databases provisioned through [service bindings]({{< ref "docs/applications/servicebindings" >}}).
+
+Production and its linked staging app share the same store tables. Staging writes therefore affect production data when write access is enabled (the default). Use [staging write controls]({{< ref "docs/applications/lifecycle/#write-mode-access" >}}) to restrict plugin writes, or a separate app for isolated test data. SQLite service bindings have a different model, with separate volumes for production and staging.
 
 ## Schema Definition
 
 The schema for the app is specified in the `schema.star` file in the root directory of the app code. The format of this file is like:
 
-```python {filename="app.star"}
+```python {filename="schema.star"}
 type("bookmark",
      fields=[
          field("url", STRING),
@@ -36,7 +56,7 @@ type("tag",
 
 Multiple types can be specified. Each type has a name, list of fields and list of indexes. Each field has a name and a type, the valid types are `INT`, `STRING`, `BOOLEAN`, `LIST` and `DICT`.
 
-Each type maps to one table in the underlying database. Indexes can be created on the fields. Each index is specified as list of field names. Adding `:desc` to the field name changes the index to be sorted descending instead of default ascending. Setting `unique` property to `True` makes it an unique index.
+Each type maps to one table in the underlying database. Indexes can be created on the fields. Each index is specified as list of field names. Adding `:desc` to the field name changes the index to be sorted descending instead of default ascending. Setting `unique` property to `True` makes it a unique index.
 
 ## Schema Design
 
@@ -117,7 +137,7 @@ The sort argument can be used to sort the result for the `select` API. The argum
 
 The `select`, `select_one`, `count` and `delete` APIs take a filter parameter. The filter has to be specified as a dict. The format of the filter is similar to the format used by MongoDB. The advantage of this over a SQL expression is that there is no possibility of SQL injection, even with an improperly written application.
 
-The filter is specified as a list diction, the keys are the names of the field to apply the condition on. The value can be a value, in which case it is treated as a equality match. If the value is an diction, then the it is treated as a expression to apply on the specified field.
+The filter is a dictionary whose keys name the fields to test. A scalar value tests equality. A dictionary value specifies operators to apply to that field.
 
 For example, a filter `{"age": 30}` is equivalent to sql where clause `age = ?` with the parameter bound to 30. Filter `{"age": 30, "city": "New York", "state": "California"}` is same as sql `age = ? AND city = ? AND state = ?`, with the appropriate bindings. To express an or condition, do filter as `{"age": 30, "$or": [{"city": "New York"}, {"state": "California"}]}`. That translates to `age = ? AND ( city = ? OR state = ? )`
 

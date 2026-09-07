@@ -40,7 +40,7 @@ Some of the unique features of OpenRun are:
 - Create and manage apps declaratively, through GitOps
 - Service bindings to provision isolated Postgres/MySQL/SQLite/Redis database accounts for apps, with more databases supported through binding providers
 - Managed SQLite with continuous Litestream replication to S3 and automatic restore
-- Easily upgrade from single-node to Kubernetes, with no config changes required
+- Reuse app declarations when moving from a single node to Kubernetes; server and storage configuration still need to be set up
 - Domain based or path based routing, with auto-TLS
 - OAuth/OpenID/SAML/Cert based auth
 - RBAC for admin operations and for app access
@@ -88,7 +88,7 @@ OpenRun supports three ways of managing apps, which can be mixed freely:
 <details>
   <summary><b>What types of apps can be deployed with OpenRun?</b></summary>
 
-> OpenRun can deploy any web app which runs in a single container, with optional [sidecar containers](https://openrun.dev/docs/container/overview/#sidecar-containers) for background workers and companion services and jobs for [background jobs](https://openrun.dev/docs/applications/jobs/). OpenRun supports [AppSpecs](https://openrun.dev/docs/container/overview/#app-specs) which allow zero-config deployment of frameworks like Streamlit/Gradio/FastHTML/NiceGUI/Shiny/Reflex based apps. For frameworks which have an AppSpec, no Dockerfile is required, no code changes are required in the app source code. For frameworks which do not have an AppSpec defined, a Dockerfile needs to be present in the app source repo.
+> OpenRun can deploy any web app which runs in a single container, with optional [sidecar containers](https://openrun.dev/docs/container/overview/#sidecar-containers) for background workers and companion services and [jobs](https://openrun.dev/docs/applications/jobs/). OpenRun supports [AppSpecs](https://openrun.dev/docs/container/appspecs/) which allow zero-config deployment of frameworks like Streamlit/Gradio/FastHTML/NiceGUI/Shiny/Reflex based apps. For frameworks which have an AppSpec, no Dockerfile is required, no code changes are required in the app source code. For frameworks which do not have an AppSpec defined, a Dockerfile needs to be present in the app source repo.
 >
 > OpenRun does NOT support apps which require multiple containers using Docker Compose. External services are accessed through a service binding, which is a more flexible and operationally convenient approach to provisioning services.
 
@@ -147,7 +147,7 @@ OpenRun has built-in [Litestream](https://openrun.dev/docs/applications/litestre
 
 - **No app changes**: Apps do not package, configure or run Litestream themselves. OpenRun manages the replication and restore lifecycle on Docker, Podman and Kubernetes.
 - **App data and server metadata**: Both the SQLite databases behind SQLite service bindings and OpenRun's own metadata and audit databases can be replicated.
-- **Disaster recovery**: Replication is continuous (changes upload within about a second) and restore is automatic. After a complete node loss, start a new server with the same config file and apps, bindings, versions and audit history come back from object storage.
+- **Disaster recovery**: Restore replicated app and metadata databases on a replacement server. Preserve the server config, object-store credentials and secrets encryption key separately. Replication is asynchronous; recovery depends on the last successful upload.
 
 <img alt="Single-node deployment with Litestream replication of app data and server metadata to S3-compatible storage" src="https://openrun.dev/d2/single-node-litestream.svg"/>
 
@@ -175,6 +175,9 @@ OpenRun supports the following:
 - Automatic [audit trail](https://openrun.dev/docs/applications/audit/) of operations and API calls, with support for custom app events
 - [OpenTelemetry](https://openrun.dev/docs/configuration/telemetry/) export of request traces, container lifecycle activity and platform metrics
 - Browser based [management console](https://openrun.dev/console-tour/) for apps, bindings, containers, audit events and server config
+- [App webhooks](https://openrun.dev/docs/applications/webhooks/) for CI-triggered reloads and promotions
+- [Configuration export](https://openrun.dev/docs/applications/export/) to bring existing deployments into GitOps
+- [AI app builder](https://openrun.dev/docs/appbuilder/) with sandboxed agent sessions and local or Git publication
 - Support for [pausing](https://openrun.dev/docs/container/config/) app containers which are idle, scaling down to zero
 
 OpenRun also supports building [hypermedia based apps](https://openrun.dev/docs/app/routing/#html-route): lightweight backend-driven HTML apps with no build step, running in a [security sandbox](https://openrun.dev/docs/applications/appsecurity/#security-model) with allowlist based permissions.
@@ -185,19 +188,19 @@ The feature roadmap for OpenRun is:
 
 - Adding more app specs, to support additional frameworks out of the box.
 - Adding more binding providers, to support additional databases and services.
-- Support for app scaling on Kubernetes based on concurrent APIs. Scaling based on CPU/memory metrics is supported right now.
+- Support for app scaling on Kubernetes based on concurrent APIs. [CPU-based autoscaling](https://openrun.dev/docs/container/kubernetes/#resources-and-autoscaling) is supported now.
 
 ## Setup
 
 ### Certs and Default password
 
-OpenRun manages TLS certs using LetsEncrypt for prod environments. For dev environments, OpenRun uses [mkcert](https://github.com/FiloSottile/mkcert) for local certs. Installing OpenRun using brew will automatically install mkcert.
+OpenRun manages TLS certs using Let's Encrypt for prod environments. For dev environments, OpenRun uses [mkcert](https://github.com/FiloSottile/mkcert) for local certs. Installing OpenRun using brew will automatically install mkcert.
 
-For container based apps, Docker or Podman or Orbstack should be installed and running on the machine. OpenRun automatically detects the container manager to use.
+For container based apps, Docker or Podman or OrbStack should be installed and running on the machine. OpenRun automatically detects the container manager to use.
 
-### Install OpenRun On OSX/Linux
+### Install OpenRun On macOS/Linux
 
-To install on OSX/Linux, run
+To install on macOS/Linux, run
 
 ```shell
 curl -sSL https://openrun.dev/install.sh | sh
@@ -240,20 +243,20 @@ See [kubernetes docs](https://openrun.dev/docs/container/kubernetes/) for detail
 Once OpenRun server is running, to install apps declaratively, open a new window and run
 
 ```
-openrun apply --approve github.com/openrundev/openrun/examples/utils.star
+openrun apply --approve github.com/openrundev/openrun/examples/utils.star /utils/bookmarks
 ```
 
-To schedule a background sync, which automatically applies the latest app config, run
+To schedule a background sync, commit your app declarations to Git and replace the example URL below with the path to your file:
 
 ```
-openrun sync schedule --approve --promote github.com/openrundev/openrun/examples/utils.star
+openrun sync schedule --approve --promote github.com/myorg/platform/apps.star
 ```
 
-To install apps using the CLI (imperative mode), run
+The disk-usage and file-listing examples require explicitly enabling `exec.in` in [default plugin permissions](https://openrun.dev/docs/configuration/security/#default-plugin-permissions). Their commands select `system` authentication because host command execution requires an authenticated caller. To install apps using the CLI, run
 
 ```
-openrun app create --approve github.com/openrundev/apps/system/list_files /files
-openrun app create --approve github.com/openrundev/apps/system/disk_usage /disk_usage
+openrun app create --approve --auth system github.com/openrundev/apps/system/list_files /files
+openrun app create --approve --auth system github.com/openrundev/apps/system/disk_usage /disk_usage
 openrun app create --approve github.com/openrundev/apps/utils/bookmarks /book
 ```
 
@@ -281,41 +284,25 @@ to install the app.
 
 ### Build from source
 
-To install a release build, follow steps in the [installation docs](https://openrun.dev/docs/installation/#install-release-build).
-
-To install from source:
-
-- Ensure that a recent version of [Go](https://go.dev/doc/install) is available, version 1.21.0 or newer
-- Checkout the OpenRun repo, cd to the checked out folder
-- Build the openrun binary and place in desired location, like $HOME
+Use the Go version required by the revision's [go.mod](go.mod) (currently Go 1.27.0 or newer):
 
 ```shell
-# Ensure go is in the $PATH
-mkdir $HOME/openrun_source && cd $HOME/openrun_source
-git clone -b main https://github.com/openrundev/openrun && cd openrun
-export OPENRUN_HOME=$HOME/clhome && mkdir -p $OPENRUN_HOME/config
-go build -o $OPENRUN_HOME/openrun ./cmd/openrun/
+git clone https://github.com/openrundev/openrun.git
+cd openrun
+export OPENRUN_HOME="$HOME/openrun"
+mkdir -p "$OPENRUN_HOME/bin"
+go build -o "$OPENRUN_HOME/bin/openrun" ./cmd/openrun/
+export PATH="$OPENRUN_HOME/bin:$PATH"
+# Run once for a new installation; preserve an existing config.
+openrun password > "$OPENRUN_HOME/openrun.toml"
+openrun server start
 ```
 
-### Initial Configuration For Source Install
-
-To use the openrun service, you need an initial config file with the service password and a work directory. The below instructions assume you are using $HOME/openrun/openrun.toml as the config file and $HOME/openrun as the work directory location.
-
-- Create the clhome directory
-- Create the openrun.toml file, and create a randomly generated password for the **admin** user account
-
-```shell
-cd $OPENRUN_HOME
-git clone -C config https://github.com/openrundev/appspecs
-$OPENRUN_HOME/openrun password > $OPENRUN_HOME/openrun.toml
-$OPENRUN_HOME/openrun server start
-```
-
-The service will be started on [https://localhost:25223](https://127.0.0.1:25223) by default (HTTP port 25222).
+The `password` command writes the initial config and prints the generated admin password to the terminal. Save it for the console and apps using `system` authentication. App specs are bundled in the binary; no separate clone is required. See [installation](https://openrun.dev/docs/installation/#install-from-source) for persistent shell configuration.
 
 ## Documentation
 
-OpenRun docs are at https://openrun.dev/docs/. For doc bugs, raise a GitHub issue in the [docs](https://github.com/openrundev/docs) repo.
+OpenRun docs are at https://openrun.dev/docs/. Report documentation bugs in the [OpenRun issue tracker](https://github.com/openrundev/openrun/issues).
 
 ## Getting help
 

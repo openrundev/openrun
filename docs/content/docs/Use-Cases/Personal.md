@@ -138,7 +138,7 @@ This will upload the RBAC config to the metadata server (and also update the fil
 
 OpenRun supports installing apps using the imperative [CLI interface]({{< ref "docs/applications/overview/#app-management" >}}) or using the [declarative]({{< ref "docs/applications/overview/#declarative-app-management" >}}) config files. We will use the declarative approach here.
 
-In one of the GitHub repos which is accessible using the PAT created above, create a app config file like
+In one of the GitHub repos which is accessible using the PAT created above, create an app config file like
 
 ```python {filename="apps.star"}
 # Admin apps

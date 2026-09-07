@@ -21,7 +21,7 @@ layout: hextra-home
 
 {{< hextra/feature-grid >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="GitOps Workflow" link="/docs/quickstart/#lifecycle-with-git" subtitle="Manage blue-green deployments, versioned releases and preview environments through declarative Git workflows without maintaining separate deployment infrastructure."  icon="github" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="GitOps Workflow" link="/docs/applications/lifecycle/#github-reload" subtitle="Manage blue-green deployments, versioned releases and preview environments through declarative Git workflows without maintaining separate deployment infrastructure."  icon="github" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Hypermedia web apps" link="/docs/app/routing/#html-route" subtitle="Build fast, lightweight hypermedia web apps with server-driven HTML, minimal JavaScript and substantially less frontend complexity."  icon="html5" class="openrun-feature-card openrun-feature-card-light" >}}
 

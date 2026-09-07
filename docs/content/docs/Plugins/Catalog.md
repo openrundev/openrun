@@ -8,7 +8,7 @@ The page lists the available plugins and their API details.
 
 ## Database Storage
 
-The `store.in` plugin supports a document store interface for writing data to SQLite. See [store]({{< ref "store" >}}) for details.
+The `store.in` plugin supports a document store interface for writing data to SQLite or PostgreSQL. See [store]({{< ref "store" >}}) for details.
 
 ## Container Config
 
@@ -88,9 +88,9 @@ The API supports the following parameters:
 The default response (when `stdout_file` is `False`) for the `exec` API (`value` within `plugin_response`) is of type list of strings. The stdout is scanned and split on newlines. The list of lines is returned. For example
 
 ```python {filename="app.star"}
-   ret = exec.run("ls", ["-l", "/"], process_partial=True).value
-   for line in ret:
-       # Process lines
+ret = exec.run("ls", ["-l", "/"], process_partial=True).value
+for line in ret:
+    print(line)
 ```
 
 {{<callout type="warning" >}}

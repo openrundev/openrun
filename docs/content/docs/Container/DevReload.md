@@ -25,7 +25,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o app ./cmd/app
+RUN CGO_ENABLED=0 go build -o app ./cmd/app
 
 FROM builder AS dev
 CMD go run ./cmd/app
@@ -99,7 +99,9 @@ container=container.config(container.AUTO, port=8000,
 Compiled languages benefit from persisting the toolchain caches across container recreates, using named volumes in `additional_mounts`. For the Go example above:
 
 ```python
-"additional_mounts": ["go-mod-cache:/go/pkg/mod", "go-build-cache:/root/.cache/go-build"]
+dev_settings={
+    "additional_mounts": ["go-mod-cache:/go/pkg/mod", "go-build-cache:/root/.cache/go-build"],
+}
 ```
 
 With the mod and build caches on named volumes, a `go run` after a restart recompiles only the changed packages.

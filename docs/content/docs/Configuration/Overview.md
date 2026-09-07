@@ -8,16 +8,18 @@ summary: "Overview of OpenRun configuration, at the server level and client leve
 
 The OpenRun server picks up its configuration from the config file at startup. All the parameters have default values, specified in the code at [openrun.default.toml](https://github.com/openrundev/openrun/blob/main/internal/system/openrun.default.toml).
 
-A user-specified config file can be provided. The environment variable `CL_CONFIG_FILE` is used to locate the config file. If not set, it defaults to `$OPENRUN_HOME/openrun.toml`.
+Select a config file with the global `--config-file` flag, or with `CL_CONFIG_FILE`. The flag takes precedence. Otherwise, OpenRun uses `$OPENRUN_HOME/openrun.toml` or discovers an existing installation as described below.
 
 Values in the user specified config take precedence over the default config values in the source code.
 
 ## Home Directory
 
-The `OPENRUN_HOME` environment variable is used to locate the home directory for the OpenRun server. If no value is set, a home directory is determined based on the path of the openrun binary (generally one level above the bin directory where the binary is). This location is used to store:
+Set `OPENRUN_HOME` to choose the server home directory. If only a config file is specified, its parent directory becomes the home. If neither is set, OpenRun looks for an existing config beside its installation, then in platform-specific Homebrew or system locations such as `/var/lib/openrun` on Linux or `%ProgramData%\openrun` on Windows. If none is found, it uses `$HOME/openrun`.
+
+Automatic first-start initialization applies only to this final fallback. With an explicit home or config path, initialize the config yourself as described in [Initial Configuration]({{< ref "docs/installation/#initial-configuration" >}}). Without a saved password hash, a generated password changes on each server start. The home directory stores:
 
 - The default config file, `$OPENRUN_HOME/openrun.toml`
-- The sqlite database containing the metadata information, default is `$OPENRUN_HOME/metadata/openrun.db`
+- The sqlite database containing the metadata information, default is `$OPENRUN_HOME/metadata/clace_metadata.db`
 - The logs for the service, under the `logs` folder.
 - The config folder contains the certificates to use for TLS.
 - The run folder contains app specific temporary files.
@@ -99,7 +101,7 @@ In app declaration, same can be accessed as
 
 ```python {filename="utils.star"}
 system_list = config("systems", ["local"])
-app("/utils/bookmarks", "github.com/openrundev/apps/utils/bookmarks", params={"systems"=systems_list})
+app("/utils/bookmarks", "github.com/openrundev/apps/utils/bookmarks", params={"systems": system_list})
 ```
 
 If the app source code needs to be checked out from same branch as the app declaration, then do

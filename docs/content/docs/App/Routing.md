@@ -8,7 +8,7 @@ The request routing layer in OpenRun is built on top of the [chi](https://github
 
 ## Routes
 
-The app contains an `routes` array, which defines all the routes for the app. For example, the app definition
+The app contains a `routes` array, which defines all the routes for the app. For example, the app definition
 
 ```python {filename="app.star"}
 app = ace.app("hello1",
@@ -23,9 +23,9 @@ defines two routes. `/` routes to the default index page, `/help` routes to the 
 
 ## HTML Route
 
-An HTML route defined using `ace.html` defines the properties for a HTML page. The response is HTML text. The data returned by the handler function is passed to the template. If the handler returns a `ace.response` or `ace.redirect`, then that takes effect, otherwise the template is rendered.
+An HTML route defined using `ace.html` defines the properties for an HTML page. The response is HTML text. The data returned by the handler function is passed to the template. If the handler returns an `ace.response` or `ace.redirect`, then that takes effect, otherwise the template is rendered.
 
-An HTML route can have fragments defined within it. These are sub-apis which used for hypermedia driven interactions from the main page.
+An HTML route can have fragments defined within it. These are sub-APIs used for hypermedia driven interactions from the main page.
 
 The parameters for `ace.html` are:
 
@@ -40,7 +40,7 @@ The parameters for `ace.html` are:
 
 ## Fragment
 
-The fragments array in the html page definition defines the API interactions within the page. The parameters for `ace.Fragment` are:
+The fragments array in the html page definition defines the API interactions within the page. The parameters for `ace.fragment` are:
 
 | Property | Optional |   Type   |       Default       |                                Notes                                 |
 | :------: | :------: | :------: | :-----------------: | :------------------------------------------------------------------: |
@@ -111,7 +111,7 @@ A GET request to `/myapi` endpoint will return JSON `{"a": 1}`.
 
 ## Proxy Route
 
-A Proxy route defines a route which has to be proxied to another service. All API calls under that route are proxied (all methods and all sub-routes). Websocket connections are also proxied. Proxy uses a plugin based config, the app has to be authorized to do the proxying. The parameters for `ace.Proxy` are:
+A Proxy route defines a route which has to be proxied to another service. All API calls under that route are proxied (all methods and all sub-routes). Websocket connections are also proxied. Proxy uses a plugin based config, the app has to be authorized to do the proxying. The parameters for `ace.proxy` are:
 
 | Property | Optional |    Type     | Default |              Notes               |
 | :------: | :------: | :---------: | :-----: | :------------------------------: |
@@ -124,7 +124,7 @@ The proxy configuration `proxy.config` has the options:
 | :-----------: | :------: | :-----: | :-----: | :------------------------------------------------------------------------------------------------------: |
 |      url      |  False   | string  |         |                                    The url to forward the requests to                                    |
 |  strip_path   |   True   | string  |         | Additional path components to strip from the request path. The app installation path is always stripped. |
-| preserve_host |  False   | boolean |         |   Whether to preserve the Host header. Default false, the Host header is set to the target host value    |
+| preserve_host |  True    | boolean |  false  |   Whether to preserve the Host header. Default false, the Host header is set to the target host value    |
 
 For example, an app which forwards requests to `www.google.com` is
 

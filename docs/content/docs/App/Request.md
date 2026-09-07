@@ -46,7 +46,7 @@ ace.html("/user/{user_id}/settings", "index.go.html")
 the url parameter `user_id` can be accessed in the handler
 
 ```python {filename="app.star"}
-def handler(req)
+def handler(req):
     user_id = req.UrlParams["user_id"]
 ```
 
@@ -59,35 +59,35 @@ ace.html("/path/*", "index.go.html")
 and can be accessed as
 
 ```python {filename="app.star"}
-def handler(req)
+def handler(req):
     user_id = req.UrlParams["*"]
 ```
 
-[Regexes](https://github.com/google/re2/wiki/Syntax) are also allowed in the path, these are defined as `ace.html("/articles/{aid:^[0-9]{5,6}}")` and accessed as `req.UrlParams["{aid}"]`. The route will match only if the regex matches.
+[Regexes](https://github.com/google/re2/wiki/Syntax) are also allowed in the path, these are defined as `ace.html("/articles/{aid:^[0-9]{5,6}}")` and accessed as `req.UrlParams["aid"]`. The route will match only if the regex matches.
 
 ### Query String Parameters
 
 Query string parameters can be accessed as
 
 ```python {filename="app.star"}
-def handler(req)
+def handler(req):
     name = req.Query.get("name")
     name = name[0] if name else None
 ```
 
-The value for Query is an string array, since there can be multiple query parameters with the same name.
+The value for Query is a string array, since there can be multiple query parameters with the same name.
 
 ### Form Data
 
 Form data can be accessed like
 
 ```python {filename="app.star"}
-def handler(req)
+def handler(req):
     name = req.Form.get("name")
     name = name[0] if name else None
 ```
 
-The value for Form is an string array, since there can be multiple form parameters with the same name.
+The value for Form is a string array, since there can be multiple form parameters with the same name.
 
 ## Client IP Resolution
 
