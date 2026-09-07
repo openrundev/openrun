@@ -5,9 +5,14 @@ package plugins
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
@@ -103,5 +108,73 @@ func TestExecRunExplicitEnv(t *testing.T) {
 	lines := result.([]any)
 	if len(lines) != 1 || lines[0] != "RUN_TEST_VAR=explicit" {
 		t.Fatalf("unexpected environment: %v", lines)
+	}
+}
+
+// A child that inherits output pipes must not keep a canceled request or
+// cursor stuck in Read/Scan after the shell is killed.
+func TestExecCancellationReleasesInheritedPipes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell")
+	}
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			pidFile := filepath.Join(t.TempDir(), "child.pid")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			call := execRunCall(
+				sdk.Kwarg{Name: "path", Value: "sh"},
+				sdk.Kwarg{Name: "args", Value: []any{"-c", "sleep 30 & echo $! > \"$1\"; wait", "sh", pidFile}},
+				sdk.Kwarg{Name: "include_stderr", Value: false},
+				sdk.Kwarg{Name: "stream", Value: stream},
+			)
+			defer call.Session.End(context.Background()) //nolint:errcheck
+			done := make(chan error, 1)
+			parent := ctx
+			if stream {
+				parent = context.Background()
+			} // Next's cancellation must suffice.
+			go func() {
+				result, err := execCommand(parent, call, nil)
+				if err == nil && stream {
+					cursor := result.(*sdk.Cursor)
+					defer cursor.Close(context.Background()) //nolint:errcheck
+					_, _, err = cursor.Next(ctx, 1)
+				}
+				done <- err
+			}()
+			deadline := time.Now().Add(3 * time.Second)
+			var pid int
+			for time.Now().Before(deadline) {
+				data, err := os.ReadFile(pidFile)
+				if err == nil {
+					pid, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+					if pid > 0 {
+						break
+					}
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if pid == 0 {
+				t.Fatal("command did not start child")
+			}
+			// Cleanup also releases the inherited pipes when running against the old code.
+			defer func() {
+				p, err := os.FindProcess(pid)
+				if err == nil {
+					_ = p.Kill()
+					_ = p.Release()
+				}
+			}()
+			cancel()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("canceled command succeeded")
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("cancellation left command reader blocked on descendant pipes")
+			}
+		})
 	}
 }

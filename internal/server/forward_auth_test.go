@@ -355,3 +355,33 @@ func assertHeader(t *testing.T, header http.Header, name string, want string) {
 		t.Fatalf("%s = %q, want %q", name, got, want)
 	}
 }
+
+type authResourceTransport func(*http.Request) (*http.Response, error)
+
+func (f authResourceTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type authResourceBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *authResourceBody) Close() error { b.closed = true; return nil }
+
+func TestForwardAuthClosesBodyBeforeDownstreamHandler(t *testing.T) {
+	s := newForwardAuthTestServer(nil)
+	body := &authResourceBody{Reader: strings.NewReader("unused auth response")}
+	s.forwardAuthHTTPClient = &http.Client{Transport: authResourceTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: body}, nil
+	})}
+	called := false
+	handler := s.forwardAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if !body.closed {
+			t.Error("auth response is still open when downstream begins")
+		}
+	}), &types.ForwardConfig{AuthUrl: "http://auth.test"})
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/app", nil))
+	if !called {
+		t.Fatal("downstream handler was not called")
+	}
+}

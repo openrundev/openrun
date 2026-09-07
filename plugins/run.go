@@ -14,8 +14,10 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/system"
 	sdk "github.com/openrundev/openrun/pkg/plugin"
 )
 
@@ -62,6 +64,7 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 		// cwd is not supported in container mode
 	} else {
 		cmd = exec.CommandContext(ctx, path, cmdArgs...)
+		system.SetProcessGroup(cmd)
 		cmd.Env = env
 		if cwd != "" {
 			cmd.Dir = cwd
@@ -71,6 +74,19 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 	if err != nil {
 		return nil, err
 	}
+	// A shell's children may inherit its pipes. Killing only the shell does
+	// not interrupt our reads, and Wait can remain stuck copying stderr.
+	kill := func() error {
+		if containerHandler == nil {
+			return system.KillGroup(cmd.Process)
+		}
+		return cmd.Process.Kill()
+	}
+	cmd.Cancel = func() error {
+		_ = stdout.Close()
+		return kill()
+	}
+	cmd.WaitDelay = 2 * time.Second
 	var stderr bytes.Buffer
 	if includeStderr {
 		cmd.Stderr = cmd.Stdout
@@ -82,13 +98,20 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 		return nil, err
 	}
 
-	// reap kills the process and waits for it, for error paths that return
-	// before the normal cmd.Wait; without the wait the child stays a zombie
+	// The stream's cancellation callback and reader may finish concurrently.
+	// Serialize Wait so the process is reaped exactly once.
+	var waitOnce sync.Once
+	var waitErr error
+	wait := func() error {
+		waitOnce.Do(func() { waitErr = cmd.Wait() })
+		return waitErr
+	}
 	var reapOnce sync.Once
 	reap := func() {
 		reapOnce.Do(func() {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			_ = stdout.Close()
+			_ = kill()
+			_ = wait()
 		})
 	}
 
@@ -118,7 +141,7 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 	}
 
 	if stream {
-		return streamCursor(cmd, stdout, parse, reap), nil
+		return streamCursor(cmd, stdout, parse, reap, wait), nil
 	}
 
 	if !stdoutToFile {
@@ -133,7 +156,7 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 			_, _ = io.Copy(io.Discard, stdout)
 		}
 	}
-	runErr := cmd.Wait()
+	runErr := wait()
 
 	if !processPartial && runErr != nil {
 		if stderr.Len() > 0 {
@@ -188,13 +211,19 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 // returns it from the handler and the server streams the lines to the
 // client, pulling batches lazily. The process is reaped when the consumer
 // stops early or a scan/parse error aborts the stream.
-func streamCursor(cmd *exec.Cmd, stdout io.Reader, parse string, reap func()) *sdk.Cursor {
+func streamCursor(cmd *exec.Cmd, stdout io.Reader, parse string, reap func(), wait func() error) *sdk.Cursor {
 	scanner := bufio.NewScanner(stdout)
 	return &sdk.Cursor{
 		TypeName: "exec output",
 		LeakKey:  fmt.Sprintf("exec_stream_%p", cmd),
 		Stream:   true,
 		Next: func(ctx context.Context, max int) ([]any, bool, error) {
+			if err := ctx.Err(); err != nil {
+				reap()
+				return nil, false, err
+			}
+			stopCancel := context.AfterFunc(ctx, reap)
+			defer stopCancel()
 			items := make([]any, 0, max)
 			for len(items) < max {
 				if !scanner.Scan() {
@@ -202,7 +231,7 @@ func streamCursor(cmd *exec.Cmd, stdout io.Reader, parse string, reap func()) *s
 						reap()
 						return nil, false, fmt.Errorf("scanner error: %w", scanner.Err())
 					}
-					if err := cmd.Wait(); err != nil {
+					if err := wait(); err != nil {
 						return nil, false, fmt.Errorf("cmd failed: %w", err)
 					}
 					return items, true, nil

@@ -80,6 +80,11 @@ func newLiveSession(id, userID string) *liveSession {
 func (ls *liveSession) subscribe() (<-chan Event, func()) {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
+	if ls.stopped {
+		ch := make(chan Event)
+		close(ch)
+		return ch, func() {}
+	}
 	id := ls.nextSubId
 	ls.nextSubId++
 	ch := make(chan Event, 256)

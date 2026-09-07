@@ -60,15 +60,17 @@ func (s *Server) forwardAuthMiddleware(next http.Handler, forwardConfig *types.F
 			http.Error(w, fmt.Sprintf("forward auth request failed: %s", err), http.StatusBadGateway)
 			return
 		}
-		defer authResp.Body.Close() //nolint:errcheck
 
 		if authResp.StatusCode >= http.StatusOK && authResp.StatusCode < http.StatusMultipleChoices {
 			s.Trace().Int("status", authResp.StatusCode).Str("method", r.Method).Str("path", r.URL.Path).Str("auth_url", authReq.URL.Redacted()).Msg("Forward auth allowed request")
 			copyForwardAuthResponseHeaders(r.Header, authResp.Header, forwardConfig.CopyResponseHeaders)
+			// Release the auth connection before a potentially long-lived app response.
+			_ = authResp.Body.Close()
 			next.ServeHTTP(w, r)
 			return
 		}
 
+		defer authResp.Body.Close() //nolint:errcheck
 		s.Warn().Int("status", authResp.StatusCode).Str("method", r.Method).Str("path", r.URL.Path).Str("auth_url", authReq.URL.Redacted()).Msg("Forward auth denied request")
 		copyHeaders(w.Header(), authResp.Header)
 		w.WriteHeader(authResp.StatusCode)

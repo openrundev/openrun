@@ -281,3 +281,28 @@ func TestHostRetireDrainsSessions(t *testing.T) {
 		t.Fatal("expected immediate close when no sessions are active")
 	}
 }
+
+func TestHostInitModuleWaiterCancellation(t *testing.T) {
+	var inited, closed atomic.Int64
+	host := newCountingHost(t, &inited, &closed, nil)
+	// Model an initialization already running for this account. Keep it
+	// blocked until after the canceled waiter has returned.
+	inflight := &moduleIniting{done: make(chan struct{})}
+	host.initing[instanceKey("mod", "")] = inflight
+	defer close(inflight.done)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result := make(chan error, 1)
+	go func() { result <- host.InitModule(ctx, "mod", "", nil) }()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled waiter remains blocked on another initialization")
+	}
+	if inited.Load() != 0 {
+		t.Fatal("waiter started another initialization")
+	}
+}

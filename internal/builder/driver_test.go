@@ -104,3 +104,23 @@ func TestSessionUpdateSuppressedWhileRestoring(t *testing.T) {
 	default:
 	}
 }
+
+func TestSubscribeAfterSessionStopped(t *testing.T) {
+	ls := newLiveSession("stopped", "user")
+	defer ls.cancel()
+	ls.stopped = true
+	ls.closeSubscribers()
+	events, unsubscribe := ls.subscribe()
+	defer unsubscribe()
+	select {
+	case _, ok := <-events:
+		if ok {
+			t.Fatal("stopped subscription yielded an event")
+		}
+	default:
+		t.Fatal("subscription after shutdown remains open")
+	}
+	if len(ls.subscribers) != 0 {
+		t.Fatal("stopped session retained subscriber")
+	}
+}

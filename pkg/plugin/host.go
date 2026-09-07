@@ -183,8 +183,12 @@ func (h *Host) InitModule(ctx context.Context, module, account string, settings 
 	}
 	if inflight, ok := h.initing[key]; ok {
 		h.mu.Unlock()
-		<-inflight.done
-		return inflight.err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-inflight.done:
+			return inflight.err
+		}
 	}
 	inflight := &moduleIniting{done: make(chan struct{})}
 	h.initing[key] = inflight

@@ -105,6 +105,7 @@ type App struct {
 	// from code paths that already hold initMutex
 	sseMu         sync.Mutex
 	sseListeners  []chan SSEMessage
+	sseClosed     bool // guarded by sseMu
 	funcMap       template.FuncMap
 	starlarkCache map[string]*starlarkCacheEntry
 
@@ -242,6 +243,7 @@ func (a *App) Close() error {
 		return nil
 	}
 	a.closed = true
+	a.closeSSEClients()
 	retireProxyTransports(a.proxyTransports)
 	retireProxyTransports(a.newProxyTransports)
 	a.proxyTransports = nil
@@ -1408,6 +1410,10 @@ func (a *App) startWatcher() error {
 func (a *App) addSSEClient(newChan chan SSEMessage) {
 	a.sseMu.Lock()
 	defer a.sseMu.Unlock()
+	if a.sseClosed {
+		close(newChan)
+		return
+	}
 	a.sseListeners = append(a.sseListeners, newChan)
 }
 
@@ -1416,10 +1422,22 @@ func (a *App) removeSSEClient(chanRemove chan SSEMessage) {
 	defer a.sseMu.Unlock()
 	for i, ch := range a.sseListeners {
 		if ch == chanRemove {
-			a.sseListeners = append(a.sseListeners[:i], a.sseListeners[i+1:]...)
+			a.sseListeners = slices.Delete(a.sseListeners, i, i+1)
 			break
 		}
 	}
+}
+
+// closeSSEClients ends streams belonging to a deleted or replaced app. Sends
+// and closes share sseMu so a pending watcher notification cannot send after close.
+func (a *App) closeSSEClients() {
+	a.sseMu.Lock()
+	defer a.sseMu.Unlock()
+	a.sseClosed = true
+	for _, ch := range a.sseListeners {
+		close(ch)
+	}
+	a.sseListeners = nil
 }
 
 func (a *App) notifyClients() {
@@ -1429,9 +1447,8 @@ func (a *App) notifyClients() {
 		data:  "App reloaded after file updates",
 	}
 	a.sseMu.Lock()
-	listeners := slices.Clone(a.sseListeners)
-	a.sseMu.Unlock()
-	for _, ch := range listeners {
+	defer a.sseMu.Unlock()
+	for _, ch := range a.sseListeners {
 		// Non-blocking send: the channel is buffered, so a skipped send means a
 		// reload ping is already queued or the client is disconnecting
 		select {
@@ -1470,13 +1487,19 @@ func (a *App) sseHandler(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		select {
-		case appMessage := <-messageChan:
-			fmt.Fprintf(w, "event: %s\n", appMessage.event) //nolint:errcheck
-			fmt.Fprintf(w, "data: %s\n\n", appMessage.data) //nolint:errcheck
+		case appMessage, ok := <-messageChan:
+			if !ok {
+				return
+			}
+			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", appMessage.event, appMessage.data); err != nil {
+				return
+			}
 			flusher.Flush()
 		case <-keepAliveTickler.C:
 			a.Trace().Msg("Sending keepalive")
-			fmt.Fprintf(w, "event:keepalive\n\n") //nolint:errcheck
+			if _, err := fmt.Fprintf(w, "event:keepalive\n\n"); err != nil {
+				return
+			}
 			flusher.Flush()
 		case <-notify:
 			// Client disconnected, exit the handler

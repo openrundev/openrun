@@ -149,26 +149,7 @@ func runLoginFlow(cCtx *cli.Context, clientConfig *types.ClientConfig, serverUrl
 
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/callback" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.URL.Query().Get("state") != state {
-			errCh <- fmt.Errorf("state mismatch in callback")
-			http.Error(w, "state mismatch", http.StatusBadRequest)
-			return
-		}
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			errCh <- fmt.Errorf("callback missing code: %s", r.URL.RawQuery)
-			http.Error(w, "missing code", http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, "<html><body><h3>Login complete</h3>You can close this window and return to the terminal.</body></html>") //nolint:errcheck
-		codeCh <- code
-	})}
+	server := &http.Server{Handler: loginCallbackHandler(state, codeCh, errCh)}
 	go server.Serve(listener) //nolint:errcheck
 	defer server.Close()      //nolint:errcheck
 
@@ -196,6 +177,8 @@ func runLoginFlow(cCtx *cli.Context, clientConfig *types.ClientConfig, serverUrl
 	case code = <-codeCh:
 	case err := <-errCh:
 		return err
+	case <-cCtx.Done():
+		return cCtx.Err()
 	case <-time.After(180 * time.Second):
 		return fmt.Errorf("timed out waiting for the browser login")
 	}
@@ -228,6 +211,39 @@ func runLoginFlow(cCtx *cli.Context, clientConfig *types.ClientConfig, serverUrl
 	return nil
 }
 
+// loginCallbackHandler must not block on duplicate callbacks after the login waiter exits.
+func loginCallbackHandler(state string, codeCh chan<- string, errCh chan<- error) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/callback" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Query().Get("state") != state {
+			select {
+			case errCh <- fmt.Errorf("state mismatch in callback"):
+			default:
+			}
+			http.Error(w, "state mismatch", http.StatusBadRequest)
+			return
+		}
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			select {
+			case errCh <- fmt.Errorf("callback missing code: %s", r.URL.RawQuery):
+			default:
+			}
+			http.Error(w, "missing code", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, "<html><body><h3>Login complete</h3>You can close this window and return to the terminal.</body></html>") //nolint:errcheck
+		select {
+		case codeCh <- code:
+		default:
+		}
+	})
+}
+
 // openBrowser tries to open the url in the default browser, returning false
 // when no opener is available (headless environments)
 func openBrowser(openUrl string) bool {
@@ -240,5 +256,9 @@ func openBrowser(openUrl string) bool {
 	default:
 		cmd = exec.Command("xdg-open", openUrl)
 	}
-	return cmd.Start() == nil
+	if err := cmd.Start(); err != nil {
+		return false
+	}
+	go func() { _ = cmd.Wait() }() // reap the opener without waiting for the browser to exit
+	return true
 }
