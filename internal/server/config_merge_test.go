@@ -458,3 +458,46 @@ func TestMergeSkipsStaticOnlySettings(t *testing.T) {
 		t.Fatal("regular security settings must still merge")
 	}
 }
+
+func TestNestedRedactionRestoresArrayCredentials(t *testing.T) {
+	original := map[string]any{
+		"agents": []any{map[string]any{"env": map[string]string{"ACCESS_TOKEN": "private", "USER": "public"}}},
+		"tokens": []string{"one", "two"},
+	}
+	redacted := redactEntryValues(original)
+	if redacted["agents"].([]any)[0].(map[string]any)["env"].(map[string]any)["ACCESS_TOKEN"] != RedactedValue {
+		t.Fatal("array entry leaked credential")
+	}
+	if redacted["tokens"].([]any)[0] != RedactedValue {
+		t.Fatal("credential list leaked")
+	}
+	if err := restoreRedactedConfigFields(redacted, original, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if redacted["agents"].([]any)[0].(map[string]any)["env"].(map[string]any)["ACCESS_TOKEN"] != "private" || redacted["tokens"].([]any)[1] != "two" {
+		t.Fatal("nested credential round trip corrupted stored values")
+	}
+	if original["agents"].([]any)[0].(map[string]any)["env"].(map[string]string)["ACCESS_TOKEN"] != "private" {
+		t.Fatal("read mutated source tree")
+	}
+}
+
+func TestRedactStaticTOMLArrayCredentials(t *testing.T) {
+	values, err := structEntryValues(struct {
+		Agents []map[string]any `toml:"agents"`
+	}{Agents: []map[string]any{{"env": map[string]string{"API_TOKEN": "private-token"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	redacted := redactEntryValues(values)
+	env := redacted["agents"].([]any)[0].(map[string]any)["env"].(map[string]any)
+	if env["API_TOKEN"] != RedactedValue {
+		t.Fatal("TOML table array leaked credential")
+	}
+	if err := restoreRedactedConfigFields(redacted, values, "config"); err != nil {
+		t.Fatal(err)
+	}
+	if redacted["agents"].([]any)[0].(map[string]any)["env"].(map[string]any)["API_TOKEN"] != "private-token" {
+		t.Fatal("TOML table array lost credential during restore")
+	}
+}

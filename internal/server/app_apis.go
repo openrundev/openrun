@@ -1060,7 +1060,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	s.Trace().Msgf("Authenticated user %s, doing authorization check", userId)
 	// Grant checks for stage/preview apps are done against the main app path
 	grantPathDomain := mainAppPathDomain(app.AppPathDomain(), app.MainApp, app.LinkedAppPath)
-	authorized, err := s.rbacManager.AuthorizeInt(userId, grantPathDomain, types.PermissionAccess, groups, false)
+	authorized, err := s.rbacManager.AuthorizeAppAccess(userId, grantPathDomain, groups, app.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2000,7 +2000,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 			return nil, err
 		}
 	}
-	// The preview is a NEW app owned by the caller that copies the main app's
+	// The preview is a NEW app inheriting ownership and copying the main app's
 	// bindings, and it runs a caller-selected commit with those credentials:
 	// each copied binding is authorized like any new attach (binding:use)
 	for _, bindingPath := range mainAppEntry.Metadata.Bindings {
@@ -2030,7 +2030,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	previewAppEntry.MainApp = mainAppEntry.Id
 	previewAppEntry.LinkedAppPath = mainAppEntry.AppPathDomain().String()
 	previewAppEntry.Id = types.AppId(types.ID_PREFIX_APP_PREVIEW + string(mainAppEntry.Id)[len(types.ID_PREFIX_APP_PROD):])
-	previewAppEntry.UserID = system.GetContextUserId(ctx)
+	// Previews inherit ownership from the main app; the requester is audited separately.
 
 	// Check if it already exists
 	if _, err = s.db.GetAppEntryTx(ctx, tx, previewAppEntry.AppPathDomain()); err == nil {

@@ -700,11 +700,22 @@ func (s *Server) AppEvalTemplate(appSecrets [][]string, defaultProvider, input s
 // provider); at startup the bind failure is nonfatal, same as NewServer's
 // own bind
 func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicConfig, failOnBindError bool) error {
+	publish, err := s.prepareDynamicConfig(ctx, config, failOnBindError)
+	if err != nil {
+		return err
+	}
+	publish()
+	return nil
+}
+
+// prepareDynamicConfig resolves templates and validates runtime changes once,
+// without modifying the active config or provider registrations.
+func (s *Server) prepareDynamicConfig(ctx context.Context, config *types.DynamicConfig, failOnBindError bool) (func(), error) {
 	// The merge always starts from the static config, so deleted dynamic
 	// values revert to their static state
 	effective, err := mergeDynamicConfig(s.Logger, s.staticConfig, config, s.secretsMgr().EvalTemplate)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	previous := s.Config()
@@ -716,7 +727,7 @@ func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicCo
 	// continue (the per-request gates keep the surface safe)
 	if err := validateApiSurfaceConfig(effective); err != nil {
 		if failOnBindError {
-			return fmt.Errorf("invalid api config, rejecting config update: %w", err)
+			return nil, fmt.Errorf("invalid api config, rejecting config update: %w", err)
 		}
 		s.Error().Err(err).Msg("dynamic api config is invalid, remote surfaces may be unavailable")
 	}
@@ -732,57 +743,80 @@ func (s *Server) applyDynamicConfig(ctx context.Context, config *types.DynamicCo
 		secretsManager, err = system.NewSecretManager(ctx, effective.Secret,
 			effective.AppConfig.Security.DefaultSecretsProvider, effective)
 		if err != nil {
-			return fmt.Errorf("error initializing secret providers: %w", err)
+			return nil, fmt.Errorf("error initializing secret providers: %w", err)
 		}
 		// Re-bind the db provider of the rebuilt manager to the metadata
 		// database, same as at startup: without this, stored-secret
 		// operations fail after any dynamic [secret] config change
 		if err := bindDBSecretStore(ctx, s.Logger, secretsManager, s.db); err != nil && failOnBindError {
-			return fmt.Errorf("error initializing embedded secrets store (db provider), rejecting config update: %w", err)
+			return nil, fmt.Errorf("error initializing embedded secrets store (db provider), rejecting config update: %w", err)
 		}
 	}
 
-	s.effectiveConfig.Store(effective)
-	if secretsManager != nil {
-		s.secretsManager.Store(secretsManager)
-	}
-
-	if !reflect.DeepEqual(previous.Api, effective.Api) {
-		// The MCP tool set snapshots [api.mcp] policy at build time: drop
-		// the built server so the next request rebuilds it with the new
-		// policy (invocation-time checks stay authoritative regardless)
-		s.invalidateMCPServer()
-	}
-
-	// If the auth callback domain changed to one that already has apps, those
-	// apps stop being served (the host is reserved for the login page, enforced
-	// in callApp). Warn so the operator knows; the reservation still holds
-	if previous.Security.AuthCallbackDomain != effective.Security.AuthCallbackDomain {
-		s.warnIfAuthDomainOccupied()
-	}
-
+	var publishOAuth func()
 	if !reflect.DeepEqual(previous.Auth, effective.Auth) {
-		if err := s.oAuthManager.UpdateProviders(effective.Auth); err != nil {
-			return fmt.Errorf("error updating oauth providers: %w", err)
+		publishOAuth, err = s.oAuthManager.prepareProviders(effective.Auth, failOnBindError)
+		if err != nil {
+			if failOnBindError {
+				return nil, fmt.Errorf("error updating oauth providers: %w", err)
+			}
+			s.Error().Err(err).Msg("committed config loaded with OAuth providers disabled")
+			publishOAuth, _ = s.oAuthManager.prepareProviders(nil, false)
 		}
 	}
+
+	var publishSAML func()
 	if !reflect.DeepEqual(previous.SAML, effective.SAML) {
-		s.samlManager.UpdateProviders(ctx, effective.SAML)
-	}
-	if !reflect.DeepEqual(previous.BuiltinAuth, effective.BuiltinAuth) {
-		// A password change or user delete must take effect immediately
-		s.builtinAuth.ResetCache()
+		publishSAML, err = s.samlManager.prepareProviders(ctx, effective.SAML, failOnBindError)
+		if err != nil {
+			if failOnBindError {
+				return nil, fmt.Errorf("error updating SAML providers: %w", err)
+			}
+			s.Error().Err(err).Msg("committed config loaded with SAML providers disabled")
+			publishSAML, _ = s.samlManager.prepareProviders(ctx, nil, false)
+		}
 	}
 
-	if !reflect.DeepEqual(previous.System, effective.System) ||
-		previous.Security.AppDefaultAuthType != effective.Security.AppDefaultAuthType ||
-		!reflect.DeepEqual(previous.AppConfig, effective.AppConfig) ||
-		!reflect.DeepEqual(previous.NodeConfig, effective.NodeConfig) {
-		// The list-apps app bakes in the title/domain/auth settings at build
-		// time; drop it so the next request rebuilds it with the new values
-		s.closeListAppsApp()
-	}
-	return nil
+	return func() {
+		s.effectiveConfig.Store(effective)
+		if secretsManager != nil {
+			s.secretsManager.Store(secretsManager)
+		}
+
+		if !reflect.DeepEqual(previous.Api, effective.Api) {
+			// The MCP tool set snapshots [api.mcp] policy at build time: drop
+			// the built server so the next request rebuilds it with the new
+			// policy (invocation-time checks stay authoritative regardless)
+			s.invalidateMCPServer()
+		}
+
+		// If the auth callback domain changed to one that already has apps, those
+		// apps stop being served (the host is reserved for the login page, enforced
+		// in callApp). Warn so the operator knows; the reservation still holds
+		if previous.Security.AuthCallbackDomain != effective.Security.AuthCallbackDomain {
+			s.warnIfAuthDomainOccupied()
+		}
+
+		if publishOAuth != nil {
+			publishOAuth()
+		}
+		if publishSAML != nil {
+			publishSAML()
+		}
+		if !reflect.DeepEqual(previous.BuiltinAuth, effective.BuiltinAuth) {
+			// A password change or user delete must take effect immediately
+			s.builtinAuth.ResetCache()
+		}
+
+		if !reflect.DeepEqual(previous.System, effective.System) ||
+			previous.Security.AppDefaultAuthType != effective.Security.AppDefaultAuthType ||
+			!reflect.DeepEqual(previous.AppConfig, effective.AppConfig) ||
+			!reflect.DeepEqual(previous.NodeConfig, effective.NodeConfig) {
+			// The list-apps app bakes in the title/domain/auth settings at build
+			// time; drop it so the next request rebuilds it with the new values
+			s.closeListAppsApp()
+		}
+	}, nil
 }
 
 func (s *Server) SaveDynamicConfig(ctx context.Context) error {
@@ -803,23 +837,32 @@ func (s *Server) SaveDynamicConfig(ctx context.Context) error {
 	return nil
 }
 
+// prepareDynamicConfigUpdate validates both RBAC and runtime configuration.
+// Publishing has no failure path and is deferred until persistence succeeds.
+func (s *Server) prepareDynamicConfigUpdate(ctx context.Context, config *types.DynamicConfig, strict bool) (func(), error) {
+	publishRBAC, err := s.rbacManager.PrepareRBACConfig(&config.RBAC)
+	if err != nil {
+		return nil, fmt.Errorf("error updating rbac config: %w", err)
+	}
+	publishRuntime, err := s.prepareDynamicConfig(ctx, config, strict)
+	if err != nil {
+		return nil, fmt.Errorf("error applying dynamic config entries: %w", err)
+	}
+	return func() {
+		publishRuntime()
+		publishRBAC()
+		s.dynamicConfig = config
+	}, nil
+}
+
+// updateDynamicConfigCache loads an already committed document. Unavailable
+// auth providers must not prevent this node from applying RBAC revocations.
 func (s *Server) updateDynamicConfigCache(ctx context.Context, newConfig *types.DynamicConfig) error {
-	// The RBAC manager is updated first so its caches rebuild. UpdateRBACConfig
-	// is atomic (a rejected config leaves the current rules untouched), but if
-	// a later step fails (for example the db secret provider bind validation),
-	// the already applied RBAC config must not stay live: the previous RBAC
-	// config is restored
-	prevRBAC := &s.dynamicConfig.RBAC
-	if err := s.rbacManager.UpdateRBACConfig(&newConfig.RBAC); err != nil {
-		return fmt.Errorf("error updating rbac config: %w", err)
+	publish, err := s.prepareDynamicConfigUpdate(ctx, newConfig, false)
+	if err != nil {
+		return err
 	}
-	if err := s.applyDynamicConfig(ctx, newConfig, true); err != nil {
-		if restoreErr := s.rbacManager.UpdateRBACConfig(prevRBAC); restoreErr != nil {
-			s.Error().Err(restoreErr).Msg("error restoring previous rbac config after rejected config update")
-		}
-		return fmt.Errorf("error applying dynamic config entries: %w", err)
-	}
-	s.dynamicConfig = newConfig
+	publish()
 	if err := s.SaveDynamicConfig(ctx); err != nil {
 		return fmt.Errorf("error saving dynamic config: %w", err)
 	}
@@ -845,22 +888,39 @@ func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.Dynam
 		return nil, err
 	}
 
-	newConfig.VersionId = "ver_" + ksuid.New().String()
-	err := s.updateDynamicConfigCache(ctx, newConfig)
+	// Copy before replacing redaction markers or assigning a version so
+	// rejected requests and returned read documents never alias live state.
+	candidate, err := copyDynamicConfig(newConfig)
+	if err != nil {
+		return nil, err
+	}
+	if err := restoreRedactedConfigValues(candidate, s.dynamicConfig); err != nil {
+		return nil, err
+	}
+	candidate.VersionId = "ver_" + ksuid.New().String()
+	publish, err := s.prepareDynamicConfigUpdate(ctx, candidate, true)
 	if err != nil {
 		return nil, fmt.Errorf("error updating dynamic config: %w", err)
 	}
 
-	err = s.db.UpdateConfig(ctx, system.GetContextUserId(ctx), currentVersionId, newConfig)
-	if err != nil {
+	if err := s.db.UpdateConfig(ctx, system.GetContextUserId(ctx), currentVersionId, candidate); err != nil {
 		return nil, fmt.Errorf("error updating dynamic config: %w", err)
+	}
+	publish()
+	// This file is a derived export. A failure to refresh it must not turn
+	// an already committed database update into a reported rejection.
+	if err := s.SaveDynamicConfig(ctx); err != nil {
+		s.Error().Err(err).Msg("config committed, but local dynamic config export could not be refreshed")
 	}
 
 	err = s.db.NotifyConfigUpdate()
 	if err != nil {
 		return nil, fmt.Errorf("error notifying other instances about new dynamic config: %w", err)
 	}
-	return newConfig, nil
+	if s.rbacManager.APIEnforced(ctx) {
+		return redactedDynamicConfig(candidate)
+	}
+	return candidate, nil
 }
 
 func (s *Server) appNotifyHandler(updatePayload types.AppUpdatePayload) {

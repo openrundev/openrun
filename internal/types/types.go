@@ -1482,6 +1482,7 @@ type SyncEntry struct {
 // when the create call was not RBAC enforced; such syncs run unrestricted.
 type RBACSnapshot struct {
 	UserId           string                      `json:"user_id"`
+	Scopes           []string                    `json:"scopes,omitzero"`          // nil is unscoped; an empty non-nil list denies every permission
 	Admin            bool                        `json:"admin,omitempty,omitzero"` // creator held the admin super-user permission; Grants is empty
 	Grants           []RBACSnapshotGrant         `json:"grants,omitempty"`
 	OwnerPermissions map[string][]RBACPermission `json:"owner_permissions,omitempty"` // resource -> perms, for the owner virtual grant
@@ -1645,7 +1646,7 @@ type RBACConfig struct {
 	Grants []RBACGrant                 `json:"grants"` // grants are used to grant permissions to users/groups for specific apps
 
 	// OwnerPermissions overrides the default permissions granted to the creator of an
-	// asset. Keys are resource names (app, sync); values are the permissions the owner
+	// asset. Keys are resource names (app, sync, service, binding); values are the permissions the owner
 	// gets on assets they created. Missing key means the built-in default; an empty
 	// list disables the owner rule for that resource. approve is not allowed.
 	OwnerPermissions map[string][]RBACPermission `json:"owner_permissions,omitempty"`
@@ -1666,7 +1667,7 @@ type RBACPermission string
 // (which implies app:read) gates everything else an app exposes: source url and
 // git info, spec, config, params, bindings, requested plugin permissions, versions,
 // files and diffs, job runs and logs, and the app's container details and logs.
-// approve is special: it is a global permission (granted with target "all"), never
+// approve is special: it is app scoped like the other app permissions, but never
 // implied by app:manage, owner permissions or permission globs; it has to be granted
 // by its literal name (or via the built-in admin role).
 const (

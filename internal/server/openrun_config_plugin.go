@@ -67,17 +67,9 @@ func (c *openrunPlugin) GetConfigVersion(ctx context.Context, call *sdk.Call) (a
 		return nil, err
 	}
 	if len(snapshot.Entries) > 0 || len(snapshot.Settings) > 0 {
-		redacted, err := copyDynamicConfig(snapshot)
+		redacted, err := redactedDynamicConfig(snapshot)
 		if err != nil {
 			return nil, err
-		}
-		for section, sectionEntries := range redacted.Entries {
-			for name, values := range sectionEntries {
-				redacted.Entries[section][name] = redactEntryValues(values)
-			}
-		}
-		for section, values := range redacted.Settings {
-			redacted.Settings[section] = redactEntryValues(values)
 		}
 		snapshot = redacted
 	}

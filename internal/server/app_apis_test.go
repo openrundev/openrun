@@ -45,8 +45,7 @@ func newAuthRedirectTestServer(defaultDomain string, fallbackUnknownDomains bool
 			providers: map[string]*saml2.SAMLServiceProvider{},
 		},
 		rbacManager: &rbac.RBACManager{
-			Logger:     logger,
-			RbacConfig: &types.RBACConfig{},
+			Logger: logger,
 		},
 	}
 }
@@ -221,8 +220,7 @@ func newAppAPIMetadataTestServer(t *testing.T) (*Server, *metadata.Metadata, con
 		db:           db,
 		notifyClose:  make(chan types.AppPathDomain),
 		rbacManager: &rbac.RBACManager{
-			Logger:     logger,
-			RbacConfig: &types.RBACConfig{},
+			Logger: logger,
 		},
 	}
 	server.secretsManager.Store(secretManager)
@@ -597,8 +595,7 @@ func TestGetAppsDoesNotResolveBindingServices(t *testing.T) {
 		staticConfig: config,
 		db:           db,
 		rbacManager: &rbac.RBACManager{
-			Logger:     logger,
-			RbacConfig: &types.RBACConfig{},
+			Logger: logger,
 		},
 	}
 

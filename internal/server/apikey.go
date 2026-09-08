@@ -488,14 +488,11 @@ func (s *Server) apiIdentityGroups(ctx context.Context, identity *types.Identity
 	case types.ADMIN_USER:
 		return []string{}, nil
 	case string(types.AppAuthnBuiltin):
-		entry, exists := s.Config().BuiltinAuth[identity.StableSubject]
+		groups, exists := builtinGroups(s.Config(), identity.StableSubject)
 		if !exists {
 			return nil, fmt.Errorf("builtin user %s is no longer configured", identity.StableSubject)
 		}
-		if entry.Groups == nil {
-			return []string{}, nil
-		}
-		return entry.Groups, nil
+		return groups, nil
 	default:
 		ttlStr := cmp.Or(s.Config().Api.FederatedIdentityTTL, "720h")
 		ttl, err := time.ParseDuration(ttlStr)

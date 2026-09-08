@@ -208,3 +208,17 @@ func valueStringSlice(value any) []string {
 	}
 	return []string{}
 }
+
+// builtinGroups resolves current group membership consistently for API keys,
+// scheduled jobs and CLI impersonation. Deleted users are distinguished from
+// configured users with an empty group list.
+func builtinGroups(config *types.ServerConfig, username string) ([]string, bool) {
+	entry, exists := config.BuiltinAuth[username]
+	if !exists {
+		return nil, false
+	}
+	if entry.Groups == nil {
+		return []string{}, true
+	}
+	return entry.Groups, true
+}

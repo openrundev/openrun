@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 	"strings"
@@ -126,7 +127,105 @@ func (s *Server) GetConfigResponse(ctx context.Context) (*types.ConfigResponse, 
 	if err := s.enforceGlobalPerm(ctx, types.PermissionConfigRead, ""); err != nil {
 		return nil, err
 	}
-	return &types.ConfigResponse{DynamicConfig: s.GetDynamicConfig()}, nil
+	config := s.GetDynamicConfig()
+	if s.rbacManager.APIEnforced(ctx) {
+		redacted, err := redactedDynamicConfig(&config)
+		if err != nil {
+			return nil, err
+		}
+		config = *redacted
+	}
+	return &types.ConfigResponse{DynamicConfig: config}, nil
+}
+
+// redactedDynamicConfig applies the config read API's credential redaction
+// without modifying the live config or a stored history snapshot.
+func redactedDynamicConfig(config *types.DynamicConfig) (*types.DynamicConfig, error) {
+	redacted, err := copyDynamicConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	for section, entries := range redacted.Entries {
+		for name, values := range entries {
+			redacted.Entries[section][name] = redactEntryValues(values)
+		}
+	}
+	for section, values := range redacted.Settings {
+		redacted.Settings[section] = redactEntryValues(values)
+	}
+	return redacted, nil
+}
+
+// restoreRedactedConfigFields preserves only secret fields marked by config
+// read APIs. Nonsecret fields can contain the literal placeholder string.
+func restoreRedactedConfigFields(values, previous map[string]any, location string) error {
+	for key, value := range values {
+		restored, err := restoreRedactedConfigValue(key, value, previous[key], location+"."+key)
+		if err != nil {
+			return err
+		}
+		values[key] = restored
+	}
+	return nil
+}
+
+// restoreRedactedConfigValue returns value with redaction placeholders in
+// secret fields replaced by the stored previous value, recursing into nested
+// maps and lists (list items are matched by position). The result never
+// aliases the caller's maps
+func restoreRedactedConfigValue(key string, value, previous any, location string) (any, error) {
+	switch value := normalizeConfigValue(value).(type) {
+	case string:
+		if value == RedactedValue && isSecretConfigField(key) {
+			if previous == nil {
+				return nil, fmt.Errorf("%s has no stored value to keep, provide a value", location)
+			}
+			return previous, nil
+		}
+		return value, nil
+	case map[string]any:
+		out := maps.Clone(value)
+		old, _ := normalizeConfigValue(previous).(map[string]any)
+		if err := restoreRedactedConfigFields(out, old, location); err != nil {
+			return nil, err
+		}
+		return out, nil
+	case []any:
+		old, _ := normalizeConfigValue(previous).([]any)
+		out := make([]any, len(value))
+		for i, item := range value {
+			var prev any
+			if i < len(old) {
+				prev = old[i]
+			}
+			restored, err := restoreRedactedConfigValue(key, item, prev, fmt.Sprintf("%s[%d]", location, i))
+			if err != nil {
+				return nil, err
+			}
+			out[i] = restored
+		}
+		return out, nil
+	default:
+		return value, nil
+	}
+}
+
+// restoreRedactedConfigValues resolves placeholders against the version-checked
+// live document for a full config read/edit/write round trip.
+func restoreRedactedConfigValues(candidate, current *types.DynamicConfig) error {
+	for section, entries := range candidate.Entries {
+		for name, values := range entries {
+			if err := restoreRedactedConfigFields(values, current.Entries[section][name], section+"."+name); err != nil {
+				return err
+			}
+		}
+	}
+	for section, values := range candidate.Settings {
+		if err := restoreRedactedConfigFields(values, current.Settings[section], section); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) GetConfigEntries(ctx context.Context, sections []string) (map[string][]ConfigEntry, error) {
@@ -208,14 +307,9 @@ func (s *Server) SetConfigEntry(ctx context.Context, section, name string, value
 	if config.Entries[section] != nil && config.Entries[section][name] != nil {
 		existing = config.Entries[section][name]
 	}
-	for key, value := range values {
-		if str, ok := value.(string); ok && str == RedactedValue {
-			prev, ok := existing[key]
-			if !ok {
-				return nil, fmt.Errorf("field %s has no stored value to keep, provide a value", key)
-			}
-			values[key] = prev
-		}
+	values = maps.Clone(values)
+	if err := restoreRedactedConfigFields(values, existing, section+"."+name); err != nil {
+		return nil, err
 	}
 
 	if err := validateConfigEntry(section, name, values); err != nil {
@@ -309,7 +403,7 @@ func (s *Server) GetConfigValues(ctx context.Context, sections []string) (map[st
 // SetConfigValue sets one dynamic config field (section + dotted key). Like
 // entries, settings updates are not staged: the change is validated against
 // the config schema, written as a new config version and takes effect
-// immediately. A value equal to the redaction placeholder keeps the stored
+// immediately. Secret fields equal to the redaction placeholder keep the stored
 // value
 func (s *Server) SetConfigValue(ctx context.Context, section, key string, value any, versionId string) (*types.DynamicConfig, error) {
 	if err := s.enforceGlobalPerm(ctx, types.PermissionConfigUpdate, ""); err != nil {
@@ -322,13 +416,11 @@ func (s *Server) SetConfigValue(ctx context.Context, section, key string, value 
 		return nil, err
 	}
 
-	if str, ok := value.(string); ok && str == RedactedValue {
-		prev, ok := config.Settings[section][key]
-		if !ok {
-			return nil, fmt.Errorf("%s %s has no stored value to keep, provide a value", section, key)
-		}
-		value = prev
+	values := map[string]any{key: value}
+	if err := restoreRedactedConfigFields(values, config.Settings[section], section); err != nil {
+		return nil, err
 	}
+	value = values[key]
 
 	if err := validateConfigValue(section, key, value); err != nil {
 		return nil, err
@@ -397,13 +489,10 @@ func (s *Server) validateRBACCandidate(ctx context.Context, candidate *types.RBA
 		return fmt.Errorf("invalid rbac config: %w", err)
 	}
 
-	// The lockout check only applies when the caller would actually be subject
-	// to enforcement after publish: RBAC enforcement is active (always, unless
-	// security.unsafe_disable_rbac) and there is a calling app context. UDS
-	// calls have no app context and are not enforced; the admin identity is
-	// checked as the built-in super-user and therefore cannot lock itself out
+	// Include remote API and --as callers, which have enforcement markers but
+	// no APP_AUTH. Trusted UDS calls are exempt; admin cannot lock itself out.
 	user := system.GetContextUserId(ctx)
-	callerSubject := ctx.Value(types.APP_AUTH) != nil
+	callerSubject := s.rbacManager.APIEnforced(ctx)
 	if s.rbacManager.ConfigEnabled() && callerSubject && user != "" && user != types.ADMIN_USER && !force {
 		authorized, err := scratch.AuthorizeUserPerm(user, system.GetContextGroups(ctx), types.PermissionConfigUpdate)
 		if err != nil {

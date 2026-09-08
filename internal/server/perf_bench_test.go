@@ -35,8 +35,7 @@ func newBenchServer(defaultDomain string) *Server {
 		staticConfig: config,
 		authHandler:  NewAdminBasicAuth(logger, config),
 		rbacManager: &rbac.RBACManager{
-			Logger:     logger,
-			RbacConfig: &types.RBACConfig{},
+			Logger: logger,
 		},
 		csrfMiddleware: http.NewCrossOriginProtection(),
 	}

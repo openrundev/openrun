@@ -17,6 +17,7 @@ import (
 // is not active for this call: RBAC disabled or a trusted unix-socket call
 // with no app context. Group membership (config groups and SSO context
 // groups) is resolved now, so the snapshot stays valid without live group data.
+// A credential scope ceiling is preserved too, including for admin creators.
 // Under a _cl_perm test URL directive the real grants of the (anonymous) user
 // are snapshotted, not the simulated set: simulation is a narrowing debug aid
 // and must never mint durable authority.
@@ -26,6 +27,13 @@ func (h *RBACManager) SnapshotUserGrants(ctx context.Context) (*types.RBACSnapsh
 	}
 	user := system.GetContextUserId(ctx)
 	groups := system.GetContextGroups(ctx)
+	snap := &types.RBACSnapshot{UserId: user}
+	if scopes, ok := system.GetContextApiScopes(ctx); ok {
+		snap.Scopes = append([]string{}, scopes...)
+	}
+	if user == "" {
+		return snap, nil
+	}
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -36,11 +44,11 @@ func (h *RBACManager) SnapshotUserGrants(ctx context.Context) (*types.RBACSnapsh
 	}
 	if isAdmin {
 		// the admin super-user permission passes every check, no grants needed
-		return &types.RBACSnapshot{UserId: user, Admin: true}, nil
+		snap.Admin = true
+		return snap, nil
 	}
 
-	snap := &types.RBACSnapshot{UserId: user}
-	for _, grant := range h.RbacConfig.Grants {
+	for _, grant := range h.rbacConfig.Grants {
 		matched, err := h.grantUserMatchesLocked(grant, user, groups)
 		if err != nil {
 			return nil, err
@@ -88,6 +96,7 @@ type syncGrant struct {
 // construction, safe for concurrent use.
 type SyncAuthorizer struct {
 	userId     string
+	scopes     []string
 	admin      bool
 	grants     []syncGrant
 	ownerPerms map[string]map[types.RBACPermission]bool
@@ -100,6 +109,7 @@ func NewSyncAuthorizer(snap *types.RBACSnapshot) *SyncAuthorizer {
 	}
 	a := &SyncAuthorizer{
 		userId:     snap.UserId,
+		scopes:     slices.Clone(snap.Scopes),
 		admin:      snap.Admin,
 		grants:     make([]syncGrant, 0, len(snap.Grants)),
 		ownerPerms: make(map[string]map[types.RBACPermission]bool, len(snap.OwnerPermissions)),
@@ -136,6 +146,11 @@ func (a *SyncAuthorizer) Authorize(perm types.RBACPermission, target types.AppPa
 		// Fail closed, same as authorizeAPIInt: a snapshot without a user id
 		// (e.g. created under a test URL simulation with no authenticated user)
 		// confers nothing
+		return false, nil
+	}
+	// Durable authority must not exceed the credential that created it,
+	// including admin grants and the owner virtual grant.
+	if a.scopes != nil && !ScopesAllow(a.scopes, perm) {
 		return false, nil
 	}
 	if a.admin {

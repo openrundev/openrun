@@ -16,6 +16,8 @@ RBAC enforcement cannot be disabled through the dynamic config. The static confi
 
 Management API calls made by app Starlark code are authorized as the authenticated request user, including read/list operations and mutations. List APIs filter out apps, services and bindings for which that user lacks the corresponding read permission. CLI calls over the unix domain socket are the transport-level administrative exception and run as trusted admin unless `--as` is used. Remote API calls authenticate with an API key or an OAuth token from browser login and run as that credential’s user identity with RBAC enforced. Enable REST with `[api.rest] enable = true` and MCP with `[api.mcp] enable = true`; see [Remote API and MCP]({{< ref "remoteaccess" >}}).
 
+The configured app owner permissions also apply when serving an app: the default `app:manage` owner permission includes `app:access`. Stage and git preview apps inherit the main app's owner; existing git previews are migrated on upgrade. Creating a git preview does not grant access to it. Owners must still pass the app's authentication. Set `owner_permissions.app` to an empty list to require explicit grants for owners too. Remote config reads and update responses redact credential fields, as the console does; trusted unix-socket config exports retain the full configuration.
+
 ## RBAC Configuration
 
 The RBAC configuration is managed through [dynamic config]({{< ref "docs/configuration/overview/#dynamic-config" >}}). The structure of the RBAC config is
@@ -103,9 +105,12 @@ Notes on the snapshot behavior:
 - The snapshot is frozen at create time. Later edits to roles, groups or grants do not change what an existing sync may do — delete and recreate the sync to pick up new grants.
 - Syncs created via the CLI (`admin` over the unix socket) or with RBAC disabled store no snapshot and run unrestricted, as before.
 - Disabling RBAC disables snapshot enforcement too; re-enabling it restores enforcement for entries that have a snapshot.
-- A sync created by a user holding the `admin` permission runs unrestricted (the snapshot just records the admin status).
+- The creating credential's scope ceiling is frozen alongside the grants, including for users holding `admin`. Scheduled runs cannot exceed those scopes. Syncs created before scope ceilings were stored must be recreated to capture the credential's limits.
+- A sync created by a user holding the `admin` permission with an unscoped credential runs unrestricted.
 - Manual `sync run` calls are authorized against the caller's own current grants, not the stored snapshot.
 - The creator of a sync entry keeps the `sync:run`, `sync:delete` and `sync:read` owner permissions on it.
+
+App jobs follow their execution context. Manual jobs and `before_deploy` jobs retain the caller's RBAC permissions, credential scope ceiling and any sync snapshot. Scheduled app jobs evaluate management API calls against the app owner's live RBAC grants and builtin groups. OAuth/OIDC and SAML logins refresh a stored IdP group snapshot, valid for `api.federated_identity_ttl`; existing browser sessions do not extend that lifetime. After upgrading, an SSO owner must sign in again to populate the snapshot. Unattributed scheduled jobs and deleted builtin or disabled owners have no management API authority. Owners without an API identity row retain direct principal grants; identity lookup failures fail the run before execution. They still run under the app's approved plugin permissions. Scheduling a job does not grant trusted server authority.
 
 ## Group Info
 

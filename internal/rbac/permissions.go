@@ -345,7 +345,9 @@ func hasGlobMeta(s string) bool {
 func validatePermission(perm types.RBACPermission) error {
 	permStr := string(perm)
 	if strings.HasPrefix(permStr, RBAC_CUSTOM_PREFIX) {
-		return nil // custom permissions are user defined, not validated
+		// Preserve legacy custom entries, including malformed glob syntax.
+		// Such globs do not match, but must not invalidate a stored RBAC config.
+		return nil
 	}
 	if hasGlobMeta(permStr) {
 		if !doublestar.ValidatePattern(permStr) {

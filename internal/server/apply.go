@@ -1759,6 +1759,7 @@ func (s *Server) enforceApplyAppPerms(ctx context.Context, appPaths []types.AppP
 	for _, appPath := range appPaths {
 		owner := ""
 		if appInfo, ok := allAppsMap[appPath]; ok {
+			appPath = mainAppPathDomain(appInfo.AppPathDomain, appInfo.MainApp, appInfo.LinkedAppPath)
 			owner = appInfo.UserID
 		}
 		if err := s.enforceAppPerm(ctx, types.PermissionApply, appPath, owner); err != nil {

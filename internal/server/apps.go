@@ -95,8 +95,8 @@ func (a *AppStore) GetAllAppsInfo() ([]types.AppInfo, error) {
 func (a *AppStore) GetAppInfo(appId types.AppId) (types.AppInfo, bool) {
 	a.mu.RLock()
 	if a.idToInfo != nil {
-		a.mu.RUnlock()
 		info, ok := a.idToInfo[appId]
+		a.mu.RUnlock()
 		return info, ok
 	}
 	a.mu.RUnlock()
@@ -107,6 +107,7 @@ func (a *AppStore) GetAppInfo(appId types.AppId) (types.AppInfo, bool) {
 
 	err := a.reloadAppInfo()
 	if err != nil {
+		a.Error().Err(err).Msg("error loading app info for authorization")
 		return types.AppInfo{}, false
 	}
 	info, ok := a.idToInfo[appId]

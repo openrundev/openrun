@@ -27,7 +27,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 27
+const CURRENT_DB_VERSION = 28
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -773,6 +773,20 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `update version set version=27, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 28 {
+		m.Info().Msg("Upgrading to version 28")
+		// A git preview has the same RBAC owner as its main app. Retain the
+		// creator in historical audit/version records, not in live ownership.
+		// Orphaned previews lose owner privileges instead of retaining grants
+		// derived from a main app which no longer exists.
+		if _, err := tx.ExecContext(ctx, `update apps set user_id = coalesce((select parent.user_id from apps parent where parent.id = apps.main_app), '') where substr(id, 1, 8) = 'app_pre_'`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `update version set version=28, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}

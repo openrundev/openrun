@@ -48,8 +48,7 @@ func newSecretsTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Co
 		staticConfig: config,
 		db:           db,
 		rbacManager: &rbac.RBACManager{
-			Logger:     logger,
-			RbacConfig: &types.RBACConfig{},
+			Logger: logger,
 		},
 	}
 	server.secretsManager.Store(secretManager)
@@ -131,15 +130,18 @@ func TestDynamicSecretBindFailureRejected(t *testing.T) {
 	testutil.AssertEqualsString(t, "value", "v1", get.Value)
 
 	// A rejected update must not leave the rejected request's RBAC rules
-	// live: updateDynamicConfigCache restores the previous RBAC config
+	// live: originating updates publish RBAC only after runtime validation
 	server.dynamicConfig = &types.DynamicConfig{}
-	dyn.RBAC = types.RBACConfig{Groups: map[string][]string{"g1": {"user1"}}}
-	err = server.updateDynamicConfigCache(ctx, dyn)
+	dyn.RBAC = types.RBACConfig{
+		Roles: map[string][]types.RBACPermission{"candidate": {"custom:rejected"}},
+	}
+	_, err = server.prepareDynamicConfigUpdate(ctx, dyn, true)
 	if err == nil || !strings.Contains(err.Error(), "rejecting config update") {
 		t.Fatalf("expected bind rejection, got %v", err)
 	}
-	if len(server.rbacManager.RbacConfig.Groups) != 0 {
-		t.Fatalf("rbac config not rolled back after rejected update: %+v", server.rbacManager.RbacConfig)
+	perms, err := server.rbacManager.GetCustomPermissionsInt("user1", types.AppPathDomain{}, nil)
+	if err != nil || len(perms) != 0 {
+		t.Fatalf("rejected RBAC custom permission remained live: %v, %v", perms, err)
 	}
 
 	// At startup the same failure is nonfatal: the manager is swapped in

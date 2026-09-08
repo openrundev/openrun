@@ -21,9 +21,9 @@ import (
 // design/rbac-api-design.md.
 //
 // App scoped operations resolve stage/preview apps to the main app path and pass
-// the app creator (AppInfo.UserID / AppEntry.UserID) as the owner; global
-// operations (sync, service, binding, config, server) have no app target and
-// require a grant targeting all apps, or ownership of the specific entry.
+// the main app creator as the owner. Service and binding operations match
+// their own resource targets. Global permissions (sync, config, server, etc.)
+// apply independently of grant targets.
 
 // rbacDenied builds the 403 error returned on an RBAC authorization failure.
 // Denials during a sync run name the sync entry, so the sync status error

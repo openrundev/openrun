@@ -401,3 +401,22 @@ func (m *Metadata) PruneUnusedOAuthClients(ctx context.Context, olderThan time.T
 	}
 	return result.RowsAffected()
 }
+
+// ObserveFederatedIdentity persists groups from a verified interactive login.
+// Concurrent first logins converge on the principal's existing identity; group
+// refreshes must not replace its id, credentials, or disabled status.
+func (m *Metadata) ObserveFederatedIdentity(ctx context.Context, identity *types.Identity) error {
+	groupsJSON, err := json.Marshal(identity.Groups)
+	if err != nil {
+		return fmt.Errorf("error marshalling identity groups: %w", err)
+	}
+	_, err = m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`insert into identities (id, provider, stable_subject, principal_name, groups, groups_observed_at, disabled_at, create_time)`+
+			` values (?, ?, ?, ?, ?, ?, NULL, `+system.FuncNow(m.dbType)+`)`+
+			` on conflict (principal_name) do update set groups = excluded.groups, groups_observed_at = excluded.groups_observed_at`),
+		identity.Id, identity.Provider, identity.StableSubject, identity.PrincipalName, string(groupsJSON), nullTime(identity.GroupsObservedAt))
+	if err != nil {
+		return fmt.Errorf("error recording federated identity: %w", err)
+	}
+	return nil
+}

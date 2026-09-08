@@ -410,6 +410,7 @@ func flattenConfigValues(values map[string]any, prefix string, out map[string]an
 // isSecretConfigField reports whether a field holds a secret which must not
 // be returned by the read APIs. Dotted settings keys check the leaf segment
 func isSecretConfigField(fieldName string) bool {
+	fieldName = strings.ToLower(fieldName)
 	if idx := strings.LastIndex(fieldName, "."); idx >= 0 {
 		fieldName = fieldName[idx+1:]
 	}
@@ -437,15 +438,58 @@ func isSecretTemplateRef(value string) bool {
 func redactEntryValues(values map[string]any) map[string]any {
 	redacted := make(map[string]any, len(values))
 	for key, value := range values {
-		if isSecretConfigField(key) {
-			if str, ok := value.(string); ok && str != "" && !isSecretTemplateRef(str) {
-				redacted[key] = RedactedValue
-				continue
-			}
-		}
-		redacted[key] = value
+		redacted[key] = redactConfigValue(key, value)
 	}
 	return redacted
+}
+
+// redactConfigValue redacts a secret string, or recurses into nested maps and
+// lists (list items inherit the parent key, so a list of tokens is redacted)
+func redactConfigValue(key string, value any) any {
+	switch value := normalizeConfigValue(value).(type) {
+	case string:
+		if isSecretConfigField(key) && value != "" && !isSecretTemplateRef(value) {
+			return RedactedValue
+		}
+		return value
+	case map[string]any:
+		return redactEntryValues(value)
+	case []any:
+		out := make([]any, len(value))
+		for i, item := range value {
+			out[i] = redactConfigValue(key, item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+// normalizeConfigValue converts the typed maps and lists that Go callers and
+// the static TOML config produce to the JSON document shapes (map[string]any,
+// []any), so the redaction helpers handle one representation
+func normalizeConfigValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]string:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = item
+		}
+		return out
+	case []string:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = item
+		}
+		return out
+	case []map[string]any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = item
+		}
+		return out
+	}
+	return value
 }
 
 // evalSecretsDeep returns a copy of the value with every string run through

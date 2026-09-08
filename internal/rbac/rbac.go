@@ -22,13 +22,13 @@ const RBAC_REGEX_PREFIX = "regex:"   // used for regex matching in users list
 
 type RBACManager struct {
 	*types.Logger
-	RbacConfig   *types.RBACConfig
+	rbacConfig   *types.RBACConfig
 	serverConfig *types.ServerConfig
 	mu           sync.RWMutex
 
 	groups         map[string]*resolvedGroup                // group name to resolved membership (group hierarchy resolved)
 	roles          map[string]*resolvedRole                 // role name to resolved permissions (hierarchy and implications resolved)
-	resolvedGrants []resolvedGrant                          // per grant resolved state, aligned with RbacConfig.Grants
+	resolvedGrants []resolvedGrant                          // per grant resolved state, aligned with rbacConfig.Grants
 	hasAdminGrant  bool                                     // whether any grant's roles confer the admin super-user permission
 	regexCache     map[string]*regexp.Regexp                // cache of compiled regex patterns
 	customPerms    []string                                 // custom permissions are permissions defined by the user. This list does not have the custom: prefix
@@ -79,7 +79,6 @@ func DefaultGrant() types.RBACGrant {
 func NewRBACHandler(logger *types.Logger, rbacConfig *types.RBACConfig, serverConfig *types.ServerConfig) (*RBACManager, error) {
 	rbacManager := &RBACManager{
 		Logger:       logger,
-		RbacConfig:   rbacConfig,
 		serverConfig: serverConfig,
 	}
 	rbacManager.enabled.Store(!serverConfig.Security.UnsafeDisableRBAC)
@@ -135,6 +134,7 @@ func (h *RBACManager) authorizeIntLocked(user string, appPathDomain types.AppPat
 
 // GetCustomPermissions returns the custom permissions set for the user for the given app path domain
 // Values in returned list do not have the custom: prefix
+// The returned slice is read-only and remains valid across config updates.
 func (h *RBACManager) GetCustomPermissionsInt(user string, appPathDomain types.AppPathDomain,
 	groups []string) ([]string, error) {
 	h.mu.RLock()
@@ -147,6 +147,9 @@ func (h *RBACManager) GetCustomPermissionsInt(user string, appPathDomain types.A
 	if !h.enabled.Load() {
 		// rbac is disabled (security.unsafe_disable_rbac), authorize all requests
 		return h.customPerms, nil
+	}
+	if user == "" {
+		return nil, nil
 	}
 
 	if isAdmin, err := h.hasAdminPermLocked(user, groups); err != nil {
@@ -208,7 +211,7 @@ func (h *RBACManager) checkGrants(inputUser string, appPathDomain types.AppPathD
 		// app level permission, look for grant with custom: prefix
 		inputPermission = types.RBACPermission(RBAC_CUSTOM_PREFIX + string(inputPermission))
 	}
-	for i, grant := range h.RbacConfig.Grants {
+	for i, grant := range h.rbacConfig.Grants {
 		match, err := h.checkGrant(grant, h.resolvedGrants[i].targets, inputUser, appPathDomain,
 			resourceId, inputPermission, groups, isAppLevelPermission)
 		if err != nil {
@@ -553,7 +556,7 @@ func (h *RBACManager) initOwnerPerms(rbacConfig *types.RBACConfig) (map[string]m
 
 	for resource := range rbacConfig.OwnerPermissions {
 		if _, ok := defaultOwnerPermissions[resource]; !ok {
-			return nil, fmt.Errorf("owner_permissions: unknown resource %q, valid resources are app, sync", resource)
+			return nil, fmt.Errorf("owner_permissions: unknown resource %q, valid resources are app, sync, service, binding", resource)
 		}
 	}
 
@@ -598,28 +601,54 @@ func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig, regexCache ma
 // state behind (mixed old/new groups and roles, or the enabled flag out of
 // sync with the resolved state)
 func (h *RBACManager) UpdateRBACConfig(rbacConfig *types.RBACConfig) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	publish, err := h.PrepareRBACConfig(rbacConfig)
+	if err != nil {
+		return err
+	}
+	publish()
+	return nil
+}
+
+// PrepareRBACConfig resolves and validates an isolated configuration without
+// changing live authorization. The returned function publishes that prepared
+// state without further validation or failure, after the caller persists it.
+func (h *RBACManager) PrepareRBACConfig(rbacConfig *types.RBACConfig) (func(), error) {
+	if rbacConfig == nil {
+		return nil, fmt.Errorf("rbac config cannot be nil")
+	}
+	// Keep the validated configuration private. Caller edits must not change
+	// live grants independently of their resolved roles and target caches.
+	cloned := *rbacConfig
+	cloned.Groups = cloneConfigLists(rbacConfig.Groups)
+	cloned.Roles = cloneConfigLists(rbacConfig.Roles)
+	cloned.OwnerPermissions = cloneConfigLists(rbacConfig.OwnerPermissions)
+	cloned.Grants = slices.Clone(rbacConfig.Grants)
+	for i := range cloned.Grants {
+		cloned.Grants[i].Users = slices.Clone(cloned.Grants[i].Users)
+		cloned.Grants[i].Roles = slices.Clone(cloned.Grants[i].Roles)
+		cloned.Grants[i].Targets = slices.Clone(cloned.Grants[i].Targets)
+	}
+	rbacConfig = &cloned
 
 	regexCache := make(map[string]*regexp.Regexp)
 
 	groups, err := h.initGroupInfo(rbacConfig, regexCache)
 	if err != nil {
-		return fmt.Errorf("error initializing rbac group info: %w", err)
+		return nil, fmt.Errorf("error initializing rbac group info: %w", err)
 	}
 
 	roles, customPerms, err := h.initRoleInfo(rbacConfig)
 	if err != nil {
-		return fmt.Errorf("error initializing rbac role info: %w", err)
+		return nil, fmt.Errorf("error initializing rbac role info: %w", err)
 	}
 
 	ownerPerms, err := h.initOwnerPerms(rbacConfig)
 	if err != nil {
-		return fmt.Errorf("error initializing rbac owner permissions: %w", err)
+		return nil, fmt.Errorf("error initializing rbac owner permissions: %w", err)
 	}
 
 	if err := h.validateGrants(rbacConfig, regexCache); err != nil {
-		return fmt.Errorf("error validating rbac grants: %w", err)
+		return nil, fmt.Errorf("error validating rbac grants: %w", err)
 	}
 
 	// Per grant resolved state: pre-parsed target globs, and whether any
@@ -640,15 +669,39 @@ func (h *RBACManager) UpdateRBACConfig(rbacConfig *types.RBACConfig) error {
 		}
 	}
 
-	h.RbacConfig = rbacConfig
-	h.regexCache = regexCache
-	h.groups = groups
-	h.roles = roles
-	h.resolvedGrants = resolvedGrants
-	h.hasAdminGrant = hasAdminGrant
-	h.customPerms = customPerms
-	h.ownerPerms = ownerPerms
-	// h.enabled is fixed at construction (static unsafe_disable_rbac):
-	// dynamic config updates cannot change enablement
-	return nil
+	return func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.rbacConfig = rbacConfig
+		h.regexCache = regexCache
+		h.groups = groups
+		h.roles = roles
+		h.resolvedGrants = resolvedGrants
+		h.hasAdminGrant = hasAdminGrant
+		h.customPerms = customPerms
+		h.ownerPerms = ownerPerms
+		// h.enabled is fixed at construction (static unsafe_disable_rbac):
+		// dynamic config updates cannot change enablement
+	}, nil
+}
+
+func cloneConfigLists[T any](input map[string][]T) map[string][]T {
+	if input == nil {
+		return nil
+	}
+	cloned := make(map[string][]T, len(input))
+	for key, values := range input {
+		cloned[key] = slices.Clone(values)
+	}
+	return cloned
+}
+
+// AuthorizeAppAccess checks served-app access for an authenticated principal,
+// including the configured owner permissions. Stage/preview targets must be
+// resolved to the main app by the caller, as with AuthorizeAPI.
+func (h *RBACManager) AuthorizeAppAccess(user string, target types.AppPathDomain, groups []string, owner string) (bool, error) {
+	if !h.ConfigEnabled() {
+		return true, nil
+	}
+	return h.authorizeAPIInt(user, groups, types.PermissionAccess, target, "", owner)
 }

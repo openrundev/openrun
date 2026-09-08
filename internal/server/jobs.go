@@ -6,11 +6,13 @@ package server
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ import (
 	apppkg "github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/metadata"
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -198,9 +201,62 @@ func (s *Server) startJobRun(ctx context.Context, exec *jobExecution) (*types.Jo
 		}
 		return nil, err
 	}
+	// Background work retains only authorization, never request audit or app state.
+	runCtx := newJobAuthorizationContext(parent, ctx)
+	// The response and worker must not share mutable status fields.
+	workerRun := *run
 	handedOff = true
-	go func() { defer done(); s.performJobRun(parent, exec, run) }()
+	go func() {
+		defer done()
+		s.performJobRun(runCtx, exec, &workerRun)
+	}()
 	return run, nil
+}
+
+// valuelessContext keeps a parent's cancellation and deadline but none of
+// its values
+type valuelessContext struct{ context.Context }
+
+func (valuelessContext) Value(any) any { return nil }
+
+// newJobAuthorizationContext builds the context a job runs under: the
+// lifetime of parent, and from caller only the authorization state (user,
+// groups, RBAC marker, trusted flag, API invoker, credential scope ceiling
+// and sync snapshot). Caller-owned audit state, app values and URL
+// permission simulations do not reach the worker
+func newJobAuthorizationContext(parent, caller context.Context) context.Context {
+	ctx := context.WithValue(valuelessContext{parent}, types.USER_ID, system.GetContextUserId(caller))
+	ctx = context.WithValue(ctx, types.GROUPS, slices.Clone(system.GetContextGroups(caller)))
+	if invoker := system.GetContextApiInvoker(caller); invoker != "" {
+		// The surface policy (checkApiOpEnabled) follows the job: an MCP
+		// caller cannot use a job to reach operations disabled for MCP
+		ctx = system.WithApiInvoker(ctx, invoker)
+	}
+	if marker := caller.Value(types.RBAC_ENABLED); marker != nil {
+		ctx = context.WithValue(ctx, types.RBAC_ENABLED, marker)
+	}
+	if system.IsTrustedOperation(caller) {
+		ctx = system.WithTrustedOperation(ctx)
+	}
+	if scopes, present := system.GetContextApiScopes(caller); present {
+		ctx = system.WithApiScopes(ctx, slices.Clone(scopes))
+	}
+	if syncId := system.GetContextValue(caller, types.SYNC_ID); syncId != "" {
+		ctx = context.WithValue(ctx, types.SYNC_ID, syncId)
+	}
+	ctx = rbac.WithSyncAuthorizer(ctx, rbac.GetSyncAuthorizer(caller))
+	// Keep credential attenuation too: jobs must not mint longer-lived or
+	// broader-resource keys than their caller. Only these constraints are
+	// copied, and copied so later caller mutations do not reach the worker
+	if cred := system.GetContextApiCredential(caller); cred != nil {
+		attenuated := &types.Credential{Scopes: slices.Clone(cred.Scopes), Resources: slices.Clone(cred.Resources)}
+		if cred.ExpiresAt != nil {
+			expiry := *cred.ExpiresAt
+			attenuated.ExpiresAt = &expiry
+		}
+		ctx = system.WithApiCredential(ctx, attenuated)
+	}
+	return ctx
 }
 
 // executeJobRun claims the run and executes it, returning the finished run
@@ -224,7 +280,7 @@ func (s *Server) executeJobRun(ctx context.Context, exec *jobExecution) (*types.
 		}
 		return nil, err
 	}
-	return s.performJobRun(claimCtx, exec, run), nil
+	return s.performJobRun(newJobAuthorizationContext(claimCtx, ctx), exec, run), nil
 }
 
 func truncateMessage(msg string) string {
@@ -238,14 +294,21 @@ func truncateMessage(msg string) string {
 // or the job container, under the job timeout, with the liveness stamp
 // renewed while it runs. Records the outcome, writes the audit event and
 // prunes the job's old runs
-func (s *Server) performJobRun(parent context.Context, exec *jobExecution, run *types.JobRun) *types.JobRun {
+func (s *Server) performJobRun(ctx context.Context, exec *jobExecution, run *types.JobRun) *types.JobRun {
 	if exec.closeApp != nil {
 		defer exec.closeApp()
 	}
 	spec := exec.spec
-	baseCtx := context.WithValue(parent, types.REQUEST_ID, exec.request)
-	baseCtx = context.WithValue(baseCtx, types.USER_ID, exec.actor)
-	baseCtx = system.WithTrustedOperation(baseCtx)
+	// Preserve the caller's RBAC, scope ceiling and sync snapshot across the
+	// asynchronous handoff. A job must not turn a limited caller into admin.
+	baseCtx := context.WithValue(ctx, types.REQUEST_ID, exec.request)
+	// Plugin permits belong to the job app, even when another app invoked it.
+	baseCtx = context.WithValue(baseCtx, types.APP_PATH_DOMAIN,
+		mainAppPathDomain(exec.target.AppPathDomain(), exec.target.MainApp, exec.target.LinkedAppPath))
+	baseCtx = context.WithValue(baseCtx, types.APP_ID, string(exec.target.Id))
+	if system.GetContextUserId(baseCtx) == "" && system.IsTrustedOperation(baseCtx) {
+		baseCtx = context.WithValue(baseCtx, types.USER_ID, exec.actor)
+	}
 	runCtx, cancel := context.WithTimeout(baseCtx, spec.TimeoutDuration())
 	defer cancel()
 	s.jobRuns.add(run.Id, cancel)
@@ -628,22 +691,79 @@ func (s *Server) startCronRun(ctx context.Context, entry *types.AppEntry, spec t
 		}
 		return
 	}
-	application, closeApp, err := s.loadJobApp(ctx, types.Transaction{}, entry)
-	if err != nil {
-		s.Error().Err(err).Msgf("error loading app for job %s", spec.Name)
+	failRun := func(err error) {
+		s.Error().Err(err).Msgf("error preparing job %s", spec.Name)
 		if ferr := s.db.FinishJobRun(ctx, types.Transaction{}, run.Id, types.JobRunFailed, nil, truncateMessage(err.Error())); ferr != nil {
 			s.Error().Err(ferr).Msgf("error recording job run %s failure", run.Id)
 		}
 		run.Status = types.JobRunFailed
 		run.Message = err.Error()
 		s.insertJobAudit(run)
+	}
+	runCtx, err := s.cronJobContext(parent, entry)
+	if err != nil {
+		failRun(err)
 		return
 	}
+	application, closeApp, err := s.loadJobApp(ctx, types.Transaction{}, entry)
+	if err != nil {
+		failRun(err)
+		return
+	}
+
 	exec.app = application
 	exec.closeApp = closeApp
 	s.Info().Str("run", run.Id).Str("job", spec.Name).Str("app", run.AppPath).Msg("starting scheduled job run")
 	handedOff = true
-	go func() { defer done(); s.performJobRun(parent, exec, run) }()
+	go func() { defer done(); s.performJobRun(runCtx, exec, run) }()
+}
+
+// cronJobContext attributes scheduled Starlark management API calls to the
+// app owner. Scheduling a job must not confer trusted server authority.
+// Unattributed, deleted builtin, or disabled owners have no management API
+// authority; ordinary app plugin permissions and container execution remain
+// independent of RBAC.
+func (s *Server) cronJobContext(parent context.Context, entry *types.AppEntry) (context.Context, error) {
+	ctx := &managementAPIContext{
+		Context: parent, userId: entry.UserID,
+		rbacEnabled: s.rbacManager.ConfigEnabled(),
+	}
+	if !ctx.rbacEnabled {
+		ctx.userId = cmp.Or(ctx.userId, jobSchedulerActor)
+		return ctx, nil
+	}
+	if ctx.userId == "" {
+		return ctx, nil
+	}
+	identity, err := s.db.GetIdentityByPrincipal(ctx, ctx.userId)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("error resolving scheduled job owner %q: %w", ctx.userId, err)
+	}
+	if identity != nil && identity.DisabledAt != nil {
+		ctx.userId = ""
+		return ctx, nil
+	}
+	// Builtin groups come from live config even without an API identity row.
+	// Deleted builtin users lose authority; this is not a storage failure.
+	if username, builtin := strings.CutPrefix(ctx.userId, string(types.AppAuthnBuiltin)+":"); builtin {
+		groups, exists := builtinGroups(s.Config(), username)
+		if !exists {
+			ctx.userId = ""
+		} else {
+			ctx.groups = groups
+		}
+		return ctx, nil
+	}
+	if identity == nil {
+		// No federated snapshot exists. Direct principal/config group grants
+		// still apply, but there is no stale snapshot to audit.
+		return ctx, nil
+	}
+	ctx.groups, err = s.apiIdentityGroups(ctx, identity)
+	if err != nil {
+		return nil, fmt.Errorf("error resolving scheduled job owner groups for %q: %w", ctx.userId, err)
+	}
+	return ctx, nil
 }
 
 // resolveJobInstance returns the app instance a job command targets: the

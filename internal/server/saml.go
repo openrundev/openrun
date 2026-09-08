@@ -87,55 +87,55 @@ func (s *SAMLManager) Setup(ctx context.Context) error {
 	return s.registerProviders(ctx, s.config.SAML)
 }
 
-// registerProviders builds the SAML providers for a config map and swaps them
-// in as the full provider set. Used at startup with the static config and by
-// UpdateProviders when dynamic config entries change the saml section
-func (s *SAMLManager) registerProviders(ctx context.Context, samlConfigs map[string]types.SAMLConfig) error {
+// registerProviders retains startup tolerance for unavailable IdP metadata.
+func (s *SAMLManager) registerProviders(ctx context.Context, configs map[string]types.SAMLConfig) error {
+	publish, err := s.prepareProviders(ctx, configs, false)
+	if err != nil {
+		return err
+	}
+	publish()
+	return nil
+}
+
+// prepareProviders builds the provider set without modifying live auth. Dynamic
+// updates reject invalid providers; startup can disable unavailable providers.
+func (s *SAMLManager) prepareProviders(ctx context.Context, samlConfigs map[string]types.SAMLConfig, strict bool) (func(), error) {
 	providerConfigs := make(map[string]*types.SAMLConfig)
 	providers := make(map[string]*saml2.SAMLServiceProvider)
-
-	// A missing callback URL is a global misconfiguration that no provider can
-	// work around, so fail fast (unlike per-provider metadata errors below).
 	if len(samlConfigs) > 0 && s.config.Security.CallbackUrl == "" {
-		return fmt.Errorf("security.callback_url must be set for enabling SAML")
+		return nil, fmt.Errorf("security.callback_url must be set for enabling SAML")
 	}
-
-	// Fetch IdP metadata for each provider concurrently. A single unreachable or
-	// misconfigured IdP must not block or abort server startup (which would take
-	// down unrelated apps), so build failures disable that provider instead.
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	var buildErrors []error
 	for name, config := range samlConfigs {
 		name = SAML_AUTH_PREFIX + name
 		providerConfigs[name] = &config
 		wg.Go(func() {
 			provider, err := s.buildSAMLProvider(ctx, name, config)
+			mu.Lock()
+			defer mu.Unlock()
 			if err != nil {
-				s.Error().Err(err).Msgf("error building SAML provider for %s, provider disabled until reload", name)
+				if strict {
+					buildErrors = append(buildErrors, fmt.Errorf("error building SAML provider %s: %w", name, err))
+				} else {
+					s.Error().Err(err).Msgf("error building SAML provider for %s, provider disabled until reload", name)
+				}
 				return
 			}
-			mu.Lock()
 			providers[name] = provider
-			mu.Unlock()
 		})
 	}
 	wg.Wait()
-
-	s.providerMu.Lock()
-	s.providerConfigs = providerConfigs
-	s.providers = providers
-	s.providerMu.Unlock()
-
-	return nil
-}
-
-// UpdateProviders re-registers the SAML providers from the merged (static +
-// dynamic) saml config. Provider build failures are logged and disable that
-// provider, matching the startup behavior
-func (s *SAMLManager) UpdateProviders(ctx context.Context, samlConfigs map[string]types.SAMLConfig) {
-	if err := s.registerProviders(ctx, samlConfigs); err != nil {
-		s.Error().Err(err).Msg("error updating SAML providers")
+	if err := errors.Join(buildErrors...); err != nil {
+		return nil, err
 	}
+	return func() {
+		s.providerMu.Lock()
+		defer s.providerMu.Unlock()
+		s.providerConfigs = providerConfigs
+		s.providers = providers
+	}, nil
 }
 
 // getProvider returns one registered SAML provider, nil if not configured or
@@ -689,6 +689,12 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 	redirectUrl, ok := stateValueString(stateMap, REDIRECT_URL)
 	if !ok {
 		http.Error(w, "error matching session state", http.StatusBadRequest)
+		return
+	}
+
+	if err := observeFederatedIdentity(r.Context(), s.db, providerName, ai.NameID, ai.NameID, groups); err != nil {
+		s.Error().Err(err).Msg("error recording authenticated identity")
+		http.Error(w, "error recording authenticated identity", http.StatusInternalServerError)
 		return
 	}
 

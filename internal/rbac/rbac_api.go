@@ -223,7 +223,22 @@ func (h *RBACManager) authorizeAPIIntLocked(user string, groups []string, perm t
 // this somewhere"), so UIs can gate chrome for users whose grants are all
 // scoped; enforcement stays per resource at action time. When enforcement is
 // not active, all permissions are returned
+// The returned slice is read-only.
 func (h *RBACManager) GetAPIPermissions(ctx context.Context, target types.AppPathDomain, owner string) ([]string, error) {
+	scopes, scoped := system.GetContextApiScopes(ctx)
+	scoped = scoped && system.IsAppRBACEnabled(ctx)
+	filter := func(perms []string) []string {
+		if !scoped {
+			return perms
+		}
+		filtered := make([]string, 0, len(perms))
+		for _, perm := range perms {
+			if ScopesAllow(scopes, types.RBACPermission(perm)) {
+				filtered = append(filtered, perm)
+			}
+		}
+		return filtered
+	}
 	if dirs := GetUrlDirectives(ctx); dirs.HasPerms() {
 		// _cl_perm test URL directive: report the simulated permission set, see AuthorizeAPI
 		perms := make([]string, 0, len(dirs.Perms))
@@ -232,11 +247,15 @@ func (h *RBACManager) GetAPIPermissions(ctx context.Context, target types.AppPat
 				perms = append(perms, perm)
 			}
 		}
-		return perms, nil
+		return filter(perms), nil
 	}
 	if sa := GetSyncAuthorizer(ctx); sa != nil {
 		// background sync run: report the frozen snapshot's permission set, see AuthorizeAPI
-		return collectAPIPermissions(sa.Authorize, target, owner)
+		perms, err := collectAPIPermissions(sa.Authorize, target, owner)
+		if err != nil {
+			return nil, err
+		}
+		return filter(perms), nil
 	}
 	if !system.IsAppRBACEnabled(ctx) {
 		if system.IsTrustedOperation(ctx) || system.AppRBACMarkerPresent(ctx) || !h.ConfigEnabled() {
@@ -265,11 +284,11 @@ func (h *RBACManager) GetAPIPermissions(ctx context.Context, target types.AppPat
 		return nil, err
 	}
 	if isAdmin {
-		return allPermissionNames, nil
+		return filter(allPermissionNames), nil
 	}
 
 	anyTarget := target == (types.AppPathDomain{}) && owner == ""
-	return collectAPIPermissions(func(perm types.RBACPermission, target types.AppPathDomain, resourceId string, owner string) (bool, error) {
+	perms, err := collectAPIPermissions(func(perm types.RBACPermission, target types.AppPathDomain, resourceId string, owner string) (bool, error) {
 		if anyTarget {
 			if kind, scoped := scopedKind(perm, false); scoped {
 				return h.holdsPermSomewhereLocked(user, groups, perm, kind)
@@ -277,6 +296,10 @@ func (h *RBACManager) GetAPIPermissions(ctx context.Context, target types.AppPat
 		}
 		return h.authorizeAPIIntLocked(user, groups, perm, target, resourceId, owner)
 	}, target, owner)
+	if err != nil {
+		return nil, err
+	}
+	return filter(perms), nil
 }
 
 // holdsPermSomewhereLocked reports whether any grant confers the scoped
@@ -290,7 +313,7 @@ func (h *RBACManager) holdsPermSomewhereLocked(user string, groups []string, per
 	if user == "" {
 		return false, nil // fail closed, consistent with authorizeAPIIntLocked
 	}
-	for i, grant := range h.RbacConfig.Grants {
+	for i, grant := range h.rbacConfig.Grants {
 		roleMatched := false
 		for _, role := range grant.Roles {
 			if resolved, ok := h.roles[role]; ok && resolved.matches(perm) {
@@ -392,8 +415,5 @@ func ValidatePermissionName(perm types.RBACPermission) error {
 	if strings.HasPrefix(string(perm), RBAC_ROLE_PREFIX) {
 		return nil
 	}
-	if strings.ContainsAny(string(perm), "*?[") {
-		return nil // permission glob, validated on apply
-	}
-	return validatePermission(perm)
+	return validatePermission(normalizePermission(perm))
 }

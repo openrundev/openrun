@@ -896,3 +896,42 @@ func TestMetadata_ServiceAndBindingLifecycle(t *testing.T) {
 	testutil.AssertErrorContains(t, err, "no service found")
 	testutil.AssertNoError(t, tx.Rollback())
 }
+
+func TestPreviewOwnerMigration(t *testing.T) {
+	m, cleanup := setupTestMetadata(t)
+	defer cleanup()
+	ctx := context.Background()
+	tx, err := m.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	for _, entry := range []*types.AppEntry{
+		{Id: "app_prd_main", Path: "/main", UserID: "main-owner"},
+		{Id: "app_pre_main", Path: "/main/preview", MainApp: "app_prd_main", UserID: "preview-creator"},
+		{Id: "app_pre_orphan", Path: "/orphan", MainApp: "app_prd_deleted", UserID: "preview-creator"},
+		{Id: "app_stg_main", Path: "/main/stage", MainApp: "app_prd_main", UserID: "main-owner"},
+		{Id: "app_dev_builder", Path: "/builder-preview", UserID: "builder-creator"},
+	} {
+		if err := m.CreateApp(ctx, tx, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE version SET version=27"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := m.VersionUpgrade(m.config); err != nil {
+			t.Fatal(err)
+		}
+		for path, owner := range map[string]string{"/main": "main-owner", "/main/preview": "main-owner", "/orphan": "", "/main/stage": "main-owner", "/builder-preview": "builder-creator"} {
+			entry, err := m.GetAppEntry(ctx, types.AppPathDomain{Path: path})
+			if err != nil || entry.UserID != owner {
+				t.Fatalf("%s owner mismatch: %+v, %v", path, entry, err)
+			}
+		}
+	}
+}

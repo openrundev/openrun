@@ -203,17 +203,27 @@ func (s *OAuthManager) buildProvider(providerName string, auth types.AuthConfig)
 }
 
 // registerProviders builds the goth providers for an auth config map and
-// swaps them in as the full provider set. With failFast (startup, static
-// config) any bad entry is an error; otherwise (dynamic config updates) a bad
-// entry is logged and skipped so it cannot take down the other providers
+// swaps them in as the full provider set. With failFast any bad entry is
+// an error; otherwise a bad entry is logged and skipped. Persisted dynamic
+// config loaded at startup can tolerate an unavailable provider.
 func (s *OAuthManager) registerProviders(auth map[string]types.AuthConfig, failFast bool) error {
+	publish, err := s.prepareProviders(auth, failFast)
+	if err != nil {
+		return err
+	}
+	publish()
+	return nil
+}
+
+// prepareProviders builds the provider set without changing registered auth.
+func (s *OAuthManager) prepareProviders(auth map[string]types.AuthConfig, failFast bool) (func(), error) {
 	providerConfigs := make(map[string]*types.AuthConfig, len(auth))
 	providers := make([]goth.Provider, 0, len(auth))
 	for providerName, authConfig := range auth {
 		provider, err := s.buildProvider(providerName, authConfig)
 		if err != nil {
 			if failFast {
-				return err
+				return nil, err
 			}
 			s.Error().Err(err).Msgf("error building oauth provider %s, provider disabled", providerName)
 			continue
@@ -223,23 +233,17 @@ func (s *OAuthManager) registerProviders(auth map[string]types.AuthConfig, failF
 	}
 
 	if len(providers) != 0 && s.config.Security.CallbackUrl == "" {
-		return fmt.Errorf("security.callback_url must be set for enabling OAuth")
+		return nil, fmt.Errorf("security.callback_url must be set for enabling OAuth")
 	}
 
-	s.providerMu.Lock()
-	s.providerConfigs = providerConfigs
-	s.providerMu.Unlock()
+	return func() {
+		s.providerMu.Lock()
+		s.providerConfigs = providerConfigs
+		s.providerMu.Unlock()
 
-	goth.ClearProviders()
-	goth.UseProviders(providers...) // Register the providers with goth
-	return nil
-}
-
-// UpdateProviders re-registers the OAuth providers from the merged (static +
-// dynamic) auth config. Called when dynamic config entries change the auth
-// section
-func (s *OAuthManager) UpdateProviders(auth map[string]types.AuthConfig) error {
-	return s.registerProviders(auth, false)
+		goth.ClearProviders()
+		goth.UseProviders(providers...) // Register the providers with goth
+	}, nil
 }
 
 // getProviderConfig returns the config for one registered provider, nil if
@@ -538,6 +542,14 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Trace().Str("user_id", user.UserID).Str("email", user.Email).Str("nickname", user.NickName).
 		Str("provider_name", providerName).Msgf("authenticated user with groups %+v", groups)
+
+	// Only a newly verified IdP login refreshes durable groups; reading an old
+	// browser session must not extend the snapshot's freshness.
+	if err := observeFederatedIdentity(r.Context(), s.db, providerName, user.UserID, userId, groups); err != nil {
+		s.Error().Err(err).Msg("error recording authenticated identity")
+		http.Error(w, "error recording authenticated identity", http.StatusInternalServerError)
+		return
+	}
 
 	// Update the state map, set to authenticated and add the user id and groups
 	stateMap[AUTH_KEY] = true

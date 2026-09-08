@@ -325,10 +325,10 @@ func (s *Server) builderEditableApp(ctx context.Context, editApp string) (*types
 	if s.rbacManager.APIEnforced(ctx) {
 		// The app owner is passed so the owner rule applies: the creator of an
 		// app can start an edit session on it without an explicit grant
-		if err := s.enforceAppPerm(ctx, types.PermissionRead, appPathDomain, entry.UserID); err != nil {
+		if err := s.enforceAppPermEntry(ctx, types.PermissionRead, entry); err != nil {
 			return nil, err
 		}
-		if err := s.enforceAppPerm(ctx, types.PermissionUpdate, appPathDomain, entry.UserID); err != nil {
+		if err := s.enforceAppPermEntry(ctx, types.PermissionUpdate, entry); err != nil {
 			return nil, err
 		}
 	}
@@ -552,7 +552,7 @@ func (s *Server) builderRepublishEdit(ctx context.Context, session *types.Builde
 	}
 	entry := &apps[0].AppEntry
 	if s.rbacManager.APIEnforced(ctx) {
-		if err := s.enforceAppPerm(ctx, types.PermissionUpdate, appPathDomain, entry.UserID); err != nil {
+		if err := s.enforceAppPermEntry(ctx, types.PermissionUpdate, entry); err != nil {
 			return nil, err
 		}
 	}
@@ -584,7 +584,7 @@ func (s *Server) builderRepublishEdit(ctx context.Context, session *types.Builde
 		// first, like the console app actions); promotion is a separate step
 		// offered by the console when the caller holds app:promote
 		response.Mode = "local"
-		if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPathDomain, entry.UserID); err != nil {
+		if err := s.enforceAppPermEntry(ctx, types.PermissionApprove, entry); err != nil {
 			return nil, err
 		}
 		if err := copyAppSource(session.WorkspaceDir, entry.SourceUrl); err != nil {
@@ -775,12 +775,15 @@ func (s *Server) builderCheckPublishPath(ctx context.Context, publishPath string
 	// owner rule) for a republish to an existing app
 	if s.rbacManager.APIEnforced(ctx) {
 		perm, owner := types.PermissionCreate, ""
+		grantTarget := resolvedPathDomain
 		if appInfo, ok, err := s.findAppInfo(resolvedPathDomain); err != nil {
 			return "", types.AppPathDomain{}, err
 		} else if ok {
-			perm, owner = types.PermissionUpdate, appInfo.UserID
+			perm = types.PermissionUpdate
+			grantTarget = mainAppPathDomain(appInfo.AppPathDomain, appInfo.MainApp, appInfo.LinkedAppPath)
+			owner = appInfo.UserID
 		}
-		if err := s.enforceAppPerm(ctx, perm, resolvedPathDomain, owner); err != nil {
+		if err := s.enforceAppPerm(ctx, perm, grantTarget, owner); err != nil {
 			return "", types.AppPathDomain{}, err
 		}
 	}
@@ -1018,6 +1021,7 @@ func (s *Server) builderPublishLocal(ctx context.Context, session *types.Builder
 		if appInfo, ok, err := s.findAppInfo(appPathDomain); err != nil {
 			return err
 		} else if ok {
+			appPathDomain = mainAppPathDomain(appInfo.AppPathDomain, appInfo.MainApp, appInfo.LinkedAppPath)
 			owner = appInfo.UserID
 		}
 		if err := s.enforceAppPerm(ctx, types.PermissionApply, appPathDomain, owner); err != nil {
@@ -1280,12 +1284,14 @@ func (s *Server) builderUnpublish(ctx context.Context, sessionId, commitMsg stri
 	// sync applies, without any direct app mutation on this server
 	if s.rbacManager.APIEnforced(ctx) {
 		owner := ""
+		grantTarget := resolvedPathDomain
 		if appInfo, ok, err := s.findAppInfo(resolvedPathDomain); err != nil {
 			return nil, err
 		} else if ok {
+			grantTarget = mainAppPathDomain(appInfo.AppPathDomain, appInfo.MainApp, appInfo.LinkedAppPath)
 			owner = appInfo.UserID
 		}
-		if err := s.enforceAppPerm(ctx, types.PermissionDelete, resolvedPathDomain, owner); err != nil {
+		if err := s.enforceAppPerm(ctx, types.PermissionDelete, grantTarget, owner); err != nil {
 			return nil, err
 		}
 	}
