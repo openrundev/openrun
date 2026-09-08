@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.19.4] - 2026-09-08
+
+### Added
+
+- Added API support for actions
+
 ## [v0.19.3] - 2026-09-01
 
 ### Added
