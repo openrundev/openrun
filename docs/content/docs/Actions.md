@@ -198,6 +198,30 @@ To set this at the app level, run
 openrun app update conf --promote fs.file_access='["/var/tmp", "$TEMPDIR", "/tmp"]' /myapp
 ```
 
+## REST API
+
+Every action app automatically exposes a REST API in addition to the form UI, with no change required in the app code. The API is mounted at the reserved `/api` path under the app path (an action cannot be defined at the `/api` path). Authentication and authorization work the same as for the UI: the app level auth applies, and per-action `permit` RBAC checks are enforced.
+
+|                Endpoint                | Method |                              Notes                               |
+| :------------------------------------: | :----: | :--------------------------------------------------------------: |
+|            `/app_path/api`             |  GET   |  List the actions available in the app, with their API paths     |
+|      `/app_path/api/openapi.json`      |  GET   |  OpenAPI 3.0 spec for the actions the current user has access to |
+|   `/app_path/api/actions/<action>`     |  GET   |    Get the param definitions (name, type, default, options)      |
+|   `/app_path/api/actions/<action>`     |  POST  |                          Run the action                          |
+|   `/app_path/api/suggest/<action>`     |  POST  |                     Run the suggest handler                      |
+|   `/app_path/api/validate/<action>`    |  POST  |                 Run the handler with `dry_run=True`              |
+
+`<action>` is the action path. For an action at path `/`, the run endpoint is `/app_path/api/actions` and the validate endpoint is `/app_path/api/validate`. For an action at path `/list`, they are `/app_path/api/actions/list` and `/app_path/api/validate/list`. The action list endpoint reports the run, validate and suggest paths for each action.
+
+The run/suggest/validate endpoints accept a JSON body with the param values, using native JSON types (`{"dir": "/tmp", "detail": true}`). String values are coerced to the param type, same as form submissions, and values for params with a [selector]({{< ref "#param-value-selector" >}}) must be one of the configured options unless the param uses the `COMBO` display type. Params missing from the body use their app level values, including `BOOLEAN` params (unlike the form UI, where a missing checkbox means false). Hidden params and unknown params are rejected with a 400 error. Form encoded and multipart bodies are also accepted; params with `FILE` display type must be submitted as multipart file uploads and cannot be set through JSON.
+
+The response is a JSON object with `status`, `values` and `report` (the resolved report type, such as `TEXT`, `TABLE` or `JSON`). Param validation errors are returned with a 422 status and a `param_errors` object. Handler failures return a 500 status with an `error` message.
+
+```bash
+$ curl -X POST -H "Content-Type: application/json" -d '{"dir": "/var/log"}' https://example.com/myapp/api/actions
+{"report":"TEXT","status":"File listing for /var/log","values":["total 0\n..."]}
+```
+
 ## Multiple Actions
 
 Multiple actions can be defined for an app. Each action should have a dedicated path. If there are multiple actions, a switcher dropdown is automatically added for the app. The order of entries in the dropdown is the same order as defined in the app.

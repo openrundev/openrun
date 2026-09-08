@@ -533,6 +533,26 @@ func (a *App) initActions(router *chi.Mux) error {
 		action.Links = allLinks
 	}
 
+	if len(a.actions) > 0 {
+		if err := a.mountActionsAPI(router); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// mountActionsAPI mounts the actions REST API router at the reserved /api path
+// under the app path
+func (a *App) mountActionsAPI(router *chi.Mux) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("error mounting actions API at %s: %v", action.API_PATH, r)
+		}
+	}()
+
+	apiRouter := action.BuildAPIRouter(a.Name, a.Path, a.actions)
+	router.Mount(action.API_PATH, apiRouter)
 	return nil
 }
 
@@ -580,6 +600,9 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
+	}
+	if path == action.API_PATH || strings.HasPrefix(path, action.API_PATH+"/") {
+		return fmt.Errorf("action path %s is not allowed, %s is reserved for the actions API", path, action.API_PATH)
 	}
 	containerProxyUrl := ""
 	if a.containerHandler != nil {

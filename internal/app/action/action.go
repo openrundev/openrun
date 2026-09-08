@@ -4,8 +4,10 @@
 package action
 
 import (
+	"bytes"
 	"context"
 	"embed"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -61,6 +63,7 @@ type Action struct {
 	description         string
 	appName             string
 	appPath             string
+	actionPath          string
 	run                 starlark.Callable
 	suggest             starlark.Callable
 	params              []apptype.AppParam
@@ -154,6 +157,7 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 		description:       description,
 		appName:           appName,
 		appPath:           appPath,
+		actionPath:        apath,
 		pagePath:          pagePath,
 		run:               run,
 		suggest:           suggest,
@@ -197,41 +201,67 @@ func (a *Action) BuildRouter() (*chi.Mux, error) {
 }
 
 func (a *Action) runAction(w http.ResponseWriter, r *http.Request) {
-	a.execAction(w, r, false, false, "execute")
+	a.execAction(w, r, false, false, "execute", false)
 }
 
 func (a *Action) suggestAction(w http.ResponseWriter, r *http.Request) {
-	a.execAction(w, r, true, false, "suggest")
+	a.execAction(w, r, true, false, "suggest", false)
 }
 
 func (a *Action) validateAction(w http.ResponseWriter, r *http.Request) {
-	a.execAction(w, r, false, true, "validate")
+	a.execAction(w, r, false, true, "validate", false)
 }
 
-func (a *Action) authorizeAction(w http.ResponseWriter, r *http.Request) bool {
+func (a *Action) apiRunAction(w http.ResponseWriter, r *http.Request) {
+	a.execAction(w, r, false, false, "api_execute", true)
+}
+
+func (a *Action) apiSuggestAction(w http.ResponseWriter, r *http.Request) {
+	a.execAction(w, r, true, false, "api_suggest", true)
+}
+
+func (a *Action) apiValidateAction(w http.ResponseWriter, r *http.Request) {
+	a.execAction(w, r, false, true, "api_validate", true)
+}
+
+// writeActionError writes an error response, as plain text for the form UI
+// and as a JSON error envelope for the actions REST API
+func writeActionError(w http.ResponseWriter, apiMode bool, msg string, code int) {
+	if apiMode {
+		writeJSONError(w, msg, code)
+	} else {
+		http.Error(w, msg, code)
+	}
+}
+
+func (a *Action) authorizeAction(w http.ResponseWriter, r *http.Request, apiMode bool) bool {
 	if a.rbacApi != nil && len(a.permit) > 0 {
 		authorized, err := a.rbacApi.AuthorizeAny(r.Context(), a.permit)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeActionError(w, apiMode, err.Error(), http.StatusInternalServerError)
 			return false
 		}
 		if !authorized {
 			// Authenticated but not authorized (no matching custom permission): 403
 			userId := system.GetContextUserId(r.Context())
-			http.Error(w, fmt.Sprintf("Forbidden : %s does not have access to action %s", userId, a.name), http.StatusForbidden)
+			writeActionError(w, apiMode, fmt.Sprintf("Forbidden : %s does not have access to action %s", userId, a.name), http.StatusForbidden)
 			return false
 		}
 	}
 	return true
 }
 
-func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, isValidate bool, op string) {
-	if !a.authorizeAction(w, r) {
+func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, isValidate bool, op string, apiMode bool) {
+	writeError := func(msg string, code int) {
+		writeActionError(w, apiMode, msg, code)
+	}
+
+	if !a.authorizeAction(w, r, apiMode) {
 		return
 	}
 
 	if isSuggest && a.suggest == nil {
-		http.Error(w, "suggest not supported for this action", http.StatusNotImplemented)
+		writeError("suggest not supported for this action", http.StatusNotImplemented)
 		return
 	}
 
@@ -295,9 +325,29 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	isHtmxRequest := r.Header.Get("HX-Request") == "true"
 
 	r.Body = http.MaxBytesReader(w, r.Body, a.maxRequestBodyBytes)
-	if err := r.ParseMultipartForm(multipartMaxMemoryBytes); err != nil && !errors.Is(err, http.ErrNotMultipart) {
-		writeRequestParseError(w, err, a.maxRequestBodyBytes)
-		return
+
+	var jsonBody map[string]jsontext.Value
+	isJSONRequest := false
+	if apiMode && requestHasJSONBody(r) {
+		isJSONRequest = true
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeRequestParseError(w, err, a.maxRequestBodyBytes, apiMode)
+			return
+		}
+		if len(bytes.TrimSpace(body)) > 0 { // empty body means use the app level param values
+			if err := json.Unmarshal(body, &jsonBody); err != nil {
+				writeRequestParseError(w, err, a.maxRequestBodyBytes, apiMode)
+				return
+			}
+		}
+	}
+
+	if !isJSONRequest {
+		if err := r.ParseMultipartForm(multipartMaxMemoryBytes); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+			writeRequestParseError(w, err, a.maxRequestBodyBytes, apiMode)
+			return
+		}
 	}
 
 	deferredCleanup := func() error {
@@ -305,7 +355,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		err := RunDeferredCleanup(thread)
 		if err != nil {
 			a.Error().Err(err).Msg("error cleaning up plugins")
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeError(err.Error(), http.StatusInternalServerError)
 			return err
 		}
 		return nil
@@ -321,15 +371,25 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 
 	options, optionsErr := a.paramOptions()
 	if optionsErr != nil {
-		http.Error(w, optionsErr.Error(), http.StatusBadRequest)
+		writeError(optionsErr.Error(), http.StatusBadRequest)
 		return
 	}
 
 	qsParams := url.Values{}
 
+	if isJSONRequest {
+		if err := a.buildArgsFromJSON(args, jsonBody, options); err != nil {
+			writeError(err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	var tempDir string
 	// Update args with submitted form values
 	for _, param := range a.params {
+		if isJSONRequest {
+			break // args were built from the JSON body
+		}
 		if a.hidden[param.Name] {
 			continue
 		}
@@ -342,7 +402,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 			}
 
 			if err != nil {
-				http.Error(w, fmt.Sprintf("error getting file %s: %s", param.Name, err), http.StatusBadRequest)
+				writeError(fmt.Sprintf("error getting file %s: %s", param.Name, err), http.StatusBadRequest)
 				return
 			}
 
@@ -350,7 +410,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 				tempDir, err = os.MkdirTemp("", "openrun-file-upload-*")
 				if err != nil {
 					_ = f.Close()
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+					writeError(err.Error(), http.StatusInternalServerError)
 					return
 				}
 
@@ -364,14 +424,14 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 			fullPath, err := uploadedFilePath(tempDir, fh.Filename)
 			if err != nil {
 				_ = f.Close()
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				writeError(err.Error(), http.StatusBadRequest)
 				return
 			}
 
 			destFile, err := os.Create(fullPath)
 			if err != nil {
 				_ = f.Close()
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				writeError(err.Error(), http.StatusInternalServerError)
 				return
 			}
 
@@ -379,7 +439,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 			_, copyErr := io.Copy(destFile, f)
 			closeErr := errors.Join(destFile.Close(), f.Close())
 			if err = errors.Join(copyErr, closeErr); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				writeError(err.Error(), http.StatusInternalServerError)
 				return
 			}
 			args[param.Name] = starlark.String(fullPath)
@@ -400,13 +460,13 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 				opts := options[param.Name]
 				if len(opts) > 0 && formValue != "" && param.DisplayType != apptype.DisplayTypeCombo &&
 					!slices.Contains(opts, formValue) {
-					http.Error(w, fmt.Sprintf("invalid value for %s: must be one of the configured options", param.Name), http.StatusBadRequest)
+					writeError(fmt.Sprintf("invalid value for %s: must be one of the configured options", param.Name), http.StatusBadRequest)
 					return
 				}
 
 				newVal, err := apptype.ParamStringToType(param.Name, param.Type, formValue)
 				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
+					writeError(err.Error(), http.StatusBadRequest)
 					return
 				}
 				args[param.Name] = newVal
@@ -465,12 +525,16 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		}
 
 		// err handler is not supported for actions
-		http.Error(w, msg, http.StatusInternalServerError)
+		writeError(msg, http.StatusInternalServerError)
 		return
 	}
 
 	if isSuggest {
-		a.handleSuggestResponse(w, ret)
+		if apiMode {
+			a.writeAPISuggestResponse(w, ret)
+		} else {
+			a.handleSuggestResponse(w, ret)
+		}
 		return
 	}
 
@@ -484,7 +548,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	if ok {
 		status, err = apptype.GetOptionalStringAttr(resultStruct, "status")
 		if err != nil {
-			http.Error(w, fmt.Sprintf("error getting result status: %s", err), http.StatusInternalServerError)
+			writeError(fmt.Sprintf("error getting result status: %s", err), http.StatusInternalServerError)
 			return
 		}
 
@@ -492,20 +556,20 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		if err != nil {
 			valuesStr, err = apptype.GetListStringAttr(resultStruct, "values", true)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("error getting result values, not a list of string or list of maps: %s", err), http.StatusInternalServerError)
+				writeError(fmt.Sprintf("error getting result values, not a list of string or list of maps: %s", err), http.StatusInternalServerError)
 				return
 			}
 		}
 
 		paramErrors, err = apptype.GetDictAttr(resultStruct, "param_errors", true)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("error getting result attr paramErrors: %s", err), http.StatusInternalServerError)
+			writeError(fmt.Sprintf("error getting result attr paramErrors: %s", err), http.StatusInternalServerError)
 			return
 		}
 
 		report, err = apptype.GetOptionalStringAttr(resultStruct, "report")
 		if err != nil {
-			http.Error(w, fmt.Sprintf("error getting result report: %s", err), http.StatusInternalServerError)
+			writeError(fmt.Sprintf("error getting result report: %s", err), http.StatusInternalServerError)
 			return
 		}
 	} else {
@@ -519,7 +583,12 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 
 	if err != nil {
 		event.Status = string(types.EventStatusFailure)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if apiMode {
+		a.writeAPIRunResponse(w, status, valuesStr, valuesMap, paramErrors, report, isValidate)
 		return
 	}
 
@@ -605,14 +674,14 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	}
 }
 
-func writeRequestParseError(w http.ResponseWriter, err error, maxRequestBodyBytes int64) {
+func writeRequestParseError(w http.ResponseWriter, err error, maxRequestBodyBytes int64, apiMode bool) {
 	var maxBytesErr *http.MaxBytesError
 	if errors.As(err, &maxBytesErr) || errors.Is(err, multipart.ErrMessageTooLarge) {
-		http.Error(w, fmt.Sprintf("request body too large: limit is %d bytes", maxRequestBodyBytes), http.StatusRequestEntityTooLarge)
+		writeActionError(w, apiMode, fmt.Sprintf("request body too large: limit is %d bytes", maxRequestBodyBytes), http.StatusRequestEntityTooLarge)
 		return
 	}
 
-	http.Error(w, err.Error(), http.StatusBadRequest)
+	writeActionError(w, apiMode, err.Error(), http.StatusBadRequest)
 }
 
 func uploadedFilePath(tempDir, filename string) (string, error) {
@@ -831,7 +900,7 @@ func (a *Action) paramOptions() (map[string][]string, error) {
 }
 
 func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
-	if !a.authorizeAction(w, r) {
+	if !a.authorizeAction(w, r, false) {
 		return
 	}
 
