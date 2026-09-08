@@ -137,8 +137,9 @@ The CLI and management apps allow imperative management of OpenRun apps. OpenRun
 Create a Starlark declaration file containing one or more `app` definitions. Any filename is accepted; `apps.ace` and `apps.star` are conventions. For example, in `apps.ace`:
 
 ```python {filename="apps.ace"}
-for name in ["team1", "team2", "team3"]:
-    app("/myapps/" + name, "github.com/openrundev/apps/utils/bookmarks", auth="system")
+app("/myapps/disk_usage", "github.com/openrundev/apps/system/disk_usage")
+app("/myapps/memory_usage", "github.com/openrundev/apps/system/memory_usage")
+app("/myapps/list_files", "github.com/openrundev/apps/system/list_files")
 ```
 
 defines three apps. Running

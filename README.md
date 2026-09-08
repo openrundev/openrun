@@ -40,7 +40,7 @@ Some of the unique features of OpenRun are:
 - Create and manage apps declaratively, through GitOps
 - Service bindings to provision isolated Postgres/MySQL/SQLite/Redis database accounts for apps, with more databases supported through binding providers
 - Managed SQLite with continuous Litestream replication to S3 and automatic restore
-- Reuse app declarations when moving from a single node to Kubernetes; server and storage configuration still need to be set up
+- Reuse app declarations when moving from a single node to Kubernete
 - Domain based or path based routing, with auto-TLS
 - OAuth/OpenID/SAML/Cert based auth
 - RBAC for admin operations and for app access
