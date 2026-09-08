@@ -658,11 +658,16 @@ func (s *Server) GetManagedContainerLogs(ctx context.Context, id string, tail in
 const maxLogChunkBytes = 1024 * 1024
 
 // GetManagedContainerLogsStream returns the last tail lines of the container
-// logs as a stream of line chunks. With follow, the stream keeps delivering
-// new output until ctx is canceled (client disconnect) or the container
-// stops. Each yielded value is a plain string of one or more complete lines
-// without the trailing newline (the stream writer adds one per value)
-func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, tail int, follow bool) (func(yield func(any, error) bool), error) {
+// logs as a stream of line chunks. Access, runtime and managed-container
+// checks run here, so their errors are returned directly; the returned
+// producer starts the log process only when it is consumed, using the
+// context it is invoked with (the plugin cursor's producer context, canceled
+// on close) so the process is stopped when the consumer goes away. With
+// follow, the stream keeps delivering new output until that context is
+// canceled (client disconnect) or the container stops. Each yielded value is
+// a plain string of one or more complete lines without the trailing newline
+// (the stream writer adds one per value)
+func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, tail int, follow bool) (func(ctx context.Context, yield func(any, error) bool), error) {
 	if err := s.enforceContainerRead(ctx, id); err != nil {
 		return nil, err
 	}
@@ -674,7 +679,7 @@ func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, t
 		tail = 500
 	}
 	if runtime == types.CONTAINER_KUBERNETES {
-		return func(yield func(any, error) bool) {
+		return func(ctx context.Context, yield func(any, error) bool) {
 			stream, err := container.GetWorkloadPodLogsStream(ctx, s.Config(), id, tail, follow)
 			if err != nil {
 				yield(nil, err)
@@ -696,7 +701,7 @@ func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, t
 	args = append(args, id)
 	// Allocate pipes and start the process only when the stream is consumed.
 	// An abandoned range function has no way to run a deferred cleanup.
-	return func(yield func(any, error) bool) {
+	return func(ctx context.Context, yield func(any, error) bool) {
 		cmd := exec.CommandContext(ctx, runtime, args...)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {

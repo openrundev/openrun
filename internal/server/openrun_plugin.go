@@ -1280,8 +1280,11 @@ func (c *openrunPlugin) GetContainerLogs(ctx context.Context, call *sdk.Call) (a
 
 // GetContainerLogsStream returns a container's logs as a streaming response:
 // the last tail lines, optionally following new output until the client
-// disconnects. The handler must return the response object as is (the value
-// is not accessible in Starlark)
+// disconnects. Access and lookup errors are returned from the call itself
+// (the handler can report them as a normal error); only failures while
+// producing the stream reach the framework's stream error handling. The
+// handler must return the response object as is (the value is not
+// accessible in Starlark)
 func (c *openrunPlugin) GetContainerLogsStream(ctx context.Context, call *sdk.Call) (any, error) {
 	var id string
 	var follow bool
@@ -1290,13 +1293,11 @@ func (c *openrunPlugin) GetContainerLogsStream(ctx context.Context, call *sdk.Ca
 		return nil, err
 	}
 
-	stream := func(ctx context.Context, yield func(any, error) bool) {
-		stream, err := c.server.GetManagedContainerLogsStream(ctx, id, int(tail), follow)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		stream(yield)
+	// The producer runs with the cursor's context, canceled on close, so the
+	// log process is stopped when the consumer disconnects
+	stream, err := c.server.GetManagedContainerLogsStream(ctx, id, int(tail), follow)
+	if err != nil {
+		return nil, err
 	}
 	return sdk.PushCursor(ctx, "container_logs", fmt.Sprintf("container_logs_%p", &stream), true, stream), nil
 }

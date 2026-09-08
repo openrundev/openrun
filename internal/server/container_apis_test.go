@@ -181,7 +181,7 @@ esac
 		t.Fatalf("container log stream: %v", err)
 	}
 	streamed := []string{}
-	stream(func(value any, err error) bool {
+	stream(ctx, func(value any, err error) bool {
 		if err != nil {
 			t.Fatalf("stream error: %v", err)
 		}
