@@ -425,6 +425,42 @@ type JobRun struct {
 	Forced bool `json:"forced,omitempty"`
 }
 
+// BasicView returns the app:read view of the spec: the job's identity and
+// schedule (name, trigger, enabled, timeout, description). The execution
+// details - image, command, args, run function, env, volumes, options, run
+// params - are app:read_detail (the env can carry credentials) and are zeroed
+func (s JobSpec) BasicView() JobSpec {
+	return JobSpec{
+		Name:        s.Name,
+		Trigger:     s.Trigger,
+		Timeout:     s.Timeout,
+		Enabled:     s.Enabled,
+		Description: s.Description,
+	}
+}
+
+// BasicView returns the app:read view of a run: identity, actor, version,
+// times and status. The definition, args, image, message (a run function's
+// result), container name and lease/node bookkeeping are app:read_detail
+func (r JobRun) BasicView() JobRun {
+	return JobRun{
+		Id:              r.Id,
+		AppId:           r.AppId,
+		AppPath:         r.AppPath,
+		JobName:         r.JobName,
+		Trigger:         r.Trigger,
+		Actor:           r.Actor,
+		Version:         r.Version,
+		PreviousVersion: r.PreviousVersion,
+		ScheduledAt:     r.ScheduledAt,
+		StartedAt:       r.StartedAt,
+		EndedAt:         r.EndedAt,
+		Status:          r.Status,
+		ExitCode:        r.ExitCode,
+		Forced:          r.Forced,
+	}
+}
+
 // Stage returns prod, stage, preview or dev from the app id
 func (r JobRun) Stage() string {
 	return AppStage(r.AppId)

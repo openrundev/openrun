@@ -25,7 +25,8 @@ import (
 // deciding what each user can do.
 
 // newRemoteApiTestServer builds the server with builtin users alice
-// (openrun-developer on /apps/**) and bob (no grants), one applied app at
+// (openrun-developer on /apps/**), carol (openrun-user on /apps/**: app:read
+// without app:read_detail) and bob (no grants), one applied app at
 // /apps/remote-test, and a TLS httptest server running the real TCP router.
 // mintKey creates a PAT the way the UDS CLI would (trusted context)
 func newRemoteApiTestServer(t *testing.T) (*Server, *httptest.Server, func(t *testing.T, req *types.ApiKeyCreateRequest) string) {
@@ -44,6 +45,7 @@ func newRemoteApiTestServer(t *testing.T) (*Server, *httptest.Server, func(t *te
 	server.staticConfig.BuiltinAuth = map[string]types.BuiltinAuthEntry{
 		"alice": {Password: "unused", Groups: []string{"dev"}},
 		"bob":   {Password: "unused"},
+		"carol": {Password: "unused"},
 	}
 	server.staticConfig.Api.Rest = types.ApiSurfaceConfig{Enable: true, Auth: []string{"admin"}}
 	server.staticConfig.Api.MCP = types.ApiSurfaceConfig{Enable: true, Auth: []string{"admin"}}
@@ -71,6 +73,8 @@ func newRemoteApiTestServer(t *testing.T) (*Server, *httptest.Server, func(t *te
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
 		Grants: []types.RBACGrant{
 			{Description: "alice dev", Users: []string{"builtin:alice"}, Roles: []string{"openrun-developer"},
+				Targets: []string{"/apps/**"}},
+			{Description: "carol user", Users: []string{"builtin:carol"}, Roles: []string{"openrun-user"},
 				Targets: []string{"/apps/**"}},
 		},
 	}); err != nil {

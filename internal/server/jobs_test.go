@@ -161,4 +161,7 @@ func TestJobApiRegistry(t *testing.T) {
 	if apiRegistry[API_RUN_JOB].Scope != types.PermissionUpdate || apiRegistry[API_LIST_JOBS].Scope != types.PermissionRead {
 		t.Error("job api scopes: app:update runs, app:read lists")
 	}
+	if apiRegistry[API_LIST_JOB_RUNS].Scope != types.PermissionReadDetail || apiRegistry[API_JOB_LOGS].Scope != types.PermissionReadDetail {
+		t.Error("job api scopes: app:read_detail for run history and output")
+	}
 }

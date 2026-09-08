@@ -229,11 +229,13 @@ func (s *Server) Export(ctx context.Context, appPathGlob string, opts types.Expo
 	groups := system.GetContextGroups(ctx)
 	appReqs := make([]*types.CreateAppRequest, 0, len(filteredApps))
 	for _, app := range filteredApps {
+		// The export is the full app config: app:read_detail (which implies
+		// app:read) selects the apps included, like app:read does for listing
 		authorized, err := s.AuthorizeList(ctx, userId, &app, groups)
 		if err != nil {
 			return "", err
 		}
-		if !authorized {
+		if !authorized || !s.appDetailAllowed(ctx, mainAppPathDomain(app.AppPathDomain, app.MainApp, app.LinkedAppPath), app.UserID) {
 			continue
 		}
 		appEntry, err := s.db.GetAppEntryTx(ctx, tx, app.AppPathDomain)

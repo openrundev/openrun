@@ -35,7 +35,7 @@ func (s *Server) VersionList(ctx context.Context, mainAppPath string) (*types.Ap
 	if err != nil {
 		return nil, err
 	}
-	if err := s.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
+	if err := s.enforceAppPermEntry(ctx, types.PermissionReadDetail, appEntry); err != nil {
 		return nil, err
 	}
 	if appEntry.IsDev {
@@ -76,7 +76,7 @@ func (s *Server) VersionFiles(ctx context.Context, mainAppPath, version string) 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
+	if err := s.enforceAppPermEntry(ctx, types.PermissionReadDetail, appEntry); err != nil {
 		return nil, err
 	}
 
@@ -107,7 +107,7 @@ func (s *Server) VersionFiles(ctx context.Context, mainAppPath, version string) 
 }
 
 // VersionFilesZip returns a producer that writes one app version's files as
-// a zip, plus the download file name. Authorization (app:read), the version
+// a zip, plus the download file name. Authorization (app:read_detail), the version
 // resolution and the file listing happen eagerly; the producer runs later,
 // at response-write time, streaming the zip to the client (chunked) with
 // backpressure - the archive is never fully held in memory or staged to
@@ -128,7 +128,7 @@ func (s *Server) VersionFilesZip(ctx context.Context, mainAppPath, version strin
 	if err != nil {
 		return nil, "", err
 	}
-	if err := s.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
+	if err := s.enforceAppPermEntry(ctx, types.PermissionReadDetail, appEntry); err != nil {
 		return nil, "", err
 	}
 

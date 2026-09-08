@@ -678,7 +678,10 @@ func (s *Server) jobInstanceIds(ctx context.Context, entry *types.AppEntry) []ty
 }
 
 // ListJobs lists the effective jobs of the apps matching the glob, with the
-// next scheduled run and the last run of each
+// next scheduled run and the last run of each. Needs app:read on every app;
+// without app:read_detail on an app, its jobs are the basic view (identity
+// and schedule, last run status) - the execution details, env, run
+// definition and args are app:read_detail (see JobSpec.BasicView)
 func (s *Server) ListJobs(ctx context.Context, appPathGlob string) (*types.JobListResponse, error) {
 	filteredApps, err := s.FilterApps(cmp.Or(appPathGlob, "all"), false)
 	if err != nil {
@@ -694,6 +697,7 @@ func (s *Server) ListJobs(ctx context.Context, appPathGlob string) (*types.JobLi
 		if err != nil {
 			return nil, err
 		}
+		detail := s.appDetailAllowedEntry(ctx, entry)
 		// The prod (or dev) instance's jobs, then the stage instance's jobs
 		// that differ from prod's: a staged job change shows before promote
 		instances := []*types.AppEntry{entry}
@@ -718,6 +722,9 @@ func (s *Server) ListJobs(ctx context.Context, appPathGlob string) (*types.JobLi
 					seen[spec.Name] = spec.String()
 				}
 				info := types.JobInfo{AppPath: entry.AppPathDomain().String(), Stage: stage, Origin: origins[i], Spec: spec}
+				if !detail {
+					info.Spec = spec.BasicView()
+				}
 				if spec.IsEnabled() && spec.TriggerType() == types.JobTriggerCron && !entry.IsDev {
 					if next, err := spec.Trigger.CronTrigger().NextRun(now); err == nil {
 						nextStr := next.UTC().Format(time.RFC3339)
@@ -730,6 +737,9 @@ func (s *Server) ListJobs(ctx context.Context, appPathGlob string) (*types.JobLi
 				}
 				if len(runs) > 0 {
 					last := runs[0]
+					if !detail {
+						last = last.BasicView()
+					}
 					info.LastRun = &last
 				}
 				ret.Jobs = append(ret.Jobs, info)
@@ -807,7 +817,7 @@ func (s *Server) ListJobRuns(ctx context.Context, appPath, jobName, status strin
 	if err != nil {
 		return nil, err
 	}
-	if err := s.enforceAppPermEntry(ctx, types.PermissionRead, entry); err != nil {
+	if err := s.enforceAppPermEntry(ctx, types.PermissionReadDetail, entry); err != nil {
 		return nil, err
 	}
 	if limit <= 0 {
@@ -846,7 +856,7 @@ func (s *Server) jobRunEntry(ctx context.Context, runId string, perm types.RBACP
 
 // JobLogs returns a run's container output, read from the container runtime
 func (s *Server) JobLogs(ctx context.Context, runId string) (*types.JobLogsResponse, error) {
-	run, entry, err := s.jobRunEntry(ctx, runId, types.PermissionRead)
+	run, entry, err := s.jobRunEntry(ctx, runId, types.PermissionReadDetail)
 	if err != nil {
 		return nil, err
 	}

@@ -203,13 +203,19 @@ func (c *openrunPlugin) listAppsImpl(ctx context.Context, call *sdk.Call, permCh
 		// For stage/preview apps, glob matching is done against the main app path
 		mainPathDomain := mainAppPathDomain(app.AppPathDomain, app.MainApp, app.LinkedAppPath)
 
+		// app:read without app:read_detail sees identity and status only:
+		// the source, git and spec fields are blanked (and the source url is
+		// not searched)
+		detail := c.server.appDetailAllowed(ctx, mainPathDomain, app.UserID)
+
 		// Check query filter
 		if query != "" {
 			queryStr := strings.ToLower(query)
-			if !strings.Contains(strings.ToLower(app.Name), queryStr) &&
-				!strings.Contains(strings.ToLower(app.String()), queryStr) &&
-				!strings.Contains(strings.ToLower(app.SourceUrl), queryStr) &&
-				!strings.Contains(strings.ToLower(app.UserID), queryStr) {
+			matched := strings.Contains(strings.ToLower(app.Name), queryStr) ||
+				strings.Contains(strings.ToLower(app.String()), queryStr) ||
+				strings.Contains(strings.ToLower(app.UserID), queryStr) ||
+				(detail && strings.Contains(strings.ToLower(app.SourceUrl), queryStr))
+			if !matched {
 				continue
 			}
 		}
@@ -295,11 +301,18 @@ func (c *openrunPlugin) listAppsImpl(ctx context.Context, call *sdk.Call, permCh
 			v["auth"] = string(app.Auth)
 			v["auth_uses_default"] = false
 		}
-		v["source"] = app.SourceUrl
-		v["source_url"] = getSourceUrl(app.SourceUrl, app.Branch)
+		v["has_detail"] = detail
+		v["source"] = ""
+		v["source_url"] = ""
+		v["star_base"] = ""
+		v["spec"] = ""
+		if detail {
+			v["source"] = app.SourceUrl
+			v["source_url"] = getSourceUrl(app.SourceUrl, app.Branch)
+			v["star_base"] = app.StarBase
+			v["spec"] = string(app.Spec)
+		}
 		v["applied_sync_id"] = app.AppliedSyncId
-		v["star_base"] = app.StarBase
-		v["spec"] = string(app.Spec)
 		v["version"] = app.Version
 		v["version_mismatch"] = versionMismatchMap[app.Id]
 		if checkApproval {
@@ -324,9 +337,14 @@ func (c *openrunPlugin) listAppsImpl(ctx context.Context, call *sdk.Call, permCh
 			}
 			v["needs_approval"] = needsApproval
 		}
-		v["git_sha"] = app.GitSha
-		v["git_message"] = app.GitMessage
-		v["git_branch"] = app.Branch
+		v["git_sha"] = ""
+		v["git_message"] = ""
+		v["git_branch"] = ""
+		if detail {
+			v["git_sha"] = app.GitSha
+			v["git_message"] = app.GitMessage
+			v["git_branch"] = app.Branch
+		}
 		v["update_age"] = system.HumanDuration(time.Since(app.UpdateTime), 0)
 		v["update_time"] = app.UpdateTime.UTC()
 		// Who performed the last update: the active version's creator, with
@@ -722,6 +740,10 @@ func (c *openrunPlugin) GetApp(ctx context.Context, call *sdk.Call) (any, error)
 	v["params"] = params
 	v["bindings"] = bindings
 	v["staged_changes"] = entry.StagedChanges
+	// has_detail is false when the caller holds app:read but not
+	// app:read_detail: the source/git/spec/params/bindings fields above are
+	// then blank (see types.AppEntry.BasicInfo)
+	v["has_detail"] = c.server.appDetailAllowedEntry(ctx, &entry.AppEntry)
 	if entry.UpdateTime != nil {
 		v["update_time"] = *entry.UpdateTime
 	} else {
@@ -745,7 +767,14 @@ func (c *openrunPlugin) GetApp(ctx context.Context, call *sdk.Call) (any, error)
 	// The number of distinct effective jobs across the prod (or dev)
 	// instance and its stage instance, for the console's Jobs tab (shown
 	// only for apps that have jobs); the jobs themselves come from list_jobs
-	v["job_count"] = c.server.appJobCount(ctx, &entry.AppEntry)
+	// The count reads the stored entry: the response entry is the basic view
+	// (jobs blanked) for app:read callers, and the Jobs tab (jobs list) is
+	// app:read
+	jobEntry := &entry.AppEntry
+	if stored, err := c.server.db.GetAppEntry(ctx, entry.AppPathDomain()); err == nil {
+		jobEntry = stored
+	}
+	v["job_count"] = c.server.appJobCount(ctx, jobEntry)
 	return v, nil
 }
 
@@ -1018,7 +1047,7 @@ func (c *openrunPlugin) AuditApp(ctx context.Context, call *sdk.Call) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	if err := c.server.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
+	if err := c.server.enforceAppPermEntry(ctx, types.PermissionReadDetail, appEntry); err != nil {
 		return nil, err
 	}
 	if !appEntry.IsDev && env != "prod" {
@@ -1145,20 +1174,26 @@ func (c *openrunPlugin) BindingHealth(ctx context.Context, call *sdk.Call) (any,
 
 // ListContainers lists the containers (or Kubernetes pods) managed by OpenRun
 func (c *openrunPlugin) ListContainers(ctx context.Context, call *sdk.Call) (any, error) {
-	var ctype string
+	var ctype, path string
 	var times bool
-	if err := sdk.UnpackArgs("list_containers", call, "type?", &ctype, "times?", &times); err != nil {
+	if err := sdk.UnpackArgs("list_containers", call, "type?", &ctype, "times?", &times, "path?", &path); err != nil {
 		return nil, err
 	}
 
 	var containers []ContainerInfo
 	var err error
-	switch ctype {
-	case "":
+	switch {
+	case path != "" && ctype != "":
+		return nil, fmt.Errorf("list_containers path filter applies to app containers only, not type %q", ctype)
+	case path != "":
+		// One app's containers: allowed with container:read or with
+		// app:read_detail on the app (the app detail page)
+		containers, err = c.server.ListAppContainers(ctx, path)
+	case ctype == "":
 		containers, err = c.server.ListManagedContainers(ctx)
-	case "agent":
+	case ctype == "agent":
 		containers, err = c.server.ListAgentContainers(ctx)
-	case "kaniko":
+	case ctype == "kaniko":
 		containers, err = c.server.ListKanikoBuildContainers(ctx)
 	default:
 		return nil, fmt.Errorf("invalid list_containers type %q, expected agent or kaniko", ctype)

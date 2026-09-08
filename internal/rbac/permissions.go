@@ -18,7 +18,8 @@ import (
 // user roles may reference them. openrun-admin is the super-user role (it
 // holds the "admin" permission, which bypasses every check). Permissions are
 // expanded through the normal implication rules (app:manage -> all app perms,
-// app:update -> reload/apply/read). openrun-builder composes openrun-developer.
+// app:update -> reload/apply/read_detail, app:read_detail -> read).
+// openrun-builder composes openrun-developer.
 // A role mixes scoped (app:*) and global permissions; the scoped ones
 // apply to the grant's target apps, the global ones apply regardless of targets
 // (see the RBAC docs on scope)
@@ -68,13 +69,20 @@ var predefinedRoles = map[string][]types.RBACPermission{
 	},
 
 	// Baseline authenticated user: reach served apps and browse the app list
+	// with basic app info (no source, config, files, logs - see
+	// PermissionReadDetail)
 	"openrun-user": {
 		types.PermissionAccess, types.PermissionRead,
 	},
 
+	// Reach served apps only: no app listing or app info at all
+	"openrun-consumer": {
+		types.PermissionAccess,
+	},
+
 	// Read-only observability across the platform (no writes, no secret reveal)
 	"openrun-monitor": {
-		types.PermissionRead,
+		types.PermissionReadDetail,
 		types.PermissionAuditRead, types.PermissionContainerRead,
 		types.PermissionSyncRead, types.PermissionServiceRead, types.PermissionBindingRead,
 		types.PermissionProviderRead,
@@ -115,6 +123,7 @@ const (
 var appPermissions = []types.RBACPermission{
 	types.PermissionAccess,
 	types.PermissionRead,
+	types.PermissionReadDetail,
 	types.PermissionCreate,
 	types.PermissionUpdate,
 	types.PermissionReload,
@@ -280,10 +289,12 @@ func managePermissions(perms []types.RBACPermission, manage types.RBACPermission
 	return expanded
 }
 
-// permissionImplications: holding the key permission implies the value permissions.
-// approve and binding:reveal are never implied
+// permissionImplications: holding the key permission implies the value permissions
+// (transitively: app:update -> app:read_detail -> app:read). approve and
+// binding:reveal are never implied
 var permissionImplications = map[types.RBACPermission][]types.RBACPermission{
-	types.PermissionUpdate:        {types.PermissionReload, types.PermissionApply, types.PermissionRead},
+	types.PermissionUpdate:        {types.PermissionReload, types.PermissionApply, types.PermissionReadDetail},
+	types.PermissionReadDetail:    {types.PermissionRead},
 	types.PermissionAppManage:     appManagePermissions,
 	types.PermissionServiceManage: managePermissions(servicePermissions, types.PermissionServiceManage),
 	// binding:reveal (reading back account credentials) is excluded, like

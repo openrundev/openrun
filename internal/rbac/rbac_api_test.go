@@ -244,7 +244,7 @@ func TestPredefinedRoles(t *testing.T) {
 	t.Parallel()
 
 	roleNames := []string{"openrun-admin", "openrun-operator", "openrun-developer",
-		"openrun-builder", "openrun-user", "openrun-monitor"}
+		"openrun-builder", "openrun-user", "openrun-consumer", "openrun-monitor"}
 	grants := make([]types.RBACGrant, 0, len(roleNames))
 	for _, r := range roleNames {
 		grants = append(grants, types.RBACGrant{
@@ -293,6 +293,7 @@ func TestPredefinedRoles(t *testing.T) {
 		"openrun-developer": {
 			{types.PermissionCreate, false, true}, // app:manage
 			{types.PermissionDelete, false, true},
+			{types.PermissionReadDetail, false, true}, // app:manage includes the full app info
 			{types.PermissionSecretCreate, true, true},
 			{types.PermissionSyncRun, true, true},
 			{types.PermissionConfigBasicRead, true, true}, // for the app create/update forms
@@ -317,13 +318,22 @@ func TestPredefinedRoles(t *testing.T) {
 		"openrun-user": {
 			{types.PermissionAccess, false, true},
 			{types.PermissionRead, false, true},
+			{types.PermissionReadDetail, false, false}, // basic app info only
 			{types.PermissionCreate, false, false},
 			{types.PermissionDelete, false, false},
 			{types.PermissionConfigBasicRead, true, false},
 			{types.PermissionBuilderCreate, true, false},
 		},
+		"openrun-consumer": {
+			{types.PermissionAccess, false, true},
+			{types.PermissionRead, false, false}, // reach apps, no listing or app info
+			{types.PermissionReadDetail, false, false},
+			{types.PermissionCreate, false, false},
+			{types.PermissionConfigBasicRead, true, false},
+		},
 		"openrun-monitor": {
 			{types.PermissionRead, false, true},
+			{types.PermissionReadDetail, false, true}, // full app info: files, config, logs
 			{types.PermissionAuditRead, true, true},
 			{types.PermissionContainerRead, true, true},
 			{types.PermissionConfigBasicRead, true, true}, // implied by config:read
@@ -356,12 +366,59 @@ func TestPredefinedRolesReserved(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{"openrun-admin", "openrun-operator", "openrun-developer",
-		"openrun-builder", "openrun-user", "openrun-monitor"} {
+		"openrun-builder", "openrun-user", "openrun-consumer", "openrun-monitor"} {
 		_, err := NewRBACHandler(testutil.TestLogger(), grantConfig(map[string][]types.RBACPermission{
 			name: {types.PermissionRead},
 		}), &types.ServerConfig{GlobalConfig: types.GlobalConfig{AdminUser: "admin"}})
 		if err == nil || !strings.Contains(err.Error(), "reserved") {
 			t.Errorf("defining reserved role %q should be rejected, got %v", name, err)
+		}
+	}
+}
+
+// TestReadDetailImplications verifies the app:read_detail chain: app:update
+// implies app:read_detail (transitively app:read), app:read_detail implies
+// app:read, app:manage includes app:read_detail, and plain app:read does not
+// reach app:read_detail
+func TestReadDetailImplications(t *testing.T) {
+	t.Parallel()
+
+	roles := map[string][]types.RBACPermission{
+		"updater":  {types.PermissionUpdate},
+		"detailer": {types.PermissionReadDetail},
+		"reader":   {types.PermissionRead},
+		"manager":  {types.PermissionAppManage},
+	}
+	grants := []types.RBACGrant{}
+	for name := range roles {
+		grants = append(grants, types.RBACGrant{Description: name, Users: []string{"u:" + name},
+			Roles: []string{name}, Targets: []string{"all"}})
+	}
+	manager := newTestManager(t, grantConfig(roles, grants...))
+
+	cases := []struct {
+		user    string
+		perm    types.RBACPermission
+		allowed bool
+	}{
+		{"u:updater", types.PermissionReadDetail, true},
+		{"u:updater", types.PermissionRead, true},
+		{"u:updater", types.PermissionReload, true},
+		{"u:detailer", types.PermissionRead, true},
+		{"u:detailer", types.PermissionReadDetail, true},
+		{"u:detailer", types.PermissionUpdate, false},
+		{"u:reader", types.PermissionRead, true},
+		{"u:reader", types.PermissionReadDetail, false},
+		{"u:manager", types.PermissionReadDetail, true},
+		{"u:manager", types.PermissionRead, true},
+	}
+	for _, c := range cases {
+		ok, err := manager.AuthorizeAPI(enforcedCtx(c.user), c.perm, testTarget(), "")
+		if err != nil {
+			t.Fatalf("authorize %s/%s: %v", c.user, c.perm, err)
+		}
+		if ok != c.allowed {
+			t.Errorf("%s: perm %s = %v, want %v", c.user, c.perm, ok, c.allowed)
 		}
 	}
 }

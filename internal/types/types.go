@@ -1171,6 +1171,33 @@ type AppEntry struct {
 	Metadata   AppMetadata `json:"metadata"` // metadata is version controlled
 }
 
+// BasicInfo returns the app:read view of the entry: identity and status only
+// (path, name, id, links, dev flag, owner, timestamps, auth type, version,
+// sync id, builder flag). Everything app:read_detail gates - source url, git
+// info, spec and spec files, config, params, container options, bindings,
+// requested permissions and accounts, settings (including webhook tokens) -
+// is zeroed. Used by the app get/list APIs for callers without app:read_detail
+func (ae *AppEntry) BasicInfo() AppEntry {
+	return AppEntry{
+		Id:            ae.Id,
+		Path:          ae.Path,
+		Domain:        ae.Domain,
+		MainApp:       ae.MainApp,
+		LinkedAppPath: ae.LinkedAppPath,
+		IsDev:         ae.IsDev,
+		UserID:        ae.UserID,
+		CreateTime:    ae.CreateTime,
+		UpdateTime:    ae.UpdateTime,
+		Metadata: AppMetadata{
+			Name:             ae.Metadata.Name,
+			VersionMetadata:  VersionMetadata{Version: ae.Metadata.VersionMetadata.Version},
+			AuthnType:        ae.Metadata.AuthnType,
+			AppliedSyncId:    ae.Metadata.AppliedSyncId,
+			BuilderPublished: ae.Metadata.BuilderPublished,
+		},
+	}
+}
+
 func (ae *AppEntry) String() string {
 	if ae.Domain == "" {
 		return ae.Path
@@ -1633,14 +1660,19 @@ type RBACGrant struct {
 
 type RBACPermission string
 
-// Permissions are resource:verb strings. app:read gates both listing and reading app
-// details (there is no separate list permission). approve is special: it is a global
-// permission (granted with target "all"), never implied by app:manage, owner
-// permissions or permission globs; it has to be granted by its literal name (or via
-// the built-in admin role).
+// Permissions are resource:verb strings. app:read gates listing apps and reading
+// their basic info (identity and status: path, name, id, auth type, version,
+// timestamps, staging state); there is no separate list permission. app:read_detail
+// (which implies app:read) gates everything else an app exposes: source url and
+// git info, spec, config, params, bindings, requested plugin permissions, versions,
+// files and diffs, job runs and logs, and the app's container details and logs.
+// approve is special: it is a global permission (granted with target "all"), never
+// implied by app:manage, owner permissions or permission globs; it has to be granted
+// by its literal name (or via the built-in admin role).
 const (
 	PermissionAccess      RBACPermission = "app:access"       // access the served app (checked for every app when RBAC is enabled)
-	PermissionRead        RBACPermission = "app:read"         // list apps, get app details, list versions/files
+	PermissionRead        RBACPermission = "app:read"         // list apps, get basic app info (identity and status)
+	PermissionReadDetail  RBACPermission = "app:read_detail"  // full app info: source/git/spec/config/params, versions, files, diffs, job runs/logs, container logs; implies app:read
 	PermissionCreate      RBACPermission = "app:create"       // create app
 	PermissionUpdate      RBACPermission = "app:update"       // settings/metadata/links/params/version switch
 	PermissionReload      RBACPermission = "app:reload"       // reload apps
@@ -1737,7 +1769,7 @@ type RBACPermissionGroup struct {
 // keep it in sync with the permission constants above
 var RBACPermissionGroups = []RBACPermissionGroup{
 	{Resource: "app", Permissions: []RBACPermission{
-		PermissionAccess, PermissionRead, PermissionCreate, PermissionUpdate,
+		PermissionAccess, PermissionRead, PermissionReadDetail, PermissionCreate, PermissionUpdate,
 		PermissionReload, PermissionApply, PermissionDelete,
 		PermissionPromote, PermissionPreview, PermissionTokenRead,
 		PermissionTokenManage, PermissionAppManage, PermissionApprove}},

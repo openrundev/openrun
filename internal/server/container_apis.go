@@ -247,6 +247,42 @@ func (s *Server) ListManagedContainers(ctx context.Context) ([]ContainerInfo, er
 	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
 		return nil, err
 	}
+	return s.listManagedContainers(ctx)
+}
+
+// ListAppContainers lists the managed containers of one app (its prod,
+// stage and preview instances, sidecars and job containers), for the app
+// detail page. Allowed with the global container:read permission or with
+// app:read_detail on the app
+func (s *Server) ListAppContainers(ctx context.Context, appPath string) ([]ContainerInfo, error) {
+	pathDomain, err := parseAppPath(appPath)
+	if err != nil {
+		return nil, err
+	}
+	appEntry, err := s.db.GetAppEntry(ctx, pathDomain)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.enforceContainerReadEntry(ctx, appEntry); err != nil {
+		return nil, err
+	}
+	infos, err := s.listManagedContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// The listing resolves each container's AppPath to its main app path
+	mainPath := mainAppPathDomain(appEntry.AppPathDomain(), appEntry.MainApp, appEntry.LinkedAppPath).String()
+	ret := make([]ContainerInfo, 0, len(infos))
+	for _, info := range infos {
+		if info.AppPath == mainPath {
+			ret = append(ret, info)
+		}
+	}
+	return ret, nil
+}
+
+// listManagedContainers is ListManagedContainers without the permission check
+func (s *Server) listManagedContainers(ctx context.Context) ([]ContainerInfo, error) {
 	runtime := s.containerRuntime()
 	if runtime == "" {
 		return nil, fmt.Errorf("no container command is configured on the server")
@@ -337,10 +373,89 @@ func (s *Server) GetKubernetesStats(ctx context.Context) (*KubernetesStats, erro
 	return &KubernetesStats{Enabled: true, Cluster: cluster, Namespaces: namespaces}, nil
 }
 
+// enforceContainerReadEntry authorizes reading the containers of one app:
+// the global container:read permission, or app:read_detail on the app (the
+// app detail page shows an app's own containers and logs to users without
+// platform-wide container access)
+func (s *Server) enforceContainerReadEntry(ctx context.Context, appEntry *types.AppEntry) error {
+	if !s.rbacManager.APIEnforced(ctx) {
+		return nil
+	}
+	authorized, err := s.rbacManager.AuthorizeGlobalAPI(ctx, types.PermissionContainerRead, "")
+	if err != nil {
+		return err
+	}
+	if authorized {
+		return nil
+	}
+	return s.enforceAppPermEntry(ctx, types.PermissionReadDetail, appEntry)
+}
+
+// enforceContainerRead authorizes reading one managed container (details,
+// logs, pod status): the global container:read permission, or
+// app:read_detail on the app the container belongs to. A container that
+// cannot be mapped to an app (unknown id, builder sandbox) needs
+// container:read
+func (s *Server) enforceContainerRead(ctx context.Context, id string) error {
+	if !s.rbacManager.APIEnforced(ctx) {
+		return nil
+	}
+	authorized, err := s.rbacManager.AuthorizeGlobalAPI(ctx, types.PermissionContainerRead, "")
+	if err != nil {
+		return err
+	}
+	if authorized {
+		return nil
+	}
+	appEntry, err := s.containerAppEntry(ctx, id)
+	if err != nil || appEntry == nil {
+		return s.rbacDenied(ctx, types.PermissionContainerRead, "server")
+	}
+	return s.enforceAppPermEntry(ctx, types.PermissionReadDetail, appEntry)
+}
+
+// containerAppEntry resolves the app a managed container belongs to, from
+// its app id label (docker/podman) or pod labels (kubernetes). nil when the
+// container carries no app id (builder sandboxes)
+func (s *Server) containerAppEntry(ctx context.Context, id string) (*types.AppEntry, error) {
+	runtime := s.containerRuntime()
+	if runtime == "" {
+		return nil, fmt.Errorf("no container command is configured on the server")
+	}
+	appId := ""
+	if runtime == types.CONTAINER_KUBERNETES {
+		pod, err := container.GetWorkloadPod(ctx, s.Config(), id)
+		if err != nil {
+			return nil, err
+		}
+		appId = kubernetesPodInfo(pod).AppId
+	} else {
+		out, err := runContainerCmd(ctx, runtime, "inspect", "--type", "container",
+			"--format", "{{ index .Config.Labels \""+containerAppIdLabel+"\" }}", id)
+		if err != nil {
+			return nil, fmt.Errorf("error inspecting container: %s : %s", out, err)
+		}
+		appId = strings.TrimSpace(string(out))
+	}
+	if appId == "" {
+		return nil, nil
+	}
+	apps, err := s.FilterApps("all", true)
+	if err != nil {
+		return nil, err
+	}
+	for _, appInfo := range apps {
+		if string(appInfo.Id) == appId {
+			return s.db.GetAppEntry(ctx, appInfo.AppPathDomain)
+		}
+	}
+	return nil, fmt.Errorf("app %s of container %s not found", appId, id)
+}
+
 // GetKubernetesPodStatus returns the kubernetes specific status of one
 // managed pod (conditions, container states, events)
 func (s *Server) GetKubernetesPodStatus(ctx context.Context, id string) (*container.WorkloadPodStatus, error) {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
+	if err := s.enforceContainerRead(ctx, id); err != nil {
 		return nil, err
 	}
 	if s.containerRuntime() != types.CONTAINER_KUBERNETES {
@@ -353,7 +468,7 @@ func (s *Server) GetKubernetesPodStatus(ctx context.Context, id string) (*contai
 // withStats also collects live resource stats and disk usage, which are slow
 // (docker stats samples for about two seconds)
 func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats bool) (*ContainerDetail, error) {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
+	if err := s.enforceContainerRead(ctx, id); err != nil {
 		return nil, err
 	}
 	runtime := s.containerRuntime()
@@ -513,7 +628,7 @@ func (s *Server) GetManagedContainer(ctx context.Context, id string, withStats b
 
 // GetManagedContainerLogs returns the last tail lines of the container logs
 func (s *Server) GetManagedContainerLogs(ctx context.Context, id string, tail int) (string, error) {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
+	if err := s.enforceContainerRead(ctx, id); err != nil {
 		return "", err
 	}
 	runtime := s.containerRuntime()
@@ -548,7 +663,7 @@ const maxLogChunkBytes = 1024 * 1024
 // stops. Each yielded value is a plain string of one or more complete lines
 // without the trailing newline (the stream writer adds one per value)
 func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, tail int, follow bool) (func(yield func(any, error) bool), error) {
-	if err := s.enforceGlobalPerm(ctx, types.PermissionContainerRead, ""); err != nil {
+	if err := s.enforceContainerRead(ctx, id); err != nil {
 		return nil, err
 	}
 	runtime := s.containerRuntime()

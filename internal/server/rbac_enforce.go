@@ -57,6 +57,25 @@ func (s *Server) enforceAppPerm(ctx context.Context, perm types.RBACPermission,
 	return nil
 }
 
+// appDetailAllowed reports whether the caller holds app:read_detail on the app
+// (the full app info, see types.AppEntry.BasicInfo for the app:read view).
+// Always true when RBAC enforcement is not active for the call. Errors from
+// the authorizer count as not allowed: the caller already passed the app:read
+// check, so the basic view is the safe fallback
+func (s *Server) appDetailAllowed(ctx context.Context, target types.AppPathDomain, owner string) bool {
+	if !s.rbacManager.APIEnforced(ctx) {
+		return true
+	}
+	authorized, err := s.rbacManager.AuthorizeAPI(ctx, types.PermissionReadDetail, target, owner)
+	return err == nil && authorized
+}
+
+// appDetailAllowedEntry is appDetailAllowed for a loaded app entry (main app
+// resolved, owner from the entry)
+func (s *Server) appDetailAllowedEntry(ctx context.Context, appEntry *types.AppEntry) bool {
+	return s.appDetailAllowed(ctx, mainAppPathDomain(appEntry.AppPathDomain(), appEntry.MainApp, appEntry.LinkedAppPath), appEntry.UserID)
+}
+
 // enforceAppPermInfos authorizes perm on every app in the list. Mutating glob
 // operations are atomic: the first unauthorized app fails the whole call
 func (s *Server) enforceAppPermInfos(ctx context.Context, perm types.RBACPermission, apps []types.AppInfo) error {

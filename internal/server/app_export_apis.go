@@ -47,7 +47,7 @@ func (s *Server) ExportAppVersion(ctx context.Context, mainAppPath, env, version
 	if err != nil {
 		return "", err
 	}
-	if err := s.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
+	if err := s.enforceAppPermEntry(ctx, types.PermissionReadDetail, appEntry); err != nil {
 		return "", err
 	}
 
@@ -263,7 +263,7 @@ func (s *Server) VersionFileContent(ctx context.Context, mainAppPath, version, n
 	if err != nil {
 		return "", err
 	}
-	if err := s.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {
+	if err := s.enforceAppPermEntry(ctx, types.PermissionReadDetail, appEntry); err != nil {
 		return "", err
 	}
 	if appEntry.IsDev {

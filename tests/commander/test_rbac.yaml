@@ -256,6 +256,114 @@ tests:
       contains:
         - "SERVERINFO: db=sqlite"
     exit-code: 0
+  rbac0189a: # app:read vs app:read_detail: two builtin users, one holding
+    # app:read only (basic app info) and one openrun-monitor (app:read_detail).
+    # The config is written first: update-config --force replaces the whole
+    # dynamic config, which would wipe dynamically added user entries
+    command: |
+      cat > rbac_config4.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "groups": {},
+          "roles": {"viewer": ["app:read"]},
+          "grants": [
+            {
+              "description": "rdviewer reads basic app info",
+              "users": ["builtin:rdviewer"],
+              "roles": ["viewer"],
+              "targets": ["all"]
+            },
+            {
+              "description": "rdmonitor reads full app info",
+              "users": ["builtin:rdmonitor"],
+              "roles": ["openrun-monitor"],
+              "targets": ["all"]
+            }
+          ]
+        }
+      }
+      EOF
+      ../openrun server update-config --force rbac_config4.json
+      ../openrun user add rdviewer --value rdviewerpw
+      ../openrun user add rdmonitor --value rdmonitorpw
+    exit-code: 0
+  rbac0189b: # app:read lists the app with identity only: the source column
+    # (rbac_child_app) and spec are blanked
+    command: ../openrun --as builtin:rdviewer app list /protected
+    stdout:
+      contains:
+        - "/protected"
+      not-contains:
+        - "rbac_child_app"
+    exit-code: 0
+  rbac0189c: # app:read_detail (openrun-monitor) lists the full app info
+    command: ../openrun --as builtin:rdmonitor app list /protected
+    stdout:
+      contains:
+        - "/protected"
+        - "rbac_child_app"
+    exit-code: 0
+  rbac0189d: # the version list is app:read_detail: denied for app:read
+    command: ../openrun --as builtin:rdviewer version list /protected
+    stderr: "app:read_detail"
+    exit-code: 1
+  rbac0189e: # and allowed with app:read_detail
+    command: ../openrun --as builtin:rdmonitor version list /protected
+    stdout: "1"
+    exit-code: 0
+  rbac0189f: # the version file listing is app:read_detail too
+    command: ../openrun --as builtin:rdviewer version files /protected
+    stderr: "app:read_detail"
+    exit-code: 1
+  rbac0189g: # openrun-consumer reaches apps only, no listing at all: rdviewer
+    # and the anonymous user (of the none-auth apps) get openrun-consumer
+    command: |
+      cat > rbac_config4.json <<EOF
+      {
+        "version_id": "force",
+        "rbac": {
+          "groups": {},
+          "roles": {},
+          "grants": [
+            {
+              "description": "rdviewer reaches apps only",
+              "users": ["builtin:rdviewer"],
+              "roles": ["openrun-consumer"],
+              "targets": ["all"]
+            },
+            {
+              "description": "anonymous reaches the test apps only",
+              "users": ["anonymous"],
+              "roles": ["openrun-consumer"],
+              "targets": ["/protected", "/rbacapp"]
+            }
+          ]
+        }
+      }
+      EOF
+      ../openrun server update-config --force rbac_config4.json
+      ../openrun user add rdviewer --value rdviewerpw
+    exit-code: 0
+  rbac0189g2: # openrun-consumer holds no app:read: the listing is empty
+    command: ../openrun --as builtin:rdviewer app list all
+    stdout:
+      line-count: 1 # header only
+      not-contains:
+        - "/protected"
+        - "/rbacapp"
+    exit-code: 0
+  rbac0189h: # app access works for openrun-consumer (anonymous on the none-auth app)
+    command: curl -s -o /dev/null -w "%{http_code}" localhost:${MAIN_HTTP_PORT}/protected/
+    stdout: "200"
+    exit-code: 0
+  rbac0189i: # while the in-app listing (anonymous, openrun-consumer) shows nothing
+    command: curl -s localhost:${MAIN_HTTP_PORT}/rbacapp/list
+    stdout:
+      not-contains:
+        - "/protected"
+        - "/rbacapp"
+    exit-code: 0
   rbac0190: # restore the default RBAC config (RBAC is always on; the default
     # grant gives every principal app access and read)
     command: |
@@ -289,5 +397,5 @@ tests:
     command: |
       ../openrun app delete /rbacapp
       ../openrun app delete /protected
-      rm -f rbac_config1.json rbac_config2.json
+      rm -f rbac_config1.json rbac_config2.json rbac_config4.json
     exit-code: 0
