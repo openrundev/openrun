@@ -111,7 +111,7 @@ The `run` API runs a command inside a new container created from the app's image
 - **process_partial** (bool, optional) : whether to process the output when the command fails
 - **stdout_file** (bool, optional) : whether to send the stdout for the command to a temporary file on disk. The response `value` is then the temp file name; the app is responsible for deleting the file
 - **parse** (string, optional) : whether to parse the stdout. Supported options are `json` (the whole output is one JSON document) and `jsonlines` (each output line is a JSON document)
-- **stream** (bool, optional) : return the output as a stream which is lazily read as the response is being generated, instead of buffering the full output. Not supported with `parse="json"`
+- **stream** (bool, optional) : return the output as a stream which is read as the response is being generated, instead of buffering the full output; an action handler can return it in `ace.result(stream=...)` to show the output live (see [streaming output]({{< ref "docs/actions/#streaming-output" >}})). Not supported with `parse="json"`
 - **include_stderr** (bool, optional, default True) : whether to include the stderr output in the command output. If False, stderr is reported only in the error message when the command fails
 
 The response format is the same as the `exec` plugin [`run`]({{< ref "/docs/plugins/catalog/#run" >}}) API: a list of output lines by default, parsed JSON with `parse`, a temp file name with `stdout_file`. The `env` and `cwd` parameters of `exec.run` are not used in container mode; the container gets the app's environment.

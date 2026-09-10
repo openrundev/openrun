@@ -4,13 +4,11 @@
 package server
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +18,7 @@ import (
 
 	"github.com/openrundev/openrun/internal/builder"
 	"github.com/openrundev/openrun/internal/container"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -653,10 +652,6 @@ func (s *Server) GetManagedContainerLogs(ctx context.Context, id string, tail in
 	return string(out), nil
 }
 
-// maxLogChunkBytes bounds the partial-line buffer of a log stream; a line
-// longer than this is force-broken so memory stays bounded
-const maxLogChunkBytes = 1024 * 1024
-
 // GetManagedContainerLogsStream returns the last tail lines of the container
 // logs as a stream of line chunks. Access, runtime and managed-container
 // checks run here, so their errors are returned directly; the returned
@@ -685,7 +680,7 @@ func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, t
 				yield(nil, err)
 				return
 			}
-			streamLogLines(stream, nil)(yield)
+			system.StreamLines(stream, nil)(logReadErrorAsLine(yield))
 		}, nil
 	}
 
@@ -718,70 +713,20 @@ func (s *Server) GetManagedContainerLogsStream(ctx context.Context, id string, t
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
 		}
-		streamLogLines(stdout, reap)(yield)
+		system.StreamLines(stdout, reap)(logReadErrorAsLine(yield))
 	}, nil
 }
 
-// streamLogLines converts a log reader into a range func yielding chunks of
-// complete lines as plain Go strings (not starlark values, so the stream
-// writer sends them verbatim without quoting). One yield per read keeps the
-// per-line overhead minimal for large tails while still flushing each line
-// promptly in follow mode. cleanup runs when the stream ends or the consumer
-// stops iterating
-func streamLogLines(reader io.ReadCloser, cleanup func()) func(yield func(any, error) bool) {
-	return func(yield func(any, error) bool) {
-		defer func() {
-			_ = reader.Close()
-			if cleanup != nil {
-				cleanup()
-			}
-		}()
-
-		buf := make([]byte, 64*1024)
-		partial := make([]byte, 0, 4096)
-		for {
-			n, err := reader.Read(buf)
-			if n > 0 {
-				data := buf[:n]
-				if nl := bytes.LastIndexByte(data, '\n'); nl == -1 {
-					partial = append(partial, data...)
-					if len(partial) >= maxLogChunkBytes {
-						// Force a break on newline-less output so the partial
-						// buffer stays bounded
-						if !yield(string(partial), nil) {
-							return
-						}
-						partial = partial[:0]
-					}
-				} else {
-					var out string
-					if len(partial) > 0 {
-						out = string(partial) + string(data[:nl])
-						partial = partial[:0]
-					} else {
-						out = string(data[:nl])
-					}
-					partial = append(partial, data[nl+1:]...)
-					if !yield(out, nil) {
-						return
-					}
-				}
-			}
-			if err != nil {
-				if len(partial) > 0 {
-					if !yield(string(partial), nil) {
-						return
-					}
-				}
-				// Normal endings: EOF, the client went away (ctx cancel kills
-				// the log command and closes the pipe). Anything else is
-				// reported as a final line
-				if err != io.EOF && !errors.Is(err, context.Canceled) && !errors.Is(err, os.ErrClosed) {
-					yield(fmt.Sprintf("error reading logs: %s", err), nil)
-				}
-				return
-			}
+// logReadErrorAsLine adapts a log stream consumer so a read failure is
+// reported as a final log line instead of a stream error: the log viewer
+// shows it in place, where an aborted response would only show a cut
+// stream
+func logReadErrorAsLine(yield func(any, error) bool) func(any, error) bool {
+	return func(v any, err error) bool {
+		if err != nil {
+			return yield(err.Error(), nil)
 		}
+		return yield(v, nil)
 	}
 }
 

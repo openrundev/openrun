@@ -216,26 +216,26 @@
 {{ end }}
 
 
-{{/* Brand fonts (see astatic/openrun.css Typography). Declared here
-  instead of in the static css so the astatic helper emits content-hashed
+{{/* Brand fonts (see openrun.css Typography, internal/webstatic). Declared
+  here instead of in the static css so the openrun_static helper emits content-hashed
   urls, which are served with immutable caching. The above-the-fold faces
   are preloaded with the SAME hashed urls, so each font downloads once */}}
 {{ define "fonts" }}
   <link
     rel="preload"
-    href="{{ astatic "astatic/fonts/schibsted-grotesk-400.woff2" }}"
+    href="{{ openrun_static "fonts/schibsted-grotesk-400.woff2" }}"
     as="font"
     type="font/woff2"
     crossorigin />
   <link
     rel="preload"
-    href="{{ astatic "astatic/fonts/jetbrains-mono-400.woff2" }}"
+    href="{{ openrun_static "fonts/jetbrains-mono-400.woff2" }}"
     as="font"
     type="font/woff2"
     crossorigin />
   <link
     rel="preload"
-    href="{{ astatic "astatic/fonts/space-grotesk-700.woff2" }}"
+    href="{{ openrun_static "fonts/space-grotesk-700.woff2" }}"
     as="font"
     type="font/woff2"
     crossorigin />
@@ -245,71 +245,81 @@
       font-style: normal;
       font-weight: 400;
       font-display: swap;
-      src: url("{{ astatic "astatic/fonts/schibsted-grotesk-400.woff2" }}") format("woff2");
+      src: url("{{ openrun_static "fonts/schibsted-grotesk-400.woff2" }}") format("woff2");
     }
     @font-face {
       font-family: "Schibsted Grotesk";
       font-style: normal;
       font-weight: 500;
       font-display: swap;
-      src: url("{{ astatic "astatic/fonts/schibsted-grotesk-500.woff2" }}") format("woff2");
+      src: url("{{ openrun_static "fonts/schibsted-grotesk-500.woff2" }}") format("woff2");
     }
     @font-face {
       font-family: "Schibsted Grotesk";
       font-style: normal;
       font-weight: 600;
       font-display: swap;
-      src: url("{{ astatic "astatic/fonts/schibsted-grotesk-600.woff2" }}") format("woff2");
+      src: url("{{ openrun_static "fonts/schibsted-grotesk-600.woff2" }}") format("woff2");
     }
     @font-face {
       font-family: "Space Grotesk";
       font-style: normal;
       font-weight: 500;
       font-display: swap;
-      src: url("{{ astatic "astatic/fonts/space-grotesk-500.woff2" }}") format("woff2");
+      src: url("{{ openrun_static "fonts/space-grotesk-500.woff2" }}") format("woff2");
     }
     @font-face {
       font-family: "Space Grotesk";
       font-style: normal;
       font-weight: 700;
       font-display: swap;
-      src: url("{{ astatic "astatic/fonts/space-grotesk-700.woff2" }}") format("woff2");
+      src: url("{{ openrun_static "fonts/space-grotesk-700.woff2" }}") format("woff2");
     }
     @font-face {
       font-family: "JetBrains Mono";
       font-style: normal;
       font-weight: 400;
       font-display: swap;
-      src: url("{{ astatic "astatic/fonts/jetbrains-mono-400.woff2" }}") format("woff2");
+      src: url("{{ openrun_static "fonts/jetbrains-mono-400.woff2" }}") format("woff2");
     }
     @font-face {
       font-family: "JetBrains Mono";
       font-style: normal;
       font-weight: 500;
       font-display: swap;
-      src: url("{{ astatic "astatic/fonts/jetbrains-mono-500.woff2" }}") format("woff2");
+      src: url("{{ openrun_static "fonts/jetbrains-mono-500.woff2" }}") format("woff2");
     }
   </style>
 {{ end }}
 
 
 {{ block "imports" . }}
-  {{/* The embedded stylesheet always loads first: it is regenerated with
-    the action templates (stylegen/), so every class the chrome uses is
-    guaranteed present regardless of when the app's own css was generated.
-    The app's generated css loads after it, appending into the same
-    cascade layers, so the app's themes and custom report template styles
-    win ties. See docs/designs/actions-css-layering.md */}}
-  <link rel="stylesheet" href="{{ astatic "astatic/style.css" }}" />
+  {{/* The shared assets (htmx, the <log-tail> viewer, the action css and
+    fonts) are embedded in the openrun binary and served for every app at
+    /_openrun/static with content-hashed names (internal/webstatic), so the
+    browser caches one copy across apps. The embedded stylesheet always
+    loads first: it is regenerated with the action templates (stylegen/),
+    so every class the chrome uses is guaranteed present regardless of when
+    the app's own css was generated. The app's generated css loads after
+    it, appending into the same cascade layers, so the app's themes and
+    custom report template styles win ties. See
+    docs/designs/actions-css-layering.md */}}
+  <link rel="stylesheet" href="{{ openrun_static "style.css" }}" />
   {{ if and (eq .styleType "daisyui") (fileNonEmpty "gen/css/style.css") }}
     <link rel="stylesheet" href="{{ static "gen/css/style.css" }}" />
   {{ end }}
   {{ template "fonts" . }}
-  <link rel="stylesheet" href="{{ astatic "astatic/openrun.css" }}" />
-  <link rel="stylesheet" href="{{ astatic "astatic/json.css" }}" />
+  <link rel="stylesheet" href="{{ openrun_static "openrun.css" }}" />
+  <link rel="stylesheet" href="{{ openrun_static "json.css" }}" />
+  {{/* Long running actions: htmx 4 aborts requests after 60s by default */}}
+  <meta name="htmx-config" content='{"defaultTimeout": 0}' />
   <script src="{{ astatic "astatic/json.js" }}"></script>
+  <script src="{{ openrun_static "logtail.js" }}"></script>
   <script src="{{ astatic "astatic/actions.js" }}"></script>
-  <script src="{{ astatic "astatic/htmx.min.js" }}"></script>
+  <script src="{{ openrun_static "htmx.min.js" }}"></script>
+  {{/* Server-sent events over fetch: streamed action output (any method)
+    and the dev-mode reload listener */}}
+  <script src="{{ openrun_static "hx-sse.min.js" }}"></script>
 
   {{ if gt (len .esmLibs) 0 }}
   <script type="importmap">

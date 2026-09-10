@@ -576,7 +576,7 @@ app = ace.app("testApp",
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	body := response.Body.String()
-	testutil.AssertStringContains(t, body, `href="/test/astatic/style-`)
+	testutil.AssertStringContains(t, body, `href="/_openrun/static/style-`)
 	if strings.Contains(body, "gen/css/style") {
 		t.Error("app stylesheet link rendered without a generated css file")
 	}
@@ -591,7 +591,7 @@ app = ace.app("testApp",
 	a.ServeHTTP(response, httptest.NewRequest("GET", "/test", nil))
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	body = response.Body.String()
-	embeddedAt := strings.Index(body, `href="/test/astatic/style-`)
+	embeddedAt := strings.Index(body, `href="/_openrun/static/style-`)
 	appAt := strings.Index(body, `href="/test/static/gen/css/style`)
 	if embeddedAt == -1 || appAt == -1 {
 		t.Fatalf("expected both stylesheets, embedded at %d, app at %d", embeddedAt, appAt)

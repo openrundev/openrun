@@ -50,11 +50,23 @@ func PushCursor(parent context.Context, typeName, leakKey string, stream bool, s
 		startOnce.Do(func() { close(ch); close(done) })
 	}
 
+	// An error arriving while a batch is being drained is held back so the
+	// items collected before it are delivered first; the next call reports
+	// it. Otherwise a producer's final output would be lost whenever its
+	// terminal error (a command's exit status) lands in the same batch
+	var pendingErr error
+
 	return &Cursor{
 		TypeName: typeName,
 		LeakKey:  leakKey,
 		Stream:   stream,
 		Next: func(ctx context.Context, max int) ([]any, bool, error) {
+			if pendingErr != nil {
+				err := pendingErr
+				pendingErr = nil
+				stop()
+				return nil, false, err
+			}
 			select {
 			case <-stopped:
 				return nil, true, nil
@@ -95,8 +107,8 @@ func PushCursor(parent context.Context, typeName, leakKey string, stream bool, s
 						return items, true, nil
 					}
 					if item.err != nil {
-						stop()
-						return nil, false, item.err
+						pendingErr = item.err
+						return items, false, nil
 					}
 					items = append(items, item.value)
 				default:

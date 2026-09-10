@@ -523,10 +523,16 @@ func operationId(op string, name string) string {
 // definitions and defaults of restricted actions are not disclosed
 func (api *appAPI) openAPISpec(w http.ResponseWriter, r *http.Request) {
 	resultResponse := map[string]any{
-		"description": "Action result",
+		"description": "Action result. A handler returning a stream (ace.result stream=) " +
+			"answers with chunked text/plain: the command output as produced, the result " +
+			"status text in the OpenRun-Action-Status header and the exit status in the " +
+			"OpenRun-Exit-Status trailer (absent when the stream was cut)",
 		"content": map[string]any{
 			"application/json": map[string]any{
 				"schema": map[string]any{"$ref": "#/components/schemas/ActionResult"},
+			},
+			"text/plain": map[string]any{
+				"schema": map[string]any{"type": "string"},
 			},
 		},
 	}

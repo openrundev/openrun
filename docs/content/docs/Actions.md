@@ -129,6 +129,37 @@ The response `values` can be a list of string or a list of dicts. The report is 
 
 For TABLE report, the fields from the first row are used as columns. Extra fields in subsequent rows are ignored. For JSON report, a JSON tree representation of each row is shown. The report type can be set to specific type instead of using AUTO.
 
+## Streaming Output
+
+A run handler that starts a long running command can stream the command's output to the page as it is produced, instead of returning it after the command exits. Call `exec.run` (or `container.run`) with `stream=True`, check the call for a startup error, and return the response object in the `stream` property of `ace.result`:
+
+```python {filename="app.star"}
+load("exec.in", "exec")
+
+def build_run(dry_run, args):
+    if not args.target:
+        return ace.result("Validation failed", param_errors={"target": "target is required"})
+    if dry_run:
+        return ace.result("Ready to build " + args.target)
+
+    ret = exec.run("make", [args.target], cwd="/srv/app", stream=True)
+    if ret.error:
+        return ace.result("Could not start make: " + ret.error)
+    return ace.result("Building " + args.target, stream=ret)
+
+app = ace.app("builder",
+    actions=[ace.action("Build", "/", build_run, show_validate=True)],
+    permissions=[ace.permission("exec.in", "run", ["make"])])
+```
+
+The status text shows immediately and a log pane below it fills as the command prints; terminal colors and progress bar updates render as in a terminal. When the command exits, the pane reports the exit status, and a non-zero exit marks the status line as an error. Closing the page stops the command. Returning the stream response object directly from the handler is shorthand for `ace.result("", stream=ret)`.
+
+A streamed result has no `values` or `report` (the output is the report) and cannot carry `param_errors`: do the validation, and return, before starting the command. A stream returned when `dry_run` is true (the Validate button) is an error. Nothing is declared on `ace.action`: the handler decides per run, so a validation failure still returns an ordinary result.
+
+The audit event for the action records success only when the command exits with status 0.
+
+See the actiontail app [code](https://github.com/openrundev/apps/tree/main/misc/actiontail) for a runnable sample: a shell loop whose output is tailed live, cancelled when the page is left.
+
 ## Custom Templates
 
 If the `report` type is set to any value other than `ace.AUTO`, `ace.TEXT`, `ace.JSON`, `ace.TABLE`, `ace.DOWNLOAD` or `ace.IMAGE`, that is treated as a custom template to use. The template should be defined in a `*.go.html` file. Either the file name can be used or a template/block name can be used. See [template]({{< ref "docs/app/templates/#template-file-location" >}}) for details.
@@ -220,6 +251,12 @@ The response is a JSON object with `status`, `values` and `report` (the resolved
 ```bash
 $ curl -X POST -H "Content-Type: application/json" -d '{"dir": "/var/log"}' https://example.com/myapp/api/actions
 {"report":"TEXT","status":"File listing for /var/log","values":["total 0\n..."]}
+```
+
+An action which [streams]({{< ref "#streaming-output" >}}) its output responds with chunked `text/plain` instead: the command output as it is produced (`curl -N` shows it live), the result status text in the `OpenRun-Action-Status` response header and the command's exit status in the `OpenRun-Exit-Status` HTTP trailer, sent when the stream ends. A missing trailer means the stream was cut before the command exited. Param validation errors and handler failures keep the JSON shapes above.
+
+```bash
+$ curl -sN -X POST -H "Content-Type: application/json" -d '{"target": "web"}' https://example.com/builder/api/actions
 ```
 
 ## Multiple Actions

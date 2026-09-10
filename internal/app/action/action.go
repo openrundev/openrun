@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"slices"
 	"strconv"
@@ -542,6 +543,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	var valuesStr []string
 	var status string
 	var paramErrors map[string]any
+	var streamVal apptype.StreamValue
 	report := apptype.AUTO
 
 	resultStruct, ok := ret.(*starlarkstruct.Struct)
@@ -572,9 +574,42 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 			writeError(fmt.Sprintf("error getting result report: %s", err), http.StatusInternalServerError)
 			return
 		}
+
+		streamAttr, attrErr := resultStruct.Attr("stream")
+		if attrErr == nil && streamAttr != nil && streamAttr != starlark.None {
+			sv, isStream := streamAttr.(apptype.StreamValue)
+			if !isStream {
+				writeError("result stream must be the response of a plugin call made with stream=True", http.StatusInternalServerError)
+				return
+			}
+			streamVal = sv
+		}
+	} else if sv, isStream := ret.(apptype.StreamValue); isStream {
+		// A stream response returned directly is shorthand for
+		// ace.result("", stream=ret)
+		streamVal = sv
 	} else {
 		// Not a result struct
 		status = strings.Trim(ret.String(), "\"")
+	}
+
+	var streamSeq func(yield func(any, error) bool)
+	if streamVal != nil {
+		if isValidate {
+			// Validation must not start commands; release the process
+			streamVal.CloseStream()
+			writeError("validate handler returned a stream: the run handler must return before starting commands when dry_run is true", http.StatusInternalServerError)
+			return
+		}
+		// Detach the stream from the plugin cleanup below, which would
+		// otherwise close it as an unconsumed resource
+		var streamErr error
+		streamSeq, streamErr = streamVal.StartStream()
+		if streamErr != nil {
+			writeError(fmt.Sprintf("error starting result stream: %s", streamErr), http.StatusInternalServerError)
+			return
+		}
+		defer streamVal.CloseStream()
 	}
 
 	if deferredCleanup() != nil {
@@ -584,6 +619,17 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	if err != nil {
 		event.Status = string(types.EventStatusFailure)
 		writeError(err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if streamSeq != nil {
+		// Success is recorded only once the command has exited cleanly
+		event.Status = string(types.EventStatusFailure)
+		if apiMode || !isHtmxRequest {
+			a.writeStreamText(w, r, status, streamSeq, &event)
+		} else {
+			a.writeStreamSSE(w, r, status, streamSeq, qsParams, &event)
+		}
 		return
 	}
 
@@ -624,34 +670,9 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	}
 
 	// Render the param error messages, using HTMX OOB
-	errorMsgs := map[string]string{}
-	errorKeys := []string{}
-	for _, param := range a.params {
-		// "" error messages have to be sent to overwrite previous values in form UI
-		if !strings.HasPrefix(param.Name, OPTIONS_PREFIX) && !strings.HasPrefix(param.Name, OPTIONS_PREFIX_UNDERSCORE) {
-			if paramErrors[param.Name] == nil {
-				errorMsgs[param.Name] = ""
-			} else {
-				errorMsgs[param.Name] = fmt.Sprintf("%s", paramErrors[param.Name])
-			}
-			errorKeys = append(errorKeys, param.Name)
-		}
-	}
-
-	slices.Sort(errorKeys)
-	for _, paramName := range errorKeys {
-		tv := struct {
-			Name    string
-			Message string
-		}{
-			Name:    paramName,
-			Message: errorMsgs[paramName],
-		}
-		err = a.actionTemplate.ExecuteTemplate(w, "paramError", tv)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	if err = a.renderParamErrors(w, paramErrors); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	if isValidate {
@@ -696,6 +717,257 @@ func uploadedFilePath(tempDir, filename string) (string, error) {
 	}
 
 	return fullPath, nil
+}
+
+// renderParamErrors writes the per-param error message blocks (HTMX OOB).
+// Every param gets a block: an empty message clears a previous error in
+// the form UI
+func (a *Action) renderParamErrors(w io.Writer, paramErrors map[string]any) error {
+	errorMsgs := map[string]string{}
+	errorKeys := []string{}
+	for _, param := range a.params {
+		if !strings.HasPrefix(param.Name, OPTIONS_PREFIX) && !strings.HasPrefix(param.Name, OPTIONS_PREFIX_UNDERSCORE) {
+			if paramErrors[param.Name] == nil {
+				errorMsgs[param.Name] = ""
+			} else {
+				errorMsgs[param.Name] = fmt.Sprintf("%s", paramErrors[param.Name])
+			}
+			errorKeys = append(errorKeys, param.Name)
+		}
+	}
+
+	slices.Sort(errorKeys)
+	for _, paramName := range errorKeys {
+		tv := struct {
+			Name    string
+			Message string
+		}{
+			Name:    paramName,
+			Message: errorMsgs[paramName],
+		}
+		if err := a.actionTemplate.ExecuteTemplate(w, "paramError", tv); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// errClientGone is the stream outcome when the client disconnected before
+// the command finished
+var errClientGone = errors.New("client disconnected")
+
+// consumeStream drains a result stream, passing each output chunk (with its
+// trailing newline restored) to emit. It returns the command's exit status
+// when the stream ended through a process exit (0 for a clean end without
+// an exit error), or an error for a client disconnect, a write failure or a
+// stream failure that is not an exit status
+func (a *Action) consumeStream(r *http.Request, seq func(yield func(any, error) bool), emit func(chunk string) error) (int, error) {
+	for v, streamErr := range seq {
+		if streamErr != nil {
+			if r.Context().Err() != nil {
+				return -1, errClientGone
+			}
+			var exitErr *exec.ExitError
+			if errors.As(streamErr, &exitErr) && exitErr.ExitCode() >= 0 {
+				return exitErr.ExitCode(), nil
+			}
+			return -1, streamErr
+		}
+		var chunk string
+		switch val := v.(type) {
+		case string:
+			chunk = val
+		default:
+			// Parsed output (jsonlines) arrives as maps: one JSON document
+			// per line, as the buffered response would report it
+			encoded, err := json.Marshal(val)
+			if err != nil {
+				return -1, err
+			}
+			chunk = string(encoded)
+		}
+		if err := emit(chunk + "\n"); err != nil {
+			if r.Context().Err() != nil {
+				return -1, errClientGone
+			}
+			return -1, err
+		}
+	}
+	return 0, nil
+}
+
+// recordStreamOutcome sets the audit status for a streamed run: success
+// only for a clean exit, the failure detail otherwise
+func recordStreamOutcome(event *types.AuditEvent, exitStatus int, err error) {
+	switch {
+	case err != nil:
+		event.Status = string(types.EventStatusFailure)
+		event.Detail = err.Error()
+	case exitStatus != 0:
+		event.Status = string(types.EventStatusFailure)
+		event.Detail = fmt.Sprintf("exit status %d", exitStatus)
+	default:
+		event.Status = string(types.EventStatusSuccess)
+	}
+}
+
+// writeSSEEvent writes one server-sent event. Multi-line data is split into
+// data: lines (the client joins them with newlines); a bare CR would end a
+// line in the SSE parser, so it is dropped
+func writeSSEEvent(w io.Writer, event, data string) error {
+	var b strings.Builder
+	if event != "" {
+		b.WriteString("event: ")
+		b.WriteString(event)
+		b.WriteString("\n")
+	}
+	for _, line := range strings.Split(data, "\n") {
+		b.WriteString("data: ")
+		b.WriteString(strings.ReplaceAll(line, "\r", ""))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+const (
+	sseOutputEvent = "openrun:output"
+	sseExitEvent   = "openrun:exit"
+)
+
+// writeStreamSSE streams a result to the form UI as server-sent events, the
+// transport the hx-sse extension consumes incrementally on the Run button's
+// hx-post. The first (unnamed) event carries the HTML the buffered response
+// would: the status line for the button's target, the cleared param error
+// blocks and the log pane shell (OOB). Then one openrun:output event per
+// output chunk feeds the <log-tail> element (JSON string payload, so CR/LF
+// and control characters survive the SSE framing), and openrun:exit ends
+// the run with the exit status. The request stays open until the command
+// exits, so the in-flight indicator matches the command; a client
+// disconnect cancels the request context, which kills the command
+func (a *Action) writeStreamSSE(w http.ResponseWriter, r *http.Request, status string,
+	seq func(yield func(any, error) bool), qsParams url.Values, event *types.AuditEvent) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeActionError(w, false, "streaming is not supported by the response writer", http.StatusInternalServerError)
+		return
+	}
+
+	var initial bytes.Buffer
+	if err := a.actionTemplate.ExecuteTemplate(&initial, "status", status); err != nil {
+		writeActionError(w, false, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := a.renderParamErrors(&initial, nil); err != nil {
+		writeActionError(w, false, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := a.actionTemplate.ExecuteTemplate(&initial, "result-stream", nil); err != nil {
+		writeActionError(w, false, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Accel-Buffering", "no")
+	h.Set("HX-Push-Url", a.pagePath+"?"+qsParams.Encode())
+	w.WriteHeader(http.StatusOK)
+
+	if err := writeSSEEvent(w, "", initial.String()); err != nil {
+		recordStreamOutcome(event, -1, err)
+		return
+	}
+	flusher.Flush()
+
+	exitStatus, err := a.consumeStream(r, seq, func(chunk string) error {
+		// The JSON encoder rejects invalid UTF-8 (binary output, other
+		// encodings): replace bad bytes for display, as a terminal would
+		encoded, encErr := json.Marshal(strings.ToValidUTF8(chunk, "\uFFFD"))
+		if encErr != nil {
+			return encErr
+		}
+		if writeErr := writeSSEEvent(w, sseOutputEvent, string(encoded)); writeErr != nil {
+			return writeErr
+		}
+		flusher.Flush()
+		return nil
+	})
+	recordStreamOutcome(event, exitStatus, err)
+	if errors.Is(err, errClientGone) {
+		return
+	}
+
+	var exit []byte
+	if err != nil {
+		a.Error().Err(err).Msg("error producing action stream")
+		exit, _ = json.Marshal(map[string]any{"error": err.Error()})
+	} else {
+		exit, _ = json.Marshal(map[string]any{"status": exitStatus})
+	}
+	if writeErr := writeSSEEvent(w, sseExitEvent, string(exit)); writeErr != nil {
+		return
+	}
+	flusher.Flush()
+}
+
+// Response header carrying the result status text of a streamed API run,
+// and the trailer carrying the command's exit status once the stream ends
+const (
+	streamStatusHeader = "OpenRun-Action-Status"
+	streamExitTrailer  = "OpenRun-Exit-Status"
+)
+
+// writeStreamText streams a result as chunked plain text: the API mode
+// response (curl -N friendly) and the fallback for non-HTMX form posts.
+// The result status text travels in the OpenRun-Action-Status header and
+// the exit status in the OpenRun-Exit-Status trailer; a missing trailer
+// means the stream was cut (a read failure or a client disconnect). No
+// synthetic lines are mixed into the output
+func (a *Action) writeStreamText(w http.ResponseWriter, r *http.Request,
+	status string, seq func(yield func(any, error) bool), event *types.AuditEvent) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeActionError(w, true, "streaming is not supported by the response writer", http.StatusInternalServerError)
+		return
+	}
+
+	h := w.Header()
+	h.Set("Content-Type", "text/plain; charset=utf-8")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Accel-Buffering", "no")
+	h.Set(streamStatusHeader, headerSafe(status))
+	h.Set("Trailer", streamExitTrailer)
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	exitStatus, err := a.consumeStream(r, seq, func(chunk string) error {
+		if _, writeErr := io.WriteString(w, chunk); writeErr != nil {
+			return writeErr
+		}
+		flusher.Flush()
+		return nil
+	})
+	recordStreamOutcome(event, exitStatus, err)
+	if err != nil {
+		if !errors.Is(err, errClientGone) {
+			a.Error().Err(err).Msg("error producing action stream")
+		}
+		return
+	}
+	// Announced in the Trailer header, so this is sent as an HTTP trailer
+	h.Set(streamExitTrailer, strconv.Itoa(exitStatus))
+}
+
+// headerSafe strips the control characters a header value cannot carry
+func headerSafe(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, value)
 }
 
 func (a *Action) renderResults(w http.ResponseWriter, report string, valuesMap []map[string]any, valuesStr []string) error {

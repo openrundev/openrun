@@ -5,6 +5,7 @@ package apptype
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -47,7 +48,7 @@ const (
 
 	// Default themes for the action UI when the app defines no style
 	// config. These are the OpenRun brand themes baked into the embedded
-	// fallback stylesheet (internal/app/action/astatic/style.css)
+	// fallback stylesheet (internal/webstatic/static/style.css)
 	DEFAULT_ACTION_LIGHT_THEME = "openrun-light"
 	DEFAULT_ACTION_DARK_THEME  = "openrun-dark"
 )
@@ -370,9 +371,28 @@ func createResultBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.
 	var status, report starlark.String
 	var values *starlark.List
 	var paramErrors *starlark.Dict
+	var stream starlark.Value
 	if err := starlark.UnpackArgs(RESULT, args, kwargs, "status?", &status, "values?", &values,
-		"report?", &report, "param_errors?", &paramErrors); err != nil {
+		"report?", &report, "param_errors?", &paramErrors, "stream?", &stream); err != nil {
 		return nil, fmt.Errorf("error unpacking result args: %w", err)
+	}
+
+	// stream is the response of a plugin call made with stream=True (exec.run,
+	// container.run): the action framework streams the output to the client
+	// as it is produced. A streamed result has no values/report (the output
+	// is the report) and cannot carry param errors (the run has started)
+	if stream != nil && stream != starlark.None {
+		if values != nil && values.Len() > 0 {
+			return nil, errors.New("result stream cannot be combined with values")
+		}
+		if report != "" {
+			return nil, errors.New("result stream cannot be combined with report")
+		}
+		if paramErrors != nil && paramErrors.Len() > 0 {
+			return nil, errors.New("result stream cannot be combined with param_errors")
+		}
+	} else {
+		stream = starlark.None
 	}
 
 	if report == "" {
@@ -392,6 +412,7 @@ func createResultBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.
 		"values":       values,
 		"report":       report,
 		"param_errors": paramErrors,
+		"stream":       stream,
 	}
 	return starlarkstruct.FromStringDict(starlark.String(RESULT), fields), nil
 }

@@ -81,7 +81,7 @@ The API supports the following parameters:
 - **process_partial** (bool, optional) : whether to process the output when there is a failure
 - **stdout_file** (bool, optional) : whether to send the stdout for the process to a temporary file on disk
 - **parse** (string, optional) : Whether to parse the stdout. Supported options are `json` and `jsonlines`
-- **stream** (bool, optional) : return the output as a stream which is lazily read as the response is generated, instead of buffering the full output. Not supported with `parse="json"`
+- **stream** (bool, optional) : return the output as a stream which is read as the response is generated, instead of buffering the full output. The output is delivered in chunks of complete lines as the command produces it (lines of any length), and a non-zero exit ends the stream with an error after the output. Return the response from a route handler to stream it as the HTTP response, or from an action handler in `ace.result(stream=...)` to show it live in the action UI (see [streaming output]({{< ref "docs/actions/#streaming-output" >}})). Not supported with `parse="json"`
 - **include_stderr** (bool, optional, default True) : whether to include the stderr output in the command output. If False, stderr is reported only in the error message when the command fails
 - **cwd** (string, optional) : the working directory to run the command in
 

@@ -6,12 +6,12 @@
    adapts to light/dark. */
 
 /* ---- Typography ---------------------------------------------------------
-   Self-hosted brand type (SIL OFL, woff2 in astatic/fonts/): Space Grotesk
+   Self-hosted brand type (SIL OFL, woff2 in fonts/ alongside this file): Space Grotesk
    for headings, Schibsted Grotesk for body, JetBrains Mono for identifiers and report
    values. The @font-face declarations live in the layout template
    (layout.go.html "fonts" block), NOT here: a static css file can only
-   reference the fonts by their plain names, while the template's astatic
-   helper emits content-hashed urls which get immutable caching. The
+   reference the fonts by their plain names, while the template's
+   openrun_static helper emits content-hashed urls which get immutable caching. The
    generated tailwind layer routes every font through
    --font-sans/--font-mono, so redefining the variables here covers the
    preflight body default and the font-sans/font-mono utilities alike.

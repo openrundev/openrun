@@ -5,6 +5,7 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -69,5 +70,37 @@ func TestPushCursorCloseUnblocksNext(t *testing.T) {
 	case <-nextDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close did not unblock Next")
+	}
+}
+
+// An error produced right after some items must not drop those items: they
+// are delivered first, the error on the following Next
+func TestPushCursorErrorAfterItems(t *testing.T) {
+	boom := errors.New("boom")
+	cursor := PushCursor(context.Background(), "test", "leak", true, func(ctx context.Context, yield func(any, error) bool) {
+		if !yield("a", nil) {
+			return
+		}
+		if !yield("b", nil) {
+			return
+		}
+		yield(nil, boom)
+	})
+	var items []any
+	var err error
+	for err == nil {
+		var batch []any
+		var done bool
+		batch, done, err = cursor.Next(context.Background(), 100)
+		items = append(items, batch...)
+		if done {
+			t.Fatal("stream reported done without the error")
+		}
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected boom, got %v", err)
+	}
+	if len(items) != 2 || items[0] != "a" || items[1] != "b" {
+		t.Fatalf("items lost before the error: %v", items)
 	}
 }

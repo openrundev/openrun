@@ -1,5 +1,5 @@
 /* Input for generating the embedded fallback stylesheet
-   (internal/app/action/astatic/style.css), used by action apps which have
+   (internal/webstatic/static/style.css), used by action apps which have
    no styling pipeline of their own. Regenerate with gen_style.sh after
    changing the action templates. The openrun-light/openrun-dark themes
    mirror the OpenRun brand themes from the management console

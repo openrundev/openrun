@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/openrundev/openrun/internal/types"
+	"github.com/openrundev/openrun/internal/webstatic"
 )
 
 func newRouterTestServer(apiEnabled, redirectToHTTPS bool) (*types.ServerConfig, *Server, *types.Logger) {
@@ -73,6 +74,49 @@ func TestRouterNewTCPHandler_SystemRoutes(t *testing.T) {
 	handler.router.ServeHTTP(internalRec, internalReq)
 	if internalRec.Code != http.StatusNotFound {
 		t.Fatalf("internal status when remote api disabled: want %d got %d", http.StatusNotFound, internalRec.Code)
+	}
+}
+
+func TestRouterNewTCPHandler_SharedStatic(t *testing.T) {
+	// The shared browser assets are served over plain HTTP on any host,
+	// unauthenticated, at content-hashed names with immutable caching
+	config, server, logger := newRouterTestServer(false, false)
+	handler := NewTCPHandler(logger, config, server)
+
+	url := webstatic.URL("logtail.js")
+	if !strings.HasPrefix(url, "/_openrun/static/logtail-") || !strings.HasSuffix(url, ".js") {
+		t.Fatalf("hashed url: got %q", url)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://apps.example.com"+url, nil)
+	rec := httptest.NewRecorder()
+	handler.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("static status: want %d got %d", http.StatusOK, rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "customElements.define('log-tail'") {
+		t.Fatalf("static body does not look like logtail.js: %.80q", rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=31536000") {
+		t.Fatalf("cache-control: got %q", cc)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+		t.Fatalf("content-type: got %q", ct)
+	}
+
+	for _, name := range []string{"htmx.min.js", "hx-sse.min.js", "style.css", "openrun.css", "json.css", "fonts/jetbrains-mono-400.woff2"} {
+		req := httptest.NewRequest(http.MethodGet, "http://example.com"+webstatic.URL(name), nil)
+		rec := httptest.NewRecorder()
+		handler.router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", name, rec.Code)
+		}
+	}
+
+	missing := httptest.NewRequest(http.MethodGet, "http://example.com/_openrun/static/nope.js", nil)
+	missingRec := httptest.NewRecorder()
+	handler.router.ServeHTTP(missingRec, missing)
+	if missingRec.Code != http.StatusNotFound {
+		t.Fatalf("missing asset status: want %d got %d", http.StatusNotFound, missingRec.Code)
 	}
 }
 

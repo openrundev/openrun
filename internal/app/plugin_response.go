@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
@@ -20,8 +21,9 @@ type PluginResponse struct {
 	isStream  bool
 	thread    *starlark.Thread
 	// A stream stays session-owned until selected as the HTTP response.
-	startStream func() error
-	closeStream func()
+	startStream   func() error
+	closeStream   func()
+	streamStarted bool
 }
 
 func NewErrorResponse(err error, thread *starlark.Thread) *PluginResponse {
@@ -81,6 +83,38 @@ func NewStreamResponse(value any) *PluginResponse {
 	return &PluginResponse{
 		value:    value,
 		isStream: true,
+	}
+}
+
+// StartStream implements apptype.StreamValue: it takes the stream out of the
+// session cleanup (once) and returns the range function producing the
+// output chunks. A response carrying an error, or a non-stream response,
+// cannot be streamed
+func (r *PluginResponse) StartStream() (func(yield func(any, error) bool), error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if !r.isStream {
+		return nil, errors.New("value is not a stream response")
+	}
+	if r.startStream != nil && !r.streamStarted {
+		r.streamStarted = true
+		if err := r.startStream(); err != nil {
+			return nil, err
+		}
+	}
+	seq, ok := r.value.(func(yield func(any, error) bool))
+	if !ok {
+		return nil, errors.New("stream value is not a sequence function")
+	}
+	return seq, nil
+}
+
+// CloseStream implements apptype.StreamValue: it releases the producer of
+// a started stream. Safe to call more than once
+func (r *PluginResponse) CloseStream() {
+	if r.closeStream != nil {
+		r.closeStream()
 	}
 }
 
@@ -173,3 +207,4 @@ func (r *PluginResponse) ToGoValue() (any, error) {
 
 var _ starlark.Value = (*PluginResponse)(nil)
 var _ starlark_type.GoValuer = (*PluginResponse)(nil)
+var _ apptype.StreamValue = (*PluginResponse)(nil)

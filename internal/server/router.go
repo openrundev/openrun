@@ -25,6 +25,7 @@ import (
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
+	"github.com/openrundev/openrun/internal/webstatic"
 )
 
 const (
@@ -181,6 +182,10 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 	server.formLogin.RegisterLogoutRoutes(server.csrfMiddleware, router) // register the system/builtin logout page routes
 
 	router.HandleFunc("/*", handler.callApp)
+	// Shared browser assets (htmx, log viewer, action css, fonts) embedded
+	// in the binary: unauthenticated, content-hashed and immutable, served
+	// on every domain and outside the https-only management API gate
+	router.Handle(webstatic.URLPrefix+"/*", webstatic.Handler())
 	router.HandleFunc(types.INTERNAL_URL_PREFIX+"/health",
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)

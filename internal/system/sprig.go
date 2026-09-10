@@ -4,6 +4,7 @@
 package system
 
 import (
+	"github.com/openrundev/openrun/internal/webstatic"
 	htmltemplate "html/template"
 	"net/url"
 	"strings"
@@ -35,6 +36,11 @@ func GetFuncMap() template.FuncMap {
 	// (fractional seconds and offsets tolerated); zero times and
 	// unparseable values render as "-"
 	funcMap["relTime"] = relTime
+	// openrun_static resolves a browser asset shared by every app and served
+	// by the server binary (htmx, the <log-tail> viewer, action css, brand
+	// fonts) to its content-hashed /_openrun/static url, see
+	// internal/webstatic
+	funcMap["openrun_static"] = webstatic.URL
 	return funcMap
 }
 

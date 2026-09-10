@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -141,7 +142,7 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 	}
 
 	if stream {
-		return streamCursor(cmd, stdout, parse, reap, wait), nil
+		return streamCursor(ctx, cmd, stdout, parse, reap, wait), nil
 	}
 
 	if !stdoutToFile {
@@ -208,51 +209,77 @@ func execCommand(ctx context.Context, call *sdk.Call, containerHandler *app.Cont
 }
 
 // streamCursor wraps the command's output as a stream cursor: the app
-// returns it from the handler and the server streams the lines to the
-// client, pulling batches lazily. The process is reaped when the consumer
-// stops early or a scan/parse error aborts the stream.
-func streamCursor(cmd *exec.Cmd, stdout io.Reader, parse string, reap func(), wait func() error) *sdk.Cursor {
-	scanner := bufio.NewScanner(stdout)
-	return &sdk.Cursor{
-		TypeName: "exec output",
-		LeakKey:  fmt.Sprintf("exec_stream_%p", cmd),
-		Stream:   true,
-		Next: func(ctx context.Context, max int) ([]any, bool, error) {
-			if err := ctx.Err(); err != nil {
-				reap()
-				return nil, false, err
-			}
+// returns it from the handler (or an action returns it in ace.result) and
+// the server streams the output to the client as it is produced. The
+// producer reads the pipe in chunks of complete lines (system.StreamLines),
+// so a slow command's single line is delivered promptly while a firehose
+// arrives in 64KB chunks, and lines of any length pass through. Output items
+// are plain strings, or one map per line for parse="jsonlines". When the
+// output ends the exit status is checked: a non-zero exit is yielded as the
+// stream's terminal error (wrapping *exec.ExitError, so consumers can
+// recover the code) after all output has been delivered. The process is
+// reaped when the consumer stops early or the cursor is closed
+func streamCursor(ctx context.Context, cmd *exec.Cmd, stdout io.ReadCloser, parse string, reap func(), wait func() error) *sdk.Cursor {
+	cursor := sdk.PushCursor(ctx, "exec output", fmt.Sprintf("exec_stream_%p", cmd), true,
+		func(ctx context.Context, yield func(any, error) bool) {
+			// A closed cursor (client disconnect) cancels this context: kill
+			// the process so the pipe read returns
 			stopCancel := context.AfterFunc(ctx, reap)
 			defer stopCancel()
-			items := make([]any, 0, max)
-			for len(items) < max {
-				if !scanner.Scan() {
-					if scanner.Err() != nil {
-						reap()
-						return nil, false, fmt.Errorf("scanner error: %w", scanner.Err())
-					}
-					if err := wait(); err != nil {
-						return nil, false, fmt.Errorf("cmd failed: %w", err)
-					}
-					return items, true, nil
+
+			completed := true
+			system.StreamLines(stdout, nil)(func(v any, err error) bool {
+				if err != nil {
+					// A read failure cuts the stream: report it as the
+					// terminal error rather than a clean exit
+					reap()
+					yield(nil, err)
+					completed = false
+					return false
 				}
-				line := scanner.Bytes()
-				if parse == "jsonlines" {
+				chunk := v.(string)
+				if parse != "jsonlines" {
+					if !yield(chunk, nil) {
+						completed = false
+						return false
+					}
+					return true
+				}
+				for line := range strings.SplitSeq(chunk, "\n") {
+					if line == "" {
+						continue
+					}
 					var result map[string]any
-					if err := json.Unmarshal(line, &result); err != nil {
+					if err := json.Unmarshal([]byte(line), &result); err != nil {
 						reap()
-						return nil, false, fmt.Errorf("error parsing JSON output: %w", err)
+						yield(nil, fmt.Errorf("error parsing JSON output: %w", err))
+						completed = false
+						return false
 					}
-					items = append(items, result)
-				} else {
-					items = append(items, string(line))
+					if !yield(result, nil) {
+						completed = false
+						return false
+					}
 				}
+				return true
+			})
+			if !completed {
+				reap()
+				return
 			}
-			return items, false, nil
-		},
-		Close: func(ctx context.Context) error {
-			reap()
-			return nil
-		},
+			if err := wait(); err != nil {
+				yield(nil, fmt.Errorf("cmd failed: %w", err))
+			}
+		})
+	// The process is already running when the cursor is created, but the
+	// producer (and its cancel hook) only starts on the first Next. A
+	// cursor closed before it is ever read (the handler returned another
+	// result, or the response setup failed) must still reap the command
+	innerClose := cursor.Close
+	cursor.Close = func(ctx context.Context) error {
+		err := innerClose(ctx)
+		reap()
+		return err
 	}
+	return cursor
 }

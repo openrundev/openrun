@@ -31,6 +31,23 @@
   </output>
 {{ end }}
 
+{{/* Streamed command output (ace.result stream=): the pane shell is
+  swapped in with the status line, then the openrun:output events feed the
+  <log-tail> element (actions.js) until openrun:exit reports the status */}}
+{{ block "result-stream" . }}
+  <output id="action_result" hx-swap-oob="innerHTML">
+    <div role="alert">
+      {{ template "result-card-open" "Output" }}
+      <log-tail
+        id="action_log"
+        label="Command output"
+        max-lines="5000"
+        height="32rem"></log-tail>
+      {{ template "result-card-close" . }}
+    </div>
+  </output>
+{{ end }}
+
 {{ block "result-textarea" . }}
   <output id="action_result" hx-swap-oob="innerHTML">
     <output role="alert" class="block">

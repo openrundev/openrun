@@ -1,6 +1,7 @@
 #!/bin/sh
 # Regenerates the embedded fallback stylesheet for action apps
-# (internal/app/action/astatic/style.css) from input.css, scanning the
+# (internal/webstatic/static/style.css, served to every app at
+# /_openrun/static) from input.css, scanning the
 # action templates and astatic JS for tailwind/daisyui classes.
 #
 # Requires the standalone tailwindcss v4 CLI (TAILWIND_CMD, default
@@ -18,5 +19,6 @@ mkdir -p cache
 [ -s cache/daisyui.js ] || curl -fsSL -o cache/daisyui.js "$DAISYUI_URL"
 [ -s cache/daisyui-theme.js ] || curl -fsSL -o cache/daisyui-theme.js "$DAISYUI_THEME_URL"
 
-"$TAILWIND_CMD" -i input.css -o ../astatic/style.css --minify
-echo "Generated $(cd ../astatic && pwd)/style.css"
+OUT=../../../webstatic/static/style.css
+"$TAILWIND_CMD" -i input.css -o "$OUT" --minify
+echo "Generated $(cd "$(dirname "$OUT")" && pwd)/style.css"

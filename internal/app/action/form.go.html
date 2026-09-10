@@ -1,17 +1,16 @@
 {{ template "header" . }}
 
 {{ if .dev }}
-  <script src="{{ astatic "astatic/sse.js" }}"></script>
+  {{/* Dev-mode live reload: the hx-sse extension keeps the connection
+    open (reconnecting after a server restart) and dispatches the named
+    openrun_reload event as a DOM event on the element */}}
   <div
     id="cl_reload_listener"
-    hx-ext="sse"
-    sse-connect="{{ .appPath }}/_openrun_app/sse"
-    sse-swap="openrun_reload"
-    hx-trigger="sse:openrun_reload"></div>
+    hx-sse:connect="{{ .appPath }}/_openrun_app/sse"></div>
   <script>
     document
       .getElementById("cl_reload_listener")
-      .addEventListener("sse:openrun_reload", function (event) {
+      .addEventListener("openrun_reload", function (event) {
         location.reload();
       });
   </script>
@@ -19,17 +18,40 @@
 
 
 <script>
-  document.body.addEventListener("htmx:beforeRequest", function (event) {
+  document.body.addEventListener("htmx:before:request", function (event) {
     ActionMessage.classList.remove("text-error");
   });
-  document.body.addEventListener("htmx:sendError", function (event) {
+  // Only the form's own requests report into the status line: the
+  // dev-mode reload listener's SSE connection also fails (and reconnects)
+  // when the dev server restarts or the page navigates away
+  function actionFormRequest(event) {
+    return event.target.closest && event.target.closest("#action_form");
+  }
+  document.body.addEventListener("htmx:error", function (event) {
+    // Network failure (the response never arrived); response errors with a
+    // status code are reported by the htmx:response:error listener
+    if (!actionFormRequest(event) || (event.detail.ctx && event.detail.ctx.response)) {
+      return;
+    }
     ActionMessage.classList.add("text-error");
     ActionMessage.innerText = "API call failed: Server is not reachable";
   });
-  document.body.addEventListener("htmx:responseError", function (event) {
+  document.body.addEventListener("htmx:response:error", function (event) {
+    if (!actionFormRequest(event)) {
+      return;
+    }
     ActionMessage.classList.add("text-error");
-    ActionMessage.innerText =
-      "API call failed: " + event.detail.xhr.responseText;
+    ActionMessage.innerText = "API call failed: " + event.detail.ctx.text;
+  });
+  // htmx 4 swaps error responses too (htmx 2 did not): the plain-text
+  // error body would replace the innerText above as HTML, and any OOB
+  // markup in it (handler errors can echo untrusted input) would be
+  // inserted. Cancel the swap; the listener above has shown the text
+  document.body.addEventListener("htmx:before:swap", function (event) {
+    const ctx = event.detail.ctx;
+    if (actionFormRequest(event) && ctx && ctx.response && ctx.response.status >= 400) {
+      event.preventDefault();
+    }
   });
 </script>
 
@@ -203,7 +225,7 @@
           type="submit"
           hx-post="{{ .pagePath }}/suggest"
           hx-target="#ActionMessage"
-          hx-swap="innerHTML swap:80ms"
+          hx-swap="innerHTML"
           hx-indicator="#ActionIndicator"
           class="btn btn-outline sm:min-w-28">
           Suggest
@@ -215,7 +237,7 @@
           type="submit"
           hx-post="{{ .pagePath }}/validate"
           hx-target="#ActionMessage"
-          hx-swap="innerHTML swap:80ms"
+          hx-swap="innerHTML"
           hx-indicator="#ActionIndicator"
           class="btn btn-outline sm:min-w-28">
           Validate
@@ -228,7 +250,7 @@
         autofocus
         hx-post="{{ .pagePath }}"
         hx-target="#ActionMessage"
-        hx-swap="innerHTML swap:80ms"
+        hx-swap="innerHTML"
         hx-indicator="#ActionIndicator"
         class="btn btn-primary sm:min-w-32">
         Run

@@ -265,6 +265,78 @@ for (const type of ['mousedown', 'click']) {
 	});
 }
 
+// Streamed action output. A run handler returning ace.result(stream=...)
+// answers the Run hx-post with server-sent events (hx-sse extension): the
+// first event swaps the status line and the <log-tail> pane shell, then
+// named events, dispatched by hx-sse as DOM events on the Run button,
+// carry the output chunks (JSON string payloads) and the exit status. The
+// pane swap is awaited by hx-sse before the next event is dispatched, but
+// output arriving before the element exists is queued rather than dropped
+const actionStream = { queue: [], exited: true };
+
+function actionLogPane() {
+	return document.getElementById('action_log');
+}
+
+function actionStreamFlush() {
+	const pane = actionLogPane();
+	if (!pane || !actionStream.queue.length) {
+		return;
+	}
+	const chunks = actionStream.queue;
+	actionStream.queue = [];
+	pane.feed(chunks.join(''));
+}
+
+// The stream events are dispatched on the Run button; the dev-mode reload
+// listener (#cl_reload_listener) is a separate hx-sse connection which
+// must not be mistaken for an action stream
+function actionFormStream(event) {
+	return event.target.closest && event.target.closest('#action_form');
+}
+
+document.addEventListener('htmx:sse:after:connection', (event) => {
+	if (!actionFormStream(event)) {
+		return;
+	}
+	actionStream.queue = [];
+	actionStream.exited = false;
+});
+
+document.addEventListener('openrun:output', (event) => {
+	actionStream.queue.push(JSON.parse(event.detail.data));
+	actionStreamFlush();
+});
+
+function actionStreamEnd(status, error) {
+	actionStreamFlush();
+	actionStream.exited = true;
+	const pane = actionLogPane();
+	if (pane) {
+		pane.end(status, error);
+	}
+	// A failed command marks the status line, like a handler error
+	const message = document.getElementById('ActionMessage');
+	if (message && (error || status !== 0)) {
+		message.classList.add('text-error');
+	}
+}
+
+document.addEventListener('openrun:exit', (event) => {
+	const result = JSON.parse(event.detail.data);
+	actionStreamEnd(result.status, result.error);
+});
+
+// A stream cut before openrun:exit (server restart, network drop) ends
+// with hx-sse's close event only: report it as a failure rather than
+// leaving the pane marked as streaming
+document.addEventListener('htmx:sse:close', (event) => {
+	if (!actionFormStream(event) || actionStream.exited) {
+		return;
+	}
+	actionStreamEnd(undefined, 'connection closed before the command finished');
+});
+
 document.addEventListener('DOMContentLoaded', () => {
 	// Persist the user's theme choice. The toggle's initial state is set by
 	// an inline script next to it in the sidebar, before first paint, so
