@@ -190,7 +190,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 		header := r.Header
 		isHtmxRequest := types.GetHTTPHeader(header, "Hx-Request") == "true" &&
 			!(types.GetHTTPHeader(header, "Hx-Boosted") == "true") && //nolint:staticcheck
-			!(types.GetHTTPHeader(header, "Hx-History-Restore-Request") == "true")
+			!(types.GetHTTPHeader(header, "Hx-History-Restore-Request") == "true") //nolint:staticcheck
 
 		if a.serverConfig.System.EarlyHints && rtype == apptype.HTML_TYPE && codeConfig.Routing.EarlyHints && !a.IsDev &&
 			r.Method == http.MethodGet &&
