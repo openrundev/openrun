@@ -36,10 +36,12 @@ var (
 	CONTENT_TYPE_HTML = []string{"text/html; charset=utf-8"}
 
 	SERVER_NAME = []string{"OpenRun"}
-	// Boosted requests (HX-Request + HX-Boosted) get the full page while
-	// non-boosted HTMX requests get the partial block, so both headers are
-	// part of the cache key
-	VARY_HEADER_VALUE = []string{"HX-Request", "HX-Boosted"}
+	// Boosted requests (HX-Request + HX-Boosted) and history restores
+	// (HX-Request + HX-History-Restore-Request, htmx re-fetching a page for
+	// back/forward navigation and swapping it into the body or the
+	// hx-history-elt element) get the full page while other HTMX requests
+	// get the partial block, so all three headers are part of the cache key
+	VARY_HEADER_VALUE = []string{"HX-Request", "HX-Boosted", "HX-History-Restore-Request"}
 )
 
 func (a *App) earlyHints(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +189,8 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 
 		header := r.Header
 		isHtmxRequest := types.GetHTTPHeader(header, "Hx-Request") == "true" &&
-			!(types.GetHTTPHeader(header, "Hx-Boosted") == "true") //nolint:staticcheck
+			!(types.GetHTTPHeader(header, "Hx-Boosted") == "true") && //nolint:staticcheck
+			!(types.GetHTTPHeader(header, "Hx-History-Restore-Request") == "true")
 
 		if a.serverConfig.System.EarlyHints && rtype == apptype.HTML_TYPE && codeConfig.Routing.EarlyHints && !a.IsDev &&
 			r.Method == http.MethodGet &&
