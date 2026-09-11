@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -385,9 +386,10 @@ func (b *brokenPipe) Close() error { return nil }
 
 // A read failure ends the exec stream with an error, not a clean exit
 func TestExecStreamReadErrorIsTerminal(t *testing.T) {
-	reaped := false
+	// The reader, cancellation hook, and Close can call reap concurrently.
+	var reaped atomic.Bool
 	cursor := streamCursor(context.Background(), exec.Command("true"), &brokenPipe{data: "a\nb\n"}, "",
-		func() { reaped = true }, func() error { return nil })
+		func() { reaped.Store(true) }, func() error { return nil })
 	defer cursor.Close(context.Background()) //nolint:errcheck
 
 	items, done, err := cursor.Next(context.Background(), 100)
@@ -398,7 +400,7 @@ func TestExecStreamReadErrorIsTerminal(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "pipe broke") {
 		t.Fatalf("expected the read error, got %v", err)
 	}
-	if !reaped {
+	if !reaped.Load() {
 		t.Fatal("command was not reaped after the read failure")
 	}
 }
