@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -130,27 +131,103 @@ func (a *AppDev) downloadWorkFile(url string, path string) error {
 	return nil
 }
 
+// htmxSSEFileName is the path (under static/gen/lib) the generated import
+// template loads the SSE extension from, for both extension generations.
+const htmxSSEFileName = "sse.js"
+
+// htmxRuntimeVersion extracts the version pinned by an htmx runtime library
+// url, like https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js
+var htmxRuntimeVersion = regexp.MustCompile(`htmx\.org@([^/]+)`)
+
+// isHtmxRuntime reports whether the library url is the htmx runtime itself
+// (rather than one of its extensions).
+func isHtmxRuntime(url string) bool {
+	return strings.Contains(url, "htmx.org") && !strings.Contains(url, "ext")
+}
+
+// htmxSSELibrary reports whether the library url is an htmx SSE extension,
+// and whether it is the htmx 4 hx-sse extension (else the htmx 1/2 one).
+func htmxSSELibrary(url string) (isSSE bool, isHtmx4 bool) {
+	switch {
+	case strings.Contains(url, "htmx.org") && strings.Contains(url, "ext/hx-sse"):
+		return true, true
+	case strings.Contains(url, "htmx.org") && strings.Contains(url, "ext/sse.js"),
+		strings.Contains(url, "htmx-ext-sse"):
+		return true, false
+	}
+	return false, false
+}
+
+// ResolveHtmxVersion returns the version of the htmx runtime served to the
+// app: the version pinned by an explicit htmx runtime library in the app's
+// libraries, else the configured one. The SSE extension and the generated
+// live reload markup have to match the runtime, not the config.
+func ResolveHtmxVersion(libs []types.JSLibrary, configured string) string {
+	for _, lib := range libs {
+		if lib.LibType != types.Library || !isHtmxRuntime(lib.DirectUrl) {
+			continue
+		}
+		if m := htmxRuntimeVersion.FindStringSubmatch(lib.DirectUrl); m != nil {
+			return m[1]
+		}
+	}
+	return configured
+}
+
+// Htmx4 reports whether the htmx version uses the runtime, extension and
+// template APIs introduced in htmx 4. A non-release version (a dist-tag like
+// "latest", which npm keeps on the 2.x line) selects the htmx 1/2 APIs.
+func Htmx4(version string) bool {
+	major, _, _ := strings.Cut(version, ".")
+	return major == "4"
+}
+
+// HtmxVersion returns the htmx runtime version served to the app.
+func (a *AppDev) HtmxVersion() string {
+	return ResolveHtmxVersion(a.JsLibs, a.Config.Htmx.Version)
+}
+
+// newHtmxSSELibrary returns the SSE extension matching the htmx version.
+func newHtmxSSELibrary(version string) *types.JSLibrary {
+	url := "https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"
+	if Htmx4(version) {
+		url = "https://unpkg.com/htmx.org@" + version + "/dist/ext/hx-sse.min.js"
+	}
+	sse := NewLibrary(url)
+	sse.SanitizedFileName = htmxSSEFileName
+	return sse
+}
+
 // SetupJsLibs sets up the js libraries for the app.
 func (a *AppDev) SetupJsLibs() error {
+	version := a.HtmxVersion()
+	if version == "" || version[0] < '0' || version[0] > '9' {
+		a.Warn().Msgf("htmx version %q is not a release version, using the htmx 1/2 live reload APIs", version)
+	}
 	hasHtmx := false
 	hasHtmxSSE := false
-	for _, jsLib := range a.JsLibs {
-		if jsLib.LibType == types.Library {
-			if strings.Contains(jsLib.DirectUrl, "htmx.org") && !strings.Contains(jsLib.DirectUrl, "ext") {
-				hasHtmx = true
-			}
-			if strings.Contains(jsLib.DirectUrl, "htmx.org") && strings.Contains(jsLib.DirectUrl, "ext/sse.js") {
-				hasHtmxSSE = true
+	for i, jsLib := range a.JsLibs {
+		if jsLib.LibType != types.Library {
+			continue
+		}
+		if isHtmxRuntime(jsLib.DirectUrl) {
+			hasHtmx = true
+		}
+		if isSSE, isHtmx4 := htmxSSELibrary(jsLib.DirectUrl); isSSE {
+			hasHtmxSSE = true
+			a.JsLibs[i].SanitizedFileName = htmxSSEFileName
+			if isHtmx4 != Htmx4(version) {
+				a.Warn().Msgf("SSE extension %s does not match htmx %s, live reload will not work", jsLib.DirectUrl, version)
 			}
 		}
 	}
 	if !hasHtmx {
-		a.JsLibs = append(a.JsLibs, *NewLibrary("https://unpkg.com/htmx.org@" + a.Config.Htmx.Version + "/dist/htmx.min.js"))
+		a.JsLibs = append(a.JsLibs, *NewLibrary("https://unpkg.com/htmx.org@" + version + "/dist/htmx.min.js"))
 	} else {
 		a.Trace().Msg("htmx already included, skipping")
 	}
 	if !hasHtmxSSE {
-		a.JsLibs = append(a.JsLibs, *NewLibrary("https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"))
+		a.JsLibs = append(a.JsLibs, *newHtmxSSELibrary(version))
 	}
 
 	for _, jsLib := range a.JsLibs {
@@ -177,15 +254,24 @@ func (a *AppDev) SetupJsLibs() error {
 		a.jsCache[jsLib] = targetFile
 	}
 
+	// A version change can replace a library at the same path. Do not delete
+	// the replacement when evicting the previous version from the cache.
+	activeTargets := make(map[string]bool, len(a.JsLibs))
+	for _, lib := range a.JsLibs {
+		activeTargets[a.jsCache[lib]] = true
+	}
 	for lib, target := range a.jsCache {
 		if target != "" && (!slices.Contains(a.JsLibs[:], lib)) {
 			// This lib is in the cache, but not in current list of libs. Remove it
 			// from the disk and from cache.
-			a.Trace().Msgf("Removing js lib %s", target)
-			if err := a.sourceFS.Remove(target); err != nil {
-				a.Warn().Msgf("Error removing js lib %s : %s", target, err)
+			if !activeTargets[target] {
+				a.Trace().Msgf("Removing js lib %s", target)
+				if err := a.sourceFS.Remove(target); err != nil {
+					a.Warn().Msgf("Error removing js lib %s : %s", target, err)
+				}
 			}
 			delete(a.jsCache, lib)
+			delete(a.filesDownloaded, lib.DirectUrl)
 		}
 	}
 

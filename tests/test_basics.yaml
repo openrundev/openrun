@@ -142,23 +142,38 @@ tests:
     command: ../openrun app create ./testapp /test2
     exit-code: 0
 
-  basic161: ## Check static files are using optimized fetch path (no compression/decompression)
-    ## The data should be streamed directly from sqlite. x-openrun-compressed header should be true
-    command: 'curl -sI -u "admin:abcd" -H "Accept-Encoding: br" localhost:${BASIC_HTTP_PORT}/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: br" -e "Content-Length: 15595" | wc -l'
+  # Derive asset hashes from the current fixture so library upgrades keep working.
+  basic161: # Brotli streams the precompressed blob from sqlite (smaller than the source, marked X-Openrun-Compressed)
+    command: |
+      asset_hash=$(shasum -a 256 testapp/static/gen/lib/htmx.min.js | cut -d " " -f 1)
+      asset_size=$(wc -c < testapp/static/gen/lib/htmx.min.js | tr -d ' ')
+      headers=$(curl -fsSI -u "admin:abcd" -H "Accept-Encoding: br" "localhost:${BASIC_HTTP_PORT}/test2/static/gen/lib/htmx-${asset_hash}.min.js")
+      matched=$(printf '%s\n' "$headers" | grep -ciE '^(X-Openrun-Compressed: true|Content-Encoding: br)')
+      length=$(printf '%s\n' "$headers" | awk 'tolower($1) == "content-length:" { print $2 + 0 }')
+      [ "$matched" = "2" ] && [ "$length" -gt 0 ] && [ "$length" -lt "$asset_size" ] && echo ok
     stdout:
-      exactly: "3"
+      exactly: "ok"
     exit-code: 0
 
-  basic162: ## Check static files are using are gzipped when only gzip encoding is accepted
-    command: 'curl -sI -u "admin:abcd" -H "Accept-Encoding: gzip" localhost:${BASIC_HTTP_PORT}/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-Openrun-Compressed: true" -e "Content-Encoding: gzip" | wc -l'
+  basic162: # Gzip is compressed on the fly (Content-Encoding gzip, no X-Openrun-Compressed)
+    command: |
+      asset_hash=$(shasum -a 256 testapp/static/gen/lib/htmx.min.js | cut -d " " -f 1)
+      headers=$(curl -fsSI -u "admin:abcd" -H "Accept-Encoding: gzip" "localhost:${BASIC_HTTP_PORT}/test2/static/gen/lib/htmx-${asset_hash}.min.js")
+      status=$(printf '%s\n' "$headers" | awk '/^HTTP\// { print $2 }')
+      encoding=$(printf '%s\n' "$headers" | grep -ci '^Content-Encoding: gzip')
+      compressed=$(printf '%s\n' "$headers" | grep -ci '^X-Openrun-Compressed')
+      [ "$status" = "200" ] && [ "$encoding" = "1" ] && [ "$compressed" = "0" ] && echo ok
     stdout:
-      exactly: "1" # X-OpenRun-Compressed is not set, content length depends on gzip
+      exactly: "ok"
     exit-code: 0
 
-  basic163: ## Check static files are not compressed if no encoding is accepted
-    command: 'curl -sI -u "admin:abcd" localhost:${BASIC_HTTP_PORT}/test2/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep -e "X-OpenRun-Compressed: true" -e "Content-Encoding: " -e "Content-Length: 50387" | wc -l'
+  basic163: # Check the uncompressed content length
+    command: |
+      asset_hash=$(shasum -a 256 testapp/static/gen/lib/htmx.min.js | cut -d " " -f 1)
+      asset_size=$(wc -c < testapp/static/gen/lib/htmx.min.js | tr -d ' ')
+      curl -fsSI -u "admin:abcd" "localhost:${BASIC_HTTP_PORT}/test2/static/gen/lib/htmx-${asset_hash}.min.js" | grep -iE "^HTTP/[^ ]+ 200|^Content-Length: ${asset_size}[[:space:]]*$" | wc -l
     stdout:
-      exactly: "1" # X-OpenRun-Compressed is not set, encoding is not set
+      exactly: "2"
     exit-code: 0
 
   #basic164: ## Check HTTP early hints (early hints are disabled by default)

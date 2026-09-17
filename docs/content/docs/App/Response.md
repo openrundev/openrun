@@ -88,6 +88,8 @@ if challenge.get("Error"):
     return ace.response(challenge, "invalid_challenge_block", code=404)
 ```
 
+htmx 4 swaps error responses (4xx and 5xx) into the target like any other response, so the block above is shown in place of the target; htmx 2 did not swap them. To keep an error response out of the page, or to route it elsewhere, use the [hx-status](https://four.htmx.org/docs/whats-new-in-htmx-4/) attribute on the requesting element, like `hx-status:404="swap:none"` or `hx-status:4xx="target:#errors"`, or set `htmx.config.noSwap` for the whole app.
+
 ## File Downloads
 
 Return `ace.response` with `download` set to a filename to send an attachment. Set `content_type` to its MIME type; the default is `application/octet-stream`. Download data can be a string, bytes, or a download stream returned by a plugin.

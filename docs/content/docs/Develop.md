@@ -76,7 +76,7 @@ app = ace.app("myapp",
         },
         "htmx": {
             # The HTMX library version to use
-            "version": "2.0.3",
+            "version": "4.0.0",
         },
         "container": {
             # Use separate container images for the stage and prod versions of the app
@@ -84,6 +84,8 @@ app = ace.app("myapp",
         },
     })
 ```
+
+New apps default to htmx 4.0.0. Apps with an existing `config_gen.lock` retain their pinned version, and an htmx runtime listed explicitly in `libraries` pins the version regardless of the config. In development mode, OpenRun downloads the SSE extension matching the htmx version into `static/gen/lib/sse.js` and the generated `openrun_gen_import` block uses the live reload markup for htmx 4 or for the htmx 1/2 APIs. The block does not change htmx's own defaults: with htmx 4, error responses are swapped like any other, see [Response]({{< ref "docs/app/response" >}}).
 
 All settings are optional; only the entries being changed need to be specified. See [Templates]({{< ref "docs/app/templates/#template-file-location" >}}) for details on `template_locations` and `base_templates`.
 

@@ -93,7 +93,7 @@ def handler(req):
 	var config apptype.CodeConfig
 
 	json.Unmarshal([]byte(fileData[apptype.CONFIG_LOCK_FILE_NAME]), &config) //nolint:errcheck
-	testutil.AssertEqualsString(t, "config", "2.0.3", config.Htmx.Version)
+	testutil.AssertEqualsString(t, "config", "4.0.0", config.Htmx.Version)
 }
 
 func TestAppLoadNoHtml(t *testing.T) {
@@ -256,6 +256,7 @@ def handler(req):
 func TestAppHeaderCustom(t *testing.T) {
 	logger := testutil.TestLogger()
 	fileData := map[string]string{
+		apptype.CONFIG_LOCK_FILE_NAME: `{"htmx":{"version":"2.0.3"}}`,
 		"app.star": `
 app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
 
@@ -390,6 +391,7 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])`,
 func TestAppHeaderDefaultWithBody(t *testing.T) {
 	logger := testutil.TestLogger()
 	fileData := map[string]string{
+		apptype.CONFIG_LOCK_FILE_NAME: `{"htmx":{"version":"2.0.3"}}`,
 		"app.star": `
 app = ace.app("testApp", routes = [ace.html("/")])
 

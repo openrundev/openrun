@@ -41,7 +41,7 @@ func NewCodeConfig() *CodeConfig {
 			ContainerExclude:  []string{"static/**/*", "static_root/**/*", "base_templates/**/*", "*.go.html", "*.star", "config_gen.lock"},
 		},
 		Htmx: HtmxConfig{
-			Version: "2.0.3",
+			Version: "4.0.0",
 		},
 		Container: ContainerConfig{
 			SeparateStageProdImages: false,

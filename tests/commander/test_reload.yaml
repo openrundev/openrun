@@ -50,9 +50,15 @@ tests:
     command: ../openrun app list --format csv "*:/reload*" | grep -v Path | grep ",2," | wc -l
     stdout:
       exactly: "2" # two apps are at version 2, dev stays at version 1
-  reload0230: #Check static file hash
-    command: 'curl -Iu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1/static/gen/lib/htmx-491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e.min.js | grep 200'
+  reload0230: # Check the current fixture's hashed URL after reloading
+    command: |
+      set -e
+      asset_hash=$(shasum -a 256 reloadtest/static/gen/lib/htmx.min.js | cut -d " " -f 1)
+      headers=$(curl -fsSI -u "admin:qwerty" "localhost:${MAIN_HTTP_PORT}/reload_local1/static/gen/lib/htmx-${asset_hash}.min.js")
+      printf '%s\n' "$headers" | awk '/^HTTP\// { status = $2 } END { if (status == 200) print "ok"; else exit 1 }'
     stdout:
+      exactly: "ok"
+    exit-code: 0
   reload0240: #Check static file direct
     command: 'curl -Iu "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1/static/gen/lib/htmx.min.js | grep 200'
 

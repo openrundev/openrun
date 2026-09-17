@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/openrundev/openrun/internal/app/action"
 	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/app/dev"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
@@ -168,6 +169,9 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 	// Requests routed through the previous router keep the matching old values.
 	appName := a.Name
 	codeConfig := a.codeConfig
+	// The generated import template picks the live reload markup by the htmx
+	// runtime actually served, which an explicit library can pin
+	htmxVersion := dev.ResolveHtmxVersion(a.jsLibs, codeConfig.Htmx.Version)
 	containerHandler := a.containerHandler
 	errorHandler := a.errorHandler
 
@@ -239,7 +243,7 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 				IsDev:          a.IsDev,
 				IsPartial:      isHtmxRequest,
 				PushEvents:     codeConfig.Routing.PushEvents,
-				HtmxVersion:    codeConfig.Htmx.Version,
+				HtmxVersion:    htmxVersion,
 				HeadersFunc:    headersFunc,
 				RemoteIP:       a.getRemoteIP(r),
 				UserId:         system.GetContextUserId(r.Context()),
