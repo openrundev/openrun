@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -45,13 +46,13 @@ const (
 	oauthMaxClients  = 200 // DCR quota
 )
 
-// oauthState is the in-process AS state: pending authorization codes.
-// Codes are short-lived and single-use; a restart drops pending logins,
-// which simply restart. Embedded in Server
+// oauthState is the in-process AS state. Pending authorization codes are
+// NOT held here: the authorize redirect (browser) and the token exchange
+// (MCP client / CLI) are separate HTTP clients that can reach different
+// nodes of a multi-node (PostgreSQL) deployment, so codes live in the
+// metadata keystore (oauth_code:<code>, expiring rows) and survive
+// restarts. Embedded in Server
 type oauthState struct {
-	oauthMu    sync.Mutex
-	oauthCodes map[string]*oauthCode
-
 	oauthRateMu   sync.Mutex
 	oauthRateHits map[string][]time.Time
 
@@ -60,14 +61,61 @@ type oauthState struct {
 	staleGroupsAudited sync.Map
 }
 
+// oauthCode is a pending authorization code, stored as JSON in the keystore
+// under types.OAUTH_CODE_KV_PREFIX + code with delete_at = Expires
 type oauthCode struct {
-	clientId    string
-	redirectUri string
-	challenge   string // PKCE S256 challenge
-	principal   string
-	scopes      []string
-	resource    string // logical surface name (rest/mcp)
-	expires     time.Time
+	ClientId    string    `json:"client_id"`
+	RedirectUri string    `json:"redirect_uri"`
+	Challenge   string    `json:"challenge"` // PKCE S256 challenge
+	Principal   string    `json:"principal"`
+	Scopes      []string  `json:"scopes"`
+	Resource    string    `json:"resource"` // logical surface name (rest/mcp)
+	Expires     time.Time `json:"expires"`
+}
+
+func oauthCodeKey(code string) string {
+	return types.OAUTH_CODE_KV_PREFIX + code
+}
+
+// storeOAuthCode persists a pending code; the keystore expiry sweeper
+// removes it if it is never exchanged
+func (s *Server) storeOAuthCode(ctx context.Context, code string, entry *oauthCode) error {
+	blob, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	expires := entry.Expires.UTC()
+	return s.db.StoreKVBlob(ctx, oauthCodeKey(code), blob, &expires)
+}
+
+// consumeOAuthCode returns the pending code and removes it, or nil when it
+// is unknown, expired or already consumed. Single use is enforced by the
+// delete: with concurrent exchanges of the same code on any nodes, exactly
+// one caller gets deleted=true and therefore the entry
+func (s *Server) consumeOAuthCode(ctx context.Context, code string) (*oauthCode, error) {
+	if code == "" {
+		return nil, nil
+	}
+	key := oauthCodeKey(code)
+	blob, err := s.db.FetchKVBlob(ctx, key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil // unknown or expired (FetchKVBlob excludes expired rows)
+	}
+	if err != nil {
+		return nil, err // database failure, not a missing code
+	}
+	deleted, err := s.db.DeleteKVIfPresent(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if !deleted {
+		return nil, nil // consumed concurrently
+	}
+	var entry oauthCode
+	if err := json.Unmarshal(blob, &entry); err != nil {
+		return nil, err
+	}
+	return &entry, nil
 }
 
 // apiExternalUrl returns the canonical https origin for the API surfaces:
@@ -464,26 +512,18 @@ func (h *Handler) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := hex.EncodeToString(codeBytes)
-	h.server.oauthMu.Lock()
-	if h.server.oauthCodes == nil {
-		h.server.oauthCodes = map[string]*oauthCode{}
+	if err := h.server.storeOAuthCode(r.Context(), code, &oauthCode{
+		ClientId:    get("client_id"),
+		RedirectUri: get("redirect_uri"),
+		Challenge:   get("code_challenge"),
+		Principal:   principal,
+		Scopes:      scopes,
+		Resource:    surface,
+		Expires:     time.Now().Add(oauthCodeTTL),
+	}); err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "error storing authorization code")
+		return
 	}
-	// Opportunistic sweep of expired pending codes
-	for existing, entry := range h.server.oauthCodes {
-		if time.Now().After(entry.expires) {
-			delete(h.server.oauthCodes, existing)
-		}
-	}
-	h.server.oauthCodes[code] = &oauthCode{
-		clientId:    get("client_id"),
-		redirectUri: get("redirect_uri"),
-		challenge:   get("code_challenge"),
-		principal:   principal,
-		scopes:      scopes,
-		resource:    surface,
-		expires:     time.Now().Add(oauthCodeTTL),
-	}
-	h.server.oauthMu.Unlock()
 
 	redirect, _ := url.Parse(get("redirect_uri"))
 	query := redirect.Query()
@@ -558,21 +598,22 @@ func (h *Handler) oauthTokenCode(w http.ResponseWriter, r *http.Request) {
 	get := r.PostForm.Get
 	code, clientId, verifier := get("code"), get("client_id"), get("code_verifier")
 
-	h.server.oauthMu.Lock()
-	entry := h.server.oauthCodes[code]
-	delete(h.server.oauthCodes, code) // single use, success or not
-	h.server.oauthMu.Unlock()
-
-	if entry == nil || time.Now().After(entry.expires) {
+	// Single use, success or not: the code is removed before any check
+	entry, err := h.server.consumeOAuthCode(r.Context(), code)
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "error reading authorization code")
+		return
+	}
+	if entry == nil || time.Now().After(entry.Expires) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "unknown or expired authorization code")
 		return
 	}
-	if entry.clientId != clientId || entry.redirectUri != get("redirect_uri") {
+	if entry.ClientId != clientId || entry.RedirectUri != get("redirect_uri") {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "client_id/redirect_uri mismatch")
 		return
 	}
 	challenge := base64.RawURLEncoding.EncodeToString(func() []byte { s := sha256.Sum256([]byte(verifier)); return s[:] }())
-	if verifier == "" || subtle.ConstantTimeCompare([]byte(challenge), []byte(entry.challenge)) != 1 {
+	if verifier == "" || subtle.ConstantTimeCompare([]byte(challenge), []byte(entry.Challenge)) != 1 {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "PKCE verification failed")
 		return
 	}
@@ -586,13 +627,13 @@ func (h *Handler) oauthTokenCode(w http.ResponseWriter, r *http.Request) {
 	// The absolute grant lifetime starts at consent; every token the grant
 	// ever mints is clamped to it (refresh rotation slides within the bound)
 	grantDeadline := time.Now().Add(h.server.apiGrantMaxTTL()).UTC()
-	response, err := h.server.mintOAuthTokens(r.Context(), entry.principal, clientId, grantId, grantId,
-		entry.scopes, entry.resource, "", grantDeadline)
+	response, err := h.server.mintOAuthTokens(r.Context(), entry.Principal, clientId, grantId, grantId,
+		entry.Scopes, entry.Resource, "", grantDeadline)
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
-	h.server.auditOAuthEvent(r.Context(), "oauth_token_grant", entry.principal, true)
+	h.server.auditOAuthEvent(r.Context(), "oauth_token_grant", entry.Principal, true)
 	writeOAuthJSON(w, http.StatusOK, response)
 }
 

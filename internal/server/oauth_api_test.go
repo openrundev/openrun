@@ -422,3 +422,56 @@ func TestApiKeyDeleteIsTypeAware(t *testing.T) {
 		t.Fatal("refresh row must be revoked, not deleted")
 	}
 }
+
+// The authorize redirect and the token exchange come from different HTTP
+// clients (browser vs MCP client / CLI) and can land on different nodes of
+// a multi-node deployment, so pending codes must live in the shared
+// database, not in process memory, and stay single-use across nodes
+func TestOAuthCodeSharedAcrossNodes(t *testing.T) {
+	server, ts, client := newOAuthTestServer(t)
+
+	verifier := "cross-node-test-verifier-0123456789-0123456789"
+	challengeSum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(challengeSum[:])
+	code := runAuthorize(t, ts, client, "openrun-cli", "http://127.0.0.1:39999/callback",
+		challenge, ts.URL+"/rest", "*", "alice", "alicepw")
+
+	// Persisted in the keystore with an expiry, not held in memory
+	blob, err := server.db.FetchKVBlob(t.Context(), oauthCodeKey(code))
+	if err != nil || len(blob) == 0 {
+		t.Fatalf("authorization code must be stored in the keystore, got %v", err)
+	}
+
+	// A second node sharing the database can consume it
+	otherNode := &Server{db: server.db}
+	entry, err := otherNode.consumeOAuthCode(t.Context(), code)
+	if err != nil || entry == nil {
+		t.Fatalf("other node must consume the code, got entry=%v err=%v", entry, err)
+	}
+	testutil.AssertEqualsString(t, "client", "openrun-cli", entry.ClientId)
+	testutil.AssertEqualsString(t, "resource", ApiResourceRest, entry.Resource)
+	testutil.AssertEqualsString(t, "challenge", challenge, entry.Challenge)
+	if entry.Principal == "" {
+		t.Fatal("consumed code must carry the principal")
+	}
+
+	// Single use: a second consumption on any node finds nothing
+	entry, err = otherNode.consumeOAuthCode(t.Context(), code)
+	if err != nil || entry != nil {
+		t.Fatalf("code must be single-use, got entry=%v err=%v", entry, err)
+	}
+
+	// And the original node's token endpoint rejects the consumed code
+	resp, err := client.PostForm(ts.URL+"/_openrun/oauth/token", url.Values{
+		"grant_type": {"authorization_code"}, "code": {code},
+		"redirect_uri": {"http://127.0.0.1:39999/callback"},
+		"client_id":    {"openrun-cli"}, "code_verifier": {verifier}})
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	var tokenErr struct {
+		Error string `json:"error"`
+	}
+	decodeJSONBody(t, resp, &tokenErr)
+	testutil.AssertEqualsString(t, "consumed code", "invalid_grant", tokenErr.Error)
+}
