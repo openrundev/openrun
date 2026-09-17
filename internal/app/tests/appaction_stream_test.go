@@ -5,6 +5,7 @@ package app_test
 
 import (
 	"context"
+	"encoding/json/v2"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -41,6 +42,26 @@ app = ace.app("testApp", actions=[ace.action("testAction", "/", handler, show_va
 		t.Fatalf("Error %s", err)
 	}
 	return a
+}
+
+// streamOutput joins the payloads of every openrun:output event in an SSE
+// body. Each shell write can arrive as its own event, so tests on the
+// command's output must not depend on how the chunks were split
+func streamOutput(t *testing.T, body string) string {
+	t.Helper()
+	var out strings.Builder
+	for _, event := range strings.Split(body, "\n\n") {
+		payload, ok := strings.CutPrefix(event, "event: openrun:output\ndata: ")
+		if !ok {
+			continue
+		}
+		var chunk string
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			t.Fatalf("output event payload %q: %s", payload, err)
+		}
+		out.WriteString(chunk)
+	}
+	return out.String()
 }
 
 func streamPost(t *testing.T, a *app.App, path string, htmx bool, values url.Values) *httptest.ResponseRecorder {
@@ -204,6 +225,6 @@ func TestActionStreamInvalidUTF8(t *testing.T) {
 	response := streamPost(t, a, "/test", true, url.Values{})
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	body := response.Body.String()
-	testutil.AssertStringContains(t, body, "event: openrun:output\ndata: \"\ufffdbad\\nafter\\n\"\n\n")
+	testutil.AssertEqualsString(t, "output", "\ufffdbad\nafter\n", streamOutput(t, body))
 	testutil.AssertStringContains(t, body, "event: openrun:exit\ndata: {\"status\":0}\n\n")
 }
