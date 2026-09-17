@@ -53,6 +53,8 @@ const (
 // metadata keystore (oauth_code:<code>, expiring rows) and survive
 // restarts. Embedded in Server
 type oauthState struct {
+	cimdState // Client ID Metadata Document cache (oauth_cimd.go)
+
 	oauthRateMu   sync.Mutex
 	oauthRateHits map[string][]time.Time
 
@@ -192,6 +194,7 @@ func (h *Handler) serveOAuthASMetadata(w http.ResponseWriter, r *http.Request) {
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"none"},
+		"client_id_metadata_document_supported": true, // CIMD (oauth_cimd.go); DCR stays as the deprecated fallback
 	})
 }
 
@@ -374,7 +377,8 @@ func (h *Handler) oauthValidateAuthorizeParams(ctx context.Context, clientId, re
 
 // validateOAuthRedirect checks the redirect uri against the client's
 // registration. The pre-registered openrun-cli client allows loopback http
-// redirects on any port (RFC 8252 §7.3); DCR clients require an exact match
+// redirects on any port (RFC 8252 §7.3); CIMD clients (https client_id)
+// and DCR clients require an exact match against their redirect list
 func (h *Handler) validateOAuthRedirect(ctx context.Context, clientId, redirectUri string) error {
 	if clientId == oauthCLIClientId {
 		parsed, err := url.Parse(redirectUri)
@@ -383,14 +387,22 @@ func (h *Handler) validateOAuthRedirect(ctx context.Context, clientId, redirectU
 		}
 		return nil
 	}
-	client, err := h.server.db.GetOAuthClient(ctx, clientId)
-	if err != nil {
-		return fmt.Errorf("unknown client_id")
-	}
-	for _, uri := range client.RedirectUris {
-		if uri == redirectUri {
-			return nil
+	var registered []string
+	if isCIMDClientId(clientId) {
+		doc, err := h.server.resolveCIMD(ctx, clientId)
+		if err != nil {
+			return err
 		}
+		registered = doc.RedirectUris
+	} else {
+		client, err := h.server.db.GetOAuthClient(ctx, clientId)
+		if err != nil {
+			return fmt.Errorf("unknown client_id")
+		}
+		registered = client.RedirectUris
+	}
+	if slices.Contains(registered, redirectUri) {
+		return nil
 	}
 	return fmt.Errorf("redirect_uri is not registered for this client")
 }
@@ -409,6 +421,11 @@ button{background:#2563eb;color:#fff;border:0;border-radius:4px;padding:.6rem;cu
 {{if .DynamicClient}}<p class="warn">This application registered itself dynamically;
 its name is self-reported and not verified. Check that the address above is the
 application you intend to authorize.</p>{{end}}
+{{if .CIMDClient}}<p class="meta">This application identifies itself by the document at
+<b>{{.ClientId}}</b>; its name is taken from that document.</p>{{end}}
+{{if .LoopbackOnly}}<p class="warn">This application only redirects to your own computer
+(localhost). Any website can publish such a document and claim to be a local application;
+approve only if you started this login from an application you trust.</p>{{end}}
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 <form method="post" action="{{.Action}}">
 {{range $k, $v := .Params}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
@@ -445,7 +462,13 @@ func (h *Handler) renderOAuthLogin(w http.ResponseWriter, r *http.Request, get f
 		}
 	}
 	clientName := clientId
-	if clientId != oauthCLIClientId {
+	cimdClient, loopbackOnly := false, false
+	if isCIMDClientId(clientId) {
+		// Already resolved (and cached) by the redirect validation above
+		if doc, err := h.server.resolveCIMD(r.Context(), clientId); err == nil {
+			clientName, cimdClient, loopbackOnly = doc.ClientName, true, doc.LoopbackOnly()
+		}
+	} else if clientId != oauthCLIClientId {
 		if client, err := h.server.db.GetOAuthClient(r.Context(), clientId); err == nil && client.Name != "" {
 			clientName = client.Name
 		}
@@ -468,7 +491,10 @@ func (h *Handler) renderOAuthLogin(w http.ResponseWriter, r *http.Request, get f
 		"Surface":       surface,
 		"Scope":         scope,
 		"RedirectUri":   get("redirect_uri"),
-		"DynamicClient": clientId != oauthCLIClientId,
+		"ClientId":      clientId,
+		"DynamicClient": clientId != oauthCLIClientId && !cimdClient,
+		"CIMDClient":    cimdClient,
+		"LoopbackOnly":  loopbackOnly,
 		"Error":         errMsg,
 		"Action":        types.INTERNAL_URL_PREFIX + "/oauth/authorize",
 		"Params":        params,

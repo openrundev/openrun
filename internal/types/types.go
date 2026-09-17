@@ -266,6 +266,12 @@ type ApiConfig struct {
 	FederatedIdentityTTL string `toml:"federated_identity_ttl"` // provider-derived group snapshot max age, default 720h
 	PatDefaultTTL        string `toml:"pat_default_ttl"`        // default API key expiry, default 2160h (90d)
 
+	// Client ID Metadata Documents (OAuth clients identified by an https URL
+	// serving their metadata). Domain entries match the host or any subdomain
+	CIMDAllowedDomains    []string `toml:"cimd_allowed_domains"`     // empty = any domain
+	CIMDDeniedDomains     []string `toml:"cimd_denied_domains"`      // deny wins over allow
+	CIMDAllowPrivateHosts bool     `toml:"cimd_allow_private_hosts"` // permit documents on private/loopback addresses (dev only)
+
 	MCP  ApiSurfaceConfig `toml:"mcp"`  // the MCP endpoint (/_openrun/mcp)
 	Rest ApiSurfaceConfig `toml:"rest"` // the management REST API over TCP (remote CLI)
 }

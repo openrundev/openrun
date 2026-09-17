@@ -81,7 +81,9 @@ openrun app list
 
 The MCP endpoint is `https://<external_url host>/_openrun/mcp`. There are two ways to authenticate:
 
-**OAuth (browser login)** — for clients that support MCP OAuth, like Claude Code, add the server and the client discovers the OpenRun authorization server, registers itself, and opens a browser login (against the mechanisms in `[api.mcp] auth`). The consent page defaults MCP sessions to **read-only** scopes; choosing broader scopes at consent is an explicit act.
+**OAuth (browser login)** — for clients that support MCP OAuth, like Claude Code, add the server and the client discovers the OpenRun authorization server, identifies itself, and opens a browser login (against the mechanisms in `[api.mcp] auth`). The consent page defaults MCP sessions to **read-only** scopes; choosing broader scopes at consent is an explicit act.
+
+Clients identify themselves in one of three ways, in the order the MCP spec recommends: a pre-registered client id (the OpenRun CLI uses `openrun-cli`), a **Client ID Metadata Document** (the client id is an `https` URL serving a JSON document with the client's name and redirect URIs; OpenRun fetches and validates it on demand and caches it per its `Cache-Control` headers), or **Dynamic Client Registration** (`/_openrun/oauth/register`), which the MCP spec has deprecated but OpenRun keeps for older clients. Metadata document clients are accepted from any domain by default; `api.cimd_allowed_domains` and `api.cimd_denied_domains` restrict them, and documents on private or loopback addresses are refused unless `api.cimd_allow_private_hosts` is set (development only). Document fetches always connect directly and ignore `HTTPS_PROXY`, so the address check applies to the document host itself. Only public clients (`token_endpoint_auth_method` absent or `none`) are supported. The consent page names the document URL and warns when a client only redirects to `localhost`, since any website can publish such a document.
 
 ```sh
 claude mcp add --transport http openrun https://openrun.example.com:25223/_openrun/mcp

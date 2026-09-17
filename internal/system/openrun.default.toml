@@ -94,6 +94,11 @@ grant_max_ttl = "2160h"          # absolute OAuth grant lifetime (90d): refresh 
 federated_identity_ttl = "720h"  # provider-derived group snapshot max age; older snapshots are
                                  # dropped until the next interactive login
 pat_default_ttl = "2160h"        # default API key expiry (90d); --expires=never for non-expiring
+cimd_allowed_domains = []        # OAuth clients identified by a Client ID Metadata Document (an https
+                                 # URL serving the client's metadata) are accepted from these domains
+                                 # (host or subdomain match); empty = any domain
+cimd_denied_domains = []         # domains refused for metadata document clients; deny wins
+cimd_allow_private_hosts = false # allow metadata documents on private/loopback addresses (dev only)
 
 [api.mcp]                        # the MCP endpoint
 enable = false                   # true serves the MCP endpoint
