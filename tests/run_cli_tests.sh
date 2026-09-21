@@ -1050,6 +1050,9 @@ EOF
   # the server registers it at startup from plugin_providers.dev_providers
   rm -rf ./plugin_ext && mkdir -p ./plugin_ext
   go build -o ./plugin_ext/openrun-plugin-store ../internal/app/store/storeprovider
+  # Stand-in MCP upstream for commander/test_mcp_apps.yaml (started by the
+  # suite itself, on an ephemeral port)
+  go build -o ./plugin_ext/mcp-echo ./mcp_echo
 
   export TESTENV=abc
   export c1c2_c3=xyz

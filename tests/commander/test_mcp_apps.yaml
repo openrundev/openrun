@@ -1,0 +1,276 @@
+# MCP apps e2e: an app marked --mcp gets OpenRun's OAuth in front of its MCP
+# endpoint. Covers the per-app protected resource metadata and 401 challenge,
+# app-bound API keys, the proxied request (token stripped, identity headers,
+# container path rewrite, trailing slash), resource binding, tool scopes and
+# step-up, body/header validation, RBAC app:access, Origin and CORS, path
+# normalization, the OAuth code flow for an app resource, app update mcp, and
+# apply files. The upstream is plugin_ext/mcp-echo (built by run_cli_tests.sh),
+# which echoes what it received as a JSON-RPC result.
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
+tests:
+  mcpapp0010: # start the echo upstream and wait for its port
+    command: |
+      rm -f mcp_echo_port.txt
+      rm -rf mcp_src && mkdir -p mcp_src
+      ./plugin_ext/mcp-echo -port-file mcp_echo_port.txt > mcp_echo.log 2>&1 &
+      echo $! > mcp_echo.pid
+      for i in $(seq 1 100); do [ -s mcp_echo_port.txt ] && break; sleep 0.1; done
+      test -s mcp_echo_port.txt && echo "echo up"
+    stdout: "echo up"
+    exit-code: 0
+  mcpapp0020: # remote client, admin key, users; RBAC without the default grant so
+    # app:access is decided per user (alice developer, carol user, bob nothing)
+    command: |
+      cat > remote_client.toml <<EOF
+      server_uri = "https://localhost:${MAIN_HTTPS_PORT}"
+      [client]
+      skip_cert_check = true
+      EOF
+      ../openrun apikey create --desc "admin key" | grep -o "orun_pat_[0-9a-f_]*" > mcp_admin_key.txt
+      cat > mcp_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {}, "grants": [
+        {"description": "alice develops under /apps", "users": ["builtin:alice"], "roles": ["openrun-developer"], "targets": ["/apps/**"]},
+        {"description": "carol uses apps under /apps", "users": ["builtin:carol"], "roles": ["openrun-user"], "targets": ["/apps/**"]}
+      ]}}
+      EOF
+      ../openrun server update-config --force mcp_rbac.json
+      ../openrun user add alice --value alicepw --groups devs
+      ../openrun user add bob --value bobpw
+      ../openrun user add carol --value carolpw
+    exit-code: 0
+  mcpapp0030: # two MCP apps in front of the echo upstream: the whole app as the
+    # endpoint rewritten to /mcp, and a mixed app with a region, scopes and a tool map
+    command: |
+      set -e
+      UP="http://127.0.0.1:$(cat mcp_echo_port.txt)"
+      ../openrun app create --approve --spec proxy --param url=$UP --param app_name=orders --auth builtin \
+        --mcp=/mcp ./mcp_src /apps/mcp_orders
+      ../openrun app create --approve --spec proxy --param url=$UP --param app_name=shop --auth builtin \
+        --mcp='{"path":"/mcp","scopes":["orders:read","orders:write"],"default_scope":"orders:read","tools":{"cancel_order":"orders:write"},"allowed_origins":["https://app.example.com"]}' \
+        ./mcp_src /apps/mcp_shop
+    stdout: "App: /apps/mcp_shop"
+    exit-code: 0
+  mcpapp0040: # protected resource metadata per app, at the path-inserted well-known path
+    command: |
+      { curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/apps/mcp_orders | jq -r '.resource, .authorization_servers[0]'
+      curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/apps/mcp_shop/mcp | jq -r '.resource, (.scopes_supported | join(","))'
+      curl -sk -o /dev/null -w '%{http_code}\n' https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/apps/mcp_shop; } | sed "s/localhost:${MAIN_HTTPS_PORT}/localhost:PORT/g"
+    stdout:
+      contains:
+        - "https://localhost:PORT/apps/mcp_orders"
+        - "https://localhost:PORT"
+        - "https://localhost:PORT/apps/mcp_shop/mcp"
+        - "orders:read,orders:write"
+        - "404"
+    exit-code: 0
+  mcpapp0050: # no token: 401 with the challenge naming the app's document and default scope
+    command: |
+      curl -sk -o /dev/null -D - -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+        https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_shop/mcp | sed "s/localhost:${MAIN_HTTPS_PORT}/localhost:PORT/g"
+    stdout:
+      contains:
+        - "401"
+        - 'resource_metadata="https://localhost:PORT/.well-known/oauth-protected-resource/apps/mcp_shop/mcp"'
+        - 'scope="orders:read"'
+    exit-code: 0
+  mcpapp0060: # app-bound API keys: unscoped for orders, scoped for shop, bob's, and a rest key
+    command: |
+      set -e
+      ../openrun apikey create --user builtin:alice --resource app:/apps/mcp_orders | grep -o "orun_pat_[0-9a-f_]*" > mcp_alice_orders.txt
+      ../openrun apikey create --user builtin:alice --resource app:/apps/mcp_shop --scopes orders:read | grep -o "orun_pat_[0-9a-f_]*" > mcp_alice_shop_ro.txt
+      ../openrun apikey create --user builtin:alice --resource app:/apps/mcp_shop | grep -o "orun_pat_[0-9a-f_]*" > mcp_alice_shop.txt
+      ../openrun apikey create --user builtin:bob --resource app:/apps/mcp_shop | grep -o "orun_pat_[0-9a-f_]*" > mcp_bob_shop.txt
+      ../openrun apikey create --user builtin:alice --resource rest | grep -o "orun_pat_[0-9a-f_]*" > mcp_alice_rest.txt
+      ../openrun apikey create --user builtin:alice --resource app:/apps/mcp_shop --scopes app:read 2>&1 || true
+    stdout: "not declared by app"
+    exit-code: 0
+  mcpapp0070: # the call reaches the upstream at the rewritten path, without the token or
+    # cookies, with the identity, scope and client headers
+    command: |
+      curl -sk -X POST -H "Authorization: Bearer $(cat mcp_alice_orders.txt)" -H 'Content-Type: application/json' \
+        -H 'Cookie: openrun_session=x; other=y' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+        https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_orders > orders_resp.json
+      jq -r '.result.path, .result.headers["X-Openrun-User"], .result.headers["X-Openrun-Client-Id"], (.result.headers.Authorization // "no-auth"), (.result.headers.Cookie // "no-cookie")' orders_resp.json
+    stdout:
+      contains:
+        - "/mcp"
+        - "builtin:alice"
+        - "apikey"
+        - "no-auth"
+        - "no-cookie"
+    exit-code: 0
+  mcpapp0080: # sub-paths and a trailing slash map under the container path
+    command: |
+      curl -sk -X POST -H "Authorization: Bearer $(cat mcp_alice_orders.txt)" -H 'Content-Type: application/json' -d '{}' https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_orders/sub | jq -r .result.path
+      curl -sk -X POST -H "Authorization: Bearer $(cat mcp_alice_orders.txt)" -H 'Content-Type: application/json' -d '{}' https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_orders/ | jq -r .result.path
+    stdout:
+      contains:
+        - "/mcp/sub"
+        - "/mcp/"
+    exit-code: 0
+  mcpapp0090: # resource binding: a rest key is refused at the app; an app key is refused at the REST surface
+    command: |
+      curl -sk -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $(cat mcp_alice_rest.txt)" -d '{}' https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_orders
+      OPENRUN_API_KEY=$(cat mcp_alice_orders.txt) CL_CONFIG_FILE=remote_client.toml ../openrun app list 2>&1 || true
+    stdout:
+      contains:
+        - "401"
+        - "Unauthorized"
+    exit-code: 0
+  mcpapp0100: # tool scopes: a read-only key cannot call the write tool (step-up challenge), a
+    # lying header is refused, an unmapped tool passes with the scopes forwarded
+    command: |
+      K=$(cat mcp_alice_shop_ro.txt); U=https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_shop/mcp
+      curl -sk -o /dev/null -D - -X POST -H "Authorization: Bearer $K" -H 'Content-Type: application/json' \
+        -H 'Mcp-Method: tools/call' -H 'Mcp-Name: cancel_order' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"cancel_order"}}' $U | grep -i "^HTTP\|www-authenticate"
+      curl -sk -o /dev/null -w 'lie=%{http_code}\n' -X POST -H "Authorization: Bearer $K" -H 'Content-Type: application/json' \
+        -H 'Mcp-Method: tools/list' -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"cancel_order"}}' $U
+      curl -sk -X POST -H "Authorization: Bearer $K" -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_orders"}}' $U | jq -r '.result.headers["X-Openrun-Scopes"]'
+      curl -sk -o /dev/null -w 'unscoped=%{http_code}\n' -X POST -H "Authorization: Bearer $(cat mcp_alice_shop.txt)" -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"cancel_order"}}' $U
+    stdout:
+      contains:
+        - "403"
+        - 'error="insufficient_scope"'
+        - 'scope="orders:write"'
+        - "lie=400"
+        - "orders:read"
+        - "unscoped=200"
+    exit-code: 0
+  mcpapp0110: # a body too large to inspect and a non-JSON body are refused, never forwarded
+    command: |
+      K=$(cat mcp_alice_shop_ro.txt); U=https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_shop/mcp
+      printf '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"cancel_order","arguments":{"pad":"' > big.json
+      head -c 1100000 /dev/zero | tr '\0' 'x' >> big.json
+      printf '"}}}' >> big.json
+      curl -sk -o /dev/null -w 'big=%{http_code}\n' -X POST -H "Authorization: Bearer $K" -H 'Content-Type: application/json' --data-binary @big.json $U
+      curl -sk -o /dev/null -w 'text=%{http_code}\n' -X POST -H "Authorization: Bearer $K" -H 'Content-Type: text/plain' -d 'hello' $U
+    stdout:
+      contains:
+        - "big=413"
+        - "text=415"
+    exit-code: 0
+  mcpapp0120: # RBAC app:access: bob holds a valid key for the app but no grant on it
+    command: |
+      curl -sk -X POST -H "Authorization: Bearer $(cat mcp_bob_shop.txt)" -d '{}' https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_shop/mcp
+    stdout: "does not have access"
+    exit-code: 0
+  mcpapp0130: # browser origins: unlisted refused; an allowed preflight reaches the upstream
+    # without a credential; the 401 for an allowed origin carries CORS headers
+    command: |
+      U=https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_shop/mcp
+      curl -sk -o /dev/null -w 'evil=%{http_code}\n' -X POST -H "Authorization: Bearer $(cat mcp_alice_shop.txt)" -H 'Origin: https://evil.example.com' -d '{}' $U
+      curl -sk -X OPTIONS -H 'Origin: https://app.example.com' -H 'Access-Control-Request-Method: POST' -H 'Authorization: Bearer bogus' $U \
+        | jq -r '.result.method, (.result.headers.Authorization // "no-auth")'
+      curl -sk -o /dev/null -D - -X POST -H 'Origin: https://app.example.com' -H 'Content-Type: application/json' -d '{}' $U \
+        | grep -i "^HTTP\|access-control" | tr 'A-Z' 'a-z'
+    stdout:
+      contains:
+        - "evil=403"
+        - "OPTIONS"
+        - "no-auth"
+        - "401"
+        - "access-control-allow-origin: https://app.example.com"
+        - "access-control-expose-headers: www-authenticate"
+    exit-code: 0
+  mcpapp0140: # the region is decided on the cleaned path: dot segments and doubled slashes
+    # with basic auth get the Bearer challenge; the UI outside the region keeps basic auth
+    command: |
+      for p in "/apps/mcp_shop/ui/../mcp" "/apps/mcp_shop//mcp" "/apps/mcp_shop/./mcp"; do
+        curl -sk --path-as-is -o /dev/null -w "%{http_code} " -X POST -u alice:alicepw -d '{}' "https://localhost:${MAIN_HTTPS_PORT}$p"
+        curl -sk --path-as-is -o /dev/null -D - -X POST -u alice:alicepw -d '{}' "https://localhost:${MAIN_HTTPS_PORT}$p" | grep -i www-authenticate | grep -o "Bearer"
+      done
+      curl -sk -u alice:alicepw https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_shop/ui | jq -r '.result.path'
+    stdout:
+      contains:
+        - "401 Bearer"
+        - "/ui"
+    exit-code: 0
+  mcpapp0150: # OAuth code + PKCE for the app resource: alice logs in on the consent page,
+    # narrows the scope, the token works at the app (not at REST); bob is refused at consent
+    command: |
+      set -e
+      RES="https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_shop/mcp"
+      VERIFIER="mcp-app-verifier-0123456789abcdef-0123456789"
+      CHALLENGE=$(printf %s "$VERIFIER" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+      LOCATION=$(curl -sk -o /dev/null -w '%{redirect_url}' -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/oauth/authorize \
+        -d response_type=code -d client_id=openrun-cli -d "redirect_uri=http://127.0.0.1:9/callback" \
+        -d state=xyz -d "code_challenge=$CHALLENGE" -d code_challenge_method=S256 \
+        --data-urlencode "resource=$RES" --data-urlencode "scope=orders:read orders:write bogus" \
+        -d or_username=alice -d or_password=alicepw --data-urlencode "or_scope=orders:read")
+      CODE=$(printf %s "$LOCATION" | sed -n 's/.*code=\([^&]*\).*/\1/p')
+      test -n "$CODE"
+      curl -sk -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/oauth/token \
+        -d grant_type=authorization_code -d "code=$CODE" -d "redirect_uri=http://127.0.0.1:9/callback" \
+        -d client_id=openrun-cli -d "code_verifier=$VERIFIER" > mcp_token.json
+      jq -r '.scope, .principal' mcp_token.json
+      curl -sk -X POST -H "Authorization: Bearer $(jq -r .access_token mcp_token.json)" -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' $RES | jq -r '.result.headers["X-Openrun-Client-Id"], .result.headers["X-Openrun-Scopes"]'
+      OPENRUN_API_KEY=$(jq -r .access_token mcp_token.json) CL_CONFIG_FILE=remote_client.toml ../openrun app list 2>&1 || true
+      curl -sk -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/oauth/authorize \
+        -d response_type=code -d client_id=openrun-cli -d "redirect_uri=http://127.0.0.1:9/callback" \
+        -d "code_challenge=$CHALLENGE" -d code_challenge_method=S256 --data-urlencode "resource=$RES" \
+        -d or_username=bob -d or_password=bobpw | grep -o "does not have access"
+    stdout:
+      contains:
+        - "orders:read"
+        - "builtin:alice"
+        - "openrun-cli"
+        - "Unauthorized"
+        - "does not have access"
+    exit-code: 0
+  mcpapp0160: # app update mcp: clearing the setting removes the region and the document,
+    # setting it back restores them
+    command: |
+      set -e
+      ../openrun app update mcp - /apps/mcp_orders -p > /dev/null
+      curl -sk -o /dev/null -D - -X POST -H "Authorization: Bearer $(cat mcp_alice_orders.txt)" -d '{}' \
+        https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_orders | grep -i www-authenticate | grep -o "Basic"
+      curl -sk -o /dev/null -w 'prm=%{http_code}\n' https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/apps/mcp_orders
+      ../openrun app update mcp /mcp /apps/mcp_orders -p > /dev/null
+      curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/apps/mcp_orders | jq -r .resource | sed "s/localhost:${MAIN_HTTPS_PORT}/localhost:PORT/g"
+    stdout:
+      contains:
+        - "Basic"
+        - "prm=404"
+        - "https://localhost:PORT/apps/mcp_orders"
+    exit-code: 0
+  mcpapp0170: # apply files declare mcp too
+    command: |
+      set -e
+      cat > mcp_apply.ace <<EOF
+      app("/apps/mcp_applied", "$PWD/mcp_src", spec="proxy", auth="builtin",
+          params={"url": "http://127.0.0.1:$(cat mcp_echo_port.txt)"},
+          mcp={"path": "/mcp", "scopes": ["r"]})
+      EOF
+      ../openrun apply --approve mcp_apply.ace all > /dev/null
+      curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/apps/mcp_applied/mcp | jq -r '.resource, (.scopes_supported | join(","))' | sed "s/localhost:${MAIN_HTTPS_PORT}/localhost:PORT/g"
+    stdout:
+      contains:
+        - "https://localhost:PORT/apps/mcp_applied/mcp"
+        - "r"
+    exit-code: 0
+  mcpapp0900: # cleanup: apps, users, keys, RBAC, the echo upstream, working files
+    command: |
+      ../openrun app delete /apps/mcp_orders
+      ../openrun app delete /apps/mcp_shop
+      ../openrun app delete /apps/mcp_applied
+      ../openrun user delete alice
+      ../openrun user delete bob
+      ../openrun user delete carol
+      for id in $(../openrun apikey list --all -f json | jq -r '.[].id'); do ../openrun apikey delete "$id" > /dev/null; done
+      cat > mcp_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {}, "grants": [{"description": "Default: authenticated principals can access and list apps", "users": ["*"], "roles": ["openrun-user"], "targets": ["all"]}]}}
+      EOF
+      ../openrun server update-config --force mcp_rbac.json
+      kill $(cat mcp_echo.pid) 2>/dev/null || true
+      rm -f mcp_echo.pid mcp_echo_port.txt mcp_echo.log mcp_admin_key.txt mcp_alice_orders.txt mcp_alice_shop_ro.txt mcp_alice_shop.txt mcp_bob_shop.txt mcp_alice_rest.txt
+      rm -f orders_resp.json big.json mcp_token.json mcp_rbac.json mcp_apply.ace remote_client.toml
+      rm -rf mcp_src
+    exit-code: 0
