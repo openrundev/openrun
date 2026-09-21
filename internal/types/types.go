@@ -1076,8 +1076,9 @@ type AppInfo struct {
 	UpdateTime      time.Time
 	RetainVersions  int
 	AppliedSyncId   string
-	CreatedBySyncId string // id of the sync entry which created this app, used by sync prune
-	UserID          string // user who created the app, used for RBAC owner checks
+	CreatedBySyncId string     // id of the sync entry which created this app, used by sync prune
+	UserID          string     // user who created the app, used for RBAC owner checks
+	MCP             *MCPConfig // set when the app is an OAuth-protected MCP server
 }
 
 func CreateAppPathDomain(path, domain string) AppPathDomain {
@@ -1247,6 +1248,7 @@ type AppMetadata struct {
 	AuthnType        AppAuthnType      `json:"authn_type"`
 	GitAuthName      string            `json:"git_auth_name"`
 	Bindings         []string          `json:"bindings"`
+	MCP              *MCPConfig        `json:"mcp,omitempty"`                        // the app is an OAuth-protected MCP server, see MCPConfig
 	AppliedSyncId    string            `json:"applied_sync_id"`                      // id of the sync entry which last applied to this app, empty for imperative changes
 	CreatedBySyncId  string            `json:"created_by_sync_id,omitempty"`         // id of the sync entry which created this app, empty for imperative/apply creates; used by sync prune
 	BuilderPublished bool              `json:"builder_published,omitempty,omitzero"` // app was published by the app builder; enables builder edit sessions
@@ -1360,6 +1362,7 @@ const (
 	AppMetadataAuthnType        AppMetadataConfigType = "auth"
 	AppMetadataGitAuthName      AppMetadataConfigType = "git_auth"
 	AppMetadataBindings         AppMetadataConfigType = "bindings"
+	AppMetadataMCP              AppMetadataConfigType = "mcp"
 )
 
 type AppVersion struct {
@@ -1843,6 +1846,15 @@ const (
 	OPENRUN_HEADER_USER_EMAIL       = OPENRUN_HEADER_PREFIX + "User-Email"
 	OPENRUN_HEADER_PERMS            = OPENRUN_HEADER_PREFIX + "Perms"
 	OPENRUN_HEADER_APP_RBAC_ENABLED = OPENRUN_HEADER_PREFIX + "Rbac-Enabled"
+	// Set on requests authenticated with an OpenRun bearer credential (MCP
+	// apps): the granted scopes (comma separated, empty = unscoped) and the
+	// OAuth client id that holds the token ("apikey" for API keys)
+	OPENRUN_HEADER_SCOPES    = OPENRUN_HEADER_PREFIX + "Scopes"
+	OPENRUN_HEADER_CLIENT_ID = OPENRUN_HEADER_PREFIX + "Client-Id"
+
+	// API_INVOKER_MCP is the request context invoker marker for MCP calls
+	// (management MCP and MCP apps), see system.WithApiInvoker
+	API_INVOKER_MCP = "mcp"
 
 	// OPENRUN_HEADER_AS_USER is sent by the CLI --as flag on management API
 	// calls over the unix domain socket: run the call as this user id with

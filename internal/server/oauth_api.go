@@ -127,19 +127,17 @@ func (s *Server) apiExternalUrl() string {
 	return strings.TrimSuffix(cmp.Or(s.Config().Api.ExternalUrl, s.Config().Security.CallbackUrl), "/")
 }
 
-// apiResourceURI returns the canonical resource URI for a surface. The rest
-// resource is a logical identifier (the endpoints live under /_openrun); the
-// mcp resource equals the real endpoint URL, since MCP clients derive the
-// resource from the server URL they connect to
+// apiResourceURI returns the canonical resource URI for a surface, both
+// under /_openrun so no app path can collide with them: the mcp resource
+// equals the real endpoint URL (MCP clients derive the resource from the
+// server URL they connect to); the rest resource <external>/_openrun/rest is
+// a logical identifier for the management REST API served under /_openrun
 func (s *Server) apiResourceURI(surface string) string {
 	external := s.apiExternalUrl()
 	if external == "" {
 		return ""
 	}
-	if surface == ApiResourceMCP {
-		return external + types.INTERNAL_URL_PREFIX + "/mcp"
-	}
-	return external + "/rest"
+	return external + types.INTERNAL_URL_PREFIX + "/" + surface
 }
 
 // surfaceForResource maps a requested RFC 8707 resource URI to the logical
@@ -154,6 +152,66 @@ func (s *Server) surfaceForResource(resource string) string {
 	return ""
 }
 
+// oauthResource is a resolved RFC 8707 resource: one of the two management
+// surfaces (URI = the surface name, as stored on credentials since the
+// first release) or an MCP app (URI = the app's canonical https resource)
+type oauthResource struct {
+	Surface string
+	App     *types.AppInfo
+	URI     string
+}
+
+// Label names the resource on the consent page
+func (o *oauthResource) Label() string {
+	if o.App != nil {
+		return fmt.Sprintf("app %s (%s)", cmp.Or(o.App.Name, o.App.String()), o.URI)
+	}
+	return o.Surface + " API"
+}
+
+// resolveOAuthResource maps a requested resource to a surface or an MCP
+// app, refusing surfaces that are disabled and unknown apps
+func (s *Server) resolveOAuthResource(resource string) (*oauthResource, error) {
+	if surface := s.surfaceForResource(resource); surface != "" {
+		if !apiSurfaceEnabled(s.Config(), surface) {
+			return nil, fmt.Errorf("invalid_target: the %s surface is not enabled", surface)
+		}
+		return &oauthResource{Surface: surface, URI: surface}, nil
+	}
+	if strings.HasPrefix(resource, "https://") {
+		info, uri, err := s.resolveAppResource(resource)
+		if err != nil {
+			return nil, fmt.Errorf("invalid_target: %w", err)
+		}
+		return &oauthResource{App: info, URI: uri}, nil
+	}
+	return nil, fmt.Errorf("invalid_target: resource %q is not a canonical resource of this server", resource)
+}
+
+// oauthStoredResource resolves the value stored on a credential (surface
+// name or app resource URI) for refresh: the surface must still be enabled,
+// the app must still exist and still be an MCP app
+func (s *Server) oauthStoredResource(stored string) (*oauthResource, error) {
+	if stored == ApiResourceRest || stored == ApiResourceMCP {
+		if !apiSurfaceEnabled(s.Config(), stored) {
+			return nil, fmt.Errorf("the %s surface is no longer enabled", stored)
+		}
+		return &oauthResource{Surface: stored, URI: stored}, nil
+	}
+	info, uri, err := s.resolveAppResource(stored)
+	if err != nil || uri != stored {
+		return nil, fmt.Errorf("the app for resource %s is no longer an MCP app", stored)
+	}
+	return &oauthResource{App: info, URI: uri}, nil
+}
+
+// mcpDefaultScopes is the read-only scope set the MCP surface asks for and
+// mints by default: every *:read permission plus app:read_detail (full app
+// info: source, config, params, versions, files, logs), which the *:read
+// glob does not cover since it is a distinct permission name. Still no
+// writes, no reveal-class permissions
+var mcpDefaultScopes = []string{"*:read", string(types.PermissionReadDetail)}
+
 // apiAuthChallenge builds the WWW-Authenticate value for a surface's 401
 // responses: realm plus, when the external url is configured, the protected
 // resource metadata pointer and the surface's default scope ask (CLI gets *,
@@ -166,10 +224,10 @@ func (s *Server) apiAuthChallenge(surface string) string {
 	}
 	scope := "*"
 	if surface == ApiResourceMCP {
-		scope = "*:read"
+		scope = strings.Join(mcpDefaultScopes, " ")
 	}
-	return fmt.Sprintf(`Bearer realm="%s", resource_metadata="%s/.well-known/oauth-protected-resource/%s", scope="%s"`,
-		REALM, external, surface, scope)
+	return fmt.Sprintf(`Bearer realm="%s", resource_metadata="%s/.well-known/oauth-protected-resource%s/%s", scope="%s"`,
+		REALM, external, types.INTERNAL_URL_PREFIX, surface, scope)
 }
 
 // serveOAuthMetadata handles the well-known documents: the RFC 8414
@@ -178,9 +236,11 @@ func (s *Server) apiAuthChallenge(surface string) string {
 func (h *Handler) serveOAuthASMetadata(w http.ResponseWriter, r *http.Request) {
 	external := h.server.apiExternalUrl()
 	config := h.server.Config()
-	if external == "" || (!apiSurfaceEnabled(config, ApiResourceRest) && !apiSurfaceEnabled(config, ApiResourceMCP)) {
-		// The AS exists only while a remote surface is enabled (checked per
-		// request: [api] is dynamically settable)
+	if external == "" || (!apiSurfaceEnabled(config, ApiResourceRest) && !apiSurfaceEnabled(config, ApiResourceMCP) &&
+		!h.server.hasMCPApps()) {
+		// The AS exists only while a remote surface is enabled or an MCP
+		// app is deployed (checked per request: [api] is dynamically
+		// settable and apps come and go)
 		http.NotFound(w, r)
 		return
 	}
@@ -233,6 +293,11 @@ func (h *Handler) serveOAuth() http.Handler {
 	mux.HandleFunc("POST "+prefix+"/register", h.oauthRegister)
 	mux.HandleFunc("GET "+prefix+"/authorize", h.oauthAuthorizeForm)
 	mux.HandleFunc("POST "+prefix+"/authorize", h.oauthAuthorizeSubmit)
+	// Federated login (oauth_federated.go): chooser -> provider/SAML login
+	// -> continue (identity from the session cookie) -> consent -> code
+	mux.HandleFunc("POST "+prefix+"/authorize/federated", h.oauthAuthorizeFederated)
+	mux.HandleFunc("GET "+prefix+"/authorize/continue", h.oauthAuthorizeContinue)
+	mux.HandleFunc("POST "+prefix+"/authorize/consent", h.oauthAuthorizeConsent)
 	mux.HandleFunc("POST "+prefix+"/token", h.oauthToken)
 	mux.HandleFunc("POST "+prefix+"/revoke", h.oauthRevoke)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -355,24 +420,17 @@ func isLoopbackHost(host string) bool {
 // oauthValidateAuthorizeParams validates the shared authorize parameters and
 // resolves the client's redirect rules. Returns the logical surface for the
 // requested resource
-func (h *Handler) oauthValidateAuthorizeParams(ctx context.Context, clientId, redirectUri, challenge, method, resource string) (string, error) {
+func (h *Handler) oauthValidateAuthorizeParams(ctx context.Context, clientId, redirectUri, challenge, method, resource string) (*oauthResource, error) {
 	if clientId == "" || redirectUri == "" {
-		return "", fmt.Errorf("client_id and redirect_uri are required")
+		return nil, fmt.Errorf("client_id and redirect_uri are required")
 	}
 	if challenge == "" || method != "S256" {
-		return "", fmt.Errorf("PKCE with code_challenge_method=S256 is required")
+		return nil, fmt.Errorf("PKCE with code_challenge_method=S256 is required")
 	}
 	if err := h.validateOAuthRedirect(ctx, clientId, redirectUri); err != nil {
-		return "", err
+		return nil, err
 	}
-	surface := h.server.surfaceForResource(resource)
-	if surface == "" {
-		return "", fmt.Errorf("invalid_target: resource %q is not a canonical resource of this server", resource)
-	}
-	if !apiSurfaceEnabled(h.server.Config(), surface) {
-		return "", fmt.Errorf("invalid_target: the %s surface is not enabled", surface)
-	}
-	return surface, nil
+	return h.server.resolveOAuthResource(resource)
 }
 
 // validateOAuthRedirect checks the redirect uri against the client's
@@ -415,8 +473,8 @@ button{background:#2563eb;color:#fff;border:0;border-radius:4px;padding:.6rem;cu
 .err{color:#b91c1c}.meta{color:#555;font-size:.9rem}.warn{color:#92400e;font-size:.9rem}
 </style></head><body>
 <h2>OpenRun Login</h2>
-<p class="meta">Application <b>{{.ClientName}}</b> is requesting access to the
-<b>{{.Surface}}</b> API with scope <b>{{.Scope}}</b>.</p>
+<p class="meta">Application <b>{{.ClientName}}</b> is requesting access to
+<b>{{.Resource}}</b>{{if .Scope}} with scope <b>{{.Scope}}</b>{{end}}.</p>
 <p class="meta">After approval the access code is sent to <b>{{.RedirectUri}}</b>.</p>
 {{if .DynamicClient}}<p class="warn">This application registered itself dynamically;
 its name is self-reported and not verified. Check that the address above is the
@@ -427,13 +485,55 @@ application you intend to authorize.</p>{{end}}
 (localhost). Any website can publish such a document and claim to be a local application;
 approve only if you started this login from an application you trust.</p>{{end}}
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
-<form method="post" action="{{.Action}}">
+{{range .Federated}}<form method="post" action="{{$.FederatedAction}}">
+{{range $k, $v := $.Params}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
+<input type="hidden" name="mechanism" value="{{.Name}}">
+<button type="submit">Continue with {{.Label}}</button>
+</form>{{end}}
+{{if .PasswordLogin}}<form method="post" action="{{.Action}}">
 {{range $k, $v := .Params}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
 <label>Username</label><input name="or_username" autocomplete="username" autofocus>
 <label>Password</label><input name="or_password" type="password" autocomplete="current-password">
 <label>Granted scope (narrow to limit this token)</label><input name="or_scope" value="{{.Scope}}">
 <button type="submit">Log in and approve</button>
-</form></body></html>`))
+</form>{{end}}
+{{if and (not .PasswordLogin) (not .Federated)}}<p class="err">No login mechanism is configured for this resource.</p>{{end}}
+</body></html>`))
+
+// setOAuthPageHeaders hardens the credential/consent pages: no scripts, no
+// framing, no referrer, never cached. style-src allows the page's own
+// inline style block; there is no injection surface for it
+func setOAuthPageHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+}
+
+// oauthClientDisplay resolves the client's display name and the consent
+// notes for it (document client, loopback-only redirects)
+func (h *Handler) oauthClientDisplay(ctx context.Context, clientId string) (name string, cimdClient, loopbackOnly bool) {
+	name = clientId
+	if isCIMDClientId(clientId) {
+		// Already resolved (and cached) by the redirect validation
+		if doc, err := h.server.resolveCIMD(ctx, clientId); err == nil {
+			return doc.ClientName, true, doc.LoopbackOnly()
+		}
+		return name, true, false
+	}
+	if clientId != oauthCLIClientId {
+		if client, err := h.server.db.GetOAuthClient(ctx, clientId); err == nil && client.Name != "" {
+			name = client.Name
+		}
+	}
+	return name, false, false
+}
+
+type federatedChoice struct {
+	Name  string
+	Label string
+}
 
 // oauthAuthorizeForm renders the login + consent page. The oauth request
 // parameters are echoed as hidden fields; credentials go in the same POST so
@@ -444,7 +544,7 @@ func (h *Handler) oauthAuthorizeForm(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) renderOAuthLogin(w http.ResponseWriter, r *http.Request, get func(string) string, errMsg string) {
 	clientId := get("client_id")
-	surface, err := h.oauthValidateAuthorizeParams(r.Context(), clientId, get("redirect_uri"),
+	res, err := h.oauthValidateAuthorizeParams(r.Context(), clientId, get("redirect_uri"),
 		get("code_challenge"), get("code_challenge_method"), get("resource"))
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -454,50 +554,45 @@ func (h *Handler) renderOAuthLogin(w http.ResponseWriter, r *http.Request, get f
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_response_type", "only response_type=code is supported")
 		return
 	}
-	scope := get("scope")
-	if scope == "" {
-		scope = "*"
-		if surface == ApiResourceMCP {
-			scope = "*:read"
-		}
+	scope := strings.Join(h.server.oauthGrantScopes(res, parseScopeParam(get("scope"))), " ")
+	if _, err := h.server.oauthLoginMechanisms(res); err != nil && errMsg == "" {
+		// No usable login for this resource (app auth none, client certs,
+		// unconfigured surface): say why instead of an empty page
+		errMsg = err.Error()
 	}
-	clientName := clientId
-	cimdClient, loopbackOnly := false, false
-	if isCIMDClientId(clientId) {
-		// Already resolved (and cached) by the redirect validation above
-		if doc, err := h.server.resolveCIMD(r.Context(), clientId); err == nil {
-			clientName, cimdClient, loopbackOnly = doc.ClientName, true, doc.LoopbackOnly()
-		}
-	} else if clientId != oauthCLIClientId {
-		if client, err := h.server.db.GetOAuthClient(r.Context(), clientId); err == nil && client.Name != "" {
-			clientName = client.Name
-		}
+	passwordLogin := h.server.hasPasswordMechanism(res)
+	federated := h.server.federatedMechanisms(res)
+	if errMsg == "" && !passwordLogin && len(federated) == 1 && r.Method == http.MethodGet {
+		// One federated mechanism and nothing to choose: go straight to it
+		h.startFederatedLogin(w, r, get, federated[0])
+		return
 	}
+	choices := make([]federatedChoice, 0, len(federated))
+	for _, mechanism := range federated {
+		choices = append(choices, federatedChoice{Name: mechanism, Label: mechanismLabel(mechanism)})
+	}
+	clientName, cimdClient, loopbackOnly := h.oauthClientDisplay(r.Context(), clientId)
 	params := map[string]string{}
 	for _, name := range []string{"response_type", "client_id", "redirect_uri", "state",
-		"code_challenge", "code_challenge_method", "resource"} {
+		"code_challenge", "code_challenge_method", "resource", "scope"} {
 		params[name] = get(name)
 	}
-	// The page collects credentials: same hardening as the form login page
-	// (no scripts, no framing, no referrer, never cached). style-src allows
-	// the page's own inline style block; there is no injection surface for it
-	w.Header().Set("Content-Security-Policy",
-		"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
-	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	setOAuthPageHeaders(w)
 	_ = oauthLoginTemplate.Execute(w, map[string]any{
-		"ClientName":    clientName,
-		"Surface":       surface,
-		"Scope":         scope,
-		"RedirectUri":   get("redirect_uri"),
-		"ClientId":      clientId,
-		"DynamicClient": clientId != oauthCLIClientId && !cimdClient,
-		"CIMDClient":    cimdClient,
-		"LoopbackOnly":  loopbackOnly,
-		"Error":         errMsg,
-		"Action":        types.INTERNAL_URL_PREFIX + "/oauth/authorize",
-		"Params":        params,
+		"ClientName":      clientName,
+		"Resource":        res.Label(),
+		"Scope":           scope,
+		"RedirectUri":     get("redirect_uri"),
+		"ClientId":        clientId,
+		"DynamicClient":   clientId != oauthCLIClientId && !cimdClient,
+		"CIMDClient":      cimdClient,
+		"LoopbackOnly":    loopbackOnly,
+		"Error":           errMsg,
+		"Action":          types.INTERNAL_URL_PREFIX + "/oauth/authorize",
+		"FederatedAction": types.INTERNAL_URL_PREFIX + "/oauth/authorize/federated",
+		"Federated":       choices,
+		"PasswordLogin":   passwordLogin,
+		"Params":          params,
 	})
 }
 
@@ -509,29 +604,69 @@ func (h *Handler) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	get := r.PostForm.Get
-	surface, err := h.oauthValidateAuthorizeParams(r.Context(), get("client_id"), get("redirect_uri"),
+	res, err := h.oauthValidateAuthorizeParams(r.Context(), get("client_id"), get("redirect_uri"),
 		get("code_challenge"), get("code_challenge_method"), get("resource"))
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	principal, err := h.server.oauthAuthenticateUser(surface, get("or_username"), get("or_password"))
+	if !h.server.hasPasswordMechanism(res) {
+		msg := "password login is not available for this resource"
+		if _, err := h.server.oauthLoginMechanisms(res); err != nil {
+			msg = err.Error()
+		}
+		h.renderOAuthLogin(w, r, get, msg)
+		return
+	}
+	principal, groups, err := h.server.oauthAuthenticateUser(res, get("or_username"), get("or_password"))
 	if err != nil {
 		h.server.insertAuthFailureEvent(r, "oauth_authorize", err.Error())
 		h.renderOAuthLogin(w, r, get, err.Error())
 		return
 	}
-
-	scopes := parseScopeParam(get("or_scope"))
-	if len(scopes) == 0 {
-		scopes = []string{"*"}
-	}
-	if err := rbac.ValidateScopes(scopes); err != nil {
-		h.renderOAuthLogin(w, r, get, err.Error())
+	scopes, errMsg, err := h.validateOAuthConsent(r, res, principal, groups, parseScopeParam(get("or_scope")))
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
+	if errMsg != "" {
+		h.renderOAuthLogin(w, r, get, errMsg)
+		return
+	}
+	h.issueOAuthCode(w, r, res, principal, scopes, get("client_id"), get("redirect_uri"), get("code_challenge"), get("state"))
+}
 
+// validateOAuthConsent applies the consent-time checks: the granted scopes
+// (RBAC scope syntax for surfaces, the app's vocabulary for apps) and, for
+// apps, app:access - a token is minted only for an app the user may open,
+// so a refused grant is visible here rather than as a later opaque 403.
+// Returns the scopes to grant, or a page message for a recoverable problem
+func (h *Handler) validateOAuthConsent(r *http.Request, res *oauthResource, principal string, groups []string,
+	requestedScopes []string) ([]string, string, error) {
+	scopes := h.server.oauthGrantScopes(res, requestedScopes)
+	if res.App == nil {
+		if err := rbac.ValidateScopes(scopes); err != nil {
+			return nil, err.Error(), nil
+		}
+		return scopes, "", nil
+	}
+	authorized, err := h.server.rbacManager.AuthorizeAppAccess(principal,
+		mainAppPathDomain(res.App.AppPathDomain, res.App.MainApp, res.App.LinkedAppPath), groups, res.App.UserID)
+	if err != nil {
+		return nil, "", err
+	}
+	if !authorized {
+		h.server.insertAuthFailureEvent(r, "oauth_authorize", principal+" has no access to "+res.App.String())
+		return nil, fmt.Sprintf("%s does not have access to %s", principal, res.App.AppPathDomain), nil
+	}
+	return scopes, "", nil
+}
+
+// issueOAuthCode stores a single-use code for validated consent and
+// redirects the browser back to the client
+func (h *Handler) issueOAuthCode(w http.ResponseWriter, r *http.Request, res *oauthResource, principal string,
+	scopes []string, clientId, redirectUri, challenge, state string) {
 	codeBytes := make([]byte, 32)
 	if _, err := rand.Read(codeBytes); err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
@@ -539,22 +674,22 @@ func (h *Handler) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	code := hex.EncodeToString(codeBytes)
 	if err := h.server.storeOAuthCode(r.Context(), code, &oauthCode{
-		ClientId:    get("client_id"),
-		RedirectUri: get("redirect_uri"),
-		Challenge:   get("code_challenge"),
+		ClientId:    clientId,
+		RedirectUri: redirectUri,
+		Challenge:   challenge,
 		Principal:   principal,
 		Scopes:      scopes,
-		Resource:    surface,
+		Resource:    res.URI,
 		Expires:     time.Now().Add(oauthCodeTTL),
 	}); err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "error storing authorization code")
 		return
 	}
 
-	redirect, _ := url.Parse(get("redirect_uri"))
+	redirect, _ := url.Parse(redirectUri)
 	query := redirect.Query()
 	query.Set("code", code)
-	if state := get("state"); state != "" {
+	if state != "" {
 		query.Set("state", state)
 	}
 	redirect.RawQuery = query.Encode()
@@ -572,35 +707,94 @@ func parseScopeParam(scope string) []string {
 	return scopes
 }
 
+// oauthLoginMechanisms returns the login mechanisms for a resource: the
+// [api.<surface>] auth list for a surface; for an MCP app, the app's own
+// auth setting (system -> admin, builtin -> builtin, an [auth.*] or
+// [saml.*] name -> that federated login). Apps with auth none or client
+// certs cannot issue tokens (no identity to bind them to)
+func (s *Server) oauthLoginMechanisms(res *oauthResource) ([]string, error) {
+	if res.App == nil {
+		surfaceConfig, _ := s.Config().Api.Surface(res.Surface)
+		if len(surfaceConfig.Auth) == 0 {
+			return nil, fmt.Errorf("api.%s auth is not configured: set the login mechanisms (builtin, admin) for the surface", res.Surface)
+		}
+		return surfaceConfig.Auth, nil
+	}
+	coreAuth, _, err := s.checkAuthModifiers(resolveAppAuth(res.App.Auth, s.Config()))
+	if err != nil {
+		return nil, err
+	}
+	coreAuth = strings.TrimPrefix(coreAuth, rbac.RBAC_AUTH_PREFIX)
+	switch {
+	case coreAuth == string(types.AppAuthnSystem):
+		return []string{"admin"}, nil
+	case coreAuth == string(types.AppAuthnBuiltin):
+		return []string{"builtin"}, nil
+	case coreAuth == string(types.AppAuthnNone):
+		return nil, fmt.Errorf("app %s has auth none: set an auth type on the app so MCP tokens can be bound to a user", res.App.AppPathDomain)
+	case coreAuth == "cert" || strings.HasPrefix(coreAuth, "cert_"):
+		return nil, fmt.Errorf("app %s uses client certificate auth, which cannot be used for the OAuth login page", res.App.AppPathDomain)
+	}
+	return []string{coreAuth}, nil
+}
+
 // oauthAuthenticateUser verifies the posted credentials against the login
-// mechanisms configured for the surface ([api.<surface>] auth), returning
-// the principal (provider:username or admin)
-func (s *Server) oauthAuthenticateUser(surface, username, password string) (string, error) {
-	surfaceConfig, _ := s.Config().Api.Surface(surface)
-	mechanisms := surfaceConfig.Auth
-	if len(mechanisms) == 0 {
-		return "", fmt.Errorf("api.%s auth is not configured: set the login mechanisms (builtin, admin) for the surface", surface)
+// mechanisms of the resource, returning the principal (provider:username
+// or admin) and its groups
+func (s *Server) oauthAuthenticateUser(res *oauthResource, username, password string) (string, []string, error) {
+	mechanisms, err := s.oauthLoginMechanisms(res)
+	if err != nil {
+		return "", nil, err
 	}
 	if username == "" || password == "" {
-		return "", fmt.Errorf("username and password are required")
+		return "", nil, fmt.Errorf("username and password are required")
 	}
 	basicHeader := "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
 	for _, mechanism := range mechanisms {
 		switch mechanism {
 		case "builtin":
-			if principal, _, ok := s.builtinAuth.authenticate(basicHeader); ok {
-				return principal, nil
+			if principal, groups, ok := s.builtinAuth.authenticate(basicHeader); ok {
+				return principal, groups, nil
 			}
 		case "admin":
 			if username == s.Config().AdminUser && s.authHandler.authenticate(basicHeader) {
-				return types.ADMIN_USER, nil
+				return types.ADMIN_USER, []string{}, nil
 			}
 		default:
-			// [auth.*]/[saml.*] federated login step is a follow-on
-			s.Warn().Msgf("api.%s auth mechanism %q is not supported yet for the OAuth login page", surface, mechanism)
+			// federated mechanisms are handled by the chooser
+			// (oauth_federated.go), never by the password form
 		}
 	}
-	return "", fmt.Errorf("invalid username or password")
+	return "", nil, fmt.Errorf("invalid username or password")
+}
+
+// oauthGrantScopes computes the scopes to grant for a resource from the
+// requested list. Surfaces: the request, defaulting to * (CLI) or the
+// read-only set mcpDefaultScopes (MCP surface). Apps: the intersection with the app's declared scopes
+// (unknown scopes are dropped, the spec allows down-scoping), defaulting
+// to the app's default scope; an app without declared scopes issues
+// unscoped tokens
+func (s *Server) oauthGrantScopes(res *oauthResource, requested []string) []string {
+	if res.App == nil {
+		if len(requested) > 0 {
+			return requested
+		}
+		if res.Surface == ApiResourceMCP {
+			return slices.Clone(mcpDefaultScopes)
+		}
+		return []string{"*"}
+	}
+	mcp := res.App.MCP
+	granted := make([]string, 0, len(requested))
+	for _, scope := range requested {
+		if slices.Contains(mcp.Scopes, scope) && !slices.Contains(granted, scope) {
+			granted = append(granted, scope)
+		}
+	}
+	if len(granted) == 0 && mcp.DefaultScope != "" {
+		granted = append(granted, mcp.DefaultScope)
+	}
+	return granted
 }
 
 // oauthToken handles the token endpoint: authorization_code exchange and
@@ -816,9 +1010,8 @@ func (h *Handler) oauthTokenRefresh(w http.ResponseWriter, r *http.Request) {
 	if len(cred.Resources) > 0 {
 		surface = cred.Resources[0]
 	}
-	if !apiSurfaceEnabled(h.server.Config(), surface) {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant",
-			fmt.Sprintf("the %s surface is no longer enabled", surface))
+	if _, err := h.server.oauthStoredResource(surface); err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
 		return
 	}
 

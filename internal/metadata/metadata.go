@@ -27,7 +27,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 28
+const CURRENT_DB_VERSION = 29
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -791,6 +791,26 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 	}
 
+	if version < 29 {
+		m.Info().Msg("Upgrading to version 29")
+		// Federated identities carry the verified email from the login so
+		// bearer-authenticated (MCP) requests get the same identity headers
+		// as browser sessions. Idempotent: a database created at this
+		// version and re-upgraded (tests reset the version) already has it
+		exists, err := m.columnExists(ctx, "identities", "email")
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := tx.ExecContext(ctx, `alter table identities add column email text`); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `update version set version=29, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -1213,6 +1233,7 @@ func (m *Metadata) GetAllAppsContext(ctx context.Context, includeInternal bool) 
 			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"]), *updateTime, retainVersions,
 			metadata.AppliedSyncId, userId.String)
 		appInfo.CreatedBySyncId = metadata.CreatedBySyncId
+		appInfo.MCP = metadata.MCP
 		apps = append(apps, appInfo)
 	}
 	if err := rows.Err(); err != nil {
@@ -1708,6 +1729,23 @@ func (m *Metadata) GetConfig() (*types.DynamicConfig, error) {
 	}
 
 	return &config, nil
+}
+
+// columnExists reports whether a table has a column, for idempotent
+// additive migrations. Reads outside the upgrade transaction (a failed
+// statement would abort a PostgreSQL transaction)
+func (m *Metadata) columnExists(ctx context.Context, table, column string) (bool, error) {
+	var query string
+	if m.dbType == system.DB_TYPE_POSTGRES {
+		query = `select count(*) from information_schema.columns where table_name = $1 and column_name = $2`
+	} else {
+		query = `select count(*) from pragma_table_info(?) where name = ?`
+	}
+	var count int
+	if err := m.db.QueryRowContext(ctx, query, table, column).Scan(&count); err != nil {
+		return false, fmt.Errorf("error checking column %s.%s: %w", table, column, err)
+	}
+	return count > 0, nil
 }
 
 func (m *Metadata) FetchKV(ctx context.Context, key string) (map[string]any, error) {

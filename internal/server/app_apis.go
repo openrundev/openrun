@@ -264,6 +264,13 @@ func (s *Server) newCreateAppEntry(ctx context.Context, appPath string, appReque
 		return nil, err
 	}
 	appEntry.Metadata.AppConfig = appRequest.AppConfig
+	appEntry.Metadata.MCP, err = s.parseAppMCPConfig(appRequest.MCP)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateAppMCPResource(appEntry.Path, appEntry.Domain, appEntry.Metadata.MCP); err != nil {
+		return nil, err
+	}
 	// Set when the create is driven by a sync entry, empty for imperative creates.
 	// CreatedBySyncId is stamped only here (never on update): a prune-enabled
 	// sync deletes only the apps it created, not pre-existing apps it adopted
@@ -271,6 +278,33 @@ func (s *Server) newCreateAppEntry(ctx context.Context, appPath string, appReque
 	appEntry.Metadata.CreatedBySyncId = appEntry.Metadata.AppliedSyncId
 	appEntry.UserID = system.GetContextUserId(ctx)
 	return &appEntry, nil
+}
+
+// parseAppMCPConfig parses an mcp document (any ParseMCPValue form; "" and
+// "-" mean not an MCP app). An MCP app needs the OAuth issuer origin
+// (api.external_url / security.callback_url): the protected resource
+// metadata must name the authorization server
+func (s *Server) parseAppMCPConfig(value string) (*types.MCPConfig, error) {
+	if value == "" || value == "-" {
+		return nil, nil
+	}
+	doc, err := types.ParseMCPValue(value)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	if doc == "" {
+		return nil, nil
+	}
+	config, err := types.ParseMCPConfig(doc)
+	if err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+	}
+	if s.apiExternalUrl() == "" {
+		return nil, types.CreateRequestError(
+			"mcp apps need the OAuth issuer origin: set api.external_url (or security.callback_url) to the server's https origin",
+			http.StatusBadRequest)
+	}
+	return config, nil
 }
 
 func (s *Server) validateAppAuthnType(authStr string) error {
@@ -947,6 +981,17 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	}
 	coreAuth = appAuthStr
 	appAuth = types.AppAuthnType(coreAuth)
+
+	// The region check runs on the cleaned path: routing resolves dot
+	// segments and doubled slashes (chi CleanPath), so "//mcp" or
+	// "/ui/../mcp" reach the same handler as "/mcp" and must get the same
+	// authentication
+	if mcp := app.Metadata.MCP; mcp != nil && inMCPRegion(path.Clean(r.URL.Path), appMCPRegion(app.Path, mcp)) {
+		// The MCP region accepts only OpenRun bearer credentials bound to
+		// this app: no cookies, no basic auth, no login redirects
+		s.serveMCPApp(w, r, app, mcp)
+		return
+	}
 
 	userId := ""
 	userSubject := ""

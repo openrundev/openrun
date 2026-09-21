@@ -545,7 +545,8 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Only a newly verified IdP login refreshes durable groups; reading an old
 	// browser session must not extend the snapshot's freshness.
-	if err := observeFederatedIdentity(r.Context(), s.db, providerName, user.UserID, userId, groups); err != nil {
+	verifiedEmail, _ := stateMap[USER_EMAIL_KEY].(string) // set above only when the IdP did not mark it unverified
+	if err := observeFederatedIdentity(r.Context(), s.db, providerName, user.UserID, userId, verifiedEmail, groups); err != nil {
 		s.Error().Err(err).Msg("error recording authenticated identity")
 		http.Error(w, "error recording authenticated identity", http.StatusInternalServerError)
 		return

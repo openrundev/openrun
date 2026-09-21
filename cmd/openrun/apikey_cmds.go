@@ -22,8 +22,9 @@ import (
 
 func initApiKeyCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	return &cli.Command{
-		Name:  "apikey",
-		Usage: "Manage API keys for remote CLI and MCP access",
+		Name:    "api-key",
+		Aliases: []string{"apikey"},
+		Usage:   "Manage API keys for remote CLI and MCP access",
 		Subcommands: []*cli.Command{
 			apiKeyCreateCommand(commonFlags, clientConfig),
 			apiKeyListCommand(commonFlags, clientConfig),
@@ -42,8 +43,8 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			" Default is the server's pat_default_ttl (90 days)", ""),
 		newStringFlag("scopes", "s", "Comma separated permission globs limiting the key (like app:*,sync:read)."+
 			" RBAC still applies; scopes are a ceiling. Default: unscoped, except mcp-only keys which"+
-			" default to *:read (pass --scopes \"*\" for a write-capable MCP key)", ""),
-		newStringFlag("resource", "r", "API surface the key is valid for: rest, mcp or all", "rest"),
+			" default to read-only: *:read plus app:read_detail (pass --scopes \"*\" for a write-capable MCP key)", ""),
+		newStringFlag("resource", "r", "What the key is valid for: rest, mcp, all, or an MCP app (app:<path>, app:<domain>:<path>, or the app's https MCP url)", "rest"),
 		newStringFlag("desc", "d", "Description for the key", ""),
 	)
 
@@ -113,7 +114,12 @@ func parseApiKeyResource(resource string) ([]string, error) {
 	case "all":
 		return []string{"rest", "mcp"}, nil
 	default:
-		return nil, fmt.Errorf("invalid resource %q: valid values are rest, mcp and all", resource)
+		if strings.HasPrefix(resource, "app:") || strings.HasPrefix(resource, "https://") {
+			// An MCP app: app:<path>, app:<domain>:<path> or the app's MCP
+			// url; resolved and validated by the server
+			return []string{resource}, nil
+		}
+		return nil, fmt.Errorf("invalid resource %q: valid values are rest, mcp, all, app:<path>, app:<domain>:<path> or an app's https MCP url", resource)
 	}
 }
 

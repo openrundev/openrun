@@ -334,6 +334,10 @@ type ContextShared struct {
 	Operation string
 	Target    string
 	DryRun    bool
+	// MCP app requests: the JSON-RPC method and tool/resource name, so the
+	// http audit event records the MCP operation (see mcp_app.go)
+	MCPMethod string
+	MCPName   string
 }
 
 func updateTargetInContext(r *http.Request, target string, dryRun bool) {
@@ -432,16 +436,25 @@ func (server *Server) handleStatus(defaultUser string) func(http.Handler) http.H
 			}
 			statusCode := wrapper.Status()
 
+			operation := r.Method
+			detail := fmt.Sprintf("%s %s %s %d %d", r.Method, r.Host, path, statusCode, duration.Milliseconds())
+			if contextShared.MCPMethod != "" {
+				// MCP app call: "what did this agent call" is one query
+				operation = "mcp_" + contextShared.MCPMethod
+				if contextShared.MCPName != "" {
+					detail += " tool=" + contextShared.MCPName
+				}
+			}
 			event := types.AuditEvent{
 				RequestId:  rid,
 				CreateTime: time.Now(),
 				UserId:     contextShared.UserId,
 				AppId:      types.AppId(contextShared.AppId),
 				EventType:  types.EventTypeHTTP,
-				Operation:  r.Method,
+				Operation:  operation,
 				Target:     r.Host + ":" + path,
 				Status:     fmt.Sprintf("%d", statusCode),
-				Detail:     fmt.Sprintf("%s %s %s %d %d", r.Method, r.Host, path, statusCode, duration.Milliseconds()),
+				Detail:     detail,
 			}
 
 			if err := server.InsertAuditEvent(&event); err != nil {

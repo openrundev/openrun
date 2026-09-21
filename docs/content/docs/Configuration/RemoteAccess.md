@@ -79,9 +79,11 @@ openrun app list
 
 ## Connect an MCP Client
 
+This section covers OpenRun's own management MCP endpoint. To expose an MCP server you deploy as an app with the same OAuth flow, see [MCP Apps]({{< ref "docs/applications/mcp" >}}).
+
 The MCP endpoint is `https://<external_url host>/_openrun/mcp`. There are two ways to authenticate:
 
-**OAuth (browser login)** — for clients that support MCP OAuth, like Claude Code, add the server and the client discovers the OpenRun authorization server, identifies itself, and opens a browser login (against the mechanisms in `[api.mcp] auth`). The consent page defaults MCP sessions to **read-only** scopes; choosing broader scopes at consent is an explicit act.
+**OAuth (browser login)** — for clients that support MCP OAuth, like Claude Code, add the server and the client discovers the OpenRun authorization server, identifies itself, and opens a browser login (against the mechanisms in `[api.mcp] auth`: `admin`, `builtin`, the name of an `[auth.*]` OAuth/OIDC provider, or `saml_<name>` for a `[saml.*]` provider; with several mechanisms the login page offers a choice, with a single federated one it goes straight to that provider). The consent page defaults MCP sessions to **read-only** scopes (`*:read` plus `app:read_detail`, so the client can inspect apps, versions, files and logs but change nothing); choosing broader scopes at consent is an explicit act.
 
 Clients identify themselves in one of three ways, in the order the MCP spec recommends: a pre-registered client id (the OpenRun CLI uses `openrun-cli`), a **Client ID Metadata Document** (the client id is an `https` URL serving a JSON document with the client's name and redirect URIs; OpenRun fetches and validates it on demand and caches it per its `Cache-Control` headers), or **Dynamic Client Registration** (`/_openrun/oauth/register`), which the MCP spec has deprecated but OpenRun keeps for older clients. Metadata document clients are accepted from any domain by default; `api.cimd_allowed_domains` and `api.cimd_denied_domains` restrict them, and documents on private or loopback addresses are refused unless `api.cimd_allow_private_hosts` is set (development only). Document fetches always connect directly and ignore `HTTPS_PROXY`, so the address check applies to the document host itself. Only public clients (`token_endpoint_auth_method` absent or `none`) are supported. The consent page names the document URL and warns when a client only redirects to `localhost`, since any website can publish such a document.
 
@@ -97,7 +99,7 @@ claude mcp add --transport http openrun https://openrun.example.com:25223/_openr
   --header "Authorization: Bearer orun_pat_..."
 ```
 
-An MCP-only key with no explicit `--scopes` defaults to **`*:read`** — the AI client can inspect everything its user can read, but cannot change anything. Mint a write-capable key deliberately with `--scopes "*"`. A key bound to `mcp` is rejected at the REST surface and vice versa (`--resource all` for a key valid on both).
+An MCP-only key with no explicit `--scopes` defaults to **`*:read app:read_detail`** — the AI client can inspect everything its user can read, including app details, versions, files and logs, but cannot change anything. Mint a write-capable key deliberately with `--scopes "*"`. A key bound to `mcp` is rejected at the REST surface and vice versa (`--resource all` for a key valid on both).
 
 Destructive tools (delete, promote, version switch, ...) support `dry_run`, and for clients that support elicitation the server runs a dry-run preview and asks for confirmation before applying the change. `[api.mcp] skip_destructive_confirm = true` disables the confirmation flow for headless automation.
 
@@ -156,7 +158,7 @@ Note on secrets: `secret_create` **is** enabled for MCP by default, which means 
 | RBAC | Always on; default grant gives every principal `app:access` + `app:read` |
 | API key expiry (`api.pat_default_ttl`) | 90 days; `--expires=never` must be explicit |
 | API key resource (`--resource`) | `rest` |
-| MCP-only key scopes | `*:read` (read-only) unless `--scopes` given |
+| MCP-only key scopes | `*:read app:read_detail` (read-only) unless `--scopes` given |
 | OAuth access token (`api.access_token_ttl`) | 1 hour |
 | OAuth refresh token (`api.refresh_token_ttl`) | 30 days per rotation |
 | Absolute login lifetime (`api.grant_max_ttl`) | 90 days, then log in again |

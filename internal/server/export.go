@@ -39,6 +39,7 @@ var appExportFields = map[string]bool{
 	"jobs":              true,
 	"appconfig":         true,
 	"bindings":          true,
+	"mcp":               true,
 	"stage_at":          true,
 	"verify":            true,
 }
@@ -334,6 +335,9 @@ func (s *Server) exportApp(ctx context.Context, tx types.Transaction, appEntry *
 		ContainerVolumes: metadata.ContainerVolumes,
 		Sidecars:         metadata.Sidecars,
 		Jobs:             metadata.Jobs,
+	}
+	if metadata.MCP != nil {
+		req.MCP = metadata.MCP.Canonical()
 	}
 
 	// The deprecated AppSettings auth fields are migrated into AppMetadata on

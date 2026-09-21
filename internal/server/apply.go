@@ -22,6 +22,7 @@ import (
 	apppkg "github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/metadata"
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
@@ -168,6 +169,10 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 	if err != nil {
 		return nil, err
 	}
+	mcp, err := mcpEntry(appDef)
+	if err != nil {
+		return nil, err
+	}
 	paramStr, err := convertToMapString(params, false)
 	if err != nil {
 		return nil, err
@@ -202,9 +207,51 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 		Sidecars:         sidecars,
 		Jobs:             jobs,
 		Bindings:         bindings,
+		MCP:              mcp,
 		StageAt:          stageAt,
 		Verify:           verify,
 	}, nil
+}
+
+// mcpEntry reads the app entry's mcp attribute: True (the whole app is the
+// MCP endpoint), a string (upstream path or JSON document) or a dict with
+// the MCPConfig fields, normalized to the canonical JSON document. "" when
+// unset or False
+func mcpEntry(appDef *starlarkstruct.Struct) (string, error) {
+	v, err := appDef.Attr("mcp")
+	if err != nil || v == nil || v == starlark.None {
+		return "", nil
+	}
+	var value string
+	switch item := v.(type) {
+	case starlark.Bool:
+		if !bool(item) {
+			return "", nil
+		}
+		value = "true"
+	case starlark.String:
+		value = item.GoString()
+		if value == "" {
+			return "", nil
+		}
+	case *starlark.Dict:
+		goValue, err := starlark_type.ToGo(item)
+		if err != nil {
+			return "", fmt.Errorf("mcp: %w", err)
+		}
+		data, err := json.Marshal(goValue)
+		if err != nil {
+			return "", fmt.Errorf("mcp: %w", err)
+		}
+		value = string(data)
+	default:
+		return "", fmt.Errorf("mcp must be True, a path/JSON string or a dict, got %s", v.Type())
+	}
+	doc, err := types.ParseMCPValue(value)
+	if err != nil {
+		return "", err
+	}
+	return doc, nil
 }
 
 // sidecarEntries reads the app entry's sidecars: JSON strings, dicts with
@@ -778,6 +825,24 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		liveApp.Metadata.GitAuthName = newInfo.GitAuthName
 	}
 
+	liveMCP := ""
+	if liveApp.Metadata.MCP != nil {
+		liveMCP = liveApp.Metadata.MCP.Canonical()
+	}
+	mcpChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
+		return info.MCP
+	}, newInfo.MCP, liveMCP, clobber)
+	if mcpChanged {
+		mcpConfig, err := s.parseAppMCPConfig(newInfo.MCP)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.validateAppMCPResource(liveApp.Path, liveApp.Domain, mcpConfig); err != nil {
+			return nil, err
+		}
+		liveApp.Metadata.MCP = mcpConfig
+	}
+
 	specChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
 		return info.Spec
 	}, newInfo.Spec, liveApp.Metadata.Spec, clobber)
@@ -873,7 +938,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	var approvalResult *types.ApproveResult
 
 	updated := specChanged || gitBranchChanged || gitCommitChanged || paramsChanged ||
-		contConfigChanged || contArgsChanged || contVolsChanged || sidecarsChanged || jobsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged
+		contConfigChanged || contArgsChanged || contVolsChanged || sidecarsChanged || jobsChanged || appConfigChanged || authChanged || gitAuthChanged || bindingsChanged || mcpChanged
 	updatedApps := make([]types.AppPathDomain, 0)
 	if updated {
 		liveApp.Metadata.VersionMetadata.ApplyInfo, err = json.Marshal(newInfo)
@@ -1466,12 +1531,13 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 		var sidecars = &starlark.List{}
 		var jobs = &starlark.List{}
 		var bindings = &starlark.List{}
+		var mcp starlark.Value = starlark.None
 
 		if err := starlark.UnpackArgs(APP, args, kwargs, "path", &path, "source", &source, "dev?", &dev,
 			"auth?", &auth, "git_auth?", &gitAuth, "git_branch?", &gitBranch, "git_commit?", &gitCommit,
 			"params?", &params, "spec?", &appSpec, "stage_at?", &stageAt, "app_config", &appConfig,
 			"container_opts?", &containerOpts, "container_args?", &containerArgs, "container_vols?", &containerVols,
-			"sidecars?", &sidecars, "bindings?", &bindings, "verify?", &verify, "jobs?", &jobs,
+			"sidecars?", &sidecars, "bindings?", &bindings, "verify?", &verify, "jobs?", &jobs, "mcp?", &mcp,
 		); err != nil {
 			return nil, err
 		}
@@ -1495,6 +1561,7 @@ func (s *Server) builtinsForApply(applyDev bool) (*applyBuiltins, error) {
 			"jobs":           jobs,
 			"bindings":       bindings,
 			"verify":         verify,
+			"mcp":            mcp,
 		}
 
 		appStruct := starlarkstruct.FromStringDict(starlark.String(APP), fields)

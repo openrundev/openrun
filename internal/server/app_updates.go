@@ -946,6 +946,21 @@ func (s *Server) updateAppMetadataConfig(ctx context.Context, tx types.Transacti
 	case types.AppMetadataGitAuthName:
 		appEntry.Metadata.GitAuthName = string(value)
 		return nil
+	case types.AppMetadataMCP:
+		if len(configEntries) > 1 {
+			return fmt.Errorf("expected only one value for %s, got %d", configType, len(configEntries))
+		}
+		// "-" clears; otherwise any ParseMCPValue form (true, /path, JSON); the
+		// CLI expands @file before sending
+		mcpConfig, err := s.parseAppMCPConfig(value)
+		if err != nil {
+			return err
+		}
+		if err := s.validateAppMCPResource(appEntry.Path, appEntry.Domain, mcpConfig); err != nil {
+			return err
+		}
+		appEntry.Metadata.MCP = mcpConfig
+		return nil
 	}
 
 	for _, entry := range configEntries {

@@ -137,7 +137,15 @@ type DeployRequest struct {
 	VersionHash      string
 	IsImageSpec      bool
 	HealthProbe      *HealthProbe
-	Verify           bool
+	// VerifyVersion, when set, is an OpenRun-side check a native probe
+	// cannot express (an MCP JSON-RPC request), given the address the new
+	// version is reachable at. Blue-green: it runs BEFORE the traffic switch,
+	// through a temporary per-version Service, and a failure removes the
+	// dark version exactly like a readiness failure. In-place (PVC-backed):
+	// it runs after the rollout, and a failure restores the pre-update
+	// snapshot
+	VerifyVersion func(ctx context.Context, hostNamePort string) error
+	Verify        bool
 	// Prepare marks a deploy run before the operation's metadata transaction
 	// (the deploy pre-pass). Stateless (blue-green) apps: the new version is
 	// deployed and made ready, and registered on the deploy transaction for
@@ -962,23 +970,27 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 		if scheme == "" {
 			scheme = core.URISchemeHTTP
 		}
-		newHTTPGet := func() *corev1apply.HTTPGetActionApplyConfiguration {
-			return corev1apply.HTTPGetAction().
-				WithPath(healthProbe.Path).
-				WithPort(intstr.FromInt(int(healthProbe.Port))).
-				WithScheme(scheme)
+		newProbe := func(failureThreshold int32) *corev1apply.ProbeApplyConfiguration {
+			probe := corev1apply.Probe()
+			if healthProbe.TCP {
+				// MCP apps: the endpoint does not answer GET, a native probe
+				// cannot POST, so readiness is a TCP connect on the port
+				probe = probe.WithTCPSocket(corev1apply.TCPSocketAction().
+					WithPort(intstr.FromInt(int(healthProbe.Port))))
+			} else {
+				probe = probe.WithHTTPGet(corev1apply.HTTPGetAction().
+					WithPath(healthProbe.Path).
+					WithPort(intstr.FromInt(int(healthProbe.Port))).
+					WithScheme(scheme))
+			}
+			return probe.
+				WithPeriodSeconds(healthProbe.PeriodSecs).
+				WithTimeoutSeconds(healthProbe.TimeoutSecs).
+				WithFailureThreshold(failureThreshold)
 		}
 		containerConfig = containerConfig.
-			WithReadinessProbe(corev1apply.Probe().
-				WithHTTPGet(newHTTPGet()).
-				WithPeriodSeconds(healthProbe.PeriodSecs).
-				WithTimeoutSeconds(healthProbe.TimeoutSecs).
-				WithFailureThreshold(healthProbe.FailureThreshold)).
-			WithStartupProbe(corev1apply.Probe().
-				WithHTTPGet(newHTTPGet()).
-				WithPeriodSeconds(healthProbe.PeriodSecs).
-				WithTimeoutSeconds(healthProbe.TimeoutSecs).
-				WithFailureThreshold(healthProbe.StartupFailures))
+			WithReadinessProbe(newProbe(healthProbe.FailureThreshold)).
+			WithStartupProbe(newProbe(healthProbe.StartupFailures))
 	}
 
 	if len(volumeMounts) > 0 {
@@ -1221,6 +1233,62 @@ func (k *KubernetesCM) applyService(ctx context.Context, serviceName string, sel
 	return k.serviceHostNamePort(svc), nil
 }
 
+// verifyDarkVersion runs req.VerifyVersion against a blue-green version that
+// is Ready but off-traffic: a temporary Service (same type as the stable
+// one, so it is reachable the same way) selecting only that version's pods
+// is created, the check runs against its address, and the Service is
+// deleted. The stable Service is untouched throughout
+func (k *KubernetesCM) verifyDarkVersion(ctx context.Context, req DeployRequest) error {
+	n := sanitizeContainerName(string(req.ContainerName))
+	name := verifyServiceName(n, req.VersionHash)
+	serviceType := core.ServiceTypeClusterIP
+	if k.config.Kubernetes.UseNodePort {
+		serviceType = core.ServiceTypeNodePort
+	}
+	svc := &core.Service{
+		ObjectMeta: meta.ObjectMeta{Name: name, Namespace: k.appNamespace,
+			Labels: map[string]string{"app": n, VERSION_HASH_LABEL: TrimLabelValue(req.VersionHash), "openrun.dev/verify": "true"}},
+		Spec: core.ServiceSpec{
+			Type:     serviceType,
+			Selector: versionSelector(n, req.VersionHash),
+			Ports: []core.ServicePort{{Name: "http", Port: req.Port,
+				TargetPort: intstr.FromInt(int(req.Port)), Protocol: core.ProtocolTCP}},
+		},
+	}
+	// A leftover from an interrupted earlier verification is replaced
+	_ = k.clientSet.CoreV1().Services(k.appNamespace).Delete(ctx, name, meta.DeleteOptions{})
+	created, err := k.clientSet.CoreV1().Services(k.appNamespace).Create(ctx, svc, meta.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("create verification service %s: %w", name, err)
+	}
+	defer func() {
+		// Best effort with a fresh context: the deploy context may be done
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := k.clientSet.CoreV1().Services(k.appNamespace).Delete(cleanupCtx, name, meta.DeleteOptions{}); err != nil &&
+			!apierrors.IsNotFound(err) {
+			k.Warn().Err(err).Msgf("error deleting verification service %s", name)
+		}
+	}()
+	if len(created.Spec.Ports) == 0 {
+		return fmt.Errorf("verification service %s has no ports", name)
+	}
+	hostNamePort := k.serviceHostNamePort(created)
+	k.waitForNodePortConnectivity(ctx, hostNamePort)
+	return req.VerifyVersion(ctx, hostNamePort)
+}
+
+// verifyServiceName names the temporary per-version verification Service,
+// kept within the 63-character label/name limit
+func verifyServiceName(serviceName, versionHash string) string {
+	const suffix = "-vrfy"
+	base := workloadName(serviceName, versionHash, false)
+	if len(base)+len(suffix) > 63 {
+		base = base[:63-len(suffix)]
+	}
+	return base + suffix
+}
+
 // serviceHostNamePort returns the address callers use to reach the Service: the
 // host NodePort in NodePort mode, otherwise the in-cluster DNS name. The Service
 // must have at least one port.
@@ -1312,6 +1380,21 @@ func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest, p
 			return DeployResult{}, fmt.Errorf("new version did not become healthy: %w. Logs\n %s", err, logs)
 		}
 		return DeployResult{}, fmt.Errorf("new version did not become healthy: %w", err)
+	}
+
+	if req.VerifyVersion != nil {
+		// The new version is dark: reach it through a temporary Service
+		// selecting its pods so the check runs before any traffic moves
+		if err := k.verifyDarkVersion(ctx, req); err != nil {
+			if rmErr := k.RemoveVersion(ctx, serviceName, req.VersionHash); rmErr != nil {
+				k.Error().Err(rmErr).Msgf("failed to remove unverified new version for app %s", appID)
+			}
+			if req.ShowLogsForFailure {
+				logs, _ := k.getContainerLogs(ctx, serviceName, req.LogLinesToShow, req.VersionHash)
+				return DeployResult{}, fmt.Errorf("new version failed verification: %w. Logs\n %s", err, logs)
+			}
+			return DeployResult{}, fmt.Errorf("new version failed verification: %w", err)
+		}
 	}
 
 	activeName := workloadName(sanitizeContainerName(string(serviceName)), req.VersionHash, false)
@@ -1510,6 +1593,13 @@ func (k *KubernetesCM) rollOutInPlace(ctx context.Context, req DeployRequest, sn
 		return DeployResult{}, fail(fmt.Errorf("error waiting for health: %w", err))
 	}
 	k.waitForNodePortConnectivity(ctx, hostNamePort)
+	if req.VerifyVersion != nil {
+		// In-place: the rollout already serves traffic; a failure restores
+		// the pre-update snapshot through fail()
+		if err := req.VerifyVersion(ctx, hostNamePort); err != nil {
+			return DeployResult{}, fail(fmt.Errorf("version %s failed verification after rollout: %w", req.VersionHash, err))
+		}
+	}
 
 	return DeployResult{
 		ContainerName: req.ContainerName,

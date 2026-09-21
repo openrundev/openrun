@@ -7,6 +7,14 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- MCP apps: `openrun app create --mcp` (also `--mcp=/upstream-path`, `--mcp='{...}'`, `app update mcp`, and `mcp=` in apply files) marks a deployed app as an MCP server whose endpoint OpenRun protects with OAuth 2.1. OpenRun serves the protected resource metadata, issues tokens bound to the app after a login and consent using the app's `auth`, enforces RBAC `app:access` and optional app-declared scopes with per-tool requirements, strips the token and forwards the identity headers (plus `X-Openrun-Scopes` / `X-Openrun-Client-Id`). API keys can be bound to an app with `openrun apikey create --resource app:<path>`. MCP apps get a JSON-RPC health probe (TCP probes on Kubernetes) and stage/preview apps accept MCP POSTs.
+- The default read-only scope set for the MCP surface (consent default and MCP-only API keys) is `*:read app:read_detail`, so agents can read app details, versions, files and logs without a write-capable grant.
+- The management REST resource identifier is `<external_url>/_openrun/rest` (was `<external_url>/rest`), with its metadata document at `/.well-known/oauth-protected-resource/_openrun/rest`, alongside `/_openrun/mcp`; the flat `/rest` and `/mcp` well-known paths now belong only to MCP apps deployed at those paths.
+- The OAuth login page (MCP clients, `openrun login`) supports federated login: `[api.rest]`/`[api.mcp] auth` and an MCP app's `auth` may name an `[auth.*]` OAuth/OIDC provider or a `[saml.*]` provider, and the page sends the user through that provider before consent.
+- The OAuth authorization server accepts Client ID Metadata Documents (https client ids), with `api.cimd_allowed_domains`, `api.cimd_denied_domains` and `api.cimd_allow_private_hosts`; dynamic client registration remains as the fallback. Pending authorization codes are stored in the metadata database so multi-node deployments work.
+
 ## [v0.19.4] - 2026-09-08
 
 ### Added

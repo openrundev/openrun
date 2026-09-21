@@ -122,6 +122,9 @@ func formatApp(req *types.CreateAppRequest) (string, []string) {
 	if len(req.Bindings) > 0 {
 		args = append(args, strArg("bindings="+formatStringList(req.Bindings)))
 	}
+	if req.MCP != "" {
+		args = append(args, strArg("mcp="+formatMCPArg(req.MCP)))
+	}
 	if req.Verify {
 		args = append(args, strArg("verify=True"))
 	}
@@ -428,4 +431,23 @@ func sortedMapKeys(m map[string]string) []string {
 // compatible with starlark's double quoted strings
 func quoteStarlark(s string) string {
 	return strconv.Quote(s)
+}
+
+// formatMCPArg renders the stored mcp JSON document in the shortest apply
+// form that round-trips through ParseMCPArg: True for the bare default,
+// the upstream path string when that is the only setting, else the JSON
+// document as a string
+func formatMCPArg(doc string) string {
+	config, err := types.ParseMCPConfig(doc)
+	if err != nil {
+		return quoteStarlark(doc)
+	}
+	if config.Path == "/" && len(config.Scopes) == 0 && config.DefaultScope == "" &&
+		len(config.Tools) == 0 && len(config.AllowedOrigins) == 0 {
+		if config.ContainerPath == "" {
+			return "True"
+		}
+		return quoteStarlark(config.ContainerPath)
+	}
+	return quoteStarlark(config.Canonical())
 }

@@ -169,8 +169,17 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 			}
 		}
 		router.Get("/.well-known/oauth-authorization-server", wellKnownGate(handler.serveOAuthASMetadata))
-		router.Get("/.well-known/oauth-protected-resource/rest", wellKnownGate(handler.serveOAuthPRM(ApiResourceRest)))
-		router.Get("/.well-known/oauth-protected-resource/mcp", wellKnownGate(handler.serveOAuthPRM(ApiResourceMCP)))
+		// The surface documents live at the /_openrun-prefixed paths, the
+		// path-inserted form of their resource URIs (<external>/_openrun/rest
+		// and <external>/_openrun/mcp); no app can own /_openrun, so they
+		// never collide with an app's document
+		router.Get(mcpPRMPrefix+types.INTERNAL_URL_PREFIX+"/rest", wellKnownGate(handler.serveOAuthPRM(ApiResourceRest)))
+		router.Get(mcpPRMPrefix+types.INTERNAL_URL_PREFIX+"/mcp", wellKnownGate(handler.serveOAuthPRM(ApiResourceMCP)))
+		// MCP apps: path-inserted documents for /<app path><region path> on
+		// any app domain, and the root document for an app at /. Transport
+		// gate inside the handler (https, or plaintext on loopback for dev)
+		router.Get(mcpPRMPrefix, handler.serveAppPRM)
+		router.Get(mcpPRMPrefix+"/*", handler.serveAppPRM)
 	}
 
 	// Webhooks are always mounted, they are disabled at the app level by default
@@ -1984,7 +1993,7 @@ func (h *Handler) serveRemoteInternal() http.Handler {
 			// credentials the other paths require. Mounted while any
 			// surface is enabled
 			if !apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) &&
-				!apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
+				!apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) && !h.server.hasMCPApps() {
 				http.NotFound(w, r)
 				return
 			}

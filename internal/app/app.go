@@ -788,6 +788,12 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 	if err != nil {
 		return fmt.Errorf("error creating container handler: %w", err)
 	}
+	if mcp := a.Metadata.MCP; mcp != nil && a.containerHandler.GetHealthUrl(health) == "/" {
+		// MCP app with no health path configured anywhere (neither the
+		// definition's health= nor container.health_url): a GET on the
+		// endpoint does not answer 200, probe with the JSON-RPC request
+		a.containerHandler.SetMCPHealth(mcp.UpstreamPath())
+	}
 
 	return nil
 }

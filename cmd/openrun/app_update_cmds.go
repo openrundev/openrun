@@ -162,6 +162,7 @@ func appUpdateMetadataCommand(commonFlags []cli.Flag, clientConfig *types.Client
 			appUpdateConfig(commonFlags, clientConfig, "auth", "", types.AppMetadataAuthnType, "<auth_type>"),
 			appUpdateConfig(commonFlags, clientConfig, "git-auth", "", types.AppMetadataGitAuthName, "<git_auth>"),
 			appUpdateConfig(commonFlags, clientConfig, "bindings", "bind", types.AppMetadataBindings, "binding_path"),
+			appUpdateConfig(commonFlags, clientConfig, "mcp", "", types.AppMetadataMCP, "<true|/upstream_path|json|@file|->"),
 		},
 	}
 }
@@ -282,6 +283,19 @@ The initial argument are strings. The last argument is <appPathGlob>. `+PATH_SPE
 					return err
 				}
 				body.ConfigEntries = entries
+			}
+			if configType == types.AppMetadataMCP {
+				// @file is expanded here; the server never reads request-named files
+				for i, entry := range body.ConfigEntries {
+					if entry == "-" {
+						continue
+					}
+					doc, err := types.ParseMCPArg(entry)
+					if err != nil {
+						return err
+					}
+					body.ConfigEntries[i] = doc
+				}
 			}
 			if configType == types.AppMetadataJobs {
 				// Same as sidecars: the full metadata job list is replaced

@@ -113,12 +113,12 @@ func TestOAuthFullFlow(t *testing.T) {
 	var prm struct {
 		Resource string `json:"resource"`
 	}
-	resp, err = client.Get(ts.URL + "/.well-known/oauth-protected-resource/rest")
+	resp, err = client.Get(ts.URL + "/.well-known/oauth-protected-resource/_openrun/rest")
 	if err != nil {
 		t.Fatalf("prm: %v", err)
 	}
 	decodeJSONBody(t, resp, &prm)
-	testutil.AssertEqualsString(t, "resource", ts.URL+"/rest", prm.Resource)
+	testutil.AssertEqualsString(t, "resource", ts.URL+"/_openrun/rest", prm.Resource)
 
 	// PKCE pair
 	verifier := "test-verifier-value-0123456789-0123456789"
@@ -274,7 +274,7 @@ func TestOAuthRevoke(t *testing.T) {
 	challengeSum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(challengeSum[:])
 	code := runAuthorize(t, ts, client, "openrun-cli", "http://127.0.0.1:39999/callback",
-		challenge, ts.URL+"/rest", "*", "alice", "alicepw")
+		challenge, ts.URL+"/_openrun/rest", "*", "alice", "alicepw")
 	resp, err := client.PostForm(ts.URL+"/_openrun/oauth/token", url.Values{
 		"grant_type": {"authorization_code"}, "code": {code},
 		"redirect_uri": {"http://127.0.0.1:39999/callback"},
@@ -304,7 +304,7 @@ func TestOAuthRevoke(t *testing.T) {
 		"response_type": {"code"}, "client_id": {"openrun-cli"},
 		"redirect_uri":   {"http://127.0.0.1:39999/callback"},
 		"code_challenge": {challenge}, "code_challenge_method": {"S256"},
-		"resource": {ts.URL + "/rest"}, "or_username": {"alice"}, "or_password": {"wrongpw"}})
+		"resource": {ts.URL + "/_openrun/rest"}, "or_username": {"alice"}, "or_password": {"wrongpw"}})
 	if err != nil {
 		t.Fatalf("bad login: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestOAuthConcurrentRefreshConsumption(t *testing.T) {
 	challengeSum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(challengeSum[:])
 	code := runAuthorize(t, ts, client, "openrun-cli", "http://127.0.0.1:39999/callback",
-		challenge, ts.URL+"/rest", "*", "alice", "alicepw")
+		challenge, ts.URL+"/_openrun/rest", "*", "alice", "alicepw")
 	resp, err := client.PostForm(ts.URL+"/_openrun/oauth/token", url.Values{
 		"grant_type": {"authorization_code"}, "code": {code},
 		"redirect_uri": {"http://127.0.0.1:39999/callback"},
@@ -387,7 +387,7 @@ func TestApiKeyDeleteIsTypeAware(t *testing.T) {
 	challengeSum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(challengeSum[:])
 	code := runAuthorize(t, ts, client, "openrun-cli", "http://127.0.0.1:39999/callback",
-		challenge, ts.URL+"/rest", "*", "alice", "alicepw")
+		challenge, ts.URL+"/_openrun/rest", "*", "alice", "alicepw")
 	resp, err := client.PostForm(ts.URL+"/_openrun/oauth/token", url.Values{
 		"grant_type": {"authorization_code"}, "code": {code},
 		"redirect_uri": {"http://127.0.0.1:39999/callback"},
@@ -434,7 +434,7 @@ func TestOAuthCodeSharedAcrossNodes(t *testing.T) {
 	challengeSum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(challengeSum[:])
 	code := runAuthorize(t, ts, client, "openrun-cli", "http://127.0.0.1:39999/callback",
-		challenge, ts.URL+"/rest", "*", "alice", "alicepw")
+		challenge, ts.URL+"/_openrun/rest", "*", "alice", "alicepw")
 
 	// Persisted in the keystore with an expiry, not held in memory
 	blob, err := server.db.FetchKVBlob(t.Context(), oauthCodeKey(code))

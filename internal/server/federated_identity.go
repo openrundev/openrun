@@ -18,7 +18,7 @@ type federatedIdentityStore interface {
 	ObserveFederatedIdentity(context.Context, *types.Identity) error
 }
 
-func observeFederatedIdentity(ctx context.Context, store KVStore, provider, subject, user string, groups []string) error {
+func observeFederatedIdentity(ctx context.Context, store KVStore, provider, subject, user, email string, groups []string) error {
 	identities, ok := store.(federatedIdentityStore)
 	if !ok {
 		return nil
@@ -26,6 +26,6 @@ func observeFederatedIdentity(ctx context.Context, store KVStore, provider, subj
 	now := time.Now().UTC()
 	return identities.ObserveFederatedIdentity(ctx, &types.Identity{
 		Id: "idn_" + ksuid.New().String(), Provider: provider, StableSubject: subject,
-		PrincipalName: provider + ":" + user, Groups: groups, GroupsObservedAt: &now,
+		PrincipalName: provider + ":" + user, Groups: groups, GroupsObservedAt: &now, Email: email,
 	})
 }

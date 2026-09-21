@@ -1469,3 +1469,57 @@ func addApplyPatchReactor(client *k8sfake.Clientset, resource string, objFn func
 		return true, objFn(patchAction.GetName(), patchAction.GetNamespace()), nil
 	})
 }
+
+func TestKubernetesCMVerifyDarkVersion(t *testing.T) {
+	ctx := context.Background()
+	client := k8sfake.NewSimpleClientset(&corev1.Service{
+		ObjectMeta: meta.ObjectMeta{Name: "dark-app", Namespace: "apps"},
+		Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "dark-app", VERSION_HASH_LABEL: "old"},
+			Ports: []corev1.ServicePort{{Port: 8080}}},
+	})
+	k := &KubernetesCM{
+		Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{},
+		appConfig: &types.AppConfig{}, clientSet: client, appId: "app_dev_dark",
+	}
+	var probed string
+	var selector map[string]string
+	req := DeployRequest{ContainerName: "dark-app", VersionHash: "new-hash", Port: 8080,
+		VerifyVersion: func(ctx context.Context, hostNamePort string) error {
+			probed = hostNamePort
+			// The temporary Service exists while the check runs and
+			// selects only the new version's pods
+			svc, err := client.CoreV1().Services("apps").Get(ctx, verifyServiceName("dark-app", "new-hash"), meta.GetOptions{})
+			if err != nil {
+				return err
+			}
+			selector = svc.Spec.Selector
+			return errors.New("mcp probe failed")
+		}}
+	err := k.verifyDarkVersion(ctx, req)
+	if err == nil || !strings.Contains(err.Error(), "mcp probe failed") {
+		t.Fatalf("verification error must propagate, got %v", err)
+	}
+	want := verifyServiceName("dark-app", "new-hash") + ".apps.svc.cluster.local:8080"
+	if probed != want {
+		t.Fatalf("probe address = %q, want %q", probed, want)
+	}
+	if selector[VERSION_HASH_LABEL] != TrimLabelValue("new-hash") || selector["app"] != "dark-app" {
+		t.Fatalf("verification service selector = %v", selector)
+	}
+	// The temporary Service is gone and the stable Service was never touched
+	if _, err := client.CoreV1().Services("apps").Get(ctx, verifyServiceName("dark-app", "new-hash"), meta.GetOptions{}); err == nil {
+		t.Fatal("verification service must be deleted")
+	}
+	stable, err := client.CoreV1().Services("apps").Get(ctx, "dark-app", meta.GetOptions{})
+	if err != nil || stable.Spec.Selector[VERSION_HASH_LABEL] != "old" {
+		t.Fatalf("stable service must keep the old version, got %v %v", stable.Spec.Selector, err)
+	}
+	req.VerifyVersion = func(context.Context, string) error { return nil }
+	if err := k.verifyDarkVersion(ctx, req); err != nil {
+		t.Fatalf("passing verification: %v", err)
+	}
+	long := strings.Repeat("a", 70)
+	if name := verifyServiceName(long, "h"); len(name) > 63 || !strings.HasSuffix(name, "-vrfy") {
+		t.Fatalf("verification service name %q must fit the limit", name)
+	}
+}

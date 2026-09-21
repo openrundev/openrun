@@ -895,9 +895,30 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 		}
 	}
 
+	// MCP app with the whole app as the endpoint and an upstream served
+	// elsewhere (--mcp=/mcp): the app root is rewritten to that path, so the
+	// public MCP url is the app url regardless of the image's endpoint path
+	mcpUpstream := ""
+	if mcp := a.Metadata.MCP; mcp != nil && mcp.Path == "/" && mcp.ContainerPath != "" {
+		mcpUpstream = mcp.ContainerPath
+	}
+
 	proxy.Rewrite = func(req *httputil.ProxyRequest) {
 		target := resolveProxyTarget()
 		req.SetURL(target)
+		if mcpUpstream != "" {
+			// path.Join cleans away a trailing slash; keep the client's
+			// spelling so an upstream that distinguishes /mcp from /mcp/ sees
+			// it. The app-prefix strip turns "<app>" and "<app>/" into the
+			// same "/", so the original request line decides
+			joined := path.Join(mcpUpstream, req.Out.URL.Path)
+			requestPath, _, _ := strings.Cut(req.In.RequestURI, "?")
+			if strings.HasSuffix(requestPath, "/") && !strings.HasSuffix(joined, "/") {
+				joined += "/"
+			}
+			req.Out.URL.Path = joined
+			req.Out.URL.RawPath = ""
+		}
 		req.SetXForwarded()
 		// The request wrapper has already sanitized these values using the
 		// configured trusted proxies. Rewrite removes forwarding headers before
@@ -939,7 +960,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	// join with a.Path) is what gets used when rewriting.
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		if loc := resp.Header.Get("Location"); loc != "" && a.AppConfig.Proxy.RewriteLocation {
-			rewritten, ok := rewriteProxyLocation(loc, resolveProxyTarget(), stripPath)
+			rewritten, ok := rewriteProxyLocation(loc, resolveProxyTarget(), stripPath, mcpUpstream)
 			if !ok {
 				rewritten = loc
 			}
@@ -974,7 +995,9 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 			// Treat all methods other than known read-only ones as writes so
 			// that PATCH and custom verbs fail closed.
 			isWriteRequest := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
-			if isWriteRequest {
+			// MCP is POST-only; bearer-authenticated MCP calls are governed by
+			// RBAC and the app's tool scopes, not the method-level stage rule
+			if isWriteRequest && system.GetContextApiInvoker(r.Context()) != types.API_INVOKER_MCP {
 				if strings.HasPrefix(string(a.Id), types.ID_PREFIX_APP_PREVIEW) && !a.Settings.PreviewWriteAccess {
 					http.Error(w, "Preview app does not have access to proxy write APIs", http.StatusForbidden)
 					return
@@ -1084,13 +1107,17 @@ func formatProxyHost(host string) string {
 // and host come from the original request, keeping the public authority
 // intact. Cross-host absolute Locations and truly relative Locations
 // ("foo/bar") are passed through unchanged.
-func rewriteProxyLocation(loc string, upstream *url.URL, stripPath string) (string, bool) {
+// upstreamPrefix is the path prefix the proxy adds when forwarding (MCP
+// apps with --mcp=/path): an upstream redirect under it maps back to the
+// app root, so /mcp/ becomes <app>/ rather than <app>/mcp/
+func rewriteProxyLocation(loc string, upstream *url.URL, stripPath string, upstreamPrefix string) (string, bool) {
 	locURL, err := url.Parse(loc)
 	if err != nil {
 		return "", false
 	}
 
 	hasStrip := stripPath != "" && stripPath != "/"
+	hasUpstreamPrefix := upstreamPrefix != "" && upstreamPrefix != "/"
 	if locURL.IsAbs() {
 		if !strings.EqualFold(locURL.Host, upstream.Host) {
 			return "", false
@@ -1099,7 +1126,7 @@ func rewriteProxyLocation(loc string, upstream *url.URL, stripPath string) (stri
 		// Truly relative reference — the client resolves it against the
 		// request URL, so re-prefixing isn't safe and isn't needed.
 		return "", false
-	} else if !hasStrip {
+	} else if !hasStrip && !hasUpstreamPrefix {
 		// Path-absolute with no stripped prefix to restore; nothing to do.
 		return "", false
 	}
@@ -1107,6 +1134,12 @@ func rewriteProxyLocation(loc string, upstream *url.URL, stripPath string) (stri
 	newPath := locURL.EscapedPath()
 	if newPath == "" {
 		newPath = "/"
+	}
+	if hasUpstreamPrefix && pathHasPrefix(newPath, upstreamPrefix) {
+		newPath = strings.TrimPrefix(newPath, upstreamPrefix)
+		if newPath == "" {
+			newPath = "/"
+		}
 	}
 	if hasStrip && !pathHasPrefix(newPath, stripPath) {
 		newPath = stripPath + newPath

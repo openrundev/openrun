@@ -52,6 +52,7 @@ type CreateAppRequest struct {
 	Jobs             []string          `json:"jobs,omitempty,omitzero"`     // JSON JobSpec documents
 	AppConfig        map[string]string `json:"appconfig"`
 	Bindings         []string          `json:"bindings"`
+	MCP              string            `json:"mcp,omitempty"` // JSON MCPConfig document, see ParseMCPArg
 	StageAt          string            `json:"stage_at"`
 	Verify           bool              `json:"verify"`
 	// fields supported by declarative apply must be merged in applyAppUpdate
@@ -591,6 +592,7 @@ type Identity struct {
 	GroupsObservedAt *time.Time `json:"groups_observed_at,omitempty"`
 	DisabledAt       *time.Time `json:"disabled_at,omitempty"`
 	CreateTime       time.Time  `json:"create_time"`
+	Email            string     `json:"email,omitempty"` // verified email from the last federated login, "" when unknown
 }
 
 // Credential is one stored bearer credential (API key / OAuth token). The
@@ -636,6 +638,7 @@ type ApiKeyCreateResponse struct {
 	Key       string     `json:"key"` // orun_pat_<id>_<secret>, shown once
 	User      string     `json:"user"`
 	Scopes    []string   `json:"scopes,omitempty"`     // applied scope ceiling; empty = unscoped
+	Resources []string   `json:"resources,omitempty"`  // surfaces or the app's canonical MCP resource the key is bound to
 	ExpiresAt *time.Time `json:"expires_at,omitempty"` // nil = never expires
 }
 

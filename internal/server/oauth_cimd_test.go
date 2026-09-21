@@ -99,7 +99,7 @@ func TestOAuthCIMDFullFlow(t *testing.T) {
 	form := url.Values{
 		"response_type": {"code"}, "client_id": {clientId},
 		"redirect_uri": {"https://tool.example.com/cb"}, "code_challenge": {challenge},
-		"code_challenge_method": {"S256"}, "resource": {ts.URL + "/rest"}}
+		"code_challenge_method": {"S256"}, "resource": {ts.URL + "/_openrun/rest"}}
 	resp, err = client.Get(ts.URL + "/_openrun/oauth/authorize?" + form.Encode())
 	if err != nil {
 		t.Fatalf("authorize form: %v", err)
@@ -117,7 +117,7 @@ func TestOAuthCIMDFullFlow(t *testing.T) {
 
 	// Full code exchange with the URL client id, then use and refresh
 	code := runAuthorize(t, ts, client, clientId, "https://tool.example.com/cb",
-		challenge, ts.URL+"/rest", "app:read", "alice", "alicepw")
+		challenge, ts.URL+"/_openrun/rest", "app:read", "alice", "alicepw")
 	resp, err = client.PostForm(ts.URL+"/_openrun/oauth/token", url.Values{
 		"grant_type": {"authorization_code"}, "code": {code},
 		"redirect_uri": {"https://tool.example.com/cb"},
@@ -158,7 +158,7 @@ func TestOAuthCIMDLoopbackWarningAndTokenExchangeWithoutRegistration(t *testing.
 	form := url.Values{
 		"response_type": {"code"}, "client_id": {clientId},
 		"redirect_uri": {"http://localhost:39999/callback"}, "code_challenge": {strings.Repeat("a", 43)},
-		"code_challenge_method": {"S256"}, "resource": {ts.URL + "/rest"}}
+		"code_challenge_method": {"S256"}, "resource": {ts.URL + "/_openrun/rest"}}
 	resp, err := client.Get(ts.URL + "/_openrun/oauth/authorize?" + form.Encode())
 	if err != nil {
 		t.Fatalf("authorize form: %v", err)
@@ -182,7 +182,7 @@ func TestOAuthCIMDRejections(t *testing.T) {
 		form := url.Values{
 			"response_type": {"code"}, "client_id": {clientId},
 			"redirect_uri": {redirect}, "code_challenge": {strings.Repeat("a", 43)},
-			"code_challenge_method": {"S256"}, "resource": {ts.URL + "/rest"}}
+			"code_challenge_method": {"S256"}, "resource": {ts.URL + "/_openrun/rest"}}
 		resp, err := client.Get(ts.URL + "/_openrun/oauth/authorize?" + form.Encode())
 		if err != nil {
 			t.Fatalf("authorize: %v", err)
@@ -259,7 +259,7 @@ func TestOAuthCIMDRejections(t *testing.T) {
 		form := url.Values{
 			"response_type": {"code"}, "client_id": {clientId},
 			"redirect_uri": {"https://tool.example.com/cb"}, "code_challenge": {strings.Repeat("a", 43)},
-			"code_challenge_method": {"S256"}, "resource": {ts.URL + "/rest"}}
+			"code_challenge_method": {"S256"}, "resource": {ts.URL + "/_openrun/rest"}}
 		resp, err := client.Get(ts.URL + "/_openrun/oauth/authorize?" + form.Encode())
 		if err != nil {
 			t.Fatalf("authorize: %v", err)

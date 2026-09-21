@@ -107,6 +107,12 @@ func appCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			Usage:   "Link a binding path to the app. Repeat to preserve binding order",
 		})
 	flags = append(flags,
+		&cli.GenericFlag{
+			Name:  "mcp",
+			Value: &mcpFlagValue{},
+			Usage: "The app is an MCP server protected by OpenRun OAuth. Bare --mcp: the whole app is the endpoint, served at the upstream root; --mcp=/mcp: the whole app is the endpoint, rewritten to that upstream path; --mcp='{\"path\":\"/mcp\",\"scopes\":[...],\"default_scope\":...,\"tools\":{...},\"allowed_origins\":[...]}' or --mcp=@file: a region within the app with scopes and tool policy",
+		})
+	flags = append(flags,
 		&cli.StringSliceFlag{
 			Name:    "app-config",
 			Aliases: []string{"conf"},
@@ -219,6 +225,10 @@ Examples:
 			if err != nil {
 				return err
 			}
+			mcp, err := mcpFlagDoc(cCtx)
+			if err != nil {
+				return err
+			}
 
 			body := types.CreateAppRequest{
 				Path:             cCtx.Args().Get(1),
@@ -237,6 +247,7 @@ Examples:
 				Jobs:             jobs,
 				AppConfig:        confMap,
 				Bindings:         bindings,
+				MCP:              mcp,
 				StageAt:          cCtx.String("stage-at"),
 			}
 			var createResult types.AppCreateResponse
@@ -750,4 +761,36 @@ func appPromoteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			return nil
 		},
 	}
+}
+
+// mcpFlagValue backs --mcp: a bool-shaped flag (bare --mcp works, no value
+// consumed) that also accepts --mcp=<upstream path>, --mcp=<json> and
+// --mcp=@file. Go's flag parser only allows an optional value for flags
+// reporting IsBoolFlag, so valued forms need the = syntax
+type mcpFlagValue struct {
+	value string
+	set   bool
+}
+
+func (m *mcpFlagValue) Set(value string) error {
+	m.value = value
+	m.set = true
+	return nil
+}
+
+func (m *mcpFlagValue) String() string   { return m.value }
+func (m *mcpFlagValue) IsBoolFlag() bool { return true }
+
+// mcpFlagDoc returns the canonical mcp JSON document for the --mcp flag,
+// "" when the flag was not given
+func mcpFlagDoc(cCtx *cli.Context) (string, error) {
+	generic, ok := cCtx.Generic("mcp").(*mcpFlagValue)
+	if !ok || !generic.set {
+		return "", nil
+	}
+	doc, err := types.ParseMCPArg(generic.value)
+	if err != nil {
+		return "", fmt.Errorf("--mcp: %w", err)
+	}
+	return doc, nil
 }

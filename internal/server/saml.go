@@ -692,7 +692,7 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := observeFederatedIdentity(r.Context(), s.db, providerName, ai.NameID, ai.NameID, groups); err != nil {
+	if err := observeFederatedIdentity(r.Context(), s.db, providerName, ai.NameID, ai.NameID, "", groups); err != nil {
 		s.Error().Err(err).Msg("error recording authenticated identity")
 		http.Error(w, "error recording authenticated identity", http.StatusInternalServerError)
 		return

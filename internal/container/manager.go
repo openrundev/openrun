@@ -86,6 +86,7 @@ type HealthProbe struct {
 	Path             string
 	Port             int32
 	Scheme           string // "HTTP" or "HTTPS"
+	TCP              bool   // probe the port with a TCP connect instead of an HTTP GET (MCP apps)
 	PeriodSecs       int32
 	TimeoutSecs      int32
 	FailureThreshold int32 // steady-state readiness tolerance

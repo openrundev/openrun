@@ -24,7 +24,7 @@ import (
 // principal, sql.ErrNoRows wrapped when absent
 func (m *Metadata) GetIdentityByPrincipal(ctx context.Context, principal string) (*types.Identity, error) {
 	row := m.db.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select id, provider, stable_subject, principal_name, groups, groups_observed_at, disabled_at, create_time`+
+		`select id, provider, stable_subject, principal_name, groups, groups_observed_at, disabled_at, create_time, email`+
 			` from identities where principal_name = ?`), principal)
 	return scanIdentity(row)
 }
@@ -37,10 +37,10 @@ func (m *Metadata) CreateIdentity(ctx context.Context, identity *types.Identity)
 		return fmt.Errorf("error marshalling identity groups: %w", err)
 	}
 	_, err = m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`insert into identities (id, provider, stable_subject, principal_name, groups, groups_observed_at, disabled_at, create_time)`+
-			` values (?, ?, ?, ?, ?, ?, NULL, `+system.FuncNow(m.dbType)+`)`),
+		`insert into identities (id, provider, stable_subject, principal_name, groups, groups_observed_at, disabled_at, create_time, email)`+
+			` values (?, ?, ?, ?, ?, ?, NULL, `+system.FuncNow(m.dbType)+`, ?)`),
 		identity.Id, identity.Provider, identity.StableSubject, identity.PrincipalName,
-		string(groupsJson), nullTime(identity.GroupsObservedAt))
+		string(groupsJson), nullTime(identity.GroupsObservedAt), identity.Email)
 	if err != nil {
 		return fmt.Errorf("error inserting identity: %w", err)
 	}
@@ -94,7 +94,7 @@ func (m *Metadata) GetCredentialWithIdentity(ctx context.Context, id string) (*t
 		`select c.id, c.secret_hash, c.type, c.identity_id, c.scopes, c.resources, c.description,`+
 			` c.oauth_client_id, c.grant_id, c.family_id, c.replaced_by_id, c.consumed_at, c.revoked_at,`+
 			` c.revocation_reason, c.expires_at, c.created_by, c.create_time, c.last_used_at,`+
-			` i.id, i.provider, i.stable_subject, i.principal_name, i.groups, i.groups_observed_at, i.disabled_at, i.create_time`+
+			` i.id, i.provider, i.stable_subject, i.principal_name, i.groups, i.groups_observed_at, i.disabled_at, i.create_time, i.email`+
 			` from credentials c join identities i on c.identity_id = i.id where c.id = ?`), id)
 	cred, identity, err := scanCredentialWithIdentity(row)
 	if err == sql.ErrNoRows {
@@ -195,12 +195,13 @@ func timePtr(t sql.NullTime) *time.Time {
 
 func scanIdentity(row *sql.Row) (*types.Identity, error) {
 	var identity types.Identity
-	var groups sql.NullString
+	var groups, email sql.NullString
 	var groupsObservedAt, disabledAt sql.NullTime
 	if err := row.Scan(&identity.Id, &identity.Provider, &identity.StableSubject, &identity.PrincipalName,
-		&groups, &groupsObservedAt, &disabledAt, &identity.CreateTime); err != nil {
+		&groups, &groupsObservedAt, &disabledAt, &identity.CreateTime, &email); err != nil {
 		return nil, err
 	}
+	identity.Email = email.String
 	if groups.Valid && groups.String != "" {
 		if err := json.Unmarshal([]byte(groups.String), &identity.Groups); err != nil {
 			return nil, fmt.Errorf("error parsing identity groups: %w", err)
@@ -214,13 +215,13 @@ func scanIdentity(row *sql.Row) (*types.Identity, error) {
 func scanCredentialWithIdentity(row *sql.Row) (*types.Credential, *types.Identity, error) {
 	var cred types.Credential
 	var identity types.Identity
-	var scopes, resources, groups sql.NullString
+	var scopes, resources, groups, email sql.NullString
 	var consumedAt, revokedAt, expiresAt, lastUsedAt, groupsObservedAt, disabledAt sql.NullTime
 	if err := row.Scan(&cred.Id, &cred.SecretHash, &cred.Type, &cred.IdentityId, &scopes, &resources,
 		&cred.Description, &cred.OAuthClientId, &cred.GrantId, &cred.FamilyId, &cred.ReplacedById,
 		&consumedAt, &revokedAt, &cred.RevocationReason, &expiresAt, &cred.CreatedBy, &cred.CreateTime, &lastUsedAt,
 		&identity.Id, &identity.Provider, &identity.StableSubject, &identity.PrincipalName,
-		&groups, &groupsObservedAt, &disabledAt, &identity.CreateTime); err != nil {
+		&groups, &groupsObservedAt, &disabledAt, &identity.CreateTime, &email); err != nil {
 		return nil, nil, err
 	}
 	if scopes.Valid && scopes.String != "" {
@@ -244,6 +245,7 @@ func scanCredentialWithIdentity(row *sql.Row) (*types.Credential, *types.Identit
 	cred.LastUsedAt = timePtr(lastUsedAt)
 	identity.GroupsObservedAt = timePtr(groupsObservedAt)
 	identity.DisabledAt = timePtr(disabledAt)
+	identity.Email = email.String
 	return &cred, &identity, nil
 }
 
@@ -411,10 +413,12 @@ func (m *Metadata) ObserveFederatedIdentity(ctx context.Context, identity *types
 		return fmt.Errorf("error marshalling identity groups: %w", err)
 	}
 	_, err = m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`insert into identities (id, provider, stable_subject, principal_name, groups, groups_observed_at, disabled_at, create_time)`+
-			` values (?, ?, ?, ?, ?, ?, NULL, `+system.FuncNow(m.dbType)+`)`+
-			` on conflict (principal_name) do update set groups = excluded.groups, groups_observed_at = excluded.groups_observed_at`),
-		identity.Id, identity.Provider, identity.StableSubject, identity.PrincipalName, string(groupsJSON), nullTime(identity.GroupsObservedAt))
+		`insert into identities (id, provider, stable_subject, principal_name, groups, groups_observed_at, disabled_at, create_time, email)`+
+			` values (?, ?, ?, ?, ?, ?, NULL, `+system.FuncNow(m.dbType)+`, ?)`+
+			` on conflict (principal_name) do update set groups = excluded.groups, groups_observed_at = excluded.groups_observed_at,`+
+			` email = coalesce(nullif(excluded.email, ''), identities.email)`),
+		identity.Id, identity.Provider, identity.StableSubject, identity.PrincipalName, string(groupsJSON), nullTime(identity.GroupsObservedAt),
+		identity.Email)
 	if err != nil {
 		return fmt.Errorf("error recording federated identity: %w", err)
 	}

@@ -92,6 +92,7 @@ type ContainerHandler struct {
 	// Health check related fields
 	healthCheckTicker *time.Ticker
 	stripAppPath      bool
+	mcpHealthPath     string // MCP apps: probe with a JSON-RPC POST to this upstream path instead of GET health (mcp_health.go)
 	mountArgs         []string
 	cargs             map[string]string
 	proxyTracker      *Tracker // Track bytes sent and received by the proxy
@@ -1365,14 +1366,25 @@ func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.C
 			proxyUrl = proxyUrl.JoinPath(h.app.Path)
 		}
 
-		proxyUrl = proxyUrl.JoinPath(h.health)
-		resp, err = client.Get(proxyUrl.String())
 		statusCode := "N/A"
+		var healthy bool
+		if h.mcpHealthPath != "" {
+			healthy, statusCode, err = mcpHealthProbe(client, proxyUrl.JoinPath(h.mcpHealthPath).String())
+		} else {
+			proxyUrl = proxyUrl.JoinPath(h.health)
+			resp, err = client.Get(proxyUrl.String())
+			if err == nil {
+				healthy = resp.StatusCode == http.StatusOK
+				statusCode = strconv.Itoa(resp.StatusCode)
+			}
+		}
 		if err == nil {
-			if resp.StatusCode == http.StatusOK {
+			if healthy {
+				if resp != nil {
+					resp.Body.Close() //nolint:errcheck
+				}
 				return nil
 			}
-			statusCode = strconv.Itoa(resp.StatusCode)
 			err = fmt.Errorf("health check returned status %s", statusCode)
 		}
 
@@ -1969,6 +1981,7 @@ func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash st
 		VersionHash:        fullHash,
 		IsImageSpec:        h.IsImageSpec(),
 		HealthProbe:        h.buildHealthProbe(),
+		VerifyVersion:      h.mcpVerifyVersion(),
 		Verify:             verify,
 		Prepare:            prepare,
 		DeployAttempts:     h.containerConfig.DeployHealthAttempts,
@@ -1992,9 +2005,28 @@ func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash st
 // buildHealthProbe constructs the native readiness/startup probe config from
 // the handler's health URL and configured timings. Returns nil when there is no
 // health URL or for command-lifetime apps (which have no service).
+// SetMCPHealth switches the health check to the MCP JSON-RPC probe against
+// the upstream path (an MCP endpoint does not answer GET)
+func (h *ContainerHandler) SetMCPHealth(upstreamPath string) {
+	h.mcpHealthPath = upstreamPath
+}
+
 func (h *ContainerHandler) buildHealthProbe() *container.HealthProbe {
 	if h.health == "" || h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
 		return nil
+	}
+	if h.mcpHealthPath != "" {
+		// An MCP endpoint answers GET with 405 and a native probe cannot
+		// POST: use a TCP probe on the port; the deploy still waits for
+		// OpenRun's own JSON-RPC probe before traffic flips
+		return &container.HealthProbe{
+			TCP:              true,
+			Port:             h.port,
+			PeriodSecs:       max(int32(h.containerConfig.DeployProbePeriodSecs), 1),
+			TimeoutSecs:      max(int32(h.containerConfig.HealthTimeoutSecs), 1),
+			FailureThreshold: max(int32(h.containerConfig.StatusHealthAttempts), 1),
+			StartupFailures:  max(int32(h.containerConfig.HealthAttemptsAfterStartup), 1),
+		}
 	}
 	scheme := "HTTP"
 	if strings.EqualFold(h.scheme, "https") {

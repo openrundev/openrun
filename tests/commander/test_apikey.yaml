@@ -157,8 +157,8 @@ tests:
   apikey0300: # OAuth metadata documents are served
     command: |
       curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-authorization-server | grep -q authorization_endpoint
-      curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/rest
-    stdout: "/rest"
+      curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/_openrun/rest
+    stdout: "/_openrun/rest"
     exit-code: 0
   apikey0310: # OAuth code + PKCE flow: login form post as alice, code exchange
     command: |
@@ -168,7 +168,7 @@ tests:
       LOCATION=$(curl -sk -o /dev/null -w '%{redirect_url}' -X POST https://localhost:${MAIN_HTTPS_PORT}/_openrun/oauth/authorize \
         -d response_type=code -d client_id=openrun-cli -d "redirect_uri=http://127.0.0.1:9/callback" \
         -d state=xyz -d "code_challenge=$CHALLENGE" -d code_challenge_method=S256 \
-        --data-urlencode "resource=https://localhost:${MAIN_HTTPS_PORT}/rest" --data-urlencode "scope=*" \
+        --data-urlencode "resource=https://localhost:${MAIN_HTTPS_PORT}/_openrun/rest" --data-urlencode "scope=*" \
         -d or_username=alice -d or_password=alicepw --data-urlencode "or_scope=*")
       CODE=$(printf %s "$LOCATION" | sed -n 's/.*code=\([^&]*\).*/\1/p')
       test -n "$CODE"

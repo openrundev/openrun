@@ -4,6 +4,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"strconv"
@@ -38,4 +39,11 @@ func setOpenRunHeaders(header http.Header, ctx context.Context) {
 		header.Set(types.OPENRUN_HEADER_USER_EMAIL, userEmail)
 	}
 	header.Set(types.OPENRUN_HEADER_APP_RBAC_ENABLED, strconv.FormatBool(rbac.AppRBACActive(ctx)))
+	if cred := system.GetContextApiCredential(ctx); cred != nil {
+		// Bearer-authenticated (MCP app) request: the granted scopes (empty
+		// = unscoped) and which OAuth client holds the token
+		scopes, _ := system.GetContextApiScopes(ctx)
+		header.Set(types.OPENRUN_HEADER_SCOPES, strings.Join(scopes, ","))
+		header.Set(types.OPENRUN_HEADER_CLIENT_ID, cmp.Or(cred.OAuthClientId, "apikey"))
+	}
 }

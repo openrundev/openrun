@@ -203,7 +203,7 @@ func TestRewriteProxyLocation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("bad upstream %q: %v", tt.upstream, err)
 			}
-			got, ok := rewriteProxyLocation(tt.loc, upstream, tt.stripPath)
+			got, ok := rewriteProxyLocation(tt.loc, upstream, tt.stripPath, "")
 			if ok != tt.wantOK {
 				t.Fatalf("ok = %v, want %v (got=%q)", ok, tt.wantOK, got)
 			}
@@ -211,5 +211,25 @@ func TestRewriteProxyLocation(t *testing.T) {
 				t.Fatalf("rewriteProxyLocation(%q, %q, %q) = %q, want %q", tt.loc, tt.upstream, tt.stripPath, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRewriteProxyLocationUpstreamPrefix(t *testing.T) {
+	upstream, _ := url.Parse("http://127.0.0.1:9000")
+	for name, tc := range map[string]struct {
+		loc, strip, prefix, want string
+		ok                       bool
+	}{
+		"prefix root to app root":  {"/mcp/", "/orders", "/mcp", "/orders/", true},
+		"prefix subpath":           {"/mcp/x?y=1", "/orders", "/mcp", "/orders/x?y=1", true},
+		"absolute upstream url":    {"http://127.0.0.1:9000/mcp/", "/orders", "/mcp", "/orders/", true},
+		"outside prefix unchanged": {"/other", "/orders", "/mcp", "/orders/other", true},
+		"prefix without strip":     {"/mcp/", "", "/mcp", "/", true},
+		"no prefix no strip":       {"/mcp/", "", "", "", false},
+	} {
+		got, ok := rewriteProxyLocation(tc.loc, upstream, tc.strip, tc.prefix)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Fatalf("%s: got %q %v want %q %v", name, got, ok, tc.want, tc.ok)
+		}
 	}
 }

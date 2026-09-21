@@ -692,7 +692,7 @@ func TestBrowserLoginRefreshesCronGroups(t *testing.T) {
 		t.Fatal("removed IdP group retained authority")
 	}
 	// SAML uses the same writer after validating the assertion and request id.
-	if err := observeFederatedIdentity(ctx, db, "saml_company", "employee", "employee", []string{"readers"}); err != nil {
+	if err := observeFederatedIdentity(ctx, db, "saml_company", "employee", "employee", "", []string{"readers"}); err != nil {
 		t.Fatal(err)
 	}
 	entry.UserID = "saml_company:employee"
@@ -715,7 +715,7 @@ func TestBrowserLoginRefreshesCronGroups(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err := observeFederatedIdentity(ctx, db, "saml_company", "employee", "employee", []string{"readers"}); err != nil {
+	if err := observeFederatedIdentity(ctx, db, "saml_company", "employee", "employee", "", []string{"readers"}); err != nil {
 		t.Fatal(err)
 	}
 	cronCtx, err = server.cronJobContext(ctx, entry)

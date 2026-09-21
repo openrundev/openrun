@@ -229,32 +229,51 @@ func (s *Server) CreateApiKey(ctx context.Context, req *types.ApiKeyCreateReques
 		return nil, err
 	}
 
+	resources := slices.Clone(req.Resources)
+	if len(resources) == 0 {
+		resources = []string{ApiResourceRest}
+	}
+	// An app reference (app:<path>, app:<domain>:<path>, https url) binds
+	// the key to that MCP app's canonical resource; such a key is valid for
+	// exactly one app and its scopes are the app's own vocabulary
+	var mcpApp *types.AppInfo
+	for i, resource := range resources {
+		if resource == ApiResourceRest || resource == ApiResourceMCP {
+			continue
+		}
+		info, uri, err := s.resolveAppReference(resource)
+		if err != nil {
+			return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+		}
+		if len(resources) != 1 {
+			return nil, types.CreateRequestError("an app-bound API key is valid for exactly one app resource", http.StatusBadRequest)
+		}
+		resources[i] = uri
+		mcpApp = info
+	}
+
 	var scopes []string
 	if len(req.Scopes) > 0 {
-		if err := rbac.ValidateScopes(req.Scopes); err != nil {
+		if mcpApp != nil {
+			for _, scope := range req.Scopes {
+				if !slices.Contains(mcpApp.MCP.Scopes, scope) {
+					return nil, types.CreateRequestError(
+						fmt.Sprintf("scope %q is not declared by app %s (scopes: %s)", scope, mcpApp.AppPathDomain,
+							strings.Join(mcpApp.MCP.Scopes, ", ")), http.StatusBadRequest)
+				}
+			}
+		} else if err := rbac.ValidateScopes(req.Scopes); err != nil {
 			return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 		}
 		scopes = req.Scopes
 	}
-
-	resources := req.Resources
-	if len(resources) == 0 {
-		resources = []string{ApiResourceRest}
-	}
-	for _, resource := range resources {
-		if resource != ApiResourceRest && resource != ApiResourceMCP {
-			return nil, types.CreateRequestError(
-				fmt.Sprintf("invalid resource %q: valid values are %s and %s", resource, ApiResourceRest, ApiResourceMCP),
-				http.StatusBadRequest)
-		}
-	}
 	if scopes == nil && len(resources) == 1 && resources[0] == ApiResourceMCP {
-		// An MCP-only key with no explicit scopes defaults to read-only,
-		// matching the OAuth consent default for the MCP surface: an AI
-		// client should not receive the user's full write authority
-		// implicitly. Write-capable keys need an explicit --scopes (like
-		// "*"; reveal-class and config:update scopes stay literal-only)
-		scopes = []string{"*:read"}
+		// An MCP-only key with no explicit scopes defaults to read-only
+		// (mcpDefaultScopes), matching the OAuth consent default for the MCP
+		// surface: an AI client should not receive the user's full write
+		// authority implicitly. Write-capable keys need an explicit --scopes
+		// (like "*"; reveal-class and config:update scopes stay literal-only)
+		scopes = slices.Clone(mcpDefaultScopes)
 	}
 
 	// Attenuation: a bearer credential can only mint credentials at most as
@@ -298,6 +317,7 @@ func (s *Server) CreateApiKey(ctx context.Context, req *types.ApiKeyCreateReques
 		Key:       wireToken,
 		User:      target,
 		Scopes:    scopes,
+		Resources: resources,
 		ExpiresAt: expiresAt,
 	}, nil
 }
@@ -432,50 +452,50 @@ func updateApiOperation(ctx context.Context, operation string, target string) {
 // mcp) and returns the principal, its RBAC groups and the credential. The
 // scope ceiling (nil = unscoped) comes back separately so the caller can
 // attach it to the request context
-func (s *Server) verifyApiToken(ctx context.Context, token string, surface string) (string, []string, []string, *types.Credential, error) {
+func (s *Server) verifyApiToken(ctx context.Context, token string, surface string) (string, []string, []string, *types.Credential, *types.Identity, error) {
 	credType, id, secret, err := parseApiToken(token)
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, nil, nil, err
 	}
 	if credType == types.CredentialTypeOAuthRefresh {
 		// Refresh tokens are not resource credentials: rejected by prefix
 		// before any DB lookup, valid only at the token/revoke endpoints
-		return "", nil, nil, nil, fmt.Errorf("refresh tokens are not valid at API endpoints")
+		return "", nil, nil, nil, nil, fmt.Errorf("refresh tokens are not valid at API endpoints")
 	}
 	cred, identity, err := s.db.GetCredentialWithIdentity(ctx, id)
 	if err != nil {
-		return "", nil, nil, nil, fmt.Errorf("unknown API token")
+		return "", nil, nil, nil, nil, fmt.Errorf("unknown API token")
 	}
 	if subtle.ConstantTimeCompare([]byte(cred.SecretHash), []byte(hashApiSecret(secret))) != 1 {
-		return "", nil, nil, nil, fmt.Errorf("invalid API token")
+		return "", nil, nil, nil, nil, fmt.Errorf("invalid API token")
 	}
 	if cred.Type != credType {
-		return "", nil, nil, nil, fmt.Errorf("token type %s is not valid at this endpoint", cred.Type)
+		return "", nil, nil, nil, nil, fmt.Errorf("token type %s is not valid at this endpoint", cred.Type)
 	}
 	if cred.RevokedAt != nil {
-		return "", nil, nil, nil, fmt.Errorf("API token has been revoked")
+		return "", nil, nil, nil, nil, fmt.Errorf("API token has been revoked")
 	}
 	if cred.ExpiresAt != nil && time.Now().After(*cred.ExpiresAt) {
-		return "", nil, nil, nil, fmt.Errorf("API token has expired")
+		return "", nil, nil, nil, nil, fmt.Errorf("API token has expired")
 	}
 	if !slices.Contains(cred.Resources, surface) {
 		// Resource binding: exact surface membership, never a prefix match
-		return "", nil, nil, nil, fmt.Errorf("API token is not valid for the %s surface", surface)
+		return "", nil, nil, nil, nil, fmt.Errorf("API token is not valid for the %s surface", surface)
 	}
 	if identity.DisabledAt != nil {
-		return "", nil, nil, nil, fmt.Errorf("identity is disabled")
+		return "", nil, nil, nil, nil, fmt.Errorf("identity is disabled")
 	}
 
 	groups, err := s.apiIdentityGroups(ctx, identity)
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, nil, nil, err
 	}
 
 	// Best effort last-used stamp; verification must not fail on it
 	if err := s.db.UpdateCredentialLastUsed(ctx, cred.Id); err != nil {
 		s.Warn().Err(err).Str("id", cred.Id).Msg("error updating API key last used time")
 	}
-	return identity.PrincipalName, groups, cred.Scopes, cred, nil
+	return identity.PrincipalName, groups, cred.Scopes, cred, identity, nil
 }
 
 // apiIdentityGroups resolves the RBAC groups for an identity: builtin (and
@@ -558,7 +578,7 @@ func (s *Server) authenticateApiRequest(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return nil, nil, false
 	}
-	principal, groups, scopes, cred, err := s.verifyApiToken(r.Context(), token, surface)
+	principal, groups, scopes, cred, _, err := s.verifyApiToken(r.Context(), token, surface)
 	if err != nil {
 		// Name the failing credential id (public token half, never the
 		// secret) so audit rows and logs distinguish which token failed;

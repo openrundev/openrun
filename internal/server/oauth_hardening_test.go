@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
@@ -28,7 +29,7 @@ func mintOAuthGrant(t *testing.T, ts *httptest.Server, client *http.Client, scop
 	challengeSum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(challengeSum[:])
 	redirectUri := "http://127.0.0.1:39999/callback"
-	code := runAuthorize(t, ts, client, "openrun-cli", redirectUri, challenge, ts.URL+"/rest", scope, "alice", "alicepw")
+	code := runAuthorize(t, ts, client, "openrun-cli", redirectUri, challenge, ts.URL+"/_openrun/rest", scope, "alice", "alicepw")
 	resp, err := client.PostForm(ts.URL+"/_openrun/oauth/token", url.Values{
 		"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirectUri},
 		"client_id": {"openrun-cli"}, "code_verifier": {verifier}})
@@ -90,8 +91,15 @@ func TestApiKeyMCPScopeDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mcp key: %v", err)
 	}
-	testutil.AssertEqualsInt(t, "mcp default scopes", 1, len(mcpKey.Scopes))
-	testutil.AssertEqualsString(t, "mcp default scope", "*:read", mcpKey.Scopes[0])
+	testutil.AssertEqualsInt(t, "mcp default scopes", 2, len(mcpKey.Scopes))
+	testutil.AssertEqualsString(t, "mcp default scopes", "*:read app:read_detail", strings.Join(mcpKey.Scopes, " "))
+	// The default read-only set covers app detail reads but no writes or reveals
+	if !rbac.ScopesAllow(mcpKey.Scopes, types.PermissionReadDetail) || !rbac.ScopesAllow(mcpKey.Scopes, types.PermissionSyncRead) {
+		t.Fatal("default MCP scopes must cover app:read_detail and *:read permissions")
+	}
+	if rbac.ScopesAllow(mcpKey.Scopes, types.PermissionUpdate) || rbac.ScopesAllow(mcpKey.Scopes, types.PermissionSecretReveal) {
+		t.Fatal("default MCP scopes must not cover writes or reveals")
+	}
 
 	// Explicit scopes are applied unchanged, and rest keys stay unscoped
 	writeKey, err := server.CreateApiKey(trustedCtx, &types.ApiKeyCreateRequest{
@@ -166,7 +174,7 @@ func TestOAuthConsentPageHardening(t *testing.T) {
 	form := url.Values{
 		"response_type": {"code"}, "client_id": {registered.ClientId},
 		"redirect_uri": {"https://tool.example.com/cb"}, "code_challenge": {challenge},
-		"code_challenge_method": {"S256"}, "resource": {ts.URL + "/rest"}}
+		"code_challenge_method": {"S256"}, "resource": {ts.URL + "/_openrun/rest"}}
 	resp, err = client.Get(ts.URL + "/_openrun/oauth/authorize?" + form.Encode())
 	if err != nil {
 		t.Fatalf("authorize form: %v", err)
