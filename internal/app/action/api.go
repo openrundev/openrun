@@ -4,6 +4,7 @@
 package action
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
+	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 )
 
@@ -194,22 +196,21 @@ func jsonValueToParamType(param apptype.AppParam, value jsontext.Value) (starlar
 	}
 }
 
-// writeAPIRunResponse writes the JSON response for the action run/validate API.
-// Param validation errors are reported with a 422 status
-func (a *Action) writeAPIRunResponse(w http.ResponseWriter, status string, valuesStr []string,
-	valuesMap []map[string]any, paramErrors map[string]any, report string, isValidate bool) {
+// APIResult builds the JSON response document and the http status for a run
+// or validate outcome. Param validation errors are reported with a 422 status
+func (a *Action) APIResult(o *Outcome, isValidate bool) (map[string]any, int) {
 	errorMsgs := map[string]string{}
 	for _, param := range a.params {
 		if isOptionsParam(param.Name) {
 			continue
 		}
-		if paramErrors[param.Name] != nil {
-			errorMsgs[param.Name] = fmt.Sprintf("%s", paramErrors[param.Name])
+		if o.ParamErrors[param.Name] != nil {
+			errorMsgs[param.Name] = fmt.Sprintf("%s", o.ParamErrors[param.Name])
 		}
 	}
 
 	response := map[string]any{
-		"status": status,
+		"status": o.Status,
 	}
 
 	code := http.StatusOK
@@ -217,17 +218,17 @@ func (a *Action) writeAPIRunResponse(w http.ResponseWriter, status string, value
 		response["param_errors"] = errorMsgs
 		code = http.StatusUnprocessableEntity
 	} else if !isValidate {
-		response["report"] = effectiveReport(report, valuesMap, valuesStr)
-		if len(valuesStr) > 0 {
-			response["values"] = valuesStr
-		} else if valuesMap != nil {
-			response["values"] = valuesMap
+		response["report"] = effectiveReport(o.Report, o.ValuesMap, o.ValuesStr)
+		if len(o.ValuesStr) > 0 {
+			response["values"] = o.ValuesStr
+		} else if o.ValuesMap != nil {
+			response["values"] = o.ValuesMap
 		} else {
 			response["values"] = []any{}
 		}
 	}
 
-	writeJSON(w, code, response)
+	return response, code
 }
 
 // effectiveReport resolves the AUTO report type to the actual report type,
@@ -253,19 +254,28 @@ func effectiveReport(report string, valuesMap []map[string]any, valuesStr []stri
 	return apptype.TABLE
 }
 
-// writeAPISuggestResponse writes the JSON response for the suggest API. The
-// response params are filtered the same way as the form UI suggest handling
+// writeAPISuggestResponse writes the JSON response for the suggest API
 func (a *Action) writeAPISuggestResponse(w http.ResponseWriter, retVal starlark.Value) {
+	response, err := a.SuggestResult(retVal)
+	if err != nil {
+		writeJSONError(w, err.Msg, err.Code)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// SuggestResult builds the JSON response document for a suggest handler
+// response. The response params are filtered the same way as the form UI
+// suggest handling
+func (a *Action) SuggestResult(retVal starlark.Value) (map[string]any, *InvokeError) {
 	ret, err := starlark_type.ToGo(retVal)
 	if err != nil {
-		writeJSONError(w, fmt.Sprintf("error unmarshalling suggest response: %s", err), http.StatusInternalServerError)
-		return
+		return nil, invokeErr(http.StatusInternalServerError, "error unmarshalling suggest response: %s", err)
 	}
 
 	if message, retIsString := ret.(string); retIsString {
 		// No suggestions available
-		writeJSON(w, http.StatusOK, map[string]any{"status": message})
-		return
+		return map[string]any{"status": message}, nil
 	}
 
 	retDict := map[string]any{}
@@ -289,8 +299,7 @@ func (a *Action) writeAPISuggestResponse(w http.ResponseWriter, retVal starlark.
 			retDict[k] = v
 		}
 	default:
-		writeJSONError(w, fmt.Sprintf("invalid suggest response type: %T, expected dict", retType), http.StatusInternalServerError)
-		return
+		return nil, invokeErr(http.StatusInternalServerError, "invalid suggest response type: %T, expected dict", retType)
 	}
 
 	paramMap := map[string]bool{}
@@ -307,7 +316,7 @@ func (a *Action) writeAPISuggestResponse(w http.ResponseWriter, retVal starlark.
 		params[key] = value
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"status": "Suggesting values", "params": params})
+	return map[string]any{"status": "Suggesting values", "params": params}, nil
 }
 
 type apiActionInfo struct {
@@ -329,10 +338,7 @@ func (api *appAPI) apiPath(prefix string, act *Action) string {
 // authorized reports whether the current user has access to the action, as
 // per the action's permit list
 func (api *appAPI) authorized(r *http.Request, act *Action) (bool, error) {
-	if act.rbacApi == nil || len(act.permit) == 0 {
-		return true, nil
-	}
-	return act.rbacApi.AuthorizeAny(r.Context(), act.permit)
+	return act.Authorized(r.Context())
 }
 
 // describe lists the actions available in the app, with their API paths
@@ -367,16 +373,6 @@ func (api *appAPI) describe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"app": api.appName, "actions": infos})
 }
 
-type apiParamInfo struct {
-	Name        string   `json:"name"`
-	Type        string   `json:"type"`
-	Description string   `json:"description,omitempty"`
-	Default     any      `json:"default,omitempty"`
-	Required    bool     `json:"required"`
-	DisplayType string   `json:"display_type,omitempty"`
-	Options     []string `json:"options,omitempty"`
-}
-
 // paramDefault returns the app level value for a param, converted to its
 // native type. The string value is returned if the conversion fails
 func (a *Action) paramDefault(p apptype.AppParam) any {
@@ -401,18 +397,38 @@ func (a *Action) apiGetSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	options, err := a.paramOptions()
+	schema, err := a.Schema()
 	if err != nil {
 		writeJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	writeJSON(w, http.StatusOK, schema)
+}
 
-	params := make([]apiParamInfo, 0, len(a.params))
+// ActionSchema has the param definitions for an action
+type ActionSchema struct {
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	Params      []types.ActionParam `json:"params"`
+	Suggest     bool                `json:"suggest"`
+}
+
+// Schema returns the param definitions for an action. Hidden params and the
+// options params are not included. The caller is expected to have checked
+// Authorized, the definitions and defaults of restricted actions are not
+// to be disclosed
+func (a *Action) Schema() (*ActionSchema, error) {
+	options, err := a.paramOptions()
+	if err != nil {
+		return nil, err
+	}
+
+	params := make([]types.ActionParam, 0, len(a.params))
 	for _, p := range a.params {
 		if isOptionsParam(p.Name) || a.hidden[p.Name] {
 			continue
 		}
-		params = append(params, apiParamInfo{
+		info := types.ActionParam{
 			Name:        p.Name,
 			Type:        string(p.Type),
 			Description: p.Description,
@@ -420,16 +436,94 @@ func (a *Action) apiGetSchema(w http.ResponseWriter, r *http.Request) {
 			Required:    p.Required,
 			DisplayType: string(p.DisplayType),
 			Options:     options[p.Name],
-		})
+		}
+		if p.DisplayType == apptype.DisplayTypePassword {
+			info.Default = nil // the app level value of a password param is not disclosed
+		}
+		params = append(params, info)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"name":        a.name,
-		"description": a.description,
-		"params":      params,
-		"suggest":     a.suggest != nil,
-	})
+	return &ActionSchema{
+		Name:        a.name,
+		Description: a.description,
+		Params:      params,
+		Suggest:     a.suggest != nil,
+	}, nil
 }
+
+// InputJSONSchema returns the JSON schema of the args object for the action:
+// the request body schema in the OpenAPI spec and the MCP tool input schema.
+// File upload params cannot be carried in a JSON document, they are left out
+// when skipFiles is set (MCP)
+func (a *Action) InputJSONSchema(skipFiles bool) (map[string]any, error) {
+	options, err := a.paramOptions()
+	if err != nil {
+		return nil, err
+	}
+
+	properties := map[string]any{}
+	required := []string{}
+	for _, p := range a.params {
+		if isOptionsParam(p.Name) || a.hidden[p.Name] {
+			continue
+		}
+		if skipFiles && p.DisplayType == apptype.DisplayTypeFileUpload {
+			continue
+		}
+		defaultVal := a.paramDefault(p)
+		if p.DisplayType == apptype.DisplayTypePassword {
+			defaultVal = nil
+		}
+		properties[p.Name] = paramJSONSchema(p, options[p.Name], defaultVal)
+		if p.Required && a.paramValuesStr[p.Name] == "" {
+			// A required param with an app level value does not have to be passed
+			required = append(required, p.Name)
+		}
+	}
+
+	schema := map[string]any{"type": "object", "properties": properties}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema, nil
+}
+
+// HasRequiredFileParam reports whether the action has a required file upload
+// param, such an action cannot be called with a JSON args document
+func (a *Action) HasRequiredFileParam() bool {
+	for _, p := range a.params {
+		if p.DisplayType == apptype.DisplayTypeFileUpload && p.Required && !a.hidden[p.Name] {
+			return true
+		}
+	}
+	return false
+}
+
+// HasParam reports whether the action has a visible param with the name
+func (a *Action) HasParam(name string) bool {
+	for _, p := range a.params {
+		if p.Name == name && !a.hidden[p.Name] && !isOptionsParam(p.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// Name returns the action name
+func (a *Action) Name() string { return a.name }
+
+// Description returns the action description
+func (a *Action) Description() string { return a.description }
+
+// Path returns the action path within the app
+func (a *Action) Path() string { return a.actionPath }
+
+// Permit returns the custom permissions of which the caller needs one, empty
+// when the action is not restricted
+func (a *Action) Permit() []string { return slices.Clone(a.permit) }
+
+// HasSuggest reports whether the action has a suggest handler
+func (a *Action) HasSuggest() bool { return a.suggest != nil }
 
 // paramJSONSchema returns the OpenAPI schema for a param
 func paramJSONSchema(p apptype.AppParam, options []string, defaultVal any) map[string]any {
@@ -476,52 +570,28 @@ func paramJSONSchema(p apptype.AppParam, options []string, defaultVal any) map[s
 	return schema
 }
 
-// operationNames returns a unique OpenAPI operationId name for each action,
-// derived from the action path. Path separators are replaced with underscores,
-// so different paths can map to the same name (/a/b and /a_b, or / and /root).
-// Colliding names get a numeric suffix, chosen so it does not clash with the
-// name of any other action either
-func operationNames(actions []*Action) map[*Action]string {
-	baseNames := make([]string, len(actions))
-	reserved := map[string]bool{}
-	for i, act := range actions {
-		name := strings.Trim(act.actionPath, "/")
-		name = strings.ReplaceAll(name, "/", "_")
-		if name == "" {
-			name = "root"
-		}
-		baseNames[i] = name
-		reserved[name] = true
-	}
-
-	names := make(map[*Action]string, len(actions))
-	used := map[string]bool{}
-	for i, act := range actions {
-		name := baseNames[i]
-		if used[name] {
-			for suffix := 2; ; suffix++ {
-				candidate := fmt.Sprintf("%s_%d", name, suffix)
-				if !used[candidate] && !reserved[candidate] {
-					name = candidate
-					break
-				}
-			}
-		}
-		used[name] = true
-		names[act] = name
-	}
-	return names
-}
-
-// operationId returns the OpenAPI operationId for an operation on an action
+// operationId returns the OpenAPI operationId for an operation on an action.
+// name is the tool name of the action (ToolNames): the OpenAPI spec, the CLI
+// and the MCP tools name an action the same way
 func operationId(op string, name string) string {
 	return op + "_" + name
 }
 
-// openAPISpec generates the OpenAPI 3.0 spec for the app actions. Only the
-// actions the current user is authorized for are included, the param
-// definitions and defaults of restricted actions are not disclosed
+// openAPISpec serves the OpenAPI 3.0 spec for the app actions
 func (api *appAPI) openAPISpec(w http.ResponseWriter, r *http.Request) {
+	spec, err := OpenAPISpec(r.Context(), api.appName, api.appPath, api.actions)
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, spec)
+}
+
+// OpenAPISpec generates the OpenAPI 3.0 spec for the app actions. Only the
+// actions the caller (the identity in ctx) is authorized for are included,
+// the param definitions and defaults of restricted actions are not disclosed
+func OpenAPISpec(ctx context.Context, appName, appPath string, actions []*Action) (map[string]any, error) {
+	api := &appAPI{appName: appName, appPath: appPath, actions: actions}
 	resultResponse := map[string]any{
 		"description": "Action result. A handler returning a stream (ace.result stream=) " +
 			"answers with chunked text/plain: the command output as produced, the result " +
@@ -555,36 +625,26 @@ func (api *appAPI) openAPISpec(w http.ResponseWriter, r *http.Request) {
 		"500": map[string]any{"description": "Action failed", "content": errorContent},
 	}
 
-	names := operationNames(api.actions)
+	names := ToolNames(api.actions)
 	paths := map[string]any{}
 	for _, act := range api.actions {
-		authorized, err := api.authorized(r, act)
+		authorized, err := act.Authorized(ctx)
 		if err != nil {
-			writeJSONError(w, err.Error(), http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 		if !authorized {
 			continue
 		}
 
-		options, err := act.paramOptions()
+		inputSchema, err := act.InputJSONSchema(false)
 		if err != nil {
-			writeJSONError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		properties := map[string]any{}
-		for _, p := range act.params {
-			if isOptionsParam(p.Name) || act.hidden[p.Name] {
-				continue
-			}
-			properties[p.Name] = paramJSONSchema(p, options[p.Name], act.paramDefault(p))
+			return nil, err
 		}
 
 		requestBody := map[string]any{
 			"content": map[string]any{
 				"application/json": map[string]any{
-					"schema": map[string]any{"type": "object", "properties": properties},
+					"schema": inputSchema,
 				},
 			},
 		}
@@ -614,11 +674,19 @@ func (api *appAPI) openAPISpec(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 		if act.suggest != nil {
+			// Suggest takes a partial set of args, no param is required
+			suggestSchema := maps.Clone(inputSchema)
+			delete(suggestSchema, "required")
+			suggestBody := map[string]any{
+				"content": map[string]any{
+					"application/json": map[string]any{"schema": suggestSchema},
+				},
+			}
 			paths[api.apiPath(apiSuggestPrefix, act)] = map[string]any{
 				"post": map[string]any{
 					"operationId": operationId("suggest", names[act]),
 					"summary":     "Suggest param values for " + act.name,
-					"requestBody": requestBody,
+					"requestBody": suggestBody,
 					"responses":   execResponses,
 				},
 			}
@@ -656,5 +724,5 @@ func (api *appAPI) openAPISpec(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	writeJSON(w, http.StatusOK, spec)
+	return spec, nil
 }

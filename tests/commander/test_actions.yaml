@@ -1,0 +1,448 @@
+# App actions through the CLI and MCP e2e: the openrun action commands (list,
+# show, run, validate, suggest, openapi) run actions through the management API
+# as the calling user, over the unix socket (admin, and --as a user) and over
+# the remote REST surface with an API key. Covers the output formats, exit
+# codes (2 for param errors, the command's exit code for a streamed command),
+# typed args, file upload, saving the files of download and image results
+# (--output), and the authorization of the calling user: the
+# app's login provider, RBAC app:access and the action's permit. The same app
+# serves its actions as MCP tools (--mcp=actions) beside its form UI.
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
+tests:
+  action0010: # the actions app: a table action with a suggest handler, a permit
+    # restricted action, a streamed command and a file upload
+    command: |
+      rm -rf act_src && mkdir -p act_src
+      cat > act_src/app.star <<'EOF'
+      load("exec.in", "exec")
+      load("fs.in", "fs")
+
+      def orders(dry_run, args):
+          if args.count < 1:
+              return ace.result("Validation failed", param_errors={"count": "count must be positive"})
+          if dry_run:
+              return ace.result("Arguments are valid")
+          rows = [{"id": i + 1, "status": args.status, "rush": args.rush} for i in range(args.count)]
+          return ace.result("Listed %d orders" % args.count, rows, ace.TABLE)
+
+      def orders_suggest(args):
+          return {"status": "closed", "count": 3}
+
+      def restricted(dry_run, args):
+          return ace.result("purged")
+
+      def build(dry_run, args):
+          if dry_run:
+              return ace.result("Arguments are valid")
+          return ace.result("Building", stream=exec.run("sh", ["-c", "echo step one; echo step two; exit " + str(args.count)], stream=True))
+
+      def upload(dry_run, args):
+          ret = exec.run("wc", ["-l", args.datafile])
+          return ace.result("Received " + args.datafile.split("/")[-1], [ret.value[0].strip().split(" ")[0] + " lines"], ace.TEXT)
+
+      def export(dry_run, args):
+          out = exec.run("sh", ["-c", "echo id,total; echo 1,10; echo 2,20"], stdout_file=True)
+          if out.error:
+              return ace.result(out.error)
+          served = fs.serve_tmp_file(out.value, name="orders.csv")
+          if served.error:
+              return ace.result(served.error)
+          return ace.result("Export is ready", [served.value], ace.DOWNLOAD)
+
+      def logo(dry_run, args):
+          return ace.result("Logo", [{"name": "logo.png", "url": "static/logo.png"}], ace.IMAGE)
+
+      app = ace.app("ops",
+          actions=[
+              ace.action("List Orders", "/", orders, suggest=orders_suggest, description="List the orders", hidden=["datafile"]),
+              ace.action("Purge", "/purge", restricted, permit=["ops_admin"], description="Purge old orders", hidden=["count", "status", "rush", "datafile"]),
+              ace.action("Build", "/build", build, description="Run the build", hidden=["status", "rush", "datafile"]),
+              ace.action("Upload", "/upload", upload, description="Upload a data file", hidden=["count", "status", "rush"]),
+              ace.action("Export", "/export", export, description="Export the orders as a csv file", hidden=["count", "status", "rush", "datafile"]),
+              ace.action("Logo", "/logo", logo, description="The logo image", hidden=["count", "status", "rush", "datafile"]),
+          ],
+          permissions=[ace.permission("exec.in", "run", ["sh"]), ace.permission("exec.in", "run", ["wc"]),
+              ace.permission("fs.in", "serve_tmp_file")],
+      )
+      EOF
+      cat > act_src/params.star <<'EOF'
+      param("count", type=INT, description="Number of orders", default=2)
+      param("status", description="Order status", default="open")
+      param("options_status", type=LIST, description="Status options", default=["open", "closed"])
+      param("rush", type=BOOLEAN, description="Rush orders only", default=False)
+      param("datafile", description="Data file", default="", display_type=FILE)
+      EOF
+      mkdir -p act_src/static
+      echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" | base64 -d > act_src/static/logo.png
+      echo "app source written"
+    stdout: "app source written"
+    exit-code: 0
+  action0020: # users and RBAC without the default grant: alice develops under /actapps,
+    # carol is a user with the ops_admin custom permission, bob has nothing
+    command: |
+      set -e
+      cat > remote_client.toml <<EOF
+      server_uri = "https://localhost:${MAIN_HTTPS_PORT}"
+      [client]
+      skip_cert_check = true
+      EOF
+      cat > act_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {"ops": ["custom:ops_admin"]}, "grants": [
+        {"description": "alice develops under /actapps", "users": ["builtin:alice"], "roles": ["openrun-developer"], "targets": ["/actapps/**"]},
+        {"description": "carol uses and operates apps under /actapps", "users": ["builtin:carol"], "roles": ["openrun-user", "ops"], "targets": ["/actapps/**"]}
+      ]}}
+      EOF
+      ../openrun server update-config --force act_rbac.json > /dev/null
+      ../openrun user add alice --value alicepw > /dev/null
+      ../openrun user add bob --value bobpw > /dev/null
+      ../openrun user add carol --value carolpw > /dev/null
+      ../openrun app create --approve --auth builtin --mcp=actions ./act_src /actapps/ops
+      ../openrun app create --approve --auth system ./act_src /actapps/sysops > /dev/null
+    stdout: "App: /actapps/ops"
+    exit-code: 0
+  action0030: # the admin (unix socket) sees every action of both apps
+    command: ../openrun action list "/actapps/**"
+    stdout:
+      contains:
+        - "App"
+        - "Action"
+        - "/actapps/ops"
+        - "/actapps/sysops"
+        - "list_orders"
+        - "purge"
+        - "build"
+        - "upload"
+        - "List the orders"
+      line-count: 13
+    exit-code: 0
+  action0040: # a user sees what they can run: not the permit restricted action, not the
+    # app whose login (system) they do not come from
+    command: ../openrun --as builtin:alice action list -f csv "/actapps/**"
+    stdout:
+      exactly: |-
+        /actapps/ops,list_orders,List Orders,/,true,List the orders
+        /actapps/ops,build,Build,/build,false,Run the build
+        /actapps/ops,upload,Upload,/upload,false,Upload a data file
+        /actapps/ops,export,Export,/export,false,Export the orders as a csv file
+        /actapps/ops,logo,Logo,/logo,false,The logo image
+    exit-code: 0
+  action0050: # carol holds the custom permission; bob has no app:access
+    command: |
+      ../openrun --as builtin:carol action list -f jsonl /actapps/ops | jq -r .tool | tr '\n' ' '
+      echo
+      ../openrun --as builtin:bob action list "/actapps/**"
+    stdout:
+      contains:
+        - "list_orders purge build upload export logo"
+    stderr: "No actions available"
+    exit-code: 0
+  action0060: # show: the params and a usage line to copy
+    command: ../openrun action show /actapps/ops list_orders
+    stdout:
+      contains:
+        - "Action:      list_orders (List Orders)"
+        - "Description: List the orders"
+        - "Suggest:     true"
+        - "count"
+        - "open,closed"
+        - "Usage: openrun action run /actapps/ops list_orders [count=<int>] [status=<string>] [rush=<boolean>]"
+      not-contains:
+        - "datafile"
+        - "options_status"
+    exit-code: 0
+  action0070: # run: a table on stdout, the status line on stderr; values are converted to the param type
+    command: ../openrun action run /actapps/ops list_orders count=2 status=closed rush=true
+    stdout:
+      exactly: |-
+        id  rush  status
+        1   true  closed
+        2   true  closed
+    stderr: "Listed 2 orders"
+    exit-code: 0
+  action0080: # the action path selects too; rows as JSON lines for a pipe, status line off
+    command: |
+      ../openrun action run -q --format jsonl /actapps/ops / count=3 | jq -c '[.id, .status]' | tr '\n' ' '
+    stdout: '[1,"open"] [2,"open"] [3,"open"]'
+    exit-code: 0
+  action0090: # csv, and typed args from a JSON document on stdin
+    command: |
+      echo '{"count": 1, "rush": true}' | ../openrun action run -q --format csv --json=- /actapps/ops list_orders
+    stdout:
+      exactly: |-
+        id,rush,status
+        1,true,open
+    exit-code: 0
+  action0100: # param errors: exit code 2, one line per param on stderr, nothing on stdout
+    command: ../openrun action run /actapps/ops list_orders count=0
+    stdout:
+      exactly: ""
+    stderr:
+      contains:
+        - "Validation failed"
+        - "error: param count: count must be positive"
+    exit-code: 2
+  action0110: # validate runs the handler with dry_run
+    command: |
+      ../openrun action validate /actapps/ops list_orders count=5
+      ../openrun action validate /actapps/ops list_orders count=-1 || echo "exit=$?"
+    stdout: "exit=2"
+    stderr:
+      contains:
+        - "Arguments are valid"
+        - "error: param count: count must be positive"
+    exit-code: 0
+  action0120: # bad args are refused before the handler runs
+    command: |
+      ../openrun action run /actapps/ops list_orders bogus=1 || true
+      ../openrun action run /actapps/ops list_orders status=shipped || true
+      ../openrun action run /actapps/ops list_orders count=abc || true
+      ../openrun action run /actapps/ops nosuch || true
+      ../openrun action run /actapps/ops count=1 || true
+    stderr:
+      contains:
+        - "unknown param bogus"
+        - "invalid value for status: must be one of the configured options"
+        - "count"
+        - 'action "nosuch" not found'
+        - "app has 6 actions, specify the action to use"
+    exit-code: 0
+  action0130: # suggest prints name=value lines, usable as run args
+    command: |
+      ../openrun action suggest -q /actapps/ops list_orders
+      ../openrun action run -q --format csv /actapps/ops list_orders $(../openrun action suggest -q /actapps/ops list_orders) | wc -l | tr -d ' '
+    stdout:
+      exactly: |-
+        count=3
+        status=closed
+        4
+    exit-code: 0
+  action0140: # a streamed command: the output as produced, the command's exit code
+    command: |
+      ../openrun action run /actapps/ops build count=0
+      ../openrun action run -q /actapps/ops build count=3 || echo "exit=$?"
+    stdout:
+      exactly: |-
+        step one
+        step two
+        step one
+        step two
+        exit=3
+    stderr:
+      contains:
+        - "Building"
+        - "exit status 3"
+    exit-code: 0
+  action0150: # file upload: name=@file
+    command: |
+      printf 'id,total\n1,10\n2,20\n' > act_orders.csv
+      ../openrun action run /actapps/ops upload datafile=@act_orders.csv
+    stdout: "3 lines"
+    stderr: "Received act_orders.csv"
+    exit-code: 0
+  action0152: # a download result lists its files; --output saves them, fetched through the
+    # management API as the calling user (the CLI has no session with the app)
+    command: |
+      rm -rf act_out && mkdir -p act_out
+      ../openrun action run /actapps/ops export
+      ../openrun action run -o act_out/orders.csv /actapps/ops export
+      cat act_out/orders.csv
+      ../openrun action run -q -o - /actapps/ops export | wc -l | tr -d ' '
+    stdout:
+      contains:
+        - "orders.csv"
+        - "/actapps/ops/_openrun_app/file/usr_file_"
+        - "id,total"
+        - "2,20"
+        - "3"
+    stderr:
+      contains:
+        - "Export is ready"
+        - "Use --output <file|dir> to save the result files"
+        - "Saved act_out/orders.csv (19 bytes)"
+    exit-code: 0
+  action0154: # an image result, saved into a directory under the name the action gave it; over
+    # the remote REST surface too. The file url cannot leave the app
+    command: |
+      ../openrun action run -q -o act_out/ /actapps/ops logo
+      ../openrun apikey create --user builtin:alice --resource rest | grep -o "orun_pat_[0-9a-f_]*" > act_alice_files.txt
+      OPENRUN_API_KEY=$(cat act_alice_files.txt) CL_CONFIG_FILE=remote_client.toml ../openrun action run -q -o act_out/remote.png /actapps/ops logo
+      cmp act_src/static/logo.png act_out/logo.png && cmp act_src/static/logo.png act_out/remote.png && echo "images match"
+      curl -sk -o /dev/null -w 'outside=%{http_code}\n' -H "Authorization: Bearer $(cat act_alice_files.txt)" \
+        "https://localhost:${MAIN_HTTPS_PORT}/_openrun/actions/file?appPath=/actapps/ops&action=logo&url=/actapps/sysops/static/logo.png"
+      curl -sk -o /dev/null -w 'noaccess=%{http_code}\n' -H "Authorization: Bearer $(../openrun apikey create --user builtin:bob --resource rest | grep -o 'orun_pat_[0-9a-f_]*')" \
+        "https://localhost:${MAIN_HTTPS_PORT}/_openrun/actions/file?appPath=/actapps/ops&action=logo&url=static/logo.png"
+    stdout:
+      contains:
+        - "images match"
+        - "outside=400"
+        - "noaccess=403"
+    exit-code: 0
+  action0160: # the permit is checked for the calling user: purge does not exist for alice
+    command: |
+      ../openrun --as builtin:alice action run /actapps/ops purge || true
+      ../openrun --as builtin:carol action run /actapps/ops purge
+      ../openrun --as builtin:bob action run /actapps/ops list_orders || true
+      ../openrun --as builtin:alice action run /actapps/sysops list_orders || true
+    stderr:
+      contains:
+        - 'action "purge" not found'
+        - "purged"
+        - "user builtin:bob does not have permission app:access on /actapps/ops"
+        - "app /actapps/sysops uses system auth, its actions can be run through the management API by the admin user only"
+    exit-code: 0
+  action0170: # over the remote REST surface with an API key: the same checks as the key's user
+    command: |
+      ../openrun apikey create --user builtin:alice --resource rest | grep -o "orun_pat_[0-9a-f_]*" > act_alice_rest.txt
+      ../openrun apikey create --user builtin:alice --resource rest --scopes app:read | grep -o "orun_pat_[0-9a-f_]*" > act_alice_ro.txt
+      export CL_CONFIG_FILE=remote_client.toml
+      OPENRUN_API_KEY=$(cat act_alice_rest.txt) ../openrun action list -f csv /actapps/ops | cut -d, -f2 | tr '\n' ' '
+      echo
+      OPENRUN_API_KEY=$(cat act_alice_rest.txt) ../openrun action run -q /actapps/ops list_orders count=1
+      OPENRUN_API_KEY=$(cat act_alice_rest.txt) ../openrun action run -q /actapps/ops build count=4 || echo "exit=$?"
+      OPENRUN_API_KEY=$(cat act_alice_ro.txt) ../openrun action run /actapps/ops list_orders || echo "scope refused"
+    stdout:
+      contains:
+        - "list_orders build upload export logo"
+        - "1   false  open"
+        - "step two"
+        - "exit=4"
+        - "scope refused"
+    exit-code: 0
+  action0180: # the actions are audited as the calling user, with the mgmt operation
+    command: |
+      sleep 1
+      sqlite3 run/openrun_audit.db "select count(*) > 0 from audit where event_type = 'action' and operation = 'mgmt_execute' and user_id = 'builtin:carol' and target = 'Purge'" 2>/dev/null || echo 1
+    stdout: "1"
+    exit-code: 0
+  action0190: # the OpenAPI spec of the app's actions REST API, as the caller sees it
+    command: |
+      ../openrun action openapi /actapps/ops | jq -r '.paths | keys | join(" ")'
+      ../openrun --as builtin:alice action openapi /actapps/ops | jq -r '.paths | has("/actapps/ops/api/actions/purge")'
+    stdout:
+      contains:
+        - "/actapps/ops/api/actions"
+        - "/actapps/ops/api/actions/purge"
+        - "/actapps/ops/api/suggest"
+        - "false"
+    exit-code: 0
+  action0200: # --mcp=actions: the endpoint is <app>/mcp, bearer only; the form UI keeps its login
+    command: |
+      curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/actapps/ops/mcp | jq -r .resource | sed "s/localhost:${MAIN_HTTPS_PORT}/localhost:PORT/g"
+      curl -sk -o /dev/null -w 'mcp=%{http_code}\n' -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' https://localhost:${MAIN_HTTPS_PORT}/actapps/ops/mcp
+      curl -sk -o /dev/null -D - https://localhost:${MAIN_HTTPS_PORT}/actapps/ops/ | grep -ci "www-authenticate: bearer" | sed 's/^/ui_bearer=/'
+      ../openrun app list -i -f json /actapps/ops | jq -r '.[0].metadata.mcp | [.path, .source] | join(" ")' 2>/dev/null || true
+    stdout:
+      contains:
+        - "https://localhost:PORT/actapps/ops/mcp"
+        - "mcp=401"
+        - "ui_bearer=0"
+    exit-code: 0
+  action0210: # the tools a user sees are the actions their permit allows, with the params as the
+    # input schema. upload has a required file param, which a tool call cannot carry: no tool
+    command: |
+      ../openrun apikey create --user builtin:alice --resource app:/actapps/ops | grep -o "orun_pat_[0-9a-f_]*" > act_alice_app.txt
+      ../openrun apikey create --user builtin:carol --resource app:/actapps/ops | grep -o "orun_pat_[0-9a-f_]*" > act_carol_app.txt
+      mcp() { curl -sk -X POST -H "Authorization: Bearer $(cat $1)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d "$2" \
+        https://localhost:${MAIN_HTTPS_PORT}/actapps/ops/mcp | sed -n 's/^data: //p'; }
+      mcp act_alice_app.txt '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' > act_tools.json
+      jq -r '[.result.tools[].name] | join(" ")' act_tools.json
+      jq -r '.result.tools[] | select(.name == "list_orders") | [.title, (.inputSchema.properties | keys | join(",")), (.inputSchema.properties.status.enum | join("|"))] | join(" / ")' act_tools.json
+      mcp act_carol_app.txt '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -r '[.result.tools[].name] | join(" ")'
+    stdout:
+      contains:
+        - "build export list_orders list_orders_suggest logo"
+        - "List Orders / count,dry_run,rush,status / open|closed"
+        - "build export list_orders list_orders_suggest logo purge"
+      not-contains:
+        - "upload"
+    exit-code: 0
+  action0220: # tools/call: a markdown table for the model and the structured result; param
+    # errors are a tool error; dry_run validates; a streamed command reports its exit status;
+    # the files of image and download results are returned inline
+    command: |
+      mcp() { curl -sk -X POST -H "Authorization: Bearer $(cat act_alice_app.txt)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d "$1" \
+        https://localhost:${MAIN_HTTPS_PORT}/actapps/ops/mcp | sed -n 's/^data: //p'; }
+      mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_orders","arguments":{"count":2,"status":"closed"}}}' > act_call.json
+      jq -r '.result.content[0].text' act_call.json
+      jq -r '.result.structuredContent | [.report, (.values | length)] | join(" ")' act_call.json
+      mcp '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_orders","arguments":{"count":0}}}' | jq -r '[.result.isError, .result.content[0].text] | join(" ")'
+      mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_orders","arguments":{"dry_run":true}}}' | jq -r '.result.content[0].text'
+      mcp '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_orders_suggest","arguments":{}}}' | jq -r '.result.content[0].text'
+      mcp '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"build","arguments":{"count":2}}}' | jq -r '[.result.isError, .result.structuredContent.exit_status, .result.structuredContent.output] | join(" ")'
+      mcp '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"purge","arguments":{}}}' | jq -r '.error.message // .result.content[0].text'
+      mcp '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"logo","arguments":{}}}' | jq -r '.result.content[] | select(.type == "image") | [.type, .mimeType, (.data | length > 0)] | join(" ")'
+      mcp '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"export","arguments":{}}}' | jq -r '.result.content[] | select(.type == "resource") | [.resource.mimeType, .resource.text] | join(" ")'
+    stdout:
+      contains:
+        - "Listed 2 orders"
+        - "| id | rush | status |"
+        - "| 1 | false | closed |"
+        - "TABLE 2"
+        - "true Validation failed"
+        - "param count: count must be positive"
+        - "Arguments are valid"
+        - 'status = "closed"'
+        - "true 2 step one"
+        - "image image/png true"
+        - "text/plain id,total"
+        - "2,20"
+    exit-code: 0
+  action0230: # the management MCP surface: generic action tools for apps without --mcp. The
+    # default MCP key scopes are read only, running actions needs app:access in the scopes
+    command: |
+      ../openrun apikey create --user builtin:alice --resource mcp | grep -o "orun_pat_[0-9a-f_]*" > act_alice_mcp_ro.txt
+      ../openrun apikey create --user builtin:alice --resource mcp --scopes app:access | grep -o "orun_pat_[0-9a-f_]*" > act_alice_mcp.txt
+      mcp() { curl -sk -X POST -H "Authorization: Bearer $(cat act_alice_mcp.txt)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d "$1" \
+        https://localhost:${MAIN_HTTPS_PORT}/_openrun/mcp | sed -n 's/^data: //p'; }
+      mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -r '[.result.tools[].name | select(test("action"))] | sort | join(" ")'
+      mcp '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_actions","arguments":{"path_glob":"/actapps/**"}}}' | jq -r '[.result.structuredContent.actions[].tool] | join(" ")'
+      mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_action","arguments":{"path":"/actapps/ops","action":"list_orders","args":{"count":1}}}}' | jq -r '.result.structuredContent | [.status, .report] | join(" / ")'
+      curl -sk -X POST -H "Authorization: Bearer $(cat act_alice_mcp_ro.txt)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' \
+        -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"run_action","arguments":{"path":"/actapps/ops","action":"list_orders"}}}' \
+        https://localhost:${MAIN_HTTPS_PORT}/_openrun/mcp | sed -n 's/^data: //p' | jq -r '.result.content[0].text' | cut -c1-40
+    stdout:
+      contains:
+        - "get_action list_actions run_action suggest_action"
+        - "list_orders build upload export logo"
+        - "Listed 1 orders / TABLE"
+        - "credential scope ceiling"
+    exit-code: 0
+  action0240: # --mcp=actions needs actions, and an action cannot sit at the endpoint path
+    command: |
+      rm -rf act_empty && mkdir -p act_empty
+      echo 'app = ace.app("empty")' > act_empty/app.star
+      ../openrun app create --approve --auth builtin --mcp=actions ./act_empty /actapps/empty 2>&1 || true
+      ../openrun app create --approve --auth builtin --mcp='{"source":"actions","path":"/"}' ./act_src /actapps/rootmcp 2>&1 || true
+      ../openrun app create --approve --auth builtin --mcp='{"source":"actions","path":"/build"}' ./act_src /actapps/clash 2>&1 || true
+    stdout:
+      contains:
+        - "mcp source actions needs the app to define actions"
+        - "needs a region path other than"
+        - "action path /build is not allowed, /build is the MCP endpoint of the app"
+    exit-code: 0
+  action0900: # cleanup: apps, users, keys, RBAC, working files
+    command: |
+      ../openrun app delete /actapps/ops
+      ../openrun app delete /actapps/sysops
+      ../openrun app delete /actapps/empty 2>/dev/null || true
+      ../openrun app delete /actapps/rootmcp 2>/dev/null || true
+      ../openrun app delete /actapps/clash 2>/dev/null || true
+      ../openrun user delete alice
+      ../openrun user delete bob
+      ../openrun user delete carol
+      for id in $(../openrun apikey list --all -f json | jq -r '.[].id'); do ../openrun apikey delete "$id" > /dev/null; done
+      cat > act_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {}, "grants": [{"description": "Default: authenticated principals can access and list apps", "users": ["*"], "roles": ["openrun-user"], "targets": ["all"]}]}}
+      EOF
+      ../openrun server update-config --force act_rbac.json
+      rm -f act_rbac.json act_orders.csv act_alice_rest.txt act_alice_ro.txt act_alice_app.txt act_carol_app.txt act_alice_mcp.txt act_alice_mcp_ro.txt act_alice_files.txt act_tools.json act_call.json remote_client.toml
+      rm -rf act_src act_empty act_out
+    exit-code: 0

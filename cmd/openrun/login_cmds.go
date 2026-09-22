@@ -31,12 +31,13 @@ import (
 // $OPENRUN_HOME/config). Access tokens auto-refresh on later CLI calls.
 
 func initLoginCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
-	flags := make([]cli.Flag, 0, len(commonFlags)+3)
+	flags := make([]cli.Flag, 0, len(commonFlags)+4)
 	flags = append(flags, commonFlags...)
 	flags = append(flags,
 		newStringFlag("server", "s", "The server url (https://host[:port]). Default is server_uri from the client config", ""),
 		newStringFlag("scopes", "", "Requested scopes, comma or space separated. Default *", "*"),
 		newBoolFlag("no-browser", "n", "Print the login url instead of opening a browser", false),
+		newStringFlag("auth", "", "The login to use, an [auth.*] or saml_<name> entry of the server's api.rest auth list. Skips the login chooser", ""),
 	)
 	return &cli.Command{
 		Name:  "login",
@@ -44,7 +45,8 @@ func initLoginCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		Flags: flags,
 		UsageText: `Examples:
   Log in:                openrun login --server https://openrun.example.com
-  Without a browser:     openrun login --server https://openrun.example.com --no-browser`,
+  Without a browser:     openrun login --server https://openrun.example.com --no-browser
+  With the app's login:  openrun login --server https://openrun.example.com --auth saml_okta`,
 		Action: func(cCtx *cli.Context) error {
 			serverUrl := strings.TrimSuffix(cmp.Or(cCtx.String("server"), clientConfig.ServerUri), "/")
 			if !strings.HasPrefix(serverUrl, "https://") && !strings.HasPrefix(serverUrl, "http://") {
@@ -155,7 +157,7 @@ func runLoginFlow(cCtx *cli.Context, clientConfig *types.ClientConfig, serverUrl
 
 	scopes := strings.Join(strings.FieldsFunc(cCtx.String("scopes"),
 		func(r rune) bool { return r == ',' || r == ' ' }), " ")
-	authorizeUrl := metadata.AuthorizationEndpoint + "?" + url.Values{
+	authorizeParams := url.Values{
 		"response_type":         {"code"},
 		"client_id":             {"openrun-cli"},
 		"redirect_uri":          {redirectUri},
@@ -164,7 +166,11 @@ func runLoginFlow(cCtx *cli.Context, clientConfig *types.ClientConfig, serverUrl
 		"code_challenge_method": {"S256"},
 		"resource":              {prm.Resource},
 		"scope":                 {scopes},
-	}.Encode()
+	}
+	if auth := cCtx.String("auth"); auth != "" {
+		authorizeParams.Set("mechanism", auth)
+	}
+	authorizeUrl := metadata.AuthorizationEndpoint + "?" + authorizeParams.Encode()
 
 	if cCtx.Bool("no-browser") || !openBrowser(authorizeUrl) {
 		printStdout(cCtx, "Open this url in a browser to log in:\n\n%s\n\n", authorizeUrl)

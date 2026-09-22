@@ -413,6 +413,27 @@
     ],
     "type": "object"
   },
+  "get_action": {
+    "additionalProperties": false,
+    "properties": {
+      "action": {
+        "description": "the action to use: its tool name from list_actions, or its path like /cancel. Optional when the app has one action",
+        "type": "string"
+      },
+      "path": {
+        "description": "the app path, like /myapp or example.com:/myapp",
+        "type": "string"
+      },
+      "stage": {
+        "description": "use the stage instance of the app instead of prod",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
   "get_app": {
     "additionalProperties": false,
     "properties": {
@@ -437,6 +458,16 @@
     "required": [
       "id"
     ],
+    "type": "object"
+  },
+  "list_actions": {
+    "additionalProperties": false,
+    "properties": {
+      "path_glob": {
+        "description": "app path glob to match, like /myapp, example.com:/**, or all. Empty matches all apps across all domains",
+        "type": "string"
+      }
+    },
     "type": "object"
   },
   "list_apikeys": {
@@ -726,6 +757,36 @@
     "additionalProperties": false,
     "type": "object"
   },
+  "run_action": {
+    "additionalProperties": false,
+    "properties": {
+      "action": {
+        "description": "the action to run: its tool name from list_actions, or its path like /cancel. Optional when the app has one action",
+        "type": "string"
+      },
+      "args": {
+        "additionalProperties": true,
+        "description": "the action args, param name to value, see get_action for the params. Params left out use the app level values",
+        "type": "object"
+      },
+      "dry_run": {
+        "description": "validate the args only: reports the param errors, runs nothing",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "the app path, like /myapp or example.com:/myapp",
+        "type": "string"
+      },
+      "stage": {
+        "description": "use the stage instance of the app instead of prod",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
   "run_job": {
     "additionalProperties": false,
     "properties": {
@@ -966,6 +1027,32 @@
   },
   "stop_server": {
     "additionalProperties": false,
+    "type": "object"
+  },
+  "suggest_action": {
+    "additionalProperties": false,
+    "properties": {
+      "action": {
+        "description": "the action: its tool name from list_actions, or its path. Optional when the app has one action",
+        "type": "string"
+      },
+      "args": {
+        "additionalProperties": true,
+        "description": "the args known so far, param name to value",
+        "type": "object"
+      },
+      "path": {
+        "description": "the app path, like /myapp or example.com:/myapp",
+        "type": "string"
+      },
+      "stage": {
+        "description": "use the stage instance of the app instead of prod",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path"
+    ],
     "type": "object"
   },
   "sync_create": {

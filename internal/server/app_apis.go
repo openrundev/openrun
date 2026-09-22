@@ -481,6 +481,7 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 				// The pre-pass loaded the definition and ran the before_deploy
 				// gates outside the transaction; persist the jobs it found
 				workEntry.Metadata.DefinitionJobs = prep.definitionJobs
+				workEntry.Metadata.DefinitionActions = prep.definitionActions
 			} else if prep == nil || !prep.gatesHandled {
 				// Load the app (no container) so the app definition's jobs are
 				// persisted with the create, then run its before_deploy jobs. A gate

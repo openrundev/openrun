@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"embed"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -16,14 +15,11 @@ import (
 	"maps"
 	"mime/multipart"
 	"net/http"
-	"net/url"
-	"os"
 	"os/exec"
 	"path"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/benbjohnson/hashfs"
 	"github.com/go-chi/chi/v5"
@@ -34,7 +30,6 @@ import (
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
 )
 
 //go:embed *.go.html astatic/*
@@ -88,6 +83,7 @@ type Action struct {
 	maxRequestBodyBytes int64
 	permit              []string
 	rbacApi             rbac.RBACAPI
+	fetchFile           FileFetcher // fetches result files through the app router, see files.go
 }
 
 // NewAction creates a new action
@@ -266,375 +262,81 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		return
 	}
 
-	thread := &starlark.Thread{
-		Name:  a.name,
-		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) },
+	inv := Invocation{Op: OpRun, AuditOp: op}
+	if isSuggest {
+		inv.Op = OpSuggest
+	} else if isValidate {
+		inv.Op = OpValidate
 	}
-
-	// Status starts as Failed and is set to Success only after the action
-	// handler runs without error, so that request parse errors and panics
-	// are not recorded as a success
-	event := types.AuditEvent{
-		RequestId:  system.GetContextRequestId(r.Context()),
-		CreateTime: time.Now(),
-		UserId:     system.GetContextUserId(r.Context()),
-		AppId:      system.GetContextAppId(r.Context()),
-		EventType:  types.EventTypeAction,
-		Operation:  op,
-		Target:     a.name,
-		Status:     string(types.EventStatusFailure),
-	}
-
-	customEvent := types.AuditEvent{
-		RequestId:  system.GetContextRequestId(r.Context()),
-		CreateTime: time.Now(),
-		UserId:     system.GetContextUserId(r.Context()),
-		AppId:      system.GetContextAppId(r.Context()),
-		EventType:  types.EventTypeCustom,
-	}
-
-	if a.auditInsert != nil {
-		defer func() {
-			if err := a.auditInsert(&event); err != nil {
-				a.Error().Err(err).Msg("error inserting audit event")
-			}
-
-			customEvent.Status = event.Status
-			customEvent.Operation = system.GetThreadLocalKey(thread, types.TL_AUDIT_OPERATION)
-			customEvent.Target = system.GetThreadLocalKey(thread, types.TL_AUDIT_TARGET)
-			customEvent.Detail = system.GetThreadLocalKey(thread, types.TL_AUDIT_DETAIL)
-
-			if customEvent.Operation != "" {
-				// Audit event was set in handler, insert it
-				if err := a.auditInsert(&customEvent); err != nil {
-					a.Error().Err(err).Msg("error inserting custom audit event")
-				}
-			}
-		}()
-	}
-
-	// Save the request context in the starlark thread local
-	// Same code as createHandlerFunc
-	thread.SetLocal(types.TL_CONTEXT, r.Context())
-	if a.containerProxyUrl != "" {
-		thread.SetLocal(types.TL_CONTAINER_URL, a.containerProxyUrl)
-	}
-	if a.containerHandler != nil {
-		thread.SetLocal(types.TL_CONTAINER_HANDLER, a.containerHandler)
-	}
-	thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.appPathDomain, a.serverConfig))
 	isHtmxRequest := r.Header.Get("HX-Request") == "true"
 
 	r.Body = http.MaxBytesReader(w, r.Body, a.maxRequestBodyBytes)
 
-	var jsonBody map[string]jsontext.Value
-	isJSONRequest := false
+	// A request which cannot be parsed never reaches invoke, which writes the
+	// action audit events: the rejected attempt is recorded here
 	if apiMode && requestHasJSONBody(r) {
-		isJSONRequest = true
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			a.auditRejectedRequest(r.Context(), op)
 			writeRequestParseError(w, err, a.maxRequestBodyBytes, apiMode)
 			return
 		}
 		if len(bytes.TrimSpace(body)) > 0 { // empty body means use the app level param values
-			if err := json.Unmarshal(body, &jsonBody); err != nil {
+			if err := json.Unmarshal(body, &inv.JSONArgs); err != nil {
+				a.auditRejectedRequest(r.Context(), op)
 				writeRequestParseError(w, err, a.maxRequestBodyBytes, apiMode)
 				return
 			}
 		}
-	}
-
-	if !isJSONRequest {
+	} else {
 		if err := r.ParseMultipartForm(multipartMaxMemoryBytes); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+			a.auditRejectedRequest(r.Context(), op)
 			writeRequestParseError(w, err, a.maxRequestBodyBytes, apiMode)
 			return
 		}
-	}
-
-	deferredCleanup := func() error {
-		// Check for any deferred cleanups
-		err := RunDeferredCleanup(thread)
-		if err != nil {
-			a.Error().Err(err).Msg("error cleaning up plugins")
-			writeError(err.Error(), http.StatusInternalServerError)
-			return err
+		if r.MultipartForm == nil {
+			// A file upload param can be submitted only in a multipart post
+			for _, param := range a.params {
+				if param.DisplayType == apptype.DisplayTypeFileUpload && !a.hidden[param.Name] {
+					a.auditRejectedRequest(r.Context(), op)
+					writeError(fmt.Sprintf("error getting file %s: %s", param.Name, http.ErrNotMultipart), http.StatusBadRequest)
+					return
+				}
+			}
 		}
-		return nil
+		inv.IsForm = true
+		inv.Form = r.Form
+		inv.Files = multipartFiles(r.MultipartForm)
 	}
 
-	defer deferredCleanup() //nolint:errcheck
-
-	args := starlark.StringDict{}
-	// Make a copy of the app level param dict
-	for k, v := range a.paramDict {
-		args[k] = v
-	}
-
-	options, optionsErr := a.paramOptions()
-	if optionsErr != nil {
-		writeError(optionsErr.Error(), http.StatusBadRequest)
+	outcome, invErr := a.invoke(r.Context(), inv)
+	if invErr != nil {
+		writeError(invErr.Msg, invErr.Code)
 		return
 	}
-
-	qsParams := url.Values{}
-
-	if isJSONRequest {
-		if err := a.buildArgsFromJSON(args, jsonBody, options); err != nil {
-			writeError(err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-
-	var tempDir string
-	// Update args with submitted form values
-	for _, param := range a.params {
-		if isJSONRequest {
-			break // args were built from the JSON body
-		}
-		if a.hidden[param.Name] {
-			continue
-		}
-
-		if param.DisplayType == apptype.DisplayTypeFileUpload {
-			f, fh, err := r.FormFile(param.Name)
-			if err == http.ErrMissingFile {
-				args[param.Name] = starlark.String("")
-				continue
-			}
-
-			if err != nil {
-				writeError(fmt.Sprintf("error getting file %s: %s", param.Name, err), http.StatusBadRequest)
-				return
-			}
-
-			if tempDir == "" {
-				tempDir, err = os.MkdirTemp("", "openrun-file-upload-*")
-				if err != nil {
-					_ = f.Close()
-					writeError(err.Error(), http.StatusInternalServerError)
-					return
-				}
-
-				defer func() {
-					if remErr := os.RemoveAll(tempDir); remErr != nil {
-						a.Error().Err(remErr).Msg("error removing temp dir")
-					}
-				}()
-			}
-
-			fullPath, err := uploadedFilePath(tempDir, fh.Filename)
-			if err != nil {
-				_ = f.Close()
-				writeError(err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			destFile, err := os.Create(fullPath)
-			if err != nil {
-				_ = f.Close()
-				writeError(err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			// Write contents of uploaded file to destFile
-			_, copyErr := io.Copy(destFile, f)
-			closeErr := errors.Join(destFile.Close(), f.Close())
-			if err = errors.Join(copyErr, closeErr); err != nil {
-				writeError(err.Error(), http.StatusInternalServerError)
-				return
-			}
-			args[param.Name] = starlark.String(fullPath)
-		} else {
-			hasValue := r.Form.Has(param.Name)
-			// Not file upload, regular param
-			formValue := r.Form.Get(param.Name)
-			if param.Type == starlark_type.BOOLEAN && !hasValue {
-				// Form does not submit unchecked checkboxes, set to false
-				args[param.Name] = starlark.Bool(false)
-				qsParams.Add(param.Name, "false")
-			} else if hasValue {
-				// Dropdown params are strict by default: a non-empty value
-				// must be one of the configured options (COMBO display type
-				// allows free text; empty is left for the handler's own
-				// required-value validation). Suggest provided lists are
-				// transient and are not checked here
-				opts := options[param.Name]
-				if len(opts) > 0 && formValue != "" && param.DisplayType != apptype.DisplayTypeCombo &&
-					!slices.Contains(opts, formValue) {
-					writeError(fmt.Sprintf("invalid value for %s: must be one of the configured options", param.Name), http.StatusBadRequest)
-					return
-				}
-
-				newVal, err := apptype.ParamStringToType(param.Name, param.Type, formValue)
-				if err != nil {
-					writeError(err.Error(), http.StatusBadRequest)
-					return
-				}
-				args[param.Name] = newVal
-
-				if param.DisplayType != apptype.DisplayTypePassword {
-					qsParams.Add(param.Name, formValue)
-				}
-			}
-		}
-	}
-
-	argsValue := Args{members: args}
-
-	callable := a.run
-	callInput := starlark.Tuple{starlark.Bool(isValidate), &argsValue}
-	if isSuggest {
-		callable = a.suggest
-		callInput = starlark.Tuple{&argsValue}
-	}
-
-	// Call the handler function
-	var ret starlark.Value
-	var err error
-	ret, err = starlark.Call(thread, callable, callInput, nil)
-
-	if err == nil {
-		pluginErrLocal := thread.Local(types.TL_PLUGIN_API_FAILED_ERROR)
-		if pluginErrLocal != nil {
-			pluginErr := pluginErrLocal.(error)
-			a.Error().Err(pluginErr).Msg("handler had plugin API failure")
-			err = pluginErr // handle as if the handler had returned an error
-		}
-	}
-
-	if err == nil {
-		event.Status = string(types.EventStatusSuccess)
-	}
-
-	if err != nil {
-		a.Error().Err(err).Msg("error calling action run handler")
-
-		firstFrame := ""
-		if evalErr, ok := err.(*starlark.EvalError); ok {
-			// Iterate through the CallFrame stack for debugging information
-			for i, frame := range evalErr.CallStack {
-				a.Warn().Msgf("Function: %s, Position: %s\n", frame.Name, frame.Pos)
-				if i == 0 {
-					firstFrame = fmt.Sprintf("Function %s, Position %s", frame.Name, frame.Pos)
-				}
-			}
-		}
-
-		msg := err.Error()
-		if firstFrame != "" && a.isDev {
-			msg = msg + " : " + firstFrame
-		}
-
-		// err handler is not supported for actions
-		writeError(msg, http.StatusInternalServerError)
-		return
-	}
+	defer outcome.Close()
 
 	if isSuggest {
 		if apiMode {
-			a.writeAPISuggestResponse(w, ret)
+			a.writeAPISuggestResponse(w, outcome.Suggest)
 		} else {
-			a.handleSuggestResponse(w, ret)
+			a.handleSuggestResponse(w, outcome.Suggest)
 		}
 		return
 	}
 
-	var valuesMap []map[string]any
-	var valuesStr []string
-	var status string
-	var paramErrors map[string]any
-	var streamVal apptype.StreamValue
-	report := apptype.AUTO
-
-	resultStruct, ok := ret.(*starlarkstruct.Struct)
-	if ok {
-		status, err = apptype.GetOptionalStringAttr(resultStruct, "status")
-		if err != nil {
-			writeError(fmt.Sprintf("error getting result status: %s", err), http.StatusInternalServerError)
-			return
-		}
-
-		valuesMap, err = apptype.GetListMapAttr(resultStruct, "values", true)
-		if err != nil {
-			valuesStr, err = apptype.GetListStringAttr(resultStruct, "values", true)
-			if err != nil {
-				writeError(fmt.Sprintf("error getting result values, not a list of string or list of maps: %s", err), http.StatusInternalServerError)
-				return
-			}
-		}
-
-		paramErrors, err = apptype.GetDictAttr(resultStruct, "param_errors", true)
-		if err != nil {
-			writeError(fmt.Sprintf("error getting result attr paramErrors: %s", err), http.StatusInternalServerError)
-			return
-		}
-
-		report, err = apptype.GetOptionalStringAttr(resultStruct, "report")
-		if err != nil {
-			writeError(fmt.Sprintf("error getting result report: %s", err), http.StatusInternalServerError)
-			return
-		}
-
-		streamAttr, attrErr := resultStruct.Attr("stream")
-		if attrErr == nil && streamAttr != nil && streamAttr != starlark.None {
-			sv, isStream := streamAttr.(apptype.StreamValue)
-			if !isStream {
-				writeError("result stream must be the response of a plugin call made with stream=True", http.StatusInternalServerError)
-				return
-			}
-			streamVal = sv
-		}
-	} else if sv, isStream := ret.(apptype.StreamValue); isStream {
-		// A stream response returned directly is shorthand for
-		// ace.result("", stream=ret)
-		streamVal = sv
-	} else {
-		// Not a result struct
-		status = strings.Trim(ret.String(), "\"")
-	}
-
-	var streamSeq func(yield func(any, error) bool)
-	if streamVal != nil {
-		if isValidate {
-			// Validation must not start commands; release the process
-			streamVal.CloseStream()
-			writeError("validate handler returned a stream: the run handler must return before starting commands when dry_run is true", http.StatusInternalServerError)
-			return
-		}
-		// Detach the stream from the plugin cleanup below, which would
-		// otherwise close it as an unconsumed resource
-		var streamErr error
-		streamSeq, streamErr = streamVal.StartStream()
-		if streamErr != nil {
-			writeError(fmt.Sprintf("error starting result stream: %s", streamErr), http.StatusInternalServerError)
-			return
-		}
-		defer streamVal.CloseStream()
-	}
-
-	if deferredCleanup() != nil {
-		return
-	}
-
-	if err != nil {
-		event.Status = string(types.EventStatusFailure)
-		writeError(err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if streamSeq != nil {
-		// Success is recorded only once the command has exited cleanly
-		event.Status = string(types.EventStatusFailure)
+	if outcome.IsStream() {
 		if apiMode || !isHtmxRequest {
-			a.writeStreamText(w, r, status, streamSeq, &event)
+			a.WriteStreamText(w, r, outcome)
 		} else {
-			a.writeStreamSSE(w, r, status, streamSeq, qsParams, &event)
+			a.writeStreamSSE(w, r, outcome)
 		}
 		return
 	}
 
 	if apiMode {
-		a.writeAPIRunResponse(w, status, valuesStr, valuesMap, paramErrors, report, isValidate)
+		response, code := a.APIResult(outcome, isValidate)
+		writeJSON(w, code, response)
 		return
 	}
 
@@ -652,25 +354,25 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	}
 
 	if !isHtmxRequest {
-		err = a.actionTemplate.ExecuteTemplate(w, "header", pageInput)
+		err := a.actionTemplate.ExecuteTemplate(w, "header", pageInput)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	} else {
 		// Set the push URL for HTMX
-		w.Header().Set("HX-Push-Url", a.pagePath+"?"+qsParams.Encode())
+		w.Header().Set("HX-Push-Url", a.pagePath+"?"+outcome.QueryParams.Encode())
 	}
 
 	// Render the result message
-	err = a.actionTemplate.ExecuteTemplate(w, "status", status)
+	err := a.actionTemplate.ExecuteTemplate(w, "status", outcome.Status)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Render the param error messages, using HTMX OOB
-	if err = a.renderParamErrors(w, paramErrors); err != nil {
+	if err = a.renderParamErrors(w, outcome.ParamErrors); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -680,7 +382,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		return
 	}
 
-	err = a.renderResults(w, report, valuesMap, valuesStr)
+	err = a.renderResults(w, outcome.Report, outcome.ValuesMap, outcome.ValuesStr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -693,6 +395,25 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 			return
 		}
 	}
+}
+
+// multipartFiles returns the first uploaded file for each form field
+func multipartFiles(form *multipart.Form) map[string]UploadedFile {
+	if form == nil {
+		return nil
+	}
+	files := make(map[string]UploadedFile, len(form.File))
+	for name, headers := range form.File {
+		if len(headers) == 0 {
+			continue
+		}
+		fh := headers[0]
+		files[name] = UploadedFile{
+			Filename: fh.Filename,
+			Open:     func() (io.ReadCloser, error) { return fh.Open() },
+		}
+	}
+	return files
 }
 
 func writeRequestParseError(w http.ResponseWriter, err error, maxRequestBodyBytes int64, apiMode bool) {
@@ -761,10 +482,10 @@ var errClientGone = errors.New("client disconnected")
 // when the stream ended through a process exit (0 for a clean end without
 // an exit error), or an error for a client disconnect, a write failure or a
 // stream failure that is not an exit status
-func (a *Action) consumeStream(r *http.Request, seq func(yield func(any, error) bool), emit func(chunk string) error) (int, error) {
+func consumeStream(ctx context.Context, seq func(yield func(any, error) bool), emit func(chunk string) error) (int, error) {
 	for v, streamErr := range seq {
 		if streamErr != nil {
-			if r.Context().Err() != nil {
+			if ctx.Err() != nil {
 				return -1, errClientGone
 			}
 			var exitErr *exec.ExitError
@@ -787,7 +508,7 @@ func (a *Action) consumeStream(r *http.Request, seq func(yield func(any, error) 
 			chunk = string(encoded)
 		}
 		if err := emit(chunk + "\n"); err != nil {
-			if r.Context().Err() != nil {
+			if ctx.Err() != nil {
 				return -1, errClientGone
 			}
 			return -1, err
@@ -846,8 +567,7 @@ const (
 // the run with the exit status. The request stays open until the command
 // exits, so the in-flight indicator matches the command; a client
 // disconnect cancels the request context, which kills the command
-func (a *Action) writeStreamSSE(w http.ResponseWriter, r *http.Request, status string,
-	seq func(yield func(any, error) bool), qsParams url.Values, event *types.AuditEvent) {
+func (a *Action) writeStreamSSE(w http.ResponseWriter, r *http.Request, outcome *Outcome) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeActionError(w, false, "streaming is not supported by the response writer", http.StatusInternalServerError)
@@ -855,7 +575,7 @@ func (a *Action) writeStreamSSE(w http.ResponseWriter, r *http.Request, status s
 	}
 
 	var initial bytes.Buffer
-	if err := a.actionTemplate.ExecuteTemplate(&initial, "status", status); err != nil {
+	if err := a.actionTemplate.ExecuteTemplate(&initial, "status", outcome.Status); err != nil {
 		writeActionError(w, false, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -872,16 +592,16 @@ func (a *Action) writeStreamSSE(w http.ResponseWriter, r *http.Request, status s
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
-	h.Set("HX-Push-Url", a.pagePath+"?"+qsParams.Encode())
+	h.Set("HX-Push-Url", a.pagePath+"?"+outcome.QueryParams.Encode())
 	w.WriteHeader(http.StatusOK)
 
 	if err := writeSSEEvent(w, "", initial.String()); err != nil {
-		recordStreamOutcome(event, -1, err)
+		recordStreamOutcome(outcome.event, -1, err)
 		return
 	}
 	flusher.Flush()
 
-	exitStatus, err := a.consumeStream(r, seq, func(chunk string) error {
+	exitStatus, err := outcome.ConsumeStream(r.Context(), func(chunk string) error {
 		// The JSON encoder rejects invalid UTF-8 (binary output, other
 		// encodings): replace bad bytes for display, as a terminal would
 		encoded, encErr := json.Marshal(strings.ToValidUTF8(chunk, "\uFFFD"))
@@ -894,7 +614,6 @@ func (a *Action) writeStreamSSE(w http.ResponseWriter, r *http.Request, status s
 		flusher.Flush()
 		return nil
 	})
-	recordStreamOutcome(event, exitStatus, err)
 	if errors.Is(err, errClientGone) {
 		return
 	}
@@ -915,8 +634,8 @@ func (a *Action) writeStreamSSE(w http.ResponseWriter, r *http.Request, status s
 // Response header carrying the result status text of a streamed API run,
 // and the trailer carrying the command's exit status once the stream ends
 const (
-	streamStatusHeader = "OpenRun-Action-Status"
-	streamExitTrailer  = "OpenRun-Exit-Status"
+	streamStatusHeader = types.ACTION_STATUS_HEADER
+	streamExitTrailer  = types.ACTION_EXIT_TRAILER
 )
 
 // writeStreamText streams a result as chunked plain text: the API mode
@@ -925,8 +644,7 @@ const (
 // the exit status in the OpenRun-Exit-Status trailer; a missing trailer
 // means the stream was cut (a read failure or a client disconnect). No
 // synthetic lines are mixed into the output
-func (a *Action) writeStreamText(w http.ResponseWriter, r *http.Request,
-	status string, seq func(yield func(any, error) bool), event *types.AuditEvent) {
+func (a *Action) WriteStreamText(w http.ResponseWriter, r *http.Request, outcome *Outcome) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeActionError(w, true, "streaming is not supported by the response writer", http.StatusInternalServerError)
@@ -937,19 +655,18 @@ func (a *Action) writeStreamText(w http.ResponseWriter, r *http.Request,
 	h.Set("Content-Type", "text/plain; charset=utf-8")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
-	h.Set(streamStatusHeader, headerSafe(status))
+	h.Set(streamStatusHeader, headerSafe(outcome.Status))
 	h.Set("Trailer", streamExitTrailer)
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	exitStatus, err := a.consumeStream(r, seq, func(chunk string) error {
+	exitStatus, err := outcome.ConsumeStream(r.Context(), func(chunk string) error {
 		if _, writeErr := io.WriteString(w, chunk); writeErr != nil {
 			return writeErr
 		}
 		flusher.Flush()
 		return nil
 	})
-	recordStreamOutcome(event, exitStatus, err)
 	if err != nil {
 		if !errors.Is(err, errClientGone) {
 			a.Error().Err(err).Msg("error producing action stream")

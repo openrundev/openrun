@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -223,10 +224,21 @@ func parseConfig(cCtx *cli.Context, globalConfig *types.GlobalConfig, clientConf
 }
 
 // fatalError prints the error to stderr and exits
+// fatalError prints the error and exits. A command can choose the exit code
+// by returning a cli.ExitCoder (the action commands: 2 for param errors, the
+// exit code of a streamed command); an empty message prints nothing, the
+// command has reported the failure itself
 func fatalError(err error) {
-	fmt.Fprintf(os.Stderr, RED+"error: %s"+RESET+"\n", err) //nolint:errcheck
+	exitCode := 1
+	var exitErr cli.ExitCoder
+	if errors.As(err, &exitErr) && exitErr.ExitCode() != 0 {
+		exitCode = exitErr.ExitCode()
+	}
+	if err.Error() != "" {
+		fmt.Fprintf(os.Stderr, RED+"error: %s"+RESET+"\n", err) //nolint:errcheck
+	}
 	system.NotifyServiceFailed(1)
-	os.Exit(1)
+	os.Exit(exitCode)
 }
 
 // setUsageErrorHandlers routes flag parsing errors through the app

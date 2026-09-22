@@ -162,7 +162,7 @@ func appUpdateMetadataCommand(commonFlags []cli.Flag, clientConfig *types.Client
 			appUpdateConfig(commonFlags, clientConfig, "auth", "", types.AppMetadataAuthnType, "<auth_type>"),
 			appUpdateConfig(commonFlags, clientConfig, "git-auth", "", types.AppMetadataGitAuthName, "<git_auth>"),
 			appUpdateConfig(commonFlags, clientConfig, "bindings", "bind", types.AppMetadataBindings, "binding_path"),
-			appUpdateConfig(commonFlags, clientConfig, "mcp", "", types.AppMetadataMCP, "<true|/upstream_path|json|@file|->"),
+			appUpdateConfig(commonFlags, clientConfig, "mcp", "", types.AppMetadataMCP, "<true|actions|/upstream_path|json|@file|->"),
 		},
 	}
 }

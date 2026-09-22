@@ -548,9 +548,32 @@ func (s *Server) apiIdentityGroups(ctx context.Context, identity *types.Identity
 // enforcement, plus the scope ceiling and invoker marker
 func (s *Server) apiTokenRequestContext(ctx context.Context, principal string, groups []string,
 	scopes []string, invoker string, cred *types.Credential) context.Context {
+	return s.apiTokenIdentityContext(ctx, principal, groups, scopes, invoker, cred, nil)
+}
+
+// federatedSubjectEmail returns the provider subject and the verified email
+// of a federated identity: what an app sees as X-Openrun-User-Id and
+// X-Openrun-User-Email for a browser session of that user. The builtin and
+// admin identities have neither
+func federatedSubjectEmail(identity *types.Identity) (string, string) {
+	if identity == nil || identity.Provider == string(types.AppAuthnBuiltin) || identity.Provider == types.ADMIN_USER {
+		return "", ""
+	}
+	return identity.StableSubject, identity.Email
+}
+
+// apiTokenIdentityContext is apiTokenRequestContext with the verified identity
+// of the credential: the subject and email of a federated identity are part
+// of the context, for the operations which run app code as the caller (app
+// actions)
+func (s *Server) apiTokenIdentityContext(ctx context.Context, principal string, groups []string,
+	scopes []string, invoker string, cred *types.Credential, identity *types.Identity) context.Context {
+	userSubject, userEmail := federatedSubjectEmail(identity)
 	authCtx := &managementAPIContext{
 		Context:     ctx,
 		userId:      principal,
+		userSubject: userSubject,
+		userEmail:   userEmail,
 		groups:      groups,
 		rbacEnabled: s.rbacManager.ConfigEnabled(),
 	}
@@ -578,7 +601,7 @@ func (s *Server) authenticateApiRequest(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return nil, nil, false
 	}
-	principal, groups, scopes, cred, _, err := s.verifyApiToken(r.Context(), token, surface)
+	principal, groups, scopes, cred, identity, err := s.verifyApiToken(r.Context(), token, surface)
 	if err != nil {
 		// Name the failing credential id (public token half, never the
 		// secret) so audit rows and logs distinguish which token failed;
@@ -601,7 +624,7 @@ func (s *Server) authenticateApiRequest(w http.ResponseWriter, r *http.Request,
 	if surface == ApiResourceMCP {
 		invoker = InvokerMCP
 	}
-	return s.apiTokenRequestContext(r.Context(), principal, groups, scopes, invoker, cred), cred, true
+	return s.apiTokenIdentityContext(r.Context(), principal, groups, scopes, invoker, cred, identity), cred, true
 }
 
 // credentialRetention is how long expired or revoked credential rows are kept

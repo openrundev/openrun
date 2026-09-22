@@ -35,12 +35,15 @@ openrun app create --auth builtin \
     ./src /shop
 ```
 
+A fourth form, `--mcp=actions`, is for [action apps]({{< ref "actions/#mcp-tools" >}}): OpenRun itself serves the app's actions as MCP tools at `<app url>/mcp`, there is no upstream MCP server. Everything below about login, tokens, scopes and API keys applies to it.
+
 `--mcp=@file` reads the JSON document from a local file (the CLI expands it; the API only accepts the document itself). `openrun app update mcp <value> <glob>` changes it later (`-` clears it); updates are staged and promoted like other metadata. In apply files the `app()` entry takes `mcp=True`, `mcp="/mcp"` or `mcp={...}`.
 
 The JSON document fields:
 
 | field | meaning |
 |---|---|
+| `source` | What serves MCP in the region. Omitted: the app's container or proxied url. `actions`: OpenRun serves the app's [actions as tools]({{< ref "actions/#mcp-tools" >}}); `path` then defaults to `/mcp` and cannot be `/`, `container_path` is not allowed |
 | `path` | The MCP region within the app, default `/` (whole app). With `/mcp`, only that subtree is the MCP endpoint and the rest of the app keeps its human login |
 | `container_path` | The path the upstream serves MCP at when it differs from `path`. Only with `path` `/`; the app root is rewritten to it |
 | `scopes` | The app's own scope names, offered at consent and advertised to clients. Omit for unscoped tokens |

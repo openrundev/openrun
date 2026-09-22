@@ -124,7 +124,50 @@ func (a *App) Audit() (*types.ApproveResult, error) {
 	}
 
 	a.Metadata.Name = name
+	if err := a.auditActionsMCP(appDef); err != nil {
+		return nil, err
+	}
 	return a.createApproveResponse(loads, globals)
+}
+
+// auditActionsMCP checks, for an app with mcp source "actions", that the app
+// definition has actions and that none of them sits at the MCP endpoint path.
+// The same rules are enforced when the app is loaded (mountActionsMCP); the
+// check here makes app create and update fail instead of the first request
+func (a *App) auditActionsMCP(appDef *starlarkstruct.Struct) error {
+	mcp := a.Metadata.MCP
+	if !mcp.ServesActions() {
+		return nil
+	}
+	count := 0
+	if actions, err := appDef.Attr("actions"); err == nil && actions != nil {
+		if actionList, ok := actions.(*starlark.List); ok {
+			iter := actionList.Iterate()
+			defer iter.Done()
+			var val starlark.Value
+			for iter.Next(&val) {
+				count++
+				actionDef, ok := val.(*starlarkstruct.Struct)
+				if !ok {
+					continue
+				}
+				actionPath, err := apptype.GetStringAttr(actionDef, "path")
+				if err != nil {
+					continue
+				}
+				if !strings.HasPrefix(actionPath, "/") {
+					actionPath = "/" + actionPath
+				}
+				if actionPath == mcp.Path || strings.HasPrefix(actionPath, mcp.Path+"/") {
+					return fmt.Errorf("action path %s is not allowed, %s is the MCP endpoint of the app", actionPath, mcp.Path)
+				}
+			}
+		}
+	}
+	if count == 0 {
+		return fmt.Errorf("mcp source %s needs the app to define actions", types.MCPSourceActions)
+	}
+	return nil
 }
 
 func needsApproval(a *types.ApproveResult) bool {

@@ -453,10 +453,7 @@ func (s *Server) serveMCPApp(w http.ResponseWriter, r *http.Request, application
 	// Federated identities carry the provider subject and verified email, so
 	// the app sees the same X-Openrun-User-Id / -User-Email it gets from a
 	// browser session of that user; builtin and admin have neither
-	userSubject, userEmail := "", ""
-	if identity.Provider != string(types.AppAuthnBuiltin) && identity.Provider != types.ADMIN_USER {
-		userSubject, userEmail = identity.StableSubject, identity.Email
-	}
+	userSubject, userEmail := federatedSubjectEmail(identity)
 	authCtx := &authContext{
 		Context:     r.Context(),
 		userId:      principal,

@@ -20,6 +20,7 @@ func TestMCPFlagParsing(t *testing.T) {
 		"absent":    {[]string{"./src", "/app"}, "", false},
 		"bare":      {[]string{"--mcp", "./src", "/app"}, `{"path":"/"}`, false},
 		"path":      {[]string{"--mcp=/mcp", "./src", "/app"}, `{"path":"/","container_path":"/mcp"}`, false},
+		"actions":   {[]string{"--mcp=actions", "./src", "/app"}, `{"path":"/mcp","source":"actions"}`, false},
 		"json":      {[]string{`--mcp={"path":"/mcp"}`, "./src", "/app"}, `{"path":"/mcp"}`, false},
 		"bad value": {[]string{"--mcp=nope", "./src", "/app"}, "", true},
 	} {

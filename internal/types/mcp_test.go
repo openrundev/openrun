@@ -89,3 +89,48 @@ func TestParseMCPArg(t *testing.T) {
 		t.Fatalf("ParseMCPValue must refuse @file, got %v", err)
 	}
 }
+
+func TestMCPActionsSource(t *testing.T) {
+	// The actions shorthand: OpenRun serves the app's actions as MCP tools at /mcp
+	doc, err := ParseMCPValue("actions")
+	if err != nil {
+		t.Fatalf("actions shorthand: %s", err)
+	}
+	if doc != `{"path":"/mcp","source":"actions"}` {
+		t.Fatalf("actions shorthand doc: %s", doc)
+	}
+	config, err := ParseMCPConfig(doc)
+	if err != nil || !config.ServesActions() {
+		t.Fatalf("actions config: %v %v", config, err)
+	}
+
+	// The path defaults to /mcp, a custom region is kept
+	config, err = ParseMCPConfig(`{"source":"actions","scopes":["r"],"tools":{"list_orders":"r"}}`)
+	if err != nil || config.Path != "/mcp" {
+		t.Fatalf("default path: %v %v", config, err)
+	}
+	config, err = ParseMCPConfig(`{"source":"actions","path":"/tools"}`)
+	if err != nil || config.Path != "/tools" {
+		t.Fatalf("custom path: %v %v", config, err)
+	}
+
+	// upstream is the default and is not stored, existing documents are unchanged
+	config, err = ParseMCPConfig(`{"source":"upstream","path":"/mcp"}`)
+	if err != nil || config.ServesActions() || config.Canonical() != `{"path":"/mcp"}` {
+		t.Fatalf("upstream source: %v %v", config, err)
+	}
+	var nilConfig *MCPConfig
+	if nilConfig.ServesActions() {
+		t.Fatalf("nil config serves actions")
+	}
+
+	for doc, want := range map[string]string{
+		`{"source":"actions","path":"/"}`:            "needs a region path other than",
+		`{"source":"actions","container_path":"/x"}`: "container_path is not allowed with source",
+		`{"source":"bogus"}`:                         `mcp source "bogus" is not valid`,
+	} {
+		if _, err := ParseMCPConfig(doc); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("doc %s: want error %q, got %v", doc, want, err)
+		}
+	}
+}

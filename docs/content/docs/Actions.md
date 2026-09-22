@@ -242,6 +242,8 @@ Every action app automatically exposes a REST API in addition to the form UI, wi
 |   `/app_path/api/suggest/<action>`     |  POST  |                     Run the suggest handler                      |
 |   `/app_path/api/validate/<action>`    |  POST  |                 Run the handler with `dry_run=True`              |
 
+The `operationId` values in the OpenAPI spec are `run_<name>`, `validate_<name>`, `suggest_<name>` and `schema_<name>`, where `<name>` is the action name used by the [command line]({{< ref "#command-line" >}}) and the [MCP tools]({{< ref "#mcp-tools" >}}): the action path with `/` replaced by `_`, and for the action at `/` its name in lowercase (`run_cancel_order` for the `Cancel Order` action).
+
 `<action>` is the action path. For an action at path `/`, the run endpoint is `/app_path/api/actions` and the validate endpoint is `/app_path/api/validate`. For an action at path `/list`, they are `/app_path/api/actions/list` and `/app_path/api/validate/list`. The action list endpoint reports the run, validate and suggest paths for each action.
 
 The run/suggest/validate endpoints accept a JSON body with the param values, using native JSON types (`{"dir": "/tmp", "detail": true}`). String values are coerced to the param type, same as form submissions, and values for params with a [selector]({{< ref "#param-value-selector" >}}) must be one of the configured options unless the param uses the `COMBO` display type. Params missing from the body use their app level values, including `BOOLEAN` params (unlike the form UI, where a missing checkbox means false). Hidden params and unknown params are rejected with a 400 error. Form encoded and multipart bodies are also accepted; params with `FILE` display type must be submitted as multipart file uploads and cannot be set through JSON.
@@ -258,6 +260,108 @@ An action which [streams]({{< ref "#streaming-output" >}}) its output responds w
 ```bash
 $ curl -sN -X POST -H "Content-Type: application/json" -d '{"target": "web"}' https://example.com/builder/api/actions
 ```
+
+## Command Line
+
+Actions can be listed and run with the `openrun action` commands, from the server machine or through a [remote CLI]({{< ref "docs/configuration/remoteaccess" >}}). No change is required in the app code.
+
+```sh
+openrun action list [<appPathGlob>]                       # the actions you can run
+openrun action show <appPath> [<action>]                  # the params, and a usage line to copy
+openrun action run <appPath> [<action>] [name=value ...]  # run the action
+openrun action validate <appPath> [<action>] [name=value ...]  # run the handler with dry_run=True
+openrun action suggest <appPath> [<action>] [name=value ...]   # run the suggest handler
+openrun action openapi <appPath>                          # the OpenAPI spec of the REST API
+```
+
+`<action>` is the name shown in the `Action` column of `action list`: the action path with `/` replaced by `_` (`/orders/cancel` is `orders_cancel`), or for the action at `/`, its name in lowercase (`Cancel Order` is `cancel_order`). The action path (like `/cancel`) is accepted too. `<action>` can be left out for an app with one action. `--stage` uses the staging instance of the app.
+
+```sh
+$ openrun action run /orders list_orders count=2 status=closed
+Listed 2 orders
+id  rush   status
+1   false  closed
+2   false  closed
+```
+
+Args are passed as `name=value`, the value is converted to the type of the param as a form value would be (`true`/`false` for `BOOLEAN`, a JSON value for `LIST` and `DICT`). Params which are not passed use the value configured for the app. `--json '{"count": 2}'` passes typed args as a JSON object (`--json=@file` reads the object from a file, `--json=-` from stdin); `name=value` args override its entries. `name=@file` uploads the file for a param with the `FILE` display type.
+
+The result values are written to stdout and the status line to stderr (`--quiet` turns it off), so the output can be piped. The values are shown the way the action reports them: a table for `TABLE`, lines for `TEXT`, formatted JSON for `JSON`. `--format json`, `jsonl` or `csv` converts them:
+
+```sh
+openrun action run -q --format jsonl /orders list_orders status=open | jq .id
+```
+
+For an action which returns files (the `DOWNLOAD` and `IMAGE` [report types]({{< ref "#report-types" >}})), the files are listed with their url; `--output` saves them:
+
+```sh
+openrun action run -o report.pdf /orders report month=2026-08   # one file, saved under the given name
+openrun action run -o ./out/ /orders charts                     # into a directory, under the names the action gave the files
+openrun action run -q -o - /orders export | head                # to stdout
+```
+
+A directory is required when the result has more than one file. The CLI has no browser session with the app, so a file whose url is within the app (a file from `fs.serve_tmp_file`, a static file of the app) is fetched through the OpenRun API as the calling user, under the same checks as running the action; the rules of the file apply, a `single_access` file is removed once it has been saved. Any other url is fetched directly, without credentials.
+
+The output of an action which [streams]({{< ref "#streaming-output" >}}) a command is written as it is produced. `action suggest` prints the suggested values as `name=value` lines, the form `action run` takes them in.
+
+| Exit code | Meaning |
+| :-------: | :------ |
+| 0 | The action ran |
+| 2 | Param validation errors, printed as `error: param <name>: <message>` |
+| 1 | Any other failure: invalid args, not authorized, a handler error |
+| other | For a streamed command, the exit code of the command |
+
+### Who the action runs as
+
+The CLI runs actions through the management API as the calling user, under the same checks the form UI applies to that user:
+
+1. The user comes from the login the app's `auth` setting names. A user logged in as `builtin:bob` cannot run the actions of an app with `--auth saml_okta`, even if an RBAC group grant covers both identities. Apps with `auth` `none` accept any user; apps using `system` or client certificate auth can be used by the admin only.
+2. The user has the `app:access` permission on the app.
+3. The user has one of the permissions in the action's `permit` list.
+
+Listing actions does not load or start apps: the actions of an app version are stored with its metadata when the app is created, reloaded or promoted. Apps in dev mode are listed from their current source. `action show` loads the app definition, and only running an action (or its suggest handler) starts the app's container.
+
+`action list` shows only the actions which pass all three checks, and runs are recorded in the [audit log]({{< ref "docs/applications/audit" >}}) under that user, with the operation `mgmt_execute`, `mgmt_validate` or `mgmt_suggest`.
+
+On the server machine the CLI uses the unix domain socket and runs as the admin user; `--as builtin:user1` runs the command as that user instead. A remote CLI runs as the user who did `openrun login`, or as the user an [API key]({{< ref "docs/configuration/remoteaccess/#api-keys" >}}) belongs to. For the users of an app to log in from the CLI, add the app's auth provider to the login mechanisms of the REST API surface:
+
+```toml {filename="openrun.toml"}
+[api.rest]
+enable = true
+auth = ["admin", "saml_okta"]  # users of apps with --auth saml_okta can run openrun login
+```
+
+```sh
+openrun login --server https://openrun.example.com --auth saml_okta  # browser login through the SAML provider
+openrun action list                                                   # the actions of the apps saml_okta users can access
+```
+
+`--auth` selects the login when the server has more than one; without it the login page offers the choice. The CLI keeps one login per server. An API key limited with `--scopes` needs `app:access` in its scopes to run actions.
+
+## MCP Tools
+
+With the `--mcp=actions` option the app serves its actions as [MCP](https://modelcontextprotocol.io) tools, for AI clients like Claude Code, Cursor and VS Code. No change is required in the app code. The MCP endpoint is at `/mcp` under the app path (an action cannot be defined at that path); the form UI and the REST API stay as they are.
+
+```sh
+openrun app create --approve --auth builtin --mcp=actions ./orders /orders
+claude mcp add --transport http orders https://apps.example.com/orders/mcp
+```
+
+The client connects with the OAuth flow described in [MCP Apps]({{< ref "docs/applications/mcp" >}}): the user logs in with the app's `auth`, the token is bound to the app, RBAC `app:access` applies, and the app's `scopes` and per tool scope requirements (`tools`) can be declared with the JSON form, `--mcp='{"source":"actions","scopes":[...],"tools":{"cancel_order":"orders:write"}}'`. `"path"` moves the endpoint from the default `/mcp`. API keys bound to the app (`openrun apikey create --resource app:/orders`) work for clients which cannot run a browser flow.
+
+Each action is one tool:
+
+- The tool name is the action name used by the CLI (`cancel_order`), the title is the action name and the description is the action description.
+- The input schema has the action's params: the type, description, the app level value as the `default`, the selector options as an `enum` (as the `x-options` suggestions for the `COMBO` display type, which accepts other values) and the `required` list. Hidden params are left out.
+- `dry_run=true` runs the handler with `dry_run=True`, to validate the arguments without running the action. When the action has a param called `dry_run` the control is named `_dry_run` (with as many leading underscores as it takes to not be a param of the action); the tool description names it.
+- An action with a suggest handler gets a second, read only tool named `<tool>_suggest` (with a numeric suffix if another action already has that name; the description of the action's tool names it).
+- A tool call cannot carry a file: params with the `FILE` display type are left out, and an action with a required `FILE` param is not exposed as a tool.
+
+The tools a user sees in the client are the actions their `permit` allows. The result of a tool call has the structured result (`status`, `report`, `values`, `param_errors`) and a text block written for the model: the status line followed by a markdown table (the first 50 rows), the text lines, or JSON. The text block is limited to 64KB of values, with a note of how many values were left out, and the structured values to 256KB (`truncated` is set); an action meant for AI clients should return a focused result rather than rely on the limits. Param errors are returned as a tool error listing `param <name>: <message>`, so that the model can correct the arguments and retry. The files of `IMAGE` and `DOWNLOAD` results are returned inline, since an MCP client has no session with the app to fetch their url with: images as image content (up to 2MB each), other files as embedded resources (as text for text files up to 256KB, as binary data up to 1MB). Up to four files are inlined per result; larger or additional files, and urls outside the app, are returned as resource links. A `single_access` file is removed once it has been returned.
+
+For an action which [streams]({{< ref "#streaming-output" >}}) a command, the call returns when the command exits, with the output (the last 64KB) and the `exit_status`; a non-zero exit is a tool error. Clients which pass a progress token receive the output as progress notifications while the command runs. Tool calls are recorded in the audit log under the user, with the operation `mcp_execute`, `mcp_validate` or `mcp_suggest`.
+
+Actions of all apps are also available through the generic `list_actions`, `get_action`, `run_action` and `suggest_action` tools of the [management MCP surface]({{< ref "docs/configuration/remoteaccess/#what-mcp-can-do" >}}), without the `--mcp` option on the app.
 
 ## Multiple Actions
 

@@ -27,6 +27,12 @@ type MCPConfig struct {
 	// the app root is rewritten to this path when proxying, so the public
 	// MCP URL is the app URL regardless of the image's endpoint path
 	ContainerPath string `json:"container_path,omitempty"`
+	// Source is what serves MCP in the region: "" (the default) is the app's
+	// upstream, a container or proxied url speaking MCP; "actions" makes
+	// OpenRun serve the app's actions as MCP tools. With "actions" the region
+	// cannot be the app root (the form UI keeps its login there), Path
+	// defaults to /mcp
+	Source string `json:"source,omitempty"`
 	// Scopes is the app's own scope vocabulary offered at consent and
 	// advertised in the protected resource metadata. Empty = unscoped
 	// tokens, access is governed by RBAC app:access alone
@@ -41,6 +47,18 @@ type MCPConfig struct {
 	// on the region. A request carrying any other Origin header is
 	// refused; requests without an Origin (native clients) are unaffected
 	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+}
+
+const (
+	MCPSourceActions       = "actions"
+	MCPActionsDefaultPath  = "/mcp"
+	mcpSourceUpstreamAlias = "upstream"
+)
+
+// ServesActions reports whether OpenRun serves the app's actions as MCP tools
+// in the region
+func (m *MCPConfig) ServesActions() bool {
+	return m != nil && m.Source == MCPSourceActions
 }
 
 // UpstreamPath returns the path the upstream serves MCP at: the container
@@ -82,9 +100,28 @@ func ParseMCPConfig(doc string) (*MCPConfig, error) {
 	if err := json.Unmarshal([]byte(doc), &config); err != nil {
 		return nil, fmt.Errorf("invalid mcp config: %w", err)
 	}
+	switch config.Source {
+	case "", mcpSourceUpstreamAlias:
+		config.Source = ""
+	case MCPSourceActions:
+		if strings.TrimSpace(config.Path) == "" {
+			config.Path = MCPActionsDefaultPath
+		}
+	default:
+		return nil, fmt.Errorf("mcp source %q is not valid: use %q or omit it", config.Source, MCPSourceActions)
+	}
 	var err error
 	if config.Path, err = normalizeMCPPath("path", config.Path); err != nil {
 		return nil, err
+	}
+	if config.Source == MCPSourceActions {
+		if config.Path == "/" {
+			return nil, fmt.Errorf("mcp source %q needs a region path other than \"/\": the app root keeps the form UI and its login (default %s)",
+				MCPSourceActions, MCPActionsDefaultPath)
+		}
+		if config.ContainerPath != "" {
+			return nil, fmt.Errorf("mcp container_path is not allowed with source %q: the tools are served by OpenRun", MCPSourceActions)
+		}
 	}
 	if config.ContainerPath != "" {
 		if config.ContainerPath, err = normalizeMCPPath("container_path", config.ContainerPath); err != nil {
@@ -133,8 +170,9 @@ func ParseMCPConfig(doc string) (*MCPConfig, error) {
 
 // ParseMCPArg expands the CLI --mcp shorthand forms to the canonical JSON
 // document: "" or "true" (bare flag) = the whole app is the endpoint served
-// at the upstream root; "/path" = the whole app is the endpoint, rewritten
-// to that upstream path; "{...}" = the full document; "@file" = a local
+// at the upstream root; "actions" = the app's actions served as MCP tools at
+// /mcp; "/path" = the whole app is the endpoint, rewritten to that upstream
+// path; "{...}" = the full document; "@file" = a local
 // file holding the document (CLI only: the server never reads files named
 // by a request, see ParseMCPValue). Returns "" for "false"
 func ParseMCPArg(value string) (string, error) {
@@ -162,6 +200,8 @@ func ParseMCPValue(value string) (string, error) {
 		return "", nil
 	case value == "" || value == "true":
 		return (&MCPConfig{Path: "/"}).Canonical(), nil
+	case value == MCPSourceActions:
+		return (&MCPConfig{Path: MCPActionsDefaultPath, Source: MCPSourceActions}).Canonical(), nil
 	case strings.HasPrefix(value, "@"):
 		return "", fmt.Errorf("mcp @file references are expanded by the CLI; pass the document itself")
 	}
@@ -175,7 +215,7 @@ func ParseMCPValue(value string) (string, error) {
 		}
 		doc = (&MCPConfig{Path: "/", ContainerPath: containerPath}).Canonical()
 	} else {
-		return "", fmt.Errorf("invalid mcp value %q: expected a container path (/mcp), a JSON object or @file", value)
+		return "", fmt.Errorf("invalid mcp value %q: expected actions, a container path (/mcp), a JSON object or @file", value)
 	}
 	config, err := ParseMCPConfig(doc)
 	if err != nil {

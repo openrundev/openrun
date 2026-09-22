@@ -119,6 +119,22 @@ func CreateTestAppIntSystemConfig(logger *types.Logger, path, domain string, fil
 		id, settings, params, appConfig, rbacApi, systemConfig, &types.ServerConfig{})
 }
 
+// testMetadataHook, when set, adjusts the app metadata of the test apps
+// created while it is set (see CreateTestAppMCP)
+var testMetadataHook func(*types.AppMetadata)
+
+// CreateTestAppMCP creates a test app with the given mcp config document
+func CreateTestAppMCP(logger *types.Logger, fileData map[string]string, plugins []string, permissions []types.Permission,
+	rbacApi rbac.RBACAPI, mcpDoc string) (*app.App, *appfs.WorkFs, error) {
+	mcp, err := types.ParseMCPConfig(mcpDoc)
+	if err != nil {
+		return nil, nil, err
+	}
+	testMetadataHook = func(metadata *types.AppMetadata) { metadata.MCP = mcp }
+	defer func() { testMetadataHook = nil }()
+	return CreateTestAppInt(logger, "/test", "", fileData, false, plugins, permissions, nil, "app_prd_testapp", types.AppSettings{}, nil, nil, rbacApi)
+}
+
 func createTestAppFull(logger *types.Logger, path, domain string, fileData map[string]string, isDev bool,
 	plugins []string, permissions []types.Permission, pluginConfig map[string]types.PluginSettings,
 	id string, settings types.AppSettings, params map[string]string, appConfig *types.AppConfig,
@@ -157,6 +173,9 @@ func createTestAppFull(logger *types.Logger, path, domain string, fileData map[s
 		Loads:       plugins,
 		Permissions: permissions,
 		ParamValues: params,
+	}
+	if testMetadataHook != nil {
+		testMetadataHook(&metadata)
 	}
 	secretManager, err := system.NewSecretManager(context.Background(), map[string]types.SecretConfig{"env": types.SecretConfig{}}, "env", &types.ServerConfig{})
 	if err != nil {

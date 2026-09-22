@@ -127,10 +127,14 @@ type App struct {
 	baseAppConfig types.AppConfig
 
 	lastRequestTime atomic.Int64
-	secretEvalFunc  func([][]string, string, string) (string, error)
-	auditInsert     func(*types.AuditEvent) error
-	AppRunPath      string       // path to the app run directory
-	rbacApi         rbac.RBACAPI // the rbac api to use
+	// publishedActions is the actions of the last published load, for readers
+	// which must not wait for initMutex (held by a reload for as long as a
+	// container build takes). nil until the definition has been loaded
+	publishedActions atomic.Pointer[[]*action.Action]
+	secretEvalFunc   func([][]string, string, string) (string, error)
+	auditInsert      func(*types.AuditEvent) error
+	AppRunPath       string       // path to the app run directory
+	rbacApi          rbac.RBACAPI // the rbac api to use
 
 	// telemetryAttrs caches the immutable per-app OpenTelemetry attributes so
 	// that ServeHTTP does not allocate them on every request.
@@ -234,6 +238,41 @@ func (a *App) Initialize(ctx context.Context, dryRun types.DryRun) error {
 		}
 	}
 	return nil
+}
+
+// RecordActivity marks the app as in use now. The idle shutdown of the app
+// container (ContainerHandler.idleAppShutdown) measures from the last
+// activity: requests served by ServeHTTP record it, callers which run app code
+// without a request (actions through the management API) call this
+func (a *App) RecordActivity() {
+	a.lastRequestTime.Store(time.Now().Unix())
+}
+
+// LastActivity returns the unix time of the last recorded activity, zero
+// when there has been none since the app was loaded
+func (a *App) LastActivity() int64 {
+	return a.lastRequestTime.Load()
+}
+
+// Actions returns the actions defined by the app, as of the last published
+// load. The app definition has to be loaded (Initialize or Reload) for the
+// actions to be available
+func (a *App) Actions() []*action.Action {
+	actions, _ := a.LoadedActions()
+	return actions
+}
+
+// LoadedActions is Actions for an app which may not have been loaded yet:
+// loaded is false when the app definition has not been loaded, the caller
+// decides whether the actions are worth loading the app for. It does not take
+// initMutex: a reload holds it for as long as a container build takes, and
+// listing actions must not wait behind that
+func (a *App) LoadedActions() (actions []*action.Action, loaded bool) {
+	published := a.publishedActions.Load()
+	if published == nil {
+		return nil, false
+	}
+	return slices.Clone(*published), true
 }
 
 func (a *App) Close() error {
@@ -600,6 +639,8 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 	a.newProxyTransports = nil
 
 	a.initialized = true
+	publishedActions := slices.Clone(a.actions)
+	a.publishedActions.Store(&publishedActions)
 	a.updateActiveContainerNameLocked()
 
 	// Retire plugin providers (external processes and in-process hosts) only
@@ -788,7 +829,7 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 	if err != nil {
 		return fmt.Errorf("error creating container handler: %w", err)
 	}
-	if mcp := a.Metadata.MCP; mcp != nil && a.containerHandler.GetHealthUrl(health) == "/" {
+	if mcp := a.Metadata.MCP; mcp != nil && !mcp.ServesActions() && a.containerHandler.GetHealthUrl(health) == "/" {
 		// MCP app with no health path configured anywhere (neither the
 		// definition's health= nor container.health_url): a GET on the
 		// endpoint does not answer 200, probe with the JSON-RPC request
@@ -1229,7 +1270,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	a.lastRequestTime.Store(time.Now().Unix()) // new api call, update last request time
+	a.RecordActivity() // new api call, update last request time
 	if telemetry.Enabled() && !a.AppConfig.Audit.SkipHttpEvents {
 		spanName := "openrun.app.request"
 		if a.AppConfig.Audit.RedactUrl {

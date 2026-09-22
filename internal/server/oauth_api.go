@@ -36,14 +36,15 @@ import (
 // refresh tokens land in the same credentials table as PATs, so one verifier
 // covers everything and revocation is immediate.
 //
-// v1 login mechanisms: "builtin" (builtin_auth users) and "admin". The
-// [auth.*]/[saml.*] federated login step is a follow-on; configuring one
-// logs a warning and that mechanism is skipped at login.
+// Login mechanisms: "builtin" (builtin_auth users) and "admin" on the password
+// form, and the [auth.*]/[saml.*] providers through the federated login step
+// (oauth_federated.go).
 
 const (
-	oauthCLIClientId = "openrun-cli" // pre-registered public client for openrun login
-	oauthCodeTTL     = 2 * time.Minute
-	oauthMaxClients  = 200 // DCR quota
+	oauthMechanismParam = "mechanism"   // authorize request extension: the login mechanism to pre-select
+	oauthCLIClientId    = "openrun-cli" // pre-registered public client for openrun login
+	oauthCodeTTL        = 2 * time.Minute
+	oauthMaxClients     = 200 // DCR quota
 )
 
 // oauthState is the in-process AS state. Pending authorization codes are
@@ -565,6 +566,13 @@ func (h *Handler) renderOAuthLogin(w http.ResponseWriter, r *http.Request, get f
 	if errMsg == "" && !passwordLogin && len(federated) == 1 && r.Method == http.MethodGet {
 		// One federated mechanism and nothing to choose: go straight to it
 		h.startFederatedLogin(w, r, get, federated[0])
+		return
+	}
+	if hint := get(oauthMechanismParam); errMsg == "" && hint != "" && r.Method == http.MethodGet && slices.Contains(federated, hint) {
+		// The client named the login to use (openrun login --auth): skip the
+		// chooser. Only a mechanism configured for the resource is honored,
+		// and the consent page still follows the login
+		h.startFederatedLogin(w, r, get, hint)
 		return
 	}
 	choices := make([]federatedChoice, 0, len(federated))

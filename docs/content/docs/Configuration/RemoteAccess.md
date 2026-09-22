@@ -64,6 +64,8 @@ openrun app list
 openrun logout            # revokes the session server side
 ```
 
+When `[api.rest] auth` lists more than one mechanism the login page offers the choice; `openrun login --auth <name>` selects an `[auth.*]` or `saml_<name>` login directly. Listing the auth provider of an app lets the users of that app log in from the CLI and [run its actions]({{< ref "actions/#command-line" >}}) as themselves.
+
 or use an API key (for CI and headless use):
 
 ```sh
@@ -121,6 +123,8 @@ openrun apikey delete <id>
 ## What MCP Can Do
 
 The MCP tool set mirrors the management API: apps (list/create/delete/approve/reload/promote/preview/versions), sync, services, bindings, secrets metadata, config read, API key self-management and more. RBAC decides per identity what actually succeeds, and every call is audited with the invoker type and credential id.
+
+The `list_actions`, `get_action`, `run_action` and `suggest_action` tools run [app actions]({{< ref "actions/#who-the-action-runs-as" >}}) as the calling user, under the checks the app's form UI applies to that user (the app's login provider, `app:access` and the action's `permit`). A credential limited by scopes needs `app:access` in its scopes: the read only default of `openrun apikey create --resource mcp` does not include it (`--scopes app:access`). The result of `run_action` has the rows of a download or image result with their urls, not the files: use the [MCP endpoint of the app]({{< ref "actions/#mcp-tools" >}}) for actions whose files the client should receive. To keep AI clients away from actions, add `run_action` to `disable_apis`.
 
 Dangerous operations are **disabled for MCP by default** and are not even registered as tools:
 

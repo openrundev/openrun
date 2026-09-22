@@ -5,6 +5,7 @@ package system
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json/v2"
 	"fmt"
@@ -117,6 +118,48 @@ func (h *HttpClient) Put(url string, params url.Values, input any, output any) e
 
 func (h *HttpClient) Delete(url string, params url.Values, output any) error {
 	return h.request(http.MethodDelete, url, params, nil, output)
+}
+
+// PostRaw sends a POST with the given body and returns the raw response, for
+// APIs whose response is not a single JSON document (an action result can be
+// a stream, with the exit status in a trailer). No overall timeout applies:
+// the response is read for as long as the server keeps producing it, cancel
+// through ctx. The caller closes the response body
+func (h *HttpClient) PostRaw(ctx context.Context, apiPath string, params url.Values, contentType string, body io.Reader) (*http.Response, error) {
+	return h.rawRequest(ctx, http.MethodPost, apiPath, params, contentType, body)
+}
+
+// GetRaw sends a GET and returns the raw response, see PostRaw (a file download)
+func (h *HttpClient) GetRaw(ctx context.Context, apiPath string, params url.Values) (*http.Response, error) {
+	return h.rawRequest(ctx, http.MethodGet, apiPath, params, "", nil)
+}
+
+func (h *HttpClient) rawRequest(ctx context.Context, method, apiPath string, params url.Values, contentType string, body io.Reader) (*http.Response, error) {
+	u, err := url.Parse(h.serverUri)
+	if err != nil {
+		return nil, err
+	}
+	u.Path = path.Join(u.Path, apiPath)
+	if params != nil {
+		u.RawQuery = params.Encode()
+	}
+	request, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	if h.apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+h.apiKey)
+	}
+	for name, value := range h.headers {
+		request.Header.Set(name, value)
+	}
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
+
+	streamClient := *h.client
+	streamClient.Timeout = 0
+	return streamClient.Do(request)
 }
 
 func (h *HttpClient) request(method, apiPath string, params url.Values, input any, output any) error {

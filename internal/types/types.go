@@ -224,10 +224,9 @@ type ApiSurfaceConfig struct {
 
 	// Auth lists the login mechanisms for the surface's interactive auth
 	// (the OAuth authorize page / openrun login): "builtin", "admin", or an
-	// [auth.*]/[saml.*] entry name (federated entries are accepted but the
-	// federated login step is not implemented yet - they warn and are
-	// skipped at login). Default ["admin"]; an empty list is an invalid
-	// config. API keys work on any enabled surface regardless
+	// [auth.*]/[saml.*] entry name (the federated login step). Default
+	// ["admin"]; an empty list is an invalid config. API keys work on any
+	// enabled surface regardless
 	Auth []string `toml:"auth"`
 
 	// EnableApis lists operations disabled by default for this surface
@@ -1242,16 +1241,23 @@ type AppMetadata struct {
 	// APIs read the database only. Jobs are the operator-set jobs (apps.ace
 	// jobs, --job, app update jobs), replacing same-name definition jobs.
 	// See JobSpec
-	DefinitionJobs   []string          `json:"definition_jobs,omitempty,omitzero"`
-	Jobs             []string          `json:"jobs,omitempty,omitzero"`
-	AppConfig        map[string]string `json:"appconfig"`
-	AuthnType        AppAuthnType      `json:"authn_type"`
-	GitAuthName      string            `json:"git_auth_name"`
-	Bindings         []string          `json:"bindings"`
-	MCP              *MCPConfig        `json:"mcp,omitempty"`                        // the app is an OAuth-protected MCP server, see MCPConfig
-	AppliedSyncId    string            `json:"applied_sync_id"`                      // id of the sync entry which last applied to this app, empty for imperative changes
-	CreatedBySyncId  string            `json:"created_by_sync_id,omitempty"`         // id of the sync entry which created this app, empty for imperative/apply creates; used by sync prune
-	BuilderPublished bool              `json:"builder_published,omitempty,omitzero"` // app was published by the app builder; enables builder edit sessions
+	DefinitionJobs []string `json:"definition_jobs,omitempty,omitzero"`
+	Jobs           []string `json:"jobs,omitempty,omitzero"`
+	// DefinitionActions are the app definition's ace.action entries, persisted
+	// when the app loads so that actions are listed from the database without
+	// loading apps. nil is unknown (a version stored before the field existed,
+	// or whose definition never loaded): the lister falls back to loading the
+	// definition. An empty list is an app without actions, which is why this
+	// is omitzero and not omitempty. See ActionDef
+	DefinitionActions []ActionDef       `json:"definition_actions,omitzero"`
+	AppConfig         map[string]string `json:"appconfig"`
+	AuthnType         AppAuthnType      `json:"authn_type"`
+	GitAuthName       string            `json:"git_auth_name"`
+	Bindings          []string          `json:"bindings"`
+	MCP               *MCPConfig        `json:"mcp,omitempty"`                        // the app is an OAuth-protected MCP server, see MCPConfig
+	AppliedSyncId     string            `json:"applied_sync_id"`                      // id of the sync entry which last applied to this app, empty for imperative changes
+	CreatedBySyncId   string            `json:"created_by_sync_id,omitempty"`         // id of the sync entry which created this app, empty for imperative/apply creates; used by sync prune
+	BuilderPublished  bool              `json:"builder_published,omitempty,omitzero"` // app was published by the app builder; enables builder edit sessions
 }
 
 // AppSettings contains the settings for an app. Settings are not version controlled.

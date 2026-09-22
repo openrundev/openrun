@@ -504,6 +504,7 @@ func (a *App) initActions(router *chi.Mux) error {
 
 	a.actions = make([]*action.Action, 0)
 	if actions == nil {
+		a.Metadata.DefinitionActions = []types.ActionDef{}
 		return nil
 	}
 
@@ -538,7 +539,45 @@ func (a *App) initActions(router *chi.Mux) error {
 			return err
 		}
 	}
+	// Persisted with the version metadata by the deploy transactions (as the
+	// definition jobs are), actions are then listed from the database. Never
+	// nil: an app without actions is known to have none
+	a.Metadata.DefinitionActions = action.Defs(a.actions)
 
+	return a.mountActionsMCP(router)
+}
+
+// mountActionsMCP serves the actions as MCP tools in the MCP region, for apps
+// with mcp source "actions". The region is reachable through the bearer path
+// of the server only (serveMCPApp), which attaches the caller identity
+func (a *App) mountActionsMCP(router *chi.Mux) (err error) {
+	mcp := a.Metadata.MCP
+	if mcp == nil {
+		return nil
+	}
+	if !mcp.ServesActions() {
+		if len(a.actions) > 0 && a.containerHandler == nil && len(a.newProxyTransports) == 0 {
+			// Nothing upstream can answer in the region
+			return fmt.Errorf("app is an MCP app but has no container or proxy serving MCP: use --mcp=%s to serve the app's actions as MCP tools",
+				types.MCPSourceActions)
+		}
+		return nil
+	}
+	if len(a.actions) == 0 {
+		return fmt.Errorf("mcp source %s needs the app to define actions", types.MCPSourceActions)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("error mounting actions MCP endpoint at %s: %v", mcp.Path, r)
+		}
+	}()
+	handler, err := action.BuildMCPHandler(a.Name, strconv.Itoa(a.Metadata.VersionMetadata.Version), a.actions)
+	if err != nil {
+		return err
+	}
+	router.Handle(mcp.Path, handler)
+	router.Handle(mcp.Path+"/*", handler)
 	return nil
 }
 
@@ -604,6 +643,9 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	if path == action.API_PATH || strings.HasPrefix(path, action.API_PATH+"/") {
 		return fmt.Errorf("action path %s is not allowed, %s is reserved for the actions API", path, action.API_PATH)
 	}
+	if mcp := a.Metadata.MCP; mcp.ServesActions() && (path == mcp.Path || strings.HasPrefix(path, mcp.Path+"/")) {
+		return fmt.Errorf("action path %s is not allowed, %s is the MCP endpoint of the app", path, mcp.Path)
+	}
 	containerProxyUrl := ""
 	if a.containerHandler != nil {
 		containerProxyUrl = a.containerHandler.GetProxyUrl()
@@ -615,6 +657,7 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	if err != nil {
 		return fmt.Errorf("error creating action %s: %w", name, err)
 	}
+	action.SetFileFetcher(a.FetchLocal)
 
 	r, err := action.BuildRouter()
 	if err != nil {

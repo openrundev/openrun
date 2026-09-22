@@ -549,6 +549,12 @@ func (h *Handler) apiHandler(w http.ResponseWriter, r *http.Request, remote bool
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	if raw, ok := resp.(rawAPIResponse); ok {
+		// The response writes itself (an action result: can be a stream).
+		// The audit event is written once the response is complete
+		raw.writeResponse(w, r)
+		return
+	}
 	w.Header().Add("Content-Type", "application/json")
 	err = json.MarshalWrite(w, resp)
 	if err != nil {

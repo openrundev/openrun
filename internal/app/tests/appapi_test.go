@@ -985,8 +985,10 @@ param("options-param5", description="param5 options", type=LIST, default=["p", "
 }
 
 func TestAPIOpenAPIOperationIds(t *testing.T) {
-	// Different action paths can sanitize to the same operationId name
-	// (/ and /root, /a/b and /a_b). The ids must be unique across the spec
+	// The operation ids use the action's tool name (action.ToolNames, shared
+	// with the CLI and the MCP tools): derived from the action path, and from
+	// the action name for the action at /. Different paths can sanitize to
+	// the same name (/a/b and /a_b). The ids must be unique across the spec
 	logger := testutil.TestLogger()
 	fileData := map[string]string{
 		"app.star": `
@@ -1042,8 +1044,8 @@ app = ace.app("testApp",
 	// Non colliding names are kept readable, collisions get a suffix
 	// which does not clash with another action's name
 	expected := map[string]string{
-		"run_root":    "/test/api/actions",
-		"run_root_2":  "/test/api/actions/root",
+		"run_a1":      "/test/api/actions", // the root action is named from its action name
+		"run_root":    "/test/api/actions/root",
 		"run_a_b":     "/test/api/actions/a/b",
 		"run_a_b_3":   "/test/api/actions/a_b", // a_b_2 is taken by the /a_b_2 action
 		"run_a_b_2":   "/test/api/actions/a_b_2",

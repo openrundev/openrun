@@ -110,7 +110,7 @@ func appCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		&cli.GenericFlag{
 			Name:  "mcp",
 			Value: &mcpFlagValue{},
-			Usage: "The app is an MCP server protected by OpenRun OAuth. Bare --mcp: the whole app is the endpoint, served at the upstream root; --mcp=/mcp: the whole app is the endpoint, rewritten to that upstream path; --mcp='{\"path\":\"/mcp\",\"scopes\":[...],\"default_scope\":...,\"tools\":{...},\"allowed_origins\":[...]}' or --mcp=@file: a region within the app with scopes and tool policy",
+			Usage: "The app is an MCP server protected by OpenRun OAuth. Bare --mcp: the whole app is the endpoint, served at the upstream root; --mcp=actions: the app's actions are served as MCP tools at <app>/mcp; --mcp=/mcp: the whole app is the endpoint, rewritten to that upstream path; --mcp='{\"path\":\"/mcp\",\"scopes\":[...],\"default_scope\":...,\"tools\":{...},\"allowed_origins\":[...]}' or --mcp=@file: a region within the app with scopes and tool policy",
 		})
 	flags = append(flags,
 		&cli.StringSliceFlag{

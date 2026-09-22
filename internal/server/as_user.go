@@ -19,6 +19,8 @@ import (
 type managementAPIContext struct {
 	context.Context
 	userId      string
+	userSubject string // provider subject of a federated identity, see federatedSubjectEmail
+	userEmail   string
 	groups      []string
 	rbacEnabled bool
 }
@@ -27,6 +29,10 @@ func (c *managementAPIContext) Value(key any) any {
 	switch key {
 	case types.USER_ID:
 		return c.userId
+	case types.USER_SUBJECT:
+		return c.userSubject
+	case types.USER_EMAIL:
+		return c.userEmail
 	case types.GROUPS:
 		return c.groups
 	case types.RBAC_ENABLED:

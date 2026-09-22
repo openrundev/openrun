@@ -63,6 +63,8 @@ type appPrep struct {
 	// definitionJobs are the jobs it declared, persisted by the transaction
 	loaded         bool
 	definitionJobs []string
+	// definitionActions are the actions it declared, persisted with the jobs
+	definitionActions []types.ActionDef
 }
 
 // newCreatePrep returns the create pre-pass result for an app id, before any
@@ -600,6 +602,7 @@ func (s *Server) prepareCreate(ctx context.Context, appPath string, approve, dry
 	}
 	prep.loaded = true
 	prep.definitionJobs = application.Metadata.DefinitionJobs
+	prep.definitionActions = application.Metadata.DefinitionActions
 	if dryRun {
 		// Gates and container starts have side effects, never on a dry run
 		return prep, nil

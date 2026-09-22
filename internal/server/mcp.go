@@ -359,6 +359,27 @@ type (
 		Force bool              `json:"force,omitzero" jsonschema:"run a disabled job, or run alongside an active run"`
 		Args  map[string]string `json:"args,omitzero" jsonschema:"run arguments, param name to value, for the job's declared params"`
 	}
+	mcpActionListIn struct {
+		PathGlob string `json:"path_glob,omitzero" jsonschema:"app path glob to match, like /myapp, example.com:/**, or all. Empty matches all apps across all domains"`
+	}
+	mcpActionIn struct {
+		Path   string `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		Action string `json:"action,omitzero" jsonschema:"the action to use: its tool name from list_actions, or its path like /cancel. Optional when the app has one action"`
+		Stage  bool   `json:"stage,omitzero" jsonschema:"use the stage instance of the app instead of prod"`
+	}
+	mcpActionRunIn struct {
+		Path   string         `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		Action string         `json:"action,omitzero" jsonschema:"the action to run: its tool name from list_actions, or its path like /cancel. Optional when the app has one action"`
+		Stage  bool           `json:"stage,omitzero" jsonschema:"use the stage instance of the app instead of prod"`
+		DryRun bool           `json:"dry_run,omitzero" jsonschema:"validate the args only: reports the param errors, runs nothing"`
+		Args   map[string]any `json:"args,omitzero" jsonschema:"the action args, param name to value, see get_action for the params. Params left out use the app level values"`
+	}
+	mcpActionSuggestIn struct {
+		Path   string         `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		Action string         `json:"action,omitzero" jsonschema:"the action: its tool name from list_actions, or its path. Optional when the app has one action"`
+		Stage  bool           `json:"stage,omitzero" jsonschema:"use the stage instance of the app instead of prod"`
+		Args   map[string]any `json:"args,omitzero" jsonschema:"the args known so far, param name to value"`
+	}
 	mcpJobRunsIn struct {
 		Path   string `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
 		Job    string `json:"job,omitzero" jsonschema:"filter by job name"`
@@ -679,6 +700,26 @@ func (s *Server) buildMCPServer() *mcp.Server {
 	addMCPTool(s, srv, API_CANCEL_JOB,
 		func(ctx context.Context, in mcpJobRunIdIn) (any, error) {
 			return s.CancelJobRun(ctx, in.Id)
+		})
+
+	addMCPTool(s, srv, API_LIST_ACTIONS,
+		func(ctx context.Context, in mcpActionListIn) (any, error) {
+			return s.ListActions(ctx, cmp.Or(in.PathGlob, "all"))
+		})
+
+	addMCPTool(s, srv, API_GET_ACTION,
+		func(ctx context.Context, in mcpActionIn) (any, error) {
+			return s.GetAction(ctx, in.Path, in.Action, in.Stage)
+		})
+
+	addMCPTool(s, srv, API_RUN_ACTION,
+		func(ctx context.Context, in mcpActionRunIn) (any, error) {
+			return s.mcpInvokeAction(ctx, in.Path, in.Action, in.Stage, in.DryRun, false, in.Args)
+		})
+
+	addMCPTool(s, srv, API_SUGGEST_ACTION,
+		func(ctx context.Context, in mcpActionSuggestIn) (any, error) {
+			return s.mcpInvokeAction(ctx, in.Path, in.Action, in.Stage, false, true, in.Args)
 		})
 
 	addMCPTool(s, srv, API_SYNC_DELETE,

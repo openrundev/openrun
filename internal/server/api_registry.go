@@ -57,6 +57,12 @@ const (
 	API_LIST_JOB_RUNS        API_NAME = "list_job_runs"
 	API_JOB_LOGS             API_NAME = "job_logs"
 	API_CANCEL_JOB           API_NAME = "cancel_job"
+	API_LIST_ACTIONS         API_NAME = "list_actions"
+	API_GET_ACTION           API_NAME = "get_action"
+	API_RUN_ACTION           API_NAME = "run_action"
+	API_SUGGEST_ACTION       API_NAME = "suggest_action"
+	API_ACTIONS_OPENAPI      API_NAME = "actions_openapi"
+	API_ACTION_FILE          API_NAME = "action_file"
 	API_SERVICE_CREATE       API_NAME = "service_create"
 	API_SERVICE_UPDATE       API_NAME = "service_update"
 	API_SERVICE_DELETE       API_NAME = "service_delete"
@@ -261,6 +267,28 @@ func init() {
 		API_CANCEL_JOB: {Description: "Cancel an active job run",
 			Scope: types.PermissionUpdate, Destructive: true,
 			Method: http.MethodPost, Path: "/jobs/cancel", ApiFunc: (*Handler).cancelJobRun},
+
+		// App actions. The scope is app:access: a caller runs an action under
+		// the checks a browser user of the app gets (the app's login provider,
+		// app:access, the action's permit list), see actions.go
+		API_LIST_ACTIONS: {Description: "List the actions the caller can run, for the apps matching a path glob. Actions are operations an app exposes (with a form UI), each with typed params",
+			Scope: types.PermissionAccess, ReadOnly: true,
+			Method: http.MethodGet, Path: "/actions", ApiFunc: (*Handler).listActions},
+		API_GET_ACTION: {Description: "Get the param definitions (names, types, defaults, options) and the args JSON schema of an app action",
+			Scope: types.PermissionAccess, ReadOnly: true,
+			Method: http.MethodGet, Path: "/actions/schema", ApiFunc: (*Handler).getAction},
+		API_RUN_ACTION: {Description: "Run an app action with the given args, as the calling user. dry_run=true validates the args without running. Use get_action for the params",
+			Scope:  types.PermissionAccess,
+			Method: http.MethodPost, Path: "/actions/run", ApiFunc: (*Handler).runAction, MaxBodyBytes: actionMaxBodyBytes},
+		API_SUGGEST_ACTION: {Description: "Get suggested arg values for an app action from its suggest handler, given a partial set of args",
+			Scope: types.PermissionAccess, ReadOnly: true,
+			Method: http.MethodPost, Path: "/actions/suggest", ApiFunc: (*Handler).suggestAction, MaxBodyBytes: actionMaxBodyBytes},
+		API_ACTIONS_OPENAPI: {MCPExcluded: "OpenAPI document of the app level REST API, use get_action",
+			Scope: types.PermissionAccess, ReadOnly: true,
+			Method: http.MethodGet, Path: "/actions/openapi", ApiFunc: (*Handler).actionsOpenAPI},
+		API_ACTION_FILE: {MCPExcluded: "file download for the CLI; the MCP tools of an app return result files inline",
+			Scope: types.PermissionAccess, ReadOnly: true,
+			Method: http.MethodGet, Path: "/actions/file", ApiFunc: (*Handler).actionFile},
 
 		// Services
 		API_SERVICE_CREATE: {Description: "Create a managed service (postgres, redis, ...)",

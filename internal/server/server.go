@@ -190,6 +190,7 @@ type Server struct {
 	rbacManager      *rbac.RBACManager
 	csrfMiddleware   *http.CrossOriginProtection
 	mcpServerState
+	actionLists sync.Map // types.AppId -> *actionListEntry: app versions without DefinitionActions metadata, see appActionList
 	oauthState
 	telemetry *telemetry.Providers
 
