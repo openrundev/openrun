@@ -260,6 +260,10 @@ then the `Single sign-on URL` should be set to `https://example.com:25223/_openr
 
 The format for the Single Sign-on URL is `<CALLBACK_URL>/_openrun/sso/<PROVIDER>/acs`. The SP Entity Id format is `<CALLBACK_URL>/_openrun/sso/<PROVIDER>/metadata`. The `PROVIDER` should have the `saml_` prefix.
 
+Start SAML login from the OpenRun application. The IdP must return exactly one assertion with an explicit audience restriction for the SP Entity ID. Both the response's `InResponseTo` and the assertion's `SubjectConfirmationData.InResponseTo` must match the login request. The assertion must be covered by its own signature or the response signature. Unsolicited IdP-initiated logins are rejected.
+
+OpenRun limits SAML XML complexity to a conservative token bound of 10,000, in addition to its 10 MiB request and decompression limits. If an IdP sends unusually large attribute or group lists, filter them to the values the application needs. Single Logout responses must be signed.
+
 If using RBAC, ensure that the group info is available under the `groups` attribute, or set `groups_attr` as required.
 
 The service provider metadata is available for download at the `https://example.com:25223/_openrun/sso/saml_testokta/metadata` endpoint if the key and cert have been specified.

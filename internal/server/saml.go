@@ -56,6 +56,10 @@ import (
 // 12. Redirects back to original app url, which will again call CheckSAMLAuth and find the authenticated cookie
 const SAML_AUTH_PREFIX = "saml_"
 
+// Bound XML complexity before round-trip validation and signature processing.
+// Byte limits alone do not bound the cost of documents with many tiny elements.
+const maxSAMLXMLTokens = 10000
+
 // SAMLManager manages the SAML providers and their configurations
 type SAMLManager struct {
 	*types.Logger
@@ -288,6 +292,7 @@ func (s *SAMLManager) buildSAMLProvider(ctx context.Context, providerName string
 		IDPCertificateStore:         idp.CertStore,
 		AllowMissingAttributes:      true,
 		MaximumDecompressedBodySize: 10 << 20,
+		MaximumXMLTokens:            maxSAMLXMLTokens,
 		ForceAuthn:                  config.ForceAuthn,
 	}
 
@@ -620,6 +625,18 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// We consume one identity per login. Reject ambiguous assertion sets and
+	// require an explicit audience (the library permits absent restrictions).
+	if len(ai.Assertions) != 1 {
+		http.Error(w, "expected exactly one assertion", http.StatusUnauthorized)
+		return
+	}
+	assertion := &ai.Assertions[0]
+	if assertion.Conditions == nil || len(assertion.Conditions.AudienceRestrictions) == 0 {
+		http.Error(w, "assertion missing audience restriction", http.StatusUnauthorized)
+		return
+	}
+
 	if ai.NameID == "" {
 		// An empty NameID would produce an authenticated-but-unusable session
 		// that returns an error on every subsequent request.
@@ -639,7 +656,6 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		ai.Values.GetAll("roles"),
 		ai.Values.GetAll("http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"),
 	)
-	s.Trace().Str("user_id", ai.NameID).Str("provider_name", providerName).Msgf("authenticated saml user with groups %+v", groups)
 
 	if r.PostFormValue("RelayState") == "" {
 		http.Error(w, "relay is required", http.StatusBadRequest)
@@ -668,12 +684,18 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce that the assertion is a response to the AuthnRequest we issued for
-	// this login. Without this, a signed but replayed or unsolicited (IdP-injected)
-	// assertion could be bound to an attacker-initiated session.
+	// Bind the signed assertion to this login. The library accepts unsigned
+	// Response envelopes containing signed assertions, so the outer InResponseTo
+	// alone is attacker-controlled and cannot prevent assertion replay.
 	expectedRequestID, ok := stateValueString(stateMap, REQUEST_ID_KEY)
 	if !ok || expectedRequestID == "" {
 		http.Error(w, "error matching session state", http.StatusInternalServerError)
+		return
+	}
+	if assertion.Subject == nil || assertion.Subject.SubjectConfirmation == nil ||
+		assertion.Subject.SubjectConfirmation.SubjectConfirmationData == nil ||
+		assertion.Subject.SubjectConfirmation.SubjectConfirmationData.InResponseTo != expectedRequestID {
+		http.Error(w, "assertion InResponseTo mismatch", http.StatusUnauthorized)
 		return
 	}
 	response, err := sp.ValidateEncodedResponse(b64Response)
@@ -685,6 +707,7 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "assertion InResponseTo mismatch", http.StatusUnauthorized)
 		return
 	}
+	s.Trace().Str("user_id", ai.NameID).Str("provider_name", providerName).Msgf("authenticated saml user with groups %+v", groups)
 
 	redirectUrl, ok := stateValueString(stateMap, REDIRECT_URL)
 	if !ok {
@@ -877,7 +900,8 @@ func (s *SAMLManager) logout(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "logout response invalid: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		s.clearSAMLSession(w, r, providerName)
+		// App-initiated logout already cleared the local session before sending
+		// the LogoutRequest. A response must not clear a newer login session.
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}

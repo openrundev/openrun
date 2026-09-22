@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Updated `gosaml2` to v0.12.0 and `goxmldsig` to v1.6.1 to reject unsigned logout responses, bound XML parsing complexity, and reject malformed encrypted assertions without panicking. Delayed logout responses no longer clear a newer login session.
+
 ### Added
 
 - MCP apps: `openrun app create --mcp` (also `--mcp=/upstream-path`, `--mcp='{...}'`, `app update mcp`, and `mcp=` in apply files) marks a deployed app as an MCP server whose endpoint OpenRun protects with OAuth 2.1. OpenRun serves the protected resource metadata, issues tokens bound to the app after a login and consent using the app's `auth`, enforces RBAC `app:access` and optional app-declared scopes with per-tool requirements, strips the token and forwards the identity headers (plus `X-Openrun-Scopes` / `X-Openrun-Client-Id`). API keys can be bound to an app with `openrun apikey create --resource app:<path>`. MCP apps get a JSON-RPC health probe (TCP probes on Kubernetes) and stage/preview apps accept MCP POSTs.
