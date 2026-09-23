@@ -245,6 +245,9 @@
       {{ end }}
 
 
+      {{/* Async action: Start submits the run and the response redirects
+        to the run page; the Run History link in the page header lists the
+        runs */}}
       <button
         type="submit"
         autofocus
@@ -253,7 +256,7 @@
         hx-swap="innerHTML"
         hx-indicator="#ActionIndicator"
         class="btn btn-primary sm:min-w-32">
-        Run
+        {{ if .async }}Start{{ else }}Run{{ end }}
       </button>
     </div>
   </div>

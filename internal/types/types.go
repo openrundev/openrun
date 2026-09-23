@@ -524,8 +524,26 @@ type AppConfig struct {
 	StaticRootCacheControl string `toml:"static_root_cache_control"`
 }
 
+// ActionConfig holds the action settings of an app
 type ActionConfig struct {
 	MaxRequestBodyBytes int64 `toml:"max_request_body_bytes"`
+	// RunTimeout is the timeout of an async run without its own timeout
+	RunTimeout string `toml:"run_timeout"`
+	// MaxAsyncRuns is the number of active async runs per app instance on a
+	// node; further submissions are refused
+	MaxAsyncRuns int `toml:"max_async_runs"`
+	// RetainRuns is the number of async run records kept per app instance
+	RetainRuns int `toml:"retain_runs"`
+	// OutputHeadBytes and OutputTailBytes are the first and last bytes of a
+	// stream run's output which are stored
+	OutputHeadBytes int64 `toml:"output_head_bytes"`
+	OutputTailBytes int64 `toml:"output_tail_bytes"`
+	// ResultMaxBytes caps the JSON size of a stored values result
+	ResultMaxBytes int64 `toml:"result_max_bytes"`
+	// DisplayRows is the number of result rows the run page renders inline
+	DisplayRows int `toml:"display_rows"`
+	// MaxWaitSecs caps the wait of the run read APIs
+	MaxWaitSecs int `toml:"max_wait_secs"`
 }
 
 // JobsConfig holds the job run settings of an app

@@ -51,6 +51,9 @@ func initActionCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			actionValidateCommand(commonFlags, clientConfig),
 			actionSuggestCommand(commonFlags, clientConfig),
 			actionOpenAPICommand(commonFlags, clientConfig),
+			actionRunsCommand(commonFlags, clientConfig),
+			actionOutputCommand(commonFlags, clientConfig),
+			actionCancelCommand(commonFlags, clientConfig),
 		},
 	}
 }
@@ -200,6 +203,9 @@ func printActionDetail(cCtx *cli.Context, detail *types.ActionDetailResponse, st
 	}
 	printStdout(cCtx, "Url:         %s\n", detail.Url)
 	printStdout(cCtx, "Suggest:     %t\n", detail.Suggest)
+	if detail.Async {
+		printStdout(cCtx, "Async:       true (the run executes in the background, see \"openrun action runs\")\n")
+	}
 
 	example := []string{"openrun action run"}
 	if stage {
@@ -250,10 +256,13 @@ func actionInvokeFlags(commonFlags []cli.Flag) []cli.Flag {
 }
 
 func actionRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
+	flags := actionInvokeFlags(commonFlags)
+	flags = append(flags, newBoolFlag("wait", "w", "Async actions: wait for the background run to end and print its result", false))
+	flags = append(flags, newBoolFlag("follow", "", "Async actions: print the run output as it is produced, then wait for the result", false))
 	return &cli.Command{
 		Name:      "run",
 		Usage:     "Run an action",
-		Flags:     actionInvokeFlags(commonFlags),
+		Flags:     flags,
 		ArgsUsage: "<appPath> [<action>] [name=value ...]",
 		UsageText: `args: <appPath> [<action>] [name=value ...]
 
@@ -267,8 +276,13 @@ written as it is produced. For an action which returns files (a download or an i
 the files are listed; --output saves them. The exit code is 0 on success, 2 for param validation errors,
 1 for other failures; for a streamed command, the exit code of the command.
 
+An async action (is_async=True) starts a background run and prints its run id;
+--wait polls the run and prints its result as above, --follow prints its output as it
+is produced. "openrun action runs", "action output" and "action cancel" manage the runs.
+
 	Examples:
 	  Run an action: openrun action run /orders cancel id=42 reason=customer
+	  Start a background run and wait for it: openrun action run --wait /site rebuild target=all
 	  Run the only action of an app: openrun action run /report month=2026-08
 	  Typed args from a file: openrun action run /orders import --json=@args.json
 	  Upload a file: openrun action run /orders import data=@orders.csv
@@ -538,6 +552,9 @@ func invokeActionCommand(cCtx *cli.Context, clientConfig *types.ClientConfig, ap
 			fmt.Fprintf(cCtx.App.ErrWriter, "error: param %s: %s\n", name, doc.ParamErrors[name]) //nolint:errcheck
 		}
 		return cli.Exit("", actionExitParamError)
+	}
+	if started, ok := startedRunOf(resp, data); ok {
+		return handleStartedRun(cCtx, clientConfig, started, status, req, output, outputPath)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		var reqErr types.RequestError

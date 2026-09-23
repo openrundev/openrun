@@ -34,6 +34,10 @@ h2:not(.font-mono),
 h3:not(.font-mono),
 .page-title {
   font-family: "Space Grotesk", var(--font-sans);
+  /* Shrink to the text so the accent line below (::after) spans exactly
+     the title's width; max-width keeps long titles wrapping */
+  width: fit-content;
+  max-width: 100%;
 }
 
 /* ---- AA-safe brand green text ------------------------------------------
@@ -68,7 +72,7 @@ h3:not(.font-mono),
 .page-title::after {
   content: "";
   display: block;
-  width: 4.3em;
+  width: 100%;
   height: 3px;
   margin-top: 0.3rem;
   border-radius: 2px;

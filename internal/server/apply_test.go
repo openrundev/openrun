@@ -269,8 +269,8 @@ func newApplyTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Cont
 	}
 	server.rbacManager = rbacManager
 	t.Cleanup(func() {
-		server.jobRuns.stop()
-		server.jobRuns.wait()
+		server.jobRuns.Stop()
+		server.jobRuns.Wait()
 		server.stopAuditWriter()
 		if server.auditDB != nil {
 			_ = server.auditDB.Close()

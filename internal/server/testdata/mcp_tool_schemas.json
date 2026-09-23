@@ -248,6 +248,19 @@
     ],
     "type": "object"
   },
+  "cancel_action_run": {
+    "additionalProperties": false,
+    "properties": {
+      "run_id": {
+        "description": "the run id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id"
+    ],
+    "type": "object"
+  },
   "cancel_job": {
     "additionalProperties": false,
     "properties": {
@@ -434,6 +447,23 @@
     ],
     "type": "object"
   },
+  "get_action_run": {
+    "additionalProperties": false,
+    "properties": {
+      "run_id": {
+        "description": "the run id returned by run_action",
+        "type": "string"
+      },
+      "wait_seconds": {
+        "description": "wait up to this many seconds (max 60) for the run to end before answering",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "run_id"
+    ],
+    "type": "object"
+  },
   "get_app": {
     "additionalProperties": false,
     "properties": {
@@ -457,6 +487,35 @@
     },
     "required": [
       "id"
+    ],
+    "type": "object"
+  },
+  "list_action_runs": {
+    "additionalProperties": false,
+    "properties": {
+      "action": {
+        "description": "one action: its tool name or path; all async actions when left out",
+        "type": "string"
+      },
+      "limit": {
+        "description": "maximum runs to return, default 50",
+        "type": "integer"
+      },
+      "path": {
+        "description": "the app path, like /myapp or example.com:/myapp",
+        "type": "string"
+      },
+      "stage": {
+        "description": "the stage instance of the app instead of prod",
+        "type": "boolean"
+      },
+      "status": {
+        "description": "filter: running, succeeded, failed, timed_out, canceled or lost",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
     ],
     "type": "object"
   },
@@ -780,6 +839,10 @@
       "stage": {
         "description": "use the stage instance of the app instead of prod",
         "type": "boolean"
+      },
+      "wait_seconds": {
+        "description": "async actions: wait up to this many seconds (max 60) for the background run to end; otherwise the run id is returned at once",
+        "type": "integer"
       }
     },
     "required": [

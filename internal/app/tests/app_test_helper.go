@@ -123,6 +123,10 @@ func CreateTestAppIntSystemConfig(logger *types.Logger, path, domain string, fil
 // created while it is set (see CreateTestAppMCP)
 var testMetadataHook func(*types.AppMetadata)
 
+// testRunServices, when set, are the async action run services of the test
+// apps (the server sets them for real apps)
+var testRunServices *app.RunServices
+
 // CreateTestAppMCP creates a test app with the given mcp config document
 func CreateTestAppMCP(logger *types.Logger, fileData map[string]string, plugins []string, permissions []types.Permission,
 	rbacApi rbac.RBACAPI, mcpDoc string) (*app.App, *appfs.WorkFs, error) {
@@ -187,6 +191,9 @@ func createTestAppFull(logger *types.Logger, path, domain string, fileData map[s
 		nil, secretManager.AppEvalTemplate, nil, serverConfig, rbacApi, []*types.Binding{})
 	if err != nil {
 		return nil, nil, err
+	}
+	if testRunServices != nil {
+		a.SetRunServices(testRunServices)
 	}
 	err = a.Initialize(context.Background(), types.DryRunFalse)
 	return a, workFS, err

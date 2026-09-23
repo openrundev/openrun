@@ -63,6 +63,10 @@ const (
 	API_SUGGEST_ACTION       API_NAME = "suggest_action"
 	API_ACTIONS_OPENAPI      API_NAME = "actions_openapi"
 	API_ACTION_FILE          API_NAME = "action_file"
+	API_LIST_ACTION_RUNS     API_NAME = "list_action_runs"
+	API_GET_ACTION_RUN       API_NAME = "get_action_run"
+	API_ACTION_RUN_OUTPUT    API_NAME = "action_run_output"
+	API_CANCEL_ACTION_RUN    API_NAME = "cancel_action_run"
 	API_SERVICE_CREATE       API_NAME = "service_create"
 	API_SERVICE_UPDATE       API_NAME = "service_update"
 	API_SERVICE_DELETE       API_NAME = "service_delete"
@@ -289,6 +293,20 @@ func init() {
 		API_ACTION_FILE: {MCPExcluded: "file download for the CLI; the MCP tools of an app return result files inline",
 			Scope: types.PermissionAccess, ReadOnly: true,
 			Method: http.MethodGet, Path: "/actions/file", ApiFunc: (*Handler).actionFile},
+		// Async action runs (is_async=True actions): run_action returns the
+		// started run, these read and cancel it
+		API_LIST_ACTION_RUNS: {Description: "List the background runs of an app's async actions, newest first; optionally one action, filtered by status",
+			Scope: types.PermissionAccess, ReadOnly: true,
+			Method: http.MethodGet, Path: "/actions/runs", ApiFunc: (*Handler).listActionRuns},
+		API_GET_ACTION_RUN: {Description: "Get a background action run: its status, args and, once finished, its result values or output summary. wait (seconds) waits for the run to end",
+			Scope: types.PermissionAccess, ReadOnly: true,
+			Method: http.MethodGet, Path: "/actions/runs/get", ApiFunc: (*Handler).getActionRun},
+		API_ACTION_RUN_OUTPUT: {MCPExcluded: "output paging for the CLI; get_action_run returns the output tail of a run",
+			Scope: types.PermissionAccess, ReadOnly: true,
+			Method: http.MethodGet, Path: "/actions/runs/output", ApiFunc: (*Handler).actionRunOutput},
+		API_CANCEL_ACTION_RUN: {Description: "Cancel an active background action run",
+			Scope: types.PermissionAccess, Destructive: true,
+			Method: http.MethodPost, Path: "/actions/runs/cancel", ApiFunc: (*Handler).cancelActionRun},
 
 		// Services
 		API_SERVICE_CREATE: {Description: "Create a managed service (postgres, redis, ...)",

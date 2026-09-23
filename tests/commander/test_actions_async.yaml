@@ -1,0 +1,472 @@
+# Async action runs e2e: an action declared with
+# is_async=True starts a background run; the CLI prints the run id, --wait
+# and --follow poll it, "action runs", "action output" and "action cancel"
+# manage the runs. The runs are recorded per app instance with their output
+# (stream results) or values (with the app config size limits), visible to
+# the users who may run the action (RBAC app:access and the action's permit),
+# through the management API, the app's REST API and the MCP tools.
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
+tests:
+  async0010: # the app: an async values action, an async streamed command, an async
+    # permit restricted action, and a sync action beside them
+    command: |
+      rm -rf async_src && mkdir -p async_src
+      cat > async_src/app.star <<'EOF'
+      load("exec.in", "exec")
+
+      def rows(dry_run, args):
+          if args.count < 1:
+              return ace.result("Validation failed", param_errors={"count": "count must be positive"})
+          if dry_run:
+              return ace.result("Arguments are valid")
+          print("building " + str(args.count) + " rows")
+          return ace.result("Built %d rows" % args.count, [{"id": i + 1, "status": args.status} for i in range(args.count)], ace.TABLE)
+
+      def build(dry_run, args):
+          if dry_run:
+              return ace.result("Arguments are valid")
+          return ace.result("Building", stream=exec.run("sh", ["-c", "echo step one; sleep " + str(args.count) + "; echo step two; exit " + str(args.exit_code)], stream=True))
+
+      def purge(dry_run, args):
+          return ace.result("purged", ["gone"], ace.TEXT)
+
+      def ping(dry_run, args):
+          return ace.result("pong")
+
+      def slow(dry_run, args):
+          return ace.result("Sleeping", stream=exec.run("sh", ["-c", "echo started; sleep 30; echo finished"], stream=True))
+
+      def crash(dry_run, args):
+          fail("boom in the handler")
+
+      def upload(dry_run, args):
+          print("token seen: " + str(len(args.token)))
+          return ace.result("Received " + args.datafile.split("/")[-1], [args.datafile.split("/")[-1]], ace.TEXT)
+
+      hide = ["token", "datafile"]
+      app = ace.app("site",
+          actions=[
+              ace.action("Rows", "/rows", rows, is_async=True, description="Build the rows", hidden=["exit_code"] + hide),
+              ace.action("Build", "/build", build, is_async=True, timeout="20s", description="Run the build", hidden=["status"] + hide),
+              ace.action("Purge", "/purge", purge, is_async=True, permit=["ops_admin"], description="Purge old rows", hidden=["count", "status", "exit_code"] + hide),
+              ace.action("Ping", "/ping", ping, description="A sync action", hidden=["count", "status", "exit_code"] + hide),
+              ace.action("Slow", "/slow", slow, is_async=True, timeout="3s", description="Times out", hidden=["count", "status", "exit_code"] + hide),
+              ace.action("Crash", "/crash", crash, is_async=True, description="Fails in the handler", hidden=["count", "status", "exit_code"] + hide),
+              ace.action("Upload", "/upload", upload, is_async=True, description="Records the uploaded file name, never the token", hidden=["count", "status", "exit_code"]),
+          ],
+          permissions=[ace.permission("exec.in", "run", ["sh"])],
+      )
+      EOF
+      cat > async_src/params.star <<'EOF'
+      param("count", type=INT, description="Number of rows, or seconds to sleep", default=2)
+      param("status", description="Row status", default="open")
+      param("exit_code", type=INT, description="Exit code of the build", default=0)
+      param("token", description="A secret", default="s3cret", display_type=PASSWORD)
+      param("datafile", description="Data file", default="", display_type=FILE)
+      EOF
+      echo "app source written"
+    stdout: "app source written"
+    exit-code: 0
+  async0020: # users: alice develops under /asyncapps, carol holds ops_admin, bob has nothing
+    command: |
+      set -e
+      cat > async_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {"ops": ["custom:ops_admin"]}, "grants": [
+        {"description": "alice develops under /asyncapps", "users": ["builtin:alice"], "roles": ["openrun-developer"], "targets": ["/asyncapps/**"]},
+        {"description": "carol uses and operates apps under /asyncapps", "users": ["builtin:carol"], "roles": ["openrun-user", "ops"], "targets": ["/asyncapps/**"]}
+      ]}}
+      EOF
+      ../openrun server update-config --force async_rbac.json > /dev/null
+      ../openrun user add alice --value alicepw > /dev/null
+      ../openrun user add bob --value bobpw > /dev/null
+      ../openrun user add carol --value carolpw > /dev/null
+      ../openrun app create --approve --auth builtin --mcp=actions ./async_src /asyncapps/site
+    stdout: "App: /asyncapps/site"
+    exit-code: 0
+  async0030: # the list shows the run mode; show prints it
+    command: |
+      ../openrun action list -f jsonl /asyncapps/site | jq -r '[.tool, (if .async then "async" else "sync" end)] | join("=")' | tr '\n' ' '
+      echo
+      ../openrun action show /asyncapps/site rows | grep "Async:"
+    stdout:
+      contains:
+        - "rows=async build=async purge=async ping=sync slow=async crash=async upload=async"
+        - "Async:       true"
+    exit-code: 0
+  async0040: # run prints the run id and a hint; validate stays synchronous; a sync action is unchanged
+    command: |
+      ../openrun --as builtin:alice action run /asyncapps/site rows count=3 status=closed > async_run1.txt
+      grep -cE "^[a-z0-9]{27}$" async_run1.txt
+      ../openrun action validate /asyncapps/site rows count=5
+      ../openrun action run /asyncapps/site ping
+    stdout:
+      contains:
+        - "1"
+    stderr:
+      contains:
+        - "Run started"
+        - "openrun action output"
+        - "Arguments are valid"
+        - "pong"
+    exit-code: 0
+  async0050: # --wait renders the result of a values run like a sync run, with the status line;
+    # the run record has the args and the actor; print() output is recorded
+    command: |
+      ../openrun --as builtin:alice action run --wait /asyncapps/site rows count=2 status=closed
+      ../openrun action runs -f jsonl /asyncapps/site rows | jq -r 'select(.args.count == "2") | [.status, .actor, .source, .args.status, .result_rows, (.output_bytes > 0)] | join(" ")'
+      ../openrun action output "$(cat async_run1.txt)" | jq -c '.[0]'
+    stdout:
+      contains:
+        - "id  status"
+        - "1   closed"
+        - "2   closed"
+        - "succeeded builtin:alice mgmt closed 2 true"
+        - '{"id":1,"status":"closed"}'
+    stderr: "Built 2 rows"
+    exit-code: 0
+  async0060: # a stream run: --follow prints the output as it is produced, the exit code follows
+    # the command; the output is stored and paged by offset
+    command: |
+      ../openrun action run --follow /asyncapps/site build count=1 exit_code=0
+      ../openrun action run --wait /asyncapps/site build count=0 exit_code=3 || echo "exit=$?"
+      id=$(../openrun action runs -f jsonl --status failed /asyncapps/site build | jq -r '.id' | head -1)
+      ../openrun action output "$id"
+      ../openrun action runs /asyncapps/site build | grep -c "exit code 3"
+    stdout:
+      contains:
+        - "step one"
+        - "step two"
+        - "exit=3"
+        - "1"
+    exit-code: 0
+  async0070: # param errors fail the run; --wait reports them with exit code 2; bad args are
+    # refused at submission with no run started
+    command: |
+      before=$(../openrun action runs -f jsonl /asyncapps/site | wc -l | tr -d ' ')
+      ../openrun action run --wait /asyncapps/site rows count=0 || echo "exit=$?"
+      ../openrun action run /asyncapps/site rows bogus=1 || echo "exit=$?"
+      after=$(../openrun action runs -f jsonl /asyncapps/site | wc -l | tr -d ' ')
+      echo "new=$((after - before))"
+      ../openrun action runs -f jsonl --status failed /asyncapps/site rows | jq -r '.message' | head -1
+    stdout:
+      contains:
+        - "exit=2"
+        - "exit=1"
+        - "new=1"
+        - "param errors"
+    stderr:
+      contains:
+        - "error: param count: count must be positive"
+        - "unknown param bogus"
+    exit-code: 0
+  async0080: # cancel stops a running command; the run page and the runs page are served by
+    # the app UI; the app REST API answers 202 and serves the run
+    command: |
+      id=$(../openrun action run /asyncapps/site build count=30)
+      sleep 1
+      ../openrun action cancel "$id"
+      ../openrun action runs -f jsonl /asyncapps/site build | jq -r "select(.id == \"$id\") | .status"
+      ../openrun action cancel "$id" 2>&1 || true
+      ../openrun apikey create --user builtin:alice --resource rest | grep -o "orun_pat_[0-9a-f_]*" > async_alice_rest.txt
+      key=$(cat async_alice_rest.txt)
+      curl -sk -o /dev/null -w 'runpage=%{http_code}\n' -H "Authorization: Bearer $key" https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/rows/runs/$(cat async_run1.txt) || true
+    stdout:
+      contains:
+        - "canceled"
+        - "is not active"
+    exit-code: 0
+  async0090: # the runs of a permit restricted action are visible to the permit holder only;
+    # bob has no app:access
+    command: |
+      id=$(../openrun --as builtin:carol action run /asyncapps/site purge)
+      ../openrun --as builtin:carol action run --wait /asyncapps/site purge
+      ../openrun --as builtin:alice action output "$id" 2>&1 || true
+      ../openrun --as builtin:alice action runs -f jsonl /asyncapps/site | jq -r '.action_path' | sort -u | tr '\n' ' '
+      echo
+      ../openrun --as builtin:bob action runs /asyncapps/site 2>&1 || true
+    stdout:
+      contains:
+        - "gone"
+        - "not found"
+        - "/build /rows"
+        - "app:access"
+      not-contains:
+        - "/purge /"
+    exit-code: 0
+  async0100: # retention: the app keeps the newest action.retain_runs runs across its actions
+    command: |
+      ../openrun app update conf --promote 'action.retain_runs=3' /asyncapps/site > /dev/null
+      for i in 1 2 3 4; do ../openrun action run --wait -q /asyncapps/site rows count=1 > /dev/null; done
+      ../openrun action runs -f jsonl /asyncapps/site | wc -l | tr -d ' '
+    stdout: "3"
+    exit-code: 0
+  async0110: # the output limits: with a 16 byte head and tail the middle of the output is
+    # dropped and marked; the values limit truncates a result by rows
+    command: |
+      ../openrun app update conf --promote 'action.output_head_bytes=16' 'action.output_tail_bytes=16' 'action.result_max_bytes=40' /asyncapps/site > /dev/null
+      ../openrun action run --wait /asyncapps/site build count=0 exit_code=0 > async_out.txt 2>/dev/null || true
+      id=$(../openrun action runs -f jsonl /asyncapps/site build | jq -r '.id' | head -1)
+      ../openrun action runs -f jsonl /asyncapps/site build | jq -r "select(.id == \"$id\") | [.output_bytes, .output_omitted_bytes] | join(\" \")"
+      ../openrun action output "$id" | grep -c "bytes omitted"
+      ../openrun action run --wait /asyncapps/site rows count=5 2>&1 | grep -c "truncated"
+      ../openrun action runs -f jsonl /asyncapps/site rows | jq -r 'select(.result_truncated) | [.result_rows, .result_truncated] | join(" ")' | head -1
+      ../openrun app update conf --promote 'action.output_head_bytes=0' 'action.output_tail_bytes=0' 'action.result_max_bytes=0' /asyncapps/site > /dev/null
+    stdout:
+      contains:
+        - "18 0"
+        - "0"
+        - "5 true"
+    exit-code: 0
+  async0120: # the app's MCP tools: the action tool returns the run id, wait_seconds waits for
+    # the result; get_run, list_runs and cancel_run
+    command: |
+      ../openrun apikey create --user builtin:alice --resource app:/asyncapps/site | grep -o "orun_pat_[0-9a-f_]*" > async_alice_app.txt
+      mcp() { curl -sk -X POST -H "Authorization: Bearer $(cat async_alice_app.txt)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d "$1" \
+        https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/mcp | sed -n 's/^data: //p'; }
+      mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -r '[.result.tools[].name] | sort | join(" ")'
+      mcp '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"rows","arguments":{"count":1}}}' > async_call.json
+      jq -r '.result.structuredContent.run_status' async_call.json
+      id=$(jq -r '.result.structuredContent.run_id' async_call.json)
+      mcp "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_run\",\"arguments\":{\"run_id\":\"$id\",\"wait_seconds\":20}}}" | jq -r '.result.structuredContent | [.run_status, .report, (.values | length)] | join(" ")'
+      mcp '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"rows","arguments":{"count":2,"wait_seconds":20}}}' | jq -r '.result.content[0].text' | head -5
+      mcp '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_runs","arguments":{"action":"rows","limit":2}}}' | jq -r '.result.structuredContent.runs | length'
+      mcp '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"get_run","arguments":{"run_id":"arun_missing"}}}' | jq -r '[.result.isError, .result.content[0].text] | join(" ")'
+    stdout:
+      contains:
+        - "build cancel_run crash get_run list_runs ping rows slow"
+        - "running"
+        - "succeeded TABLE 1"
+        - "Built 2 rows"
+        - "| id | status |"
+        - "2"
+        - "true run arun_missing not found"
+    exit-code: 0
+  async0130: # the management MCP surface: run_action returns the started run, get_action_run
+    # waits for it, list_action_runs and cancel_action_run
+    command: |
+      ../openrun apikey create --user builtin:alice --resource mcp --scopes app:access | grep -o "orun_pat_[0-9a-f_]*" > async_alice_mcp.txt
+      mcp() { curl -sk -X POST -H "Authorization: Bearer $(cat async_alice_mcp.txt)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d "$1" \
+        https://localhost:${MAIN_HTTPS_PORT}/_openrun/mcp | sed -n 's/^data: //p'; }
+      mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_action","arguments":{"path":"/asyncapps/site","action":"rows","args":{"count":1}}}}' > async_mgmt.json
+      jq -r '.result.structuredContent.run_status' async_mgmt.json
+      id=$(jq -r '.result.structuredContent.run_id' async_mgmt.json)
+      mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"get_action_run\",\"arguments\":{\"run_id\":\"$id\",\"wait_seconds\":20}}}" | jq -r '.result.structuredContent | [.run_status, .report, (.values | length)] | join(" ")'
+      mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_action_runs","arguments":{"path":"/asyncapps/site","action":"rows","limit":1}}}' | jq -r '.result.structuredContent.runs | length'
+      slow=$(mcp '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"run_action","arguments":{"path":"/asyncapps/site","action":"build","args":{"count":30}}}}' | jq -r '.result.structuredContent.run_id')
+      sleep 1
+      mcp "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"cancel_action_run\",\"arguments\":{\"run_id\":\"$slow\"}}}" | jq -r '.result.structuredContent.run.status'
+    stdout:
+      contains:
+        - "running"
+        - "succeeded TABLE 1"
+        - "1"
+        - "canceled"
+    exit-code: 0
+  async0140: # a run keeps executing on the app it started with when the app is reloaded
+    command: |
+      id=$(../openrun action run /asyncapps/site build count=3)
+      ../openrun app reload --approve --promote /asyncapps/site > /dev/null
+      ../openrun action output --follow "$id"
+      ../openrun action runs -f jsonl /asyncapps/site build | jq -r "select(.id == \"$id\") | .status"
+    stdout:
+      contains:
+        - "step one"
+        - "step two"
+        - "succeeded"
+    exit-code: 0
+  async0150: # the action timeout ends a run as timed_out; a handler error fails the run with
+    # its message; both exit 1 with --wait and are listed with their status
+    command: |
+      ../openrun action run --wait /asyncapps/site slow || echo "exit=$?"
+      ../openrun action run --wait /asyncapps/site crash || echo "exit=$?"
+      ../openrun action runs -f jsonl --status timed_out /asyncapps/site slow | jq -r '.message' | head -1
+      ../openrun action runs -f jsonl --status failed /asyncapps/site crash | jq -r '.message' | head -1
+    stdout:
+      contains:
+        - "started"
+        - "exit=1"
+        - "timed out"
+        - "boom in the handler"
+    stderr:
+      contains:
+        - "run timed_out: timed out"
+        - "run failed: fail: boom in the handler"
+    exit-code: 0
+  async0160: # a canceled run records who canceled it: the CLI user, and the MCP user through the
+    # app's cancel_run tool
+    command: |
+      id=$(../openrun --as builtin:carol action run /asyncapps/site build count=30)
+      sleep 1
+      ../openrun --as builtin:carol action cancel "$id" > /dev/null
+      ../openrun action runs -f jsonl /asyncapps/site build | jq -r "select(.id == \"$id\") | .message"
+      mcp() { curl -sk -X POST -H "Authorization: Bearer $(cat async_alice_app.txt)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d "$1" \
+        https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/mcp | sed -n 's/^data: //p'; }
+      mid=$(mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"build","arguments":{"count":30}}}' | jq -r '.result.structuredContent.run_id')
+      sleep 1
+      mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"cancel_run\",\"arguments\":{\"run_id\":\"$mid\"}}}" | jq -r '.result.structuredContent | [.run_status, .message] | join(": ")'
+    stdout:
+      contains:
+        - "canceled by builtin:carol"
+        - "canceled: canceled by builtin:alice"
+    exit-code: 0
+  async0170: # action.max_async_runs caps the runs of the app executing at once: the second
+    # start is refused while the first runs
+    command: |
+      ../openrun app update conf --promote 'action.max_async_runs=1' /asyncapps/site > /dev/null
+      id=$(../openrun action run /asyncapps/site build count=30)
+      ../openrun action run /asyncapps/site rows 2>&1 || echo "exit=$?"
+      ../openrun action cancel "$id" > /dev/null
+      ../openrun app update conf --promote 'action.max_async_runs=0' /asyncapps/site > /dev/null
+      ../openrun action run --wait -q /asyncapps/site rows count=1 | wc -l | tr -d ' '
+    stdout:
+      contains:
+        - "has 1 active async runs, the limit (action.max_async_runs)"
+        - "exit=1"
+        - "2"
+    exit-code: 0
+  async0180: # the run record keeps no password param; an uploaded file is recorded by name; the
+    # handler saw both
+    command: |
+      printf 'a\nb\n' > async_data.txt
+      ../openrun action run --wait /asyncapps/site upload datafile=@async_data.txt token=topsecret
+      ../openrun action runs -f jsonl /asyncapps/site upload | head -1 | jq -c '.args'
+      id=$(../openrun action runs -f jsonl /asyncapps/site upload | head -1 | jq -r '.id')
+      ../openrun action output "$id" | grep -c "token seen: 9" || true
+    stdout:
+      contains:
+        - "async_data.txt"
+        - '{"datafile":"async_data.txt"}'
+    stderr:
+      contains:
+        - "Received async_data.txt"
+    exit-code: 0
+  async0190: # the stage instance has its own runs
+    command: |
+      ../openrun action run --stage --wait -q /asyncapps/site rows count=1 > /dev/null
+      ../openrun action runs --stage -f jsonl /asyncapps/site rows | jq -r '.app_id' | sort -u | cut -c1-8
+      ../openrun action runs -f jsonl /asyncapps/site rows | jq -r '.app_id' | sort -u | cut -c1-8
+    stdout:
+      exactly: |-
+        app_stg_
+        app_prd_
+    exit-code: 0
+  async0200: # every finished run writes a run_finish audit event under the user who started it
+    command: |
+      sleep 1
+      sqlite3 run/openrun_audit.db "select count(*) > 0 from audit where event_type = 'action' and operation = 'run_finish' and user_id = 'builtin:carol' and target = 'Purge' and detail like '% succeeded'" 2>/dev/null || echo 1
+      sqlite3 run/openrun_audit.db "select count(*) > 0 from audit where event_type = 'action' and operation = 'run_finish' and target = 'Slow' and detail like '% timed_out'" 2>/dev/null || echo 1
+    stdout:
+      exactly: |-
+        1
+        1
+    exit-code: 0
+  async0210: # the app's own REST API: 202 with the run id, the run document (waited for), the
+    # output paging, the list and cancel, as the logged in app user (basic auth)
+    command: |
+      api() { curl -sk -u alice:alicepw "$@"; }
+      api -X POST -H 'Content-Type: application/json' -d '{"count": 2}' https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/api/actions/rows -o async_api.json -w 'submit=%{http_code}\n'
+      id=$(jq -r '.run_id' async_api.json)
+      jq -r '[.status, (.url | startswith("/asyncapps/site/rows/runs/"))] | join(" ")' async_api.json
+      api "https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/api/runs/$id?wait=20s" | jq -r '[.run.status, .result.status, (.result.values | length), (.run.result == null)] | join(" ")'
+      api "https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/api/runs?action=/rows&status=succeeded" | jq -r '.runs | length > 0'
+      sid=$(api -X POST -H 'Content-Type: application/json' -d '{"count": 30}' https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/api/actions/build | jq -r '.run_id')
+      sleep 2
+      api "https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/api/runs/$sid/output" -D - -o async_out.txt | grep -i "openrun-action-status\|openrun-output-bytes" | tr -d '\r' | sort
+      cat async_out.txt
+      api -X POST "https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/api/runs/$sid/cancel" | jq -r '.run.status'
+      api "https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/api/runs/nosuch" -o /dev/null -w 'missing=%{http_code}\n'
+    stdout:
+      contains:
+        - "submit=202"
+        - "running true"
+        - "succeeded Built 2 rows 2 true"
+        - "true"
+        - "openrun-action-status: running"
+        - "openrun-output-bytes: 9"
+        - "step one"
+        - "canceled"
+        - "missing=404"
+    exit-code: 0
+  async0220: # the form UI: Start redirects to the run page (HX-Redirect for htmx, 303 for a
+    # plain post), the run page shows the result, the Run History page has an args column,
+    # the filter and the drill-down links, and result.json is the stored document
+    command: |
+      ui() { curl -sk -u alice:alicepw "$@"; }
+      ui -X POST -H 'HX-Request: true' -d 'count=3&status=closed' https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/rows -D - -o /dev/null | grep -i "^hx-redirect" | tr -d '\r' | sed 's#/runs/.*#/runs/<id>#'
+      loc=$(ui -X POST -d 'count=4&status=closed' https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/rows -D - -o /dev/null -w '%{http_code}\n' | tr -d '\r' | grep -i "^location\|^303" | tr '\n' ' ')
+      echo "$loc" | sed 's#/runs/[a-z0-9]*#/runs/<id>#'
+      id=$(echo "$loc" | grep -o 'runs/[a-z0-9]*' | cut -d/ -f2)
+      sleep 2
+      ui "https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/rows/runs/$id" | grep -o "Built 4 rows\|badge-success\|Run History" | sort -u | tr '\n' ' '
+      echo
+      ui "https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/rows/runs?filter=count%3D4" | grep -o '<th scope="col" class="font-mono">[a-z_]*</th>\|View details of run' | sort | uniq -c | tr -s ' ' | tr '\n' ';'
+      echo
+      ui "https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/rows/runs?filter=nomatchingarg" | grep -c "No runs"
+      ui "https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/rows/runs/$id/result.json" | jq -c 'length, .[0].status'
+      ui "https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/rows/runs/nosuch" -o /dev/null -w 'missing=%{http_code}\n'
+    stdout:
+      contains:
+        - "hx-redirect: /asyncapps/site/rows/runs/<id>"
+        - "location: /asyncapps/site/rows/runs/<id> 303"
+        - "Built 4 rows Run History badge-success"
+        - '1 <th scope="col" class="font-mono">count</th>;'
+        - '1 <th scope="col" class="font-mono">status</th>;'
+        - "1 View details of run;"
+        - "1"
+        - "4"
+        - '"closed"'
+        - "missing=404"
+    exit-code: 0
+  async0230: # a run of a permit restricted action is not found for a user without the permit
+    # through the app's MCP tools either; the management run_action waits with wait_seconds
+    command: |
+      pid=$(../openrun --as builtin:carol action run /asyncapps/site purge)
+      mcp() { curl -sk -X POST -H "Authorization: Bearer $(cat async_alice_app.txt)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d "$1" \
+        https://localhost:${MAIN_HTTPS_PORT}/asyncapps/site/mcp | sed -n 's/^data: //p'; }
+      mcp "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"get_run\",\"arguments\":{\"run_id\":\"$pid\"}}}" | jq -r '[.result.isError, .result.content[0].text] | join(" ")'
+      mcp '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"rows","arguments":{"count":1,"dry_run":true}}}' | jq -r '.result.structuredContent | [.status, (.run_id == null)] | join(" ")'
+      mgmt() { curl -sk -X POST -H "Authorization: Bearer $(cat async_alice_mcp.txt)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d "$1" \
+        https://localhost:${MAIN_HTTPS_PORT}/_openrun/mcp | sed -n 's/^data: //p'; }
+      mgmt '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_action","arguments":{"path":"/asyncapps/site","action":"rows","args":{"count":2},"wait_seconds":20}}}' | jq -r '.result.structuredContent | [.run_status, .report, (.values | length)] | join(" ")'
+    stdout:
+      contains:
+        - "true run "
+        - " not found"
+        - "Arguments are valid true"
+        - "succeeded TABLE 2"
+    exit-code: 0
+  async0240: # deleting the app removes its runs
+    command: |
+      ../openrun app create --approve --auth builtin ./async_src /asyncapps/gone > /dev/null
+      ../openrun action run --wait -q /asyncapps/gone rows count=1 > /dev/null
+      ../openrun action runs -f jsonl /asyncapps/gone | wc -l | tr -d ' '
+      ../openrun app delete /asyncapps/gone > /dev/null
+      ../openrun action runs /asyncapps/gone 2>&1 || true
+    stdout:
+      contains:
+        - "1"
+        - "not found"
+    exit-code: 0
+  async0900: # cleanup
+    command: |
+      ../openrun app delete /asyncapps/site
+      ../openrun user delete alice
+      ../openrun user delete bob
+      ../openrun user delete carol
+      for id in $(../openrun apikey list --all -f json | jq -r '.[].id'); do ../openrun apikey delete "$id" > /dev/null; done
+      cat > async_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {}, "grants": [{"description": "Default: authenticated principals can access and list apps", "users": ["*"], "roles": ["openrun-user"], "targets": ["all"]}]}}
+      EOF
+      ../openrun server update-config --force async_rbac.json
+      rm -f async_rbac.json async_run1.txt async_out.txt async_call.json async_mgmt.json async_alice_rest.txt async_alice_app.txt async_alice_mcp.txt async_data.txt async_api.json
+      rm -rf async_src
+    exit-code: 0

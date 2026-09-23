@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/types"
@@ -334,14 +335,22 @@ func createLibraryBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark
 }
 
 func createActionBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var name, desc, path starlark.String
+	var name, desc, path, timeout starlark.String
 	var suggest, executor starlark.Callable
 	var hidden, permit *starlark.List
-	var showValidate starlark.Bool
+	var showValidate, async starlark.Bool
 	if err := starlark.UnpackArgs(ACTION, args, kwargs, "name", &name, "path", &path,
 		"run", &executor, "suggest?", &suggest, "description?", &desc, "hidden?", &hidden,
-		"show_validate?", &showValidate, "permit?", &permit); err != nil {
+		"show_validate?", &showValidate, "permit?", &permit, "is_async?", &async, "timeout?", &timeout); err != nil {
 		return nil, fmt.Errorf("error unpacking action args: %w", err)
+	}
+	if timeout != "" {
+		if _, err := time.ParseDuration(string(timeout)); err != nil {
+			return nil, fmt.Errorf("action %s: invalid timeout %q: %w", name, timeout, err)
+		}
+		if !async {
+			return nil, fmt.Errorf("action %s: timeout applies to is_async=True actions only", name)
+		}
 	}
 
 	if hidden == nil {
@@ -359,6 +368,8 @@ func createActionBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.
 		"hidden":        hidden,
 		"show_validate": showValidate,
 		"permit":        permit,
+		"is_async":      async,
+		"timeout":       timeout,
 	}
 
 	if suggest != nil {

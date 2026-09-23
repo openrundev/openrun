@@ -1029,6 +1029,7 @@ func (s *Server) removeAppRuntimeResources(ctx context.Context, appIds []types.A
 	// Job run records of the deleted apps; their containers carry the app
 	// id label and are removed with the app's other containers below
 	s.removeAppJobRuns(ctx, appIds)
+	s.removeAppActionRuns(ctx, appIds)
 
 	var errs []error
 	command := s.Config().System.ContainerCommand

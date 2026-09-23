@@ -1,0 +1,6 @@
+param("rows", type=INT, description="Number of rows to build", default=5)
+param("status", description="Row status", default="open")
+param("options_status", type=LIST, description="Status options", default=["open", "closed", "shipped"])
+param("steps", type=INT, description="Steps to run, one per second", default=10)
+param("exit_code", type=INT, description="Exit code of the command, non zero fails the run", default=0)
+param("lines", type=INT, description="Lines to print", default=200000)

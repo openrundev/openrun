@@ -16,15 +16,10 @@ import (
 	"github.com/openrundev/openrun/internal/container"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"github.com/segmentio/ksuid"
 )
 
 func newPrefixedId(prefix string) (string, error) {
-	genId, err := ksuid.NewRandom()
-	if err != nil {
-		return "", err
-	}
-	return prefix + strings.ToLower(genId.String()), nil
+	return system.NewPrefixedId(prefix)
 }
 
 func (s *Server) validateStagingService(ctx context.Context, tx types.Transaction, service *types.Service) error {

@@ -12,10 +12,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	apppkg "github.com/openrundev/openrun/internal/app"
@@ -35,73 +33,6 @@ const (
 	jobLogTailLines    = 50
 	jobSchedulerActor  = "scheduler"
 )
-
-// jobRunRegistry tracks the runs executing on this node, by run id, so a
-// cancel request can stop them
-type jobRunRegistry struct {
-	mu        sync.Mutex
-	active    map[string]context.CancelFunc
-	ctx       context.Context
-	cancelAll context.CancelFunc
-	closed    bool
-	wg        sync.WaitGroup
-}
-
-// begin registers work before it can touch the database, so shutdown can
-// reject new runs and wait for every claimed run to finish cleanup.
-func (r *jobRunRegistry) begin() (context.Context, func(), error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return nil, nil, errors.New("job runner is stopped")
-	}
-	if r.ctx == nil {
-		r.ctx, r.cancelAll = context.WithCancel(context.Background())
-	}
-	r.wg.Add(1)
-	return r.ctx, r.wg.Done, nil
-}
-func (r *jobRunRegistry) stop() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.closed = true
-	if r.cancelAll != nil {
-		r.cancelAll()
-	}
-}
-func (r *jobRunRegistry) wait() { r.wg.Wait() }
-
-func (r *jobRunRegistry) add(id string, cancel context.CancelFunc) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.active == nil {
-		r.active = map[string]context.CancelFunc{}
-	}
-	r.active[id] = cancel
-}
-
-func (r *jobRunRegistry) remove(id string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.active, id)
-}
-
-func (r *jobRunRegistry) cancel(id string) bool {
-	r.mu.Lock()
-	cancel, ok := r.active[id]
-	r.mu.Unlock()
-	if ok {
-		cancel()
-	}
-	return ok
-}
-
-func (r *jobRunRegistry) has(id string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	_, ok := r.active[id]
-	return ok
-}
 
 // jobExecution is one run to execute: the loaded app holding the code, env
 // and image, the instance the run targets, and the trigger context
@@ -177,7 +108,7 @@ func (s *Server) claimJobRun(ctx context.Context, exec *jobExecution) (*types.Jo
 
 // startJobRun claims the run and executes it in the background
 func (s *Server) startJobRun(ctx context.Context, exec *jobExecution) (*types.JobRun, error) {
-	parent, done, err := s.jobRuns.begin()
+	parent, done, err := s.jobRuns.Begin()
 	if err != nil {
 		if exec.closeApp != nil {
 			exec.closeApp()
@@ -213,55 +144,18 @@ func (s *Server) startJobRun(ctx context.Context, exec *jobExecution) (*types.Jo
 	return run, nil
 }
 
-// valuelessContext keeps a parent's cancellation and deadline but none of
-// its values
-type valuelessContext struct{ context.Context }
-
-func (valuelessContext) Value(any) any { return nil }
-
 // newJobAuthorizationContext builds the context a job runs under: the
 // lifetime of parent, and from caller only the authorization state (user,
 // groups, RBAC marker, trusted flag, API invoker, credential scope ceiling
 // and sync snapshot). Caller-owned audit state, app values and URL
 // permission simulations do not reach the worker
 func newJobAuthorizationContext(parent, caller context.Context) context.Context {
-	ctx := context.WithValue(valuelessContext{parent}, types.USER_ID, system.GetContextUserId(caller))
-	ctx = context.WithValue(ctx, types.GROUPS, slices.Clone(system.GetContextGroups(caller)))
-	if invoker := system.GetContextApiInvoker(caller); invoker != "" {
-		// The surface policy (checkApiOpEnabled) follows the job: an MCP
-		// caller cannot use a job to reach operations disabled for MCP
-		ctx = system.WithApiInvoker(ctx, invoker)
-	}
-	if marker := caller.Value(types.RBAC_ENABLED); marker != nil {
-		ctx = context.WithValue(ctx, types.RBAC_ENABLED, marker)
-	}
-	if system.IsTrustedOperation(caller) {
-		ctx = system.WithTrustedOperation(ctx)
-	}
-	if scopes, present := system.GetContextApiScopes(caller); present {
-		ctx = system.WithApiScopes(ctx, slices.Clone(scopes))
-	}
-	if syncId := system.GetContextValue(caller, types.SYNC_ID); syncId != "" {
-		ctx = context.WithValue(ctx, types.SYNC_ID, syncId)
-	}
-	ctx = rbac.WithSyncAuthorizer(ctx, rbac.GetSyncAuthorizer(caller))
-	// Keep credential attenuation too: jobs must not mint longer-lived or
-	// broader-resource keys than their caller. Only these constraints are
-	// copied, and copied so later caller mutations do not reach the worker
-	if cred := system.GetContextApiCredential(caller); cred != nil {
-		attenuated := &types.Credential{Scopes: slices.Clone(cred.Scopes), Resources: slices.Clone(cred.Resources)}
-		if cred.ExpiresAt != nil {
-			expiry := *cred.ExpiresAt
-			attenuated.ExpiresAt = &expiry
-		}
-		ctx = system.WithApiCredential(ctx, attenuated)
-	}
-	return ctx
+	return rbac.DetachedAuthContext(parent, caller)
 }
 
 // executeJobRun claims the run and executes it, returning the finished run
 func (s *Server) executeJobRun(ctx context.Context, exec *jobExecution) (*types.JobRun, error) {
-	parent, done, err := s.jobRuns.begin()
+	parent, done, err := s.jobRuns.Begin()
 	if err != nil {
 		if exec.closeApp != nil {
 			exec.closeApp()
@@ -311,8 +205,8 @@ func (s *Server) performJobRun(ctx context.Context, exec *jobExecution, run *typ
 	}
 	runCtx, cancel := context.WithTimeout(baseCtx, spec.TimeoutDuration())
 	defer cancel()
-	s.jobRuns.add(run.Id, cancel)
-	defer s.jobRuns.remove(run.Id)
+	s.jobRuns.Add(run.Id, "", cancel)
+	defer s.jobRuns.Remove(run.Id)
 
 	var lease *system.BackgroundTask
 	if !exec.tx.IsInitialized() {
@@ -540,7 +434,7 @@ func (s *Server) removeAppJobRuns(ctx context.Context, appIds []types.AppId) {
 		if run.ContainerName == "" {
 			continue
 		}
-		if s.jobRuns.cancel(run.Id) {
+		if s.jobRuns.Cancel(run.Id, "") {
 			continue // the run's own cleanup handles a canceled container
 		}
 		// Docker containers of the app are removed by label with the app's
@@ -592,6 +486,7 @@ func (s *Server) loadJobApp(ctx context.Context, tx types.Transaction, entry *ty
 // jobsTick runs the scheduler and the reconciler, once a minute on the leader
 func (s *Server) jobsTick(ctx context.Context) {
 	s.reconcileJobRuns(ctx)
+	s.reconcileActionRuns(ctx)
 	s.scheduleCronJobs(ctx)
 }
 
@@ -604,7 +499,7 @@ func (s *Server) reconcileJobRuns(ctx context.Context) {
 		return
 	}
 	for _, run := range expired {
-		if s.jobRuns.has(run.Id) {
+		if s.jobRuns.Has(run.Id) {
 			continue // executing here, the stamp renewal is just late
 		}
 		s.Warn().Str("run", run.Id).Str("node", run.NodeId).Msg("job run lost: executing node stopped")
@@ -658,7 +553,7 @@ func (s *Server) scheduleCronJobs(ctx context.Context) {
 
 // startCronRun claims one cron tick and starts its run
 func (s *Server) startCronRun(ctx context.Context, entry *types.AppEntry, spec types.JobSpec, tick time.Time) {
-	parent, done, err := s.jobRuns.begin()
+	parent, done, err := s.jobRuns.Begin()
 	if err != nil {
 		return
 	}
@@ -1009,7 +904,7 @@ func (s *Server) CancelJobRun(ctx context.Context, runId string) (*types.JobRunR
 	if run.NodeId != s.jobNodeId() {
 		return nil, types.CreateRequestError(fmt.Sprintf("job run %s is executing on node %s, cancel it there", runId, run.NodeId), http.StatusConflict)
 	}
-	if !s.jobRuns.cancel(runId) {
+	if !s.jobRuns.Cancel(runId, system.GetContextUserId(ctx)) {
 		return nil, types.CreateRequestError(fmt.Sprintf("job run %s is not executing on this node", runId), http.StatusConflict)
 	}
 	return &types.JobRunResponse{Run: *run}, nil

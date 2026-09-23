@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/benbjohnson/hashfs"
 	"github.com/go-chi/chi/v5"
@@ -84,6 +85,10 @@ type Action struct {
 	permit              []string
 	rbacApi             rbac.RBACAPI
 	fetchFile           FileFetcher // fetches result files through the app router, see files.go
+	config              types.ActionConfig
+	async               bool          // the handler runs in the background (ace.action is_async=True)
+	timeout             time.Duration // async run timeout
+	runHost             *RunHost      // the server services async runs need, nil until SetRunHost
 }
 
 // NewAction creates a new action
@@ -91,7 +96,8 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 	params []apptype.AppParam, paramValuesStr map[string]string, paramDict starlark.StringDict,
 	appPath string, styleType types.StyleType, containerProxyUrl string, hidden []string, showValidate bool,
 	auditInsert func(*types.AuditEvent) error, containerManager any, jsLibs []types.JSLibrary, appPathDomain types.AppPathDomain,
-	serverConfig *types.ServerConfig, actionConfig types.ActionConfig, permit []string, rbacApi rbac.RBACAPI) (*Action, error) {
+	serverConfig *types.ServerConfig, actionConfig types.ActionConfig, permit []string, rbacApi rbac.RBACAPI,
+	async bool, timeout string) (*Action, error) {
 
 	funcMap := system.GetFuncMap()
 
@@ -146,6 +152,11 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 	if actionConfig.MaxRequestBodyBytes <= 0 {
 		actionConfig.MaxRequestBodyBytes = defaultMaxRequestBodyBytes
 	}
+	actionConfig = withRunDefaults(actionConfig)
+	runTimeout, err := runTimeoutOf(timeout, actionConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Action{
 		Logger:            &appLogger,
@@ -175,7 +186,20 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 		maxRequestBodyBytes: actionConfig.MaxRequestBodyBytes,
 		permit:              permit,
 		rbacApi:             rbacApi,
+		config:              actionConfig,
+		async:               async,
+		timeout:             runTimeout,
 	}, nil
+}
+
+// IsAsync reports whether the action runs in the background (is_async=True)
+func (a *Action) IsAsync() bool {
+	return a.async
+}
+
+// Timeout returns the async run timeout
+func (a *Action) Timeout() time.Duration {
+	return a.timeout
 }
 
 func (a *Action) GetLink() ActionLink {
@@ -192,6 +216,14 @@ func (a *Action) BuildRouter() (*chi.Mux, error) {
 	r.Post("/", a.runAction)
 	r.Post("/suggest", a.suggestAction)
 	r.Post("/validate", a.validateAction)
+	if a.IsAsync() {
+		r.Get("/runs", a.getRunsPage)
+		r.Get("/runs/{runId}", a.getRunPage)
+		r.Get("/runs/{runId}/status", a.getRunStatusFragment)
+		r.Get("/runs/{runId}/output", a.getRunOutput)
+		r.Get("/runs/{runId}/result.json", a.getRunResultJSON)
+		r.Post("/runs/{runId}/cancel", a.cancelRunUI)
+	}
 
 	r.Handle("/astatic/*", http.StripPrefix(path.Join(a.pagePath), hashfs.FileServer(embedFS)))
 	return r, nil
@@ -322,6 +354,16 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 		} else {
 			a.handleSuggestResponse(w, outcome.Suggest)
 		}
+		return
+	}
+
+	if outcome.Run != nil {
+		// An async action: the run was started, show its card
+		if apiMode {
+			writeJSON(w, http.StatusAccepted, a.RunStarted(outcome.Run))
+			return
+		}
+		a.writeRunCard(w, r, outcome.Run, isHtmxRequest)
 		return
 	}
 
@@ -986,6 +1028,8 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 		"showSuggest":   a.suggest != nil,
 		"showValidate":  a.showValidate,
 		"esmLibs":       a.esmLibs,
+		"async":         a.IsAsync(),
+		"runsPath":      a.runsPath(),
 	}
 	err = a.actionTemplate.ExecuteTemplate(w, "form.go.html", input)
 	if err != nil {

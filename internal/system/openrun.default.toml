@@ -304,6 +304,15 @@ plugin = "exec.in"
 
 # Action related settings
 action.max_request_body_bytes = 33554432
+# Async action runs (ace.action is_async=True)
+action.run_timeout = "1h"           # timeout of an async run without its own timeout
+action.max_async_runs = 20          # active async runs per app instance on a node
+action.retain_runs = 100            # async run records kept per app instance
+action.output_head_bytes = 10485760 # first bytes of a stream run's output kept
+action.output_tail_bytes = 10485760 # last bytes kept (the most recent while running)
+action.result_max_bytes = 104857600 # JSON size cap of a values result
+action.display_rows = 1000          # result rows the run page renders inline
+action.max_wait_secs = 120          # cap of the wait of the run read APIs
 
 # Jobs related settings
 jobs.retain_runs = 50 # run records (and their finished containers) kept per job

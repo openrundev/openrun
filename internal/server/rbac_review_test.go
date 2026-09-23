@@ -251,9 +251,9 @@ app = ace.app("job authorization", jobs=[ace.job("inspect", run=inspect), ace.jo
 	if err != nil {
 		t.Fatal(err)
 	}
-	server.jobRuns.stop()
+	server.jobRuns.Stop()
 	waited := make(chan struct{})
-	go func() { server.jobRuns.wait(); close(waited) }()
+	go func() { server.jobRuns.Wait(); close(waited) }()
 	select {
 	case <-waited:
 	case <-time.After(5 * time.Second):

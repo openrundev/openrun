@@ -368,11 +368,26 @@ type (
 		Stage  bool   `json:"stage,omitzero" jsonschema:"use the stage instance of the app instead of prod"`
 	}
 	mcpActionRunIn struct {
-		Path   string         `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
-		Action string         `json:"action,omitzero" jsonschema:"the action to run: its tool name from list_actions, or its path like /cancel. Optional when the app has one action"`
-		Stage  bool           `json:"stage,omitzero" jsonschema:"use the stage instance of the app instead of prod"`
-		DryRun bool           `json:"dry_run,omitzero" jsonschema:"validate the args only: reports the param errors, runs nothing"`
-		Args   map[string]any `json:"args,omitzero" jsonschema:"the action args, param name to value, see get_action for the params. Params left out use the app level values"`
+		Path     string         `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		Action   string         `json:"action,omitzero" jsonschema:"the action to run: its tool name from list_actions, or its path like /cancel. Optional when the app has one action"`
+		Stage    bool           `json:"stage,omitzero" jsonschema:"use the stage instance of the app instead of prod"`
+		DryRun   bool           `json:"dry_run,omitzero" jsonschema:"validate the args only: reports the param errors, runs nothing"`
+		Args     map[string]any `json:"args,omitzero" jsonschema:"the action args, param name to value, see get_action for the params. Params left out use the app level values"`
+		WaitSecs int            `json:"wait_seconds,omitzero" jsonschema:"async actions: wait up to this many seconds (max 60) for the background run to end; otherwise the run id is returned at once"`
+	}
+	mcpActionRunsIn struct {
+		Path   string `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		Action string `json:"action,omitzero" jsonschema:"one action: its tool name or path; all async actions when left out"`
+		Stage  bool   `json:"stage,omitzero" jsonschema:"the stage instance of the app instead of prod"`
+		Status string `json:"status,omitzero" jsonschema:"filter: running, succeeded, failed, timed_out, canceled or lost"`
+		Limit  int    `json:"limit,omitzero" jsonschema:"maximum runs to return, default 50"`
+	}
+	mcpActionRunIdIn struct {
+		RunId    string `json:"run_id" jsonschema:"the run id returned by run_action"`
+		WaitSecs int    `json:"wait_seconds,omitzero" jsonschema:"wait up to this many seconds (max 60) for the run to end before answering"`
+	}
+	mcpActionRunCancelIn struct {
+		RunId string `json:"run_id" jsonschema:"the run id"`
 	}
 	mcpActionSuggestIn struct {
 		Path   string         `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
@@ -714,12 +729,27 @@ func (s *Server) buildMCPServer() *mcp.Server {
 
 	addMCPTool(s, srv, API_RUN_ACTION,
 		func(ctx context.Context, in mcpActionRunIn) (any, error) {
-			return s.mcpInvokeAction(ctx, in.Path, in.Action, in.Stage, in.DryRun, false, in.Args)
+			return s.mcpInvokeAction(ctx, in.Path, in.Action, in.Stage, in.DryRun, false, in.Args, in.WaitSecs)
 		})
 
 	addMCPTool(s, srv, API_SUGGEST_ACTION,
 		func(ctx context.Context, in mcpActionSuggestIn) (any, error) {
-			return s.mcpInvokeAction(ctx, in.Path, in.Action, in.Stage, false, true, in.Args)
+			return s.mcpInvokeAction(ctx, in.Path, in.Action, in.Stage, false, true, in.Args, 0)
+		})
+
+	addMCPTool(s, srv, API_LIST_ACTION_RUNS,
+		func(ctx context.Context, in mcpActionRunsIn) (any, error) {
+			return s.ListActionRuns(ctx, in.Path, in.Action, in.Status, in.Stage, in.Limit)
+		})
+
+	addMCPTool(s, srv, API_GET_ACTION_RUN,
+		func(ctx context.Context, in mcpActionRunIdIn) (any, error) {
+			return s.GetActionRunMCP(ctx, in.RunId, time.Duration(min(in.WaitSecs, mcpRunWaitMaxSecs))*time.Second)
+		})
+
+	addMCPTool(s, srv, API_CANCEL_ACTION_RUN,
+		func(ctx context.Context, in mcpActionRunCancelIn) (any, error) {
+			return s.CancelActionRun(ctx, in.RunId)
 		})
 
 	addMCPTool(s, srv, API_SYNC_DELETE,

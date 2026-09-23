@@ -410,7 +410,7 @@ tests:
         https://localhost:${MAIN_HTTPS_PORT}/_openrun/mcp | sed -n 's/^data: //p' | jq -r '.result.content[0].text' | cut -c1-40
     stdout:
       contains:
-        - "get_action list_actions run_action suggest_action"
+        - "cancel_action_run get_action get_action_run list_action_runs list_actions run_action suggest_action"
         - "list_orders build upload export logo"
         - "Listed 1 orders / TABLE"
         - "credential scope ceiling"

@@ -180,7 +180,7 @@ type Server struct {
 	authFailureMu    sync.Mutex
 	authFailureTimes map[string]time.Time
 	accessLogger     *zerolog.Logger
-	jobRuns          jobRunRegistry // runs executing on this node
+	jobRuns          system.RunRegistry // job and async action runs executing on this node
 	syncLoop         *system.BackgroundTask
 	tlsErrorLogger   *RateLimitedErrorLogger
 	acmeIssuer       *certmagic.ACMEIssuer
@@ -1609,7 +1609,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.stopOnce.Do(func() {
 		s.Info().Msg("Stopping service")
 		s.blockRestarts()
-		s.jobRuns.stop()
+		s.jobRuns.Stop()
 		s.PauseBackground()
 		if s.builderManager != nil {
 			s.builderManager.Stop()
@@ -1638,7 +1638,7 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.cleanupVersionsMu.Lock() //nolint:staticcheck // lock acquisition waits for cleanup
 		//lint:ignore SA2001 acquiring and releasing this mutex is the worker join operation
 		s.cleanupVersionsMu.Unlock() //nolint:staticcheck // paired join lock has no protected body
-		s.jobRuns.wait()
+		s.jobRuns.Wait()
 		// Close the apps after the HTTP servers have drained: stops dev-mode
 		// child processes (tailwind watcher) which would otherwise be
 		// orphaned when this process exits

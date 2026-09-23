@@ -27,7 +27,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 29
+const CURRENT_DB_VERSION = 30
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -807,6 +807,25 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `update version set version=29, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 30 {
+		m.Info().Msg("Upgrading to version 30")
+		// Async action runs (arch/docs/async-actions.md). Idempotent: a
+		// database created at this version and re-upgraded (tests reset the
+		// version) already has the table
+		exists, err := m.tableExists(ctx, "action_runs")
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if err := m.createActionRunTables(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `update version set version=30, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}
@@ -1734,6 +1753,20 @@ func (m *Metadata) GetConfig() (*types.DynamicConfig, error) {
 // columnExists reports whether a table has a column, for idempotent
 // additive migrations. Reads outside the upgrade transaction (a failed
 // statement would abort a PostgreSQL transaction)
+func (m *Metadata) tableExists(ctx context.Context, table string) (bool, error) {
+	var query string
+	if m.dbType == system.DB_TYPE_POSTGRES {
+		query = `select count(*) from information_schema.tables where table_name = $1`
+	} else {
+		query = `select count(*) from sqlite_master where type = 'table' and name = ?`
+	}
+	var count int
+	if err := m.db.QueryRowContext(ctx, query, table).Scan(&count); err != nil {
+		return false, fmt.Errorf("error checking table %s: %w", table, err)
+	}
+	return count > 0, nil
+}
+
 func (m *Metadata) columnExists(ctx context.Context, table, column string) (bool, error) {
 	var query string
 	if m.dbType == system.DB_TYPE_POSTGRES {

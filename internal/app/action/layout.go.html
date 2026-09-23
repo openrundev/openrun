@@ -98,13 +98,19 @@
                 </svg>
               </button>
 
-              <div class="min-w-0">
-                <a href="{{ .pagePath }}">
-                  <h1
-                    class="page-title text-2xl md:text-3xl font-bold tracking-tight break-words">
-                    {{ .name }}
-                  </h1>
-                </a>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-start justify-between gap-3">
+                  <a href="{{ .pagePath }}" class="min-w-0">
+                    <h1
+                      class="page-title text-2xl md:text-3xl font-bold tracking-tight break-words">
+                      {{ .name }}
+                    </h1>
+                  </a>
+                  {{ if .runsPath }}
+                    {{/* Async action: the runs list, on the title line */}}
+                    <a href="{{ .runsPath }}" class="link link-primary shrink-0 mt-2 text-sm whitespace-nowrap">Run History</a>
+                  {{ end }}
+                </div>
                 {{ if .description }}
                   <p class="mt-2 text-sm text-base-content/70">
                     {{ .description }}

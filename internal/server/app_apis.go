@@ -693,8 +693,10 @@ func (s *Server) newApp(appEntry *types.AppEntry, sourceFS *appfs.SourceFs, bind
 	if err != nil {
 		_ = sourceFS.Close()
 		_ = workFS.Close()
+		return nil, err
 	}
-	return application, err
+	application.SetRunServices(s.runServices())
+	return application, nil
 }
 
 func (s *Server) getAppBindings(ctx context.Context, inpTx types.Transaction, appEntry *types.AppEntry) ([]*types.Binding, error) {

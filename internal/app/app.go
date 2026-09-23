@@ -101,6 +101,7 @@ type App struct {
 
 	watcher *fsnotify.Watcher
 	closed  bool // guarded by initMutex; terminal once Close begins
+	pins    int  // background runs holding the app open, guarded by initMutex; see Acquire
 	// sseListeners has its own lock (not initMutex) since notifyClients runs
 	// from code paths that already hold initMutex
 	sseMu         sync.Mutex
@@ -133,6 +134,7 @@ type App struct {
 	publishedActions atomic.Pointer[[]*action.Action]
 	secretEvalFunc   func([][]string, string, string) (string, error)
 	auditInsert      func(*types.AuditEvent) error
+	runServices      *RunServices // the server services async action runs need, nil in tests without a server
 	AppRunPath       string       // path to the app run directory
 	rbacApi          rbac.RBACAPI // the rbac api to use
 
@@ -275,13 +277,87 @@ func (a *App) LoadedActions() (actions []*action.Action, loaded bool) {
 	return slices.Clone(*published), true
 }
 
-func (a *App) Close() error {
+// RunServices are the server services async action runs need: the run
+// store (the metadata database) and the node's run registry
+type RunServices struct {
+	Store    action.RunStore
+	Registry *system.RunRegistry
+	NodeId   string
+}
+
+// SetRunServices sets the services async action runs use; called by the
+// server when the app is created, before it is loaded
+func (a *App) SetRunServices(services *RunServices) {
+	a.runServices = services
+}
+
+// runHost builds the run host of an async action of this app
+func (a *App) runHost() *action.RunHost {
+	if a.runServices == nil {
+		return nil
+	}
+	return &action.RunHost{
+		Store:          a.runServices.Store,
+		Registry:       a.runServices.Registry,
+		NodeId:         a.runServices.NodeId,
+		AppId:          a.Id,
+		AppPath:        a.AppPathDomain().String(),
+		Version:        a.Metadata.VersionMetadata.Version,
+		Acquire:        a.Acquire,
+		RecordActivity: a.RecordActivity,
+	}
+}
+
+// Acquire pins the app for a background run (an async action run): Close
+// defers the teardown of the plugin hosts, the container handler and the
+// source fs until every pin is released, so a reload or delete which replaces
+// the app lets the run finish on the app it started with. It fails once
+// Close was called
+func (a *App) Acquire() (func(), error) {
 	a.initMutex.Lock()
 	defer a.initMutex.Unlock()
 	if a.closed {
+		return nil, fmt.Errorf("app %s is closed", a.AppPathDomain())
+	}
+	a.pins++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			a.initMutex.Lock()
+			a.pins--
+			closeNow := a.closed && a.pins == 0
+			a.initMutex.Unlock()
+			if closeNow {
+				if err := a.teardown(); err != nil {
+					a.Warn().Err(err).Msg("error closing app after its last run ended")
+				}
+			}
+		})
+	}, nil
+}
+
+// Close marks the app closed and tears it down, unless runs pin it: the
+// teardown then happens when the last pin is released
+func (a *App) Close() error {
+	a.initMutex.Lock()
+	if a.closed {
+		a.initMutex.Unlock()
 		return nil
 	}
 	a.closed = true
+	pinned := a.pins > 0
+	a.initMutex.Unlock()
+	if pinned {
+		a.Info().Msgf("app %s close deferred: %d runs active", a.AppPathDomain(), a.pins)
+		return nil
+	}
+	return a.teardown()
+}
+
+// teardown releases the app's resources
+func (a *App) teardown() error {
+	a.initMutex.Lock()
+	defer a.initMutex.Unlock()
 	a.closeSSEClients()
 	retireProxyTransports(a.proxyTransports)
 	retireProxyTransports(a.newProxyTransports)

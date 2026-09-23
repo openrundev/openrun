@@ -16,6 +16,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/action"
@@ -276,6 +277,7 @@ func actionInfo(application *app.App, act *action.Action, tool string) types.Act
 		Path:        act.Path(),
 		Description: act.Description(),
 		Suggest:     act.HasSuggest(),
+		Async:       act.IsAsync(),
 	}
 }
 
@@ -311,6 +313,7 @@ func listedActionDefs(appPath string, defs []types.ActionDef) []listedAction {
 			Path:        def.Path,
 			Description: def.Description,
 			Suggest:     def.Suggest,
+			Async:       def.Async,
 		}})
 	}
 	return listed
@@ -516,6 +519,13 @@ type actionResponse struct {
 func (a *actionResponse) writeResponse(w http.ResponseWriter, r *http.Request) {
 	inv := a.invocation
 	defer inv.outcome.Close()
+	if inv.outcome.Run != nil {
+		// An async action: the run started, 202 with the run id
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.MarshalWrite(w, inv.action.RunStarted(inv.outcome.Run))
+		return
+	}
 	if inv.outcome.IsStream() {
 		inv.action.WriteStreamText(w, r, inv.outcome)
 		return
@@ -677,8 +687,11 @@ func (h *Handler) suggestAction(r *http.Request) (any, error) {
 // result is consumed to completion and reported as its output tail and exit
 // status. Param errors and failed commands are results, not tool failures:
 // the caller can read them and correct the call
+// mcpRunWaitMaxSecs caps the wait of the get_action_run tool
+const mcpRunWaitMaxSecs = 60
+
 func (s *Server) mcpInvokeAction(ctx context.Context, appPath, selector string, stage, dryRun, suggest bool,
-	args map[string]any) (any, error) {
+	args map[string]any, waitSecs int) (any, error) {
 	req := &types.ActionRunRequest{AppPath: appPath, Action: selector, Stage: stage, DryRun: dryRun}
 	if len(args) > 0 {
 		req.Args = make(map[string]jsontext.Value, len(args))
@@ -695,6 +708,16 @@ func (s *Server) mcpInvokeAction(ctx context.Context, appPath, selector string, 
 		return nil, err
 	}
 	defer invocation.outcome.Close()
+	if run := invocation.outcome.Run; run != nil {
+		// An async action: the started run, waited for when asked
+		if wait := time.Duration(min(max(waitSecs, 0), mcpRunWaitMaxSecs)) * time.Second; wait > 0 {
+			if waited, err := invocation.action.WaitRun(ctx, run.Id, wait, true); err == nil {
+				run = waited
+			}
+		}
+		doc, _, _ := invocation.action.RunDocument(run, string(API_GET_ACTION_RUN))
+		return doc, nil
+	}
 	doc, _, _ := invocation.action.ResultDocument(ctx, invocation.outcome, invocation.op, nil)
 	return doc, nil
 }

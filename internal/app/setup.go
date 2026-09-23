@@ -636,6 +636,14 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 			return err
 		}
 	}
+	async, err := apptype.GetBoolAttr(actionDef, "is_async")
+	if err != nil {
+		return err
+	}
+	timeout, err := apptype.GetOptionalStringAttr(actionDef, "timeout")
+	if err != nil {
+		return err
+	}
 
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
@@ -653,11 +661,14 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	action, err := action.NewAction(a.Logger, a.sourceFS, a.IsDev, name, description, a.Name, path, run, suggest,
 		slices.Collect(maps.Values(a.paramInfo)), a.paramValuesStr, a.paramDict, a.Path, a.appStyle.GetStyleType(),
 		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerHandler, a.jsLibs, a.AppPathDomain(),
-		a.serverConfig, a.AppConfig.Action, permit, a.rbacApi)
+		a.serverConfig, a.AppConfig.Action, permit, a.rbacApi, async, timeout)
 	if err != nil {
 		return fmt.Errorf("error creating action %s: %w", name, err)
 	}
 	action.SetFileFetcher(a.FetchLocal)
+	if action.IsAsync() {
+		action.SetRunHost(a.runHost())
+	}
 
 	r, err := action.BuildRouter()
 	if err != nil {

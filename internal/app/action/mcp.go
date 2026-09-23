@@ -45,6 +45,8 @@ const (
 	mcpInlineFiles      = 4         // files returned inline per result, the rest are links
 	mcpProgressInterval = 250 * time.Millisecond
 	reportStream        = "STREAM" // report value of a stream result, beside the apptype report types
+	mcpWaitArg          = "wait_seconds"
+	mcpWaitMaxSecs      = 60 // the longest an async action tool waits for its run
 )
 
 // MCPTool is an action exposed as an MCP tool
@@ -53,6 +55,9 @@ type MCPTool struct {
 	Action  *Action
 	Suggest bool // the tool runs the suggest handler
 	dryRun  string
+	wait    string          // the wait control of an async action tool
+	getRun  string          // the app's get_run tool name, named in the result of an async action tool
+	handler mcp.ToolHandler // the run tools (get_run, list_runs, cancel_run), which are not bound to one action
 }
 
 // MCPTools returns the MCP tools for the actions: a tool per action, named by
@@ -62,6 +67,7 @@ type MCPTool struct {
 func MCPTools(actions []*Action) ([]*MCPTool, error) {
 	names := ToolNames(actions)
 	suggestNames := suggestToolNames(actions, names)
+	runNames := runToolNames(actions, names, suggestNames)
 	tools := make([]*MCPTool, 0, len(actions))
 	for _, act := range actions {
 		if act.HasRequiredFileParam() {
@@ -92,6 +98,18 @@ func MCPTools(actions []*Action) ([]*MCPTool, error) {
 			"default":     false,
 			"description": "Validate the arguments only: reports the param errors, runs nothing",
 		}
+		waitArg := ""
+		if act.IsAsync() {
+			waitArg = mcpWaitArg
+			for act.HasParam(waitArg) || waitArg == dryRunArg {
+				waitArg = "_" + waitArg
+			}
+			properties[waitArg] = map[string]any{
+				"type":        "integer",
+				"default":     0,
+				"description": fmt.Sprintf("Wait up to this many seconds (max %d) for the background run to end; 0 returns the run id at once", mcpWaitMaxSecs),
+			}
+		}
 		runSchema["properties"] = properties
 
 		description := strings.TrimSpace(act.description)
@@ -102,9 +120,14 @@ func MCPTools(actions []*Action) ([]*MCPTool, error) {
 		if act.suggest != nil {
 			description += fmt.Sprintf(" %s suggests argument values.", suggestNames[act])
 		}
+		if act.IsAsync() {
+			description += fmt.Sprintf(" Runs in the background: returns a run_id, check it with %s or set %s.", runNames.get, waitArg)
+		}
 		tools = append(tools, &MCPTool{
 			Action: act,
 			dryRun: dryRunArg,
+			wait:   waitArg,
+			getRun: runNames.get,
 			Tool: &mcp.Tool{
 				Name:         names[act],
 				Title:        act.name,
@@ -135,7 +158,301 @@ func MCPTools(actions []*Action) ([]*MCPTool, error) {
 			})
 		}
 	}
+	tools = append(tools, runTools(actions, names, runNames)...)
 	return tools, nil
+}
+
+// runToolNameSet holds the names of the run tools of an app, resolved
+// against the action and suggest tool names (an action tool named get_run
+// pushes the run tool to get_run_2)
+type runToolNameSet struct {
+	get, list, cancel string
+}
+
+// runToolNames resolves the run tool names; empty when the app has no async
+// action
+func runToolNames(actions []*Action, names, suggestNames map[*Action]string) runToolNameSet {
+	async := false
+	for _, act := range actions {
+		async = async || act.IsAsync()
+	}
+	if !async {
+		return runToolNameSet{}
+	}
+	used := map[string]bool{}
+	for _, name := range names {
+		used[name] = true
+	}
+	for _, name := range suggestNames {
+		used[name] = true
+	}
+	toolName := func(base string) string {
+		name := base
+		for suffix := 2; used[name]; suffix++ {
+			name = fmt.Sprintf("%s_%d", base, suffix)
+		}
+		used[name] = true
+		return name
+	}
+	return runToolNameSet{get: toolName(mcpGetRunTool), list: toolName(mcpListRunsTool), cancel: toolName(mcpCancelRunTool)}
+}
+
+// The run tools of an app with async actions
+const (
+	mcpGetRunTool    = "get_run"
+	mcpListRunsTool  = "list_runs"
+	mcpCancelRunTool = "cancel_run"
+)
+
+// runTools returns the run tools of an app with async actions: get_run,
+// list_runs and cancel_run. A run is visible to a caller who may run its
+// action
+func runTools(actions []*Action, names map[*Action]string, runNames runToolNameSet) []*MCPTool {
+	async := make([]*Action, 0)
+	for _, act := range actions {
+		if act.IsAsync() {
+			async = append(async, act)
+		}
+	}
+	if len(async) == 0 {
+		return nil
+	}
+	find := func(ctx context.Context, runId string) (*Action, *types.ActionRun, *mcp.CallToolResult) {
+		for _, act := range async {
+			run, err := act.LoadRun(ctx, runId, false)
+			if err != nil {
+				continue
+			}
+			authorized, err := act.Authorized(ctx)
+			if err != nil {
+				return nil, nil, mcpToolError("%s", err)
+			}
+			if !authorized {
+				break
+			}
+			return act, run, nil
+		}
+		return nil, nil, mcpToolError("run %s not found", runId)
+	}
+	runIdSchema := map[string]any{"type": "string", "description": "The run id returned by the action tool"}
+
+	getRun := &MCPTool{Tool: &mcp.Tool{
+		Name:        runNames.get,
+		Title:       "Get run",
+		Description: "Get a background action run: its status, args and, once finished, its result or output. wait_seconds waits for the run to end.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"run_id":   runIdSchema,
+			mcpWaitArg: map[string]any{"type": "integer", "default": 0, "description": fmt.Sprintf("Wait up to this many seconds (max %d) for the run to end", mcpWaitMaxSecs)},
+		}, "required": []string{"run_id"}, "additionalProperties": false},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}}
+	getRun.handler = func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var in struct {
+			RunId    string `json:"run_id"`
+			WaitSecs int    `json:"wait_seconds"`
+		}
+		if err := json.Unmarshal(req.Params.Arguments, &in); err != nil {
+			return mcpToolError("invalid arguments: %s", err), nil
+		}
+		act, run, toolErr := find(ctx, in.RunId)
+		if toolErr != nil {
+			return toolErr, nil
+		}
+		wait := time.Duration(min(max(in.WaitSecs, 0), mcpWaitMaxSecs)) * time.Second
+		run, err := act.WaitRun(ctx, run.Id, wait, true)
+		if err != nil {
+			return mcpToolError("run %s not found", in.RunId), nil
+		}
+		return act.RunMCPResult(ctx, run, runNames.get), nil
+	}
+
+	listRuns := &MCPTool{Tool: &mcp.Tool{
+		Name:        runNames.list,
+		Title:       "List runs",
+		Description: "List the background runs of the async actions, newest first.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"action": map[string]any{"type": "string", "description": "One action, by tool name; all async actions when left out"},
+			"status": map[string]any{"type": "string", "description": "Filter: running, succeeded, failed, timed_out, canceled or lost"},
+			"limit":  map[string]any{"type": "integer", "default": 20},
+		}, "additionalProperties": false},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}}
+	listRuns.handler = func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var in struct {
+			Action string `json:"action"`
+			Status string `json:"status"`
+			Limit  int    `json:"limit"`
+		}
+		if len(req.Params.Arguments) > 0 {
+			if err := json.Unmarshal(req.Params.Arguments, &in); err != nil {
+				return mcpToolError("invalid arguments: %s", err), nil
+			}
+		}
+		if in.Limit <= 0 {
+			in.Limit = 20
+		}
+		// The runs of every authorized action, merged newest first and
+		// limited as a whole
+		type listedRun struct {
+			run  types.ActionRun
+			tool string
+		}
+		merged := make([]listedRun, 0)
+		for _, act := range async {
+			if in.Action != "" && names[act] != in.Action && act.actionPath != in.Action {
+				continue
+			}
+			if authorized, err := act.Authorized(ctx); err != nil || !authorized {
+				continue
+			}
+			actionRuns, err := act.ListRuns(ctx, in.Status, in.Limit)
+			if err != nil {
+				return mcpToolError("%s", err), nil
+			}
+			for _, run := range actionRuns {
+				merged = append(merged, listedRun{run: run.BasicView(), tool: names[act]})
+			}
+		}
+		slices.SortFunc(merged, func(a, b listedRun) int { return b.run.StartedAt.Compare(a.run.StartedAt) })
+		if len(merged) > in.Limit {
+			merged = merged[:in.Limit]
+		}
+		runs := make([]map[string]any, 0, len(merged))
+		var b strings.Builder
+		for _, entry := range merged {
+			run := entry.run
+			runs = append(runs, map[string]any{"run_id": run.Id, "action": entry.tool, "status": run.Status,
+				"started_at": run.StartedAt, "ended_at": run.EndedAt, "actor": run.Actor, "args": run.Args, "message": run.Message})
+			fmt.Fprintf(&b, "%s %s %s %s %s\n", run.Id, entry.tool, run.Status, run.StartedAt.Format(time.RFC3339), run.Message)
+		}
+		if len(runs) == 0 {
+			b.WriteString("No runs\n")
+		}
+		return &mcp.CallToolResult{StructuredContent: map[string]any{"runs": runs},
+			Content: []mcp.Content{&mcp.TextContent{Text: capText(b.String(), mcpTextLimit)}}}, nil
+	}
+
+	cancelRun := &MCPTool{Tool: &mcp.Tool{
+		Name:        runNames.cancel,
+		Title:       "Cancel run",
+		Description: "Cancel an active background action run.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"run_id": runIdSchema},
+			"required": []string{"run_id"}, "additionalProperties": false},
+	}}
+	cancelRun.handler = func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var in struct {
+			RunId string `json:"run_id"`
+		}
+		if err := json.Unmarshal(req.Params.Arguments, &in); err != nil {
+			return mcpToolError("invalid arguments: %s", err), nil
+		}
+		act, run, toolErr := find(ctx, in.RunId)
+		if toolErr != nil {
+			return toolErr, nil
+		}
+		if _, invErr := act.CancelRun(ctx, run.Id); invErr != nil {
+			return mcpToolError("%s", invErr.Msg), nil
+		}
+		waited, err := act.WaitRun(ctx, run.Id, 2*time.Second, false)
+		if err != nil {
+			return mcpToolError("run %s canceled, record unavailable: %s", in.RunId, err), nil
+		}
+		return act.RunMCPResult(ctx, waited, runNames.get), nil
+	}
+	return []*MCPTool{getRun, listRuns, cancelRun}
+}
+
+// RunMCPResult builds the tool result for a run: the run document and a
+// text block; a finished values run renders as the action's result would, a
+// stream run as its output tail
+func (a *Action) RunMCPResult(ctx context.Context, run *types.ActionRun, checkWith string) *mcp.CallToolResult {
+	doc, text, isError, outcome := a.runDocument(run, checkWith)
+	result := &mcp.CallToolResult{IsError: isError, StructuredContent: doc}
+	result.Content = []mcp.Content{&mcp.TextContent{Text: capText(text, 2*mcpTextLimit)}}
+	if !isError && outcome != nil {
+		// The files of a download or image result, fetched as the caller
+		// (an MCP client has no app session), as for a sync result
+		if report, _ := doc["report"].(string); report == apptype.DOWNLOAD || report == apptype.IMAGE {
+			result.Content = append(result.Content, a.fileContents(ctx, outcome, report == apptype.IMAGE)...)
+		}
+	}
+	return result
+}
+
+// RunDocument returns a run as a document: run_id, run_status and the run
+// fields, plus the result document of a finished run. checkWith names the
+// tool a client polls the run with, for the text of a running run
+func (a *Action) RunDocument(run *types.ActionRun, checkWith string) (map[string]any, string, bool) {
+	doc, text, isError, _ := a.runDocument(run, checkWith)
+	return doc, text, isError
+}
+
+// runDocument is RunDocument plus the outcome a finished values run decodes
+// to (nil otherwise), for the file contents
+func (a *Action) runDocument(run *types.ActionRun, checkWith string) (map[string]any, string, bool, *Outcome) {
+	doc := map[string]any{"run_id": run.Id, "run_status": run.Status, "status": cmp.Or(run.ResultStatus, run.Message, run.Status),
+		"started_at": run.StartedAt, "args": run.Args}
+	if run.EndedAt != nil {
+		doc["ended_at"] = run.EndedAt
+	}
+	if run.Message != "" {
+		// The failure, cancel or timeout message, beside the handler's status
+		doc["message"] = run.Message
+	}
+	var b strings.Builder
+	if run.IsActive() {
+		fmt.Fprintf(&b, "Run %s is running (started %s). Check it with %s.\n", run.Id, run.StartedAt.Format(time.RFC3339), cmp.Or(checkWith, mcpGetRunTool))
+		return doc, b.String(), false, nil
+	}
+	fmt.Fprintf(&b, "Run %s %s", run.Id, run.Status)
+	if run.Message != "" {
+		fmt.Fprintf(&b, ": %s", run.Message)
+	}
+	b.WriteString("\n")
+	failed := run.Status != types.ActionRunSucceeded
+	if run.IsStream {
+		doc["report"] = reportStream
+		// The last mcpStreamTailLimit bytes of the readable output: the
+		// window read from the stored tail may restart from the head (an
+		// offset in the omitted region) and be larger than the limit, so the
+		// bound is applied to the window itself
+		window := ReadOutput(run, max(run.OutputBytes-int64(mcpStreamTailLimit), 0))
+		output := strings.ToValidUTF8(string(lastBytes([]byte(window.Output), mcpStreamTailLimit)), "\uFFFD")
+		doc["output"] = output
+		if run.OutputBytes > int64(len(output)) {
+			doc["truncated"] = true
+			fmt.Fprintf(&b, "(output truncated, showing the last %d bytes)\n", len(output))
+		}
+		b.WriteString(output)
+		if output != "" && !strings.HasSuffix(output, "\n") {
+			b.WriteString("\n")
+		}
+		if run.ExitCode != nil {
+			doc["exit_status"] = *run.ExitCode
+			fmt.Fprintf(&b, "exit status %d\n", *run.ExitCode)
+		}
+		return doc, b.String(), failed, nil
+	}
+	valuesMap, valuesStr, err := DecodeResult(run, 0)
+	if err != nil {
+		fmt.Fprintf(&b, "stored result unreadable: %s\n", err)
+		return doc, b.String(), true, nil
+	}
+	paramErrors := map[string]any{}
+	for k, v := range run.ParamErrors {
+		paramErrors[k] = v
+	}
+	o := &Outcome{Status: run.ResultStatus, Report: cmp.Or(run.Report, apptype.AUTO), ValuesMap: valuesMap, ValuesStr: valuesStr, ParamErrors: paramErrors}
+	resultDoc, text, resultErr := a.resultDocument(context.Background(), o, OpRun, nil)
+	for k, v := range resultDoc {
+		doc[k] = v
+	}
+	if run.ResultTruncated {
+		doc["truncated"] = true
+		fmt.Fprintf(&b, "(the stored result was truncated to the size limit, %d rows)\n", run.ResultRows)
+	}
+	b.WriteString(text)
+	return doc, b.String(), failed || resultErr, o
 }
 
 // suggestToolNames returns the name of the suggest tool for each action with
@@ -194,7 +511,11 @@ func BuildMCPHandler(appName, version string, actions []*Action) (http.Handler, 
 	byName := make(map[string]*MCPTool, len(tools))
 	for _, tool := range tools {
 		byName[tool.Tool.Name] = tool
-		srv.AddTool(tool.Tool, tool.handle)
+		if tool.handler != nil {
+			srv.AddTool(tool.Tool, tool.handler)
+		} else {
+			srv.AddTool(tool.Tool, tool.handle)
+		}
 	}
 
 	// tools/list shows a caller only the tools of the actions their permit
@@ -212,6 +533,10 @@ func BuildMCPHandler(appName, version string, actions []*Action) (http.Handler, 
 			for _, listed := range listResult.Tools {
 				tool, known := byName[listed.Name]
 				if !known {
+					continue
+				}
+				if tool.Action == nil {
+					visible = append(visible, listed) // the run tools, each run is checked on call
 					continue
 				}
 				authorized, authErr := tool.Action.Authorized(ctx)
@@ -261,12 +586,32 @@ func (t *MCPTool) handle(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Ca
 			op = OpValidate
 		}
 	}
+	waitSecs := 0
+	if t.wait != "" {
+		if raw, ok := args[t.wait]; ok {
+			delete(args, t.wait)
+			if err := json.Unmarshal(raw, &waitSecs); err != nil {
+				return mcpToolError("param %s must be an integer", t.wait), nil
+			}
+		}
+	}
 
 	outcome, invErr := t.Action.Invoke(ctx, Invocation{Op: op, AuditOp: AuditOp(SourceMCP, op), JSONArgs: args})
 	if invErr != nil {
 		return mcpToolError("%s", invErr.Msg), nil
 	}
 	defer outcome.Close()
+
+	if outcome.Run != nil {
+		// An async action: the run started; wait for it when asked
+		run := outcome.Run
+		if wait := time.Duration(min(max(waitSecs, 0), mcpWaitMaxSecs)) * time.Second; wait > 0 {
+			if waited, err := t.Action.WaitRun(ctx, run.Id, wait, true); err == nil {
+				run = waited
+			}
+		}
+		return t.Action.RunMCPResult(ctx, run, t.getRun), nil
+	}
 
 	var progress func(chunk string)
 	if token := req.Params.GetProgressToken(); token != nil && req.Session != nil {

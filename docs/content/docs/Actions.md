@@ -61,6 +61,8 @@ An action is defined using the `ace.action` struct. The fields in this structure
 |    hidden     |   true   | list strings |  none   |                      The params which should be hidden in the UI for this Action                       |
 | show_validate |   true   |   boolean    |  False  |                           Whether to show a Validate option for this action                           |
 |    permit     |   true   | list string  |   []    | List of custom RBAC permissions, any one of which need to be granted for the user to allow this action |
+|   is_async    |   true   |   boolean    |  False  |          `True` runs the handler in the background, see [Async Actions]({{< ref "#async-actions" >}})          |
+|    timeout    |   true   |    string    |   none  |          Timeout of an async run, a Go duration like `"2h"`; defaults to the app's `action.run_timeout`          |
 
 The name and description are shown in the app UI. The app params are displayed in a form. `BOOLEAN` types are checkboxes, others are text boxes.
 
@@ -159,6 +161,36 @@ A streamed result has no `values` or `report` (the output is the report) and can
 The audit event for the action records success only when the command exits with status 0.
 
 See the actiontail app [code](https://github.com/openrundev/apps/tree/main/misc/actiontail) for a runnable sample: a shell loop whose output is tailed live, cancelled when the page is left.
+
+## Async Actions
+
+A sync action runs its handler inside the request: the browser waits, the server's request timeout applies (three minutes), and closing the page cancels a streamed command. An action which takes longer, or whose runs should be kept, is declared with `is_async=True`:
+
+```python {filename="app.star"}
+load("exec.in", "exec")
+
+def rebuild(dry_run, args):
+    if not args.target:
+        return ace.result("target is required", param_errors={"target": "required"})
+    if dry_run:
+        return ace.result("Ready to rebuild " + args.target)
+    return exec.run("make", ["-C", "/srv/site", args.target], stream=True)
+
+app = ace.app("site",
+    actions=[ace.action("Rebuild", "/rebuild", rebuild, is_async=True, timeout="2h",
+                        show_validate=True, description="Rebuilds the site (takes 10-30 minutes)")],
+    permissions=[ace.permission("exec.in", "run", ["make"])])
+```
+
+The form of an async action has a **Start** button: it starts a **run** (the handler executes in the background on the server, as the submitting user) and opens the run page. The run page shows the status, the args, the output of a streamed command as it is produced (the page can be closed and reopened), and, once the run ends, the result rendered as a sync action renders it. The **Run History** link under the action title lists the runs of the action, newest first: their status (`running`, `succeeded`, `failed`, `timed_out`, `canceled` or `lost`), the user who started them, their duration and one column per arg, filterable by status and by text (`name=value` for an exact arg, a bare word for text in any arg value, the result status or the failure message). A running run can be canceled from its page, and **Run again** opens the form with the run's args.
+
+The handler is written as for a sync action: it returns a stream (the run's output is the command's output, exit code 0 is success) or an `ace.result` with values and a report (stored with the run). `print()` calls in the handler go to the run output. A result with `param_errors` fails the run; validate the args with `show_validate=True` or the `dry_run` branch, which remain synchronous. Password params are not recorded with the run, and file upload params are recorded by file name.
+
+The runs are recorded in the metadata database, per app instance (the stage instance has its own runs): the last `action.retain_runs` runs (default 100, across the app's actions) are kept. For a streamed command the first and last `action.output_head_bytes` and `action.output_tail_bytes` (10MB each) of the output are kept and the bytes in between are dropped, with a marker; for a values result up to `action.result_max_bytes` (100MB) of JSON, whole rows beyond that are dropped and the run says so. The run page renders the first `action.display_rows` (1000) rows and offers the stored result as a download. `action.run_timeout` (default `1h`) is the timeout of runs without their own `timeout`, and `action.max_async_runs` (20) caps the runs of an app instance executing at once on a node. All are `[app_config]` settings in the server config, overridable per app with `openrun app update conf --promote 'action.retain_runs=20' /site`.
+
+A run executes on the node which accepted it; if the node stops, the run is marked `lost` after a minute and can be started again. A reload or update of the app while a run executes lets the run finish on the version it started with. Every run writes an `action` audit event with the operation `run_finish`, the run id and its status, in addition to the submission's event.
+
+Through the [REST API]({{< ref "#rest-api" >}}) the run endpoint of an async action answers `202` with the `run_id` and the run url; `GET /api/runs/<id>` (with `?wait=30s` to wait for the end, up to `action.max_wait_secs`) returns the run with its result, `GET /api/runs/<id>/output?since=<offset>` the output, `GET /api/runs?action=<path>&status=` lists the runs and `POST /api/runs/<id>/cancel` cancels one. The [CLI]({{< ref "#command-line" >}}) and the [MCP tools]({{< ref "#mcp-tools" >}}) have the same operations.
 
 ## Custom Templates
 
@@ -311,6 +343,18 @@ The output of an action which [streams]({{< ref "#streaming-output" >}}) a comma
 | 1 | Any other failure: invalid args, not authorized, a handler error |
 | other | For a streamed command, the exit code of the command |
 
+### Async actions
+
+`openrun action run` of an [async action]({{< ref "#async-actions" >}}) starts the run and prints its id; `--wait` polls the run until it ends and prints the result as for a sync action (with the same exit codes), `--follow` prints the output of a streamed command as it is produced and then the result. The runs are managed with:
+
+```sh
+openrun action runs /site [rebuild] [--status failed] [--limit 20]   # the runs of the app (or one action), newest first
+openrun action output <run-id> [--follow]                            # the stored output (the first and last 10MB), or the result values as JSON
+openrun action cancel <run-id>                                       # stop a running run
+```
+
+Ctrl-C while following leaves the run running. `openrun action show` reports async actions, and `openrun action list -f json` carries `async`.
+
 ### Who the action runs as
 
 The CLI runs actions through the management API as the calling user, under the same checks the form UI applies to that user:
@@ -361,7 +405,9 @@ The tools a user sees in the client are the actions their `permit` allows. The r
 
 For an action which [streams]({{< ref "#streaming-output" >}}) a command, the call returns when the command exits, with the output (the last 64KB) and the `exit_status`; a non-zero exit is a tool error. Clients which pass a progress token receive the output as progress notifications while the command runs. Tool calls are recorded in the audit log under the user, with the operation `mcp_execute`, `mcp_validate` or `mcp_suggest`.
 
-Actions of all apps are also available through the generic `list_actions`, `get_action`, `run_action` and `suggest_action` tools of the [management MCP surface]({{< ref "docs/configuration/remoteaccess/#what-mcp-can-do" >}}), without the `--mcp` option on the app.
+The tool of an [async action]({{< ref "#async-actions" >}}) returns the `run_id` and `run_status` of the started run; its optional `wait_seconds` argument (up to 60) waits for the run and returns the result as a sync tool would. An app with async actions has three more tools: `get_run` (`run_id`, `wait_seconds`) returns a run with its result or the tail of its output, `list_runs` lists the runs and `cancel_run` stops one.
+
+Actions of all apps are also available through the generic `list_actions`, `get_action`, `run_action` and `suggest_action` tools of the [management MCP surface]({{< ref "docs/configuration/remoteaccess/#what-mcp-can-do" >}}), without the `--mcp` option on the app; `list_action_runs`, `get_action_run` and `cancel_action_run` manage the runs of async actions there, and `run_action` takes `wait_seconds` for them.
 
 ## Multiple Actions
 

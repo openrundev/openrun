@@ -113,8 +113,9 @@ type Outcome struct {
 	ValuesStr   []string
 	ValuesMap   []map[string]any
 	ParamErrors map[string]any
-	Suggest     starlark.Value // the suggest handler response, for OpSuggest
-	QueryParams url.Values     // non password form values, for the UI push url
+	Suggest     starlark.Value   // the suggest handler response, for OpSuggest
+	QueryParams url.Values       // non password form values, for the UI push url
+	Run         *types.ActionRun // the started run of an async action; the other fields are unset
 
 	stream func(yield func(any, error) bool)
 	event  *types.AuditEvent
@@ -323,6 +324,20 @@ func (a *Action) invoke(ctx context.Context, inv Invocation) (retOutcome *Outcom
 		}
 	}
 
+	if inv.Op == OpRun && a.IsAsync() {
+		// An async action: the run executes in the background with the args
+		// built above; the uploaded files now belong to the run. The
+		// submission's audit event records the run id
+		run, runErr := a.startRun(ctx, inv, args, tempDir)
+		if runErr != nil {
+			return nil, runErr
+		}
+		tempDir = ""
+		event.Status = string(types.EventStatusSuccess)
+		event.Detail = run.Id
+		return &Outcome{QueryParams: qsParams, Run: run, event: &event, finish: finish}, nil
+	}
+
 	argsValue := Args{members: args}
 
 	callable := a.run
@@ -333,37 +348,9 @@ func (a *Action) invoke(ctx context.Context, inv Invocation) (retOutcome *Outcom
 	}
 
 	// Call the handler function
-	ret, err := starlark.Call(thread, callable, callInput, nil)
-	if err == nil {
-		pluginErrLocal := thread.Local(types.TL_PLUGIN_API_FAILED_ERROR)
-		if pluginErrLocal != nil {
-			pluginErr := pluginErrLocal.(error)
-			a.Error().Err(pluginErr).Msg("handler had plugin API failure")
-			err = pluginErr // handle as if the handler had returned an error
-		}
-	}
-
-	if err != nil {
-		a.Error().Err(err).Msg("error calling action run handler")
-
-		firstFrame := ""
-		if evalErr, ok := err.(*starlark.EvalError); ok {
-			// Iterate through the CallFrame stack for debugging information
-			for i, frame := range evalErr.CallStack {
-				a.Warn().Msgf("Function: %s, Position: %s\n", frame.Name, frame.Pos)
-				if i == 0 {
-					firstFrame = fmt.Sprintf("Function %s, Position %s", frame.Name, frame.Pos)
-				}
-			}
-		}
-
-		msg := err.Error()
-		if firstFrame != "" && a.isDev {
-			msg = msg + " : " + firstFrame
-		}
-
-		// err handler is not supported for actions
-		return nil, invokeErr(http.StatusInternalServerError, "%s", msg)
+	ret, callErr := a.callHandler(thread, callable, callInput)
+	if callErr != nil {
+		return nil, callErr
 	}
 	event.Status = string(types.EventStatusSuccess)
 
@@ -377,47 +364,13 @@ func (a *Action) invoke(ctx context.Context, inv Invocation) (retOutcome *Outcom
 		return outcome, nil
 	}
 
-	resultStruct, ok := ret.(*starlarkstruct.Struct)
-	if ok {
-		outcome.Status, err = apptype.GetOptionalStringAttr(resultStruct, "status")
-		if err != nil {
-			return nil, invokeErr(http.StatusInternalServerError, "error getting result status: %s", err)
-		}
-
-		outcome.ValuesMap, err = apptype.GetListMapAttr(resultStruct, "values", true)
-		if err != nil {
-			outcome.ValuesStr, err = apptype.GetListStringAttr(resultStruct, "values", true)
-			if err != nil {
-				return nil, invokeErr(http.StatusInternalServerError, "error getting result values, not a list of string or list of maps: %s", err)
-			}
-		}
-
-		outcome.ParamErrors, err = apptype.GetDictAttr(resultStruct, "param_errors", true)
-		if err != nil {
-			return nil, invokeErr(http.StatusInternalServerError, "error getting result attr paramErrors: %s", err)
-		}
-
-		outcome.Report, err = apptype.GetOptionalStringAttr(resultStruct, "report")
-		if err != nil {
-			return nil, invokeErr(http.StatusInternalServerError, "error getting result report: %s", err)
-		}
-
-		streamAttr, attrErr := resultStruct.Attr("stream")
-		if attrErr == nil && streamAttr != nil && streamAttr != starlark.None {
-			sv, isStream := streamAttr.(apptype.StreamValue)
-			if !isStream {
-				return nil, invokeErr(http.StatusInternalServerError, "result stream must be the response of a plugin call made with stream=True")
-			}
-			streamVal = sv
-		}
-	} else if sv, isStream := ret.(apptype.StreamValue); isStream {
-		// A stream response returned directly is shorthand for
-		// ace.result("", stream=ret)
-		streamVal = sv
-	} else {
-		// Not a result struct
-		outcome.Status = strings.Trim(ret.String(), "\"")
+	decoded, decodeErr := decodeResult(ret)
+	if decodeErr != nil {
+		return nil, decodeErr
 	}
+	outcome.Status, outcome.Report = decoded.status, decoded.report
+	outcome.ValuesMap, outcome.ValuesStr, outcome.ParamErrors = decoded.valuesMap, decoded.valuesStr, decoded.paramErrors
+	streamVal = decoded.stream
 
 	if streamVal != nil {
 		if inv.Op == OpValidate {
@@ -441,6 +394,101 @@ func (a *Action) invoke(ctx context.Context, inv Invocation) (retOutcome *Outcom
 	}
 
 	return outcome, nil
+}
+
+// callHandler calls an action handler on the thread, promoting a plugin API
+// failure to an error and mapping errors to the invocation error the
+// surfaces report (the first frame appended for dev apps)
+func (a *Action) callHandler(thread *starlark.Thread, callable starlark.Callable, callInput starlark.Tuple) (starlark.Value, *InvokeError) {
+	ret, err := starlark.Call(thread, callable, callInput, nil)
+	if err == nil {
+		pluginErrLocal := thread.Local(types.TL_PLUGIN_API_FAILED_ERROR)
+		if pluginErrLocal != nil {
+			pluginErr := pluginErrLocal.(error)
+			a.Error().Err(pluginErr).Msg("handler had plugin API failure")
+			err = pluginErr // handle as if the handler had returned an error
+		}
+	}
+	if err == nil {
+		return ret, nil
+	}
+	a.Error().Err(err).Msg("error calling action run handler")
+
+	firstFrame := ""
+	if evalErr, ok := err.(*starlark.EvalError); ok {
+		// Iterate through the CallFrame stack for debugging information
+		for i, frame := range evalErr.CallStack {
+			a.Warn().Msgf("Function: %s, Position: %s\n", frame.Name, frame.Pos)
+			if i == 0 {
+				firstFrame = fmt.Sprintf("Function %s, Position %s", frame.Name, frame.Pos)
+			}
+		}
+	}
+
+	msg := err.Error()
+	if firstFrame != "" && a.isDev {
+		msg = msg + " : " + firstFrame
+	}
+	// err handler is not supported for actions
+	return nil, invokeErr(http.StatusInternalServerError, "%s", msg)
+}
+
+// decodedResult is a run handler's return value, decoded
+type decodedResult struct {
+	status      string
+	report      string
+	valuesMap   []map[string]any
+	valuesStr   []string
+	paramErrors map[string]any
+	stream      apptype.StreamValue
+}
+
+// decodeResult decodes what a run handler returned: an ace.result struct, a
+// stream returned directly (shorthand for ace.result("", stream=ret)), or
+// any other value whose string form is the status
+func decodeResult(ret starlark.Value) (*decodedResult, *InvokeError) {
+	decoded := &decodedResult{report: apptype.AUTO}
+	var err error
+	resultStruct, ok := ret.(*starlarkstruct.Struct)
+	if ok {
+		decoded.status, err = apptype.GetOptionalStringAttr(resultStruct, "status")
+		if err != nil {
+			return nil, invokeErr(http.StatusInternalServerError, "error getting result status: %s", err)
+		}
+
+		decoded.valuesMap, err = apptype.GetListMapAttr(resultStruct, "values", true)
+		if err != nil {
+			decoded.valuesStr, err = apptype.GetListStringAttr(resultStruct, "values", true)
+			if err != nil {
+				return nil, invokeErr(http.StatusInternalServerError, "error getting result values, not a list of string or list of maps: %s", err)
+			}
+		}
+
+		decoded.paramErrors, err = apptype.GetDictAttr(resultStruct, "param_errors", true)
+		if err != nil {
+			return nil, invokeErr(http.StatusInternalServerError, "error getting result attr paramErrors: %s", err)
+		}
+
+		decoded.report, err = apptype.GetOptionalStringAttr(resultStruct, "report")
+		if err != nil {
+			return nil, invokeErr(http.StatusInternalServerError, "error getting result report: %s", err)
+		}
+
+		streamAttr, attrErr := resultStruct.Attr("stream")
+		if attrErr == nil && streamAttr != nil && streamAttr != starlark.None {
+			sv, isStream := streamAttr.(apptype.StreamValue)
+			if !isStream {
+				return nil, invokeErr(http.StatusInternalServerError, "result stream must be the response of a plugin call made with stream=True")
+			}
+			decoded.stream = sv
+		}
+	} else if sv, isStream := ret.(apptype.StreamValue); isStream {
+		decoded.stream = sv
+	} else {
+		// Not a result struct
+		decoded.status = strings.Trim(ret.String(), "\"")
+	}
+	return decoded, nil
 }
 
 // auditRejectedRequest records the failed action event for a request a

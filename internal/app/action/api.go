@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/openrundev/openrun/internal/app/apptype"
@@ -34,6 +36,7 @@ const (
 	apiActionsPrefix  = "/actions"  // GET returns the param definitions, POST runs the action
 	apiSuggestPrefix  = "/suggest"  // POST runs the suggest handler
 	apiValidatePrefix = "/validate" // POST runs the handler with dry_run=True
+	apiRunsPrefix     = "/runs"     // async runs: list, get, output, cancel
 )
 
 // appAPI implements the app level endpoints for the actions REST API. The API
@@ -66,7 +69,137 @@ func BuildAPIRouter(appName, appPath string, actions []*Action) *chi.Mux {
 		r.Post(path.Join(apiSuggestPrefix, act.actionPath), act.apiSuggestAction)
 		r.Post(path.Join(apiValidatePrefix, act.actionPath), act.apiValidateAction)
 	}
+	hasAsync := false
+	for _, act := range actions {
+		hasAsync = hasAsync || act.IsAsync()
+	}
+	if hasAsync {
+		r.Get(apiRunsPrefix, api.listRuns)
+		r.Get(apiRunsPrefix+"/{runId}", api.getRun)
+		r.Get(apiRunsPrefix+"/{runId}/output", api.getRunOutput)
+		r.Post(apiRunsPrefix+"/{runId}/cancel", api.cancelRun)
+	}
 	return r
+}
+
+// runAction resolves a run id to its action, authorizing the caller with the
+// action's permit; a run of an action the caller cannot run is not found
+func (api *appAPI) runAction(w http.ResponseWriter, r *http.Request) (*Action, *types.ActionRun, bool) {
+	runId := chi.URLParam(r, "runId")
+	for _, act := range api.actions {
+		if !act.IsAsync() {
+			continue
+		}
+		run, err := act.LoadRun(r.Context(), runId, false)
+		if err != nil {
+			continue
+		}
+		if !act.authorizeAction(w, r, true) {
+			return nil, nil, false
+		}
+		return act, run, true
+	}
+	writeJSONError(w, fmt.Sprintf("run %s not found", runId), http.StatusNotFound)
+	return nil, nil, false
+}
+
+// listRuns lists the async runs of the app's actions the caller may run;
+// ?action=<path> selects one action, ?status= filters, ?limit= caps
+func (api *appAPI) listRuns(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	actionPath := query.Get("action")
+	if actionPath != "" && !strings.HasPrefix(actionPath, "/") {
+		actionPath = "/" + actionPath
+	}
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	runs := make([]types.ActionRun, 0)
+	for _, act := range api.actions {
+		if !act.IsAsync() || (actionPath != "" && act.actionPath != actionPath) {
+			continue
+		}
+		authorized, err := act.Authorized(r.Context())
+		if err != nil {
+			writeJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !authorized {
+			continue
+		}
+		actionRuns, err := act.ListRuns(r.Context(), query.Get("status"), limit)
+		if err != nil {
+			writeJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, run := range actionRuns {
+			runs = append(runs, run.BasicView())
+		}
+	}
+	slices.SortFunc(runs, func(a, b types.ActionRun) int {
+		return b.StartedAt.Compare(a.StartedAt)
+	})
+	if limit > 0 && len(runs) > limit {
+		runs = runs[:limit]
+	}
+	writeJSON(w, http.StatusOK, types.ActionRunsResponse{Runs: runs})
+}
+
+// getRun returns a run document; ?wait=<duration> waits for the run to end
+func (api *appAPI) getRun(w http.ResponseWriter, r *http.Request) {
+	act, run, ok := api.runAction(w, r)
+	if !ok {
+		return
+	}
+	if wait := parseWait(r.URL.Query().Get("wait")); wait > 0 && run.IsActive() {
+		var err error
+		if run, err = act.WaitRun(r.Context(), run.Id, wait, true); err != nil {
+			writeJSONError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+	} else {
+		var err error
+		if run, err = act.LoadRun(r.Context(), run.Id, true); err != nil {
+			writeJSONError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+	}
+	code := http.StatusOK
+	if run.IsActive() {
+		code = http.StatusAccepted
+	}
+	writeJSON(w, code, act.RunAPIResult(run))
+}
+
+// getRunOutput returns the output of a run from ?since=
+func (api *appAPI) getRunOutput(w http.ResponseWriter, r *http.Request) {
+	act, run, ok := api.runAction(w, r)
+	if !ok {
+		return
+	}
+	run, err := act.LoadRun(r.Context(), run.Id, true)
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+	WriteRunOutput(w, run, since)
+}
+
+// cancelRun cancels an active run
+func (api *appAPI) cancelRun(w http.ResponseWriter, r *http.Request) {
+	act, run, ok := api.runAction(w, r)
+	if !ok {
+		return
+	}
+	if _, invErr := act.CancelRun(r.Context(), run.Id); invErr != nil {
+		writeJSONError(w, invErr.Msg, invErr.Code)
+		return
+	}
+	run, err := act.WaitRun(r.Context(), run.Id, 2*time.Second, false)
+	if err != nil {
+		writeJSONError(w, fmt.Sprintf("run canceled, record unavailable: %s", err), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, types.ActionRunResponse{Run: run.BasicView()})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

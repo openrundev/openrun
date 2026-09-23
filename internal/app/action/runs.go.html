@@ -1,0 +1,357 @@
+{{/* Async action runs: the run card answered to a submission, the runs
+  list and the run page
+*/}}
+
+{{ define "run-badge" }}
+  {{- if eq . "running" -}}
+    <span class="badge badge-info badge-sm">running</span>
+  {{- else if eq . "succeeded" -}}
+    <span class="badge badge-success badge-sm">succeeded</span>
+  {{- else if eq . "failed" -}}
+    <span class="badge badge-error badge-sm">failed</span>
+  {{- else if eq . "timed_out" -}}
+    <span class="badge badge-warning badge-sm">timed out</span>
+  {{- else if eq . "canceled" -}}
+    <span class="badge badge-warning badge-sm">canceled</span>
+  {{- else -}}
+    <span class="badge badge-ghost badge-sm">{{ . }}</span>
+  {{- end -}}
+{{ end }}
+
+{{/* The polled status header of a run page */}}
+{{ define "run-status" }}
+  <div
+    id="run_status"
+    {{ if .run.Active }}
+      hx-get="{{ .run.PagePath }}/status" hx-trigger="every {{ .pollSecs }}s"
+      hx-swap="outerHTML"
+    {{ end }}
+    data-run-status="{{ .run.Status }}"
+    class="flex flex-col gap-2 text-sm">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+      {{ template "run-badge" .run.Status }}
+      <span
+        ><span class="text-base-content/70">Started</span>
+        {{ .run.Started }}</span
+      >
+      {{ if .run.Ended }}
+        <span
+          ><span class="text-base-content/70">Ended</span>
+          {{ .run.Ended }}</span
+        >
+      {{ end }}
+      <span
+        ><span class="text-base-content/70">Duration</span>
+        {{ .run.Duration }}</span
+      >
+      {{ if .run.Actor }}
+        <span
+          ><span class="text-base-content/70">By</span> {{ .run.Actor }}</span
+        >
+      {{ end }}
+      {{ if gt .run.Version 0 }}
+        <span
+          ><span class="text-base-content/70">Version</span>
+          {{ .run.Version }}</span
+        >
+      {{ end }}
+      {{ if .run.Active }}
+        <button
+          type="button"
+          class="btn btn-warning btn-xs"
+          hx-post="{{ .run.PagePath }}/cancel"
+          hx-target="#run_status"
+          hx-swap="outerHTML"
+          hx-confirm="Cancel this run?">
+          Cancel
+        </button>
+      {{ end }}
+    </div>
+    {{ if .run.ResultStatus }}
+      <div role="status" class="font-medium break-words">
+        {{ .run.ResultStatus }}
+      </div>
+    {{ end }}
+    {{ if and .run.Message (ne .run.Status "succeeded") }}
+      {{ if or (eq .run.Status "canceled") (eq .run.Status "timed_out") }}
+        <div
+          role="status"
+          class="rounded-box border border-warning/40 bg-warning/10 px-3 py-2 text-xs break-words">
+          {{ .run.Message }}
+        </div>
+      {{ else }}
+        <div
+          role="alert"
+          class="rounded-box border border-error/40 bg-error/10 text-error px-3 py-2 font-mono text-xs whitespace-pre-wrap break-words">
+          {{ .run.Message }}
+        </div>
+      {{ end }}
+    {{ end }}
+  </div>
+{{ end }}
+
+{{ define "run-page" }}
+  {{ template "header" . }}
+  <div class="flex flex-col gap-4 w-full">
+    <div class="card border border-base-300 bg-base-100 shadow-sm w-full">
+      <div class="card-body p-4 sm:p-6 gap-3 min-w-0">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="section-heading">
+            Run <span class="font-mono text-sm">{{ .run.Id }}</span>
+          </h2>
+          <div class="flex gap-2">
+            <a
+              class="btn btn-ghost btn-xs"
+              href="{{ .pagePath }}?{{ range $i, $a := .run.ArgsList }}
+                {{ if $i }}&amp;{{ end }}{{ $a.Name }}={{ $a.Value }}
+              {{ end }}"
+              >Run again</a
+            >
+          </div>
+        </div>
+        {{ template "run-status" . }}
+        {{ if .run.ArgsList }}
+          <div class="overflow-x-auto border-t border-base-300 pt-3">
+            <table class="table table-sm w-auto text-sm">
+              <thead>
+                <tr>
+                  {{ range .run.ArgsList }}
+                    <th scope="col">{{ .Name }}</th>
+                  {{ end }}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  {{ range .run.ArgsList }}
+                    <td class="font-mono text-xs break-all">{{ .Value }}</td>
+                  {{ end }}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        {{ end }}
+        {{ if .run.ParamErrors }}
+          <ul class="text-sm text-error">
+            {{ range $k, $v := .run.ParamErrors }}
+              <li>{{ $k }}: {{ $v }}</li>
+            {{ end }}
+          </ul>
+        {{ end }}
+      </div>
+    </div>
+
+    <output
+      id="ActionMessage"
+      aria-live="assertive"
+      class="block w-full text-center text-sm empty:hidden"></output>
+
+    {{ if or .run.IsStream .run.Active }}
+      <div class="card border border-base-300 bg-base-100 shadow-sm w-full">
+        <div class="card-body p-4 sm:p-6 gap-3 min-w-0">
+          <h2 class="section-heading">Output</h2>
+          <log-tail
+            id="run_log"
+            label="Run output"
+            max-lines="5000"
+            height="32rem"></log-tail>
+        </div>
+      </div>
+      <script>
+        // Follow the run output: the stored window from the last offset,
+        // polled while the run is active, ended with the exit status
+        (() => {
+          const pane = document.getElementById("run_log");
+          const url = {{ .run.OutputUrl }};
+          const active = {{ .run.Active }};
+          const isStream = {{ .run.IsStream }};
+          let since = 0;
+          let ended = false;
+          async function poll() {
+            if (ended) return;
+            let resp;
+            try {
+              resp = await fetch(url + "?since=" + since, { cache: "no-store" });
+            } catch (e) {
+              setTimeout(poll, 2000);
+              return;
+            }
+            if (!resp.ok) {
+              pane.end(undefined, "output unavailable (" + resp.status + ")");
+              ended = true;
+              return;
+            }
+            const text = await resp.text();
+            if (resp.headers.get("OpenRun-Output-Restart") === "true") {
+              pane.feed("\n... output restarted from the beginning ...\n");
+            }
+            if (text) pane.feed(text);
+            since = parseInt(resp.headers.get("OpenRun-Output-Bytes") || "0", 10);
+            const status = resp.headers.get("OpenRun-Action-Status");
+            if (status && status !== "running") {
+              ended = true;
+              const exit = resp.headers.get("OpenRun-Exit-Code");
+              if (exit !== null) pane.end(parseInt(exit, 10));
+              else if (status === "succeeded") pane.end(0);
+              else pane.end(undefined, status);
+              if (!isStream) {
+                // A values result: reload the page to render it
+                location.reload();
+              }
+              return;
+            }
+            setTimeout(poll, 1000);
+          }
+          if (active || isStream) poll();
+        })();
+      </script>
+    {{ end }}
+  </div>
+{{ end }}
+
+{{ define "runs-table" }}
+  <div
+    id="runs_table"
+    {{ if .hasActive }}
+      hx-get="{{ .pagePath }}/runs?status={{ .status }}&filter={{ .filter }}"
+      hx-trigger="every 5s" hx-swap="outerHTML"
+    {{ end }}
+    class="overflow-x-auto">
+    {{ if .runs }}
+      <table class="table table-zebra table-sm min-w-full text-sm">
+        <thead>
+          <tr>
+            <th scope="col" class="w-8">
+              <span class="sr-only">Details</span>
+            </th>
+            <th scope="col">Status</th>
+            <th scope="col">Started</th>
+            <th scope="col">Duration</th>
+            <th scope="col">By</th>
+            <th scope="col">Message</th>
+            {{ range .argColumns }}
+              <th scope="col" class="font-mono">{{ . }}</th>
+            {{ end }}
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .runs }}
+            <tr class="hover:bg-base-200/60">
+              <td class="w-8">
+                {{/* The drill-down affordance of the console tables: a
+                  circled chevron in the brand green
+                */}}
+                <a
+                  href="{{ .PagePath }}"
+                  class="btn btn-xs btn-ghost btn-square"
+                  title="Open run {{ .Id }}"
+                  aria-label="View details of run {{ .Id }}">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden="true"
+                    focusable="false"
+                    width="20"
+                    height="20">
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      fill="#00c200"
+                      fill-opacity="0.14"
+                      stroke="#00c200"
+                      stroke-opacity="0.45"
+                      stroke-width="1.5" />
+                    <path
+                      d="m10 8 4.5 4L10 16"
+                      stroke="#00c200"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round" />
+                  </svg>
+                </a>
+              </td>
+              <td>{{ template "run-badge" .Status }}</td>
+              <td class="whitespace-nowrap">
+                {{/* Relative age (relTime, the shared helper) with the
+                  exact UTC time as the tooltip, as the console tables do
+                */}}
+                <span
+                  class="tooltip tooltip-right"
+                  data-tip="{{ dateInZone "2006-01-02 15:04:05" .StartedAt "UTC" }} UTC"
+                  >{{ relTime .StartedAt }}</span
+                >
+              </td>
+              <td class="whitespace-nowrap">{{ .Duration }}</td>
+              <td class="whitespace-nowrap">{{ .Actor }}</td>
+              <td
+                class="text-xs max-w-64 truncate {{ if and .Message (ne .Status "succeeded") }}
+                  text-error
+                {{ end }}"
+                title="{{ .Message }}">
+                {{ if .ResultStatus }}
+                  {{ .ResultStatus }}
+                {{ else }}
+                  {{ .Message }}
+                {{ end }}
+              </td>
+              {{ range .ArgCells }}
+                <td class="font-mono text-xs max-w-48 truncate" title="{{ . }}">
+                  {{ . }}
+                </td>
+              {{ end }}
+            </tr>
+          {{ end }}
+        </tbody>
+      </table>
+      {{ if .more }}
+        <div class="py-2 text-sm text-base-content/70">
+          Showing the newest {{ len .runs }} matching runs; narrow the filter to
+          see older ones.
+        </div>
+      {{ end }}
+    {{ else }}
+      <div role="status" class="py-2 text-center text-sm text-base-content/70">
+        No runs
+      </div>
+    {{ end }}
+  </div>
+{{ end }}
+
+{{ define "runs-page" }}
+  {{ template "header" . }}
+  <div class="card border border-base-300 bg-base-100 shadow-sm w-full">
+    <div class="card-body p-4 sm:p-6 gap-3 min-w-0">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="section-heading">Run History</h2>
+        <form method="get" class="flex flex-wrap items-center gap-2">
+          <select
+            name="status"
+            class="select select-sm"
+            onchange="this.form.submit()">
+            <option value="" {{ if not .status }}selected{{ end }}>
+              All statuses
+            </option>
+            {{ range .statuses }}
+              <option value="{{ . }}" {{ if eq . $.status }}selected{{ end }}>
+                {{ . }}
+              </option>
+            {{ end }}
+          </select>
+          {{/* Filter: name=value matches an arg, a bare word any arg value,
+            the status message or the failure message; several terms must
+            all match
+          */}}
+          <input
+            type="search"
+            name="filter"
+            value="{{ .filter }}"
+            placeholder="Filter: name=value, or text in args or message"
+            class="input input-sm w-64" />
+          <button type="submit" class="btn btn-sm btn-outline">Filter</button>
+        </form>
+      </div>
+      {{ template "runs-table" . }}
+    </div>
+  </div>
+  {{ template "footer" . }}
+{{ end }}
