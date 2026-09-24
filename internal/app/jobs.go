@@ -113,7 +113,7 @@ func (a *App) validateJobs(jobs []types.JobSpec) error {
 			}
 		}
 		for _, param := range spec.Params {
-			if _, ok := a.paramInfo[param]; !ok {
+			if _, ok := a.allParamInfo()[param]; !ok {
 				return fmt.Errorf("job %s: param %q is not defined in params.star", spec.Name, param)
 			}
 		}
@@ -364,7 +364,7 @@ func (a *App) JobArgValues(spec types.JobSpec, runArgs map[string]string) (map[s
 		if !declared[name] {
 			return nil, fmt.Errorf("job %s does not accept argument %q (params: %v)", spec.Name, name, spec.Params)
 		}
-		info, ok := a.paramInfo[name]
+		info, ok := a.allParamInfo()[name]
 		if !ok {
 			return nil, fmt.Errorf("job %s: param %q is not defined in params.star", spec.Name, name)
 		}
@@ -391,7 +391,7 @@ func (a *App) jobArgs(spec types.JobSpec, runArgs map[string]string) (*action.Ar
 		members[k] = v
 	}
 	for name, value := range runArgs {
-		info, ok := a.paramInfo[name]
+		info, ok := a.allParamInfo()[name]
 		if !ok {
 			return nil, fmt.Errorf("job %s: unknown argument %q", spec.Name, name)
 		}

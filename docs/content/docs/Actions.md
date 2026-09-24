@@ -414,3 +414,37 @@ Actions of all apps are also available through the generic `list_actions`, `get_
 Multiple actions can be defined for an app. Each action should have a dedicated path. If there are multiple actions, a switcher dropdown is automatically added for the app. The order of entries in the dropdown is the same order as defined in the app.
 
 See weather app [code](https://github.com/openrundev/apps/blob/main/misc/weather/app.star):[demo](https://utils.demo.clace.io/weather) for an example of using multiple actions in one app.
+
+## Actions for Spec Apps
+
+An app built from a [spec]({{< ref "docs/container/appspecs" >}}) (for example `--spec python-flask`) has no `app.star` of its own: the spec's `app.star` proxies every request to the container. Such an app adds actions with two optional files next to its code, without copying the spec's `app.star`:
+
+- `actions.star` defines the actions. It must set `actions` to a list of `ace.action` entries, and may set `permissions` to a list of `ace.permission` entries for the plugins the actions use. Both lists are appended to the app definition, after any entries in `app.star`. The file can load plugins and other `.star` files, and has the `param` module with the app's param values.
+- `action_params.star` declares the params the actions present, with the same `param(...)` syntax as `params.star`. When this file exists, every action of the app shows exactly these params (minus the action's `hidden` list) in the UI, the REST API, the CLI and the MCP tool schema, and `args` has exactly these params. The `params.star` params (for a spec app, the spec's own params like `port`) are not shown. Without this file, every `params.star` param is an action param, as before.
+
+The params of `action_params.star` are app params in every other way: `--param name=value` at create and `openrun param update` set the value the action presents as the default, they are members of the `param` module and they are passed to the container environment like every param. A name declared in both files is an error. A required action param without a default does not need a value at create time: it is supplied when the action runs, and a run or validate call without it is refused with a param error before the handler is called.
+
+```python {filename="actions.star"}
+load("http.in", "http")
+
+def list_orders(dry_run, args):
+    if dry_run:
+        return ace.result("Arguments are valid")
+    resp = http.get(ace.CONTAINER_URL + "/internal/orders", params={"status": args.status})
+    return ace.result("Orders", resp.value.json(), ace.TABLE)
+
+actions = [ace.action("List Orders", "/orders", list_orders, description="Open orders from the app")]
+permissions = [ace.permission("http.in", "get")]
+```
+
+```python {filename="action_params.star"}
+param("status", description="Order status", default="open")
+param("options_status", type=LIST, default=["open", "closed", "all"])
+```
+
+```shell
+openrun app create --approve --spec python-flask --mcp=actions ./orders-app /orders
+openrun action run /orders orders status=closed
+```
+
+The action's handler reaches the container's own APIs through the [http plugin]({{< ref "docs/plugins/overview" >}}) with `ace.CONTAINER_URL`. The action paths, the `/api` path of the actions REST API and the `/mcp` region of `--mcp=actions` are served by OpenRun; every other path is still proxied to the container. Actions on such an app need a sub path, an action at `/` cannot share the app root with the proxy.

@@ -139,6 +139,71 @@ func createAppBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tup
 	return starlarkstruct.FromStringDict(starlark.String(APP), fields), nil
 }
 
+// ReadActionsFile reads the globals of an actions.star file: the required
+// "actions" list of ace.action values and the optional "permissions" list of
+// ace.permission values. fileName is used in the error messages
+func ReadActionsFile(fileName string, globals starlark.StringDict) (actions, permissions []starlark.Value, err error) {
+	actionsVal, ok := globals[ACTIONS_KEY]
+	if _, isModuleStruct := actionsVal.(*starlarkstruct.Struct); !ok || isModuleStruct {
+		// Absent, or the module struct a loaded file gets under its own
+		// basename (addModuleStruct) when the file does not define the name
+		return nil, nil, fmt.Errorf("%s must define %s = [...]", fileName, ACTIONS_KEY)
+	}
+	if actions, err = structList(fileName, ACTIONS_KEY, ACTION, actionsVal); err != nil {
+		return nil, nil, err
+	}
+	if permsVal, ok := globals[ACTION_PERMISSIONS_KEY]; ok {
+		if permissions, err = structList(fileName, ACTION_PERMISSIONS_KEY, PERMISSION, permsVal); err != nil {
+			return nil, nil, err
+		}
+	}
+	return actions, permissions, nil
+}
+
+// structList checks that value is a list of structs built by the named
+// constructor (ace.action, ace.permission) and returns its entries
+func structList(fileName, key, constructor string, value starlark.Value) ([]starlark.Value, error) {
+	list, ok := value.(*starlark.List)
+	if !ok {
+		return nil, fmt.Errorf("%s: %s is not a list", fileName, key)
+	}
+	entries := make([]starlark.Value, 0, list.Len())
+	iter := list.Iterate()
+	defer iter.Done()
+	var val starlark.Value
+	for iter.Next(&val) {
+		s, ok := val.(*starlarkstruct.Struct)
+		if !ok || s.Constructor() != starlark.String(constructor) {
+			return nil, fmt.Errorf("%s: %s entry %d is not an ace.%s", fileName, key, len(entries), constructor)
+		}
+		entries = append(entries, val)
+	}
+	return entries, nil
+}
+
+// MergeAppDef returns a copy of the ace.app struct with the given actions and
+// permissions appended to its lists, in that order after the app.star entries
+func MergeAppDef(appDef *starlarkstruct.Struct, actions, permissions []starlark.Value) (*starlarkstruct.Struct, error) {
+	fields := starlark.StringDict{}
+	appDef.ToStringDict(fields)
+	for key, extra := range map[string][]starlark.Value{ACTIONS_KEY: actions, ACTION_PERMISSIONS_KEY: permissions} {
+		if len(extra) == 0 {
+			continue
+		}
+		merged := []starlark.Value{}
+		if existing, ok := fields[key].(*starlark.List); ok {
+			iter := existing.Iterate()
+			var val starlark.Value
+			for iter.Next(&val) {
+				merged = append(merged, val)
+			}
+			iter.Done()
+		}
+		fields[key] = starlark.NewList(append(merged, extra...))
+	}
+	return starlarkstruct.FromStringDict(starlark.String(APP), fields), nil
+}
+
 func createHtmlBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var path, html, block starlark.String
 	var handler starlark.Callable

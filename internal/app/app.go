@@ -68,8 +68,9 @@ type App struct {
 	systemConfig     *types.SystemConfig
 	storeInfo        *starlark_type.StoreInfo
 	paramInfo        map[string]apptype.AppParam
-	paramValuesStr   map[string]string   // the param values for the app, from metadata and defaults
-	paramDict        starlark.StringDict // the Starlark param values for the app
+	actionParamInfo  map[string]apptype.AppParam // params from action_params.star, nil when the file is absent
+	paramValuesStr   map[string]string           // the param values for the app, from metadata and defaults
+	paramDict        starlark.StringDict         // the Starlark param values for the app
 	plugins          *AppPlugins
 	containerHandler *ContainerHandler
 	serverConfig     *types.ServerConfig
@@ -559,6 +560,11 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 	}
 
 	err = a.loadParamsInfo(a.sourceFS)
+	if err != nil {
+		return false, err
+	}
+
+	err = a.loadActionParamsInfo(a.sourceFS)
 	if err != nil {
 		return false, err
 	}
@@ -1173,6 +1179,57 @@ func (a *App) loadParamsInfo(sourceFS *appfs.SourceFs) error {
 	}
 
 	return nil
+}
+
+// loadActionParamsInfo reads action_params.star, the params shown on the
+// action surfaces (see spec-actions.md). The file is optional: when absent,
+// actionParamInfo is nil and the actions use the params.star params as before.
+// Its params are app params like any other (param values, the param module,
+// the container environment), so a name declared in both files is an error.
+// Called after loadParamsInfo
+func (a *App) loadActionParamsInfo(sourceFS *appfs.SourceFs) error {
+	a.actionParamInfo = nil
+	fileName := a.getStarPath(apptype.ACTION_PARAMS_FILE_NAME)
+	data, err := sourceFS.ReadFile(fileName)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil // Ignore absence of action params file
+	}
+
+	info, err := apptype.ReadParamInfo(fileName, data, a.serverConfig)
+	if err != nil {
+		return fmt.Errorf("error reading action params info: %w", err)
+	}
+	for name := range info {
+		if _, ok := a.paramInfo[name]; ok {
+			return fmt.Errorf("param %s is defined in both %s and %s", name, apptype.PARAMS_FILE_NAME, apptype.ACTION_PARAMS_FILE_NAME)
+		}
+	}
+	a.actionParamInfo = info
+	return nil
+}
+
+// allParamInfo returns the params of params.star and action_params.star
+// together, the app's full param set
+func (a *App) allParamInfo() map[string]apptype.AppParam {
+	if len(a.actionParamInfo) == 0 {
+		return a.paramInfo
+	}
+	all := make(map[string]apptype.AppParam, len(a.paramInfo)+len(a.actionParamInfo))
+	maps.Copy(all, a.paramInfo)
+	maps.Copy(all, a.actionParamInfo)
+	return all
+}
+
+// actionParams returns the params the actions present: the action_params.star
+// params when that file exists, else every params.star param
+func (a *App) actionParams() []apptype.AppParam {
+	if a.actionParamInfo != nil {
+		return slices.Collect(maps.Values(a.actionParamInfo))
+	}
+	return slices.Collect(maps.Values(a.paramInfo))
 }
 
 // applySecurityHeaders sets security related HTTP response headers based on the configured

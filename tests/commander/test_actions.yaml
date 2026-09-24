@@ -12,6 +12,7 @@ config:
     CL_CONFIG_FILE: openrun.toml
     GOCOVERDIR: ${GOCOVERDIR}/../client
     MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
 tests:
   action0010: # the actions app: a table action with a suggest handler, a permit
     # restricted action, a streamed command and a file upload
@@ -428,6 +429,159 @@ tests:
         - "needs a region path other than"
         - "action path /build is not allowed, /build is the MCP endpoint of the app"
     exit-code: 0
+  action0300: # actions for a spec app: the source has no app.star, only the Flask-style
+    # code (here an upstream Starlark app stands in for the container) plus actions.star
+    # and action_params.star. The spec's params are reachable through the param module
+    command: |
+      set -e
+      rm -rf act_up act_spec && mkdir -p act_up act_spec
+      cat > act_up/app.star <<'EOF'
+      def orders(req):
+          return [{"id": 1, "status": "open"}, {"id": 2, "status": "closed"}]
+
+      def root(req):
+          return {"upstream": "root"}
+
+      app = ace.app("upstream", routes=[ace.api("/internal/orders", orders), ace.api("/", root)])
+      EOF
+      cat > act_spec/actions.star <<'EOF'
+      load("http.in", "http")
+
+      def orders(dry_run, args):
+          if dry_run:
+              return ace.result("Arguments are valid")
+          rows = http.get(param.url + "/internal/orders").value.json()
+          rows = [r for r in rows if args.status == "all" or r["status"] == args.status]
+          return ace.result("Listed %d orders" % len(rows), rows, ace.TABLE)
+
+      def cancel(dry_run, args):
+          if dry_run:
+              return ace.result("Arguments are valid")
+          return ace.result("Cancelled order " + args.order_id)
+
+      actions = [
+          ace.action("List Orders", "/orders", orders, description="Orders from the upstream", hidden=["order_id"]),
+          ace.action("Cancel Order", "/orders/cancel", cancel, description="Cancel an order", hidden=["status"]),
+      ]
+      permissions = [ace.permission("http.in", "get")]
+      EOF
+      cat > act_spec/action_params.star <<'EOF'
+      param("status", description="Order status", default="all")
+      param("options_status", type=LIST, default=["all", "open", "closed"])
+      param("order_id", description="The order to cancel")
+      EOF
+      cat > act_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {"ops": ["custom:ops_admin"]}, "grants": [
+        {"description": "alice develops under /actapps", "users": ["builtin:alice"], "roles": ["openrun-developer"], "targets": ["/actapps/**"]},
+        {"description": "carol uses and operates apps under /actapps", "users": ["builtin:carol"], "roles": ["openrun-user", "ops"], "targets": ["/actapps/**"]},
+        {"description": "the upstream and the spec app are open", "users": ["anonymous"], "roles": ["openrun-user"], "targets": ["/actapps/up", "/actapps/spec"]}
+      ]}}
+      EOF
+      ../openrun server update-config --force act_rbac.json > /dev/null
+      ../openrun app create --approve --auth none ./act_up /actapps/up > /dev/null
+      ../openrun app create --approve --auth none --mcp=actions --spec proxy \
+        --param url=http://localhost:${MAIN_HTTP_PORT}/actapps/up ./act_spec /actapps/spec
+    stdout: "App: /actapps/spec"
+    exit-code: 0
+  action0310: # routing: unclaimed paths go to the upstream, the action path, the actions
+    # API and the MCP region (bearer only, hence the challenge) are OpenRun's
+    command: |
+      curl -s http://localhost:${MAIN_HTTP_PORT}/actapps/spec/internal/orders | jq -cS .
+      curl -s http://localhost:${MAIN_HTTP_PORT}/actapps/spec/ | jq -r .upstream
+      curl -s http://localhost:${MAIN_HTTP_PORT}/actapps/spec/api | jq -r '.actions[] | [.name, .ui_path] | join(" ")'
+      curl -s http://localhost:${MAIN_HTTP_PORT}/actapps/spec/orders | grep -o "<title>[^<]*</title>"
+      curl -s -o /dev/null -w 'mcp=%{http_code}\n' -X POST http://localhost:${MAIN_HTTP_PORT}/actapps/spec/mcp
+    stdout:
+      contains:
+        - '[{"id":1,"status":"open"},{"id":2,"status":"closed"}]'
+        - "root"
+        - "List Orders /actapps/spec/orders"
+        - "<title>"
+        - "mcp=401"
+    exit-code: 0
+  action0320: # only the action_params.star params are presented, not the spec's
+    command: |
+      ../openrun action show /actapps/spec orders
+      ../openrun action list -f csv /actapps/spec
+      curl -s http://localhost:${MAIN_HTTP_PORT}/actapps/spec/api/actions/orders | jq -r '[.params[].name] | join(",")'
+    stdout:
+      contains:
+        - "Action:      orders (List Orders)"
+        - "all,open,closed"
+        - "Usage: openrun action run /actapps/spec orders [status=<string>]"
+        - "/actapps/spec,orders,List Orders,/orders,false,Orders from the upstream"
+        - "status"
+      not-contains:
+        - "app_name"
+        - "preserve_host"
+        - "response_headers"
+    exit-code: 0
+  action0330: # run reaches the upstream through the spec's url param; the permission
+    # declared in actions.star was approved at create
+    command: ../openrun action run /actapps/spec orders status=closed
+    stdout:
+      exactly: |-
+        id  status
+        2   closed
+    stderr: "Listed 1 orders"
+    exit-code: 0
+  action0335: # a required action param without a default needs no value at create, and
+    # is enforced when the action runs: exit 2 with the param error, the handler not called
+    command: |
+      ../openrun action run /actapps/spec orders_cancel || echo "exit=$?"
+      ../openrun action validate /actapps/spec orders_cancel order_id= || echo "exit=$?"
+      ../openrun action run /actapps/spec orders_cancel order_id=2
+    stdout:
+      exactly: |-
+        exit=2
+        exit=2
+    stderr:
+      contains:
+        - "Missing required params"
+        - "error: param order_id: param order_id is required"
+        - "Cancelled order 2"
+    exit-code: 0
+  action0340: # an action param is an app param: param update sets the default the
+    # action presents and runs with
+    command: |
+      ../openrun param update --promote status open /actapps/spec > /dev/null
+      ../openrun param list /actapps/spec | grep status
+      curl -s http://localhost:${MAIN_HTTP_PORT}/actapps/spec/api/actions/orders | jq -r '.params[] | select(.name == "status") | .default'
+      ../openrun action run -q --format csv /actapps/spec orders
+    stdout:
+      contains:
+        - "status"
+        - "open"
+        - "1,open"
+      not-contains:
+        - "2,closed"
+    exit-code: 0
+  action0350: # errors: a spec param redeclared as an action param, a hidden name outside
+    # action_params.star, a root action on a root proxy
+    command: |
+      rm -rf act_bad && cp -r act_spec act_bad
+      echo 'param("url", default="x")' >> act_bad/action_params.star
+      ../openrun app create --approve --auth none --spec proxy --param url=http://localhost:${MAIN_HTTP_PORT}/actapps/up ./act_bad /actapps/bad 2>&1 || true
+      ../openrun app delete /actapps/bad > /dev/null 2>&1 || true
+      rm -rf act_bad && cp -r act_spec act_bad
+      cat > act_bad/actions.star <<'EOF'
+      actions = [ace.action("A", "/a", lambda dry_run, args: ace.result("a"), hidden=["url"])]
+      EOF
+      ../openrun app create --approve --auth none --spec proxy --param url=http://localhost:${MAIN_HTTP_PORT}/actapps/up ./act_bad /actapps/bad 2>&1 || true
+      ../openrun app delete /actapps/bad > /dev/null 2>&1 || true
+      cat > act_bad/actions.star <<'EOF'
+      actions = [ace.action("A", "/", lambda dry_run, args: ace.result("a"))]
+      EOF
+      ../openrun app create --approve --auth none --spec proxy --param url=http://localhost:${MAIN_HTTP_PORT}/actapps/up ./act_bad /actapps/bad 2>&1 || true
+      ../openrun app list /actapps/bad 2>&1 || true
+    stdout:
+      contains:
+        - "param url is defined in both params.star and action_params.star"
+        - "action A: hidden param url is not defined in action_params.star"
+        - "a root action cannot share the app root"
+      not-contains:
+        - "App: /actapps/bad"
+    exit-code: 0
   action0900: # cleanup: apps, users, keys, RBAC, working files
     command: |
       ../openrun app delete /actapps/ops
@@ -435,6 +589,9 @@ tests:
       ../openrun app delete /actapps/empty 2>/dev/null || true
       ../openrun app delete /actapps/rootmcp 2>/dev/null || true
       ../openrun app delete /actapps/clash 2>/dev/null || true
+      ../openrun app delete /actapps/spec
+      ../openrun app delete /actapps/up
+      ../openrun app delete /actapps/bad 2>/dev/null || true
       ../openrun user delete alice
       ../openrun user delete bob
       ../openrun user delete carol
@@ -444,5 +601,5 @@ tests:
       EOF
       ../openrun server update-config --force act_rbac.json
       rm -f act_rbac.json act_orders.csv act_alice_rest.txt act_alice_ro.txt act_alice_app.txt act_carol_app.txt act_alice_mcp.txt act_alice_mcp_ro.txt act_alice_files.txt act_tools.json act_call.json remote_client.toml
-      rm -rf act_src act_empty act_out
+      rm -rf act_src act_empty act_out act_up act_spec act_bad
     exit-code: 0

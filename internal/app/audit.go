@@ -90,6 +90,11 @@ func (a *App) Audit() (*types.ApproveResult, error) {
 		return nil, err
 	}
 
+	err = a.loadActionParamsInfo(a.sourceFS)
+	if err != nil {
+		return nil, err
+	}
+
 	builtin, err := a.createBuiltin()
 	if err != nil {
 		return nil, err
@@ -117,6 +122,12 @@ func (a *App) Audit() (*types.ApproveResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	// actions.star runs on the audit thread too, so its plugin loads are
+	// recorded and its permissions are part of the approval
+	appDef, err = a.mergeActionsFile(thread, appDef, starlarkCache)
+	if err != nil {
+		return nil, err
+	}
 
 	name, err := apptype.GetStringAttr(appDef, "name")
 	if err != nil {
@@ -127,7 +138,85 @@ func (a *App) Audit() (*types.ApproveResult, error) {
 	if err := a.auditActionsMCP(appDef); err != nil {
 		return nil, err
 	}
-	return a.createApproveResponse(loads, globals)
+	if err := a.auditActions(appDef); err != nil {
+		return nil, err
+	}
+	return a.createApproveResponse(loads, appDef)
+}
+
+// auditActions applies the action definition checks of the app load
+// (addAction) at audit time, so that app create and update fail instead of
+// the first request: hidden names outside action_params.star, and a root
+// action beside a root proxy route (which would conflict on the router)
+func (a *App) auditActions(appDef *starlarkstruct.Struct) error {
+	actions, err := appDef.Attr("actions")
+	if err != nil || actions == nil {
+		return nil
+	}
+	actionList, ok := actions.(*starlark.List)
+	if !ok {
+		return nil
+	}
+	rootProxy := false
+	if routes, err := appDef.Attr("routes"); err == nil {
+		if routeList, ok := routes.(*starlark.List); ok {
+			iter := routeList.Iterate()
+			var val starlark.Value
+			for iter.Next(&val) {
+				routeDef, ok := val.(*starlarkstruct.Struct)
+				if !ok {
+					continue
+				}
+				if _, err := routeDef.Attr("config"); err != nil {
+					continue // not a proxy route
+				}
+				if p, err := apptype.GetStringAttr(routeDef, "path"); err == nil && p == "/" {
+					rootProxy = true
+				}
+			}
+			iter.Done()
+		}
+	}
+	iter := actionList.Iterate()
+	defer iter.Done()
+	var val starlark.Value
+	for iter.Next(&val) {
+		actionDef, ok := val.(*starlarkstruct.Struct)
+		if !ok {
+			continue
+		}
+		name, _ := apptype.GetStringAttr(actionDef, "name")
+		actionPath, _ := apptype.GetStringAttr(actionDef, "path")
+		if !strings.HasPrefix(actionPath, "/") {
+			actionPath = "/" + actionPath
+		}
+		if actionPath == "/" && rootProxy {
+			return fmt.Errorf("action %s: a root action cannot share the app root with the proxy route at /, use a sub path", name)
+		}
+		hidden, err := apptype.GetListStringAttr(actionDef, "hidden", true)
+		if err != nil {
+			return err
+		}
+		if err := a.checkActionHidden(name, hidden); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkActionHidden verifies, when action_params.star sets the visible param
+// set, that the hidden names of an action are in it: a name outside it is a
+// stale reference (typically to a params.star param)
+func (a *App) checkActionHidden(name string, hidden []string) error {
+	if a.actionParamInfo == nil {
+		return nil
+	}
+	for _, h := range hidden {
+		if _, ok := a.actionParamInfo[h]; !ok {
+			return fmt.Errorf("action %s: hidden param %s is not defined in %s", name, h, apptype.ACTION_PARAMS_FILE_NAME)
+		}
+	}
+	return nil
 }
 
 // auditActionsMCP checks, for an app with mcp source "actions", that the app
@@ -293,14 +382,10 @@ func permissionCoveredByServerConfig(perm types.Permission, serverPerms []types.
 	return false
 }
 
-func (a *App) createApproveResponse(loads []string, globals starlark.StringDict) (*types.ApproveResult, error) {
+func (a *App) createApproveResponse(loads []string, appDef *starlarkstruct.Struct) (*types.ApproveResult, error) {
 	// the App entry should not get updated during the audit call, since there
 	// can be audit calls when the app is running.
-	appDef, err := verifyConfig(globals)
-	if err != nil {
-		return nil, err
-	}
-
+	var err error
 	perms := []types.Permission{}
 	results := types.ApproveResult{
 		AppPathDomain:       a.AppPathDomain(),

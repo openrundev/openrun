@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -65,6 +64,10 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 	}
 
 	a.appDef, err = verifyConfig(a.globals)
+	if err != nil {
+		return err
+	}
+	a.appDef, err = a.mergeActionsFile(thread, a.appDef, a.starlarkCache)
 	if err != nil {
 		return err
 	}
@@ -244,7 +247,7 @@ func (a *App) addParams(builtin starlark.StringDict) (starlark.StringDict, error
 
 	// Add param module for referencing param values
 	a.paramDict = starlark.StringDict{}
-	for _, p := range a.paramInfo {
+	for _, p := range a.allParamInfo() {
 		a.paramDict[p.Name] = p.DefaultValue
 
 		if p.DefaultValue != starlark.None {
@@ -274,9 +277,12 @@ func (a *App) addParams(builtin starlark.StringDict) (starlark.StringDict, error
 		}
 
 		valueStr, ok := a.Metadata.ParamValues[p.Name]
+		_, isActionParam := a.actionParamInfo[p.Name]
 		if !ok {
-			// no custom value specified
-			if p.Required && p.DefaultValue == starlark.None {
+			// no custom value specified. Action params are supplied per
+			// invocation, a required one without a value is enforced when the
+			// action runs
+			if p.Required && p.DefaultValue == starlark.None && !isActionParam {
 				return nil, fmt.Errorf("param %s is a required param, a value has to be provided", p.Name)
 			}
 			continue
@@ -289,7 +295,7 @@ func (a *App) addParams(builtin starlark.StringDict) (starlark.StringDict, error
 		}
 		a.paramDict[p.Name] = value
 
-		if p.Type == starlark_type.STRING && p.Required && valueStr == "" {
+		if p.Type == starlark_type.STRING && p.Required && valueStr == "" && !isActionParam {
 			return nil, fmt.Errorf("param %s is a required param, value cannot be empty", p.Name)
 		}
 	}
@@ -307,6 +313,27 @@ func (a *App) addParams(builtin starlark.StringDict) (starlark.StringDict, error
 		}
 	}
 	return newBuiltins, nil
+}
+
+// mergeActionsFile evaluates the optional actions.star file on the given
+// thread (the app loader or the audit loader, so plugin loads in the file are
+// hooked or recorded like those of app.star) and appends its actions and
+// permissions to the app definition. An app without the file is unchanged
+func (a *App) mergeActionsFile(thread *starlark.Thread, appDef *starlarkstruct.Struct, cache map[string]*starlarkCacheEntry) (*starlarkstruct.Struct, error) {
+	fileName := a.getStarPath(apptype.ACTIONS_FILE_NAME)
+	if !fileExists(a.sourceFS, fileName) {
+		return appDef, nil
+	}
+	// loadStarlark applies star_base itself
+	globals, err := a.loadStarlark(thread, apptype.ACTIONS_FILE_NAME, cache)
+	if err != nil {
+		return nil, fmt.Errorf("error loading %s: %w", fileName, err)
+	}
+	actions, permissions, err := apptype.ReadActionsFile(fileName, globals)
+	if err != nil {
+		return nil, err
+	}
+	return apptype.MergeAppDef(appDef, actions, permissions)
 }
 
 func verifyConfig(globals starlark.StringDict) (*starlarkstruct.Struct, error) {
@@ -654,12 +681,23 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	if mcp := a.Metadata.MCP; mcp.ServesActions() && (path == mcp.Path || strings.HasPrefix(path, mcp.Path+"/")) {
 		return fmt.Errorf("action path %s is not allowed, %s is the MCP endpoint of the app", path, mcp.Path)
 	}
+	if err := a.checkActionHidden(name, hidden); err != nil {
+		return err
+	}
 	containerProxyUrl := ""
 	if a.containerHandler != nil {
 		containerProxyUrl = a.containerHandler.GetProxyUrl()
 	}
+	// args of the run and suggest handlers start from the action param set
+	actionParamDict := a.paramDict
+	if a.actionParamInfo != nil {
+		actionParamDict = starlark.StringDict{}
+		for name := range a.actionParamInfo {
+			actionParamDict[name] = a.paramDict[name]
+		}
+	}
 	action, err := action.NewAction(a.Logger, a.sourceFS, a.IsDev, name, description, a.Name, path, run, suggest,
-		slices.Collect(maps.Values(a.paramInfo)), a.paramValuesStr, a.paramDict, a.Path, a.appStyle.GetStyleType(),
+		a.actionParams(), a.paramValuesStr, actionParamDict, a.Path, a.appStyle.GetStyleType(),
 		containerProxyUrl, hidden, showValidate, a.auditInsert, a.containerHandler, a.jsLibs, a.AppPathDomain(),
 		a.serverConfig, a.AppConfig.Action, permit, a.rbacApi, async, timeout)
 	if err != nil {
@@ -678,6 +716,9 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("error adding action at path %s: %v", path, r)
+			if path == "/" {
+				err = fmt.Errorf("%w (a root action cannot share the app root with the proxy route at /, use a sub path)", err)
+			}
 		}
 	}()
 	router.Mount(path, r)

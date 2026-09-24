@@ -958,8 +958,12 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 		value, ok := a.paramValuesStr[p.Name]
 		qValue := queryParams.Get(p.Name)
 		if !ok && qValue == "" {
-			http.Error(w, fmt.Sprintf("missing param value for %s", p.Name), http.StatusInternalServerError)
-			return
+			// A param with no default and no app level value (a required
+			// action param is supplied per invocation) starts empty
+			value = ""
+			if p.Type == starlark_type.BOOLEAN {
+				value = "false"
+			}
 		}
 
 		if qValue != "" {

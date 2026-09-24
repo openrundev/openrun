@@ -12,6 +12,16 @@ const (
 	CONFIG_LOCK_FILE_NAME = "config_gen.lock"
 	SCHEMA_FILE_NAME      = "schema.star"
 	PARAMS_FILE_NAME      = "params.star"
+	// ACTIONS_FILE_NAME is the optional convention file declaring actions
+	// (and permissions) outside app.star, so an app built from a spec can add
+	// actions without owning the spec's app.star
+	ACTIONS_FILE_NAME = "actions.star"
+	// ACTION_PARAMS_FILE_NAME declares the params shown on the action
+	// surfaces; when present, only its params are shown (see spec-actions.md)
+	ACTION_PARAMS_FILE_NAME = "action_params.star"
+	// ACTIONS_KEY and ACTION_PERMISSIONS_KEY are the globals read from actions.star
+	ACTIONS_KEY            = "actions"
+	ACTION_PERMISSIONS_KEY = "permissions"
 	// BUILTIN_PLUGIN_SUFFIX is the standard plugin module suffix:
 	// load("store.in", "store"). Resolution prefers a module compiled into
 	// the binary and falls back to an external provider serving that name

@@ -324,6 +324,23 @@ func (a *Action) invoke(ctx context.Context, inv Invocation) (retOutcome *Outcom
 		}
 	}
 
+	if inv.Op != OpSuggest {
+		// A required param without a default and without an app level value
+		// (an action_params.star param, supplied per invocation) must be
+		// passed: the handler is not called with a None value. Reported as
+		// param errors, so the REST API answers 422, the CLI exits 2 and the
+		// MCP tool returns a correctable tool error
+		if missing := a.missingRequiredParams(args); len(missing) > 0 {
+			paramErrors := make(map[string]any, len(missing))
+			for _, name := range missing {
+				paramErrors[name] = fmt.Sprintf("param %s is required", name)
+			}
+			event.Status = string(types.EventStatusSuccess)
+			return &Outcome{QueryParams: qsParams, Status: "Missing required params", Report: apptype.AUTO,
+				ParamErrors: paramErrors, event: &event, finish: finish}, nil
+		}
+	}
+
 	if inv.Op == OpRun && a.IsAsync() {
 		// An async action: the run executes in the background with the args
 		// built above; the uploaded files now belong to the run. The
@@ -552,4 +569,24 @@ func (o *Outcome) ConsumeStream(ctx context.Context, emit func(chunk string) err
 	exitStatus, err := consumeStream(ctx, o.stream, emit)
 	recordStreamOutcome(o.event, exitStatus, err)
 	return exitStatus, err
+}
+
+// missingRequiredParams returns the visible required params which have no
+// value in args: None (no default, no app level value, not passed), or an
+// empty string for a string param declared without a default. Params with a
+// default keep their existing semantics, the handler validates them
+func (a *Action) missingRequiredParams(args starlark.StringDict) []string {
+	missing := []string{}
+	for _, p := range a.params {
+		if !p.Required || a.hidden[p.Name] || strings.HasPrefix(p.Name, OPTIONS_PREFIX) || strings.HasPrefix(p.Name, OPTIONS_PREFIX_UNDERSCORE) {
+			continue
+		}
+		value, ok := args[p.Name]
+		if !ok || value == nil || value == starlark.None ||
+			(p.Type == starlark_type.STRING && p.DefaultValue == starlark.None && value == starlark.String("")) {
+			missing = append(missing, p.Name)
+		}
+	}
+	slices.Sort(missing)
+	return missing
 }
