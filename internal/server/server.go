@@ -785,10 +785,10 @@ func (s *Server) prepareDynamicConfig(ctx context.Context, config *types.Dynamic
 		}
 
 		if !reflect.DeepEqual(previous.Api, effective.Api) {
-			// The MCP tool set snapshots [api.mcp] policy at build time: drop
-			// the built server so the next request rebuilds it with the new
-			// policy (invocation-time checks stay authoritative regardless)
-			s.invalidateMCPServer()
+			// The MCP tool set snapshots [api.mcp] policy at build time:
+			// re-register it with the new policy (invocation-time checks
+			// stay authoritative regardless)
+			s.refreshMCPServer()
 		}
 
 		// If the auth callback domain changed to one that already has apps, those

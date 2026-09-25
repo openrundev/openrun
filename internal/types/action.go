@@ -17,23 +17,70 @@ import (
 // database without loading apps. The params are not part of it: describing
 // and running an action use the loaded definition
 type ActionDef struct {
-	Name        string   `json:"name"`
-	Path        string   `json:"path"`
-	Description string   `json:"description,omitempty"`
-	Suggest     bool     `json:"suggest,omitempty"`
-	Permit      []string `json:"permit,omitempty"` // custom permissions of which the caller needs one
-	Async       bool     `json:"async,omitempty"`  // the handler runs in the background (arch/docs/async-actions.md)
+	Name        string       `json:"name"`
+	Path        string       `json:"path"`
+	Description string       `json:"description,omitempty"`
+	Suggest     bool         `json:"suggest,omitempty"`
+	Permit      []string     `json:"permit,omitempty"` // custom permissions of which the caller needs one
+	Async       bool         `json:"async,omitempty"`  // the handler runs in the background (arch/docs/async-actions.md)
+	Hints       *ActionHints `json:"hints,omitzero"`   // side-effect hints, nil when the action declares none
+}
+
+// ActionHints are the side-effect hints an action declares with ace.action
+// (read_only, destructive, idempotent, open_world): the MCP tool annotations
+// of the action, informational for the CLI and the form UI. Each hint is
+// nil when not declared, so that a declared False is distinct from an
+// undeclared hint (an undeclared action has no annotations at all, as
+// before hints existed)
+type ActionHints struct {
+	ReadOnly    *bool `json:"read_only,omitempty"`
+	Destructive *bool `json:"destructive,omitempty"`
+	Idempotent  *bool `json:"idempotent,omitempty"`
+	OpenWorld   *bool `json:"open_world,omitempty"`
+}
+
+// IsDestructive reports whether the action declares destructive=True
+func (h *ActionHints) IsDestructive() bool {
+	return h != nil && h.Destructive != nil && *h.Destructive
+}
+
+// IsReadOnly reports whether the action declares read_only=True
+func (h *ActionHints) IsReadOnly() bool {
+	return h != nil && h.ReadOnly != nil && *h.ReadOnly
+}
+
+// Labels returns the declared hints as short labels (ro, destructive, idem,
+// open), for the CLI
+func (h *ActionHints) Labels() []string {
+	if h == nil {
+		return nil
+	}
+	labels := []string{}
+	if h.ReadOnly != nil && *h.ReadOnly {
+		labels = append(labels, "ro")
+	}
+	if h.Destructive != nil && *h.Destructive {
+		labels = append(labels, "destructive")
+	}
+	if h.Idempotent != nil && *h.Idempotent {
+		labels = append(labels, "idem")
+	}
+	if h.OpenWorld != nil && *h.OpenWorld {
+		labels = append(labels, "open")
+	}
+	return labels
 }
 
 // ActionInfo is one action of an app, as listed for a caller who can run it
 type ActionInfo struct {
-	AppPath     string `json:"app_path"`
-	Name        string `json:"name"`
-	Tool        string `json:"tool"` // the name the action is selected by
-	Path        string `json:"path"` // the action path within the app
-	Description string `json:"description,omitempty"`
-	Suggest     bool   `json:"suggest"`
-	Async       bool   `json:"async"` // the handler runs in the background, the run APIs manage the runs
+	AppPath     string       `json:"app_path"`
+	Name        string       `json:"name"`
+	Tool        string       `json:"tool"` // the name the action is selected by
+	Path        string       `json:"path"` // the action path within the app
+	Description string       `json:"description,omitempty"`
+	Suggest     bool         `json:"suggest"`
+	Async       bool         `json:"async"`          // the handler runs in the background, the run APIs manage the runs
+	Hints       *ActionHints `json:"hints,omitzero"` // side-effect hints, nil when the action declares none
 }
 
 // ActionListResponse is the response of the list actions API. Warnings has

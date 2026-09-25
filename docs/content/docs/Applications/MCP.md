@@ -35,7 +35,7 @@ openrun app create --auth builtin \
     ./src /shop
 ```
 
-A fourth form, `--mcp=actions`, is for [action apps]({{< ref "actions/#mcp-tools" >}}): OpenRun itself serves the app's actions as MCP tools at `<app url>/mcp`, there is no upstream MCP server. Everything below about login, tokens, scopes and API keys applies to it.
+A fourth form, `--mcp=actions`, is for [action apps]({{< ref "actions/#mcp-tools" >}}): OpenRun itself serves the app's actions as MCP tools at `<app url>/mcp`, there is no upstream MCP server. Everything below about login, tokens, scopes and API keys applies to it. The tools carry the [side-effect hints]({{< ref "actions/#side-effect-hints" >}}) of the actions as annotations, a `destructive=True` action is confirmed by the user before it runs (for clients on MCP protocol 2026-07-28 or later with the elicitation capability), and the tool list is private to the caller with a freshness hint of `action.mcp_list_ttl` (default `3m`).
 
 `--mcp=@file` reads the JSON document from a local file (the CLI expands it; the API only accepts the document itself). `openrun app update mcp <value> <glob>` changes it later (`-` clears it); updates are staged and promoted like other metadata. In apply files the `app()` entry takes `mcp=True`, `mcp="/mcp"` or `mcp={...}`.
 

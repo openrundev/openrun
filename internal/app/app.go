@@ -133,11 +133,14 @@ type App struct {
 	// which must not wait for initMutex (held by a reload for as long as a
 	// container build takes). nil until the definition has been loaded
 	publishedActions atomic.Pointer[[]*action.Action]
-	secretEvalFunc   func([][]string, string, string) (string, error)
-	auditInsert      func(*types.AuditEvent) error
-	runServices      *RunServices // the server services async action runs need, nil in tests without a server
-	AppRunPath       string       // path to the app run directory
-	rbacApi          rbac.RBACAPI // the rbac api to use
+	// configSource returns the effective server config, for the settings
+	// which change dynamically; nil in tests without a server
+	configSource   func() *types.ServerConfig
+	secretEvalFunc func([][]string, string, string) (string, error)
+	auditInsert    func(*types.AuditEvent) error
+	runServices    *RunServices // the server services async action runs need, nil in tests without a server
+	AppRunPath     string       // path to the app run directory
+	rbacApi        rbac.RBACAPI // the rbac api to use
 
 	// telemetryAttrs caches the immutable per-app OpenTelemetry attributes so
 	// that ServeHTTP does not allocate them on every request.
@@ -284,6 +287,22 @@ type RunServices struct {
 	Store    action.RunStore
 	Registry *system.RunRegistry
 	NodeId   string
+}
+
+// SetConfigSource sets the accessor of the effective server config, for the
+// settings which change dynamically (the MCP confirmation switch); called by
+// the server when the app is created, before it is loaded
+func (a *App) SetConfigSource(source func() *types.ServerConfig) {
+	a.configSource = source
+}
+
+// effectiveServerConfig returns the effective server config: the server's
+// current config, or the config the app was created with without a server
+func (a *App) effectiveServerConfig() *types.ServerConfig {
+	if a.configSource != nil {
+		return a.configSource()
+	}
+	return a.serverConfig
 }
 
 // SetRunServices sets the services async action runs use; called by the

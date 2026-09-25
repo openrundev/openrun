@@ -128,6 +128,20 @@ type apiOperation struct {
 	Destructive bool                 // MCP DestructiveHint
 	MCPDisabled bool                 // disabled by default for the MCP invoker
 
+	// DestructiveWhen decides per call whether the operation is destructive
+	// (run_action: the action's own destructive hint), for the MCP
+	// confirmation of operations which are not destructive as a whole. The
+	// tool annotation stays that of Destructive
+	DestructiveWhen func(ctx context.Context, s *Server, in any) bool
+	// ConfirmMessage builds the confirmation prompt of a DestructiveWhen
+	// operation from the input and the dry-run preview, in place of the
+	// generic operation prompt
+	ConfirmMessage func(ctx context.Context, s *Server, in any, preview any) string
+	// PreviewError inspects the dry-run preview of a DestructiveWhen
+	// operation: a non-empty message is a validation failure the caller
+	// can correct, returned as a tool error instead of the confirmation
+	PreviewError func(preview any) string
+
 	// Description documents the operation for consumers of the catalog; it
 	// is the MCP tool description
 	Description string
@@ -282,7 +296,7 @@ func init() {
 			Scope: types.PermissionAccess, ReadOnly: true,
 			Method: http.MethodGet, Path: "/actions/schema", ApiFunc: (*Handler).getAction},
 		API_RUN_ACTION: {Description: "Run an app action with the given args, as the calling user. dry_run=true validates the args without running. Use get_action for the params",
-			Scope:  types.PermissionAccess,
+			Scope: types.PermissionAccess, DestructiveWhen: runActionDestructive, ConfirmMessage: runActionConfirmMessage, PreviewError: runActionPreviewError,
 			Method: http.MethodPost, Path: "/actions/run", ApiFunc: (*Handler).runAction, MaxBodyBytes: actionMaxBodyBytes},
 		API_SUGGEST_ACTION: {Description: "Get suggested arg values for an app action from its suggest handler, given a partial set of args",
 			Scope: types.PermissionAccess, ReadOnly: true,

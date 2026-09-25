@@ -10,6 +10,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -278,7 +279,69 @@ func actionInfo(application *app.App, act *action.Action, tool string) types.Act
 		Description: act.Description(),
 		Suggest:     act.HasSuggest(),
 		Async:       act.IsAsync(),
+		Hints:       act.Hints(),
 	}
+}
+
+// runActionDestructive reports whether a run_action call targets an action
+// declared destructive=True, for the MCP confirmation of the call. The
+// definition is read without initializing the app; a call which cannot be
+// resolved is not destructive, the handler reports the error
+func runActionDestructive(ctx context.Context, s *Server, in any) bool {
+	req, ok := in.(mcpActionRunIn)
+	if !ok || req.DryRun {
+		return false
+	}
+	resolved, err := s.resolveAction(ctx, req.Path, req.Action, req.Stage, false)
+	if err != nil {
+		return false
+	}
+	defer resolved.release()
+	return resolved.action.IsDestructive()
+}
+
+// runActionPreviewError returns the param errors of a run_action validate
+// pass as the text of a tool error, "" when the args are valid
+func runActionPreviewError(preview any) string {
+	doc, ok := preview.(map[string]any)
+	if !ok {
+		return ""
+	}
+	paramErrors, _ := doc["param_errors"].(map[string]any)
+	if len(paramErrors) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if status, _ := doc["status"].(string); status != "" {
+		b.WriteString(status + "\n")
+	}
+	for _, name := range slices.Sorted(maps.Keys(paramErrors)) {
+		fmt.Fprintf(&b, "param %s: %v\n", name, paramErrors[name])
+	}
+	return b.String()
+}
+
+// runActionConfirmMessage builds the confirmation prompt of a run_action
+// call the way the app's own MCP tools do: the action, its app and
+// description, the args (passwords hidden) and the validate status
+func runActionConfirmMessage(ctx context.Context, s *Server, in any, preview any) string {
+	req, _ := in.(mcpActionRunIn)
+	status := ""
+	if doc, ok := preview.(map[string]any); ok {
+		status, _ = doc["status"].(string)
+	}
+	resolved, err := s.resolveAction(ctx, req.Path, req.Action, req.Stage, false)
+	if err != nil {
+		return fmt.Sprintf("Confirm run_action on %s: %s", req.Path, cmp.Or(status, "the action is destructive"))
+	}
+	defer resolved.release()
+	args := make(map[string]jsontext.Value, len(req.Args))
+	for name, value := range req.Args {
+		if encoded, err := json.Marshal(value); err == nil {
+			args[name] = encoded
+		}
+	}
+	return resolved.action.MCPConfirmMessage(args, status)
 }
 
 // listedAction is an action as the list shows it, with the permit the caller
@@ -314,6 +377,7 @@ func listedActionDefs(appPath string, defs []types.ActionDef) []listedAction {
 			Description: def.Description,
 			Suggest:     def.Suggest,
 			Async:       def.Async,
+			Hints:       def.Hints,
 		}})
 	}
 	return listed

@@ -60,7 +60,7 @@ tests:
       app = ace.app("ops",
           actions=[
               ace.action("List Orders", "/", orders, suggest=orders_suggest, description="List the orders", hidden=["datafile"]),
-              ace.action("Purge", "/purge", restricted, permit=["ops_admin"], description="Purge old orders", hidden=["count", "status", "rush", "datafile"]),
+              ace.action("Purge", "/purge", restricted, permit=["ops_admin"], description="Purge old orders", hidden=["count", "status", "rush", "datafile"], destructive=True),
               ace.action("Build", "/build", build, description="Run the build", hidden=["status", "rush", "datafile"]),
               ace.action("Upload", "/upload", upload, description="Upload a data file", hidden=["count", "status", "rush"]),
               ace.action("Export", "/export", export, description="Export the orders as a csv file", hidden=["count", "status", "rush", "datafile"]),
@@ -125,11 +125,11 @@ tests:
     command: ../openrun --as builtin:alice action list -f csv "/actapps/**"
     stdout:
       exactly: |-
-        /actapps/ops,list_orders,List Orders,/,true,List the orders
-        /actapps/ops,build,Build,/build,false,Run the build
-        /actapps/ops,upload,Upload,/upload,false,Upload a data file
-        /actapps/ops,export,Export,/export,false,Export the orders as a csv file
-        /actapps/ops,logo,Logo,/logo,false,The logo image
+        /actapps/ops,list_orders,List Orders,/,true,-,List the orders
+        /actapps/ops,build,Build,/build,false,-,Run the build
+        /actapps/ops,upload,Upload,/upload,false,-,Upload a data file
+        /actapps/ops,export,Export,/export,false,-,Export the orders as a csv file
+        /actapps/ops,logo,Logo,/logo,false,-,The logo image
     exit-code: 0
   action0050: # carol holds the custom permission; bob has no app:access
     command: |
@@ -154,6 +154,14 @@ tests:
       not-contains:
         - "datafile"
         - "options_status"
+        - "Hints:"
+    exit-code: 0
+  action0065: # show: the declared side-effect hints of an action
+    command: ../openrun --as builtin:carol action show /actapps/ops purge
+    stdout:
+      contains:
+        - "Action:      purge (Purge)"
+        - "Hints:       destructive"
     exit-code: 0
   action0070: # run: a table on stdout, the status line on stderr; values are converted to the param type
     command: ../openrun action run /actapps/ops list_orders count=2 status=closed rush=true
@@ -509,7 +517,7 @@ tests:
         - "Action:      orders (List Orders)"
         - "all,open,closed"
         - "Usage: openrun action run /actapps/spec orders [status=<string>]"
-        - "/actapps/spec,orders,List Orders,/orders,false,Orders from the upstream"
+        - "/actapps/spec,orders,List Orders,/orders,false,-,Orders from the upstream"
         - "status"
       not-contains:
         - "app_name"

@@ -696,6 +696,7 @@ func (s *Server) newApp(appEntry *types.AppEntry, sourceFS *appfs.SourceFs, bind
 		return nil, err
 	}
 	application.SetRunServices(s.runServices())
+	application.SetConfigSource(s.Config)
 	return application, nil
 }
 

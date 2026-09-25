@@ -289,9 +289,11 @@ func TestActionSuggestListShow(t *testing.T) {
 				writeJSONResponse(w, http.StatusOK, `{"actions":[]}`)
 				return
 			}
-			writeJSONResponse(w, http.StatusOK, `{"actions":[{"app_path":"/orders","name":"List Orders","tool":"list_orders","path":"/","description":"List the orders\nsecond line","suggest":true}],"warnings":["/broken: load failed"]}`)
+			writeJSONResponse(w, http.StatusOK, `{"actions":[{"app_path":"/orders","name":"List Orders","tool":"list_orders","path":"/","description":"List the orders\nsecond line","suggest":true},
+				{"app_path":"/orders","name":"Purge","tool":"purge","path":"/purge","suggest":false,"hints":{"destructive":true,"idempotent":true}}],"warnings":["/broken: load failed"]}`)
 		case "/_openrun/actions/schema":
 			writeJSONResponse(w, http.StatusOK, `{"app_path":"/orders","name":"List Orders","tool":"list_orders","path":"/","description":"List the orders","suggest":true,
+				"hints":{"read_only":true},
 				"url":"https://localhost/orders","input_schema":{"type":"object"},"params":[
 				{"name":"count","type":"INT","description":"Number of orders","default":2,"required":false},
 				{"name":"region","type":"STRING","required":true,"options":["us","eu"]},
@@ -305,7 +307,7 @@ func TestActionSuggestListShow(t *testing.T) {
 	assertEq(t, "suggest status", "Suggesting values\n", stderr)
 
 	stdout, stderr, _ = runActionCli(t, ats, "list", "/orders")
-	for _, want := range []string{"App", "Action", "/orders", "list_orders", "List Orders", "true", "List the orders"} {
+	for _, want := range []string{"App", "Action", "Hints", "/orders", "list_orders", "List Orders", "true", "List the orders", "destructive,idem"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("list output must contain %q: %q", want, stdout)
 		}
@@ -323,7 +325,7 @@ func TestActionSuggestListShow(t *testing.T) {
 
 	stdout, _, _ = runActionCli(t, ats, "show", "/orders", "list_orders")
 	for _, want := range []string{"Action:      list_orders (List Orders)", "Url:         https://localhost/orders",
-		"Name    Type", "count   int", "region  string", "us,eu", "data    string (file)",
+		"Hints:       ro", "Name    Type", "count   int", "region  string", "us,eu", "data    string (file)",
 		"Usage: openrun action run /orders list_orders [count=<int>] region=<string> data=@<file>"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("show output must contain %q:\n%s", want, stdout)

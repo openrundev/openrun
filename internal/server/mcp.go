@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/openrundev/openrun/internal/app/action"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -42,8 +43,8 @@ preview the outcome first.`
 // getMCPServer returns the lazily built *mcp.Server; tools not enabled for
 // the MCP invoker (registry defaults + [api.mcp] config) are not registered,
 // and every tool re-checks invocation-time policy anyway. A dynamic [api]
-// config change invalidates the built server so the tool set follows the
-// effective policy (invalidateMCPServer)
+// config change re-registers the tool set on the same server so it follows
+// the effective policy (refreshMCPServer)
 func (s *Server) getMCPServer() *mcp.Server {
 	s.mcpMu.Lock()
 	defer s.mcpMu.Unlock()
@@ -53,14 +54,20 @@ func (s *Server) getMCPServer() *mcp.Server {
 	return s.mcpServer
 }
 
-// invalidateMCPServer drops the built MCP server so the next request rebuilds
-// the tool set from the current effective [api] config. In-flight requests
-// keep their server instance; the SDK emits tools/list_changed on rebuild for
-// clients that track it
-func (s *Server) invalidateMCPServer() {
+// refreshMCPServer re-registers the tool set of the built MCP server from
+// the current effective [api] config: the tools are removed and added on the
+// live server, which is what makes the SDK send tools/list_changed to the
+// clients holding a subscriptions/listen stream (a server built anew could
+// not reach them). A no-op until the server is first built
+func (s *Server) refreshMCPServer() {
 	s.mcpMu.Lock()
 	defer s.mcpMu.Unlock()
-	s.mcpServer = nil
+	if s.mcpServer == nil {
+		return
+	}
+	s.mcpServer.RemoveTools(s.mcpToolNames...)
+	s.mcpToolNames = nil
+	s.registerMCPTools(s.mcpServer)
 }
 
 // mcpHTTPHandler authenticates the bearer credential for the mcp surface and
@@ -85,8 +92,9 @@ func (s *Server) mcpHTTPHandler() http.Handler {
 // mcpServerState holds the lazily built MCP server, embedded in Server. The
 // server is rebuilt after dynamic [api] config changes
 type mcpServerState struct {
-	mcpMu     sync.Mutex
-	mcpServer *mcp.Server
+	mcpMu        sync.Mutex
+	mcpServer    *mcp.Server
+	mcpToolNames []string // the registered tool names, removed on a refresh
 }
 
 // addMCPTool registers one typed tool wrapping a management operation. The
@@ -149,8 +157,14 @@ func addMCPTool[In any](s *Server, srv *mcp.Server, operation API_NAME,
 		// twice - the first pass is the side-effect-free preview, the retry
 		// (carrying the user's answer) is the real run - so nothing with
 		// side effects may be added ahead of this block
-		if entry.Destructive && !s.Config().Api.MCP.SkipDestructiveConfirm &&
-			!mcpInputDryRun(in) && mcpConfirmSupported(req) {
+		confirmable := !s.Config().Api.MCP.SkipDestructiveConfirm && !mcpInputDryRun(in) && mcpConfirmSupported(req)
+		destructive := entry.Destructive
+		if confirmable && !destructive && entry.DestructiveWhen != nil {
+			// Destructive per call (run_action of an action declared
+			// destructive=True); errors surface from the handler itself
+			destructive = entry.DestructiveWhen(ctx, s, in)
+		}
+		if confirmable && destructive {
 			if response, answered := req.Params.InputResponses[mcpConfirmKey]; answered {
 				elicit, ok := response.(*mcp.ElicitResult)
 				if !ok || elicit.Action != "accept" {
@@ -180,6 +194,20 @@ func addMCPTool[In any](s *Server, srv *mcp.Server, operation API_NAME,
 						return nil, nil, dryErr
 					}
 					preview, _ = toJSONValue(dryOut)
+					if entry.PreviewError != nil {
+						if msg := entry.PreviewError(preview); msg != "" {
+							// A validation failure the caller can correct
+							// (the param errors of an action): returned as
+							// a tool error, nothing to confirm yet
+							event.Operation += "_dryrun"
+							event.Detail += " confirm=invalid"
+							if auditErr := s.InsertAuditEvent(&event); auditErr != nil {
+								s.Error().Err(auditErr).Msg("error inserting audit event for MCP preview")
+							}
+							return &mcp.CallToolResult{IsError: true,
+								Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, preview, nil
+						}
+					}
 				}
 				event.Operation += "_dryrun"
 				event.Detail += " confirm=requested"
@@ -187,10 +215,14 @@ func addMCPTool[In any](s *Server, srv *mcp.Server, operation API_NAME,
 				if auditErr := s.InsertAuditEvent(&event); auditErr != nil {
 					s.Error().Err(auditErr).Msg("error inserting audit event for MCP preview")
 				}
+				message := mcpConfirmMessage(operation, entry, mcpInputTarget(in), preview)
+				if entry.ConfirmMessage != nil {
+					message = entry.ConfirmMessage(ctx, s, in, preview)
+				}
 				return &mcp.CallToolResult{
 					InputRequests: mcp.InputRequestMap{
 						mcpConfirmKey: &mcp.ElicitParams{
-							Message: mcpConfirmMessage(operation, entry, mcpInputTarget(in), preview),
+							Message: message,
 							RequestedSchema: map[string]any{
 								"type": "object", "properties": map[string]any{},
 							},
@@ -233,6 +265,7 @@ func addMCPTool[In any](s *Server, srv *mcp.Server, operation API_NAME,
 		}
 		return nil, generic, err
 	})
+	s.mcpToolNames = append(s.mcpToolNames, string(operation))
 }
 
 // MCP tool input types. Dedicated slim DTOs: the REST request types lean on
@@ -524,7 +557,29 @@ type (
 func (s *Server) buildMCPServer() *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "openrun", Version: types.GetVersion()},
 		&mcp.ServerOptions{Instructions: mcpServerInstructions})
+	// The tool list follows the effective [api.mcp] policy and the caller's
+	// credential: private to the caller's client, refreshed within the ttl
+	// by clients which do not listen for changes
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if listResult, ok := result.(*mcp.ListToolsResult); ok && err == nil {
+				listResult.CacheScope = "private"
+				listResult.TTLMs = int(mcpListTTL / time.Millisecond)
+			}
+			return result, err
+		}
+	})
+	s.registerMCPTools(srv)
+	return srv
+}
 
+// mcpListTTL is the freshness hint of the management tool list
+const mcpListTTL = 5 * time.Minute
+
+// registerMCPTools registers the tool set on the server, recording the names
+// for refreshMCPServer
+func (s *Server) registerMCPTools(srv *mcp.Server) {
 	addMCPTool(s, srv, API_SERVER_VERSION,
 		func(ctx context.Context, _ mcpEmptyIn) (any, error) {
 			return s.ServerVersion(ctx)
@@ -980,8 +1035,6 @@ func (s *Server) buildMCPServer() *mcp.Server {
 		func(ctx context.Context, in mcpApiKeyIdIn) (any, error) {
 			return s.DeleteApiKey(ctx, in.Id)
 		})
-
-	return srv
 }
 
 // toJSONValue round-trips a value through json/v2 into generic JSON values,
@@ -1015,19 +1068,16 @@ func mcpInputTarget(in any) string {
 	return ""
 }
 
-// mcpConfirmKey is the input-request id used for destructive-op confirmation
-const mcpConfirmKey = "confirm"
+// mcpConfirmKey is the input-request id used for destructive-op confirmation,
+// shared with the per-app action tools
+const mcpConfirmKey = action.MCPConfirmKey
 
 // mcpConfirmSupported reports whether the calling client can complete an
-// MRTR confirmation round trip in stateless mode: protocol 2026-07-28+ (the
-// input_required retry is client-driven; older clients would need the
-// server-side live-elicit bridge, which stateless mode cannot serve) and a
-// declared elicitation capability. Older or non-eliciting clients skip
+// MRTR confirmation round trip in stateless mode (protocol 2026-07-28+ and a
+// declared elicitation capability). Older or non-eliciting clients skip
 // confirmation entirely and keep today's direct-execute behavior
 func mcpConfirmSupported(req *mcp.CallToolRequest) bool {
-	iparams := req.Session.InitializeParams()
-	return iparams != nil && iparams.ProtocolVersion >= "2026-07-28" &&
-		iparams.Capabilities != nil && iparams.Capabilities.Elicitation != nil
+	return action.MCPConfirmSupported(req)
 }
 
 // mcpInputWithDryRun returns a copy of the tool input with DryRun set true,

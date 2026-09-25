@@ -404,10 +404,30 @@ func createActionBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.
 	var suggest, executor starlark.Callable
 	var hidden, permit *starlark.List
 	var showValidate, async starlark.Bool
+	// The side-effect hints are tri-state: absent (None) is not declared,
+	// which is distinct from False
+	var readOnly, destructive, idempotent, openWorld starlark.Value = starlark.None, starlark.None, starlark.None, starlark.None
 	if err := starlark.UnpackArgs(ACTION, args, kwargs, "name", &name, "path", &path,
 		"run", &executor, "suggest?", &suggest, "description?", &desc, "hidden?", &hidden,
-		"show_validate?", &showValidate, "permit?", &permit, "is_async?", &async, "timeout?", &timeout); err != nil {
+		"show_validate?", &showValidate, "permit?", &permit, "is_async?", &async, "timeout?", &timeout,
+		"read_only?", &readOnly, "destructive?", &destructive, "idempotent?", &idempotent, "open_world?", &openWorld); err != nil {
 		return nil, fmt.Errorf("error unpacking action args: %w", err)
+	}
+	hints := map[string]starlark.Value{"read_only": readOnly, "destructive": destructive, "idempotent": idempotent, "open_world": openWorld}
+	for key, value := range hints {
+		if value != starlark.None {
+			if _, ok := value.(starlark.Bool); !ok {
+				return nil, fmt.Errorf("action %s: %s must be True or False", name, key)
+			}
+		}
+	}
+	if readOnly == starlark.True {
+		if destructive == starlark.True {
+			return nil, fmt.Errorf("action %s: read_only and destructive are exclusive", name)
+		}
+		if idempotent == starlark.False {
+			return nil, fmt.Errorf("action %s: a read_only action is idempotent", name)
+		}
 	}
 	if timeout != "" {
 		if _, err := time.ParseDuration(string(timeout)); err != nil {
@@ -435,6 +455,11 @@ func createActionBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.
 		"permit":        permit,
 		"is_async":      async,
 		"timeout":       timeout,
+	}
+	for key, value := range hints {
+		if value != starlark.None {
+			fields[key] = value
+		}
 	}
 
 	if suggest != nil {

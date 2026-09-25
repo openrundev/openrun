@@ -312,6 +312,7 @@ action.output_head_bytes = 10485760 # first bytes of a stream run's output kept
 action.output_tail_bytes = 10485760 # last bytes kept (the most recent while running)
 action.result_max_bytes = 104857600 # JSON size cap of a values result
 action.display_rows = 1000          # result rows the run page renders inline
+action.mcp_list_ttl = "3m"          # how long an MCP client may use a listed tool set before listing again
 action.max_wait_secs = 120          # cap of the wait of the run read APIs
 
 # Jobs related settings

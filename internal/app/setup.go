@@ -599,7 +599,11 @@ func (a *App) mountActionsMCP(router *chi.Mux) (err error) {
 			err = fmt.Errorf("error mounting actions MCP endpoint at %s: %v", mcp.Path, r)
 		}
 	}()
-	handler, err := action.BuildMCPHandler(a.Name, strconv.Itoa(a.Metadata.VersionMetadata.Version), a.actions)
+	listTTL, err := action.MCPListTTLOf(a.AppConfig.Action)
+	if err != nil {
+		return err
+	}
+	handler, err := action.BuildMCPHandler(a.Name, listTTL, a.actions)
 	if err != nil {
 		return err
 	}
@@ -620,6 +624,26 @@ func (a *App) mountActionsAPI(router *chi.Mux) (err error) {
 	apiRouter := action.BuildAPIRouter(a.Name, a.Path, a.actions)
 	router.Mount(action.API_PATH, apiRouter)
 	return nil
+}
+
+// actionHints reads the side-effect hints of an ace.action definition
+// (read_only, destructive, idempotent, open_world); nil when none is declared
+func actionHints(actionDef *starlarkstruct.Struct) (*types.ActionHints, error) {
+	hints := &types.ActionHints{}
+	declared := false
+	for key, field := range map[string]**bool{"read_only": &hints.ReadOnly, "destructive": &hints.Destructive,
+		"idempotent": &hints.Idempotent, "open_world": &hints.OpenWorld} {
+		value, err := apptype.GetBoolPtrAttr(actionDef, key)
+		if err != nil {
+			return nil, err
+		}
+		*field = value
+		declared = declared || value != nil
+	}
+	if !declared {
+		return nil, nil
+	}
+	return hints, nil
 }
 
 func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err error) {
@@ -671,6 +695,10 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 	if err != nil {
 		return err
 	}
+	hints, err := actionHints(actionDef)
+	if err != nil {
+		return err
+	}
 
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
@@ -704,6 +732,8 @@ func (a *App) addAction(count int, val starlark.Value, router *chi.Mux) (err err
 		return fmt.Errorf("error creating action %s: %w", name, err)
 	}
 	action.SetFileFetcher(a.FetchLocal)
+	action.SetHints(hints)
+	action.SetConfigSource(a.effectiveServerConfig)
 	if action.IsAsync() {
 		action.SetRunHost(a.runHost())
 	}

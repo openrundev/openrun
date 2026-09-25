@@ -86,9 +86,11 @@ type Action struct {
 	rbacApi             rbac.RBACAPI
 	fetchFile           FileFetcher // fetches result files through the app router, see files.go
 	config              types.ActionConfig
-	async               bool          // the handler runs in the background (ace.action is_async=True)
-	timeout             time.Duration // async run timeout
-	runHost             *RunHost      // the server services async runs need, nil until SetRunHost
+	async               bool                       // the handler runs in the background (ace.action is_async=True)
+	hints               *types.ActionHints         // side-effect hints declared with ace.action, nil when none
+	configSource        func() *types.ServerConfig // the effective server config, for the dynamic settings; serverConfig when nil
+	timeout             time.Duration              // async run timeout
+	runHost             *RunHost                   // the server services async runs need, nil until SetRunHost
 }
 
 // NewAction creates a new action
@@ -195,6 +197,30 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 // IsAsync reports whether the action runs in the background (is_async=True)
 func (a *Action) IsAsync() bool {
 	return a.async
+}
+
+// SetConfigSource sets the accessor of the effective server config, for
+// the settings which change dynamically (the MCP confirmation switch)
+func (a *Action) SetConfigSource(source func() *types.ServerConfig) {
+	a.configSource = source
+}
+
+// SetHints sets the side-effect hints declared with ace.action
+func (a *Action) SetHints(hints *types.ActionHints) {
+	a.hints = hints
+}
+
+// Hints returns the side-effect hints declared with ace.action, nil when the
+// action declares none
+func (a *Action) Hints() *types.ActionHints {
+	return a.hints
+}
+
+// IsDestructive reports whether the action declares destructive=True: the
+// MCP tools ask capable clients to confirm before running it, the form shows
+// a badge
+func (a *Action) IsDestructive() bool {
+	return a.hints.IsDestructive()
 }
 
 // Timeout returns the async run timeout
@@ -309,20 +335,20 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 	if apiMode && requestHasJSONBody(r) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			a.auditRejectedRequest(r.Context(), op)
+			a.auditRejectedRequest(r.Context(), op, "")
 			writeRequestParseError(w, err, a.maxRequestBodyBytes, apiMode)
 			return
 		}
 		if len(bytes.TrimSpace(body)) > 0 { // empty body means use the app level param values
 			if err := json.Unmarshal(body, &inv.JSONArgs); err != nil {
-				a.auditRejectedRequest(r.Context(), op)
+				a.auditRejectedRequest(r.Context(), op, "")
 				writeRequestParseError(w, err, a.maxRequestBodyBytes, apiMode)
 				return
 			}
 		}
 	} else {
 		if err := r.ParseMultipartForm(multipartMaxMemoryBytes); err != nil && !errors.Is(err, http.ErrNotMultipart) {
-			a.auditRejectedRequest(r.Context(), op)
+			a.auditRejectedRequest(r.Context(), op, "")
 			writeRequestParseError(w, err, a.maxRequestBodyBytes, apiMode)
 			return
 		}
@@ -330,7 +356,7 @@ func (a *Action) execAction(w http.ResponseWriter, r *http.Request, isSuggest, i
 			// A file upload param can be submitted only in a multipart post
 			for _, param := range a.params {
 				if param.DisplayType == apptype.DisplayTypeFileUpload && !a.hidden[param.Name] {
-					a.auditRejectedRequest(r.Context(), op)
+					a.auditRejectedRequest(r.Context(), op, "")
 					writeError(fmt.Sprintf("error getting file %s: %s", param.Name, http.ErrNotMultipart), http.StatusBadRequest)
 					return
 				}
@@ -1033,6 +1059,7 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 		"showValidate":  a.showValidate,
 		"esmLibs":       a.esmLibs,
 		"async":         a.IsAsync(),
+		"destructive":   a.IsDestructive(),
 		"runsPath":      a.runsPath(),
 	}
 	err = a.actionTemplate.ExecuteTemplate(w, "form.go.html", input)

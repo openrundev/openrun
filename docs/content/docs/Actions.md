@@ -63,6 +63,10 @@ An action is defined using the `ace.action` struct. The fields in this structure
 |    permit     |   true   | list string  |   []    | List of custom RBAC permissions, any one of which need to be granted for the user to allow this action |
 |   is_async    |   true   |   boolean    |  False  |          `True` runs the handler in the background, see [Async Actions]({{< ref "#async-actions" >}})          |
 |    timeout    |   true   |    string    |   none  |          Timeout of an async run, a Go duration like `"2h"`; defaults to the app's `action.run_timeout`          |
+|   read_only   |   true   |   boolean    |  none   |          `True` declares that the action changes nothing, see [Side-effect Hints]({{< ref "#side-effect-hints" >}})          |
+|  destructive  |   true   |   boolean    |  none   |          `True` declares that the action makes changes which may not be reversible          |
+|  idempotent   |   true   |   boolean    |  none   |          `True` declares that running the action again with the same args has no further effect          |
+|  open_world   |   true   |   boolean    |  none   |          `True` declares that the action reaches outside the app (a web API, a mail sender)          |
 
 The name and description are shown in the app UI. The app params are displayed in a form. `BOOLEAN` types are checkboxes, others are text boxes.
 
@@ -191,6 +195,23 @@ The runs are recorded in the metadata database, per app instance (the stage inst
 A run executes on the node which accepted it; if the node stops, the run is marked `lost` after a minute and can be started again. A reload or update of the app while a run executes lets the run finish on the version it started with. Every run writes an `action` audit event with the operation `run_finish`, the run id and its status, in addition to the submission's event.
 
 Through the [REST API]({{< ref "#rest-api" >}}) the run endpoint of an async action answers `202` with the `run_id` and the run url; `GET /api/runs/<id>` (with `?wait=30s` to wait for the end, up to `action.max_wait_secs`) returns the run with its result, `GET /api/runs/<id>/output?since=<offset>` the output, `GET /api/runs?action=<path>&status=` lists the runs and `POST /api/runs/<id>/cancel` cancels one. The [CLI]({{< ref "#command-line" >}}) and the [MCP tools]({{< ref "#mcp-tools" >}}) have the same operations.
+
+## Side-effect Hints
+
+An action can declare what its run does to the world, with the `read_only`, `destructive`, `idempotent` and `open_world` fields of `ace.action`:
+
+```python
+app = ace.app("orders",
+    actions=[
+        ace.action("Order Report", "/report", report, read_only=True),
+        ace.action("Cancel Order", "/cancel", cancel, destructive=True, description="Cancels the order and refunds it"),
+        ace.action("Set Flag", "/flag", set_flag, destructive=False, idempotent=True),
+    ])
+```
+
+The hints are informational: they never change who may run an action (`permit` and RBAC do) or how it runs. They are shown as a `Hints` column by `openrun action list` and a `Hints:` line by `openrun action show`, returned as `hints` by the `list_actions` and `get_action` management APIs, and become the [tool annotations](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#tool) of the action's [MCP tool]({{< ref "#mcp-tools" >}}) (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), which AI clients use to decide when to ask the user before a call. `read_only=True` implies not destructive and idempotent. An action which declares none of the fields has no hints and no tool annotations, and clients treat it as they did before hints existed.
+
+`destructive=True` has two visible effects: the action page shows a **Destructive** badge next to the action name, and MCP clients which support elicitation are asked to confirm the call before the action runs (see [MCP Tools]({{< ref "#mcp-tools" >}})). The CLI and the REST API run a destructive action at once, as they run any other action.
 
 ## Custom Templates
 
@@ -400,8 +421,11 @@ Each action is one tool:
 - `dry_run=true` runs the handler with `dry_run=True`, to validate the arguments without running the action. When the action has a param called `dry_run` the control is named `_dry_run` (with as many leading underscores as it takes to not be a param of the action); the tool description names it.
 - An action with a suggest handler gets a second, read only tool named `<tool>_suggest` (with a numeric suffix if another action already has that name; the description of the action's tool names it).
 - A tool call cannot carry a file: params with the `FILE` display type are left out, and an action with a required `FILE` param is not exposed as a tool.
+- The [side-effect hints]({{< ref "#side-effect-hints" >}}) of the action are its tool annotations; an action without hints has no annotations. The suggest tool and the run tools of async actions are marked read only.
 
-The tools a user sees in the client are the actions their `permit` allows. The result of a tool call has the structured result (`status`, `report`, `values`, `param_errors`) and a text block written for the model: the status line followed by a markdown table (the first 50 rows), the text lines, or JSON. The text block is limited to 64KB of values, with a note of how many values were left out, and the structured values to 256KB (`truncated` is set); an action meant for AI clients should return a focused result rather than rely on the limits. Param errors are returned as a tool error listing `param <name>: <message>`, so that the model can correct the arguments and retry. The files of `IMAGE` and `DOWNLOAD` results are returned inline, since an MCP client has no session with the app to fetch their url with: images as image content (up to 2MB each), other files as embedded resources (as text for text files up to 256KB, as binary data up to 1MB). Up to four files are inlined per result; larger or additional files, and urls outside the app, are returned as resource links. A `single_access` file is removed once it has been returned.
+An action declared `destructive=True` is confirmed by the user before it runs, when the client supports it (MCP protocol 2026-07-28 or later with the elicitation capability, which the current versions of the major clients have): the first call validates the arguments (as `dry_run=true` would; param errors are returned for correction instead) and answers with a confirmation prompt naming the action, the app, the arguments (password params hidden) and the status the validate pass reported; the client retries the call with the user's answer, and the action runs only on an accepted answer. A declined call returns `status` `declined by the user, no changes were made` (not an error) and is recorded in the audit log as a failed `mcp_execute` with `confirm=declined`. A call with `dry_run=true` needs no confirmation. Clients without elicitation support run the action at once, as before. `[api.mcp] skip_destructive_confirm = true` turns the confirmation off for the whole server, for headless automation; it applies to the destructive management tools too.
+
+The tools a user sees in the client are the actions their `permit` allows. The tool list is marked private to the caller's client (`cacheScope`) with a freshness hint (`ttlMs`) of `action.mcp_list_ttl`, an `[app_config]` setting (default `3m`, overridable per app with `openrun app update conf 'action.mcp_list_ttl="30s"' /orders`): how long a client may use the listed tools before listing again. The server does not push tool list changes; after a reload, promote or update which changes the actions, a client sees the new tools at its next listing, while every call is evaluated against the current actions regardless of the list the client holds (a removed tool fails, an added tool works). A dev app whose actions change often can set a short ttl. The result of a tool call has the structured result (`status`, `report`, `values`, `param_errors`) and a text block written for the model: the status line followed by a markdown table (the first 50 rows), the text lines, or JSON. The text block is limited to 64KB of values, with a note of how many values were left out, and the structured values to 256KB (`truncated` is set); an action meant for AI clients should return a focused result rather than rely on the limits. Param errors are returned as a tool error listing `param <name>: <message>`, so that the model can correct the arguments and retry. The files of `IMAGE` and `DOWNLOAD` results are returned inline, since an MCP client has no session with the app to fetch their url with: images as image content (up to 2MB each), other files as embedded resources (as text for text files up to 256KB, as binary data up to 1MB). Up to four files are inlined per result; larger or additional files, and urls outside the app, are returned as resource links. A `single_access` file is removed once it has been returned.
 
 For an action which [streams]({{< ref "#streaming-output" >}}) a command, the call returns when the command exits, with the output (the last 64KB) and the `exit_status`; a non-zero exit is a tool error. Clients which pass a progress token receive the output as progress notifications while the command runs. Tool calls are recorded in the audit log under the user, with the operation `mcp_execute`, `mcp_validate` or `mcp_suggest`.
 

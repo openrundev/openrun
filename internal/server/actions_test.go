@@ -812,3 +812,107 @@ func TestActionsDefinitionsFollowTheSource(t *testing.T) {
 	testutil.AssertEqualsInt(t, "stored after the reload", 2, len(entry.Metadata.DefinitionActions))
 	testutil.AssertEqualsString(t, "stored permit", "ops_admin", strings.Join(entry.Metadata.DefinitionActions[1].Permit, ","))
 }
+
+const actionsHintsAppStar = `
+def purge(dry_run, args):
+	if args.count < 1:
+		return ace.result("Validation failed", param_errors={"count": "count must be positive"})
+	if dry_run:
+		return ace.result("would purge %d orders" % args.count)
+	return ace.result("purged %d orders" % args.count)
+
+def plain(dry_run, args):
+	return ace.result("plain done")
+
+app = ace.app("hints", actions=[
+	ace.action("Purge", "/purge", purge, destructive=True, description="Removes orders"),
+	ace.action("Plain", "/plain", plain, hidden=["count", "status"]),
+])
+`
+
+// The management run_action tool asks capable clients to confirm when the
+// action is declared destructive=True, as the destructive management tools
+// do; other actions and other clients run at once
+func TestActionsManagementMCPConfirm(t *testing.T) {
+	server, _ := newActionsTestServer(t)
+	dir := t.TempDir()
+	for name, content := range map[string]string{"app.star": actionsHintsAppStar, "params.star": actionsTestParamsStar} {
+		testutil.AssertNoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0600))
+	}
+	ctx := system.WithTrustedOperation(t.Context())
+	_, err := server.CreateApp(ctx, "/apps/hints", true, false, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin"})
+	testutil.AssertNoError(t, err)
+	server.apps.ResetAllAppCache()
+
+	// The list carries the hints, and is private to the caller's client
+	resp, err := server.ListActions(userApiCtx(t, server, "builtin:alice"), "/apps/hints")
+	testutil.AssertNoError(t, err)
+	hints := map[string]*types.ActionHints{}
+	for _, info := range resp.Actions {
+		hints[info.Tool] = info.Hints
+	}
+	if !hints["purge"].IsDestructive() || hints["plain"] != nil {
+		t.Fatalf("hints: %+v %+v", hints["purge"], hints["plain"])
+	}
+
+	var declineMsg string
+	declineSession := mcpConnectWithElicit(t, server, "builtin:alice", []string{"dev"}, "decline", &declineMsg)
+	tools, err := declineSession.ListTools(t.Context(), nil)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "cache scope", "private", tools.CacheScope)
+	testutil.AssertEqualsInt(t, "ttl", int(mcpListTTL/time.Millisecond), tools.TTLMs)
+
+	runArgs := func(action string, count int) map[string]any {
+		return map[string]any{"path": "/apps/hints", "action": action, "args": map[string]any{"count": count}}
+	}
+	result, err := declineSession.CallTool(t.Context(), &mcp.CallToolParams{Name: "run_action", Arguments: runArgs("purge", 3)})
+	testutil.AssertNoError(t, err)
+	if result.IsError {
+		t.Fatalf("declined run errored: %s", callToolText(t, result))
+	}
+	testutil.AssertStringContains(t, callToolText(t, result), "no changes were made")
+	for _, want := range []string{"Confirm Purge on /apps/hints", "Removes orders", "count=3", "would purge 3 orders"} {
+		testutil.AssertStringContains(t, declineMsg, want)
+	}
+
+	// Param errors are returned for correction, before any confirmation
+	var unexpected string
+	invalidSession := mcpConnectWithElicit(t, server, "builtin:alice", []string{"dev"}, "accept", &unexpected)
+	result, err = invalidSession.CallTool(t.Context(), &mcp.CallToolParams{Name: "run_action", Arguments: runArgs("purge", 0)})
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsBool(t, "param error is a tool error", true, result.IsError)
+	testutil.AssertStringContains(t, callToolText(t, result), "param count: count must be positive")
+	testutil.AssertEqualsString(t, "no prompt for a param error", "", unexpected)
+
+	// The plain action never asks
+	plainSession := mcpConnectWithElicit(t, server, "builtin:alice", []string{"dev"}, "decline", &unexpected)
+	result, err = plainSession.CallTool(t.Context(), &mcp.CallToolParams{Name: "run_action", Arguments: map[string]any{"path": "/apps/hints", "action": "plain"}})
+	testutil.AssertNoError(t, err)
+	testutil.AssertStringContains(t, callToolText(t, result), "plain done")
+	testutil.AssertEqualsString(t, "no prompt for a plain action", "", unexpected)
+
+	acceptSession := mcpConnectWithElicit(t, server, "builtin:alice", []string{"dev"}, "accept", nil)
+	result, err = acceptSession.CallTool(t.Context(), &mcp.CallToolParams{Name: "run_action", Arguments: runArgs("purge", 2)})
+	testutil.AssertNoError(t, err)
+	if result.IsError {
+		t.Fatalf("accepted run errored: %s", callToolText(t, result))
+	}
+	testutil.AssertStringContains(t, callToolText(t, result), "purged 2 orders")
+
+	// A client without the elicitation capability runs at once
+	_, connect := server, func(t *testing.T) *mcp.ClientSession {
+		t.Helper()
+		serverCtx := server.apiTokenRequestContext(t.Context(), "builtin:alice", []string{"dev"}, nil, InvokerMCP, nil)
+		serverTransport, clientTransport := mcp.NewInMemoryTransports()
+		serverSession, err := server.getMCPServer().Connect(serverCtx, serverTransport, nil)
+		testutil.AssertNoError(t, err)
+		t.Cleanup(func() { _ = serverSession.Close() })
+		clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "plain", Version: "1"}, nil).Connect(t.Context(), clientTransport, nil)
+		testutil.AssertNoError(t, err)
+		t.Cleanup(func() { _ = clientSession.Close() })
+		return clientSession
+	}
+	result, err = connect(t).CallTool(t.Context(), &mcp.CallToolParams{Name: "run_action", Arguments: runArgs("purge", 5)})
+	testutil.AssertNoError(t, err)
+	testutil.AssertStringContains(t, callToolText(t, result), "purged 5 orders")
+}

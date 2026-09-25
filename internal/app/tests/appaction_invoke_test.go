@@ -295,24 +295,13 @@ func TestActionSchema(t *testing.T) {
 // identity is attached to each request the way the server's bearer path does
 func mcpSession(t *testing.T, a *app.App, progress func(string)) *mcp.ClientSession {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		a.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), types.USER_ID, "builtin:alice")))
-	}))
-	t.Cleanup(server.Close)
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, &mcp.ClientOptions{
+	return mcpSessionOptions(t, a, &mcp.ClientOptions{
 		ProgressNotificationHandler: func(_ context.Context, req *mcp.ProgressNotificationClientRequest) {
 			if progress != nil {
 				progress(req.Params.Message)
 			}
 		},
 	})
-	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: server.URL + "/test/mcp"}, nil)
-	if err != nil {
-		t.Fatalf("mcp connect: %s", err)
-	}
-	t.Cleanup(func() { session.Close() }) //nolint:errcheck
-	return session
 }
 
 func toolText(result *mcp.CallToolResult) string {

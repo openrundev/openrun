@@ -124,7 +124,7 @@ func printActionList(cCtx *cli.Context, actions []types.ActionInfo, format strin
 	case FORMAT_CSV:
 		w := csv.NewWriter(cCtx.App.Writer)
 		for _, a := range actions {
-			w.Write([]string{a.AppPath, a.Tool, a.Name, a.Path, strconv.FormatBool(a.Suggest), a.Description}) //nolint:errcheck
+			w.Write([]string{a.AppPath, a.Tool, a.Name, a.Path, strconv.FormatBool(a.Suggest), hintLabels(a.Hints), a.Description}) //nolint:errcheck
 		}
 		w.Flush()
 	case FORMAT_BASIC:
@@ -138,12 +138,22 @@ func printActionList(cCtx *cli.Context, actions []types.ActionInfo, format strin
 			fmt.Fprintln(cCtx.App.ErrWriter, "No actions available") //nolint:errcheck
 			return
 		}
-		formatStr := "%-30s %-24s %-24s %-16s %-8s %-s\n"
-		printStdout(cCtx, formatStr, "App", "Action", "Name", "Path", "Suggest", "Description")
+		formatStr := "%-30s %-24s %-24s %-16s %-8s %-12s %-s\n"
+		printStdout(cCtx, formatStr, "App", "Action", "Name", "Path", "Suggest", "Hints", "Description")
 		for _, a := range actions {
-			printStdout(cCtx, formatStr, a.AppPath, a.Tool, a.Name, a.Path, strconv.FormatBool(a.Suggest), firstLine(a.Description))
+			printStdout(cCtx, formatStr, a.AppPath, a.Tool, a.Name, a.Path, strconv.FormatBool(a.Suggest), hintLabels(a.Hints), firstLine(a.Description))
 		}
 	}
+}
+
+// hintLabels renders the declared side-effect hints of an action (ro,
+// destructive, idem, open), "-" when none is declared
+func hintLabels(hints *types.ActionHints) string {
+	labels := hints.Labels()
+	if len(labels) == 0 {
+		return "-"
+	}
+	return strings.Join(labels, ",")
 }
 
 func firstLine(text string) string {
@@ -205,6 +215,9 @@ func printActionDetail(cCtx *cli.Context, detail *types.ActionDetailResponse, st
 	printStdout(cCtx, "Suggest:     %t\n", detail.Suggest)
 	if detail.Async {
 		printStdout(cCtx, "Async:       true (the run executes in the background, see \"openrun action runs\")\n")
+	}
+	if labels := detail.Hints.Labels(); len(labels) > 0 {
+		printStdout(cCtx, "Hints:       %s\n", strings.Join(labels, ","))
 	}
 
 	example := []string{"openrun action run"}

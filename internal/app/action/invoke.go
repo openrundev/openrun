@@ -512,7 +512,7 @@ func decodeResult(ret starlark.Value) (*decodedResult, *InvokeError) {
 // transport refused before the invocation (a body which cannot be parsed or
 // is over the size limit): a rejected attempt is part of the action audit
 // trail, as the attempts which fail in invoke are
-func (a *Action) auditRejectedRequest(ctx context.Context, auditOp string) {
+func (a *Action) auditRejectedRequest(ctx context.Context, auditOp string, detail string) {
 	if a.auditInsert == nil {
 		return
 	}
@@ -525,6 +525,7 @@ func (a *Action) auditRejectedRequest(ctx context.Context, auditOp string) {
 		Operation:  auditOp,
 		Target:     a.name,
 		Status:     string(types.EventStatusFailure),
+		Detail:     detail,
 	}
 	if err := a.auditInsert(&event); err != nil {
 		a.Error().Err(err).Msg("error inserting audit event")

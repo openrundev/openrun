@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openrundev/openrun/internal/bindings"
@@ -586,5 +587,50 @@ func TestMCPListSummarization(t *testing.T) {
 	}
 	if !strings.Contains(callToolText(t, result), "Version") && !strings.Contains(callToolText(t, result), "version") {
 		t.Fatalf("version summary must keep version numbers: %s", callToolText(t, result))
+	}
+}
+
+// A dynamic [api] config change re-registers the tool set on the live MCP
+// server, so clients listening for tool list changes are notified; the
+// server instance survives the refresh
+func TestMCPRefreshNotifiesListeners(t *testing.T) {
+	server, _ := newMCPTestServer(t)
+	before := server.getMCPServer()
+
+	changed := make(chan struct{}, 8)
+	serverCtx := server.apiTokenRequestContext(t.Context(), "admin", nil, nil, InvokerMCP, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := before.Connect(serverCtx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "listener", Version: "1"}, &mcp.ClientOptions{
+		ToolListChangedHandler: func(context.Context, *mcp.ToolListChangedRequest) { changed <- struct{}{} },
+	})
+	session, err := client.Connect(t.Context(), clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	tools, err := session.ListTools(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := len(tools.Tools)
+	time.Sleep(200 * time.Millisecond)
+
+	server.refreshMCPServer()
+	if server.getMCPServer() != before {
+		t.Fatal("the MCP server must survive a refresh")
+	}
+	select {
+	case <-changed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no tools/list_changed notification after the refresh")
+	}
+	tools, err = session.ListTools(t.Context(), nil)
+	if err != nil || len(tools.Tools) != count {
+		t.Fatalf("tools after refresh: %v %d != %d", err, len(tools.Tools), count)
 	}
 }

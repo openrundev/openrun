@@ -79,6 +79,21 @@ func GetOptionalBoolAttr(s starlark.HasAttrs, key string) (bool, error) {
 	return bool(vb), nil
 }
 
+// GetBoolPtrAttr returns the bool attr, nil when the attr is absent: for
+// tri-state settings where a declared False differs from not declared
+func GetBoolPtrAttr(s starlark.HasAttrs, key string) (*bool, error) {
+	v, err := s.Attr(key)
+	if err != nil || v == nil {
+		return nil, nil
+	}
+	vb, ok := v.(starlark.Bool)
+	if !ok {
+		return nil, fmt.Errorf("%s is not a bool", key)
+	}
+	value := bool(vb)
+	return &value, nil
+}
+
 func GetListStringAttr(s starlark.HasAttrs, key string, optional bool) ([]string, error) {
 	v, err := s.Attr(key)
 	if err != nil {

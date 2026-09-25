@@ -71,6 +71,7 @@ func Defs(actions []*Action) []types.ActionDef {
 			Suggest:     act.suggest != nil,
 			Permit:      slices.Clone(act.permit),
 			Async:       act.IsAsync(),
+			Hints:       act.hints,
 		})
 	}
 	return defs

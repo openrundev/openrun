@@ -29,7 +29,12 @@ import (
 // region of the app. The region is reachable only through the bearer path of
 // the server (token audience, app:access, tool scopes, audit), which attaches
 // the identity context the permit checks read. Stateless: no session state,
-// safe across zero downtime restarts and multiple nodes
+// safe across zero downtime restarts and multiple nodes. The server is
+// built per load of the app: it does not notify tool list changes (a load
+// replaces it, and a deploy replaces the App object it belongs to), the
+// list carries a freshness hint instead (action.mcp_list_ttl) and every
+// call is evaluated against the current load regardless of the list a
+// client holds
 
 const (
 	mcpDryRunArg        = "dry_run" // prefixed with _ until it is not a param of the action
@@ -46,8 +51,25 @@ const (
 	mcpProgressInterval = 250 * time.Millisecond
 	reportStream        = "STREAM" // report value of a stream result, beside the apptype report types
 	mcpWaitArg          = "wait_seconds"
-	mcpWaitMaxSecs      = 60 // the longest an async action tool waits for its run
+	mcpWaitMaxSecs      = 60              // the longest an async action tool waits for its run
+	defaultMCPListTTL   = 3 * time.Minute // action.mcp_list_ttl default
 )
+
+// MCPListTTLOf returns the freshness hint of the tool list from the app
+// config (action.mcp_list_ttl), the default when unset
+func MCPListTTLOf(config types.ActionConfig) (time.Duration, error) {
+	if config.MCPListTTL == "" {
+		return defaultMCPListTTL, nil
+	}
+	d, err := time.ParseDuration(config.MCPListTTL)
+	if err != nil {
+		return 0, fmt.Errorf("invalid action mcp_list_ttl %q: %w", config.MCPListTTL, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("invalid action mcp_list_ttl %q: must not be negative", config.MCPListTTL)
+	}
+	return d, nil
+}
 
 // MCPTool is an action exposed as an MCP tool
 type MCPTool struct {
@@ -134,6 +156,7 @@ func MCPTools(actions []*Action) ([]*MCPTool, error) {
 				Description:  description,
 				InputSchema:  runSchema,
 				OutputSchema: mcpResultSchema,
+				Annotations:  mcpAnnotations(act.hints),
 			},
 		})
 
@@ -495,17 +518,20 @@ var mcpResultSchema = map[string]any{
 }
 
 // BuildMCPHandler creates the Streamable HTTP handler serving the actions as
-// MCP tools
-func BuildMCPHandler(appName, version string, actions []*Action) (http.Handler, error) {
+// MCP tools. listTTL is the freshness hint of the tool list
+func BuildMCPHandler(appName string, listTTL time.Duration, actions []*Action) (http.Handler, error) {
 	tools, err := MCPTools(actions)
 	if err != nil {
 		return nil, err
 	}
 
-	srv := mcp.NewServer(&mcp.Implementation{Name: appName, Version: version}, &mcp.ServerOptions{
+	srv := mcp.NewServer(&mcp.Implementation{Name: appName, Version: types.GetVersion()}, &mcp.ServerOptions{
 		Instructions: fmt.Sprintf("Tools are the actions of the %s app, they run as the authenticated user. "+
 			"Pass %s=true to a tool to validate its arguments without running it. "+
 			"A tool named <tool>%s, where present, suggests argument values.", appName, mcpDryRunArg, mcpSuggestSuffix),
+		// The tool set changes with a load of the app, which replaces this
+		// server: no change notifications, clients refresh within the ttl
+		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: false}},
 	})
 
 	byName := make(map[string]*MCPTool, len(tools))
@@ -521,7 +547,9 @@ func BuildMCPHandler(appName, version string, actions []*Action) (http.Handler, 
 	// tools/list shows a caller only the tools of the actions their permit
 	// allows: the param definitions and defaults of restricted actions are
 	// not disclosed (the same rule as the OpenAPI spec). tools/call checks
-	// the permit again in Invoke
+	// the permit again in Invoke. The list varies by caller, so it is
+	// private to the caller's client: a shared cache must not serve it to
+	// another caller
 	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			result, err := next(ctx, method, req)
@@ -548,6 +576,8 @@ func BuildMCPHandler(appName, version string, actions []*Action) (http.Handler, 
 				}
 			}
 			listResult.Tools = visible
+			listResult.CacheScope = "private"
+			listResult.TTLMs = int(listTTL / time.Millisecond)
 			return listResult, nil
 		}
 	})
@@ -593,6 +623,33 @@ func (t *MCPTool) handle(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Ca
 			if err := json.Unmarshal(raw, &waitSecs); err != nil {
 				return mcpToolError("param %s must be an integer", t.wait), nil
 			}
+		}
+	}
+
+	if op == OpRun && t.Action.IsDestructive() && !t.Action.mcpConfirmSkipped() && MCPConfirmSupported(req) {
+		// A destructive action (ace.action destructive=True) is confirmed by
+		// the user first: the validate pass answers the first call with the
+		// confirmation request, the retry carries the answer. The client
+		// resends the arguments with the retry, nothing is kept in between
+		if answered, accepted := MCPConfirmAnswer(req); answered {
+			if !accepted {
+				t.Action.auditRejectedRequest(ctx, AuditOp(SourceMCP, OpRun), "confirm=declined")
+				return MCPDeclinedResult(), nil
+			}
+		} else {
+			preview, invErr := t.Action.Invoke(ctx, Invocation{Op: OpValidate, AuditOp: AuditOp(SourceMCP, OpValidate), JSONArgs: args})
+			if invErr != nil {
+				return mcpToolError("%s", invErr.Msg), nil
+			}
+			doc, text, isError := t.Action.ResultDocument(ctx, preview, OpValidate, nil)
+			preview.Close()
+			if isError {
+				// Param errors are reported for correction, nothing to confirm yet
+				return &mcp.CallToolResult{IsError: true, StructuredContent: doc,
+					Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+			}
+			status, _ := doc["status"].(string)
+			return MCPConfirmRequest(t.Action.MCPConfirmMessage(args, status)), nil
 		}
 	}
 

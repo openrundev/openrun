@@ -544,6 +544,10 @@ type ActionConfig struct {
 	DisplayRows int `toml:"display_rows"`
 	// MaxWaitSecs caps the wait of the run read APIs
 	MaxWaitSecs int `toml:"max_wait_secs"`
+	// MCPListTTL is the freshness hint (ttlMs) of the MCP tool list of an
+	// app serving its actions as tools: how long a client may use a listed
+	// tool set before listing again. A Go duration, default 3m
+	MCPListTTL string `toml:"mcp_list_ttl"`
 }
 
 // JobsConfig holds the job run settings of an app
