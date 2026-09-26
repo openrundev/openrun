@@ -281,10 +281,15 @@ func TestActionsMCPReloadAndListTTL(t *testing.T) {
 	mcpConfig, err := types.ParseMCPConfig(`{"source":"actions"}`)
 	testutil.AssertNoError(t, err)
 	testMetadataHook = func(metadata *types.AppMetadata) { metadata.MCP = mcpConfig }
-	a, _, err := CreateTestAppInt(testutil.TestLogger(), "/test", "", fileData, true, nil, nil, nil, "app_dev_live", types.AppSettings{}, nil,
-		&types.AppConfig{Action: types.ActionConfig{MCPListTTL: "0s"}}, &testRBAC{})
+	// This test edits the in-memory source and reloads explicitly. Ignore disk
+	// events so the dev watcher cannot concurrently rewrite the shared file map.
+	systemConfig := testSystemConfig()
+	systemConfig.WatchIgnorePatterns = []string{"**"}
+	a, _, err := CreateTestAppIntSystemConfig(testutil.TestLogger(), "/test", "", fileData, true, nil, nil, nil, "app_dev_live", types.AppSettings{}, nil,
+		&types.AppConfig{Action: types.ActionConfig{MCPListTTL: "0s"}}, &testRBAC{}, systemConfig)
 	testMetadataHook = nil
 	testutil.AssertNoError(t, err)
+	t.Cleanup(func() { testutil.AssertNoError(t, a.Close()) })
 
 	session := mcpSession(t, a, nil)
 	tools, err := session.ListTools(context.Background(), nil)
