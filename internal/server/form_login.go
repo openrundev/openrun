@@ -272,16 +272,20 @@ func buildLoginFontsCSS() ([]byte, map[string]string, error) {
 // hash for the user, or false when the user has no usable credential. The
 // fingerprint is recorded in the session at login and re-checked on every
 // request, so a password change (like a user delete or admin rename)
-// invalidates existing form-login sessions immediately. The auto-generated
-// admin password also writes its hash to the config at startup, so system
-// sessions do not survive a restart that regenerates the password
-func credentialFingerprint(config *types.ServerConfig, authType, username string) (string, bool) {
+// invalidates existing form-login sessions immediately. adminHash resolves
+// the hash of the admin password generated at startup when the config has
+// none (nil: the config hash only), so system sessions do not survive a
+// restart that regenerates the password
+func credentialFingerprint(config *types.ServerConfig, adminHash func() string, authType, username string) (string, bool) {
 	var bcryptHash string
 	if authType == string(types.AppAuthnSystem) {
 		if username != config.AdminUser {
 			return "", false
 		}
 		bcryptHash = config.Security.AdminPasswordBcrypt
+		if bcryptHash == "" && adminHash != nil {
+			bcryptHash = adminHash()
+		}
 	} else {
 		bcryptHash = config.BuiltinAuth[username].Password
 	}
@@ -290,6 +294,15 @@ func credentialFingerprint(config *types.ServerConfig, authType, username string
 	}
 	sum := sha256.Sum256([]byte(bcryptHash))
 	return hex.EncodeToString(sum[:16]), true
+}
+
+// adminPasswordHash returns the resolver of the admin password hash for
+// credentialFingerprint, nil without an admin basic auth handler
+func (s *FormLoginManager) adminPasswordHash() func() string {
+	if s.adminAuth == nil {
+		return nil
+	}
+	return s.adminAuth.passwordHash
 }
 
 // usesFormLogin reports whether an auth type is a candidate for the form login
@@ -747,7 +760,7 @@ func (s *FormLoginManager) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	// complete step (which holds the nonce cookie) turns this into a session.
 	// The completion redirect is followed immediately, so the entry is
 	// short-lived
-	credFp, ok := credentialFingerprint(s.getConfig(), authType, username)
+	credFp, ok := credentialFingerprint(s.getConfig(), s.adminPasswordHash(), authType, username)
 	if !ok {
 		// defensive: the credential was verified just above, so it must resolve
 		http.Error(w, "error resolving credentials", http.StatusInternalServerError)
@@ -890,7 +903,7 @@ func (s *FormLoginManager) sessionAuth(w http.ResponseWriter, r *http.Request, a
 	if !ok {
 		return "", nil, false
 	}
-	currentFp, ok := credentialFingerprint(config, authType, user)
+	currentFp, ok := credentialFingerprint(config, s.adminPasswordHash(), authType, user)
 	if !ok || subtle.ConstantTimeCompare([]byte(sessionFp), []byte(currentFp)) != 1 {
 		return "", nil, false
 	}

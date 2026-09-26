@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -89,11 +90,15 @@ func FindExec(name string) string {
 		return path
 	}
 
-	// Homebrew services do not have the path set, lookup common paths
-	paths := []string{
-		"/usr/local/bin",
-		"/opt/homebrew/bin",
-		"/home/linuxbrew/.linuxbrew",
+	// Homebrew services do not have the path set, lookup common paths. The
+	// list is per OS: on macOS /home is an automounter mount point, so a
+	// stat of the linuxbrew location waits on the automounter (10-20ms)
+	paths := []string{"/usr/local/bin"}
+	switch runtime.GOOS {
+	case "darwin":
+		paths = append(paths, "/opt/homebrew/bin")
+	case "linux":
+		paths = append(paths, "/home/linuxbrew/.linuxbrew/bin")
 	}
 
 	for _, p := range paths {

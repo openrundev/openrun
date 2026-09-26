@@ -40,7 +40,6 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/ksuid"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/openrundev/openrun/internal/app/appfs"
 	_ "github.com/openrundev/openrun/internal/app/store" // Register db plugin
@@ -293,6 +292,24 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
+	// The generated admin password is hashed in the background, see
+	// setupAdminAccount. Nothing below reads the admin credentials
+	generatedAdminPassword, adminHash, err := setupAdminAccount(l, config)
+	if err != nil {
+		return nil, err
+	}
+
+	// The container command lookup scans PATH for the runtimes, which takes
+	// several milliseconds on a long PATH: overlap it with the database and
+	// auth initialization
+	var containerCommand chan string
+	if config.System.ContainerCommand == "auto" {
+		containerCommand = make(chan string, 1)
+		go func() {
+			containerCommand <- container.LookupContainerCommand(true)
+		}()
+	}
+
 	// Initialize telemetry after secrets are resolved so OTLP headers can use
 	// {{ secret ... }} references. A failure here is logged but does not block
 	// server startup; observability is non-essential.
@@ -363,7 +380,9 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	db.ConfigNotifyFunc = server.configNotifyHandler
 	db.ProviderNotifyFunc = server.providerNotifyHandler
 	server.apps = NewAppStore(l, server)
+	server.generatedAdminPassword = generatedAdminPassword
 	server.authHandler = NewAdminBasicAuth(l, config)
+	server.authHandler.generated = adminHash
 	server.builtinAuth = NewBuiltinAuth(l, server.Config)
 	server.notifyClose = make(chan types.AppPathDomain)
 
@@ -424,8 +443,8 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 
 	server.initAccessLogger(config)
 
-	if config.System.ContainerCommand == "auto" {
-		config.System.ContainerCommand = container.LookupContainerCommand(true)
+	if containerCommand != nil {
+		config.System.ContainerCommand = <-containerCommand
 		// if command is empty string, that means either containers are disabled in config or no container command found
 	}
 
@@ -475,15 +494,6 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	err = server.SaveDynamicConfig(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("error saving dynamic config: %w", err)
-	}
-
-	// The admin account is set up on the static config BEFORE the dynamic
-	// merge: the effective config is a copy of the static one, so a generated
-	// password hash written here is carried into every effective config built
-	// later (including rebuilds on dynamic config changes) and is also what
-	// AdminBasicAuth, which holds the static config, verifies against
-	if server.generatedAdminPassword, err = server.setupAdminAccount(); err != nil {
-		return nil, err
 	}
 
 	// Merge the dynamic config entries over the static config and register any
@@ -1130,59 +1140,46 @@ func (s *Server) handleAppClose() {
 	}
 }
 
-// setupAdminAccount sets up the basic auth password for admin account. If admin user is unset,
-// that means admin account is not enabled. If AdminPasswordBcrypt is set, it will be used as
-// the password hash for the admin account. If AdminPasswordBcrypt is not set, a random password
-// will be generated for that server startup. The generated password will be printed to stdout.
-//
-// The hash is written to the STATIC config, so it must run before the first
-// dynamic config merge (every effective config is derived from the static one)
-// and it is what the AdminBasicAuth handler, which holds the static config,
-// checks passwords against
-func (s *Server) setupAdminAccount() (string, error) {
-	if s.staticConfig.AdminUser == "" {
-		s.Warn().Msg("No admin username specified, skipping admin account setup")
-		return "", nil
+// setupAdminAccount sets up the basic auth password for the admin account.
+// If admin user is unset, the admin account is not enabled. If
+// AdminPasswordBcrypt is set, it is used as the password hash for the admin
+// account. Otherwise a random password is generated for this server startup
+// (printed to stdout by Start) and its bcrypt hash is computed in the
+// background: at the configured cost the hash takes tens of milliseconds,
+// more than every other step of a warm startup together, so the server
+// starts accepting connections without waiting for it and only the first
+// admin authentication waits. Returns the generated password (empty when
+// none) and the hash to install on the AdminBasicAuth handler (nil when the
+// configured hash applies)
+func setupAdminAccount(logger *types.Logger, config *types.ServerConfig) (string, *adminPasswordHash, error) {
+	if config.AdminUser == "" {
+		logger.Warn().Msg("No admin username specified, skipping admin account setup")
+		return "", nil, nil
+	}
+	if config.Security.AdminPasswordBcrypt != "" {
+		logger.Info().Msgf("Using admin password bcrypt hash from configuration")
+		return "", nil, nil
 	}
 
-	if s.staticConfig.Security.AdminPasswordBcrypt != "" {
-		s.Info().Msgf("Using admin password bcrypt hash from configuration")
-		return "", nil
-	}
-
-	s.Debug().Msg("Generating admin password")
-	var err error
+	logger.Debug().Msg("Generating admin password")
 	password, err := passwd.GeneratePassword()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-
-	bcryptHash, err := bcrypt.GenerateFromPassword([]byte(password), passwd.BCRYPT_COST)
-	if err != nil {
-		return "", err
-	}
-
-	s.staticConfig.Security.AdminPasswordBcrypt = string(bcryptHash)
-	return password, nil
+	return password, newAdminPasswordHash(logger, password), nil
 }
 
-// Start starts the OpenRun Server
+// Start starts the OpenRun Server. Every listener (unix domain socket, HTTP
+// and HTTPS) is bound first, before the provider and builder initialization:
+// those steps launch provider binaries and run container commands, and can
+// take seconds. A connection arriving while they run completes its TCP
+// handshake into the listener's accept backlog and is served as soon as the
+// servers start accepting, instead of being refused. Serving traffic still
+// waits for the initialization, so binding operations and app loads of .ex
+// modules never race the provider registrations
 func (s *Server) Start() error {
 	s.handler = NewTCPHandler(s.Logger, s.Config(), s)
 
-	// Register out-of-process providers of every kind — binding and Starlark
-	// plugin providers, from dev config entries and database-registered
-	// installs — before serving traffic, so binding operations and app loads
-	// of .ex modules never race the provider registrations.
-	s.setupProviders(context.Background())
-	// Builder config problems must not block startup: the builder config is
-	// dynamically editable, so a bad entry has to be fixable through the
-	// console. The error is logged and surfaces again on builder use
-	if err := s.initBuilder(); err != nil {
-		s.Error().Err(err).Msg("app_builder config error, the builder will not work until fixed")
-	} else if err := s.builderManager.Start(context.Background()); err != nil {
-		s.Error().Err(err).Msg("Error starting app builder")
-	}
 	serverUri := strings.TrimSpace(os.ExpandEnv(s.Config().ServerUri))
 	if serverUri == "" {
 		return errors.New("server_uri is not set")
@@ -1230,7 +1227,23 @@ func (s *Server) Start() error {
 		return fmt.Errorf("error creating directory %s : %s", "mounts", err)
 	}
 
-	// Start unix domain socket server
+	// The listeners bound below are handed to the servers only once every
+	// startup step has passed. Until then a failure closes them, so a failed
+	// start does not leave the socket file and ports held (by an embedding
+	// caller that retries, or past the error exit of the CLI)
+	var bound []net.Listener
+	serving := false
+	defer func() {
+		if serving {
+			return
+		}
+		for _, listener := range bound {
+			listener.Close() //nolint:errcheck
+		}
+	}()
+
+	// Bind the unix domain socket
+	var udsListener net.Listener
 	if !strings.HasPrefix(serverUri, "http://") && !strings.HasPrefix(serverUri, "https://") {
 		if strings.HasPrefix(serverUri, clHome) {
 			serverUri = path.Join(".", serverUri[len(clHome):]) // use relative path
@@ -1273,7 +1286,8 @@ func (s *Server) Start() error {
 		if err != nil {
 			return err
 		}
-		socket = s.connTracker.wrap(socket)
+		bound = append(bound, socket)
+		udsListener = s.connTracker.wrap(socket)
 
 		s.udsServer = &http.Server{
 			WriteTimeout: 180 * time.Second,
@@ -1285,26 +1299,22 @@ func (s *Server) Start() error {
 				Public:    false, // UDS is admin-only, peer is authenticated by file permissions
 			}),
 		}
-
-		s.Info().Str("address", serverUri).Msg("Starting unix domain socket server")
-		go func() {
-			if err := s.udsServer.Serve(socket); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				s.Error().Err(err).Msg("UDS server error")
-				if s.httpServer != nil {
-					s.httpServer.Shutdown(context.Background()) //nolint:errcheck
-				}
-				if s.httpsServer != nil {
-					s.httpsServer.Shutdown(context.Background()) //nolint:errcheck
-				}
-				os.Exit(1)
-			}
-		}()
 	} else {
 		s.Info().Msg("Unix domain sockets are disabled")
 	}
 
-	// Start HTTP and HTTPS servers
+	// Bind the HTTP port
+	var httpListener net.Listener
 	if s.Config().Http.Port >= 0 {
+		addr := fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Http.Host), s.Config().Http.Port)
+		rawListener, err := s.upgrader.Listen("tcp", addr, net.Listen)
+		if err != nil {
+			return err
+		}
+		bound = append(bound, rawListener)
+		s.Config().Http.Port = rawListener.Addr().(*net.TCPAddr).Port
+		httpListener = s.connTracker.wrap(rawListener)
+
 		s.httpServer = &http.Server{
 			WriteTimeout: 180 * time.Second,
 			ReadTimeout:  180 * time.Second,
@@ -1323,13 +1333,25 @@ func (s *Server) Start() error {
 		}
 	}
 
+	// Bind the HTTPS port. The raw TCP listener is bound (or inherited
+	// across an in-place restart) separately from the TLS wrapping: the TLS
+	// state is per connection, so the restarted process applies its own TLS
+	// config to the inherited socket
+	var httpsListener net.Listener
 	if s.Config().Https.Port >= 0 {
-		var err error
+		addr := fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Https.Host), s.Config().Https.Port)
+		rawListener, err := s.upgrader.Listen("tcp", addr, net.Listen)
+		if err != nil {
+			return err
+		}
+		bound = append(bound, rawListener)
+		s.Config().Https.Port = rawListener.Addr().(*net.TCPAddr).Port
+
 		s.httpsServer, err = s.setupHTTPSServer()
 		if err != nil {
 			return err
 		}
-
+		httpsListener = tls.NewListener(s.connTracker.wrap(rawListener), s.httpsServer.TLSConfig)
 	}
 
 	if s.Config().Https.EnableHTTPChallenge {
@@ -1347,31 +1369,59 @@ func (s *Server) Start() error {
 		}
 	}
 
+	// Register out-of-process providers of every kind — binding and Starlark
+	// plugin providers, from dev config entries and database-registered
+	// installs — and start the app builder before serving traffic. The two
+	// are independent (provider binaries and the metadata provider table on
+	// one side, the container runtime and the builder session table on the
+	// other) and each can run external commands, so they run concurrently
+	// to shorten the window before the servers start accepting
+	var builderDone sync.WaitGroup
+	builderDone.Add(1)
+	go func() {
+		defer builderDone.Done()
+		s.startBuilder()
+	}()
+	s.setupProviders(context.Background())
+	builderDone.Wait()
+
 	if s.generatedAdminPassword != "" {
 		fmt.Printf("Admin user    : %s\n", s.Config().AdminUser)
 		fmt.Printf("Admin password: %s\n", s.generatedAdminPassword)
 	}
 
+	// Every step that can fail has passed: the listeners now belong to the
+	// servers, which close them on shutdown
+	serving = true
+
+	// stopSiblings shuts down the other servers when one server's Serve
+	// fails, before the process exits
+	stopSiblings := func(failed *http.Server) {
+		for _, server := range []*http.Server{s.udsServer, s.httpServer, s.httpsServer} {
+			if server != nil && server != failed {
+				server.Shutdown(context.Background()) //nolint:errcheck
+			}
+		}
+	}
+
+	if s.udsServer != nil {
+		s.Info().Str("address", serverUri).Msg("Starting unix domain socket server")
+		go func() {
+			if err := s.udsServer.Serve(udsListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				s.Error().Err(err).Msg("UDS server error")
+				stopSiblings(s.udsServer)
+				os.Exit(1)
+			}
+		}()
+	}
+
 	if s.httpServer != nil {
 		addr := fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Http.Host), s.Config().Http.Port)
-		rawListener, err := s.upgrader.Listen("tcp", addr, net.Listen)
-		if err != nil {
-			return err
-		}
-		s.Config().Http.Port = rawListener.Addr().(*net.TCPAddr).Port
-		addr = fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Http.Host), s.Config().Http.Port)
 		s.Info().Str("address", addr).Msg("Starting HTTP server")
-
-		listener := s.connTracker.wrap(rawListener)
 		go func() {
-			if err := s.httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := s.httpServer.Serve(httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				s.Error().Err(err).Msg("HTTP server error")
-				if s.httpsServer != nil {
-					s.httpsServer.Shutdown(context.Background()) //nolint:errcheck
-				}
-				if s.udsServer != nil {
-					s.udsServer.Shutdown(context.Background()) //nolint:errcheck
-				}
+				stopSiblings(s.httpServer)
 				os.Exit(1)
 			}
 		}()
@@ -1379,27 +1429,11 @@ func (s *Server) Start() error {
 
 	if s.httpsServer != nil {
 		addr := fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Https.Host), s.Config().Https.Port)
-		// The raw TCP listener is bound (or inherited across an in-place
-		// restart) separately from the TLS wrapping: the TLS state is per
-		// connection, so the restarted process applies its own TLS config to
-		// the inherited socket
-		rawListener, err := s.upgrader.Listen("tcp", addr, net.Listen)
-		if err != nil {
-			return err
-		}
-		s.Config().Https.Port = rawListener.Addr().(*net.TCPAddr).Port
-		addr = fmt.Sprintf("%s:%d", system.MapServerHost(s.Config().Https.Host), s.Config().Https.Port)
 		s.Info().Str("address", addr).Msg("Starting HTTPS server")
-		listener := tls.NewListener(s.connTracker.wrap(rawListener), s.httpsServer.TLSConfig)
 		go func() {
-			if err := s.httpsServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := s.httpsServer.Serve(httpsListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				s.Error().Err(err).Msg("HTTPS server error")
-				if s.httpServer != nil {
-					s.httpServer.Shutdown(context.Background()) //nolint:errcheck
-				}
-				if s.udsServer != nil {
-					s.udsServer.Shutdown(context.Background()) //nolint:errcheck
-				}
+				stopSiblings(s.httpsServer)
 				os.Exit(1)
 			}
 		}()
@@ -1415,6 +1449,20 @@ func (s *Server) Start() error {
 		}()
 	}
 	return nil
+}
+
+// startBuilder initializes and starts the app builder. Builder config
+// problems must not block startup: the builder config is dynamically
+// editable, so a bad entry has to be fixable through the console. The error
+// is logged and surfaces again on builder use
+func (s *Server) startBuilder() {
+	if err := s.initBuilder(); err != nil {
+		s.Error().Err(err).Msg("app_builder config error, the builder will not work until fixed")
+		return
+	}
+	if err := s.builderManager.Start(context.Background()); err != nil {
+		s.Error().Err(err).Msg("Error starting app builder")
+	}
 }
 
 // Ready signals that startup has fully completed and this process can serve

@@ -345,7 +345,7 @@ func TestSessionAuthPasswordChangeRevokes(t *testing.T) {
 		session.Values[PROVIDER_NAME_KEY] = authType
 		session.Values[USER_KEY] = user
 		if withFp {
-			fp, ok := credentialFingerprint(cfg, authType, user)
+			fp, ok := credentialFingerprint(cfg, nil, authType, user)
 			if !ok {
 				t.Fatalf("no credential fingerprint for %s/%s", authType, user)
 			}

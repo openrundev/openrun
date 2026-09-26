@@ -950,13 +950,15 @@ func LookupContainerCommand(checkKubernetes bool) string {
 		}
 	}
 
-	podmanExec := system.FindExec(PODMAN_COMMAND)
-	if podmanExec != "" {
-		return podmanExec
-	}
+	// Each lookup walks PATH (several milliseconds on a long PATH), so the
+	// two run concurrently. podman is preferred when both are installed
+	podmanExec := make(chan string, 1)
+	go func() {
+		podmanExec <- system.FindExec(PODMAN_COMMAND)
+	}()
 	dockerExec := system.FindExec(DOCKER_COMMAND)
-	if dockerExec != "" {
-		return dockerExec
+	if podman := <-podmanExec; podman != "" {
+		return podman
 	}
-	return ""
+	return dockerExec
 }

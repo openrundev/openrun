@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/openrundev/openrun/internal/passwd"
 	"github.com/openrundev/openrun/internal/types"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -23,9 +24,56 @@ import (
 type AdminBasicAuth struct {
 	*types.Logger
 	config *types.ServerConfig
+	// generated is the hash of the admin password generated at startup, set
+	// when the config has no admin_password_bcrypt
+	generated *adminPasswordHash
 
 	mu            sync.RWMutex
 	authShaCached string
+}
+
+// adminPasswordHash is the bcrypt hash of the admin password generated at
+// startup, computed in the background: the server starts accepting
+// connections without waiting for the bcrypt cost, and the first admin
+// authentication waits for the hash instead
+type adminPasswordHash struct {
+	done chan struct{}
+	hash string
+}
+
+func newAdminPasswordHash(logger *types.Logger, password string) *adminPasswordHash {
+	h := &adminPasswordHash{done: make(chan struct{})}
+	go func() {
+		defer close(h.done)
+		bcryptHash, err := bcrypt.GenerateFromPassword([]byte(password), passwd.BCRYPT_COST)
+		if err != nil {
+			// The admin account stays unusable (no hash matches); the
+			// server keeps running for the other auth types
+			logger.Error().Err(err).Msg("error hashing the generated admin password, admin login is not available")
+			return
+		}
+		h.hash = string(bcryptHash)
+	}()
+	return h
+}
+
+// get waits for the hash to be computed
+func (h *adminPasswordHash) get() string {
+	<-h.done
+	return h.hash
+}
+
+// passwordHash returns the admin password bcrypt hash: the configured one,
+// or the one generated at startup (waiting for it on the first use). Empty
+// when the admin account has no usable credential
+func (a *AdminBasicAuth) passwordHash() string {
+	if hash := a.config.Security.AdminPasswordBcrypt; hash != "" {
+		return hash
+	}
+	if a.generated != nil {
+		return a.generated.get()
+	}
+	return ""
 }
 
 func NewAdminBasicAuth(logger *types.Logger, config *types.ServerConfig) *AdminBasicAuth {
@@ -69,7 +117,7 @@ func (a *AdminBasicAuth) authenticate(authHeader string) bool {
 		return false
 	}
 
-	err := bcrypt.CompareHashAndPassword([]byte(a.config.Security.AdminPasswordBcrypt), []byte(pass))
+	err := bcrypt.CompareHashAndPassword([]byte(a.passwordHash()), []byte(pass))
 	if err != nil {
 		a.Warn().Err(err).Msg("Password match failed")
 		time.Sleep(100 * time.Millisecond) // slow down brute force attacks
