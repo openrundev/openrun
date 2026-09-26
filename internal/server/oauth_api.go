@@ -19,7 +19,9 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
+
 	"sync"
 	"time"
 
@@ -121,11 +123,46 @@ func (s *Server) consumeOAuthCode(ctx context.Context, code string) (*oauthCode,
 	return &entry, nil
 }
 
-// apiExternalUrl returns the canonical https origin for the API surfaces:
-// api.external_url, defaulting to security.callback_url. Empty when neither
-// is configured
+// apiExternalUrl returns the canonical origin (the OAuth issuer) for the
+// API surfaces and the MCP apps, see apiExternalUrlFor
 func (s *Server) apiExternalUrl() string {
-	return strings.TrimSuffix(cmp.Or(s.Config().Api.ExternalUrl, s.Config().Security.CallbackUrl), "/")
+	return apiExternalUrlFor(s.Config())
+}
+
+// apiExternalUrlFor returns the canonical origin for the API surfaces and
+// the MCP apps: api.external_url, else security.callback_url, else the
+// listener-derived default of defaultApiExternalUrl. Empty when none
+// applies. Always taken from config, never from a request Host
+func apiExternalUrlFor(config *types.ServerConfig) string {
+	if external := strings.TrimSuffix(cmp.Or(config.Api.ExternalUrl, config.Security.CallbackUrl), "/"); external != "" {
+		return external
+	}
+	return defaultApiExternalUrl(config)
+}
+
+// defaultApiExternalUrl is the issuer origin used when neither
+// api.external_url nor security.callback_url is set: the HTTPS listener on
+// the default app domain, https://<system.default_domain>[:<https.port>].
+// Empty when the HTTPS listener is off (or on an ephemeral port) or no
+// default domain is configured, so a fresh install with the default https
+// port serves MCP apps without any [api] configuration. Tokens are bound to
+// this value like a configured one: setting the field later invalidates
+// them
+func defaultApiExternalUrl(config *types.ServerConfig) string {
+	if config.Https.Port <= 0 || config.System.DefaultDomain == "" {
+		return ""
+	}
+	host := strings.ToLower(config.System.DefaultDomain)
+	if config.Https.Port != 443 {
+		host += ":" + strconv.Itoa(config.Https.Port)
+	}
+	return "https://" + host
+}
+
+// apiExternalUrlIsDefault reports whether the issuer origin comes from
+// defaultApiExternalUrl rather than configuration
+func apiExternalUrlIsDefault(config *types.ServerConfig) bool {
+	return config.Api.ExternalUrl == "" && config.Security.CallbackUrl == "" && defaultApiExternalUrl(config) != ""
 }
 
 // apiResourceURI returns the canonical resource URI for a surface, both
@@ -179,8 +216,9 @@ func (s *Server) resolveOAuthResource(resource string) (*oauthResource, error) {
 		}
 		return &oauthResource{Surface: surface, URI: surface}, nil
 	}
-	if strings.HasPrefix(resource, "https://") {
+	if strings.Contains(resource, "://") {
 		info, uri, err := s.resolveAppResource(resource)
+
 		if err != nil {
 			return nil, fmt.Errorf("invalid_target: %w", err)
 		}

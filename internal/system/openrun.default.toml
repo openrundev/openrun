@@ -85,8 +85,10 @@ disable_client_certs = true                    # disable client certs for HTTPS
                                  # by default (enable = false). Enabled surfaces require RBAC
                                  # enforcement and HTTPS (or a trusted TLS-terminating proxy listed in
                                  # security.trusted_proxies).
-external_url = ""                # canonical https origin for API token resource URIs; defaults to
-                                 # security.callback_url when unset
+external_url = ""                # canonical https origin for API token resource URIs and the OAuth
+                                 # issuer of MCP apps; defaults to security.callback_url, else to the
+                                 # HTTPS listener on the default domain (https://<default_domain>:<https port>)
+
 access_token_ttl = "1h"          # OAuth access token lifetime
 refresh_token_ttl = "720h"       # OAuth refresh token lifetime per rotation (30d)
 grant_max_ttl = "2160h"          # absolute OAuth grant lifetime (90d): refresh rotation slides within

@@ -33,7 +33,8 @@ API keys work on any enabled surface whatever its login mechanisms. The [console
 The server refuses to start with a surface enabled unless the transport prerequisites are met:
 
 - An HTTPS listener (on by default, port 25223) or `security.trusted_proxies` for a TLS-terminating proxy.
-- A canonical https origin in `api.external_url`, defaulting to `security.callback_url` when that is set. This value backs the OAuth metadata and token bindings — treat it as stable; changing it invalidates outstanding tokens.
+- A canonical https origin in `api.external_url`, defaulting to `security.callback_url` when that is set, and otherwise to the HTTPS listener on the default app domain (`https://<system.default_domain>:<https.port>`, logged at startup). This value backs the OAuth metadata and token bindings — treat it as stable; changing it invalidates outstanding tokens. Set it explicitly whenever clients reach the server by a name other than the default domain.
+
 
 ```toml {filename="openrun.toml"}
 [security]

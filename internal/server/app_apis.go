@@ -299,12 +299,11 @@ func (s *Server) parseAppMCPConfig(value string) (*types.MCPConfig, error) {
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
-	if s.apiExternalUrl() == "" {
-		return nil, types.CreateRequestError(
-			"mcp apps need the OAuth issuer origin: set api.external_url (or security.callback_url) to the server's https origin",
-			http.StatusBadRequest)
+	if err := validateMCPAppIssuer(s.Config()); err != nil {
+		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 	return config, nil
+
 }
 
 func (s *Server) validateAppAuthnType(authStr string) error {

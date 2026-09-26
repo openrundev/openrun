@@ -562,21 +562,28 @@ func TestMetadata_ConfigAndKV(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	_, err := m.GetConfig()
-	if !errors.Is(err, ErrConfigNotFound) {
-		t.Fatalf("expected ErrConfigNotFound, got %v", err)
+	// The migration (version 31) seeds the initial config: default RBAC
+	// config plus the default builtin users
+	seeded, err := m.GetConfig()
+	testutil.AssertNoError(t, err)
+	if seeded.VersionId == "" || len(seeded.RBAC.Grants) == 0 {
+		t.Fatalf("migration must seed the initial config, got %+v", seeded)
+	}
+	for _, name := range []string{"test1", "test2"} {
+		if entry := seeded.Entries["builtin_auth"][name]; entry == nil || entry["password"] != DefaultBuiltinUsers[name].Password {
+			t.Fatalf("seeded config must carry builtin user %s: %+v", name, seeded.Entries)
+		}
 	}
 
 	configV1 := &types.DynamicConfig{
 		VersionId: "v1",
 		RBAC:      types.RBACConfig{},
 	}
-	testutil.AssertNoError(t, m.InitConfig(ctx, "u1", configV1))
-
 	err = m.InitConfig(ctx, "u1", configV1)
 	if !errors.Is(err, ErrConfigAlreadyExists) {
 		t.Fatalf("expected ErrConfigAlreadyExists, got %v", err)
 	}
+	testutil.AssertNoError(t, m.UpdateConfig(ctx, "u1", seeded.VersionId, configV1))
 
 	configV2 := &types.DynamicConfig{
 		VersionId: "v2",
@@ -743,16 +750,21 @@ func TestMetadata_ConfigHistoryDraftAndAtomicDelete(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
+	// The migration-seeded initial config is replaced by v1 (recorded in
+	// history as the seeded version), then v2 replaces v1
+	seeded, err := m.GetConfig()
+	testutil.AssertNoError(t, err)
 	v1 := &types.DynamicConfig{VersionId: "history-v1", RBAC: types.RBACConfig{Groups: map[string][]string{"g1": {"u1"}}}}
 	v2 := &types.DynamicConfig{VersionId: "history-v2", RBAC: types.RBACConfig{}}
-	testutil.AssertNoError(t, m.InitConfig(ctx, "alice", v1))
+	testutil.AssertNoError(t, m.UpdateConfig(ctx, "alice", seeded.VersionId, v1))
 	testutil.AssertNoError(t, m.UpdateConfig(ctx, "bob", v1.VersionId, v2))
 
 	history, err := m.ListConfigHistory(ctx)
 	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsInt(t, "history entries", 1, len(history))
+	testutil.AssertEqualsInt(t, "history entries", 2, len(history))
 	testutil.AssertEqualsString(t, "history version", v2.VersionId, history[0].VersionId)
 	testutil.AssertEqualsString(t, "history user", "bob", history[0].UserId)
+	testutil.AssertEqualsString(t, "older history version", v1.VersionId, history[1].VersionId)
 
 	snapshot, err := m.GetConfigVersion(ctx, v2.VersionId)
 	testutil.AssertNoError(t, err)

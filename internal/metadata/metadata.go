@@ -22,12 +22,14 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgxlisten"
 	"github.com/openrundev/openrun/internal/rbac"
+	"github.com/segmentio/ksuid"
+
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 30
+const CURRENT_DB_VERSION = 31
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -830,6 +832,49 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 	}
 
+	if version < 31 {
+		m.Info().Msg("Upgrading to version 31")
+		// Default builtin users (test1/test1, test2/test2) as dynamic
+		// [builtin_auth.*] entries, so an install can try builtin auth (app
+		// logins, the MCP OAuth login page) without configuring users.
+		// Existing entries of the same names are kept. A store without a
+		// dynamic config row (fresh install) gets the initial row here: the
+		// default RBAC config plus the users, which the server then finds
+		// at startup (its own init of the row is only a fallback)
+		var configStr sql.NullString
+		err := tx.QueryRowContext(ctx, `select config from config`).Scan(&configStr)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if err == nil && configStr.Valid && configStr.String != "" {
+			migrated, changed, migErr := migrateDefaultBuiltinUsers([]byte(configStr.String), m.config.BuiltinAuth)
+			if migErr != nil {
+				m.Error().Err(migErr).Msg("could not migrate stored dynamic config for the default builtin users")
+			} else if changed {
+				if _, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+					`update config set config = ?`), string(migrated)); err != nil {
+					return err
+				}
+				m.Info().Msg("Default builtin users test1 and test2 added to the dynamic config")
+			}
+		} else if err == sql.ErrNoRows {
+			initial := InitialDynamicConfig(m.config.BuiltinAuth)
+			initialJson, err := json.Marshal(initial)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+				`insert into config values (?, ?, `+system.FuncNow(m.dbType)+", ?)"),
+				initial.VersionId, types.ADMIN_USER, string(initialJson)); err != nil {
+				return err
+			}
+			m.Info().Msg("Dynamic config initialized with the default RBAC config and the builtin users test1 and test2")
+		}
+		if _, err := tx.ExecContext(ctx, `update version set version=31, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -837,7 +882,91 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 	return nil
 }
 
+// DefaultBuiltinUsers are the [builtin_auth.*] entries every installation
+// starts with (DB version 31): test1 with password test1 and test2 with
+// password test2, no groups. Bcrypt hashes are fixed so migrations and
+// test databases pay no hashing cost. They exist so a new install can try
+// builtin auth (app logins, the MCP OAuth login page) immediately; delete
+// them (openrun user delete) before exposing a server
+var DefaultBuiltinUsers = map[string]types.BuiltinAuthEntry{
+	"test1": {Password: "$2a$10$u3QRqV7t9Y6coh4j3CS9dukY5AJ4NU7.tdosH.7qd.81nD8FncEKa", Groups: []string{}},
+	"test2": {Password: "$2a$10$oY2VLrKH/JhFFvVn411jLuvvLH9.S136u0hm6EcJtvlConmsMSGQC", Groups: []string{}},
+}
+
+// NewConfigVersionId returns a fresh dynamic config version id
+func NewConfigVersionId() string {
+	return "ver_" + ksuid.New().String()
+}
+
+// DefaultBuiltinEntries returns the DefaultBuiltinUsers as dynamic config
+// entries (builtin_auth -> name -> {password, groups}, the shape
+// CreateUpdateUser writes), leaving out any name that has a static
+// [builtin_auth.*] entry in openrun.toml: a dynamic entry shadows the
+// static one, so seeding it would replace the operator's password and
+// groups with the documented defaults
+func DefaultBuiltinEntries(static map[string]types.BuiltinAuthEntry) map[string]map[string]map[string]any {
+	users := map[string]map[string]any{}
+	for name, entry := range DefaultBuiltinUsers {
+		if _, exists := static[name]; exists {
+			continue
+		}
+		users[name] = map[string]any{"password": entry.Password, "groups": entry.Groups}
+	}
+	return map[string]map[string]map[string]any{"builtin_auth": users}
+}
+
+// InitialDynamicConfig is the dynamic config a fresh install starts with,
+// inserted by the version 31 migration: a new version id, the default RBAC
+// config (enforcement always on, the default grant reproduces
+// authenticated => app access) and the default builtin users (minus the
+// statically configured names, see DefaultBuiltinEntries)
+func InitialDynamicConfig(static map[string]types.BuiltinAuthEntry) *types.DynamicConfig {
+	return &types.DynamicConfig{VersionId: NewConfigVersionId(), RBAC: *rbac.DefaultConfig(), Entries: DefaultBuiltinEntries(static)}
+}
+
+// migrateDefaultBuiltinUsers adds the DefaultBuiltinUsers to the stored
+// dynamic config JSON as entries.builtin_auth.<name>, keeping any existing
+// dynamic entry of the same name and skipping names with a static
+// [builtin_auth.*] entry (idempotent, see DefaultBuiltinEntries). Operates
+// on the raw JSON so unknown fields of an older or newer store survive
+// untouched
+func migrateDefaultBuiltinUsers(configJson []byte, static map[string]types.BuiltinAuthEntry) ([]byte, bool, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(configJson, &doc); err != nil {
+		return nil, false, err
+	}
+	entries, _ := doc["entries"].(map[string]any)
+	if entries == nil {
+		entries = map[string]any{}
+	}
+	users, _ := entries["builtin_auth"].(map[string]any)
+	if users == nil {
+		users = map[string]any{}
+	}
+	changed := false
+	for name, values := range DefaultBuiltinEntries(static)["builtin_auth"] {
+		if _, exists := users[name]; exists {
+			continue
+		}
+		users[name] = values
+		changed = true
+	}
+
+	if !changed {
+		return configJson, false, nil
+	}
+
+	entries["builtin_auth"] = users
+	doc["entries"] = entries
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return nil, false, err
+	}
+	return out, true, nil
+}
+
 // migrateRBACDefaultConfig rewrites the stored dynamic config JSON for the
+
 // always-on RBAC model: the legacy rbac.enabled field is dropped, and when it
 // was not true (RBAC was not being enforced) the default all-principals app
 // access grant is appended, unless an equivalent grant already exists

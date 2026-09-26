@@ -156,9 +156,12 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 		// With both surfaces disabled every path here is a plain 404, same
 		// as the reserved-path handler this replaces
 		router.Mount(types.INTERNAL_URL_PREFIX, server.csrfMiddleware.Handler(handler.serveRemoteInternal()))
-		// OAuth well-known metadata documents (RFC 8414 / RFC 9728), behind
-		// the same transport gate. One PRM document per enabled surface;
-		// the handlers 404 while their surface is disabled
+		// OAuth well-known metadata documents (RFC 8414 / RFC 9728). The
+		// surface PRM documents sit behind the https-only gate of their
+		// surfaces; one per enabled surface, the handlers 404 while their
+		// surface is disabled. The AS metadata is also what an MCP app
+		// client discovers, so it shares the MCP app gate (https, or
+		// plaintext on loopback for local development)
 		wellKnownGate := func(next http.HandlerFunc) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
 				if system.GetRequestScheme(r, server.Config().Security.TrustedProxies) != "https" {
@@ -168,7 +171,13 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 				next(w, r)
 			}
 		}
-		router.Get("/.well-known/oauth-authorization-server", wellKnownGate(handler.serveOAuthASMetadata))
+		router.Get("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+			if !server.mcpTransportAllowed(r) {
+				http.NotFound(w, r)
+				return
+			}
+			handler.serveOAuthASMetadata(w, r)
+		})
 		// The surface documents live at the /_openrun-prefixed paths, the
 		// path-inserted form of their resource URIs (<external>/_openrun/rest
 		// and <external>/_openrun/mcp); no app can own /_openrun, so they
@@ -1973,7 +1982,10 @@ func (h *Handler) serveInternal(remote bool) http.Handler {
 // token is already leaked by the time a response is written), then dispatch
 // to the MCP endpoint or the REST management APIs. Surface enablement is
 // checked per request against the effective config, so a dynamic [api]
-// update takes effect without a restart; a disabled surface is a plain 404
+// update takes effect without a restart; a disabled surface is a plain 404.
+// The OAuth endpoints, which MCP apps share, additionally accept plaintext
+// on loopback (mcpTransportAllowed) so a local development flow against
+// http://localhost completes end to end
 func (h *Handler) serveRemoteInternal() http.Handler {
 	restHandler := h.serveInternal(true)
 	mcpHandler := h.server.mcpHTTPHandler()
@@ -1982,7 +1994,24 @@ func (h *Handler) serveRemoteInternal() http.Handler {
 	oauthPrefix := types.INTERNAL_URL_PREFIX + "/oauth/"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		config := h.server.Config()
-		if system.GetRequestScheme(r, config.Security.TrustedProxies) != "https" {
+		secure := system.GetRequestScheme(r, config.Security.TrustedProxies) == "https"
+		if strings.HasPrefix(r.URL.Path, oauthPrefix) {
+			// The OAuth AS endpoints are pre-authentication: they mint the
+			// credentials the other paths require. Mounted while any
+			// surface is enabled or an MCP app is deployed
+			if !h.server.mcpTransportAllowed(r) {
+				http.NotFound(w, r)
+				return
+			}
+			if !apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) &&
+				!apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) && !h.server.hasMCPApps() {
+				http.NotFound(w, r)
+				return
+			}
+			oauthHandler.ServeHTTP(w, r)
+			return
+		}
+		if !secure {
 			http.NotFound(w, r)
 			return
 		}
@@ -1994,19 +2023,8 @@ func (h *Handler) serveRemoteInternal() http.Handler {
 			mcpHandler.ServeHTTP(w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, oauthPrefix) {
-			// The OAuth AS endpoints are pre-authentication: they mint the
-			// credentials the other paths require. Mounted while any
-			// surface is enabled
-			if !apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) &&
-				!apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) && !h.server.hasMCPApps() {
-				http.NotFound(w, r)
-				return
-			}
-			oauthHandler.ServeHTTP(w, r)
-			return
-		}
 		if !apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) {
+
 			http.NotFound(w, r)
 			return
 		}

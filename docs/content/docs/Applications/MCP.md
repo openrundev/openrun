@@ -51,7 +51,7 @@ The JSON document fields:
 | `tools` | Tool name to required scope. A `tools/call` for a listed tool needs that scope on the token; unlisted tools need none |
 | `allowed_origins` | Browser origins (`scheme://host[:port]`) admitted on the endpoint. Requests with any other `Origin` are refused; native clients send none |
 
-An MCP app needs the OAuth issuer origin configured: `api.external_url`, or `security.callback_url` which it defaults to.
+An MCP app needs an OAuth issuer origin: `api.external_url`, or `security.callback_url` which it defaults to. When neither is set and the HTTPS listener is on, the listener on the default app domain is used: `https://<system.default_domain>:<https.port>`, so a default install (`https://localhost:25223`) serves MCP apps with no `[api]` configuration. The value is logged at startup. Tokens are bound to it, so setting `api.external_url` later invalidates outstanding tokens; set it up front for a server clients reach by another name. While MCP apps are deployed, a configuration update that clears or breaks the origin is refused.
 
 The health check for an MCP app without an explicit `health` path in `container.config` sends an MCP JSON-RPC request to the endpoint instead of a `GET`, since an MCP endpoint does not answer `GET` with 200. On Kubernetes the pod readiness and startup probes are TCP probes on the container port (a native probe cannot send a body), and OpenRun additionally sends its JSON-RPC probe to the new version through a temporary per-version Service before traffic is switched to it; a version that does not answer as an MCP server is removed and the deploy fails, as with any failed health check.
 
@@ -81,7 +81,9 @@ RBAC decides who may reach the app at all: with RBAC on, the user needs `app:acc
 
 ## Transport notes
 
-- The endpoint is served over HTTPS, or behind a trusted TLS-terminating proxy listed in `security.trusted_proxies`. Plaintext requests get a 404, except on `localhost` for local development.
+- The endpoint is served over HTTPS, or behind a trusted TLS-terminating proxy listed in `security.trusted_proxies`. Plaintext requests get a 404, except for connections from loopback to a loopback host (`localhost`, `127.0.0.1`, `::1`) for local development; a remote connection with a `Host: localhost` header does not qualify.
+ The same exception covers the discovery documents and the OAuth endpoints, so a client can complete the whole flow against `http://localhost:25222`: set `api.external_url = "http://localhost:25222"` (a plain http origin is accepted only on a loopback host, and only while no management API surface is enabled) and add the app as `http://localhost:25222/orders`. With the default https issuer, the client is sent to `https://localhost:25223` for login and needs to trust that certificate.
+
 - Browser-based MCP clients need their origin in `allowed_origins`; CORS preflight requests from an allowed origin are passed to the app without a token so the app's CORS handler can answer them.
 - Legacy MCP clients that use sessions (`Mcp-Session-Id`, GET streams) pass through unchanged. On Kubernetes with several replicas such clients need a stateless-mode server; OpenRun does not pin sessions to pods.
 - Every MCP call is recorded in the app's HTTP audit log with the JSON-RPC method (`mcp_tools/call`) and the tool name.

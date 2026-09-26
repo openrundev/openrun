@@ -267,6 +267,10 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	if err := validateApiSurfaceConfig(config); err != nil {
 		return nil, err
 	}
+	if apiExternalUrlIsDefault(config) {
+		l.Info().Str("external_url", defaultApiExternalUrl(config)).Msg("api.external_url and security.callback_url are not set: " +
+			"the HTTPS listener on system.default_domain is the OAuth issuer origin for MCP apps and API tokens (set api.external_url to override)")
+	}
 	if apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) && len(config.Api.MCP.EnableApis) > 0 {
 		// Operator opted dangerous operations back in for MCP: make it
 		// visible in the startup log
@@ -441,13 +445,16 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}
 
 	if server.dynamicConfig == nil || server.dynamicConfig.VersionId == "" {
-		// Initialize dynamic config if not already done. A fresh install
-		// starts with the default RBAC config: enforcement is always on, and
-		// the default grant reproduces authenticated => app access
+		// Fallback only: the DB migration (version 31) seeds the initial
+		// row (default RBAC config plus the default builtin users) on a
+		// fresh install. A store that somehow has no row starts with the
+		// default RBAC config: enforcement is always on, and the default
+		// grant reproduces authenticated => app access
 		if server.dynamicConfig == nil {
 			server.dynamicConfig = &types.DynamicConfig{RBAC: *rbac.DefaultConfig()}
 		}
-		server.dynamicConfig.VersionId = "ver_" + ksuid.New().String()
+		server.dynamicConfig.VersionId = metadata.NewConfigVersionId()
+
 		err = server.db.InitConfig(context.Background(), "admin", server.dynamicConfig)
 		if err != nil {
 			if !errors.Is(err, metadata.ErrConfigAlreadyExists) {
@@ -732,6 +739,21 @@ func (s *Server) prepareDynamicConfig(ctx context.Context, config *types.Dynamic
 		}
 		s.Error().Err(err).Msg("dynamic api config is invalid, remote surfaces may be unavailable")
 	}
+	// Deployed MCP apps advertise the issuer origin in their discovery
+	// documents: an update that clears or breaks it (api.external_url and
+	// security.callback_url are dynamic) is refused while any exists. The
+	// uncached check: this runs before the effective config is published,
+	// and the app store's domain index must not be built against the
+	// previous system.default_domain
+	if s.hasMCPAppsUncached() {
+
+		if err := validateMCPAppIssuer(effective); err != nil {
+			if failOnBindError {
+				return nil, fmt.Errorf("mcp apps are deployed, rejecting config update: %w", err)
+			}
+			s.Error().Err(err).Msg("the OAuth issuer origin is invalid for the deployed MCP apps; their clients cannot log in")
+		}
+	}
 
 	// The secret providers are initialized with their config, so a change
 	// rebuilds the manager. Building it validates the provider names and
@@ -827,7 +849,10 @@ func (s *Server) SaveDynamicConfig(ctx context.Context) error {
 	}
 
 	targetPath := path.Join(targetDir, "dynamic_config.json")
-	configJson, err := json.Marshal(s.dynamicConfig, jsontext.WithIndent("  "))
+	// Deterministic (sorted map keys) like `openrun server show-config`, so
+	// the export and the API output of the same version are byte-equal
+	configJson, err := json.Marshal(s.dynamicConfig, jsontext.WithIndent("  "), json.Deterministic(true))
+
 	if err != nil {
 		return fmt.Errorf("error marshalling dynamic config: %w", err)
 	}

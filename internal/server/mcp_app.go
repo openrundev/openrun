@@ -11,6 +11,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -39,14 +40,20 @@ const (
 	mcpMethodToolsCall = "tools/call"
 )
 
-// appMCPExternalPort returns the ":port" suffix of api.external_url (one
-// https port serves every app domain), "" when it uses the default port
-func (s *Server) appMCPExternalPort() string {
+// appMCPExternalOrigin returns the scheme and the ":port" suffix of the
+// issuer origin (apiExternalUrl): one listener serves every app domain, so
+// an app's resource shares them. The scheme is https, or http when the
+// issuer is a loopback http origin (local development, see
+// validateApiExternalUrl); the port suffix is "" on the default port
+func (s *Server) appMCPExternalOrigin() (scheme, port string) {
 	parsed, err := url.Parse(s.apiExternalUrl())
-	if err != nil || parsed.Port() == "" {
-		return ""
+	if err != nil || parsed.Scheme == "" {
+		return "https", ""
 	}
-	return ":" + parsed.Port()
+	if parsed.Port() != "" {
+		port = ":" + parsed.Port()
+	}
+	return parsed.Scheme, port
 }
 
 // appMCPRegion is the request path prefix of the MCP region: the app path
@@ -74,7 +81,8 @@ func (s *Server) appMCPResource(appPath, domain string, mcp *types.MCPConfig) st
 	if region == "/" {
 		region = ""
 	}
-	return "https://" + host + s.appMCPExternalPort() + region
+	scheme, port := s.appMCPExternalOrigin()
+	return scheme + "://" + host + port + region
 }
 
 // appMCPPRMUrl is the path-inserted RFC 9728 metadata URL for the app,
@@ -137,15 +145,39 @@ func (s *Server) hasMCPApps() bool {
 	return false
 }
 
+// hasMCPAppsUncached is hasMCPApps straight from the database, for callers
+// that run before the effective config is published (dynamic config
+// validation): the app store's domain index is built against
+// system.default_domain, so it must not be populated with a value about
+// to change
+func (s *Server) hasMCPAppsUncached() bool {
+	if s.db == nil {
+		return false
+	}
+	apps, err := s.db.GetAllApps(true)
+	if err != nil {
+		return false
+	}
+	for _, info := range apps {
+		if info.MCP != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveAppResource maps an RFC 8707 resource URI (from an authorize
-// request or an API key request) to an MCP app: https scheme, a host that
-// is a registered app domain or the default domain (no unknown-domain
-// fallback at the AS), and a path equal to the app's region. Returns the
-// app and the canonical resource string to store on the credential
+
+// request or an API key request) to an MCP app: the issuer's scheme (https,
+// or http for a loopback development issuer), a host that is a registered
+// app domain or the default domain (no unknown-domain fallback at the AS),
+// and a path equal to the app's region. Returns the app and the canonical
+// resource string to store on the credential
 func (s *Server) resolveAppResource(resource string) (*types.AppInfo, string, error) {
+	scheme, _ := s.appMCPExternalOrigin()
 	parsed, err := url.Parse(strings.TrimSpace(resource))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Fragment != "" || parsed.User != nil {
-		return nil, "", fmt.Errorf("resource %q is not an https app url", resource)
+	if err != nil || parsed.Scheme != scheme || parsed.Host == "" || parsed.Fragment != "" || parsed.User != nil {
+		return nil, "", fmt.Errorf("resource %q is not an %s app url", resource, scheme)
 	}
 	host := strings.ToLower(parsed.Hostname())
 	domains, err := s.apps.GetAllDomains()
@@ -166,15 +198,16 @@ func (s *Server) resolveAppResource(resource string) (*types.AppInfo, string, er
 }
 
 // resolveAppReference maps an API key --resource app reference
-// ("app:<path>", "app:<domain>:<path>" or the https resource URI) to the
+// ("app:<path>", "app:<domain>:<path>" or the app's resource URI) to the
 // canonical resource of an MCP app
 func (s *Server) resolveAppReference(ref string) (*types.AppInfo, string, error) {
-	if strings.HasPrefix(ref, "https://") {
+	if strings.Contains(ref, "://") {
 		return s.resolveAppResource(ref)
 	}
 	spec, ok := strings.CutPrefix(ref, "app:")
 	if !ok {
-		return nil, "", fmt.Errorf("invalid resource %q: valid values are %s, %s, all, app:<path>, app:<domain>:<path> or the app's https MCP url",
+		return nil, "", fmt.Errorf("invalid resource %q: valid values are %s, %s, all, app:<path>, app:<domain>:<path> or the app's MCP url",
+
 			ref, ApiResourceRest, ApiResourceMCP)
 	}
 	pathDomain, err := parseAppPath(spec)
@@ -196,14 +229,33 @@ func (s *Server) resolveAppReference(ref string) (*types.AppInfo, string, error)
 	return nil, "", fmt.Errorf("app %s not found", pathDomain)
 }
 
-// mcpTransportAllowed: the region exists over https (direct or via a
+// mcpTransportAllowed: the MCP app paths exist over https (direct or via a
 // trusted proxy) and, as a development convenience, over plaintext on
-// loopback hosts only
+// loopback hosts only. The same gate covers everything an MCP client on
+// http://localhost walks: the region, the app's protected resource
+// document, the authorization server metadata and the OAuth endpoints
+// (router.go). The management surfaces and their documents stay https-only
 func (s *Server) mcpTransportAllowed(r *http.Request) bool {
 	if system.GetRequestScheme(r, s.Config().Security.TrustedProxies) == "https" {
 		return true
 	}
-	return isLoopbackHost(system.GetHostname(r.Host))
+	// The exception needs a loopback connection, not just a loopback Host
+	// header: the Host is client-controlled, and an HTTP listener bound to
+	// a routable address must not hand out login pages or tokens in
+	// plaintext to a remote caller that says Host: localhost
+	return isLoopbackHost(system.GetHostname(r.Host)) && isLoopbackRemote(r.RemoteAddr)
+}
+
+// isLoopbackRemote reports whether the connection's peer address is a
+// loopback IP (RemoteAddr "ip:port"; anything unparseable, like a Unix
+// socket peer, does not qualify)
+func isLoopbackRemote(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 // appPRMMatch resolves the MCP app whose region is the document suffix of

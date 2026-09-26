@@ -44,7 +44,7 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		newStringFlag("scopes", "s", "Comma separated permission globs limiting the key (like app:*,sync:read)."+
 			" RBAC still applies; scopes are a ceiling. Default: unscoped, except mcp-only keys which"+
 			" default to read-only: *:read plus app:read_detail (pass --scopes \"*\" for a write-capable MCP key)", ""),
-		newStringFlag("resource", "r", "What the key is valid for: rest, mcp, all, or an MCP app (app:<path>, app:<domain>:<path>, or the app's https MCP url)", "rest"),
+		newStringFlag("resource", "r", "What the key is valid for: rest, mcp, all, or an MCP app (app:<path>, app:<domain>:<path>, or the app's MCP url)", "rest"),
 		newStringFlag("desc", "d", "Description for the key", ""),
 	)
 
@@ -114,12 +114,14 @@ func parseApiKeyResource(resource string) ([]string, error) {
 	case "all":
 		return []string{"rest", "mcp"}, nil
 	default:
-		if strings.HasPrefix(resource, "app:") || strings.HasPrefix(resource, "https://") {
+		if strings.HasPrefix(resource, "app:") || strings.HasPrefix(resource, "https://") || strings.HasPrefix(resource, "http://") {
 			// An MCP app: app:<path>, app:<domain>:<path> or the app's MCP
-			// url; resolved and validated by the server
+			// url (http only for a loopback development issuer); resolved
+			// and validated by the server
 			return []string{resource}, nil
 		}
-		return nil, fmt.Errorf("invalid resource %q: valid values are rest, mcp, all, app:<path>, app:<domain>:<path> or an app's https MCP url", resource)
+		return nil, fmt.Errorf("invalid resource %q: valid values are rest, mcp, all, app:<path>, app:<domain>:<path> or an app's MCP url", resource)
+
 	}
 }
 

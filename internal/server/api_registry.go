@@ -4,7 +4,6 @@
 package server
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -507,18 +506,14 @@ func validateApiSurfaceConfig(config *types.ServerConfig) error {
 	}
 	// The external url backs token resource URIs and the OAuth metadata; a
 	// config that would 404 discovery or fail login only after credentials
-	// are typed must be rejected
-	external := strings.TrimSuffix(cmp.Or(config.Api.ExternalUrl, config.Security.CallbackUrl), "/")
+	// are typed must be rejected. The management surfaces are https-only
+	// (no loopback plaintext exception), so their issuer is too
+	external := apiExternalUrlFor(config)
 	if external == "" {
 		return fmt.Errorf("an enabled remote API surface (api.rest / api.mcp enable) requires api.external_url (or security.callback_url): the canonical https origin for API tokens and OAuth metadata")
 	}
-	// OAuth endpoints and resource identifiers are built from this value by
-	// concatenation: it must be a plain https origin, or the discovery
-	// metadata comes out invalid
-	parsed, err := url.Parse(external)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
-		parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-		return fmt.Errorf("api.external_url must be a plain https origin (https://host[:port], no path/query/fragment/userinfo), got %q", external)
+	if err := validateApiExternalUrl(external, false); err != nil {
+		return err
 	}
 	for section, surface := range map[string]types.ApiSurfaceConfig{"api.mcp": config.Api.MCP, "api.rest": config.Api.Rest} {
 		for _, mechanism := range surface.Auth {
@@ -536,7 +531,51 @@ func validateApiSurfaceConfig(config *types.ServerConfig) error {
 	return nil
 }
 
+// validateApiExternalUrl checks the shape of the issuer origin. OAuth
+// endpoints and resource identifiers are built from it by concatenation,
+// so it must be a plain origin (scheme://host[:port], no path, query,
+// fragment or userinfo) over https. With allowLoopbackHttp an http origin
+// whose host is loopback is accepted as well: MCP apps serve their region,
+// the OAuth endpoints and the discovery documents over plaintext on
+// loopback for local development, and the issuer must then be reachable
+// the same way
+func validateApiExternalUrl(external string, allowLoopbackHttp bool) error {
+	parsed, err := url.Parse(external)
+	if err != nil || parsed.Host == "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return fmt.Errorf("api.external_url must be a plain https origin (https://host[:port], no path/query/fragment/userinfo), got %q", external)
+	}
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if allowLoopbackHttp && isLoopbackHost(strings.ToLower(parsed.Hostname())) {
+			return nil
+		}
+		if allowLoopbackHttp {
+			return fmt.Errorf("api.external_url must be an https origin; a plain http origin is allowed only on a loopback host (http://localhost[:port]) for local development, got %q", external)
+		}
+	}
+	return fmt.Errorf("api.external_url must be a plain https origin (https://host[:port], no path/query/fragment/userinfo), got %q", external)
+}
+
+// validateMCPAppIssuer checks that the effective config carries an issuer
+// origin MCP apps can use (apiExternalUrlFor, https or loopback http).
+// Applied when an MCP app is created or updated and, while MCP apps are
+// deployed, on every dynamic config update: clearing or breaking the origin
+// would leave every deployed MCP app advertising discovery documents that
+// 404
+func validateMCPAppIssuer(config *types.ServerConfig) error {
+	external := apiExternalUrlFor(config)
+	if external == "" {
+		return fmt.Errorf("mcp apps need the OAuth issuer origin: set api.external_url (or security.callback_url) to the server's https origin, " +
+			"or enable the HTTPS listener (https.port) so the default https://<system.default_domain>:<https.port> applies")
+	}
+	return validateApiExternalUrl(external, true)
+}
+
 // validateApiConfig checks the [api] section schema: every surface names
+
 // at least one login mechanism (the default is admin), and the
 // enable_apis / disable_apis op names are known
 func validateApiConfig(config *types.ServerConfig) error {

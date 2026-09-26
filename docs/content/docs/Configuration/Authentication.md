@@ -51,6 +51,9 @@ openrun user delete alice
 
 The password is bcrypt hashed on the client; only the hash is sent to the server and stored in the config. Builtin users are intended for small deployments and for testing RBAC policies with multiple users and groups; prefer OAuth/OIDC/SAML for production single sign-on.
 
+Every installation starts with two builtin users for trying things out, `test1` with password `test1` and `test2` with password `test2` (no groups). They are ordinary dynamic entries, not added when a static `[builtin_auth.test1]` or `[builtin_auth.test2]` entry already exists in `openrun.toml`: an app created with `--auth builtin` accepts them right away
+, including the login page of an [MCP app]({{< ref "docs/applications/mcp" >}}), and `openrun user delete test1` removes them. Delete both before exposing a server to untrusted networks if you are using builtin auth.
+
 ## Default Authentication Type
 
 Any app when created uses the default auth type configured for the server. `none` is the default. To change this, add

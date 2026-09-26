@@ -144,9 +144,14 @@ func TestRouterNewTCPHandler_RemoteApiTransportGateAndAuth(t *testing.T) {
 	if tlsRec.Code != http.StatusUnauthorized {
 		t.Fatalf("status: want %d got %d", http.StatusUnauthorized, tlsRec.Code)
 	}
-	if got := tlsRec.Header().Get("WWW-Authenticate"); got != `Bearer realm="openrun"` {
-		t.Fatalf("WWW-Authenticate header: got %q", got)
+	// No api.external_url or security.callback_url is configured: the
+	// HTTPS listener on the default domain is the issuer origin, so the
+	// challenge still points at the discovery document
+	want := `Bearer realm="openrun", resource_metadata="https://example.com:7443/.well-known/oauth-protected-resource/_openrun/rest", scope="*"`
+	if got := tlsRec.Header().Get("WWW-Authenticate"); got != want {
+		t.Fatalf("WWW-Authenticate header: got %q want %q", got, want)
 	}
+
 }
 
 func TestRouterNewTCPHandler_RedirectToHTTPS(t *testing.T) {

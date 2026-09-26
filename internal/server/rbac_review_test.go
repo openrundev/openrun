@@ -275,7 +275,7 @@ func TestRemoteConfigRoundTripPreservesCredentials(t *testing.T) {
 		Entries:  map[string]map[string]map[string]any{"git_auth": {"gh": {"password": "secret-password", "user_id": "git"}}},
 		Settings: map[string]map[string]any{"system": {"builder_auth_token": "secret-token"}},
 	}
-	if err := db.InitConfig(trusted, types.ADMIN_USER, previous); err != nil {
+	if err := seedTestConfig(trusted, db, previous); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.updateDynamicConfigCache(trusted, previous); err != nil {
@@ -498,7 +498,7 @@ func TestConfigPlaceholderConsistency(t *testing.T) {
 		Entries:  map[string]map[string]map[string]any{"git_auth": {"gh": {"password": "stored-secret", "user_id": "git"}}},
 		Settings: map[string]map[string]any{"system": {"builder_auth_token": "stored-token", "list_apps_title": "original"}},
 	}
-	if err := db.InitConfig(trusted, types.ADMIN_USER, previous); err != nil {
+	if err := seedTestConfig(trusted, db, previous); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.updateDynamicConfigCache(trusted, previous); err != nil {
@@ -600,7 +600,7 @@ func TestInvalidSAMLConfigDoesNotCommit(t *testing.T) {
 	server.staticConfig.Api.Rest.Auth = []string{"admin"}
 	server.samlManager = NewSAMLManager(server.Logger, server.staticConfig, nil, db)
 	previous := &types.DynamicConfig{VersionId: "initial", RBAC: *rbac.DefaultConfig()}
-	if err := db.InitConfig(ctx, types.ADMIN_USER, previous); err != nil {
+	if err := seedTestConfig(ctx, db, previous); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.updateDynamicConfigCache(ctx, previous); err != nil {
@@ -743,7 +743,7 @@ func TestConfigNotifyAppliesRBACWithUnavailableProviders(t *testing.T) {
 		"auth": {"oidc": {"key": "client", "secret": "credential", "discovery_url": ":unavailable"}},
 		"saml": {"company": {"metadata_url": ":unavailable"}},
 	}}
-	if err := db.InitConfig(ctx, types.ADMIN_USER, committed); err != nil {
+	if err := seedTestConfig(ctx, db, committed); err != nil {
 		t.Fatal(err)
 	}
 	server.configNotifyHandler(types.ConfigUpdatePayload{ServerId: "other-node"})
@@ -790,7 +790,7 @@ func TestNestedConfigRedactionRoundTrip(t *testing.T) {
 	initial := &types.DynamicConfig{VersionId: "initial", RBAC: *rbac.DefaultConfig(), Entries: map[string]map[string]map[string]any{
 		"builder_agent": {"codex_review": {"env": map[string]any{"API_TOKEN": "private-token", "DISPLAY": "public"}}},
 	}}
-	if err := db.InitConfig(ctx, types.ADMIN_USER, initial); err != nil {
+	if err := seedTestConfig(ctx, db, initial); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.updateDynamicConfigCache(ctx, initial); err != nil {
@@ -980,4 +980,15 @@ func TestAsyncSecretRevealDoesNotMutateRequestAudit(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("secret reveal job did not finish")
+}
+
+// seedTestConfig replaces the migration-seeded initial dynamic config (DB
+// version 31 inserts the default RBAC config with the default builtin
+// users) with the test's own starting config, keeping its version id
+func seedTestConfig(ctx context.Context, db *metadata.Metadata, config *types.DynamicConfig) error {
+	seeded, err := db.GetConfig()
+	if err != nil {
+		return err
+	}
+	return db.UpdateConfig(ctx, types.ADMIN_USER, seeded.VersionId, config)
 }
