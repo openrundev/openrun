@@ -65,9 +65,8 @@ ifeq ($(origin .RECIPEPREFIX), undefined)
   $(error This Make does not support .RECIPEPREFIX. Please use GNU Make 4.0 or later)
 endif
 .RECIPEPREFIX = >
-TAG := 
 
-.PHONY: help test unit int testui covtest covunit covint release fullrelease update-dep update-go int_single lint verify build-linux image tags docs-screenshots
+.PHONY: help test unit int testui covtest covunit covint release-sdk release fullrelease update-dep update-go int_single lint verify build-linux image tags docs-screenshots
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -216,132 +215,136 @@ update-go: ## Update the Go version in all modules and Actions workflows; args: 
 > done
 > echo "Updated Go version to $$version in $${#module_dirs[@]} modules and Actions workflows"
 
-release: ## Tag and push a release; args: <app_version> <helm_version>
-> @if [[ -z "$(INPUT)" || "$(INPUT)" == v* ]]; then \
->    echo "Error: OpenRun version has to be set, without the v prefix"; \
->    exit 1; \
-> fi
-> @if [[ -z "$(INPUT2)" || "$(INPUT2)" == openrun* ]]; then \
->    echo "Error: Helm version has to be set, without the openrun prefix"; \
->    exit 1; \
-> fi
-> git tag -a v$(INPUT) -m "Release v$(INPUT)"; git push origin v$(INPUT)
-> @cd ../openrun-helm-charts/
-> sed -i.bak -E "s/^([[:space:]]*version:[[:space:]]*)[^#[:space:]]+/\1${INPUT2}/" charts/openrun/Chart.yaml
-> mv charts/openrun/Chart.yaml.bak /tmp/chart.bak1
-> sed -i.bak -E "s/^([[:space:]]*appVersion:[[:space:]]*)[^#[:space:]]+/\1${INPUT}/" charts/openrun/Chart.yaml
-> mv charts/openrun/Chart.yaml.bak /tmp/chart.bak2
-> git add charts/openrun/Chart.yaml
-> git commit -m "Updated Helm chart to $(INPUT2), app version to $(INPUT)"
-> echo "************************************************** "
-> echo "   cd ../openrun-helm-charts/ && git push"
-> echo "************************************************** "
-> echo "Run above command to push the Helm chart after the OpenRun release job is done"
-> @cd - > /dev/null
+# ---------------------------------------------------------------------------
+# Releases
+#
+# Versions are given without the v prefix (e.g. 0.20.0); the tags add it:
+#   v<version>                              OpenRun server (this repo)
+#   pkg/binding/v<version>, pkg/plugin/v<version>  SDK modules (this repo)
+#   <provider>/v<version>                   binding providers (../bindings)
+#   openrun-<version>                       Helm chart (../openrun-helm-charts)
+#
+#   make release-sdk <version>              tag + push both SDK modules only
+#   make release <version> [<helm_version>] tag + push the server, then create
+#                                           the Helm chart release commit
+#   make fullrelease <version>              SDKs + server + every binding
+#                                           provider + Helm chart commit
+#   make -C ../bindings release <sdk_version> <bindings_version> PUSH=1
+#                                           binding providers only
+#
+# Every repo that gets tagged must be on a clean main synchronized with
+# origin/main. The Helm chart commit is never pushed automatically: its
+# appVersion is the server image tag, so push it after the OpenRun release
+# job has published the images.
+# ---------------------------------------------------------------------------
 
-fullrelease: ## Tag+push OpenRun, SDKs and all bindings; create (not push) the Helm chart release commit; args: <version>
-> @version="$(INPUT)"
-> version="$${version#v}"
-> if [[ -z "$$version" ]]; then
->   echo "Usage: make fullrelease <version>, e.g. make fullrelease 0.19.0"
->   exit 1
-> fi
-> semver_re='^(0|[1-9][0-9]*)\.((0|[1-9][0-9]*))\.((0|[1-9][0-9]*))(-((0|[1-9][0-9]*)|([0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))(\.((0|[1-9][0-9]*)|([0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)))*)?$$'
-> if ! [[ "$$version" =~ $$semver_re ]]; then
->   echo "Error: version '$$version' must be SemVer without build metadata (for example 1.2.3 or 1.2.3-rc.1)"
->   exit 1
-> fi
-> # Everything is tagged from the current checkouts. Require clean main
-> # branches synchronized with origin/main, and fetch tags before checking for
-> # collisions so a remote-only tag cannot cause a partial release later.
-> for repo in . ../bindings ../openrun-helm-charts; do
->   if [[ -n "$$(git -C $$repo status --porcelain)" ]]; then
->     echo "Error: working tree $$repo is not clean, commit or stash changes first"
->     exit 1
->   fi
->   branch="$$(git -C $$repo branch --show-current)"
->   if [[ "$$branch" != "main" ]]; then
->     echo "Error: $$repo must be on main (currently '$$branch')"
->     exit 1
->   fi
->   git -C $$repo fetch --quiet --prune --tags origin
->   if [[ "$$(git -C $$repo rev-parse HEAD)" != "$$(git -C $$repo rev-parse refs/remotes/origin/main)" ]]; then
->     echo "Error: $$repo main is not synchronized with origin/main"
->     exit 1
->   fi
-> done
-> for tag in "v$$version" "pkg/binding/v$$version" "pkg/plugin/v$$version"; do
->   if git rev-parse -q --verify "refs/tags/$$tag" > /dev/null; then
->     echo "Error: tag $$tag already exists"
->     exit 1
->   fi
-> done
-> binding_modules="$$($(MAKE) --no-print-directory -s -C ../bindings modules)"
-> for module in $$binding_modules; do
->   tag="$$module/v$$version"
->   if git -C ../bindings rev-parse -q --verify "refs/tags/$$tag" > /dev/null; then
->     echo "Error: bindings tag $$tag already exists"
->     exit 1
->   fi
-> done
-> helm_tag="openrun-$$version"
-> if git -C ../openrun-helm-charts rev-parse -q --verify "refs/tags/$$helm_tag" > /dev/null; then
->   echo "Error: Helm chart tag $$helm_tag already exists"
->   exit 1
-> fi
-> chart_version="$$(awk '$$1 == "version:" { print $$2; exit }' ../openrun-helm-charts/charts/openrun/Chart.yaml)"
-> chart_app_version="$$(awk '$$1 == "appVersion:" { print $$2; exit }' ../openrun-helm-charts/charts/openrun/Chart.yaml)"
-> if [[ -z "$$chart_version" || -z "$$chart_app_version" ]]; then
->   echo "Error: could not read version and appVersion from the OpenRun Chart.yaml"
->   exit 1
-> fi
-> if [[ "$$chart_version" == "$$version" && "$$chart_app_version" == "$$version" ]]; then
->   echo "Error: Helm Chart.yaml is already at $$version but tag $$helm_tag does not exist"
->   echo "Repair or rerun the Helm chart release before starting a new full release"
->   exit 1
-> fi
-> # The main module's SDK requirements must name the versions being released.
-> # Local replace directives are not honored by downstream module consumers,
-> # so pin both SDKs before the server and nested modules are tagged.
-> go mod edit -require=github.com/openrundev/openrun/pkg/binding@v$$version
-> go mod edit -require=github.com/openrundev/openrun/pkg/plugin@v$$version
-> if ! git diff --quiet go.mod; then
->   git add go.mod
->   git commit -m "Pin SDK modules to v$$version for release"
-> fi
-> # openrun server + pkg/binding and pkg/plugin SDKs: tag, then push the
-> # current branch and all three tags. The binding SDK tag must be on the
-> # remote before the bindings release, whose go mod tidy resolves it; the
-> # plugin SDK tag makes the release resolvable for plugin provider builds.
-> git tag -a "v$$version" -m "Release v$$version"
+# Bash helpers shared by the release targets; expanded as the first recipe line
+define RELEASE_SH
+semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$$'
+# version_arg <name> <value>: print the version without a v prefix, or fail
+version_arg() {
+  local v="$${2#v}"
+  if [[ -z "$$v" ]]; then
+    echo "Error: $$1 is required, e.g. 0.20.0" >&2
+    return 1
+  fi
+  if ! [[ "$$v" =~ $$semver_re ]]; then
+    echo "Error: $$1 '$$2' is not a version like 0.20.0 or 0.20.0-rc.1" >&2
+    return 1
+  fi
+  echo "$$v"
+}
+# require_release_ready <repo>: clean working tree, on main, synchronized with origin/main
+require_release_ready() {
+  if [[ -n "$$(git -C "$$1" status --porcelain)" ]]; then
+    echo "Error: $$1 has uncommitted changes, commit or stash them first" >&2
+    return 1
+  fi
+  if [[ "$$(git -C "$$1" branch --show-current)" != "main" ]]; then
+    echo "Error: $$1 must be on main" >&2
+    return 1
+  fi
+  git -C "$$1" fetch --quiet --prune --tags origin
+  if [[ "$$(git -C "$$1" rev-parse HEAD)" != "$$(git -C "$$1" rev-parse origin/main)" ]]; then
+    echo "Error: $$1 main is not synchronized with origin/main" >&2
+    return 1
+  fi
+}
+# require_no_tag <repo> <tag>: fail if the tag exists (run after fetching tags)
+require_no_tag() {
+  if git -C "$$1" rev-parse -q --verify "refs/tags/$$2" > /dev/null; then
+    echo "Error: tag $$2 already exists in $$1" >&2
+    return 1
+  fi
+}
+# helm_chart_commit <chart_version> <app_version>: commit Chart.yaml in ../openrun-helm-charts (not pushed)
+helm_chart_commit() {
+  local chart=../openrun-helm-charts/charts/openrun/Chart.yaml
+  sed -i.bak -E \
+    -e "s/^([[:space:]]*version:[[:space:]]*)[^#[:space:]]+/\1$$1/" \
+    -e "s/^([[:space:]]*appVersion:[[:space:]]*)[^#[:space:]]+/\1$$2/" "$$chart"
+  rm -f "$$chart.bak"
+  if ! grep -q "^version: $$1$$" "$$chart" || ! grep -q "^appVersion: $$2$$" "$$chart"; then
+    echo "Error: failed to update $$chart to version $$1, appVersion $$2" >&2
+    return 1
+  fi
+  git -C ../openrun-helm-charts add charts/openrun/Chart.yaml
+  git -C ../openrun-helm-charts commit -q -m "Updated Helm chart to $$1, app version to $$2"
+  echo "**************************************************"
+  echo " Helm chart release commit created in ../openrun-helm-charts (not pushed)"
+  echo " After the OpenRun release job for v$$2 has published its images, run:"
+  echo "   cd ../openrun-helm-charts && git push"
+  echo "**************************************************"
+}
+endef
+
+release-sdk: ## Tag and push the pkg/binding and pkg/plugin SDK modules; args: <version>
+> @$(RELEASE_SH)
+> version=$$(version_arg version "$(INPUT)")
+> require_release_ready .
+> for tag in "pkg/binding/v$$version" "pkg/plugin/v$$version"; do require_no_tag . "$$tag"; done
 > git tag -a "pkg/binding/v$$version" -m "Release pkg/binding/v$$version"
 > git tag -a "pkg/plugin/v$$version" -m "Release pkg/plugin/v$$version"
-> git push --atomic origin HEAD:main "v$$version" "pkg/binding/v$$version" "pkg/plugin/v$$version"
-> # Bindings: update every provider module to the new SDK version, tag each
-> # module and push; the bindings release workflow builds and publishes each
-> # provider (binaries + OCI image) from its pushed tag
-> $(MAKE) -C ../bindings release INPUT="v$$version" INPUT2="v$$version" PUSH=1
-> # Helm chart: create the release commit only. It is pushed manually after the
-> # OpenRun release job has published the v$$version images, since the chart's
-> # appVersion is the server image tag.
-> cd ../openrun-helm-charts/
-> sed -i.bak -E "s/^([[:space:]]*version:[[:space:]]*)[^#[:space:]]+/\1$$version/" charts/openrun/Chart.yaml
-> rm -f charts/openrun/Chart.yaml.bak
-> sed -i.bak -E "s/^([[:space:]]*appVersion:[[:space:]]*)[^#[:space:]]+/\1$$version/" charts/openrun/Chart.yaml
-> rm -f charts/openrun/Chart.yaml.bak
-> if ! grep -q "^version: $$version$$" charts/openrun/Chart.yaml || ! grep -q "^appVersion: $$version$$" charts/openrun/Chart.yaml; then
->   echo "Error: failed to update Helm Chart.yaml to $$version"
+> git push --atomic origin "pkg/binding/v$$version" "pkg/plugin/v$$version"
+> echo "Pushed pkg/binding/v$$version and pkg/plugin/v$$version; consumers can now require them"
+
+release: ## Tag and push the OpenRun server, then create the Helm chart release commit; args: <version> [<helm_version>, default <version>]
+> @$(RELEASE_SH)
+> version=$$(version_arg version "$(INPUT)")
+> helm_version=$$(version_arg helm_version "$(if $(INPUT2),$(INPUT2),$(INPUT))")
+> require_release_ready .
+> require_release_ready ../openrun-helm-charts
+> require_no_tag . "v$$version"
+> require_no_tag ../openrun-helm-charts "openrun-$$helm_version"
+> git tag -a "v$$version" -m "Release v$$version"
+> git push origin "v$$version"
+> helm_chart_commit "$$helm_version" "$$version"
+
+fullrelease: ## Release everything at one version: SDKs, server, every binding provider, Helm chart commit; args: <version>
+> @$(RELEASE_SH)
+> version=$$(version_arg version "$(INPUT)")
+> for repo in . ../bindings ../openrun-helm-charts; do require_release_ready "$$repo"; done
+> for tag in "v$$version" "pkg/binding/v$$version" "pkg/plugin/v$$version"; do require_no_tag . "$$tag"; done
+> for module in $$($(MAKE) --no-print-directory -s -C ../bindings modules); do require_no_tag ../bindings "$$module/v$$version"; done
+> require_no_tag ../openrun-helm-charts "openrun-$$version"
+> if grep -q "^version: $$version$$" ../openrun-helm-charts/charts/openrun/Chart.yaml; then
+>   echo "Error: Chart.yaml is already at $$version but tag openrun-$$version does not exist; finish that chart release first"
 >   exit 1
 > fi
-> git add charts/openrun/Chart.yaml
-> git commit -m "Updated Helm chart to $$version, app version to $$version"
-> cd - > /dev/null
-> echo "**************************************************"
-> echo " Tagged and pushed: v$$version, pkg/binding/v$$version, pkg/plugin/v$$version, bindings */v$$version"
-> echo " Helm chart release commit created in ../openrun-helm-charts (not pushed)"
-> echo " After the OpenRun release job for v$$version is done, run:"
-> echo "   cd ../openrun-helm-charts/ && git push"
-> echo "**************************************************"
+> # The server tag must require the SDK versions being released: downstream
+> # consumers of the server module do not see the local replace directives.
+> go mod edit -require=github.com/openrundev/openrun/pkg/binding@v$$version -require=github.com/openrundev/openrun/pkg/plugin@v$$version
+> if ! git diff --quiet go.mod; then
+>   git add go.mod
+>   git commit -q -m "Pin SDK modules to v$$version for release"
+> fi
+> # Server and SDK tags go out in one push; the bindings release below runs
+> # go mod tidy against the published pkg/binding tag.
+> for tag in "v$$version" "pkg/binding/v$$version" "pkg/plugin/v$$version"; do git tag -a "$$tag" -m "Release $$tag"; done
+> git push --atomic origin HEAD:main "v$$version" "pkg/binding/v$$version" "pkg/plugin/v$$version"
+> $(MAKE) -C ../bindings release INPUT="$$version" INPUT2="$$version" PUSH=1
+> echo "Tagged and pushed v$$version, pkg/binding/v$$version, pkg/plugin/v$$version and every bindings <provider>/v$$version"
+> helm_chart_commit "$$version" "$$version"
 
 # Swallow extra command-line words (e.g. `make int_single test_reload.yaml`)
 # so make doesn't also try to build them as targets; $(INPUT)/$(INPUT2) above
