@@ -4,9 +4,12 @@
 package binding
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
+	"time"
 )
 
 // ApplyGrantsIncremental is the ApplyGrants scaffolding for bindings that
@@ -56,6 +59,66 @@ func ApplyGrantsIncremental(bindingMetadata BindingMetadata, supportedGrantTypes
 		Granted:        SubtractGrants(grantsProcessed, bindingMetadata.GrantsApplied),
 		PendingRevokes: revokedGrants,
 	}, nil
+}
+
+// ApplyGrantsIncrementalSafe is ApplyGrantsIncremental for bindings whose
+// grant statements auto-commit individually (SQL databases): the server
+// discards GrantApplyResult on error, so a batch that fails midway would
+// leave the grants already executed untracked. Each grant is executed on its
+// own and, on failure, the new grants executed so far (including the failing
+// one, which may span several statements) are revoked and the previously
+// applied grants re-granted, since a revoke can remove privileges shared
+// with them. perms executes one grant or revoke batch; op is "grant" or
+// "revoke". Cleanup runs under its own bounded context so that request
+// cancellation does not leave permissions half applied.
+func ApplyGrantsIncrementalSafe(ctx context.Context, bindingMetadata BindingMetadata, supportedGrantTypes []GrantType,
+	reapplyAll bool, perms func(ctx context.Context, op string, grants []BindingGrant) ([]BindingGrant, error)) (GrantApplyResult, error) {
+	return ApplyGrantsIncremental(bindingMetadata, supportedGrantTypes, reapplyAll,
+		func(grants []BindingGrant) ([]BindingGrant, error) {
+			return applyGrantsSafely(ctx, bindingMetadata.GrantsApplied, grants, perms)
+		})
+}
+
+// applyGrantsSafely executes grants one at a time and compensates a partial
+// failure by revoking the new grants executed so far and restoring previous.
+func applyGrantsSafely(ctx context.Context, previous, grants []BindingGrant,
+	perms func(context.Context, string, []BindingGrant) ([]BindingGrant, error)) ([]BindingGrant, error) {
+	// Validate the whole batch before executing any SQL.
+	for _, grant := range grants {
+		if grant.GrantType == GrantTypeCreate && grant.GrantTarget != "" && grant.GrantTarget != GrantTargetAll {
+			return nil, fmt.Errorf("create grant on specific table is not supported")
+		}
+	}
+	var processed []BindingGrant
+	for i, grant := range grants {
+		done, err := perms(ctx, "grant", []BindingGrant{grant})
+		if err == nil {
+			processed = UnionGrants(processed, done)
+			continue
+		}
+		// Include the failing grant: it may comprise several auto-committed SQL
+		// statements. Do not revoke pre-existing grants during a reapply.
+		rollback := SubtractGrants(grants[:i+1], previous)
+		if len(rollback) == 0 {
+			return nil, err
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		var cleanupErr error
+		for j := len(rollback) - 1; j >= 0; j-- {
+			_, revokeErr := perms(cleanupCtx, "revoke", rollback[j:j+1])
+			cleanupErr = errors.Join(cleanupErr, revokeErr)
+		}
+		// A revoke can remove privileges shared with a previous grant. Restore
+		// those even if a different revoke failed, and report every cleanup error.
+		_, restoreErr := perms(cleanupCtx, "grant", previous)
+		cleanupErr = errors.Join(cleanupErr, restoreErr)
+		cancel()
+		if cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("error rolling back partial grants: %w", cleanupErr))
+		}
+		return nil, err
+	}
+	return processed, nil
 }
 
 // ApplyGrantsRebuild is the ApplyGrants scaffolding for bindings that replace
