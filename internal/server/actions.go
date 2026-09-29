@@ -24,6 +24,7 @@ import (
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
+	"golang.org/x/sync/errgroup"
 )
 
 // App actions through the management API: the transport of the openrun action
@@ -179,7 +180,7 @@ func (s *Server) definitionApp(ctx context.Context, entry *types.AppEntry) (*app
 	if err != nil {
 		return nil, nil, err
 	}
-	if _, err := application.Reload(ctx, true, true, types.DryRunFalse, app.ReloadOptions{SkipContainer: true}); err != nil {
+	if _, err := application.Reload(ctx, true, true, types.DryRunFalse, app.ReloadOptions{SkipContainer: true, DefinitionOnly: true}); err != nil {
 		application.Close() //nolint:errcheck
 		return nil, nil, err
 	}
@@ -352,10 +353,41 @@ type listedAction struct {
 }
 
 // actionListEntry is the in-memory action list of one app version, for the
-// versions which have no DefinitionActions in their metadata
+// versions which have no DefinitionActions in their metadata, or the error
+// its definition load failed with. A failure is remembered for
+// actionListFailureTTL (not per version: an approval or a fixed dev source
+// repairs an app without a new version), so a list over many broken apps
+// does not re-read every one of their sources each time. A dev app's
+// successful list is never cached (its source changes without a deploy, the
+// list follows the source: TestActionsDefinitionsFollowTheSource)
 type actionListEntry struct {
 	version int
 	actions []listedAction
+	err     error
+	at      time.Time
+}
+
+// actionListFailureTTL is how long a failed definition load is remembered
+const actionListFailureTTL = 30 * time.Second
+
+// actionListConcurrency bounds the app definition loads a list runs in
+// parallel: the apps of a glob listing are independent, and the cost of a
+// listing is the sum of the loads of the apps which are neither loaded on
+// this node nor cached
+const actionListConcurrency = 8
+
+// forEachAppParallel runs fn for each app, at most actionListConcurrency at
+// a time, and returns the first error. fn receives the app's index so that
+// results can be collected in the input order
+func forEachAppParallel(ctx context.Context, apps []types.AppInfo, fn func(ctx context.Context, i int, info types.AppInfo) error) error {
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(actionListConcurrency)
+	for i, info := range apps {
+		group.Go(func() error {
+			return fn(groupCtx, i, info)
+		})
+	}
+	return group.Wait()
 }
 
 func listedActions(appPath string, actions []*action.Action) []listedAction {
@@ -412,20 +444,28 @@ func (s *Server) appActionList(ctx context.Context, info types.AppInfo) ([]liste
 		}
 	}
 	version := appEntry.Metadata.VersionMetadata.Version
-	if cached, ok := s.actionLists.Load(appEntry.Id); ok && !appEntry.IsDev {
-		if entry := cached.(*actionListEntry); entry.version == version {
+	if cached, ok := s.actionLists.Load(appEntry.Id); ok {
+		entry := cached.(*actionListEntry)
+		if entry.err != nil {
+			if time.Since(entry.at) < actionListFailureTTL {
+				return nil, entry.err
+			}
+		} else if !appEntry.IsDev && entry.version == version {
 			return entry.actions, nil
 		}
 	}
 
 	application, release, err := s.definitionApp(ctx, appEntry)
 	if err != nil {
+		s.actionLists.Store(appEntry.Id, &actionListEntry{version: version, err: err, at: time.Now()})
 		return nil, err
 	}
 	defer release()
 	listed := listedActions(appPath, application.Actions())
 	if !appEntry.IsDev {
-		s.actionLists.Store(appEntry.Id, &actionListEntry{version: version, actions: listed})
+		s.actionLists.Store(appEntry.Id, &actionListEntry{version: version, actions: listed, at: time.Now()})
+	} else {
+		s.actionLists.Delete(appEntry.Id)
 	}
 	return listed, nil
 }
@@ -441,44 +481,63 @@ func (s *Server) ListActions(ctx context.Context, appPathGlob string) (*types.Ac
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
-	ret := &types.ActionListResponse{Actions: []types.ActionInfo{}}
-	for _, appInfo := range filteredApps {
+	// Per app, in parallel: the checks, then the listed actions the caller
+	// holds the permit for. Collected by app index, so the order (and the
+	// warnings) is stable whatever finishes first
+	type appResult struct {
+		actions []types.ActionInfo
+		warning string
+	}
+	results := make([]appResult, len(filteredApps))
+	err = forEachAppParallel(ctx, filteredApps, func(ctx context.Context, i int, appInfo types.AppInfo) error {
 		target := actionTargetOfInfo(appInfo)
 		if s.rbacManager.APIEnforced(ctx) {
 			authorized, err := s.rbacManager.AuthorizeAPI(ctx, types.PermissionAccess, target.grantPath, target.owner)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if !authorized {
-				continue
+				return nil
 			}
 		}
 		if s.actionProviderMatch(ctx, target) != nil {
-			continue
+			return nil
 		}
 
 		listed, err := s.appActionList(ctx, appInfo)
 		if err != nil {
-			ret.Warnings = append(ret.Warnings, fmt.Sprintf("%s: %s", appInfo.AppPathDomain, err))
-			continue
+			results[i].warning = fmt.Sprintf("%s: %s", appInfo.AppPathDomain, err)
+			return nil
 		}
 		if len(listed) == 0 {
-			continue
+			return nil
 		}
 		appCtx, err := s.actionAppContext(ctx, target)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, act := range listed {
 			authorized := len(act.permit) == 0
 			if !authorized {
 				if authorized, err = s.rbacManager.AuthorizeAny(appCtx, act.permit); err != nil {
-					return nil, err
+					return err
 				}
 			}
 			if authorized {
-				ret.Actions = append(ret.Actions, act.info)
+				results[i].actions = append(results[i].actions, act.info)
 			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ret := &types.ActionListResponse{Actions: []types.ActionInfo{}}
+	for _, result := range results {
+		ret.Actions = append(ret.Actions, result.actions...)
+		if result.warning != "" {
+			ret.Warnings = append(ret.Warnings, result.warning)
 		}
 	}
 	// By app path; the actions of an app stay in their declared order
@@ -540,7 +599,7 @@ type actionInvocation struct {
 }
 
 // InvokeAction runs (or validates, with DryRun) an action, or its suggest
-// handler. source is the audit operation prefix (action.SourceMgmt / SourceMCP)
+// handler. source is the audit operation prefix (action.SourceCLI / SourceMCP)
 func (s *Server) InvokeAction(ctx context.Context, req *types.ActionRunRequest, suggest bool, source string,
 	files map[string]action.UploadedFile) (*actionInvocation, error) {
 	resolved, err := s.resolveAction(ctx, req.AppPath, req.Action, req.Stage, true)
@@ -731,7 +790,7 @@ func (h *Handler) invokeAction(r *http.Request, suggest bool) (any, error) {
 	if r.MultipartForm != nil {
 		defer r.MultipartForm.RemoveAll() //nolint:errcheck
 	}
-	invocation, err := h.server.InvokeAction(r.Context(), req, suggest, action.SourceMgmt, files)
+	invocation, err := h.server.InvokeAction(r.Context(), req, suggest, action.SourceCLI, files)
 	if err != nil {
 		return nil, err
 	}

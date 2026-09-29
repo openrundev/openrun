@@ -191,24 +191,26 @@ func actionRunsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 
 	return &cli.Command{
 		Name:      "runs",
-		Usage:     "List the background runs of an app's async actions, newest first",
+		Usage:     "List the background runs of async actions, newest first: those of one app, or of every app you can use",
 		Flags:     flags,
-		ArgsUsage: "<appPath> [<action>]",
-		UsageText: `args: <appPath> [<action>]
+		ArgsUsage: "[<appPathGlob>] [<action>]",
+		UsageText: `args: [<appPathGlob>] [<action>]
 
-` + actionSelectHelp + ` Without an action, the runs of every async action of the app are listed.
+<appPathGlob> defaults to all. ` + PATH_SPEC_HELP + `
+` + actionSelectHelp + ` Without an action, the runs of every async action are listed.
 
 	Examples:
+	  List the recent runs of every app: openrun action runs
 	  List the runs of an app: openrun action runs /site
 	  Failed runs of one action: openrun action runs --status failed /site rebuild`,
 		Action: func(cCtx *cli.Context) error {
-			if cCtx.NArg() < 1 || cCtx.NArg() > 2 {
-				return fmt.Errorf("expected args: <appPath> [<action>]")
+			if cCtx.NArg() > 2 {
+				return fmt.Errorf("expected args: [<appPathGlob>] [<action>]")
 			}
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
 			values := url.Values{}
-			values.Add("appPath", cCtx.Args().Get(0))
+			values.Add("appPath", cmp.Or(cCtx.Args().Get(0), "all"))
 			values.Add("action", cCtx.Args().Get(1))
 			values.Add("stage", strconv.FormatBool(cCtx.Bool("stage")))
 			values.Add("status", cCtx.String("status"))
@@ -216,6 +218,9 @@ func actionRunsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			var response types.ActionRunsResponse
 			if err := client.Get("/_openrun/actions/runs", values, &response); err != nil {
 				return err
+			}
+			for _, warning := range response.Warnings {
+				fmt.Fprintf(cCtx.App.ErrWriter, "warning: %s\n", warning) //nolint:errcheck
 			}
 			return printActionRuns(cCtx, response.Runs, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
@@ -241,14 +246,14 @@ func printActionRuns(cCtx *cli.Context, runs []types.ActionRun, format string) e
 		return nil
 	}
 	w := tabwriter.NewWriter(cCtx.App.Writer, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "Run\tAction\tStatus\tStarted\tDuration\tBy\tMessage") //nolint:errcheck
+	fmt.Fprintln(w, "Run\tApp\tAction\tStatus\tStarted\tDuration\tBy\tMessage") //nolint:errcheck
 	for _, run := range runs {
 		end := time.Now()
 		if run.EndedAt != nil {
 			end = *run.EndedAt
 		}
 		duration := end.Sub(run.StartedAt).Round(time.Second)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", run.Id, run.ActionName, run.Status, //nolint:errcheck
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", run.Id, run.AppPath, run.ActionName, run.Status, //nolint:errcheck
 			run.StartedAt.Local().Format("2006-01-02 15:04:05"), duration, run.Actor, firstLine(run.Message))
 	}
 	return w.Flush()

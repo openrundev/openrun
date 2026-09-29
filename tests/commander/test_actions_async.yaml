@@ -124,7 +124,7 @@ tests:
         - "id  status"
         - "1   closed"
         - "2   closed"
-        - "succeeded builtin:alice mgmt closed 2 true"
+        - "succeeded builtin:alice cli closed 2 true"
         - '{"id":1,"status":"closed"}'
     stderr: "Built 2 rows"
     exit-code: 0
@@ -196,6 +196,25 @@ tests:
         - "app:access"
       not-contains:
         - "/purge /"
+    exit-code: 0
+  async0095: # across apps: no app path lists the runs of every app the caller may use,
+    # newest first with an App column; a glob and an action selector narrow the
+    # list; a caller without app:access on any app gets an empty list
+    command: |
+      ../openrun action runs | head -1
+      ../openrun action runs -f jsonl | jq -r '.app_path' | sort -u | tr '\n' ' '
+      echo
+      ../openrun action runs -f jsonl '/asyncapps/**' rows | jq -r '.action_path' | sort -u | tr '\n' ' '
+      echo
+      echo "bob=$(../openrun --as builtin:bob action runs -f jsonl | wc -l | tr -d ' ')"
+    stdout:
+      contains:
+        - "App"
+        - "/asyncapps/site"
+        - "/rows"
+        - "bob=0"
+      not-contains:
+        - "/build"
     exit-code: 0
   async0100: # retention: the app keeps the newest action.retain_runs runs across its actions
     command: |

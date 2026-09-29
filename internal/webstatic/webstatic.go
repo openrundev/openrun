@@ -3,8 +3,8 @@
 
 // Package webstatic serves the browser assets embedded in the openrun binary
 // which are shared by every app on the server: the htmx runtime, the
-// <log-tail> streaming log viewer, the action UI stylesheets and the brand
-// fonts. They are served at URLPrefix with content-hashed file names and
+// <log-tail> streaming log viewer, the action UI scripts (actions.js,
+// json.js) and stylesheets, and the brand fonts. They are served at URLPrefix with content-hashed file names and
 // immutable caching, so one download is cached for all apps on a server,
 // and the same URL works on every app domain. The route needs no
 // authentication (no user data), and is mounted outside the transport-gated

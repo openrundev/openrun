@@ -43,10 +43,10 @@ const (
 // Audit operation prefixes, one per surface. The audit operation is
 // <source>_execute|suggest|validate, the form UI uses the bare names
 const (
-	SourceUI   = ""
-	SourceAPI  = "api"
-	SourceMgmt = "mgmt"
-	SourceMCP  = "mcp"
+	SourceUI  = ""
+	SourceAPI = "api"
+	SourceCLI = "cli"
+	SourceMCP = "mcp"
 )
 
 // AuditOp returns the audit operation name for an op on a surface

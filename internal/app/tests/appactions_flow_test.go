@@ -23,6 +23,7 @@ import (
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
+	"github.com/openrundev/openrun/internal/webstatic"
 	"golang.org/x/net/html"
 )
 
@@ -36,6 +37,12 @@ import (
 // createActionsTestApp loads the tests/actions_tests source from disk and
 // creates it as a prod app at /test with its plugin permissions approved
 func createActionsTestApp(t *testing.T, rbacApi rbac.RBACAPI) *app.App {
+	t.Helper()
+	return createActionsTestAppAt(t, rbacApi, "/test")
+}
+
+// createActionsTestAppAt is createActionsTestApp mounted at the given path
+func createActionsTestAppAt(t *testing.T, rbacApi rbac.RBACAPI, appPath string) *app.App {
 	t.Helper()
 	logger := testutil.TestLogger()
 
@@ -82,7 +89,7 @@ func createActionsTestApp(t *testing.T, rbacApi rbac.RBACAPI) *app.App {
 	}
 	appConfig := &types.AppConfig{FS: types.FS{FileAccess: []string{"$TEMPDIR", "/tmp"}}}
 
-	a, _, err := CreateTestAppInt(logger, "/test", "", fileData, false, plugins, permissions,
+	a, _, err := CreateTestAppInt(logger, appPath, "", fileData, false, plugins, permissions,
 		pluginConfig, "app_prd_actionstest", types.AppSettings{}, nil, appConfig, rbacApi)
 	if err != nil {
 		t.Fatalf("Error creating actions_tests app: %s", err)
@@ -334,17 +341,24 @@ func TestActionsAppFormRender(t *testing.T) {
 		t.Error("logs action must not render a Validate button")
 	}
 
-	// Every astatic asset reference carries a content hash for caching
-	refRe := regexp.MustCompile(`(?:href|src)="([^"]*astatic/[^"]*)"`)
-	hashRe := regexp.MustCompile(`-[a-f0-9]{64}\.`)
-	refs := refRe.FindAllStringSubmatch(body, -1)
-	if len(refs) == 0 {
-		t.Fatal("no astatic asset references found")
-	}
-	for _, ref := range refs {
-		if !hashRe.MatchString(ref[1]) {
-			t.Errorf("astatic asset served without a content hash: %s", ref[1])
+	// The action scripts are shared assets (internal/webstatic): served for
+	// every app at /_openrun/static with content-hashed names, one cached
+	// copy per server. Nothing is served per app any more
+	refRe := regexp.MustCompile(`(?:href|src)="([^"]*/(?:actions|json)-[a-f0-9]{64}\.js)"`)
+	for _, page := range []string{body, logsResponse.Body.String()} {
+		refs := refRe.FindAllStringSubmatch(page, -1)
+		testutil.AssertEqualsInt(t, "script references", 2, len(refs))
+		for _, ref := range refs {
+			if !strings.HasPrefix(ref[1], webstatic.URLPrefix+"/") {
+				t.Errorf("action script not served from the shared route: %s", ref[1])
+			}
+			recorder := httptest.NewRecorder()
+			webstatic.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", ref[1], nil))
+			testutil.AssertEqualsInt(t, "asset "+ref[1], 200, recorder.Code)
 		}
+	}
+	if strings.Contains(body, "astatic/") || strings.Contains(logsResponse.Body.String(), "astatic/") {
+		t.Fatal("no asset may be referenced per app")
 	}
 }
 

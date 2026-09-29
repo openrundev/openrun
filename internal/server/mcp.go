@@ -409,11 +409,12 @@ type (
 		WaitSecs int            `json:"wait_seconds,omitzero" jsonschema:"async actions: wait up to this many seconds (max 60) for the background run to end; otherwise the run id is returned at once"`
 	}
 	mcpActionRunsIn struct {
-		Path   string `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		Path   string `json:"path,omitzero" jsonschema:"the app path, like /myapp or example.com:/myapp, or an app path glob like /apps/**; every app when left out"`
 		Action string `json:"action,omitzero" jsonschema:"one action: its tool name or path; all async actions when left out"`
 		Stage  bool   `json:"stage,omitzero" jsonschema:"the stage instance of the app instead of prod"`
 		Status string `json:"status,omitzero" jsonschema:"filter: running, succeeded, failed, timed_out, canceled or lost"`
 		Limit  int    `json:"limit,omitzero" jsonschema:"maximum runs to return, default 50"`
+		Before string `json:"before,omitzero" jsonschema:"continue a listing: the next_before cursor of the previous page"`
 	}
 	mcpActionRunIdIn struct {
 		RunId    string `json:"run_id" jsonschema:"the run id returned by run_action"`
@@ -794,7 +795,7 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 
 	addMCPTool(s, srv, API_LIST_ACTION_RUNS,
 		func(ctx context.Context, in mcpActionRunsIn) (any, error) {
-			return s.ListActionRuns(ctx, in.Path, in.Action, in.Status, in.Stage, in.Limit)
+			return s.ListActionRuns(ctx, in.Path, in.Action, in.Status, in.Stage, in.Limit, in.Before)
 		})
 
 	addMCPTool(s, srv, API_GET_ACTION_RUN,

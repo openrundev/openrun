@@ -209,12 +209,12 @@ func TestActionStreamSharedAssets(t *testing.T) {
 	response, _ := actionsGet(t, a, "/test")
 	body := response.Body.String()
 	// hashfs inserts the hash before the first dot: htmx-<sha>.min.js
-	for _, name := range []string{"logtail-", "htmx-", "hx-sse-", "style-", "openrun-", "fonts/jetbrains-mono-400-"} {
+	for _, name := range []string{"logtail-", "htmx-", "hx-sse-", "style-", "openrun-", "fonts/jetbrains-mono-400-", "actions-", "json-"} {
 		testutil.AssertStringContains(t, body, "/_openrun/static/"+name)
 	}
 	testutil.AssertStringContains(t, body, `"defaultTimeout": 0`)
-	if strings.Contains(body, "astatic/htmx") || strings.Contains(body, "astatic/style") || strings.Contains(body, "astatic/fonts") {
-		t.Fatal("shared assets must not be served from the per-app astatic route")
+	if strings.Contains(body, "astatic/") {
+		t.Fatal("no asset is served per app any more")
 	}
 }
 

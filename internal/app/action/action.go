@@ -22,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/benbjohnson/hashfs"
 	"github.com/go-chi/chi/v5"
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
@@ -33,9 +32,8 @@ import (
 	"go.starlark.net/starlark"
 )
 
-//go:embed *.go.html astatic/*
+//go:embed *.go.html
 var embedHtml embed.FS
-var embedFS = hashfs.NewFS(embedHtml)
 
 const (
 	defaultMaxRequestBodyBytes int64 = 32 << 20
@@ -109,11 +107,6 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 		return fullPath
 	}
 
-	funcMap["astatic"] = func(name string) string {
-		fullPath := path.Join(appPath, embedFS.HashName(name))
-		return fullPath
-	}
-
 	funcMap["fileNonEmpty"] = func(name string) bool {
 		staticPath := path.Join("static", name)
 		fi, err := sourceFS.Stat(staticPath)
@@ -123,7 +116,7 @@ func NewAction(logger *types.Logger, sourceFS *appfs.SourceFs, isDev bool, name,
 		return fi.Size() > 0
 	}
 
-	tmpl, err := template.New("form").Funcs(funcMap).ParseFS(embedFS, "*.go.html")
+	tmpl, err := template.New("form").Funcs(funcMap).ParseFS(embedHtml, "*.go.html")
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +244,6 @@ func (a *Action) BuildRouter() (*chi.Mux, error) {
 		r.Post("/runs/{runId}/cancel", a.cancelRunUI)
 	}
 
-	r.Handle("/astatic/*", http.StripPrefix(path.Join(a.pagePath), hashfs.FileServer(embedFS)))
 	return r, nil
 }
 

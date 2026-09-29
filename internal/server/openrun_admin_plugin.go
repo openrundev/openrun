@@ -33,6 +33,7 @@ func initAdminPlugin(server *Server) {
 					{Name: "run_sync", Type: sdk.WRITE, Method: "RunSync"},
 					{Name: "run_job", Type: sdk.WRITE, Method: "RunJob"},
 					{Name: "cancel_job", Type: sdk.WRITE, Method: "CancelJob"},
+					{Name: "cancel_action_run", Type: sdk.WRITE, Method: "CancelActionRun"},
 					{Name: "delete_sync", Type: sdk.WRITE, Method: "DeleteSync"},
 					{Name: "set_rbac_group", Type: sdk.WRITE, Method: "SetRBACGroup"},
 					{Name: "delete_rbac_group", Type: sdk.WRITE, Method: "DeleteRBACGroup"},
@@ -367,6 +368,21 @@ func (c *openrunAdminPlugin) CancelJob(ctx context.Context, call *sdk.Call) (any
 		return nil, err
 	}
 	result, err := c.server.CancelJobRun(ctx, runId)
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
+}
+
+// CancelActionRun cancels an active background action run executing on this
+// node. The caller passes the checks of the run's action (provider match,
+// app:access, permit), as for reading the run
+func (c *openrunAdminPlugin) CancelActionRun(ctx context.Context, call *sdk.Call) (any, error) {
+	var runId string
+	if err := sdk.UnpackArgs("cancel_action_run", call, "run_id", &runId); err != nil {
+		return nil, err
+	}
+	result, err := c.server.CancelActionRun(ctx, runId)
 	if err != nil {
 		return nil, err
 	}

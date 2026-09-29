@@ -321,10 +321,10 @@ tests:
         - "exit=4"
         - "scope refused"
     exit-code: 0
-  action0180: # the actions are audited as the calling user, with the mgmt operation
+  action0180: # the actions are audited as the calling user, with the cli operation (the management API)
     command: |
       sleep 1
-      sqlite3 run/openrun_audit.db "select count(*) > 0 from audit where event_type = 'action' and operation = 'mgmt_execute' and user_id = 'builtin:carol' and target = 'Purge'" 2>/dev/null || echo 1
+      sqlite3 run/openrun_audit.db "select count(*) > 0 from audit where event_type = 'action' and operation = 'cli_execute' and user_id = 'builtin:carol' and target = 'Purge'" 2>/dev/null || echo 1
     stdout: "1"
     exit-code: 0
   action0190: # the OpenAPI spec of the app's actions REST API, as the caller sees it

@@ -308,7 +308,7 @@ func init() {
 			Method: http.MethodGet, Path: "/actions/file", ApiFunc: (*Handler).actionFile},
 		// Async action runs (is_async=True actions): run_action returns the
 		// started run, these read and cancel it
-		API_LIST_ACTION_RUNS: {Description: "List the background runs of an app's async actions, newest first; optionally one action, filtered by status",
+		API_LIST_ACTION_RUNS: {Description: "List the background runs of async actions, newest first: those of one app, or of every app matching a path glob (default all); optionally one action, filtered by status. A full page returns next_before, the before cursor of the next page",
 			Scope: types.PermissionAccess, ReadOnly: true,
 			Method: http.MethodGet, Path: "/actions/runs", ApiFunc: (*Handler).listActionRuns},
 		API_GET_ACTION_RUN: {Description: "Get a background action run: its status, args and, once finished, its result values or output summary. wait (seconds) waits for the run to end",

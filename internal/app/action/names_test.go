@@ -68,7 +68,7 @@ func TestFindAction(t *testing.T) {
 func TestAuditOp(t *testing.T) {
 	testutil.AssertEqualsString(t, "ui run", "execute", AuditOp(SourceUI, OpRun))
 	testutil.AssertEqualsString(t, "api validate", "api_validate", AuditOp(SourceAPI, OpValidate))
-	testutil.AssertEqualsString(t, "mgmt suggest", "mgmt_suggest", AuditOp(SourceMgmt, OpSuggest))
+	testutil.AssertEqualsString(t, "cli suggest", "cli_suggest", AuditOp(SourceCLI, OpSuggest))
 	testutil.AssertEqualsString(t, "mcp run", "mcp_execute", AuditOp(SourceMCP, OpRun))
 }
 

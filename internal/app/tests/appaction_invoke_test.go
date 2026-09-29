@@ -115,7 +115,7 @@ func TestActionInvokeRun(t *testing.T) {
 	act := findAction(t, a, "list_orders") // the root action is named from its name
 
 	// String values are coerced to the param type, as form values are
-	outcome, invErr := act.Invoke(userCtx(), action.Invocation{Op: action.OpRun, AuditOp: "mgmt_execute",
+	outcome, invErr := act.Invoke(userCtx(), action.Invocation{Op: action.OpRun, AuditOp: "cli_execute",
 		JSONArgs: jsonArgs(map[string]string{"count": `"3"`, "rush": `"true"`, "status": `"closed"`})})
 	if invErr != nil {
 		t.Fatalf("invoke: %s", invErr)

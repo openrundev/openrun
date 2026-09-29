@@ -328,7 +328,7 @@ func runTools(actions []*Action, names map[*Action]string, runNames runToolNameS
 			if authorized, err := act.Authorized(ctx); err != nil || !authorized {
 				continue
 			}
-			actionRuns, err := act.ListRuns(ctx, in.Status, in.Limit)
+			actionRuns, err := act.ListRuns(ctx, in.Status, types.ActionRunCursor{}, in.Limit)
 			if err != nil {
 				return mcpToolError("%s", err), nil
 			}

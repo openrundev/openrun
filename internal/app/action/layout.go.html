@@ -15,7 +15,33 @@
         // key off them).
         localStorage.setItem("theme-dark", {{ .darkTheme }});
         localStorage.setItem("theme-light", {{ .lightTheme }});
-        const theme = localStorage.getItem("theme");
+        // An embedding page (the console's action viewer frames the action
+        // page) passes its theme as ?_cl_theme=dark|light: it wins over the
+        // persisted choice, is remembered for the frame's later navigations
+        // (sessionStorage, honored only while framed) and hides the theme
+        // switcher, the embedding page owns the theme (actions.js applies
+        // theme changes the embedding page posts)
+        const embedTheme = (() => {
+          const framed = window.self !== window.top;
+          try {
+            const passed = new URLSearchParams(location.search).get("_cl_theme");
+            if (passed == "dark" || passed == "light") {
+              sessionStorage.setItem("_cl_theme", passed);
+              return passed;
+            }
+            if (framed) {
+              const stored = sessionStorage.getItem("_cl_theme");
+              if (stored == "dark" || stored == "light") {
+                return stored;
+              }
+            }
+          } catch (e) { /* storage may be unavailable */ }
+          return null;
+        })();
+        if (embedTheme) {
+          document.documentElement.setAttribute("data-embed-theme", embedTheme);
+        }
+        const theme = embedTheme || localStorage.getItem("theme");
         const systemDark =
           window.matchMedia &&
           window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -46,6 +72,10 @@
             background-color: #101a13;
             color-scheme: dark;
           }
+        }
+        /* The embedding page owns the theme: no switcher */
+        html[data-embed-theme] .theme-switcher {
+          display: none;
         }
       </style>
 
@@ -196,9 +226,10 @@
               <div class="flex-1 min-h-0"></div>
             {{ end }}
 
-            <!-- Sidebar footer: theme switcher -->
+            <!-- Sidebar footer: theme switcher (hidden when an embedding
+              page passed its theme, see the head script) -->
             <div
-              class="border-t border-base-300 px-4 py-2.5 flex items-center justify-between">
+              class="theme-switcher border-t border-base-300 px-4 py-2.5 flex items-center justify-between">
               <span class="text-xs text-base-content/70">Theme</span>
               <label
                 class="swap swap-rotate btn btn-sm btn-ghost btn-circle"
@@ -329,9 +360,9 @@
   <link rel="stylesheet" href="{{ openrun_static "json.css" }}" />
   {{/* Long running actions: htmx 4 aborts requests after 60s by default */}}
   <meta name="htmx-config" content='{"defaultTimeout": 0}' />
-  <script src="{{ astatic "astatic/json.js" }}"></script>
+  <script src="{{ openrun_static "json.js" }}"></script>
   <script src="{{ openrun_static "logtail.js" }}"></script>
-  <script src="{{ astatic "astatic/actions.js" }}"></script>
+  <script src="{{ openrun_static "actions.js" }}"></script>
   <script src="{{ openrun_static "htmx.min.js" }}"></script>
   {{/* Server-sent events over fetch: streamed action output (any method)
     and the dev-mode reload listener */}}

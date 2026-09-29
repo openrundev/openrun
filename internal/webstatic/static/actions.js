@@ -337,6 +337,32 @@ document.addEventListener('htmx:sse:close', (event) => {
 	actionStreamEnd(undefined, 'connection closed before the command finished');
 });
 
+// applyScheme switches the page to the light or dark theme of the app (the
+// theme names the layout head script stored in localStorage).
+// data-color-scheme drives the --or-accent-text brand token in openrun.css
+// (theme names are app-configurable, so the CSS cannot key off them)
+function applyScheme(scheme) {
+	const themeName = localStorage.getItem('theme-' + scheme);
+	if (themeName) {
+		document.documentElement.setAttribute('data-theme', themeName);
+	}
+	document.documentElement.setAttribute('data-color-scheme', scheme);
+}
+
+// An embedding page (the console's action viewer) passes its theme with
+// ?_cl_theme= (layout head script) and posts {type: "cl_theme", theme} when
+// the user switches it: follow, and remember it for the frame's later
+// navigations. Same-origin senders only
+window.addEventListener('message', (event) => {
+	if (event.origin != location.origin || !event.data || event.data.type != 'cl_theme') {
+		return;
+	}
+	const scheme = event.data.theme == 'dark' ? 'dark' : 'light';
+	applyScheme(scheme);
+	document.documentElement.setAttribute('data-embed-theme', scheme);
+	try { sessionStorage.setItem('_cl_theme', scheme); } catch (e) { /* storage may be unavailable */ }
+});
+
 document.addEventListener('DOMContentLoaded', () => {
 	// Persist the user's theme choice. The toggle's initial state is set by
 	// an inline script next to it in the sidebar, before first paint, so
@@ -346,14 +372,7 @@ document.addEventListener('DOMContentLoaded', () => {
 	if (toggle) {
 		toggle.addEventListener('change', (event) => {
 			const scheme = event.target.checked ? 'light' : 'dark';
-			const themeName = localStorage.getItem('theme-' + scheme);
-			if (themeName) {
-				document.documentElement.setAttribute('data-theme', themeName);
-			}
-			// data-color-scheme drives the --or-accent-text brand token in
-			// openrun.css (theme names are app-configurable, so the CSS
-			// cannot key off them)
-			document.documentElement.setAttribute('data-color-scheme', scheme);
+			applyScheme(scheme);
 			localStorage.setItem('theme', scheme);
 		});
 	}

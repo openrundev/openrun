@@ -102,13 +102,21 @@ func (m *memRunStore) GetActionRun(_ context.Context, id string, _ bool) (*types
 	return &c, nil
 }
 
-func (m *memRunStore) ListActionRuns(_ context.Context, appIds []types.AppId, actionPath, status string, limit int) ([]types.ActionRun, error) {
+func (m *memRunStore) ListActionRuns(_ context.Context, appIds []types.AppId, actionPaths []string, status string, before types.ActionRunCursor, limit int) ([]types.ActionRun, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ret := []types.ActionRun{}
 	for _, run := range m.runs {
-		if (actionPath != "" && run.ActionPath != actionPath) || (status != "" && run.Status != status) {
+		if (len(actionPaths) > 0 && !slices.Contains(actionPaths, run.ActionPath)) || (status != "" && run.Status != status) {
 			continue
+		}
+		if !before.IsZero() {
+			// Keyset paging: only the runs before the cursor position
+			// (started_at desc, id desc order)
+			beforeCursor := run.StartedAt.Before(before.StartedAt) || (run.StartedAt.Equal(before.StartedAt) && run.Id < before.Id)
+			if !beforeCursor {
+				continue
+			}
 		}
 		ret = append(ret, run.BasicView())
 	}
@@ -221,7 +229,7 @@ func TestAsyncActionValuesRun(t *testing.T) {
 	testutil.AssertEqualsBool(t, "async", true, act.IsAsync())
 	testutil.AssertEqualsBool(t, "sync", false, findAction(t, f.app, "sync").IsAsync())
 
-	outcome, invErr := act.Invoke(userCtx(), action.Invocation{Op: action.OpRun, AuditOp: "mgmt_execute",
+	outcome, invErr := act.Invoke(userCtx(), action.Invocation{Op: action.OpRun, AuditOp: "cli_execute",
 		JSONArgs: jsonArgs(map[string]string{"count": `"3"`, "status": `"closed"`})})
 	if invErr != nil {
 		t.Fatalf("invoke: %s", invErr)
@@ -231,7 +239,7 @@ func TestAsyncActionValuesRun(t *testing.T) {
 		t.Fatal("expected a started run")
 	}
 	testutil.AssertEqualsString(t, "status", types.ActionRunRunning, outcome.Run.Status)
-	testutil.AssertEqualsString(t, "source", "mgmt", outcome.Run.Source)
+	testutil.AssertEqualsString(t, "source", "cli", outcome.Run.Source)
 	testutil.AssertEqualsString(t, "actor", "builtin:alice", outcome.Run.Actor)
 	testutil.AssertEqualsString(t, "arg count", "3", outcome.Run.Args["count"])
 	if _, ok := outcome.Run.Args["token"]; ok {
@@ -434,9 +442,9 @@ func TestAsyncActionAdmissionAndRetention(t *testing.T) {
 		outcome.Close()
 		waitRun(t, rows, outcome.Run.Id)
 	}
-	all, _ := f.store.ListActionRuns(context.Background(), nil, "", "", 0)
+	all, _ := f.store.ListActionRuns(context.Background(), nil, nil, "", types.ActionRunCursor{}, 0)
 	testutil.AssertEqualsInt(t, "retained", 2, len(all))
-	runs, err := rows.ListRuns(context.Background(), "", 0)
+	runs, err := rows.ListRuns(context.Background(), "", types.ActionRunCursor{}, 0)
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsInt(t, "rows runs", 2, len(runs))
 }

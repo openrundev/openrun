@@ -528,6 +528,14 @@ type ReloadOptions struct {
 	// registers the commit time switch, so it holds the transaction for no
 	// container work
 	Prepare bool
+	// DefinitionOnly loads the definition to read it (the actions and jobs
+	// an app declares), not to serve it: for a dev app it skips the style
+	// setup and the tailwind watcher, the JS library setup and the HTML
+	// generation. Those write into the app's source directory and start a
+	// watcher process; a listing over many dev apps would otherwise rewrite
+	// the files (and restart the css build) of every one of them, and reload
+	// the served instances watching those directories
+	DefinitionOnly bool
 }
 
 func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.DryRun, opts ReloadOptions) (bool, error) {
@@ -624,7 +632,7 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 		return false, err
 	}
 
-	if a.IsDev {
+	if a.IsDev && !opts.DefinitionOnly {
 		// Copy settings into appdev
 		a.appDev.Config = a.codeConfig
 		a.appDev.CustomLayout = a.CustomLayout
@@ -653,7 +661,7 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 			}
 		}
 
-		if a.usesHtmlTemplate {
+		if a.usesHtmlTemplate && !opts.DefinitionOnly {
 			// Create the generated HTML
 			if err = a.appDev.GenerateHTML(); err != nil {
 				return false, err
@@ -676,8 +684,11 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 		// No base templates found, use the default unstructured templates
 		if newTemplate, err = a.sourceFS.ParseFS(a.funcMap, a.codeConfig.Routing.TemplateLocations...); err != nil {
 			if strings.Contains(err.Error(), "pattern matches no files") {
-				if a.usesHtmlTemplate {
-					// No html templates found, but app has html routes
+				if a.usesHtmlTemplate && !opts.DefinitionOnly {
+					// No html templates found, but app has html routes. A
+					// definition-only load reads the definition, it serves
+					// nothing: the templates a dev app generates on a
+					// serving reload need not exist yet
 					return false, err
 				}
 				// no html templates, ignore error

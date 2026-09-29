@@ -125,7 +125,7 @@ func (api *appAPI) listRuns(w http.ResponseWriter, r *http.Request) {
 		if !authorized {
 			continue
 		}
-		actionRuns, err := act.ListRuns(r.Context(), query.Get("status"), limit)
+		actionRuns, err := act.ListRuns(r.Context(), query.Get("status"), types.ActionRunCursor{}, limit)
 		if err != nil {
 			writeJSONError(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -127,8 +127,9 @@ func (a *Action) WaitRun(ctx context.Context, runId string, wait time.Duration, 
 	}
 }
 
-// ListRuns lists this action's runs, newest first
-func (a *Action) ListRuns(ctx context.Context, status string, limit int) ([]types.ActionRun, error) {
+// ListRuns lists this action's runs, newest first; before continues a
+// listing (keyset paging)
+func (a *Action) ListRuns(ctx context.Context, status string, before types.ActionRunCursor, limit int) ([]types.ActionRun, error) {
 	store := a.RunStore()
 	if store == nil {
 		return []types.ActionRun{}, nil
@@ -136,7 +137,7 @@ func (a *Action) ListRuns(ctx context.Context, status string, limit int) ([]type
 	if limit <= 0 {
 		limit = runsPageLimit
 	}
-	return store.ListActionRuns(ctx, []types.AppId{a.runHost.AppId}, a.actionPath, status, limit)
+	return store.ListActionRuns(ctx, []types.AppId{a.runHost.AppId}, []string{a.actionPath}, status, before, limit)
 }
 
 // CancelRun cancels an active run of this action executing on this node
@@ -256,7 +257,7 @@ func (a *Action) getRunsPage(w http.ResponseWriter, r *http.Request) {
 	}
 	status := r.URL.Query().Get("status")
 	filter := strings.TrimSpace(r.URL.Query().Get("filter"))
-	listed, err := a.ListRuns(r.Context(), status, runsListLimit)
+	listed, err := a.ListRuns(r.Context(), status, types.ActionRunCursor{}, runsListLimit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

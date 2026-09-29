@@ -267,19 +267,19 @@ func TestActionsRunOverRest(t *testing.T) {
 	testutil.AssertEqualsString(t, "status header", "Streaming", resp.Header.Get(types.ACTION_STATUS_HEADER))
 	testutil.AssertEqualsString(t, "exit trailer", "4", resp.Trailer.Get(types.ACTION_EXIT_TRAILER))
 
-	// The action audit event carries the caller and the mgmt operation (the
+	// The action audit event carries the caller and the cli operation (the
 	// audit writer is asynchronous)
 	found := false
 	for i := 0; i < 100 && !found; i++ {
 		var count int
-		row := server.auditDB.QueryRow(`select count(*) from audit where event_type = 'action' and operation = 'mgmt_execute' and user_id = 'builtin:alice' and target = 'List Orders'`)
+		row := server.auditDB.QueryRow(`select count(*) from audit where event_type = 'action' and operation = 'cli_execute' and user_id = 'builtin:alice' and target = 'List Orders'`)
 		testutil.AssertNoError(t, row.Scan(&count))
 		found = count > 0
 		if !found {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	testutil.AssertEqualsBool(t, "mgmt_execute audit event", true, found)
+	testutil.AssertEqualsBool(t, "cli_execute audit event", true, found)
 }
 
 func TestActionsManagementMCPTool(t *testing.T) {
@@ -801,6 +801,15 @@ func TestActionsDefinitionsFollowTheSource(t *testing.T) {
 	}
 	// The dev app follows its source; the prod app lists what is deployed
 	testutil.AssertEqualsString(t, "source changed", "/apps/dev:one,/apps/dev:two,/apps/prod:one", list())
+
+	// A dev app which gains an html route is still listed before a serving
+	// reload generated its templates: the definition-only load does not
+	// require them
+	withRoute := "def handler(dry_run, args):\n\treturn ace.result(\"ok\")\n\napp = ace.app(\"src\", routes=[ace.html(\"/\")], actions=[" + two + "])\n"
+	testutil.AssertNoError(t, os.WriteFile(filepath.Join(devDir, "app.star"), []byte(withRoute), 0600))
+	testutil.AssertEqualsString(t, "html route without templates", "/apps/dev:one,/apps/dev:two,/apps/prod:one", list())
+	_, err = server.GetAction(ctx, "/apps/dev", "one", false)
+	testutil.AssertNoError(t, err)
 
 	// Reload and promote: the new version's actions are stored with it
 	_, err = server.ReloadApps(ctx, "/apps/prod", true, false, true, "", "", "", true, false)

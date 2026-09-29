@@ -54,7 +54,7 @@ const (
 type RunStore interface {
 	CreateActionRun(ctx context.Context, run *types.ActionRun) error
 	GetActionRun(ctx context.Context, id string, payload bool) (*types.ActionRun, error)
-	ListActionRuns(ctx context.Context, appIds []types.AppId, actionPath, status string, limit int) ([]types.ActionRun, error)
+	ListActionRuns(ctx context.Context, appIds []types.AppId, actionPaths []string, status string, before types.ActionRunCursor, limit int) ([]types.ActionRun, error)
 	UpdateActionRunLease(ctx context.Context, id string, leaseUntil time.Time) error
 	UpdateActionRunOutput(ctx context.Context, id string, head *string, tail string, outputBytes, omittedBytes int64) error
 	FinishActionRun(ctx context.Context, run *types.ActionRun) error

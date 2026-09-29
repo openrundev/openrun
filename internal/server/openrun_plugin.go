@@ -37,6 +37,10 @@ func initOpenRunPlugin(server *Server) {
 					{Name: "list_sync", Type: sdk.READ, Method: "ListSync"},
 					{Name: "list_jobs", Type: sdk.READ, Method: "ListJobs"},
 					{Name: "list_job_runs", Type: sdk.READ, Method: "ListJobRuns"},
+					{Name: "list_actions", Type: sdk.READ, Method: "ListActions"},
+					{Name: "get_action", Type: sdk.READ, Method: "GetAction"},
+					{Name: "list_action_runs", Type: sdk.READ, Method: "ListActionRuns"},
+					{Name: "get_action_run", Type: sdk.READ, Method: "GetActionRun"},
 					{Name: "job_logs", Type: sdk.READ, Method: "JobLogs"},
 					{Name: "list_bindings", Type: sdk.READ, Method: "ListBindings"},
 					{Name: "replication_status", Type: sdk.READ, Method: "ReplicationStatus"},
@@ -775,7 +779,24 @@ func (c *openrunPlugin) GetApp(ctx context.Context, call *sdk.Call) (any, error)
 		jobEntry = stored
 	}
 	v["job_count"] = c.server.appJobCount(ctx, jobEntry)
+	v["action_count"] = c.server.appActionCount(ctx, jobEntry)
 	return v, nil
+}
+
+// appActionCount counts the actions of an app instance: the definition
+// actions of its metadata (recorded at deploy), or those of the loaded app
+// for a dev app, whose metadata records none. Zero when unknown: the app is
+// not loaded to count them
+func (s *Server) appActionCount(ctx context.Context, entry *types.AppEntry) int {
+	if entry.Metadata.DefinitionActions != nil {
+		return len(entry.Metadata.DefinitionActions)
+	}
+	if loadedApp, err := s.apps.GetApp(entry.AppPathDomain()); err == nil {
+		if actions, loaded := loadedApp.LoadedActions(); loaded {
+			return len(actions)
+		}
+	}
+	return 0
 }
 
 // appJobCount counts the distinct job names of an app instance and, for a
@@ -838,6 +859,77 @@ func (c *openrunPlugin) JobLogs(ctx context.Context, call *sdk.Call) (any, error
 		return nil, err
 	}
 	result, err := c.server.JobLogs(ctx, runId)
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
+}
+
+// ListActions lists the actions the caller can run, for the apps matching
+// the path glob (default all): the caller passes the app's provider match
+// and app:access checks, and holds the permit of the action. Actions are
+// operations an app exposes with a form UI; see arch/docs/actions-cli-mcp.md
+func (c *openrunPlugin) ListActions(ctx context.Context, call *sdk.Call) (any, error) {
+	var path string
+	if err := sdk.UnpackArgs("list_actions", call, "path?", &path); err != nil {
+		return nil, err
+	}
+	result, err := c.server.ListActions(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
+}
+
+// GetAction returns the definition of an action of an app (tool name or
+// path; optional for a single action app): its params, the JSON schema of
+// the args and the url of its form UI. stage reads the staging instance
+func (c *openrunPlugin) GetAction(ctx context.Context, call *sdk.Call) (any, error) {
+	var path, action string
+	var stage bool
+	if err := sdk.UnpackArgs("get_action", call, "path", &path, "action?", &action, "stage?", &stage); err != nil {
+		return nil, err
+	}
+	result, err := c.server.GetAction(ctx, path, action, stage)
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
+}
+
+// ListActionRuns lists the background runs of async actions, newest first:
+// those of one app (path), or of every app matching a path glob (default
+// all) the caller may use; optionally one action, filtered by status. limit
+// defaults to 50; before continues a listing from the next_before cursor of
+// the previous page (set when that page was full)
+func (c *openrunPlugin) ListActionRuns(ctx context.Context, call *sdk.Call) (any, error) {
+	var path, action, status, before string
+	var stage bool
+	var limit int64
+	if err := sdk.UnpackArgs("list_action_runs", call, "path?", &path, "action?", &action, "status?", &status,
+		"stage?", &stage, "limit?", &limit, "before?", &before); err != nil {
+		return nil, err
+	}
+	result, err := c.server.ListActionRuns(ctx, path, action, status, stage, int(limit), before)
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
+}
+
+// GetActionRun returns a background action run: the run record ("run", with
+// its args), the bounded document ("document": once finished the result
+// values of a values run or the output tail of a stream run, as the MCP
+// get_action_run tool renders them), the url of the run page in the app and
+// the tool name of the action. wait (seconds) waits up to that long for an
+// active run to end
+func (c *openrunPlugin) GetActionRun(ctx context.Context, call *sdk.Call) (any, error) {
+	var runId string
+	var wait int64
+	if err := sdk.UnpackArgs("get_action_run", call, "run_id", &runId, "wait?", &wait); err != nil {
+		return nil, err
+	}
+	result, err := c.server.GetActionRunView(ctx, runId, time.Duration(wait)*time.Second)
 	if err != nil {
 		return nil, err
 	}

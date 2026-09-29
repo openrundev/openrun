@@ -161,23 +161,34 @@ func (m *Metadata) queryActionRuns(ctx context.Context, query string, args ...an
 }
 
 // ListActionRuns lists the runs of the app instances, newest first, without
-// the payload columns; actionPath and status filter when set
-func (m *Metadata) ListActionRuns(ctx context.Context, appIds []types.AppId, actionPath, status string, limit int) ([]types.ActionRun, error) {
+// the payload columns; actionPaths (the runs of those actions only; nil is
+// every action) and status filter when set - in the query, so that a limit
+// counts the runs the caller gets. before continues a listing: the runs
+// before that (started_at, id) position in the list order (keyset paging)
+func (m *Metadata) ListActionRuns(ctx context.Context, appIds []types.AppId, actionPaths []string, status string, before types.ActionRunCursor, limit int) ([]types.ActionRun, error) {
 	if len(appIds) == 0 {
 		return []types.ActionRun{}, nil
 	}
-	args := make([]any, 0, len(appIds)+3)
+	args := make([]any, 0, len(appIds)+len(actionPaths)+4)
 	for _, id := range appIds {
 		args = append(args, id)
 	}
 	query := `select ` + actionRunColumns + ` from action_runs where app_id in (` + placeholders(len(appIds)) + `)`
-	if actionPath != "" {
-		query += ` and action_path = ?`
-		args = append(args, actionPath)
+	if len(actionPaths) > 0 {
+		query += ` and action_path in (` + placeholders(len(actionPaths)) + `)`
+		for _, p := range actionPaths {
+			args = append(args, p)
+		}
 	}
 	if status != "" {
 		query += ` and status = ?`
 		args = append(args, status)
+	}
+	if !before.IsZero() {
+		// Bound in UTC like the stored value (CreateActionRun): sqlite
+		// compares the datetime text, the zone spelling has to match
+		query += ` and (started_at < ? or (started_at = ? and id < ?))`
+		args = append(args, before.StartedAt.UTC(), before.StartedAt.UTC(), before.Id)
 	}
 	query += ` order by started_at desc, id desc`
 	if limit > 0 {

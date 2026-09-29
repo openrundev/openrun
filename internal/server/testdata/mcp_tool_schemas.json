@@ -497,12 +497,16 @@
         "description": "one action: its tool name or path; all async actions when left out",
         "type": "string"
       },
+      "before": {
+        "description": "continue a listing: the next_before cursor of the previous page",
+        "type": "string"
+      },
       "limit": {
         "description": "maximum runs to return, default 50",
         "type": "integer"
       },
       "path": {
-        "description": "the app path, like /myapp or example.com:/myapp",
+        "description": "the app path, like /myapp or example.com:/myapp, or an app path glob like /apps/**; every app when left out",
         "type": "string"
       },
       "stage": {
@@ -514,9 +518,6 @@
         "type": "string"
       }
     },
-    "required": [
-      "path"
-    ],
     "type": "object"
   },
   "list_actions": {

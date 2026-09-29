@@ -5,6 +5,9 @@ package types
 
 import (
 	"encoding/json/jsontext"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -150,22 +153,26 @@ const (
 // ActionRun is the record of an async action run (the action_runs table).
 // The payload fields (Output*, Result, ParamErrors) are loaded on request
 type ActionRun struct {
-	Id         string            `json:"id"`
-	AppId      AppId             `json:"app_id"`
-	AppPath    string            `json:"app_path"`
-	ActionPath string            `json:"action_path"`
-	ActionName string            `json:"action_name"`
-	Source     string            `json:"source"` // ui, api, mgmt or mcp
-	Actor      string            `json:"actor"`
-	RequestId  string            `json:"request_id,omitempty"`
-	Version    int               `json:"version"`
-	Args       map[string]string `json:"args,omitempty"` // redacted: no password params, file params as file names
-	StartedAt  time.Time         `json:"started_at"`
-	EndedAt    *time.Time        `json:"ended_at,omitempty"`
-	Status     string            `json:"status"`
-	Message    string            `json:"message,omitempty"` // error text
-	NodeId     string            `json:"node_id"`
-	LeaseUntil *time.Time        `json:"lease_until,omitempty"`
+	Id      string `json:"id"`
+	AppId   AppId  `json:"app_id"`
+	AppPath string `json:"app_path"`
+	// MainAppPath is the main app's path for a run of a staging instance
+	// (whose own path is the staging one), the app path otherwise. Set on
+	// API responses (not stored): the app and action links of a run
+	MainAppPath string            `json:"main_app_path,omitempty"`
+	ActionPath  string            `json:"action_path"`
+	ActionName  string            `json:"action_name"`
+	Source      string            `json:"source"` // ui, api, cli (the management API) or mcp
+	Actor       string            `json:"actor"`
+	RequestId   string            `json:"request_id,omitempty"`
+	Version     int               `json:"version"`
+	Args        map[string]string `json:"args,omitempty"` // redacted: no password params, file params as file names
+	StartedAt   time.Time         `json:"started_at"`
+	EndedAt     *time.Time        `json:"ended_at,omitempty"`
+	Status      string            `json:"status"`
+	Message     string            `json:"message,omitempty"` // error text
+	NodeId      string            `json:"node_id"`
+	LeaseUntil  *time.Time        `json:"lease_until,omitempty"`
 
 	IsStream           bool   `json:"is_stream"`
 	ExitCode           *int   `json:"exit_code,omitempty"`
@@ -208,7 +215,47 @@ type ActionRunResponse struct {
 
 // ActionRunsResponse is the response of the list runs API
 type ActionRunsResponse struct {
-	Runs []ActionRun `json:"runs"`
+	Runs       []ActionRun `json:"runs"`
+	Warnings   []string    `json:"warnings,omitempty"`    // apps of a glob listing whose actions could not be read
+	NextBefore string      `json:"next_before,omitempty"` // cursor of the next page (pass as before) when the page was full
+}
+
+// ActionRunCursor is the keyset paging position of a run listing: the runs
+// started before (started_at, id) of the last run of a page, in the list
+// order (started_at desc, id desc). Its string form, "<unix nanos>_<id>", is
+// the before argument of the run list APIs
+type ActionRunCursor struct {
+	StartedAt time.Time
+	Id        string
+}
+
+func (c ActionRunCursor) IsZero() bool {
+	return c.Id == "" && c.StartedAt.IsZero()
+}
+
+func (c ActionRunCursor) String() string {
+	if c.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf("%d_%s", c.StartedAt.UnixNano(), c.Id)
+}
+
+// RunCursor is the cursor which continues a listing after this run
+func (r ActionRun) RunCursor() ActionRunCursor {
+	return ActionRunCursor{StartedAt: r.StartedAt, Id: r.Id}
+}
+
+// ParseActionRunCursor parses a before argument; empty is no cursor
+func ParseActionRunCursor(value string) (ActionRunCursor, error) {
+	if value == "" {
+		return ActionRunCursor{}, nil
+	}
+	nanos, id, ok := strings.Cut(value, "_")
+	n, err := strconv.ParseInt(nanos, 10, 64)
+	if !ok || err != nil || id == "" {
+		return ActionRunCursor{}, fmt.Errorf("invalid before cursor %q: expected <unix nanos>_<run id>", value)
+	}
+	return ActionRunCursor{StartedAt: time.Unix(0, n), Id: id}, nil
 }
 
 // ActionRunOutputResponse is the response of the run output API: the output

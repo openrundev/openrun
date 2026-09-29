@@ -126,7 +126,7 @@ func TestAsyncActionsOverRest(t *testing.T) {
 	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs/get", url.Values{"runId": {started.RunId}, "wait": {"20s"}}, &doc))
 	testutil.AssertEqualsString(t, "run status", types.ActionRunSucceeded, doc.Run.Status)
 	testutil.AssertEqualsString(t, "actor", "builtin:alice", doc.Run.Actor)
-	testutil.AssertEqualsString(t, "source", "mgmt", doc.Run.Source)
+	testutil.AssertEqualsString(t, "source", "cli", doc.Run.Source)
 	testutil.AssertEqualsString(t, "result status", "Built 3 rows", doc.Result.Status)
 	testutil.AssertEqualsInt(t, "result values", 3, len(doc.Result.Values))
 	testutil.AssertEqualsString(t, "no payload", "", doc.Run.Result)
@@ -162,6 +162,64 @@ func TestAsyncActionsOverRest(t *testing.T) {
 	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"/apps/site"}, "status": {"failed"}}, &runs))
 	testutil.AssertEqualsInt(t, "failed runs", 0, len(runs.Runs))
 
+	// Across apps: no app path (or a glob) merges the runs of every app the
+	// caller may use, newest first, with the app path on each run; a
+	// selector picks one action by tool name; limit bounds the merged list
+	createAsyncActionsTestApp(t, server, "/apps/other")
+	resp, body = post(alice, "/_openrun/actions/run", `{"app_path":"/apps/other","action":"rows","args":{"count":"1"}}`)
+	testutil.AssertEqualsInt(t, "other run status", http.StatusAccepted, resp.StatusCode)
+	testutil.AssertNoError(t, json.Unmarshal([]byte(body), &started))
+	waitActionRun(t, server, started.RunId)
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{}, &runs))
+	testutil.AssertEqualsInt(t, "all runs", 3, len(runs.Runs))
+	testutil.AssertEqualsString(t, "newest first across apps", started.RunId, runs.Runs[0].Id)
+	testutil.AssertEqualsString(t, "other app", "/apps/other", runs.Runs[0].AppPath)
+	testutil.AssertEqualsString(t, "site app", "/apps/site", runs.Runs[1].AppPath)
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"/apps/*"}, "action": {"build"}}, &runs))
+	testutil.AssertEqualsInt(t, "build runs across apps", 1, len(runs.Runs))
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"all"}, "action": {"nosuch"}}, &runs))
+	testutil.AssertEqualsInt(t, "unknown selector across apps", 0, len(runs.Runs))
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"all"}, "limit": {"2"}}, &runs))
+	testutil.AssertEqualsInt(t, "limited", 2, len(runs.Runs))
+	// Keyset paging: a full page carries the cursor of the next one, which
+	// continues the listing; the last page has none
+	if runs.NextBefore == "" {
+		t.Fatal("full page without a next_before cursor")
+	}
+	secondPageFirst := runs.Runs[1].Id
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"all"}, "limit": {"1"}}, &runs))
+	testutil.AssertEqualsInt(t, "page 1", 1, len(runs.Runs))
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"all"}, "limit": {"1"}, "before": {runs.NextBefore}}, &runs))
+	testutil.AssertEqualsInt(t, "page 2", 1, len(runs.Runs))
+	testutil.AssertEqualsString(t, "page 2 run", secondPageFirst, runs.Runs[0].Id)
+	lastCursor := runs.NextBefore
+	runs = types.ActionRunsResponse{} // a fresh decode target: an omitted next_before must read as empty
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"all"}, "limit": {"5"}, "before": {lastCursor}}, &runs))
+	testutil.AssertEqualsInt(t, "last page", 1, len(runs.Runs))
+	testutil.AssertEqualsString(t, "no cursor on the last page", "", runs.NextBefore)
+	// The single-app listing pages the same way
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"/apps/site"}, "limit": {"1"}}, &runs))
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"/apps/site"}, "limit": {"1"}, "before": {runs.NextBefore}}, &runs))
+	testutil.AssertEqualsInt(t, "single-app page 2", 1, len(runs.Runs))
+	err = alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"all"}, "before": {"bogus"}}, &runs)
+	testutil.AssertEqualsInt(t, "bad cursor", http.StatusBadRequest, requestErrorCode(t, err))
+	// Brace alternatives are a glob too (FilterApps supports them), not
+	// one app's path
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"/apps/{site,other}"}}, &runs))
+	testutil.AssertEqualsInt(t, "brace glob", 3, len(runs.Runs))
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"/apps/other"}}, &runs))
+	testutil.AssertEqualsInt(t, "one app", 1, len(runs.Runs))
+	err = alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"/apps/other"}, "action": {"nosuch"}}, &runs)
+	testutil.AssertEqualsInt(t, "unknown selector for one app", http.StatusNotFound, requestErrorCode(t, err))
+	// The caller's app:access decides which apps' runs are merged: dave
+	// (okta) fails the provider match of the builtin auth apps
+	err = mint("okta:dave").Get("/_openrun/actions/runs", url.Values{}, &runs)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "no runs for another provider", 0, len(runs.Runs))
+	if _, err := server.DeleteApps(system.WithTrustedOperation(t.Context()), "/apps/other", false); err != nil {
+		t.Fatalf("delete other app: %v", err)
+	}
+
 	// Cancel a running stream
 	resp, body = post(alice, "/_openrun/actions/run", `{"app_path":"/apps/site","action":"build","args":{"count":30}}`)
 	testutil.AssertEqualsInt(t, "slow run status", http.StatusAccepted, resp.StatusCode)
@@ -180,10 +238,28 @@ func TestAsyncActionsOverRest(t *testing.T) {
 	testutil.AssertEqualsInt(t, "alice no permit", http.StatusNotFound, requestErrorCode(t, err))
 	testutil.AssertNoError(t, carol.Get("/_openrun/actions/runs/get", url.Values{"runId": {started.RunId}}, &doc))
 	testutil.AssertEqualsString(t, "carol sees it", "secret", doc.Result.Status)
-	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"/apps/site"}}, &runs))
-	for _, r := range runs.Runs {
-		if r.ActionPath == "/restricted" {
-			t.Fatal("restricted run listed for alice")
+	for _, appPath := range []string{"/apps/site", "all"} {
+		testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {appPath}}, &runs))
+		for _, r := range runs.Runs {
+			if r.ActionPath == "/restricted" {
+				t.Fatalf("restricted run listed for alice (%s)", appPath)
+			}
+		}
+	}
+	testutil.AssertNoError(t, carol.Get("/_openrun/actions/runs", url.Values{"action": {"/restricted"}}, &runs))
+	testutil.AssertEqualsInt(t, "carol restricted runs across apps", 1, len(runs.Runs))
+	// The permitted actions are filtered in the query: carol's restricted
+	// run is the newest, a page of one for alice is her newest permitted
+	// run (not empty), across apps and for one app alike
+	for _, appPath := range []string{"all", "/apps/site"} {
+		runs = types.ActionRunsResponse{}
+		testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {appPath}, "limit": {"1"}}, &runs))
+		testutil.AssertEqualsInt(t, "alice page of one ("+appPath+")", 1, len(runs.Runs))
+		if runs.Runs[0].ActionPath == "/restricted" {
+			t.Fatalf("restricted run listed for alice (%s)", appPath)
+		}
+		if runs.NextBefore == "" {
+			t.Fatalf("no cursor after a full page (%s)", appPath)
 		}
 	}
 	err = alice.Get("/_openrun/actions/runs/get", url.Values{"runId": {"arun_missing"}}, &doc)
@@ -227,10 +303,58 @@ func TestAsyncActionsOverRest(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsString(t, "lost", types.ActionRunLost, stale.Status)
 
+	// Runs sharing a start time page by id (desc), for one app as across
+	// apps: a page of one lists the higher id first, the cursor continues
+	// to the other, nothing is skipped
+	sameTime := time.Now().Add(time.Hour) // the newest runs of the app
+	for _, id := range []string{"arun_a", "arun_z"} {
+		testutil.AssertNoError(t, server.db.CreateActionRun(t.Context(), &types.ActionRun{Id: id, AppId: stored.AppId, AppPath: stored.AppPath,
+			ActionPath: "/rows", ActionName: "Rows", Source: "ui", Actor: "builtin:alice", StartedAt: sameTime, Status: types.ActionRunSucceeded}))
+	}
+	for _, appPath := range []string{"/apps/site", "all"} {
+		page, err := server.ListActionRuns(userApiCtx(t, server, "builtin:alice"), appPath, "", "", false, 1, "")
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqualsString(t, "same time first ("+appPath+")", "arun_z", page.Runs[0].Id)
+		page, err = server.ListActionRuns(userApiCtx(t, server, "builtin:alice"), appPath, "", "", false, 1, page.NextBefore)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqualsString(t, "same time second ("+appPath+")", "arun_a", page.Runs[0].Id)
+	}
+
+	// The staging instance is checked as itself: with staging on another
+	// login (system) than prod (builtin), alice sees no staging runs, on
+	// the single-app list (refused) and on the glob list (left out) alike
+	prodEntry, err := server.db.GetAppEntry(t.Context(), types.CreateAppPathDomain("/apps/site", ""))
+	testutil.AssertNoError(t, err)
+	stageEntry, err := server.getStageAppNoTx(t.Context(), prodEntry)
+	testutil.AssertNoError(t, err)
+	stageEntry.Metadata.AuthnType = types.AppAuthnSystem
+	tx, err := server.db.BeginTransaction(t.Context())
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, server.db.UpdateAppMetadata(t.Context(), tx, stageEntry))
+	testutil.AssertNoError(t, tx.Commit())
+	server.apps.ResetAllAppCache()
+	trusted := system.WithTrustedOperation(t.Context())
+	out, err = server.mcpInvokeAction(trusted, "/apps/site", "rows", true, false, false, map[string]any{"count": 1}, 0)
+	testutil.AssertNoError(t, err)
+	stageRunId := out.(map[string]any)["run_id"].(string)
+	waitActionRun(t, server, stageRunId)
+	adminRuns, err := server.ListActionRuns(trusted, "all", "", "", true, 0, "")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsInt(t, "admin sees the staging run", 1, len(adminRuns.Runs))
+	testutil.AssertEqualsString(t, "staging run", stageRunId, adminRuns.Runs[0].Id)
+	testutil.AssertEqualsString(t, "staging run main path", "/apps/site", adminRuns.Runs[0].MainAppPath)
+	if adminRuns.Runs[0].AppPath == adminRuns.Runs[0].MainAppPath {
+		t.Fatalf("staging run app path %s should be the staging instance's", adminRuns.Runs[0].AppPath)
+	}
+	err = alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"/apps/site"}, "stage": {"true"}}, &runs)
+	testutil.AssertEqualsInt(t, "alice refused on staging", http.StatusForbidden, requestErrorCode(t, err))
+	testutil.AssertNoError(t, alice.Get("/_openrun/actions/runs", url.Values{"appPath": {"all"}, "stage": {"true"}}, &runs))
+	testutil.AssertEqualsInt(t, "alice sees no staging runs across apps", 0, len(runs.Runs))
+
 	if _, err := server.DeleteApps(system.WithTrustedOperation(t.Context()), "/apps/site", false); err != nil {
 		t.Fatalf("delete app: %v", err)
 	}
-	remaining, err := server.db.ListActionRuns(t.Context(), []types.AppId{stored.AppId}, "", "", 0)
+	remaining, err := server.db.ListActionRuns(t.Context(), []types.AppId{stored.AppId}, nil, "", types.ActionRunCursor{}, 0)
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsInt(t, "runs after delete", 0, len(remaining))
 }
