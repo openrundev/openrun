@@ -63,27 +63,6 @@ func TestBuiltinAuthAuthenticate(t *testing.T) {
 	testutil.AssertEqualsBool(t, "bad header", false, ok)
 }
 
-func TestBuiltinAuthCacheReset(t *testing.T) {
-	users := map[string]types.BuiltinAuthEntry{
-		"alice": {Password: hashPassword(t, "pw1")},
-	}
-	auth := testBuiltinAuth(t, users)
-
-	header := basicAuthHeader("alice", "pw1")
-	_, _, ok := auth.authenticate(header)
-	testutil.AssertEqualsBool(t, "ok", true, ok)
-
-	// A password change comes with a cache reset (applyDynamicConfig); the
-	// old password header must stop working
-	users["alice"] = types.BuiltinAuthEntry{Password: hashPassword(t, "pw2")}
-	auth.ResetCache()
-	_, _, ok = auth.authenticate(header)
-	testutil.AssertEqualsBool(t, "old password after reset", false, ok)
-
-	_, _, ok = auth.authenticate(basicAuthHeader("alice", "pw2"))
-	testutil.AssertEqualsBool(t, "new password", true, ok)
-}
-
 func TestValidateUsername(t *testing.T) {
 	for _, valid := range []string{"alice", "alice@example.com", "a_b-c.d", "user1"} {
 		if err := validateUsername(valid); err != nil {

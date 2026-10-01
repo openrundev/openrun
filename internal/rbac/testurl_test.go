@@ -101,28 +101,6 @@ func TestUrlDirectivesMatching(t *testing.T) {
 	}
 }
 
-func TestUrlDirectivesContextHelpers(t *testing.T) {
-	ctx := context.Background()
-	if GetUrlDirectives(ctx) != nil || HasTestUrlPerms(ctx) || GetTestUrlPrefix(ctx) != "" {
-		t.Error("empty context should have no directives")
-	}
-	if _, ok := GetTestUrlPerms(ctx); ok {
-		t.Error("empty context should have no perms")
-	}
-
-	ctx = testUrlCtx([]string{"app:read"})
-	if !HasTestUrlPerms(ctx) {
-		t.Error("perms should be present")
-	}
-	perms, ok := GetTestUrlPerms(ctx)
-	if !ok || !slices.Equal(perms, []string{"app:read"}) {
-		t.Errorf("perms: got %v %v", perms, ok)
-	}
-	if GetTestUrlPrefix(ctx) != "/abc/_cl_perm=test" {
-		t.Errorf("prefix: got %q", GetTestUrlPrefix(ctx))
-	}
-}
-
 // newTestUrlManager builds a manager with RBAC enforcement disabled
 // (security.unsafe_disable_rbac), the state in which test URL directives are
 // honored

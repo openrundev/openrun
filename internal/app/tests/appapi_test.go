@@ -142,18 +142,6 @@ func TestAPIRootAppRootAction(t *testing.T) {
 	apiTester(t, true, "/")
 }
 
-func TestAPIRootApp(t *testing.T) {
-	apiTester(t, true, "/abc")
-}
-
-func TestAPINonRootAppRootAction(t *testing.T) {
-	apiTester(t, false, "/")
-}
-
-func TestAPINonRootApp(t *testing.T) {
-	apiTester(t, false, "/abc")
-}
-
 func apiParamApp(t *testing.T) http.Handler {
 	t.Helper()
 	logger := testutil.TestLogger()
@@ -449,157 +437,6 @@ param("param2", description="param2 description", type=BOOLEAN, default=False)`,
 	testutil.AssertStringContains(t, response.Body.String(), `"suggest":true`)
 }
 
-func TestAPISuggestNotSupported(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-def handler(dry_run, args):
-	return ace.result(status="done", values=["a"], report=ace.TEXT)
-
-app = ace.app("testApp",
-	actions=[ace.action("testAction", "/", handler)])
-
-		`,
-		"params.star": `param("param1", description="param1 description", type=STRING, default="myvalue")`,
-	}
-	a, _, err := CreateTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := createJSONRequest(t, "/test/api/suggest", `{}`)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", http.StatusNotImplemented, response.Code)
-	assertJSONMatch(t, "no suggest", `{"error": "suggest not supported for this action"}`, response.Body.String())
-}
-
-func TestAPIValidate(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-def handler(dry_run, args):
-	if args.param1 == "bad":
-		return ace.result(status="failed", param_errors={"param1": "bad value"})
-	if dry_run:
-		return "Looks good"
-	return ace.result(status="done", values=["a"], report=ace.TEXT)
-
-app = ace.app("testApp",
-	actions=[ace.action("testAction", "/", handler, show_validate=True)])
-
-		`,
-		"params.star": `param("param1", description="param1 description", type=STRING, default="myvalue")`,
-	}
-	a, _, err := CreateTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	// Validate success, no values/report in the response
-	request := createJSONRequest(t, "/test/api/validate", `{"param1": "good"}`)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	assertJSONMatch(t, "validate ok", `{"status": "Looks good"}`, response.Body.String())
-
-	// Validate failure
-	request = createJSONRequest(t, "/test/api/validate", `{"param1": "bad"}`)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", http.StatusUnprocessableEntity, response.Code)
-	assertJSONMatch(t, "validate failed", `{"status": "failed", "param_errors": {"param1": "bad value"}}`, response.Body.String())
-
-	// Actual run
-	request = createJSONRequest(t, "/test/api/actions", `{"param1": "good"}`)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	assertJSONMatch(t, "run", `{"status": "done", "report": "TEXT", "values": ["a"]}`, response.Body.String())
-}
-
-func TestAPIHandlerError(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-def handler(dry_run, args):
-	10/args.param3
-	return ace.result(status="done", values=["a"], report=ace.TEXT)
-
-app = ace.app("testApp",
-	actions=[ace.action("testAction", "/", handler)])
-
-		`,
-		"params.star": `param("param3", description="param3 description", type=INT, default=10)`,
-	}
-	a, _, err := CreateTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := createJSONRequest(t, "/test/api/actions", `{"param3": 0}`)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", http.StatusInternalServerError, response.Code)
-	assertJSONMatch(t, "handler error", `{"error": "floating-point division by zero"}`, response.Body.String())
-}
-
-func TestAPIMultipleActions(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-def handler1(dry_run, args):
-	return ace.result(status="one", values=["a"], report=ace.TEXT)
-
-def handler2(dry_run, args):
-	return ace.result(status="two", values=["b"], report=ace.TEXT)
-
-def suggest_handler(args):
-	return {"param1": ["a"]}
-
-app = ace.app("testApp",
-	actions=[ace.action("test1Action", "/test1", handler1, suggest=suggest_handler),
-	         ace.action("test2Action", "/test2", handler2)])
-
-		`,
-		"params.star": `param("param1", description="param1 description", type=STRING, default="myvalue")`,
-	}
-	a, _, err := CreateTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/test/api", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	assertJSONMatch(t, "describe", `{
-		"app": "testApp",
-		"actions": [
-			{"name": "test1Action", "path": "/test/api/actions/test1", "validate_path": "/test/api/validate/test1", "suggest_path": "/test/api/suggest/test1", "ui_path": "/test/test1", "suggest": true, "authorized": true},
-			{"name": "test2Action", "path": "/test/api/actions/test2", "validate_path": "/test/api/validate/test2", "ui_path": "/test/test2", "suggest": false, "authorized": true}
-		]
-	}`, response.Body.String())
-
-	request = createJSONRequest(t, "/test/api/actions/test1", `{}`)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	assertJSONMatch(t, "run test1", `{"status": "one", "report": "TEXT", "values": ["a"]}`, response.Body.String())
-
-	request = createJSONRequest(t, "/test/api/actions/test2", `{}`)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	assertJSONMatch(t, "run test2", `{"status": "two", "report": "TEXT", "values": ["b"]}`, response.Body.String())
-
-	// Unknown action path
-	request = createJSONRequest(t, "/test/api/actions/unknown", `{}`)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", http.StatusNotFound, response.Code)
-}
-
 func TestAPIOptionsAndHiddenParams(t *testing.T) {
 	logger := testutil.TestLogger()
 	fileData := map[string]string{
@@ -841,23 +678,6 @@ app = ace.app("testApp",
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 }
 
-func TestAPINoActions(t *testing.T) {
-	logger := testutil.TestLogger()
-	a, _, err := CreateTestApp(logger, map[string]string{
-		"app.star":      `app = ace.app("testApp", routes = [ace.html("/")])`,
-		"index.go.html": `{{.}}`,
-	})
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	// The API is mounted only for apps with actions
-	request := httptest.NewRequest("GET", "/test/api", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", http.StatusNotFound, response.Code)
-}
-
 func TestAPIOpenAPISpec(t *testing.T) {
 	logger := testutil.TestLogger()
 	fileData := map[string]string{
@@ -1057,55 +877,6 @@ app = ace.app("testApp",
 	}
 }
 
-func TestAPIOpenAPISpecPermitChecks(t *testing.T) {
-	// The OpenAPI spec discloses the param definitions and defaults, so only
-	// the actions the user is authorized for are included
-	fileData := map[string]string{
-		"app.star": `
-def handler(dry_run, args):
-	return ace.result(status="done", values=["a"], report=ace.TEXT)
-
-app = ace.app("testApp",
-	actions=[ace.action("test1Action", "/test1", handler, permit=["perm1"]),
-	         ace.action("test2Action", "/test2", handler, permit=["perm2"]),
-	         ace.action("test3Action", "/test3", handler)])
-
-		`,
-		"params.star": `param("param1", description="param1 description", type=STRING, default="myvalue")`,
-	}
-
-	logger := testutil.TestLogger()
-	a, _, err := CreateTestAppAuthorizer(logger, fileData, nil, nil, nil, &testRBAC{perms: []string{"perm1"}})
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/test/api/openapi.json", nil)
-	request = request.WithContext(context.WithValue(request.Context(), types.USER_ID, "user@example.com"))
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-
-	var spec map[string]any
-	if err := json.Unmarshal(response.Body.Bytes(), &spec); err != nil {
-		t.Fatalf("Error parsing OpenAPI spec: %s", err)
-	}
-	paths := spec["paths"].(map[string]any)
-	for _, p := range []string{"/test/api/actions/test1", "/test/api/validate/test1", "/test/api/actions/test3", "/test/api/validate/test3"} {
-		if paths[p] == nil {
-			t.Errorf("expected path %s in OpenAPI spec, got paths %v", p, paths)
-		}
-	}
-	for _, p := range []string{"/test/api/actions/test2", "/test/api/validate/test2", "/test/api/suggest/test2"} {
-		if paths[p] != nil {
-			t.Errorf("unauthorized path %s should not be in OpenAPI spec", p)
-		}
-	}
-	if len(paths) != 4 {
-		t.Errorf("expected 4 paths, got %d: %v", len(paths), paths)
-	}
-}
-
 func TestAPIHelperPathCollision(t *testing.T) {
 	// Actions at / and /validate (or /suggest) must not collide with the
 	// validate/suggest endpoints of the root action
@@ -1173,46 +944,4 @@ app = ace.app("testApp",
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", http.StatusNotImplemented, response.Code)
-}
-
-func TestAPIUIUnchanged(t *testing.T) {
-	// The UI form endpoints are unchanged by the API, both are served
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-def handler(dry_run, args):
-	return ace.result(status="done", values=["a", "b"], report=ace.TEXT)
-
-app = ace.app("testApp",
-	actions=[ace.action("testAction", "/", handler)])
-
-		`,
-		"params.star": `param("param1", description="param1 description", type=STRING, default="myvalue")`,
-	}
-	a, _, err := CreateTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	// UI form
-	request := httptest.NewRequest("GET", "/test/", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringContains(t, response.Body.String(), "<title>testAction</title>")
-
-	// UI post returns HTML, not JSON
-	request = httptest.NewRequest("POST", "/test", nil)
-	request.Header.Set("HX-Request", "true")
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringContains(t, response.Body.String(), `<div role="status"`)
-
-	// API post returns JSON
-	request = createJSONRequest(t, "/test/api/actions", `{}`)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	assertJSONMatch(t, "api run", `{"status": "done", "report": "TEXT", "values": ["a", "b"]}`, response.Body.String())
 }

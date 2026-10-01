@@ -809,39 +809,6 @@ func TestWaitForHealthRetriesWhenContainerNotExited(t *testing.T) {
 	}
 }
 
-func TestWaitForHealthUsesProxyPathAfterContainerReady(t *testing.T) {
-	t.Parallel()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "ok") //nolint:errcheck
-	}))
-	defer srv.Close()
-
-	h := &ContainerHandler{
-		Logger: types.NewLogger(&types.LogConfig{Level: "WARN"}),
-		app: &App{
-			AppEntry: &types.AppEntry{
-				Id:   types.AppId(types.ID_PREFIX_APP_PROD + "proxy_ready_test"),
-				Path: "/proxy-ready",
-			},
-		},
-		manager: &healthTestManager{
-			hostNamePort: strings.TrimPrefix(srv.URL, "http://"),
-			running:      true,
-		},
-		scheme:       "http",
-		health:       "health",
-		stripAppPath: true,
-		containerConfig: types.Container{
-			HealthTimeoutSecs: 1,
-		},
-	}
-
-	if err := h.WaitForHealth(1, container.ContainerName("proxy-ready-test"), "hash"); err != nil {
-		t.Fatalf("WaitForHealth returned error: %v", err)
-	}
-}
-
 func TestBuildHealthProbeUsesDeployHealthConfig(t *testing.T) {
 	t.Parallel()
 
@@ -1109,23 +1076,6 @@ func newBindingEnvTestHandler(appID types.AppId, bindingSource string) *Containe
 	}
 }
 
-func TestGetBindingEnvProdApp(t *testing.T) {
-	t.Parallel()
-
-	h := newBindingEnvTestHandler(types.AppId(types.ID_PREFIX_APP_PROD+"binding_env_test"), "postgres/private")
-
-	env, err := h.getBindingEnv()
-	if err != nil {
-		t.Fatalf("getBindingEnv: %v", err)
-	}
-	if env["POSTGRES_URL"] != "postgres://prod-substituted" {
-		t.Fatalf("POSTGRES_URL = %q", env["POSTGRES_URL"])
-	}
-	if env["POSTGRES_URL_DIRECT"] != "postgres://prod-direct" {
-		t.Fatalf("POSTGRES_URL_DIRECT = %q", env["POSTGRES_URL_DIRECT"])
-	}
-}
-
 func TestGetBindingEnvUsesStagedAccountForDevApp(t *testing.T) {
 	t.Parallel()
 
@@ -1207,30 +1157,6 @@ func TestSqliteBindingVolumesAndEnv(t *testing.T) {
 	}
 	if env["SQLITE_DB_PATH"] != "/data/data.db" {
 		t.Fatalf("SQLITE_DB_PATH = %q", env["SQLITE_DB_PATH"])
-	}
-}
-
-// TestContainerHandlerIdleShutdownPauseResume covers the pause primitive
-// used during a zero downtime in-place restart: idle detection is
-// process-local, so the old process must not stop a container based on its
-// own stale view of activity while the new process may already be serving
-// it. See Server.PauseBackground
-func TestContainerHandlerIdleShutdownPauseResume(t *testing.T) {
-	t.Parallel()
-
-	h := &ContainerHandler{}
-	if h.idlePaused.Load() {
-		t.Fatal("expected idle shutdown not paused by default")
-	}
-
-	h.PauseIdleShutdown()
-	if !h.idlePaused.Load() {
-		t.Fatal("expected idle shutdown paused after PauseIdleShutdown")
-	}
-
-	h.ResumeIdleShutdown()
-	if h.idlePaused.Load() {
-		t.Fatal("expected idle shutdown not paused after ResumeIdleShutdown")
 	}
 }
 

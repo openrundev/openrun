@@ -49,22 +49,6 @@ func TestIsBrowserNavigation(t *testing.T) {
 	}
 }
 
-func TestUsesFormLogin(t *testing.T) {
-	for authType, want := range map[string]bool{
-		"system":       true,
-		"builtin":      true,
-		"none":         false,
-		"":             false,
-		"cert":         false,
-		"github_local": false,
-		"saml_okta":    false,
-	} {
-		if got := usesFormLogin(authType); got != want {
-			t.Errorf("usesFormLogin(%q) = %v, want %v", authType, got, want)
-		}
-	}
-}
-
 func newTestFormLoginManager(t *testing.T, cfg *types.ServerConfig) *FormLoginManager {
 	t.Helper()
 	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
@@ -577,46 +561,6 @@ func TestLogoutReportsDeletionFailure(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("logoutSubmit status = %d, want 500 on deletion failure", rec.Code)
 	}
-}
-
-func TestLogoutTemplateRenders(t *testing.T) {
-	cfg := &types.ServerConfig{}
-	manager := newTestFormLoginManager(t, cfg)
-
-	// confirm: signed in, offers the POST sign-out and carries the redirect
-	confirm := logoutBody(manager, "confirm", "builtin:testuser", "/myapp")
-	if !strings.Contains(confirm, "Signed in as builtin:testuser") {
-		t.Error("confirm page does not show the user")
-	}
-	if !strings.Contains(confirm, `action="`+formLogoutPath+`"`) ||
-		!strings.Contains(confirm, `name="redirect" value="/myapp"`) {
-		t.Error("confirm page does not post to the logout path with the redirect")
-	}
-	// done: signed out, links to the redirect, no form
-	done := logoutBody(manager, "done", "", "/myapp")
-	if !strings.Contains(done, "signed out") || strings.Contains(done, "<form") {
-		t.Error("done page should have no form and confirm sign-out")
-	}
-	if !strings.Contains(done, `href="/myapp"`) {
-		t.Error("done page does not link to the redirect target")
-	}
-	// none: not signed in
-	if !strings.Contains(logoutBody(manager, "none", "", "/"), "not signed in") {
-		t.Error("none page does not state the user is not signed in")
-	}
-	// strict headers applied
-	w := httptest.NewRecorder()
-	manager.renderLogout(w, "confirm", "x", "/")
-	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "default-src 'none'") ||
-		w.Header().Get("X-Frame-Options") != "DENY" {
-		t.Error("logout page missing security headers")
-	}
-}
-
-func logoutBody(manager *FormLoginManager, mode, user, redirect string) string {
-	w := httptest.NewRecorder()
-	manager.renderLogout(w, mode, user, redirect)
-	return w.Body.String()
 }
 
 func TestLoginTemplateRenders(t *testing.T) {

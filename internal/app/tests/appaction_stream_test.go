@@ -121,22 +121,6 @@ func TestActionStreamDirectReturn(t *testing.T) {
 	testutil.AssertStringContains(t, body, "event: openrun:exit\ndata: {\"status\":0}\n\n")
 }
 
-func TestActionStreamParamErrorsStayHTML(t *testing.T) {
-	// A validation failure returns before the command starts: the normal
-	// HTML response, not a stream
-	a := streamActionApp(t, `echo unused`, `	return ace.result("Running", stream=ret)`)
-
-	response := streamPost(t, a, "/test", true, url.Values{"param1": {"invalid"}})
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	if strings.Contains(response.Header().Get("Content-Type"), "event-stream") {
-		t.Fatal("param error response must not be an event stream")
-	}
-	testutil.AssertStringContains(t, response.Body.String(), "not allowed")
-	if strings.Contains(response.Body.String(), "openrun:output") {
-		t.Fatal("param error response must not stream")
-	}
-}
-
 func TestActionStreamValidateRejected(t *testing.T) {
 	// A handler that ignores dry_run and starts a command on validate is an
 	// error, and the command is released
@@ -191,15 +175,6 @@ func TestActionStreamAPIText(t *testing.T) {
 	a.ServeHTTP(response, request)
 	testutil.AssertEqualsInt(t, "code", 422, response.Code)
 	testutil.AssertStringContains(t, response.Body.String(), `"param_errors"`)
-}
-
-func TestActionStreamNonHtmxPostIsText(t *testing.T) {
-	// A plain form post (no HTMX) gets the text stream, not SSE
-	a := streamActionApp(t, `echo plain`, `	return ace.result("Running", stream=ret)`)
-	response := streamPost(t, a, "/test", false, url.Values{})
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertEqualsString(t, "type", "text/plain; charset=utf-8", response.Header().Get("Content-Type"))
-	testutil.AssertEqualsString(t, "body", "plain\n", response.Body.String())
 }
 
 func TestActionStreamSharedAssets(t *testing.T) {

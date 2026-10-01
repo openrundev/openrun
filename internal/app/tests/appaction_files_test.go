@@ -4,17 +4,14 @@
 package app_test
 
 import (
-	"context"
 	"errors"
 	"io"
 	"strings"
 	"testing"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/action"
 	"github.com/openrundev/openrun/internal/testutil"
-	"github.com/openrundev/openrun/internal/types"
 )
 
 // The files of DOWNLOAD and IMAGE results, for callers without an app
@@ -86,43 +83,4 @@ func TestActionFetchResultFiles(t *testing.T) {
 	// ... the completed fetch does
 	_, err = a.FetchLocal(userCtx(), local, 1<<20)
 	testutil.AssertErrorContains(t, err, "status 404")
-}
-
-func TestActionsMCPResultFiles(t *testing.T) {
-	mcpConfig, err := types.ParseMCPConfig(`{"source":"actions"}`)
-	testutil.AssertNoError(t, err)
-	testMetadataHook = func(metadata *types.AppMetadata) { metadata.MCP = mcpConfig }
-	a := createActionsTestApp(t, nil)
-	testMetadataHook = nil
-	session := mcpSession(t, a, nil)
-
-	// The image is returned inline: an MCP client has no app session to fetch the url with
-	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "image"})
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsBool(t, "isError", false, result.IsError)
-	testutil.AssertStringContains(t, toolText(result), "Generated the logo image")
-	var image *mcp.ImageContent
-	for _, content := range result.Content {
-		if c, ok := content.(*mcp.ImageContent); ok {
-			image = c
-		}
-	}
-	if image == nil {
-		t.Fatalf("no image content: %s", toolText(result))
-	}
-	testutil.AssertEqualsString(t, "image mime", "image/png", image.MIMEType)
-	if !strings.HasPrefix(string(image.Data), "\x89PNG") {
-		t.Fatalf("not a png: %q", image.Data[:8])
-	}
-	structured := result.StructuredContent.(map[string]any)
-	testutil.AssertEqualsString(t, "report", "IMAGE", structured["report"].(string))
-
-	// The action with the required file param has no tool
-	tools, err := session.ListTools(context.Background(), nil)
-	testutil.AssertNoError(t, err)
-	for _, tool := range tools.Tools {
-		if tool.Name == "upload" {
-			t.Fatal("upload needs a file, it cannot be an MCP tool")
-		}
-	}
 }

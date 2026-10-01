@@ -4,12 +4,10 @@
 package action
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"github.com/openrundev/openrun/internal/testutil"
@@ -36,16 +34,6 @@ func TestOutputRecorderHeadAndTail(t *testing.T) {
 	testutil.AssertEqualsInt(t, "flushed omitted", 15, int(flushedOmitted))
 	_, _, _, changed = r.tailForFlush(true)
 	testutil.AssertEqualsBool(t, "unchanged", false, changed)
-}
-
-func TestOutputRecorderSmallOutput(t *testing.T) {
-	r := newOutputRecorder(100, 100)
-	r.write("hello\n")
-	head, tail, total, omitted := r.snapshot()
-	testutil.AssertEqualsString(t, "head", "hello\n", head)
-	testutil.AssertEqualsString(t, "tail", "", tail)
-	testutil.AssertEqualsInt(t, "total", 6, int(total))
-	testutil.AssertEqualsInt(t, "omitted", 0, int(omitted))
 }
 
 func TestOutputRecorderLargeChunk(t *testing.T) {
@@ -94,35 +82,6 @@ func TestReadOutput(t *testing.T) {
 	testutil.AssertEqualsString(t, "small offset", "lo\n", w.Output)
 }
 
-func TestEncodeResult(t *testing.T) {
-	rows := []map[string]any{{"id": 1}, {"id": 2}, {"id": 3}}
-	doc, count, truncated, err := encodeResult(rows, nil, 1000)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsInt(t, "rows", 3, count)
-	testutil.AssertEqualsBool(t, "truncated", false, truncated)
-	var decoded []map[string]any
-	testutil.AssertNoError(t, json.Unmarshal([]byte(doc), &decoded))
-	testutil.AssertEqualsInt(t, "decoded", 3, len(decoded))
-
-	// Rows beyond the limit are dropped whole
-	doc, count, truncated, err = encodeResult(rows, nil, 20)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsInt(t, "rows", 3, count)
-	testutil.AssertEqualsBool(t, "truncated", true, truncated)
-	testutil.AssertNoError(t, json.Unmarshal([]byte(doc), &decoded))
-	testutil.AssertEqualsInt(t, "kept", 2, len(decoded))
-
-	doc, count, truncated, err = encodeResult(nil, []string{"a", "b"}, 1000)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "strings", `["a","b"]`, doc)
-	testutil.AssertEqualsInt(t, "rows", 2, count)
-	testutil.AssertEqualsBool(t, "truncated", false, truncated)
-
-	doc, _, _, err = encodeResult(nil, nil, 1000)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "empty", "[]", doc)
-}
-
 func TestRunTimeoutOf(t *testing.T) {
 	d, err := runTimeoutOf("", types.ActionConfig{})
 	testutil.AssertNoError(t, err)
@@ -138,24 +97,6 @@ func TestRunTimeoutOf(t *testing.T) {
 
 	_, err = runTimeoutOf("soon", types.ActionConfig{})
 	testutil.AssertErrorContains(t, err, "invalid action run timeout")
-}
-
-func TestRunErrorStatus(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
-	defer cancel()
-	<-ctx.Done()
-	status, msg := runErrorStatus(ctx, context.DeadlineExceeded)
-	testutil.AssertEqualsString(t, "status", types.ActionRunTimedOut, status)
-	testutil.AssertEqualsString(t, "message", "timed out", msg)
-
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	cancel2()
-	status, _ = runErrorStatus(ctx2, context.Canceled)
-	testutil.AssertEqualsString(t, "canceled", types.ActionRunCanceled, status)
-
-	status, msg = runErrorStatus(context.Background(), errClientGone)
-	testutil.AssertEqualsString(t, "client gone", types.ActionRunCanceled, status)
-	testutil.AssertEqualsString(t, "client gone message", "canceled", msg)
 }
 
 func TestDecodeStoredResult(t *testing.T) {

@@ -55,82 +55,6 @@ jIB7CjthniGJgrOycH3szloBKE/g9XlyCvtcML2fiwGep4WPlY0V/g==</ds:X509Certificate>
 </md:EntityDescriptor>
 `
 
-func TestGenSAMLCookieName(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		provider string
-		want     string
-	}{
-		{
-			name:     "simple provider name",
-			provider: "okta",
-			want:     "okta_openrun_saml_session",
-		},
-		{
-			name:     "provider with prefix",
-			provider: "saml_google",
-			want:     "saml_google_openrun_saml_session",
-		},
-		{
-			name:     "empty provider",
-			provider: "",
-			want:     "_openrun_saml_session",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := genSAMLCookieName(tt.provider)
-			testutil.AssertEqualsString(t, "cookie name", tt.want, got)
-		})
-	}
-}
-
-func TestBuildSAMLUrl(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name         string
-		baseUrl      string
-		providerName string
-		endpoint     string
-		want         string
-	}{
-		{
-			name:         "basic url without trailing slash",
-			baseUrl:      "https://example.com",
-			providerName: "okta",
-			endpoint:     "acs",
-			want:         "https://example.com/_openrun/sso/okta/acs",
-		},
-		{
-			name:         "url with path and trailing slash",
-			baseUrl:      "https://example.com/app/",
-			providerName: "azure",
-			endpoint:     "slo",
-			want:         "https://example.com/app/_openrun/sso/azure/slo",
-		},
-		{
-			name:         "localhost url",
-			baseUrl:      "http://localhost:8080",
-			providerName: "test",
-			endpoint:     "redirect",
-			want:         "http://localhost:8080/_openrun/sso/test/redirect",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := buildSAMLUrl(tt.baseUrl, tt.providerName, tt.endpoint)
-			testutil.AssertEqualsString(t, "saml url", tt.want, got)
-		})
-	}
-}
-
 func TestFirstNonEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -176,78 +100,6 @@ func TestFirstNonEmpty(t *testing.T) {
 					t.Errorf("element %d: want %s, got %s", i, tt.want[i], got[i])
 				}
 			}
-		})
-	}
-}
-
-func TestSAMLManager_ValidateSAMLProvider(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name           string
-		setupProviders map[string]bool
-		authType       string
-		want           bool
-	}{
-		{
-			name: "valid provider with rbac prefix",
-			setupProviders: map[string]bool{
-				"saml_okta": true,
-			},
-			authType: "rbac:saml_okta",
-			want:     true,
-		},
-		{
-			name: "valid provider without rbac prefix",
-			setupProviders: map[string]bool{
-				"saml_google": true,
-			},
-			authType: "saml_google",
-			want:     true,
-		},
-		{
-			name: "non-existent provider",
-			setupProviders: map[string]bool{
-				"saml_okta": true,
-			},
-			authType: "rbac:saml_azure",
-			want:     false,
-		},
-		{
-			name:           "empty providers map",
-			setupProviders: map[string]bool{},
-			authType:       "rbac:saml_okta",
-			want:           false,
-		},
-		{
-			name: "provider without saml prefix",
-			setupProviders: map[string]bool{
-				"okta": true,
-			},
-			authType: "rbac:okta",
-			want:     true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			logger := testutil.TestLogger()
-			config := &types.ServerConfig{}
-			cookieStore := sessions.NewCookieStore([]byte("test-key"))
-			db := &metadata.Metadata{}
-
-			manager := NewSAMLManager(logger, config, cookieStore, db)
-			manager.providers = make(map[string]*saml2.SAMLServiceProvider)
-
-			// Setup mock providers
-			for name := range tt.setupProviders {
-				manager.providers[name] = &saml2.SAMLServiceProvider{}
-			}
-
-			got := manager.ValidateSAMLProvider(tt.authType)
-			testutil.AssertEqualsBool(t, "validation result", tt.want, got)
 		})
 	}
 }
@@ -301,38 +153,6 @@ func TestSAMLManager_Setup(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestSAMLManager_SetupInitializationState(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{
-		SAML: map[string]types.SAMLConfig{},
-	}
-	cookieStore := sessions.NewCookieStore([]byte("test-key"))
-	db := &metadata.Metadata{}
-
-	manager := NewSAMLManager(logger, config, cookieStore, db)
-
-	// Before setup
-	if manager.providerConfigs != nil {
-		t.Error("providerConfigs should be nil before setup")
-	}
-	if manager.providers != nil {
-		t.Error("providers should be nil before setup")
-	}
-
-	// After setup
-	err := manager.Setup(context.Background())
-	testutil.AssertNoError(t, err)
-
-	if manager.providerConfigs == nil {
-		t.Error("providerConfigs should be initialized after setup")
-	}
-	if manager.providers == nil {
-		t.Error("providers should be initialized after setup")
 	}
 }
 

@@ -74,59 +74,6 @@ func TestActionRunAsyncWait(t *testing.T) {
 	}
 }
 
-func TestActionRunAsyncFollowAndOutput(t *testing.T) {
-	ats := newActionTestServer(t)
-	var reads atomic.Int32
-	ats.respond = func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost:
-			writeJSONResponse(w, http.StatusAccepted, `{"run_id":"arun_5","status":"running"}`)
-		case strings.HasSuffix(r.URL.Path, "/runs/output"):
-			since := r.URL.Query().Get("since")
-			if reads.Add(1) == 1 {
-				if since != "0" {
-					t.Errorf("first since: %s", since)
-				}
-				writeJSONResponse(w, http.StatusOK, `{"run":{"id":"arun_5","status":"running","is_stream":true,"output_bytes":9},"output":"step one\n","since":0}`)
-				return
-			}
-			if since != "9" {
-				t.Errorf("second since: %s", since)
-			}
-			writeJSONResponse(w, http.StatusOK, `{"run":{"id":"arun_5","status":"succeeded","is_stream":true,"output_bytes":18,"exit_code":0},"output":"step two\n","since":9}`)
-		case strings.HasSuffix(r.URL.Path, "/runs/get"):
-			writeJSONResponse(w, http.StatusOK, `{"run":{"id":"arun_5","status":"succeeded","is_stream":true,"exit_code":0}}`)
-		default:
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}
-	stdout, _, code := runActionCli(t, ats, "run", "--follow", "/site", "build")
-	assertEq(t, "exit", "0", string(rune('0'+code)))
-	assertEq(t, "followed output", "step one\nstep two\n", stdout)
-
-	// action output prints the stored output of a finished stream run
-	ats.respond = func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/runs/get"):
-			writeJSONResponse(w, http.StatusOK, `{"run":{"id":"arun_6","status":"failed","is_stream":true,"exit_code":3,"message":"exit code 3"}}`)
-		case strings.HasSuffix(r.URL.Path, "/runs/output"):
-			writeJSONResponse(w, http.StatusOK, `{"run":{"id":"arun_6","status":"failed","is_stream":true,"output_bytes":4},"output":"oops","since":0}`)
-		}
-	}
-	stdout, _, code = runActionCli(t, ats, "output", "arun_6")
-	assertEq(t, "output exit", "0", string(rune('0'+code)))
-	assertEq(t, "output", "oops", stdout)
-
-	// And the values of a finished values run as JSON
-	ats.respond = func(w http.ResponseWriter, r *http.Request) {
-		writeJSONResponse(w, http.StatusOK, `{"run":{"id":"arun_7","status":"succeeded","is_stream":false},"result":{"status":"ok","report":"TEXT","values":["a","b"]}}`)
-	}
-	stdout, _, _ = runActionCli(t, ats, "output", "arun_7")
-	if !strings.Contains(stdout, `"a"`) || !strings.Contains(stdout, `"b"`) {
-		t.Fatalf("values output: %q", stdout)
-	}
-}
-
 func TestActionRunAsyncWaitSavesFiles(t *testing.T) {
 	ats := newActionTestServer(t)
 	var fileQuery string

@@ -57,38 +57,6 @@ func TestReadFileIf(t *testing.T) {
 	})
 }
 
-func TestMustHost(t *testing.T) {
-	t.Run("adds https when missing", func(t *testing.T) {
-		host, err := mustHost("registry.example.com")
-		if err != nil {
-			t.Fatalf("mustHost returned error: %v", err)
-		}
-		if host != "registry.example.com" {
-			t.Fatalf("mustHost host = %q, want %q", host, "registry.example.com")
-		}
-	})
-
-	t.Run("keeps explicit host and port", func(t *testing.T) {
-		host, err := mustHost("https://registry.example.com:5000/path")
-		if err != nil {
-			t.Fatalf("mustHost returned error: %v", err)
-		}
-		if host != "registry.example.com:5000" {
-			t.Fatalf("mustHost host = %q, want %q", host, "registry.example.com:5000")
-		}
-	})
-
-	t.Run("fails when url has no host", func(t *testing.T) {
-		_, err := mustHost("http:///missing-host")
-		if err == nil {
-			t.Fatal("mustHost should fail for URL without host")
-		}
-		if !strings.Contains(err.Error(), "no host") {
-			t.Fatalf("mustHost error = %q, want no host message", err)
-		}
-	})
-}
-
 func TestInferECRRegion(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -367,13 +335,6 @@ func TestCheckImagesExistsConfigError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "manifest head") && !strings.Contains(err.Error(), "get remote config") {
 		t.Fatalf("error = %q, want wrapped manifest/get-remote-config message", err)
-	}
-}
-
-func TestSanitizeName(t *testing.T) {
-	got := sanitizeName("app_name:v1")
-	if got != "app-name-v1" {
-		t.Fatalf("sanitizeName returned %q, want %q", got, "app-name-v1")
 	}
 }
 

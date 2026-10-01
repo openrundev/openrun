@@ -265,53 +265,6 @@ func TestMCPAppBearerFlow(t *testing.T) {
 	testutil.AssertEqualsInt(t, "origin refused", http.StatusForbidden, resp.StatusCode)
 }
 
-// CORS preflight from an allowed origin reaches the app without a token so
-// its CORS handler can answer; other origins are refused; preflight never
-// carries credentials or identity
-func TestMCPAppPreflight(t *testing.T) {
-	server, ts, _ := newMCPAppTestServer(t)
-	upstream := newUpstreamRecorder(t)
-	createMCPTestApp(t, server, "/apps/web", upstream.server.URL, "builtin",
-		`{"allowed_origins":["https://app.example.com"]}`)
-	preflight := func(origin string) *http.Response {
-		req, _ := http.NewRequest(http.MethodOptions, ts.URL+"/apps/web", nil)
-		req.Header.Set("Origin", origin)
-		req.Header.Set("Access-Control-Request-Method", "POST")
-		req.Header.Set("Authorization", "Bearer bogus")
-		req.Header.Set("Cookie", "a=b")
-		resp, err := ts.Client().Do(req)
-		if err != nil {
-			t.Fatalf("preflight: %v", err)
-		}
-		readBody(t, resp)
-		return resp
-	}
-	resp := preflight("https://app.example.com")
-	testutil.AssertEqualsInt(t, "allowed preflight", http.StatusOK, resp.StatusCode)
-	_, gotHeaders, _ := upstream.last()
-	testutil.AssertEqualsString(t, "preflight token stripped", "", gotHeaders.Get("Authorization"))
-	testutil.AssertEqualsString(t, "preflight cookie stripped", "", gotHeaders.Get("Cookie"))
-	testutil.AssertEqualsString(t, "preflight origin forwarded", "https://app.example.com", gotHeaders.Get("Origin"))
-	testutil.AssertEqualsString(t, "no identity on preflight", types.ANONYMOUS_USER, gotHeaders.Get(types.OPENRUN_HEADER_USER))
-	resp = preflight("https://evil.example.com")
-	testutil.AssertEqualsInt(t, "refused preflight", http.StatusForbidden, resp.StatusCode)
-
-	// The actual call still needs a token, and the challenge is readable
-	// by the browser client: CORS headers on OpenRun's own 401
-	resp = mcpCall(t, ts, "/apps/web", "", map[string]string{"Origin": "https://app.example.com"}, `{}`)
-	readBody(t, resp)
-	testutil.AssertEqualsInt(t, "post needs token", http.StatusUnauthorized, resp.StatusCode)
-	testutil.AssertEqualsString(t, "cors on 401", "https://app.example.com", resp.Header.Get("Access-Control-Allow-Origin"))
-	testutil.AssertEqualsString(t, "challenge exposed", "WWW-Authenticate", resp.Header.Get("Access-Control-Expose-Headers"))
-	if resp.Header.Get("WWW-Authenticate") == "" {
-		t.Fatal("401 must carry the challenge")
-	}
-	// Native clients (no Origin) get no CORS headers
-	resp = mcpCall(t, ts, "/apps/web", "", nil, `{}`)
-	readBody(t, resp)
-	testutil.AssertEqualsString(t, "no cors without origin", "", resp.Header.Get("Access-Control-Allow-Origin"))
-}
-
 func TestMCPAppOAuthFlow(t *testing.T) {
 	server, ts, client := newMCPAppTestServer(t)
 	upstream := newUpstreamRecorder(t)

@@ -23,20 +23,6 @@ func GetThreadLocalKey(thread *starlark.Thread, key string) string {
 	return valueStr
 }
 
-func GetRequestUserId(thread *starlark.Thread) string {
-	ctxVal := thread.Local(types.TL_CONTEXT)
-	if ctxVal == nil {
-		return ""
-	}
-
-	ctx, ok := ctxVal.(context.Context)
-	if !ok {
-		return ""
-	}
-
-	return GetContextUserId(ctx)
-}
-
 // GetRequestContext returns the request context stored on the Starlark
 // thread. A missing thread context yields context.Background(), which carries
 // no enforcement or trust marker: RBAC fails closed for it when enabled, so a
@@ -53,20 +39,6 @@ func GetRequestContext(thread *starlark.Thread) context.Context {
 	}
 
 	return ctx
-}
-
-func GetRequestGroups(thread *starlark.Thread) []string {
-	ctxVal := thread.Local(types.TL_CONTEXT)
-	if ctxVal == nil {
-		return []string{}
-	}
-
-	ctx, ok := ctxVal.(context.Context)
-	if !ok {
-		return []string{}
-	}
-
-	return GetContextGroups(ctx)
 }
 
 // Context keys pre-boxed as any values. ctx.Value takes an interface, so

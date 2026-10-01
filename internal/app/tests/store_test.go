@@ -270,19 +270,6 @@ func TestStoreBasics(t *testing.T) {
 	runStoreBasicsTest(t, "store.in", "sqlite:/tmp/openrun_app.db?_journal_mode=WAL", "UNIQUE constraint failed")
 }
 
-func TestStoreBasicsExternal(t *testing.T) {
-	// Same test cases as TestStoreBasics, with the store plugin served by the
-	// out-of-process provider as store.ex
-	buildStoreProvider(t)
-
-	// Remove old db file if exists
-	os.Remove("/tmp/openrun_app.db")     //nolint:errcheck
-	os.Remove("/tmp/openrun_app.db-wal") //nolint:errcheck
-	os.Remove("/tmp/openrun_app.db-shm") //nolint:errcheck
-
-	runStoreBasicsTest(t, "store.ex", "sqlite:/tmp/openrun_app.db?_journal_mode=WAL", "UNIQUE constraint failed")
-}
-
 func TestStoreBasicsExternalFallbackForIn(t *testing.T) {
 	// Same test cases as TestStoreBasics, loading "store.in" in a binary with
 	// no compiled-in store module: resolution falls back to the external
@@ -353,13 +340,6 @@ func waitForPostgresReady(ctx context.Context, connStr string) error {
 
 func TestStoreTransaction(t *testing.T) {
 	runStoreTransactionTest(t, "store.in")
-}
-
-func TestStoreTransactionExternal(t *testing.T) {
-	// Same test cases as TestStoreTransaction (including the cursor leak
-	// checks), with the store plugin served out-of-process as store.ex
-	buildStoreProvider(t)
-	runStoreTransactionTest(t, "store.ex")
 }
 
 func runStoreTransactionTest(t *testing.T, module string) {

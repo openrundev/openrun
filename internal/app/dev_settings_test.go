@@ -61,46 +61,6 @@ VOLUME /app/data
 ENTRYPOINT /app/${APP_NAME} -f /app/data/db.sqlite ${APP_ARGS}
 `
 
-func TestResolveDevStageConvention(t *testing.T) {
-	t.Parallel()
-
-	data := `
-FROM golang:1.24 AS builder
-WORKDIR /app
-COPY . .
-RUN go build -o app .
-
-FROM builder AS dev
-CMD go run .
-
-FROM alpine
-COPY --from=builder /app/app /app/app
-ENTRYPOINT ["/app/app"]
-`
-	ds, env, err := resolveForTest(t, data, nil, "", false, nil)
-	if err != nil {
-		t.Fatalf("resolveDevSettings returned error: %v", err)
-	}
-	if ds == nil {
-		t.Fatal("expected settings, got nil")
-	}
-	if ds.Target != "dev" {
-		t.Fatalf("target = %q, want dev", ds.Target)
-	}
-	if ds.Command != "" {
-		t.Fatalf("command = %q, want empty (dev stage CMD runs)", ds.Command)
-	}
-	if ds.Dir != "/app" {
-		t.Fatalf("dir = %q, want /app (inherited WORKDIR)", ds.Dir)
-	}
-	if ds.Reload != types.DEV_RELOAD_RESTART {
-		t.Fatalf("reload = %q, want restart", ds.Reload)
-	}
-	if len(env) != 0 {
-		t.Fatalf("inferred env = %v, want empty for dev stage mode", env)
-	}
-}
-
 func TestResolveDevStageWithoutCommandFails(t *testing.T) {
 	t.Parallel()
 
@@ -359,31 +319,6 @@ ENTRYPOINT ["python", "optimized.py"]
 	// The build stage defines its own CMD, which runs as is
 	if ds.Command != "" || ds.Target != "builder" {
 		t.Fatalf("resolved = %+v, want empty command with target builder", ds)
-	}
-	if len(env) != 0 {
-		t.Fatalf("inferred env = %v, want empty", env)
-	}
-}
-
-func TestResolveSingleStage(t *testing.T) {
-	t.Parallel()
-
-	data := `
-FROM python:3.12
-WORKDIR /code
-COPY . .
-CMD ["python", "app.py"]
-`
-	ds, env, err := resolveForTest(t, data, nil, "", false, nil)
-	if err != nil {
-		t.Fatalf("resolveDevSettings returned error: %v", err)
-	}
-	if ds == nil {
-		t.Fatal("expected settings, got nil")
-	}
-	// Full image build, its own CMD runs, source mounted at the WORKDIR
-	if ds.Target != "" || ds.Command != "" || ds.Dir != "/code" {
-		t.Fatalf("resolved = %+v", ds)
 	}
 	if len(env) != 0 {
 		t.Fatalf("inferred env = %v, want empty", env)

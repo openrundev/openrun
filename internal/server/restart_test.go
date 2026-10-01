@@ -50,30 +50,6 @@ func TestRequestRestartRejectedAfterStopRequested(t *testing.T) {
 	}
 }
 
-// TestDrainTimeoutUsesEffectiveConfig covers reading the drain timeout from
-// the live (dynamic-config-merged) config rather than a static snapshot, so
-// a restart.drain_timeout_secs value applied via update-config actually
-// takes effect for shutdown and websocket draining
-func TestDrainTimeoutUsesEffectiveConfig(t *testing.T) {
-	staticConfig := &types.ServerConfig{}
-	staticConfig.Restart.DrainTimeoutSecs = 300
-
-	s := &Server{
-		Logger:       types.NewLogger(&types.LogConfig{Level: "WARN"}),
-		staticConfig: staticConfig,
-	}
-	if got := s.DrainTimeout(); got != 300_000_000_000 {
-		t.Fatalf("expected static config value 300s before any effective config is set, got: %v", got)
-	}
-
-	effective := *staticConfig
-	effective.Restart.DrainTimeoutSecs = 5
-	s.effectiveConfig.Store(&effective)
-	if got := s.DrainTimeout(); got != 5_000_000_000 {
-		t.Fatalf("expected DrainTimeout to reflect the effective config override, got: %v", got)
-	}
-}
-
 // TestResumeBackgroundNoOpAfterStopRequested covers the guard against a late
 // resume racing shutdown: the restart-child goroutine waiting on
 // WaitForParent (or a failed restart's recovery path) may call

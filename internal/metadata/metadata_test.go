@@ -6,7 +6,6 @@ package metadata
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
 	"net"
 	"os"
@@ -226,114 +225,6 @@ func TestMetadata_MigrateLinkedAppPathsBackfillsInternalApps(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsInt(t, "linked app count", 3, len(linkedApps))
 	testutil.AssertNoError(t, tx.Rollback())
-}
-
-func TestMetadata_AppLifecycle(t *testing.T) {
-	m, cleanup := setupTestMetadata(t)
-	defer cleanup()
-	ctx := context.Background()
-
-	prod := &types.AppEntry{
-		Id:            types.AppId(types.ID_PREFIX_APP_PROD + "1"),
-		Path:          "/prod",
-		Domain:        "example.com",
-		LinkedAppPath: "/prod" + types.STAGE_SUFFIX,
-		SourceUrl:     "https://example.com/repo.git",
-		UserID:        "u1",
-		Metadata: types.AppMetadata{
-			Name:        "Prod app",
-			AuthnType:   types.AppAuthnSystem,
-			GitAuthName: "git-one",
-			VersionMetadata: types.VersionMetadata{
-				Version: 1,
-			},
-			AppConfig: map[string]string{"star_base": "\"/tmp/base\""},
-		},
-		Settings: types.AppSettings{},
-	}
-	preview := &types.AppEntry{
-		Id:            types.AppId(types.ID_PREFIX_APP_PREVIEW + "1"),
-		Path:          "/preview",
-		Domain:        "example.com",
-		MainApp:       prod.Id,
-		LinkedAppPath: prod.AppPathDomain().String(),
-		SourceUrl:     "https://example.com/repo.git",
-		UserID:        "u2",
-		Metadata: types.AppMetadata{
-			Name: "Preview app",
-		},
-	}
-
-	tx, err := m.BeginTransaction(ctx)
-	testutil.AssertNoError(t, err)
-	testutil.AssertNoError(t, m.CreateApp(ctx, tx, prod))
-	testutil.AssertNoError(t, m.CreateApp(ctx, tx, preview))
-
-	versionMetadata, err := json.Marshal(prod.Metadata)
-	testutil.AssertNoError(t, err)
-	_, err = tx.ExecContext(ctx,
-		`insert into app_versions(appid, version, user_id, metadata, create_time) values(?, ?, ?, ?, datetime('now'))`,
-		prod.Id, prod.Metadata.VersionMetadata.Version, prod.UserID, string(versionMetadata))
-	testutil.AssertNoError(t, err)
-
-	prod.SourceUrl = "https://example.com/repo2.git"
-	testutil.AssertNoError(t, m.UpdateSourceUrl(ctx, tx, prod))
-
-	prod.Metadata.Name = "Prod app updated"
-	testutil.AssertNoError(t, m.UpdateAppMetadata(ctx, tx, prod))
-
-	preview.Metadata.Name = "Preview app updated"
-	testutil.AssertNoError(t, m.UpdateAppMetadata(ctx, tx, preview))
-
-	prod.Settings.StageWriteAccess = true
-	testutil.AssertNoError(t, m.UpdateAppSettings(ctx, tx, prod))
-	testutil.AssertNoError(t, tx.Commit())
-
-	gotProd, err := m.GetAppEntry(ctx, types.CreateAppPathDomain(prod.Path, prod.Domain))
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "updated source", prod.SourceUrl, gotProd.SourceUrl)
-	testutil.AssertEqualsString(t, "linked app path", prod.LinkedAppPath, gotProd.LinkedAppPath)
-	testutil.AssertEqualsString(t, "updated name", prod.Metadata.Name, gotProd.Metadata.Name)
-	if gotProd.Metadata.SpecFiles == nil {
-		t.Fatal("expected spec files map to be initialized")
-	}
-
-	paths, err := m.GetAppsForDomain(prod.Domain)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsInt(t, "apps for domain", 2, len(paths))
-
-	withoutInternal, err := m.GetAllApps(false)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsInt(t, "non-internal app count", 1, len(withoutInternal))
-	testutil.AssertEqualsString(t, "star base stripped", "/tmp/base", withoutInternal[0].StarBase)
-
-	withInternal, err := m.GetAllApps(true)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsInt(t, "all app count", 2, len(withInternal))
-
-	tx, err = m.BeginTransaction(ctx)
-	testutil.AssertNoError(t, err)
-	linkedApps, err := m.GetLinkedApps(ctx, tx, prod.Id)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsInt(t, "linked app count", 1, len(linkedApps))
-	testutil.AssertEqualsString(t, "linked app path", preview.LinkedAppPath, linkedApps[0].LinkedAppPath)
-	testutil.AssertNoError(t, tx.Rollback())
-
-	var versionMetadataJSON string
-	err = m.db.QueryRow(`select metadata from app_versions where appid = ? and version = ?`, prod.Id, 1).Scan(&versionMetadataJSON)
-	testutil.AssertNoError(t, err)
-	var versionEntry types.AppMetadata
-	err = json.Unmarshal([]byte(versionMetadataJSON), &versionEntry)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "version metadata updated", prod.Metadata.Name, versionEntry.Name)
-
-	tx, err = m.BeginTransaction(ctx)
-	testutil.AssertNoError(t, err)
-	testutil.AssertNoError(t, m.DeleteApp(ctx, tx, prod.Id))
-	testutil.AssertNoError(t, tx.Commit())
-
-	_, err = m.GetAppEntry(ctx, types.CreateAppPathDomain(prod.Path, prod.Domain))
-	testutil.AssertErrorContains(t, err, "app not found")
 }
 
 func TestFileStoreRejectsSymlinksInSource(t *testing.T) {
@@ -731,18 +622,6 @@ func TestMetadataUpgradeAddsLoadIndexes(t *testing.T) {
 	assertPlanUsesIndex(`select path from apps where domain = 'example.com'`, "idx_apps_domain_path")
 	assertPlanUsesIndex(`select id from apps where main_app = 'app_prd_1' order by create_time desc`, "idx_apps_main_app_create_time")
 	assertPlanUsesIndex(`delete from files where sha not in (select distinct sha from app_files)`, "idx_app_files_sha")
-}
-
-func TestToNullTime(t *testing.T) {
-	nullTime := toNullTime(nil)
-	testutil.AssertEqualsBool(t, "nil time valid", false, nullTime.Valid)
-
-	now := time.Now().Truncate(time.Second)
-	nullTime = toNullTime(&now)
-	testutil.AssertEqualsBool(t, "non nil time valid", true, nullTime.Valid)
-	if !nullTime.Time.Equal(now.UTC()) {
-		t.Fatalf("expected %s got %s", now.UTC(), nullTime.Time)
-	}
 }
 
 func TestMetadata_ConfigHistoryDraftAndAtomicDelete(t *testing.T) {

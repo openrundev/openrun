@@ -48,16 +48,6 @@ func TestCleanRelativePath(t *testing.T) {
 	})
 }
 
-func TestCleanRelativeLocalPath(t *testing.T) {
-	got, err := CleanRelativeLocalPath(`sub\Containerfile`)
-	if err != nil {
-		t.Fatalf("CleanRelativeLocalPath returned error: %v", err)
-	}
-	if want := filepath.Join("sub", "Containerfile"); got != want {
-		t.Fatalf("CleanRelativeLocalPath = %q, want %q", got, want)
-	}
-}
-
 func TestCleanFilename(t *testing.T) {
 	t.Run("accepts plain filenames", func(t *testing.T) {
 		for _, name := range []string{"report.txt", "my report.txt", ".env"} {

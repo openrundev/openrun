@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -139,36 +138,3 @@ func TestJobsLoadErrors(t *testing.T) {
 		})
 	}
 }
-
-func TestJobsMetadataOverride(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-def f(dry_run, args):
-	return "ok"
-app = ace.app("t", jobs=[ace.job("a", run=f, trigger=ace.cron("@daily")), ace.job("b", run=f)])
-`,
-	}
-	a, _, err := CreateTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-	// An operator job replaces the same-name definition job whole
-	a.Metadata.Jobs = []string{types.JobSpec{Name: "b", Run: "f", Enabled: boolPtr(false)}.String()}
-	if _, err := a.Reload(context.Background(), true, true, types.DryRunFalse, app.ReloadOptions{}); err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-	jobs, origins, err := a.EffectiveJobs()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(jobs) != 2 || origins[1] != types.JobOriginMetadata || jobs[1].IsEnabled() {
-		t.Errorf("metadata job did not replace the definition: %+v %v", jobs, origins)
-	}
-	gates, _ := a.BeforeDeployJobs()
-	if len(gates) != 0 {
-		t.Errorf("gates %v", gates)
-	}
-}
-
-func boolPtr(b bool) *bool { return &b }

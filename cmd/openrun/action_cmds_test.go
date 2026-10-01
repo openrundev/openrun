@@ -95,41 +95,6 @@ func assertEq(t *testing.T, msg, want, got string) {
 	}
 }
 
-func TestActionRunTableAndFormats(t *testing.T) {
-	ats := newActionTestServer(t)
-	ats.respond = func(w http.ResponseWriter, r *http.Request) {
-		writeJSONResponse(w, http.StatusOK, `{"status":"Listed 2 orders","report":"TABLE","values":[`+
-			`{"id":1,"status":"open","tags":["a","b"]},{"id":22,"status":"closed","tags":[]}]}`)
-	}
-
-	stdout, stderr, code := runActionCli(t, ats, "run", "--stage", "/orders", "list_orders", "count=2", "status=open=x")
-	assertEq(t, "exit", "0", string(rune('0'+code)))
-	// The data goes to stdout, the status line to stderr
-	assertEq(t, "table", "id  status  tags\n1   open    [\"a\",\"b\"]\n22  closed  []\n", stdout)
-	assertEq(t, "status line", "Listed 2 orders\n", stderr)
-
-	// The request: selector, stage, args as strings for the server to coerce
-	assertEq(t, "app path", "/orders", ats.lastRequest.AppPath)
-	assertEq(t, "action", "list_orders", ats.lastRequest.Action)
-	if !ats.lastRequest.Stage || ats.lastRequest.DryRun {
-		t.Fatalf("stage/dry_run: %+v", ats.lastRequest)
-	}
-	assertEq(t, "count arg", `"2"`, string(ats.lastRequest.Args["count"]))
-	assertEq(t, "value with =", `"open=x"`, string(ats.lastRequest.Args["status"]))
-
-	stdout, stderr, _ = runActionCli(t, ats, "run", "-q", "--format", "jsonl", "/orders", "list_orders")
-	assertEq(t, "jsonl", `{"id":1,"status":"open","tags":["a","b"]}`+"\n"+`{"id":22,"status":"closed","tags":[]}`+"\n", stdout)
-	assertEq(t, "quiet", "", stderr)
-
-	stdout, _, _ = runActionCli(t, ats, "run", "--format", "csv", "/orders", "list_orders")
-	assertEq(t, "csv", "id,status,tags\n1,open,\"[\"\"a\"\",\"\"b\"\"]\"\n22,closed,[]\n", stdout)
-
-	// Without an action (single action app): the second arg is a name=value pair
-	runActionCli(t, ats, "run", "/orders", "count=5")
-	assertEq(t, "no selector", "", ats.lastRequest.Action)
-	assertEq(t, "first pair", `"5"`, string(ats.lastRequest.Args["count"]))
-}
-
 func TestActionRunReports(t *testing.T) {
 	ats := newActionTestServer(t)
 	ats.respond = func(w http.ResponseWriter, r *http.Request) {

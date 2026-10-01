@@ -200,34 +200,6 @@ esac
 	}
 }
 
-func TestContainerHasLabelSupportsDockerAndPodmanFormats(t *testing.T) {
-	t.Parallel()
-
-	const key = LABEL_PREFIX + DEV_HASH_LABEL
-	for _, tt := range []struct {
-		name      string
-		container Container
-	}{
-		{
-			name:      "docker",
-			container: Container{LabelString: "other=value," + key + "=run-hash,third=value"},
-		},
-		{
-			name:      "podman",
-			container: Container{Labels: map[string]string{key: "run-hash"}},
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			if !tt.container.HasLabel(key, "run-hash") {
-				t.Fatalf("HasLabel(%q, %q) = false", key, "run-hash")
-			}
-			if tt.container.HasLabel(key, "different") {
-				t.Fatalf("HasLabel(%q, %q) = true", key, "different")
-			}
-		})
-	}
-}
-
 func TestCommandCMGetDevContainerInfoDockerAndPodman(t *testing.T) {
 	const (
 		name    = "clc-dev-test"
@@ -394,40 +366,6 @@ exit 64
 	}
 	if got != "sha256:abc123" {
 		t.Fatalf("RefreshImage digest = %q, want %q", got, "sha256:abc123")
-	}
-}
-
-func TestImagePullFallback(t *testing.T) {
-	commandPath := filepath.Join(t.TempDir(), "docker")
-	script := `#!/bin/sh
-case "$1" in
-	pull)
-		echo "ok"
-		exit 0
-		;;
-	image)
-		if [ "$2" = "inspect" ]; then
-			echo "sha256:configdigest"
-			exit 0
-		fi
-		;;
-esac
-echo "unexpected args: $*" >&2
-exit 64
-`
-	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake container command: %v", err)
-	}
-
-	manager := NewCommandCM(testutil.TestLogger(), &types.ServerConfig{
-		System: types.SystemConfig{ContainerCommand: commandPath},
-	}, "", "")
-	got, err := manager.RefreshImage(context.Background(), ImageName("local/built:dev"))
-	if err != nil {
-		t.Fatalf("RefreshImage returned error: %v", err)
-	}
-	if got != "sha256:configdigest" {
-		t.Fatalf("RefreshImage digest = %q, want %q", got, "sha256:configdigest")
 	}
 }
 

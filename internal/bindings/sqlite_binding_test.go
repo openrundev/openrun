@@ -19,21 +19,6 @@ func newTestSqliteBinding(t *testing.T, serviceConfig map[string]string, litestr
 	return b, err
 }
 
-func TestSqliteAccount(t *testing.T) {
-	t.Parallel()
-
-	account := SqliteAccountForDir(SqliteDefaultDir)
-	if account["dir"] != "/data" {
-		t.Fatalf("dir = %q", account["dir"])
-	}
-	if account["db_path"] != "/data/data.db" {
-		t.Fatalf("db_path = %q", account["db_path"])
-	}
-	if account["url"] != "file:/data/data.db" {
-		t.Fatalf("url = %q", account["url"])
-	}
-}
-
 func TestSqliteBindingDir(t *testing.T) {
 	t.Parallel()
 

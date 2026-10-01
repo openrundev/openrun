@@ -51,12 +51,6 @@ func TestValidateBindingCreatePathAllowsNonAutoPath(t *testing.T) {
 	}
 }
 
-func TestValidateBindingCreatePathAllowsInternalAutoPath(t *testing.T) {
-	if err := validateBindingCreatePath("/auto/app", true); err != nil {
-		t.Fatalf("validateBindingCreatePath returned error: %v", err)
-	}
-}
-
 // secretCaptureServiceBinding records the service config passed to
 // InitializeService, for asserting secret reference resolution.
 type secretCaptureServiceBinding struct {

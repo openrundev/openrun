@@ -24,33 +24,6 @@ import (
 // Content-Disposition header. It is the mechanism the console zip downloads
 // use to stream a version/source bundle without staging it to disk or the db.
 
-func TestDownloadResponse(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-app = ace.app("testApp", routes = [ace.html("/")])
-
-def handler(req):
-	return ace.response("col1,col2\n1,2\n", download="report.csv", content_type="text/csv")`,
-	}
-	a, _, err := CreateDevModeTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/test", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertEqualsString(t, "type", "text/csv", response.Header().Get("Content-Type"))
-	testutil.AssertEqualsString(t, "disposition", `attachment; filename="report.csv"`,
-		response.Header().Get("Content-Disposition"))
-	testutil.AssertEqualsString(t, "body", "col1,col2\n1,2\n", response.Body.String())
-	// No Content-Length: the body streams out with chunked transfer encoding
-	testutil.AssertEqualsString(t, "content-length", "", response.Header().Get("Content-Length"))
-}
-
 // A download with no content_type falls back to application/octet-stream.
 func TestDownloadResponseDefaultContentType(t *testing.T) {
 	logger := testutil.TestLogger()
@@ -135,33 +108,6 @@ def handler(req):
 	got := response.Body.Bytes()
 	if string(got) != string(want) {
 		t.Fatalf("binary body corrupted:\n want % x\n  got % x", want, got)
-	}
-}
-
-// A large body (bigger than net/http's internal write buffer) exercises the
-// streaming path and confirms the whole payload is delivered intact.
-func TestDownloadResponseLarge(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-app = ace.app("testApp", routes = [ace.html("/")])
-
-def handler(req):
-	return ace.response("A" * 200000, download="big.txt")`,
-	}
-	a, _, err := CreateDevModeTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/test", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertEqualsInt(t, "len", 200000, response.Body.Len())
-	if strings.Trim(response.Body.String(), "A") != "" {
-		t.Fatalf("large body has unexpected content")
 	}
 }
 

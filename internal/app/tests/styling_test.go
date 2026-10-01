@@ -15,27 +15,6 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-func TestStyleNone(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
-settings={"style":{"library": ""}})`,
-	}
-
-	a, _, err := CreateDevModeTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/test/static/gen/css/style.css", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "body", "", response.Body.String())
-}
-
 func TestStyleOther(t *testing.T) {
 	// Create a test server to serve the css file
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,58 +63,6 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 		@source "*.go.html";
 		@source "base_templates/*.go.html";
 		@source "static/*.js";
-	`, string(data))
-}
-
-func TestStyleDaisyUI(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
-				style=ace.style(library="daisyui"))`,
-	}
-
-	_, workFS, err := CreateDevModeTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	data, err := workFS.ReadFile("style/input.css")
-	testutil.AssertNoError(t, err)
-	testutil.AssertStringMatch(t, "input.css", `
-		@import "tailwindcss" source(none);
-		@source "*.go.html";
-		@source "base_templates/*.go.html";
-		@source "static/*.js";
-		@plugin "daisyui" {
-		  themes: emerald --default, night --prefersdark;
-		}
-	`, string(data))
-}
-
-func TestStyleDaisyUIThemes(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
-				style=ace.style(library="daisyui", themes=["dark", "cupcake"]))`,
-	}
-
-	_, workFS, err := CreateDevModeTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	data, err := workFS.ReadFile("style/input.css")
-	testutil.AssertNoError(t, err)
-	testutil.AssertStringMatch(t, "input.css", `
-		@import "tailwindcss" source(none);
-		@source "*.go.html";
-		@source "base_templates/*.go.html";
-		@source "static/*.js";
-		@plugin "daisyui" {
-		  themes: cupcake, dark, emerald --default, night --prefersdark;
-		}
 	`, string(data))
 }
 

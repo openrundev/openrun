@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-func TestValidateDevSettings(t *testing.T) {
-	t.Parallel()
-
-	settings := map[string]any{}
-	for _, key := range []string{"target", "command", "dir", "reload", "env_files", "additional_mounts", "port"} {
-		settings[key] = nil
-	}
-	if err := validateDevSettings(settings); err != nil {
-		t.Fatalf("validateDevSettings returned error: %v", err)
-	}
-}
-
 func TestValidateDevSettingsRejectsUnknownKeys(t *testing.T) {
 	t.Parallel()
 

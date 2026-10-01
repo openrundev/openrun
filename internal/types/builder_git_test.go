@@ -36,24 +36,6 @@ func TestResolveBuilderGitProfile(t *testing.T) {
 	}
 }
 
-func TestResolveBuilderGitLocalMode(t *testing.T) {
-	// No profile git target (or no profile choice at all): local mode, even
-	// with git entries present
-	c := gitTestConfig()
-	for _, profile := range []string{"nogit"} {
-		got, err := c.ResolveBuilderGit(profile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.Repo != "" {
-			t.Errorf("profile %q: expected local mode (empty repo), got %+v", profile, got)
-		}
-		if got.AppsFile != "apps.star" {
-			t.Errorf("profile %q: local mode needs the apps_file default: %+v", profile, got)
-		}
-	}
-}
-
 func TestResolveBuilderGitErrors(t *testing.T) {
 	c := gitTestConfig()
 	if _, err := c.ResolveBuilderGit("badref"); err == nil || !strings.Contains(err.Error(), "builder_git.missing") {

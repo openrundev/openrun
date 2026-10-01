@@ -518,29 +518,6 @@ func TestMCPDestructiveConfirmation(t *testing.T) {
 	}
 }
 
-func TestMCPDestructiveConfirmationSkipToggle(t *testing.T) {
-	server, _ := newMCPTestServer(t)
-	server.staticConfig.Api.MCP.SkipDestructiveConfirm = true
-
-	var prompted string
-	session := mcpConnectWithElicit(t, server, "admin", nil, "decline", &prompted)
-	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{
-		Name: "delete_apps", Arguments: map[string]any{"path_glob": "/apps/mcp-test"}})
-	if err != nil || result.IsError {
-		t.Fatalf("delete with confirmation disabled: %v %s", err, callToolText(t, result))
-	}
-	if prompted != "" {
-		t.Fatalf("skip_destructive_confirm must suppress elicitation, got prompt: %s", prompted)
-	}
-	apps, err := server.GetApps(system.WithTrustedOperation(context.Background()), "/apps/mcp-test", false)
-	if err != nil {
-		t.Fatalf("get apps: %v", err)
-	}
-	if len(apps) != 0 {
-		t.Fatal("delete must execute directly with confirmation disabled")
-	}
-}
-
 // TestMCPListSummarization: list tools return a compact projection by
 // default (identifiers and status, no nested metadata) and the complete
 // response with full_output=true

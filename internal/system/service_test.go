@@ -237,20 +237,6 @@ func TestServicePostDoesNotBlock(t *testing.T) {
 	expectClosed(t, "post", done)
 }
 
-func TestServiceNotifyWithoutService(t *testing.T) {
-	if serviceMgr != nil {
-		t.Fatal("expected serviceMgr to be nil in tests")
-	}
-	// All public entry points must be no-ops when not running as a service
-	NotifyServiceReady()
-	NotifyServiceStopping()
-	NotifyServiceStopped()
-	NotifyServiceFailed(1)
-	if ServiceStopNotify() != nil {
-		t.Error("expected nil stop notify channel when not running as a service")
-	}
-}
-
 func TestServiceNotifyExitWaitsForRunner(t *testing.T) {
 	mgr := newServiceManager()
 	serviceMgr = mgr

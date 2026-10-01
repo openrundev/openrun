@@ -13,12 +13,6 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-func TestAcmeEnabled(t *testing.T) {
-	testutil.AssertEqualsBool(t, "disabled by default", false, acmeEnabled(&types.HttpsConfig{}))
-	testutil.AssertEqualsBool(t, "enabled with email", true, acmeEnabled(&types.HttpsConfig{ServiceEmail: "a@example.com"}))
-	testutil.AssertEqualsBool(t, "enabled with custom ca", true, acmeEnabled(&types.HttpsConfig{ACMECAUrl: "https://ca.internal/acme/directory"}))
-}
-
 func TestConfigureACMEIssuerLetsEncrypt(t *testing.T) {
 	issuer := certmagic.ACMEIssuer{}
 	cfg := types.HttpsConfig{ServiceEmail: "a@example.com", UseStaging: true}

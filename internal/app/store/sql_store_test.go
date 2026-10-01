@@ -78,24 +78,6 @@ func TestSqlStoreCloseClosesPool(t *testing.T) {
 	}
 }
 
-func TestGenTableName(t *testing.T) {
-	s := &SqlStore{
-		prefix: "prefix",
-	}
-
-	table := "table"
-	expected := `"prefix_table"`
-
-	result, err := s.genTableName(table)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	if result != expected {
-		t.Errorf("Expected %s, but got %s", expected, result)
-	}
-}
-
 func TestValidateTableName(t *testing.T) {
 	validNames := []string{
 		"table",

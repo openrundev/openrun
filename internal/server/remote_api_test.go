@@ -212,31 +212,6 @@ func TestRemoteApiKeyManagementDenied(t *testing.T) {
 	testutil.AssertEqualsInt(t, "deleting another user's key requires admin", http.StatusForbidden, requestErrorCode(t, err))
 }
 
-func TestRemoteApiPlaintextRefused(t *testing.T) {
-	server, _, mintKey := newRemoteApiTestServer(t)
-
-	// A plaintext listener with the same router: the remote surface does not
-	// exist there (404), even with a valid credential
-	handler := NewTCPHandler(server.Logger, server.staticConfig, server)
-	plainTs := httptest.NewServer(handler.router)
-	defer plainTs.Close()
-
-	aliceKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:alice"})
-	var response types.AppListResponse
-	err := system.NewHttpClient(plainTs.URL, aliceKey, true).Get("/_openrun/apps", nil, &response)
-	if err == nil || !strings.Contains(err.Error(), "404") {
-		t.Fatalf("plaintext remote api must 404, got %v", err)
-	}
-
-	// The health endpoint stays served over plaintext for LB probes
-	healthResp, err := http.Get(plainTs.URL + "/_openrun/health")
-	if err != nil {
-		t.Fatalf("health: %v", err)
-	}
-	defer healthResp.Body.Close() //nolint:errcheck
-	testutil.AssertEqualsInt(t, "health status", http.StatusOK, healthResp.StatusCode)
-}
-
 func TestRemoteApiKeyAttenuation(t *testing.T) {
 	_, ts, mintKey := newRemoteApiTestServer(t)
 

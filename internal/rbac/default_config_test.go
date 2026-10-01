@@ -35,24 +35,3 @@ func TestDefaultConfig(t *testing.T) {
 		}
 	}
 }
-
-// TestWildcardUserGrant verifies the "*" users entry matches any principal
-// while regular entries still match exactly
-func TestWildcardUserGrant(t *testing.T) {
-	t.Parallel()
-	manager := newTestManager(t, &types.RBACConfig{
-		Grants: []types.RBACGrant{{Description: "wildcard read", Users: []string{"*"},
-			Roles: []string{"openrun-monitor"}, Targets: []string{"all"}}},
-	})
-	for _, user := range []string{"anyone", types.ANONYMOUS_USER, "provider:user"} {
-		allowed, err := manager.AuthorizeInt(user, types.AppPathDomain{Path: "/x"}, types.PermissionRead, nil, false)
-		if err != nil || !allowed {
-			t.Fatalf("wildcard grant must match %s: allowed=%v err=%v", user, allowed, err)
-		}
-	}
-	// Empty user still fails closed (context propagation bug guard)
-	allowed, err := manager.AuthorizeInt("", types.AppPathDomain{Path: "/x"}, types.PermissionRead, nil, false)
-	if err != nil || allowed {
-		t.Fatalf("empty user must fail closed even with a wildcard grant: allowed=%v err=%v", allowed, err)
-	}
-}

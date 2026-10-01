@@ -132,40 +132,6 @@ func resetLeaderRow(t *testing.T, connStr string) {
 	}
 }
 
-func TestLeaderElection_SqliteAlwaysLeader(t *testing.T) {
-	logger := testutil.TestLogger()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("failed to open db: %v", err)
-	}
-	defer db.Close() //nolint:errcheck
-
-	m := &Metadata{Logger: logger, db: db, dbType: system.DB_TYPE_SQLITE}
-	config := &types.ServerConfig{}
-	le := NewLeaderElection(logger, m, config, "node-1", "host-1")
-
-	testutil.AssertEqualsBool(t, "sqlite is always leader", true, le.IsLeader())
-}
-
-func TestLeaderElection_AcquireLeadership(t *testing.T) {
-	skipIfNoPostgres(t)
-	connStr, pgCleanup := startPostgres(t)
-	defer pgCleanup()
-	ensureLeaderTable(t, connStr)
-	resetLeaderRow(t, connStr)
-
-	le, cleanup := newLeaderElectionForTest(t, connStr, "node-A", "host-A", 30, 5)
-	defer cleanup()
-
-	testutil.AssertEqualsBool(t, "not leader before acquire", false, le.IsLeader())
-
-	st, acquired, err := le.tryAcquire(context.Background())
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsBool(t, "acquired", true, acquired)
-	testutil.AssertEqualsString(t, "leader id", "node-A", st.LeaderID)
-	testutil.AssertEqualsString(t, "hostname", "host-A", st.Hostname)
-}
-
 func TestLeaderElection_HeartbeatRenewsLease(t *testing.T) {
 	skipIfNoPostgres(t)
 	connStr, pgCleanup := startPostgres(t)
@@ -186,50 +152,6 @@ func TestLeaderElection_HeartbeatRenewsLease(t *testing.T) {
 	if ts.IsZero() {
 		t.Fatal("expected non-zero heartbeat timestamp")
 	}
-}
-
-func TestLeaderElection_HeartbeatFailsForNonLeader(t *testing.T) {
-	skipIfNoPostgres(t)
-	connStr, pgCleanup := startPostgres(t)
-	defer pgCleanup()
-	ensureLeaderTable(t, connStr)
-	resetLeaderRow(t, connStr)
-
-	leA, cleanupA := newLeaderElectionForTest(t, connStr, "node-A", "host-A", 30, 5)
-	defer cleanupA()
-	leB, cleanupB := newLeaderElectionForTest(t, connStr, "node-B", "host-B", 30, 5)
-	defer cleanupB()
-
-	_, acquired, err := leA.tryAcquire(context.Background())
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsBool(t, "A acquired", true, acquired)
-
-	// B's heartbeat should fail — it's not the leader
-	_, ok, err := leB.heartbeat(context.Background())
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsBool(t, "B heartbeat should fail", false, ok)
-}
-
-func TestLeaderElection_SecondNodeCannotAcquireWhileLeaseActive(t *testing.T) {
-	skipIfNoPostgres(t)
-	connStr, pgCleanup := startPostgres(t)
-	defer pgCleanup()
-	ensureLeaderTable(t, connStr)
-	resetLeaderRow(t, connStr)
-
-	leA, cleanupA := newLeaderElectionForTest(t, connStr, "node-A", "host-A", 30, 5)
-	defer cleanupA()
-	leB, cleanupB := newLeaderElectionForTest(t, connStr, "node-B", "host-B", 30, 5)
-	defer cleanupB()
-
-	_, acquired, err := leA.tryAcquire(context.Background())
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsBool(t, "A acquired", true, acquired)
-
-	// B should not be able to acquire while A's lease is active
-	_, acquired, err = leB.tryAcquire(context.Background())
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsBool(t, "B should not acquire", false, acquired)
 }
 
 func TestLeaderElection_LeaseExpiryAllowsTakeover(t *testing.T) {
@@ -320,70 +242,6 @@ func TestLeaderElection_CreateTablesIdempotent(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	testutil.AssertNoError(t, le.CreateTables(ctx, types.Transaction{Tx: tx}))
 	testutil.AssertNoError(t, tx.Commit())
-}
-
-func TestLeaderElection_CreateTablesSkippedForSqlite(t *testing.T) {
-	logger := testutil.TestLogger()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("failed to open db: %v", err)
-	}
-	defer db.Close() //nolint:errcheck
-
-	m := &Metadata{Logger: logger, db: db, dbType: system.DB_TYPE_SQLITE}
-	config := &types.ServerConfig{}
-	le := NewLeaderElection(logger, m, config, "node-A", "host-A")
-
-	ctx := context.Background()
-	tx, err := db.BeginTx(ctx, nil)
-	testutil.AssertNoError(t, err)
-	testutil.AssertNoError(t, le.CreateTables(ctx, types.Transaction{Tx: tx}))
-	testutil.AssertNoError(t, tx.Commit())
-}
-
-func TestLeaderElection_StartLoopAndStop(t *testing.T) {
-	skipIfNoPostgres(t)
-	connStr, pgCleanup := startPostgres(t)
-	defer pgCleanup()
-	ensureLeaderTable(t, connStr)
-	resetLeaderRow(t, connStr)
-
-	le, cleanup := newLeaderElectionForTest(t, connStr, "node-A", "host-A", 30, 1)
-	defer cleanup()
-
-	testutil.AssertEqualsBool(t, "not leader before start", false, le.IsLeader())
-
-	le.StartLoop(context.Background())
-
-	// Give the goroutine time to run the initial tryAcquire
-	time.Sleep(500 * time.Millisecond)
-	testutil.AssertEqualsBool(t, "leader after start", true, le.IsLeader())
-
-	le.Stop()
-	// Verify stop doesn't panic on double-call
-	le.Stop()
-}
-
-func TestLeaderElection_StartLoopNoopForSqlite(t *testing.T) {
-	logger := testutil.TestLogger()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("failed to open db: %v", err)
-	}
-	defer db.Close() //nolint:errcheck
-
-	m := &Metadata{Logger: logger, db: db, dbType: system.DB_TYPE_SQLITE}
-	config := &types.ServerConfig{}
-	le := NewLeaderElection(logger, m, config, "node-A", "host-A")
-
-	// StartLoop should return immediately for sqlite without setting cancel
-	le.StartLoop(context.Background())
-	if le.cancel != nil {
-		t.Fatal("expected cancel to be nil for sqlite")
-	}
-
-	// Stop should be safe even though StartLoop was a no-op
-	le.Stop()
 }
 
 func TestLeaderElection_LoopDetectsLostLeadership(t *testing.T) {

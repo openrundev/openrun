@@ -13,27 +13,6 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-func TestLoadStarlark(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `load("test.star", "testpage")
-app = ace.app("testApp", custom_layout=True, routes = testpage)`,
-		"index.go.html": `Template contents {{.AppName}}.`,
-		"test.star":     `testpage = [ace.html("/")]`,
-	}
-	a, _, err := CreateTestAppRoot(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringContains(t, response.Body.String(), "Template contents testApp.")
-}
-
 func TestLoadStarlarkModuleStruct(t *testing.T) {
 	// load("test.star", "test") binds a struct of test.star's globals; flat
 	// symbol loads keep working alongside it

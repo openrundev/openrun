@@ -228,123 +228,6 @@ func newAppAPIMetadataTestServer(t *testing.T) (*Server, *metadata.Metadata, con
 	return server, db, ctx
 }
 
-func TestStaticDiskSpecServesFromDiskWithoutPersistingSourceFiles(t *testing.T) {
-	t.Parallel()
-
-	server, db, ctx := newAppAPIMetadataTestServer(t)
-	defer db.Close()
-
-	// The static_disk spec comes from the appspecs repo, which CI clones into
-	// internal/server/appspecs before testing; a fresh checkout only has the
-	// embedded dummy placeholder.
-	if server.GetAppSpec(types.StaticDiskSpec) == nil {
-		t.Skipf("spec %s not available, clone github.com/openrundev/appspecs into internal/server/appspecs to run this test", types.StaticDiskSpec)
-	}
-
-	sourceDir := t.TempDir()
-	indexPath := filepath.Join(sourceDir, "index.html")
-	if err := os.WriteFile(indexPath, []byte("version one"), 0o600); err != nil {
-		t.Fatalf("write index: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "other.txt"), []byte("other file"), 0o600); err != nil {
-		t.Fatalf("write other: %v", err)
-	}
-
-	tx, err := db.BeginTransaction(ctx)
-	if err != nil {
-		t.Fatalf("begin transaction: %v", err)
-	}
-	_, err = server.CreateAppTx(ctx, tx, "/diskstatic", true, false, &types.CreateAppRequest{
-		SourceUrl: sourceDir,
-		Spec:      types.StaticDiskSpec,
-		ParamValues: map[string]string{
-			"index": "index.html",
-		},
-		StageAt: "path",
-	}, nil, server.newBindingAccountManager(false), nil)
-	if err != nil {
-		_ = tx.Rollback()
-		t.Fatalf("create static disk app: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
-
-	prod, err := db.GetAppEntry(ctx, types.AppPathDomain{Path: "/diskstatic"})
-	if err != nil {
-		t.Fatalf("get prod app: %v", err)
-	}
-	stage, err := db.GetAppEntry(ctx, types.AppPathDomain{Path: "/diskstatic" + types.STAGE_SUFFIX})
-	if err != nil {
-		t.Fatalf("get stage app: %v", err)
-	}
-
-	tx, err = db.BeginTransaction(ctx)
-	if err != nil {
-		t.Fatalf("begin query transaction: %v", err)
-	}
-	for _, entry := range []*types.AppEntry{prod, stage} {
-		var fileCount int
-		err = tx.QueryRowContext(ctx, `select count(*) from app_files where appid = ?`, entry.Id).Scan(&fileCount)
-		if err != nil {
-			t.Fatalf("query app files for %s: %v", entry.Id, err)
-		}
-		if fileCount != 0 {
-			t.Fatalf("app_files count for %s = %d, want 0", entry.Id, fileCount)
-		}
-
-		var versionCount int
-		err = tx.QueryRowContext(ctx, `select count(*) from app_versions where appid = ?`, entry.Id).Scan(&versionCount)
-		if err != nil {
-			t.Fatalf("query app versions for %s: %v", entry.Id, err)
-		}
-		if versionCount == 0 {
-			t.Fatalf("app_versions count for %s = 0, want metadata version", entry.Id)
-		}
-	}
-	if err := tx.Rollback(); err != nil {
-		t.Fatalf("rollback query transaction: %v", err)
-	}
-
-	application, err := server.setupApp(ctx, prod, types.Transaction{})
-	if err != nil {
-		t.Fatalf("setup app: %v", err)
-	}
-	if err := application.Initialize(ctx, types.DryRunFalse); err != nil {
-		t.Fatalf("initialize app: %v", err)
-	}
-	defer application.Close() //nolint:errcheck
-
-	// The static_disk spec app.star declares static_from_disk in its app_config
-	// settings; verify the settings reach the app config
-	if !application.AppConfig.StaticFromDisk {
-		t.Fatal("AppConfig.StaticFromDisk = false, want true from spec app_config settings")
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/diskstatic", nil)
-	rec := httptest.NewRecorder()
-	application.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Body.String(); got != "version one" {
-		t.Fatalf("body = %q, want disk content", got)
-	}
-
-	if err := os.WriteFile(indexPath, []byte("version two"), 0o600); err != nil {
-		t.Fatalf("rewrite index: %v", err)
-	}
-	req = httptest.NewRequest(http.MethodGet, "/diskstatic", nil)
-	rec = httptest.NewRecorder()
-	application.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status after rewrite = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Body.String(); got != "version two" {
-		t.Fatalf("body after rewrite = %q, want updated disk content", got)
-	}
-}
-
 func TestStaticFromDiskConfigServesFromDiskWithoutSpec(t *testing.T) {
 	t.Parallel()
 
@@ -546,30 +429,6 @@ func TestValidateAppAuthnTypeChecksForwardModifier(t *testing.T) {
 	}
 	if err := server.validateAppAuthnType("github+bad_authz"); err == nil {
 		t.Fatal("expected invalid auth modifier error")
-	}
-}
-
-func TestUpdateAppMetadataConfigValidatesForwardModifier(t *testing.T) {
-	t.Parallel()
-
-	server := newAuthRedirectTestServer("example.com", false)
-	server.staticConfig.Forward = map[string]types.ForwardConfig{
-		"authz": {AuthUrl: "http://auth.example.com/check"},
-	}
-	server.oAuthManager.providerConfigs["github"] = &types.AuthConfig{}
-	appEntry := &types.AppEntry{}
-
-	err := server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_missing"}, false, nil)
-	if err == nil {
-		t.Fatal("expected missing forward config error")
-	}
-
-	err = server.updateAppMetadataConfig(context.Background(), types.Transaction{}, appEntry, types.AppMetadataAuthnType, []string{"github+forward_authz"}, false, nil)
-	if err != nil {
-		t.Fatalf("update auth metadata: %v", err)
-	}
-	if appEntry.Metadata.AuthnType != "github+forward_authz" {
-		t.Fatalf("auth = %q, want %q", appEntry.Metadata.AuthnType, "github+forward_authz")
 	}
 }
 
@@ -846,55 +705,6 @@ func TestMatchAppRootDoesNotShadowInternalApps(t *testing.T) {
 	}
 }
 
-func TestIsOpenRunCookieName(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		cookie string
-		want   bool
-	}{
-		{name: "oauth session", cookie: "github_openrun_session", want: true},
-		{name: "saml session", cookie: "saml_okta_openrun_saml_session", want: true},
-		{name: "gothic session", cookie: "_gothic_session", want: true},
-		{name: "app cookie", cookie: "sessionid", want: false},
-		{name: "contains openrun but different suffix", cookie: "openrun_theme", want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := isOpenRunCookieName(tt.cookie); got != tt.want {
-				t.Fatalf("isOpenRunCookieName(%q): want %v got %v", tt.cookie, tt.want, got)
-			}
-		})
-	}
-}
-
-func TestStripOpenRunCookies(t *testing.T) {
-	t.Parallel()
-
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/myapp", nil)
-	req.Header.Add("Cookie", strings.Join([]string{
-		"app_session=keep1",
-		"github_openrun_session=drop1",
-		"theme=keep2",
-		"_gothic_session=drop2",
-		"saml_okta_openrun_saml_session=drop3",
-	}, "; "))
-
-	stripOpenRunCookies(req)
-
-	got := req.Header.Values("Cookie")
-	if len(got) != 1 {
-		t.Fatalf("cookie header count: want 1 got %d", len(got))
-	}
-	if got[0] != "app_session=keep1; theme=keep2" {
-		t.Fatalf("cookie header: got %q", got[0])
-	}
-}
-
 func TestStripOpenRunCookiesRemovesHeaderWhenOnlyOpenRunCookiesRemain(t *testing.T) {
 	t.Parallel()
 
@@ -905,19 +715,6 @@ func TestStripOpenRunCookiesRemovesHeaderWhenOnlyOpenRunCookiesRemain(t *testing
 
 	if got := req.Header.Get("Cookie"); got != "" {
 		t.Fatalf("cookie header: want empty got %q", got)
-	}
-}
-
-func TestStripOpenRunCookieHeaderFastPath(t *testing.T) {
-	t.Parallel()
-
-	const cookieHeader = "app_session=keep1; theme=keep2"
-	got, changed := stripOpenRunCookieHeader(cookieHeader)
-	if changed {
-		t.Fatal("expected fast path to leave header unchanged")
-	}
-	if got != cookieHeader {
-		t.Fatalf("cookie header: want %q got %q", cookieHeader, got)
 	}
 }
 

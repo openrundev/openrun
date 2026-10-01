@@ -91,15 +91,6 @@ func DeferCleanupModule(thread *starlark.Thread, modulePath, key string, deferFu
 	thread.SetLocal(types.TL_DEFER_MAP, deferMap)
 }
 
-// ClearCleanup clears a defer function from the thread local
-func ClearCleanup(thread *starlark.Thread, key string) {
-	pluginName := thread.Local(types.TL_CURRENT_MODULE_FULL_PATH)
-	if pluginName == nil {
-		panic(fmt.Errorf("plugin name not found in thread local"))
-	}
-	ClearCleanupModule(thread, pluginName.(string), key)
-}
-
 // ClearCleanupModule clears a defer entry registered under the given module
 // path. Cleanup code can run when TL_CURRENT_MODULE_FULL_PATH points at a
 // different plugin — a result cursor is often iterated after calls to other

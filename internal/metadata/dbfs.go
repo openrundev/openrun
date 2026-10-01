@@ -263,11 +263,6 @@ func (d *DbFs) StaticFiles() []string {
 	return staticFiles
 }
 
-// GlobMatch returns true if the file name matches any of the patterns
-func GlobMatch(patterns []string, fileName string) (bool, error) {
-	return appfs.GlobMatch(patterns, fileName)
-}
-
 // FileHash returns a hash of the file names and their corresponding sha256
 // hashes (see appfs.SourceFileHash)
 func (d *DbFs) FileHash(excludeGlob []string) (string, error) {

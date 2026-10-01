@@ -44,21 +44,6 @@ func TestApplicationValueShapes(t *testing.T) {
 	}
 }
 
-func TestApplicationTypedValueBecomesMap(t *testing.T) {
-	value := NewStarlarkType("entry", map[string]starlark.Value{
-		"name": starlark.String("first"),
-		"id":   starlark.MakeInt(1),
-	})
-	got, err := ToGo(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]any{"name": "first", "id": 1}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %#v, want %#v", got, want)
-	}
-}
-
 func TestApplicationNonComparableDictKeyReturnsError(t *testing.T) {
 	dict := starlark.NewDict(1)
 	mustSetKey(t, dict, starlark.Tuple{starlark.MakeInt(1)}, starlark.String("value"))

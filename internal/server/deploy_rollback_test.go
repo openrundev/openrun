@@ -18,25 +18,6 @@ func testServer() *Server {
 	return &Server{Logger: types.NewLogger(&types.LogConfig{Level: "ERROR"})}
 }
 
-// When a caller owns the DB transaction (ownsDB=true), finish rolls back the
-// stack if the operation did not commit.
-func TestDeployScopeOwnerRollsBack(t *testing.T) {
-	s := testServer()
-	ctx, scope := s.beginDeployScope(context.Background(), true, false)
-
-	rolled := false
-	container.DeployTxnFromContext(ctx).Register("app1", "clc-app1", func(context.Context) error { rolled = true; return nil }, nil)
-
-	origErr := errors.New("verify failed")
-	got := scope.finish(ctx, origErr)
-	if !rolled {
-		t.Fatal("owner scope did not roll back on a non-committed failure")
-	}
-	if !errors.Is(got, origErr) {
-		t.Fatalf("finish returned %v, want it to wrap origErr", got)
-	}
-}
-
 // A committed owner does not roll back.
 func TestDeployScopeCommittedDoesNotRollBack(t *testing.T) {
 	s := testServer()

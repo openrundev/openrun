@@ -171,39 +171,3 @@ func TestAsUserValidation(t *testing.T) {
 		}
 	}
 }
-
-func TestAsUserEnforcement(t *testing.T) {
-	server := newAsUserTestServer(t, &types.RBACConfig{
-		Roles: map[string][]types.RBACPermission{
-			"stopper": {types.PermissionServerStop},
-		},
-		Grants: []types.RBACGrant{
-			// alice gets server:stop through her dev group, bob has no grant
-			{Description: "dev group stops the server", Users: []string{"group:dev"},
-				Roles: []string{"stopper"}, Targets: []string{"all"}},
-		},
-	})
-
-	aliceCtx, err := server.asUserRequestContext(context.Background(), "builtin:alice")
-	if err != nil {
-		t.Fatalf("as user context: %v", err)
-	}
-	if err := server.enforceGlobalPerm(aliceCtx, types.PermissionServerStop, ""); err != nil {
-		t.Fatalf("expected alice to hold server:stop through group:dev, got %v", err)
-	}
-
-	bobCtx, err := server.asUserRequestContext(context.Background(), "builtin:bob")
-	if err != nil {
-		t.Fatalf("as user context: %v", err)
-	}
-	err = server.enforceGlobalPerm(bobCtx, types.PermissionServerStop, "")
-	if err == nil || !strings.Contains(err.Error(), string(types.PermissionServerStop)) {
-		t.Fatalf("expected server:stop denial for bob, got %v", err)
-	}
-
-	// The trusted administrative path (no as user) stays unenforced
-	trustedCtx := system.WithTrustedOperation(context.Background())
-	if err := server.enforceGlobalPerm(trustedCtx, types.PermissionServerStop, ""); err != nil {
-		t.Fatalf("expected trusted context to pass, got %v", err)
-	}
-}

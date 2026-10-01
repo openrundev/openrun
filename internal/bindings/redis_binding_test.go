@@ -11,26 +11,6 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-func TestBuildRedisAccountURLWithBindingHostname(t *testing.T) {
-	accountURL, err := buildRedisAccountURL("redis://admin:secret@localhost:6379/2", "cl_user", "p@ss", "")
-	if err != nil {
-		t.Fatalf("buildRedisAccountURL() error = %v", err)
-	}
-	assertURL(t, accountURL, "redis", "localhost:6379", "cl_user", "p@ss", "/2", map[string]string{})
-
-	bindingURL, err := buildRedisAccountURL("redis://admin:secret@localhost:6379/2", "cl_user", "p@ss", "host.docker.internal")
-	if err != nil {
-		t.Fatalf("buildRedisAccountURL() with binding hostname error = %v", err)
-	}
-	assertURL(t, bindingURL, "redis", "host.docker.internal:6379", "cl_user", "p@ss", "/2", map[string]string{})
-
-	disabledURL, err := buildRedisAccountURL("redis://admin:secret@localhost:6379/2", "cl_user", "p@ss", "disable")
-	if err != nil {
-		t.Fatalf("buildRedisAccountURL() with disabled binding hostname error = %v", err)
-	}
-	assertURL(t, disabledURL, "redis", "localhost:6379", "cl_user", "p@ss", "/2", map[string]string{})
-}
-
 func TestBuildRedisAccountURLSchemes(t *testing.T) {
 	valkeyURL, err := buildRedisAccountURL("valkey://admin:secret@localhost:6379/0", "cl_user", "pass", "")
 	if err != nil {

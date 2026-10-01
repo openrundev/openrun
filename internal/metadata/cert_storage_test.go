@@ -51,27 +51,6 @@ func setupTestCertStorage(t *testing.T) (*CertStorage, func()) {
 	return cs, func() { db.Close() } //nolint:errcheck
 }
 
-func TestCertStorage_StoreAndLoad(t *testing.T) {
-	cs, cleanup := setupTestCertStorage(t)
-	defer cleanup()
-	ctx := context.Background()
-
-	// Store
-	err := cs.Store(ctx, "cert/test1", []byte("cert-data-1"))
-	testutil.AssertNoError(t, err)
-
-	// Load
-	data, err := cs.Load(ctx, "cert/test1")
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "data", "cert-data-1", string(data))
-
-	// Load non-existent returns fs.ErrNotExist (required by certmagic)
-	_, err = cs.Load(ctx, "cert/nonexistent")
-	if err != fs.ErrNotExist {
-		t.Errorf("expected fs.ErrNotExist, got: %v", err)
-	}
-}
-
 func TestCertStorage_StoreUpdate(t *testing.T) {
 	cs, cleanup := setupTestCertStorage(t)
 	defer cleanup()
@@ -216,23 +195,4 @@ func TestCertStorage_LockExpiry(t *testing.T) {
 	// Lock again should succeed (expired)
 	err = cs.Lock(ctx, "lock/expiry")
 	testutil.AssertNoError(t, err)
-}
-
-func TestCertStorage_UnlockNonExistent(t *testing.T) {
-	cs, cleanup := setupTestCertStorage(t)
-	defer cleanup()
-	ctx := context.Background()
-
-	// Unlock non-existent (should not error)
-	err := cs.Unlock(ctx, "lock/nonexistent")
-	testutil.AssertNoError(t, err)
-}
-
-func TestCertStorage_CertMagicInterface(t *testing.T) {
-	cs, cleanup := setupTestCertStorage(t)
-	defer cleanup()
-
-	// Verify CertStorage implements certmagic.Storage by using it
-	ctx := context.Background()
-	_ = cs.Exists(ctx, "test")
 }

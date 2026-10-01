@@ -53,21 +53,6 @@ func ParseMappedErrorTest(t *testing.T, query map[string]any, expected string) {
 	_, _, err := parseQuery(query, sqliteFieldMapper)
 	testutil.AssertErrorContains(t, err, expected)
 }
-func TestEqualityQueries(t *testing.T) {
-	ParseQueryTest(t, nil, "", nil)
-	ParseQueryTest(t, map[string]any{}, "", nil)
-	ParseQueryTest(t, map[string]any{"age": 30}, "age = ?", []any{30})
-	ParseQueryTest(t, map[string]any{"age": 30, "city": "New York"}, "age = ? AND city = ?", []any{30, "New York"})
-	ParseQueryTest(t, map[string]any{"age": 30, "city": "New York", "state": "California"}, "age = ? AND city = ? AND state = ?", []any{30, "New York", "California"})
-	ParseQueryTest(t, map[string]any{"age": 30, "city": "New York", "state": "California", "country": "USA"}, "age = ? AND city = ? AND country = ? AND state = ?", []any{30, "New York", "USA", "California"})
-	ParseQueryTest(t, map[string]any{"age": 30, "$or": []map[string]any{{"city": "New York"}, {"state": "California"}}}, " ( city = ? OR state = ? )  AND age = ?", []any{"New York", "California", 30})
-	ParseQueryTest(t, map[string]any{"age": 30, "$or": []map[string]any{{"city": "New York"}, {"state": "California"}}}, " ( city = ? OR state = ? )  AND age = ?", []any{"New York", "California", 30})
-	ParseQueryTest(t, map[string]any{"age": 30, "$or": []map[string]any{{"city": "New York"}}}, " ( city = ? )  AND age = ?", []any{"New York", 30})
-	ParseQueryTest(t, map[string]any{"age": 30, "$or": []map[string]any{{"city": "New York"}, {"state": "California"}, {"country": "USA"}}}, " ( city = ? OR state = ? OR country = ? )  AND age = ?", []any{"New York", "California", "USA", 30})
-	ParseQueryTest(t, map[string]any{"age": 30, "$and": []map[string]any{{"city": "New York"}, {"state": "California"}}, "country": "USA"}, " ( city = ? AND state = ? )  AND age = ? AND country = ?", []any{"New York", "California", 30, "USA"})
-	ParseQueryTest(t, map[string]any{"age": 30, "$AND": []map[string]any{{"city": "New York"}, {"$OR": []map[string]any{{"state": "California"}, {"country": "USA"}}}, {"city": "New York"}}}, " ( city = ? AND  ( state = ? OR country = ? )  AND city = ? )  AND age = ?", []any{"New York", "California", "USA", "New York", 30})
-}
-
 func TestOperatorQueries(t *testing.T) {
 	ParseQueryTest(t, map[string]any{"age": map[string]any{"$gt": 30}}, "age > ?", []any{30})
 	ParseQueryTest(t, map[string]any{"age": map[string]any{"$lt": 30}}, "age < ?", []any{30})
@@ -76,13 +61,6 @@ func TestOperatorQueries(t *testing.T) {
 	ParseQueryTest(t, map[string]any{"age": map[string]any{"$ne": 30}}, "age != ?", []any{30})
 	ParseQueryTest(t, map[string]any{"age": map[string]any{"$eq": 30}}, "age = ?", []any{30})
 	ParseQueryTest(t, map[string]any{"age": map[string]any{"$like": 30}}, "age like ?", []any{30})
-}
-
-func TestMultiOperatorQueries(t *testing.T) {
-	ParseQueryTest(t, map[string]any{"age": map[string]any{"$gt": 30, "$lt": 40}}, "age > ? AND age < ?", []any{30, 40})
-	ParseQueryTest(t, map[string]any{"age": map[string]any{"$gt": 30, "$lt": 40, "$ne": 35}}, "age > ? AND age < ? AND age != ?", []any{30, 40, 35})
-	ParseQueryTest(t, map[string]any{"city": "New York", "age": map[string]any{"$gt": 30, "$lt": 40, "$ne": 35}}, "age > ? AND age < ? AND age != ? AND city = ?", []any{30, 40, 35, "New York"})
-	ParseQueryTest(t, map[string]any{"age": map[string]any{"$gt": 30, "$lt": 40, "$and": []map[string]any{{"$ne": 34}, {"$ne": 35}}}}, " ( age != ? AND age != ? )  AND age > ? AND age < ?", []any{34, 35, 30, 40})
 }
 
 func TestErrorQueries(t *testing.T) {

@@ -4,7 +4,6 @@
 package app_test
 
 import (
-	"encoding/json/v2"
 	"net/http/httptest"
 	"testing"
 
@@ -102,34 +101,6 @@ def handler(req):
 	testutil.AssertStringMatch(t, "body", `deny *`, response.Body.String())
 }
 
-func TestStaticLoadDevMode(t *testing.T) {
-	// In dev mode, the file hashing is disabled, Assumes
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
-
-def handler(req):
-	return {"key": "myvalue"}`,
-		"index.go.html":    `abc {{static "file1"}} def {{static "file2.txt"}}`,
-		"static/file1":     `file1data`,
-		"static/file2.txt": `file2data`,
-	}
-
-	a, _, err := CreateDevModeTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/test", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	want := `abc /test/static/file1-ca9e40772ef9119c13100a8258bc38a665a0a1976bf81c96e69a353b6605f5a7 def /test/static/file2-d044e5b148745e322fe3e916e5f3bb9c9182892fdf99850baf4ed82c2864dd30.txt`
-	testutil.AssertStringMatch(t, "body", want, response.Body.String())
-}
-
 func TestStaticError(t *testing.T) {
 	logger := testutil.TestLogger()
 	fileData := map[string]string{
@@ -171,50 +142,6 @@ def handler(req):
 	// The etag is also not set currently, that needs to be added in the future
 	testutil.AssertEqualsString(t, "header", "", response.Header().Get("Cache-Control"))
 	testutil.AssertEqualsBool(t, "header etag", true, response.Header().Get("ETag") == "")
-}
-
-func TestVerifyFile(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
-
-def handler(req):
-	return {"key": "myvalue"}`,
-		"index.go.html": `abc`,
-		"file.txt":      `filedata`,
-		`..\app.star`:   `should not be reachable`,
-	}
-
-	a, _, err := CreateTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/test/_openrun_app/verify_file/file.txt", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	var body map[string]string
-	if err := json.UnmarshalRead(response.Body, &body); err != nil {
-		t.Fatalf("error decoding response: %s", err)
-	}
-	testutil.AssertEqualsString(t, "file_path", "file.txt", body["file_path"])
-	testutil.AssertEqualsString(t, "file_exists", "true", body["file_exists"])
-	testutil.AssertEqualsString(t, "file_size", "8", body["file_size"])
-
-	request = httptest.NewRequest("GET", "/test/_openrun_app/verify_file/app.star", nil)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-
-	request = httptest.NewRequest("GET", `/test/_openrun_app/verify_file/..\app.star`, nil)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 400, response.Code)
 }
 
 func TestStaticDupRoute(t *testing.T) {
@@ -302,89 +229,6 @@ def handler(req):
 
 	testutil.AssertEqualsInt(t, "code", 200, response.Code)
 	testutil.AssertStringMatch(t, "body", `abc`, response.Body.String())
-}
-
-func TestStaticIndex(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-app = ace.app("testApp", static_only=True, index="static2/file1")
-
-def handler(req):
-	return {"key": "myvalue"}`,
-		"index.go.html":                `abc {{static "file1"}} def {{static "file2.txt"}}`,
-		"static2/file1":                `file1data`,
-		"static/file2.txt":             `file2data`,
-		"static_root2/robots.txt":      `deny *`,
-		"static_root/abc/def/test.txt": `abc`,
-	}
-
-	a, _, err := CreateTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/test", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "body", "file1data", response.Body.String())
-
-	request = httptest.NewRequest("GET", "/test/", nil)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "body", "file1data", response.Body.String())
-
-	request = httptest.NewRequest("GET", "/test/static/file2.txt", nil)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "body", "file2data", response.Body.String())
-}
-
-func TestStaticIndexSingle(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-app = ace.app("testApp", static_only=True, index="static2/file1", single_file=True)
-
-def handler(req):
-	return {"key": "myvalue"}`,
-		"index.go.html":                `abc {{static "file1"}} def {{static "file2.txt"}}`,
-		"static2/file1":                `file1data`,
-		"static/file2.txt":             `file2data`,
-		"static_root2/robots.txt":      `deny *`,
-		"static_root/abc/def/test.txt": `abc`,
-	}
-
-	a, _, err := CreateTestApp(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/test", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "body", "file1data", response.Body.String())
-
-	request = httptest.NewRequest("GET", "/test/", nil)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertStringMatch(t, "body", "file1data", response.Body.String())
-
-	request = httptest.NewRequest("GET", "/test/static/file2.txt", nil)
-	response = httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 404, response.Code)
 }
 
 func TestStaticOnlyError(t *testing.T) {

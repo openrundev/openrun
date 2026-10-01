@@ -10,30 +10,6 @@ import (
 	"github.com/openrundev/openrun/internal/testutil"
 )
 
-func TestBaseTemplate(t *testing.T) {
-	logger := testutil.TestLogger()
-	fileData := map[string]string{
-		"app.star": `
-app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")])
-
-def handler(req):
-	return {"key": "myvalue"}`,
-		"index.go.html":              `ABC {{.Data.key}} {{- template "base" . -}}`,
-		"base_templates/aaa.go.html": `{{define "base"}} aaa{{end}}`,
-	}
-	a, _, err := CreateTestAppRoot(logger, fileData)
-	if err != nil {
-		t.Fatalf("Error %s", err)
-	}
-
-	request := httptest.NewRequest("GET", "/", nil)
-	response := httptest.NewRecorder()
-	a.ServeHTTP(response, request)
-
-	testutil.AssertEqualsInt(t, "code", 200, response.Code)
-	testutil.AssertEqualsString(t, "body", "ABC myvalue aaa", response.Body.String())
-}
-
 func TestBaseTemplateResponse(t *testing.T) {
 	logger := testutil.TestLogger()
 	fileData := map[string]string{

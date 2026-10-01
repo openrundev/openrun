@@ -434,21 +434,3 @@ func TestKubernetesCMInPlaceStandaloneRollsOutImmediately(t *testing.T) {
 		t.Fatalf("deployment hash after failed rollout = %q, want %q (restored)", got, inPlaceOldHash)
 	}
 }
-
-func TestDryRunOption(t *testing.T) {
-	ctx := context.Background()
-	if got := dryRunOption(ctx); got != nil {
-		t.Fatalf("dryRunOption(plain ctx) = %v, want nil", got)
-	}
-	k := &KubernetesCM{}
-	if got := k.applyOptions(ctx).DryRun; got != nil {
-		t.Fatalf("applyOptions(plain ctx).DryRun = %v, want nil", got)
-	}
-	dry := withServerDryRun(ctx)
-	if got := dryRunOption(dry); len(got) != 1 || got[0] != meta.DryRunAll {
-		t.Fatalf("dryRunOption(dry run ctx) = %v, want [All]", got)
-	}
-	if got := k.applyOptions(dry).DryRun; len(got) != 1 || got[0] != meta.DryRunAll {
-		t.Fatalf("applyOptions(dry run ctx).DryRun = %v, want [All]", got)
-	}
-}

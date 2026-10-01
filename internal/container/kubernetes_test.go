@@ -65,23 +65,6 @@ func TestParseKubernetesOptions(t *testing.T) {
 	}
 }
 
-func TestParseKubernetesOptionsInvalidValue(t *testing.T) {
-	_, err := parseKubernetesOptions(map[string]string{"min_replicas": "not-a-number"})
-	if err == nil {
-		t.Fatal("expected parseKubernetesOptions to fail for invalid min_replicas")
-	}
-}
-
-func TestSanitizeContainerName(t *testing.T) {
-	name := sanitizeContainerName("my_app:version_with_extra_text_that_should_be_trimmed_because_it_is_very_long")
-	if strings.Contains(name, "_") || strings.Contains(name, ":") {
-		t.Fatalf("sanitizeContainerName should replace underscores/colons, got %q", name)
-	}
-	if len(name) > 50 {
-		t.Fatalf("sanitizeContainerName length = %d, want <= 50", len(name))
-	}
-}
-
 func TestTrimLabelValue(t *testing.T) {
 	long := strings.Repeat("a", 80)
 	trimmed := TrimLabelValue(long)

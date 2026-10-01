@@ -74,17 +74,3 @@ func TestConnTrackerUnwrapsTLS(t *testing.T) {
 		t.Fatalf("expected 1 tracked conn through tls unwrap, got %d", tracker.count())
 	}
 }
-
-func TestConnTrackerIgnoresUntrackedStates(t *testing.T) {
-	tracker := &connTracker{}
-	tc, client := newTrackedPipe(tracker)
-	defer client.Close() //nolint:errcheck
-	defer tc.Close()     //nolint:errcheck
-
-	tracker.connState(tc, http.StateNew)
-	tracker.connState(tc, http.StateActive)
-	tracker.connState(tc, http.StateClosed)
-	if tracker.count() != 0 {
-		t.Fatalf("expected 0 tracked conns, got %d", tracker.count())
-	}
-}

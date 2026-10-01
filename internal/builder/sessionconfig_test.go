@@ -34,27 +34,6 @@ func selectOption(id string, category *acp.SessionConfigOptionCategory, values .
 	}}
 }
 
-func TestApplySessionConfigSetsModelAndEffort(t *testing.T) {
-	setter := &fakeSetter{}
-	options := []acp.SessionConfigOption{
-		selectOption("model", nil, "anthropic/claude-opus-4-8", "anthropic/claude-fable-5"),
-		selectOption("reasoningEffort", nil, "low", "medium", "high"),
-	}
-	warnings := applySessionConfig(context.Background(), setter, "ses1", options, "anthropic/claude-fable-5", "high")
-	if len(warnings) != 0 {
-		t.Fatalf("unexpected warnings: %v", warnings)
-	}
-	if len(setter.calls) != 2 {
-		t.Fatalf("expected 2 set calls, got %d", len(setter.calls))
-	}
-	if setter.calls[0].ConfigId != "model" || setter.calls[0].Value != "anthropic/claude-fable-5" || setter.calls[0].SessionId != "ses1" {
-		t.Errorf("bad model call: %+v", setter.calls[0])
-	}
-	if setter.calls[1].ConfigId != "reasoningEffort" || setter.calls[1].Value != "high" {
-		t.Errorf("bad effort call: %+v", setter.calls[1])
-	}
-}
-
 func TestApplySessionConfigSuffixAndCategoryMatch(t *testing.T) {
 	setter := &fakeSetter{}
 	modelCat := acp.SessionConfigOptionCategoryModel

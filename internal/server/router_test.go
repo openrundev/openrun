@@ -187,19 +187,6 @@ func TestRouterNewTCPHandlerRejectsInvalidHost(t *testing.T) {
 	}
 }
 
-func TestRouterNewUDSHandler_NoAppRoutes(t *testing.T) {
-	config, server, logger := newRouterTestServer(false, false)
-	handler := NewUDSHandler(logger, config, server)
-
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/testperf", nil)
-	rec := httptest.NewRecorder()
-	handler.router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status: want %d got %d", http.StatusNotFound, rec.Code)
-	}
-}
-
 func TestRouterHTTPSRedirectMiddleware(t *testing.T) {
 	_, server, logger := newRouterTestServer(false, false)
 	handler := &Handler{

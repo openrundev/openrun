@@ -267,12 +267,6 @@ func GetRequestScheme(r *http.Request, trustedProxies []string) string {
 	return "http"
 }
 
-// IsOrigRequestHTTPS reports whether the request is (or originally came in as) HTTPS,
-// honoring X-Forwarded-Proto only when the direct peer is a trusted proxy.
-func IsOrigRequestHTTPS(r *http.Request, trustedProxies []string) bool {
-	return GetRequestScheme(r, trustedProxies) == "https"
-}
-
 func GetRequestUrl(r *http.Request, trustedProxies []string) string {
 	ret := strings.Builder{}
 	ret.WriteString(GetRequestScheme(r, trustedProxies))

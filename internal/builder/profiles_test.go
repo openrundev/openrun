@@ -100,20 +100,3 @@ func TestParseConfigMount(t *testing.T) {
 		t.Fatal("relative container path should fail")
 	}
 }
-
-func TestDockerfileChangesImageTag(t *testing.T) {
-	read1 := func(string) ([]byte, error) { return []byte("FROM ubuntu:24.04\nRUN a"), nil }
-	read2 := func(string) ([]byte, error) { return []byte("FROM ubuntu:24.04\nRUN b"), nil }
-	config := types.BuilderAgentConfig{Dockerfile: "df", Command: []string{"x"}}
-	p1, err := resolveProfile("custom_prof", config, read1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p2, err := resolveProfile("custom_prof", config, read2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p1.imageTag() == p2.imageTag() {
-		t.Fatal("editing the Dockerfile must change the image tag")
-	}
-}

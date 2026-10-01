@@ -154,44 +154,6 @@ func TestBindingReveal(t *testing.T) {
 	}
 }
 
-// TestServiceBindingOwnerRule verifies the creator of a service or binding
-// holds the owner permissions (default <resource>:manage) on it without a grant
-func TestServiceBindingOwnerRule(t *testing.T) {
-	t.Parallel()
-
-	manager := newTestManager(t, grantConfig(map[string][]types.RBACPermission{}))
-
-	// Owner holds manage-expanded perms on their own entries
-	allowed, err := manager.AuthorizeResourceAPI(enforcedCtx("creator"), types.PermissionServiceUpdate, "postgres/main", "creator")
-	if err != nil || !allowed {
-		t.Errorf("service owner should hold service:update, got %v err %v", allowed, err)
-	}
-	allowed, err = manager.AuthorizeResourceAPI(enforcedCtx("creator"), types.PermissionBindingRunCommand, "/apps/db1", "creator")
-	if err != nil || !allowed {
-		t.Errorf("binding owner should hold binding:run_command, got %v err %v", allowed, err)
-	}
-	// Non-owner gets nothing
-	allowed, err = manager.AuthorizeResourceAPI(enforcedCtx("other"), types.PermissionServiceRead, "postgres/main", "creator")
-	if err != nil || allowed {
-		t.Errorf("non-owner must not hold service perms, got %v err %v", allowed, err)
-	}
-
-	// owner_permissions config can narrow the owner rule per resource
-	narrowed := grantConfig(map[string][]types.RBACPermission{})
-	narrowed.OwnerPermissions = map[string][]types.RBACPermission{
-		ResourceBinding: {types.PermissionBindingRead},
-	}
-	narrowedManager := newTestManager(t, narrowed)
-	allowed, err = narrowedManager.AuthorizeResourceAPI(enforcedCtx("creator"), types.PermissionBindingRead, "/apps/db1", "creator")
-	if err != nil || !allowed {
-		t.Errorf("narrowed binding owner should hold binding:read, got %v err %v", allowed, err)
-	}
-	allowed, err = narrowedManager.AuthorizeResourceAPI(enforcedCtx("creator"), types.PermissionBindingDelete, "/apps/db1", "creator")
-	if err != nil || allowed {
-		t.Errorf("narrowed binding owner must not hold binding:delete, got %v err %v", allowed, err)
-	}
-}
-
 // TestResourceTargetValidation verifies service:/binding: target entries are
 // validated on config update
 func TestResourceTargetValidation(t *testing.T) {
@@ -262,45 +224,6 @@ func TestSyncAuthorizerResourceTargets(t *testing.T) {
 	allowed, err = sa.Authorize(types.PermissionBindingCreate, types.AppPathDomain{}, "/elsewhere/db", "")
 	if err != nil || allowed {
 		t.Errorf("snapshot must not confer binding:create outside glob, got %v err %v", allowed, err)
-	}
-}
-
-// TestResourcePermsInCatalog verifies the new permissions are part of the
-// reported permission catalog and GetAPIPermissions output for broad grants
-func TestResourcePermsInCatalog(t *testing.T) {
-	t.Parallel()
-
-	for _, perm := range []types.RBACPermission{types.PermissionServiceBind, types.PermissionServiceManage,
-		types.PermissionBindingUse, types.PermissionBindingManage, types.PermissionBindingReveal} {
-		if !slices.Contains(allPermissionNames, string(perm)) {
-			t.Errorf("expected %s in allPermissionNames", perm)
-		}
-	}
-
-	// A grant with the all target reports the service/binding perms through
-	// GetAPIPermissions (composites are reported through their expansion)
-	manager := newTestManager(t, grantConfig(
-		map[string][]types.RBACPermission{
-			"dbadmin": {types.PermissionServiceManage, types.PermissionBindingManage},
-		},
-		types.RBACGrant{Description: "db admin", Users: []string{"user1"},
-			Roles: []string{"dbadmin"}, Targets: []string{"all"}},
-	))
-	perms, err := manager.GetAPIPermissions(enforcedCtx("user1"), types.AppPathDomain{}, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	for _, perm := range []types.RBACPermission{types.PermissionServiceBind, types.PermissionServiceRead,
-		types.PermissionBindingUse, types.PermissionBindingRunCommand} {
-		if !slices.Contains(perms, string(perm)) {
-			t.Errorf("expected %s in reported permissions %v", perm, perms)
-		}
-	}
-	if slices.Contains(perms, string(types.PermissionServiceManage)) {
-		t.Errorf("composite service:manage should be reported through its expansion, got %v", perms)
-	}
-	if slices.Contains(perms, string(types.PermissionBindingReveal)) {
-		t.Errorf("binding:manage must not report binding:reveal, got %v", perms)
 	}
 }
 

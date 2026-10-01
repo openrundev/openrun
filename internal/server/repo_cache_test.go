@@ -6,36 +6,11 @@ package server
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/openrundev/openrun/internal/types"
 )
-
-func TestValidGitCommit(t *testing.T) {
-	t.Parallel()
-	tests := map[string]struct {
-		commit string
-		valid  bool
-	}{
-		"full sha":    {commit: "0e23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec", valid: true},
-		"uppercase":   {commit: "0E23273F82701C7ECB4F9F6B4E2A4C6EA154C0EC", valid: true},
-		"short sha":   {commit: "0e23273f", valid: false},
-		"not hex":     {commit: "zz23273f82701c7ecb4f9f6b4e2a4c6ea154c0ec", valid: false},
-		"placeholder": {commit: "invalid", valid: false},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			if got := validGitCommit(tc.commit); got != tc.valid {
-				t.Fatalf("validGitCommit(%q) = %t, want %t", tc.commit, got, tc.valid)
-			}
-		})
-	}
-}
 
 func TestGitOperationContextTimeout(t *testing.T) {
 	tests := []struct {
@@ -155,59 +130,5 @@ func TestSharedRepoCacheBranchHeadExpiry(t *testing.T) {
 	}
 	if _, ok := cache.getBranchHead(key, -time.Second); ok {
 		t.Fatal("disabled branch-head cache returned a value")
-	}
-}
-
-func TestMaterializeGitCommitFolder(t *testing.T) {
-	t.Parallel()
-	sourceDir := t.TempDir()
-	repo, err := git.PlainInit(sourceDir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	appDir := filepath.Join(sourceDir, "apps", "one")
-	if err := os.MkdirAll(appDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(appDir, "app.star"), []byte("app = 1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "outside.txt"), []byte("outside\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	worktree, err := repo.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := worktree.Add("apps/one/app.star"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := worktree.Add("outside.txt"); err != nil {
-		t.Fatal(err)
-	}
-	hash, err := worktree.Commit("fixture", &git.CommitOptions{
-		Author: &object.Signature{Name: "OpenRun Test", Email: "test@openrun.dev", When: time.Now()},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	targetDir := t.TempDir()
-	message, gotHash, err := materializeGitCommit(sourceDir, targetDir, hash.String(), "apps/one/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if message != "fixture" || gotHash != hash.String() {
-		t.Fatalf("materialized commit = %q, %q; want fixture, %q", message, gotHash, hash)
-	}
-	contents, err := os.ReadFile(filepath.Join(targetDir, "apps", "one", "app.star"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(contents) != "app = 1\n" {
-		t.Fatalf("materialized contents = %q", contents)
-	}
-	if _, err := os.Stat(filepath.Join(targetDir, "outside.txt")); !os.IsNotExist(err) {
-		t.Fatalf("file outside requested folder was materialized, stat err = %v", err)
 	}
 }

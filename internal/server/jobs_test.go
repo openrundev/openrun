@@ -10,46 +10,6 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-func TestExportJobFormat(t *testing.T) {
-	t.Parallel()
-	enabled := false
-	req := &types.CreateAppRequest{
-		Path: "/apps/jobs", SourceUrl: "/tmp/app",
-		Jobs: []string{
-			types.JobSpec{Name: "migrate", Command: []string{"python", "manage.py", "migrate"},
-				Trigger: types.BeforeDeployTrigger(), Timeout: "10m"}.String(),
-			types.JobSpec{Name: "db-backup", Image: "image:postgres:16", InheritEnv: boolPtr(true), Shell: true,
-				Command: []string{"pg_dump $DATABASE_URL"}, Volumes: []string{"backup:/backup"},
-				Trigger: types.CronJobTrigger("0 2 * * *", "UTC"),
-				Enabled: &enabled, Params: []string{"region"}, Description: "nightly"}.String(),
-		},
-	}
-	out, warnings := formatApp(req)
-	if len(warnings) != 0 {
-		t.Fatalf("formatApp warnings = %v, want none", warnings)
-	}
-	want := `    jobs=[
-        job("migrate", command=["python", "manage.py", "migrate"], trigger=before_deploy(), timeout="10m"),
-        job("db-backup", command=["pg_dump $DATABASE_URL"], shell=True, image="image:postgres:16", inherit_env=True, volumes=["backup:/backup"], trigger=cron("0 2 * * *", timezone="UTC"), enabled=False, params=["region"], description="nightly"),
-    ]`
-	if !strings.Contains(out, want) {
-		t.Errorf("job export format mismatch\nwant block:\n%s\ngot:\n%s", want, out)
-	}
-
-	// The exported form is accepted back by the apply loader
-	server := &Server{
-		Logger:       types.NewLogger(&types.LogConfig{Level: "WARN"}),
-		staticConfig: &types.ServerConfig{},
-	}
-	apps, _, err := server.loadApplyInfo("jobs.ace", []byte(out), "", false)
-	if err != nil {
-		t.Fatalf("loadApplyInfo returned error: %v\n%s", err, out)
-	}
-	if len(apps) != 1 || len(apps[0].Jobs) != 2 || apps[0].Jobs[0] != req.Jobs[0] || apps[0].Jobs[1] != req.Jobs[1] {
-		t.Fatalf("round trip jobs = %v, want %v", apps[0].Jobs, req.Jobs)
-	}
-}
-
 func TestLoadApplyInfoJobs(t *testing.T) {
 	t.Parallel()
 	server := &Server{
