@@ -61,7 +61,7 @@ jobs:
 
           go install github.com/commander-cli/commander/v2/cmd/commander@v2.5.0
           # pull requests use the github runner, docker/podman does not run there
-          gmake covtest CONTAINER_COMMANDS=disable
+          gmake covtest-parallel CONTAINER_COMMANDS=disable
 
       - name: Upload Go test results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

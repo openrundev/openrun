@@ -24,6 +24,7 @@ General:
   --home DIR              OPENRUN_HOME, the repo checkout to build/test
                            (default: parent directory of this script)
   --coverdir DIR           GOCOVERDIR for coverage-instrumented binaries
+  --build-only             Build the CLI and restore appspecs, then exit
   --skip-build             Reuse the existing tests/../openrun binary instead
                            of rebuilding it (faster edit/run loops)
   --verbose                Pass --verbose to commander
@@ -78,6 +79,7 @@ USAGE
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COVERDIR=""
 SKIP_BUILD=""
+BUILD_ONLY=""
 VERBOSE=""
 ENABLE_DR=""
 CONTAINER_COMMANDS="docker"
@@ -116,6 +118,7 @@ while [[ $# -gt 0 ]]; do
     --home) HOME_DIR="$2"; shift 2 ;;
     --coverdir) COVERDIR="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
+    --build-only) BUILD_ONLY=1; shift ;;
     --verbose) VERBOSE="--verbose"; shift ;;
     --dr) ENABLE_DR=1; shift ;;
     --container-commands) CONTAINER_COMMANDS="$2"; shift 2 ;;
@@ -198,13 +201,16 @@ export GOCOVERDIR="$COVERDIR"
 
 if [[ -n "$SKIP_BUILD" ]]; then
   echo "Skipping build, reusing existing ./openrun binary"
-else
+else (
   # Bundle the local specs used by the CLI tests. Placeholder-only source
   # trees may contain either dummy/ or just README, so do not use the
   # placeholder's name to decide whether specs need to be staged.
-  rm -rf appspecs_bk
   if [[ -d config/appspecs ]]; then
-    mv internal/server/appspecs appspecs_bk
+    specs_backup=$(mktemp -d)
+    mv internal/server/appspecs "$specs_backup/appspecs"
+    # Restore the source tree even if staging or compilation fails. The
+    # subshell confines this trap to the build; test cleanup has its own.
+    trap 'rm -rf internal/server/appspecs; mv "$specs_backup/appspecs" internal/server/appspecs; rmdir "$specs_backup"' EXIT
     cp -r config/appspecs internal/server/
   fi
 
@@ -216,12 +222,11 @@ else
   else
       go build ./cmd/openrun
   fi
+)
+fi
 
-  if [[ -d appspecs_bk ]]; then
-      # Restore appspecs
-      rm -rf internal/server/appspecs
-      mv appspecs_bk internal/server/appspecs
-  fi
+if [[ -n "$BUILD_ONLY" ]]; then
+  exit 0
 fi
 
 cd tests

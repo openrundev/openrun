@@ -139,7 +139,7 @@ jobs:
             echo "**********Kubernetes tests skipped************"
           fi
 
-          gmake covtest "${MAKE_TEST_ARGS[@]}"
+          gmake covtest-parallel "${MAKE_TEST_ARGS[@]}"
 
       - name: Clean OpenRun test resources
         if: ${{ always() }}

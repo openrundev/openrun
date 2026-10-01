@@ -66,7 +66,7 @@ ifeq ($(origin .RECIPEPREFIX), undefined)
 endif
 .RECIPEPREFIX = >
 
-.PHONY: help test unit int testui covtest covunit covint release-sdk release fullrelease update-dep update-go int_single lint verify build-linux image tags docs-screenshots
+.PHONY: help test unit int testui covtest covtest-parallel covbuild covunit covint release-sdk release fullrelease update-dep update-go int_single lint verify build-linux image tags docs-screenshots
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -80,6 +80,14 @@ build-linux: ## Build linux binary into dist/
 
 image: build-linux ## Build docker image
 > docker build -f deploy/Dockerfile -t $(IMAGE_TAG) dist
+
+# The CLI build temporarily stages test appspecs in the source tree. Finish
+# it before starting unit tests, which embed/read the original appspecs.
+covtest-parallel: covbuild ## Run unit and integration coverage concurrently (CI)
+> $(MAKE) --jobs=2 covtest SKIP_BUILD=1
+
+covbuild: ## Build the coverage-enabled CLI without running integration tests
+> ./tests/run_cli_tests.sh --home $(OPENRUN_HOME) --coverdir $(OPENRUN_HOME)/coverage/int --build-only
 
 covtest: covunit covint ## Run all tests with coverage
 > go tool covdata percent -i=$(OPENRUN_HOME)/coverage/client,$(OPENRUN_HOME)/coverage/unit,$(OPENRUN_HOME)/coverage/int
