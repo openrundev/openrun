@@ -143,59 +143,6 @@ func TestRemoteApiAuthRequired(t *testing.T) {
 	testutil.AssertEqualsInt(t, "bob apps", 0, len(bobResponse.Apps))
 }
 
-func TestRemoteApiRBACWrites(t *testing.T) {
-	_, ts, mintKey := newRemoteApiTestServer(t)
-
-	// bob cannot delete
-	bobKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:bob"})
-	var deleteResponse types.AppDeleteResponse
-	err := remoteClient(ts, bobKey).Delete("/_openrun/app",
-		url.Values{"appPathGlob": {"/apps/remote-test"}, "dryRun": {"true"}}, &deleteResponse)
-	if err == nil {
-		t.Fatal("bob delete must fail RBAC")
-	}
-
-	// alice (openrun-developer includes app:manage -> app:delete) can, dry run
-	aliceKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:alice"})
-	if err := remoteClient(ts, aliceKey).Delete("/_openrun/app",
-		url.Values{"appPathGlob": {"/apps/remote-test"}, "dryRun": {"true"}}, &deleteResponse); err != nil {
-		t.Fatalf("alice dry-run delete: %v", err)
-	}
-}
-
-func TestRemoteApiScopeCeiling(t *testing.T) {
-	_, ts, mintKey := newRemoteApiTestServer(t)
-
-	// Read-only scoped key for alice: reads work, writes are denied by the
-	// scope ceiling even though alice's grants allow them
-	scopedKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:alice", Scopes: []string{"*:read"}})
-	var listResponse types.AppListResponse
-	if err := remoteClient(ts, scopedKey).Get("/_openrun/apps",
-		url.Values{"appPathGlob": {"/apps/**"}}, &listResponse); err != nil {
-		t.Fatalf("scoped list apps: %v", err)
-	}
-	testutil.AssertEqualsInt(t, "scoped apps", 1, len(listResponse.Apps))
-
-	var deleteResponse types.AppDeleteResponse
-	err := remoteClient(ts, scopedKey).Delete("/_openrun/app",
-		url.Values{"appPathGlob": {"/apps/remote-test"}, "dryRun": {"true"}}, &deleteResponse)
-	if err == nil {
-		t.Fatal("*:read scoped key must not delete")
-	}
-}
-
-func TestRemoteApiResourceBinding(t *testing.T) {
-	_, ts, mintKey := newRemoteApiTestServer(t)
-
-	// A key bound to the mcp surface is rejected at the REST surface
-	mcpKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:alice", Resources: []string{"mcp"}})
-	var response types.AppListResponse
-	err := remoteClient(ts, mcpKey).Get("/_openrun/apps", nil, &response)
-	if err == nil || !strings.Contains(err.Error(), "Unauthorized") {
-		t.Fatalf("mcp-bound key must be unauthorized at the rest surface, got %v", err)
-	}
-}
-
 func TestRemoteApiExpiredKey(t *testing.T) {
 	_, ts, mintKey := newRemoteApiTestServer(t)
 
@@ -247,95 +194,22 @@ func TestRemoteApiInvokerOpPolicy(t *testing.T) {
 	server.staticConfig.Api.Rest.DisableApis = nil
 }
 
-func TestRemoteApiKeyManagement(t *testing.T) {
-	_, ts, mintKey := newRemoteApiTestServer(t)
+// Commander covers successful key management. Keep the permission denials
+// that its remote CLI cases do not exercise.
+func TestRemoteApiKeyManagementDenied(t *testing.T) {
+	server, ts, mintKey := newRemoteApiTestServer(t)
+	bob, err := server.CreateApiKey(system.WithTrustedOperation(t.Context()),
+		&types.ApiKeyCreateRequest{User: "builtin:bob"})
+	testutil.AssertNoError(t, err)
+	alice := remoteClient(ts, mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:alice"}))
 
-	aliceKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:alice"})
-	bobKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:bob"})
-	adminKey := mintKey(t, &types.ApiKeyCreateRequest{User: "admin"})
+	var list types.ApiKeyListResponse
+	err = remoteClient(ts, bob.Key).Get("/_openrun/apikey", nil, &list)
+	testutil.AssertEqualsInt(t, "list requires apikey:manage:self", http.StatusForbidden, requestErrorCode(t, err))
 
-	// alice (openrun-developer carries apikey:manage:self) creates her own
-	// key over the remote CLI path
-	var createResponse types.ApiKeyCreateResponse
-	if err := remoteClient(ts, aliceKey).Post("/_openrun/apikey", nil,
-		&types.ApiKeyCreateRequest{Description: "alice laptop"}, &createResponse); err != nil {
-		t.Fatalf("alice create own key: %v", err)
-	}
-	testutil.AssertEqualsString(t, "key user", "builtin:alice", createResponse.User)
-	if !strings.HasPrefix(createResponse.Key, "orun_pat_") {
-		t.Fatalf("key format: %q", createResponse.Key)
-	}
-	if createResponse.ExpiresAt == nil {
-		t.Fatal("default key must carry the 90d expiry")
-	}
-
-	// alice cannot create a key for bob (admin only)
-	err := remoteClient(ts, aliceKey).Post("/_openrun/apikey", nil,
-		&types.ApiKeyCreateRequest{User: "builtin:bob"}, &createResponse)
-	if err == nil {
-		t.Fatal("alice creating a key for bob must require admin")
-	}
-
-	// admin can, and the audit trail records it as create_apikey_other
-	if err := remoteClient(ts, adminKey).Post("/_openrun/apikey", nil,
-		&types.ApiKeyCreateRequest{User: "builtin:bob", Description: "for bob"}, &createResponse); err != nil {
-		t.Fatalf("admin create key for bob: %v", err)
-	}
-	testutil.AssertEqualsString(t, "key user", "builtin:bob", createResponse.User)
-
-	// bob has no apikey:manage:self grant: he cannot list keys
-	var listResponse types.ApiKeyListResponse
-	if err := remoteClient(ts, bobKey).Get("/_openrun/apikey", nil, &listResponse); err == nil {
-		t.Fatal("bob without apikey:manage:self must not list keys")
-	}
-
-	// alice lists only her own keys
-	if err := remoteClient(ts, aliceKey).Get("/_openrun/apikey", nil, &listResponse); err != nil {
-		t.Fatalf("alice list keys: %v", err)
-	}
-	for _, key := range listResponse.Keys {
-		testutil.AssertEqualsString(t, "listed key user", "builtin:alice", key.User)
-	}
-	if len(listResponse.Keys) != 2 {
-		t.Fatalf("alice keys: want 2 got %d", len(listResponse.Keys))
-	}
-
-	// --all requires admin
-	if err := remoteClient(ts, aliceKey).Get("/_openrun/apikey",
-		url.Values{"all": {"true"}}, &listResponse); err == nil {
-		t.Fatal("alice list --all must require admin")
-	}
-	if err := remoteClient(ts, adminKey).Get("/_openrun/apikey",
-		url.Values{"all": {"true"}}, &listResponse); err != nil {
-		t.Fatalf("admin list --all: %v", err)
-	}
-	if len(listResponse.Keys) < 4 {
-		t.Fatalf("admin list --all: want >=4 keys got %d", len(listResponse.Keys))
-	}
-
-	// alice deletes her own created key; deleting bob's needs admin
-	var deleteResponse types.ApiKeyDeleteResponse
-	var aliceOwnedId, bobOwnedId string
-	for _, key := range listResponse.Keys {
-		if key.User == "builtin:alice" && key.Description == "alice laptop" {
-			aliceOwnedId = key.Id
-		}
-		if key.User == "builtin:bob" && key.Description == "for bob" {
-			bobOwnedId = key.Id
-		}
-	}
-	if err := remoteClient(ts, aliceKey).Delete("/_openrun/apikey",
-		url.Values{"id": {aliceOwnedId}}, &deleteResponse); err != nil {
-		t.Fatalf("alice delete own key: %v", err)
-	}
-	if err := remoteClient(ts, aliceKey).Delete("/_openrun/apikey",
-		url.Values{"id": {bobOwnedId}}, &deleteResponse); err == nil {
-		t.Fatal("alice deleting bob's key must require admin")
-	}
-	if err := remoteClient(ts, adminKey).Delete("/_openrun/apikey",
-		url.Values{"id": {bobOwnedId}}, &deleteResponse); err != nil {
-		t.Fatalf("admin delete bob's key: %v", err)
-	}
+	var deleted types.ApiKeyDeleteResponse
+	err = alice.Delete("/_openrun/apikey", url.Values{"id": {bob.Id}}, &deleted)
+	testutil.AssertEqualsInt(t, "deleting another user's key requires admin", http.StatusForbidden, requestErrorCode(t, err))
 }
 
 func TestRemoteApiPlaintextRefused(t *testing.T) {

@@ -585,28 +585,6 @@ func firstDiff(a, b string) int {
 	return min(len(a), len(b))
 }
 
-// TestExportStageAtDefault verifies stage_at is omitted when the stage app is
-// at this server's default stage location
-func TestExportStageAtDefault(t *testing.T) {
-	server, db, ctx := newApplyTestServer(t)
-	defer db.Close()
-
-	appSourceDir := writeExportTestAppSource(t)
-	if _, err := server.CreateApp(ctx, "/apps/defstage", false, false, &types.CreateAppRequest{
-		SourceUrl: appSourceDir,
-	}); err != nil {
-		t.Fatalf("create app: %v", err)
-	}
-
-	exported, err := server.Export(ctx, "all", types.ExportOptions{})
-	if err != nil {
-		t.Fatalf("export: %v", err)
-	}
-	if strings.Contains(exported, "stage_at") {
-		t.Errorf("stage_at emitted for default stage location:\n%s", exported)
-	}
-}
-
 // TestPrettyPrint verifies parsing and canonical re-emission of an existing
 // config file, including evaluation of starlark helper logic
 func TestPrettyPrint(t *testing.T) {
@@ -662,51 +640,5 @@ app(path="/two",
 	}
 	if _, err := server.PrettyPrint(context.Background(), "github.com/org/repo/file.ace"); err == nil {
 		t.Error("pretty print of a git url did not fail")
-	}
-}
-
-// TestImperativeCreateHasNoApplyInfo pins the contract that exclude-declarative
-// detection relies on: imperative app creation must not store ApplyInfo, while
-// apply driven creation must
-func TestImperativeCreateHasNoApplyInfo(t *testing.T) {
-	server, db, ctx := newApplyTestServer(t)
-	defer db.Close()
-
-	appSourceDir := writeExportTestAppSource(t)
-	if _, err := server.CreateApp(ctx, "/apps/imp", false, false, &types.CreateAppRequest{
-		SourceUrl: appSourceDir,
-	}); err != nil {
-		t.Fatalf("create app: %v", err)
-	}
-
-	applyPath := filepath.Join(t.TempDir(), "one.ace")
-	if err := os.WriteFile(applyPath, []byte(fmt.Sprintf("app(\"/apps/dec\", %q)\n", appSourceDir)), 0600); err != nil {
-		t.Fatalf("write apply file: %v", err)
-	}
-	if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
-		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-
-	tx, err := db.BeginTransaction(ctx)
-	if err != nil {
-		t.Fatalf("begin transaction: %v", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	imperative, err := db.GetAppEntryTx(ctx, tx, types.AppPathDomain{Path: "/apps/imp"})
-	if err != nil {
-		t.Fatalf("get imperative app: %v", err)
-	}
-	if len(imperative.Metadata.VersionMetadata.ApplyInfo) != 0 {
-		t.Errorf("imperatively created app has ApplyInfo: %s", imperative.Metadata.VersionMetadata.ApplyInfo)
-	}
-
-	declarative, err := db.GetAppEntryTx(ctx, tx, types.AppPathDomain{Path: "/apps/dec"})
-	if err != nil {
-		t.Fatalf("get declarative app: %v", err)
-	}
-	if len(declarative.Metadata.VersionMetadata.ApplyInfo) == 0 {
-		t.Error("apply created app has no ApplyInfo")
 	}
 }

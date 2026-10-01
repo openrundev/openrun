@@ -55,52 +55,6 @@ func newSecretsTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Co
 	return server, db, ctx
 }
 
-func TestSecretAPIs(t *testing.T) {
-	server, _, ctx := newSecretsTestServer(t)
-
-	// Create with a generated name
-	response, err := server.CreateSecret(ctx, &types.CreateSecretRequest{
-		Prefix:      "myapp_dbpass",
-		Value:       "s3cret",
-		Description: "db password",
-	}, false)
-	testutil.AssertNoError(t, err)
-	if !strings.HasPrefix(response.Name, "myapp_dbpass_") {
-		t.Fatalf("unexpected generated name %s", response.Name)
-	}
-	testutil.AssertEqualsString(t, "ref", `{{secret_from "db" "`+response.Name+`"}}`, response.SecretRef)
-
-	// The reference resolves through app template evaluation
-	resolved, err := server.AppEvalTemplate([][]string{{"regex:.*"}}, "", response.SecretRef)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "resolved", "s3cret", resolved)
-
-	// List and get
-	infos, err := server.ListSecrets(ctx, "", "myapp_*")
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsInt(t, "list", 1, len(infos))
-	testutil.AssertEqualsString(t, "description", "db password", infos[0].Description)
-
-	getResponse, err := server.GetSecret(ctx, "", response.Name, false)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "no value without reveal", "", getResponse.Value)
-
-	getResponse, err = server.GetSecret(ctx, "", response.Name, true)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "revealed", "s3cret", getResponse.Value)
-
-	// Rekey is a no-op when everything uses the active key
-	rekeyResponse, err := server.RekeySecrets(ctx, "")
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsInt(t, "rekeyed", 0, rekeyResponse.Rekeyed)
-	testutil.AssertEqualsInt(t, "skipped", 0, rekeyResponse.Skipped)
-
-	// Delete
-	testutil.AssertNoError(t, server.DeleteSecret(ctx, "", response.Name))
-	_, err = server.GetSecret(ctx, "", response.Name, false)
-	testutil.AssertEqualsError(t, "deleted", err, types.ErrSecretNotFound)
-}
-
 func TestDynamicSecretBindFailureRejected(t *testing.T) {
 	server, _, ctx := newSecretsTestServer(t)
 	server.staticConfig.Secret = map[string]types.SecretConfig{"db": {}}

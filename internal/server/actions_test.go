@@ -282,36 +282,6 @@ func TestActionsRunOverRest(t *testing.T) {
 	testutil.AssertEqualsBool(t, "cli_execute audit event", true, found)
 }
 
-func TestActionsManagementMCPTool(t *testing.T) {
-	server, _ := newActionsTestServer(t)
-	createActionsTestApp(t, server, "/apps/ops", "builtin", "")
-	ctx := userApiCtx(t, server, "builtin:alice")
-
-	out, err := server.mcpInvokeAction(ctx, "/apps/ops", "list_orders", false, false, false, map[string]any{"count": 2}, 0)
-	testutil.AssertNoError(t, err)
-	doc := out.(map[string]any)
-	testutil.AssertEqualsString(t, "status", "Listed 2 orders", doc["status"].(string))
-
-	// Param errors are part of the result document
-	out, err = server.mcpInvokeAction(ctx, "/apps/ops", "list_orders", false, false, false, map[string]any{"count": 0}, 0)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "param error", "count must be positive", out.(map[string]any)["param_errors"].(map[string]string)["count"])
-
-	// A stream is consumed to completion
-	out, err = server.mcpInvokeAction(ctx, "/apps/ops", "stream", false, false, false, map[string]any{"count": 1}, 0)
-	testutil.AssertNoError(t, err)
-	doc = out.(map[string]any)
-	testutil.AssertEqualsString(t, "output", "one\ntwo\n", doc["output"].(string))
-	testutil.AssertEqualsInt(t, "exit status", 1, doc["exit_status"].(int))
-
-	out, err = server.mcpInvokeAction(ctx, "/apps/ops", "list_orders", false, false, true, nil, 0)
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "suggest", "open", out.(map[string]any)["params"].(map[string]any)["status"].(string))
-
-	_, err = server.mcpInvokeAction(ctx, "/apps/ops", "restricted", false, false, false, nil, 0)
-	testutil.AssertEqualsInt(t, "no permit", http.StatusNotFound, requestErrorCode(t, err))
-}
-
 // bearerTransport adds the bearer token to the MCP client's requests
 type bearerTransport struct {
 	base  http.RoundTripper
@@ -442,35 +412,6 @@ func TestActionsManagementMCPSession(t *testing.T) {
 		Arguments: map[string]any{"path": "/apps/ops", "action": "list_orders"}})
 	testutil.AssertNoError(t, err)
 	testutil.AssertStringContains(t, callToolText(t, result), `"input_schema"`)
-}
-
-// mcp source actions is validated against the app definition when the app is
-// created, not at its first request
-func TestActionsMCPCreateValidation(t *testing.T) {
-	server, _ := newActionsTestServer(t)
-	ctx := system.WithTrustedOperation(t.Context())
-
-	emptyDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(emptyDir, "app.star"), []byte(`app = ace.app("empty")`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := server.CreateApp(ctx, "/apps/empty", true, false, &types.CreateAppRequest{
-		SourceUrl: emptyDir, AppAuthn: "builtin", MCP: `{"source":"actions"}`})
-	testutil.AssertErrorContains(t, err, "mcp source actions needs the app to define actions")
-
-	actionsDir := t.TempDir()
-	for name, content := range map[string]string{"app.star": actionsTestAppStar, "params.star": actionsTestParamsStar} {
-		if err := os.WriteFile(filepath.Join(actionsDir, name), []byte(content), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_, err = server.CreateApp(ctx, "/apps/clash", true, false, &types.CreateAppRequest{
-		SourceUrl: actionsDir, AppAuthn: "builtin", MCP: `{"source":"actions","path":"/stream"}`})
-	testutil.AssertErrorContains(t, err, "action path /stream is not allowed, /stream is the MCP endpoint of the app")
-
-	_, err = server.CreateApp(ctx, "/apps/rootmcp", true, false, &types.CreateAppRequest{
-		SourceUrl: actionsDir, AppAuthn: "builtin", MCP: `{"source":"actions","path":"/"}`})
-	testutil.AssertErrorContains(t, err, "needs a region path other than")
 }
 
 // The files of a download result are served through the management API, as

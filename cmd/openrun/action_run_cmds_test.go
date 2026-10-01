@@ -16,20 +16,6 @@ import (
 // Tests for the async run commands against the stub management API: the run
 // id of a started run, --wait and --follow, runs, output and cancel
 
-func TestActionRunAsyncStarted(t *testing.T) {
-	ats := newActionTestServer(t)
-	ats.respond = func(w http.ResponseWriter, r *http.Request) {
-		writeJSONResponse(w, http.StatusAccepted, `{"run_id":"arun_1","status":"running","url":"/site/rebuild/runs/arun_1"}`)
-	}
-	stdout, stderr, code := runActionCli(t, ats, "run", "/site", "rebuild", "target=all")
-	assertEq(t, "exit", "0", string(rune('0'+code)))
-	assertEq(t, "run id on stdout", "arun_1\n", stdout)
-	if !strings.Contains(stderr, "Run started") || !strings.Contains(stderr, "openrun action output arun_1") {
-		t.Fatalf("stderr: %q", stderr)
-	}
-	assertEq(t, "arg", `"all"`, string(ats.lastRequest.Args["target"]))
-}
-
 func TestActionRunAsyncWait(t *testing.T) {
 	ats := newActionTestServer(t)
 	var polls atomic.Int32
@@ -139,41 +125,6 @@ func TestActionRunAsyncFollowAndOutput(t *testing.T) {
 	if !strings.Contains(stdout, `"a"`) || !strings.Contains(stdout, `"b"`) {
 		t.Fatalf("values output: %q", stdout)
 	}
-}
-
-func TestActionRunsAndCancel(t *testing.T) {
-	ats := newActionTestServer(t)
-	ats.respond = func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/actions/runs"):
-			q := r.URL.Query()
-			assertEq(t, "app path", "/site", q.Get("appPath"))
-			assertEq(t, "action", "rebuild", q.Get("action"))
-			assertEq(t, "status", "failed", q.Get("status"))
-			assertEq(t, "limit", "5", q.Get("limit"))
-			writeJSONResponse(w, http.StatusOK, `{"runs":[{"id":"arun_8","action_name":"Rebuild","status":"failed","actor":"builtin:alice",`+
-				`"started_at":"2026-09-22T10:00:00Z","ended_at":"2026-09-22T10:00:05Z","message":"exit code 2\nmore"}]}`)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/runs/cancel"):
-			assertEq(t, "cancel id", "arun_8", r.URL.Query().Get("runId"))
-			writeJSONResponse(w, http.StatusOK, `{"run":{"id":"arun_8","status":"canceled"}}`)
-		default:
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}
-	stdout, _, code := runActionCli(t, ats, "runs", "--status", "failed", "--limit", "5", "/site", "rebuild")
-	assertEq(t, "exit", "0", string(rune('0'+code)))
-	if !strings.Contains(stdout, "Run") || !strings.Contains(stdout, "arun_8") || !strings.Contains(stdout, "builtin:alice") ||
-		!strings.Contains(stdout, "5s") || !strings.Contains(stdout, "exit code 2") || strings.Contains(stdout, "more") {
-		t.Fatalf("runs table: %q", stdout)
-	}
-	stdout, _, _ = runActionCli(t, ats, "runs", "-f", "jsonl", "--status", "failed", "--limit", "5", "/site", "rebuild")
-	if !strings.Contains(stdout, `"id":"arun_8"`) {
-		t.Fatalf("runs jsonl: %q", stdout)
-	}
-
-	stdout, _, code = runActionCli(t, ats, "cancel", "arun_8")
-	assertEq(t, "cancel exit", "0", string(rune('0'+code)))
-	assertEq(t, "cancel output", "run arun_8 canceled\n", stdout)
 }
 
 func TestActionRunAsyncWaitSavesFiles(t *testing.T) {

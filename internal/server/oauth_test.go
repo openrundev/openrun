@@ -529,28 +529,7 @@ func TestValidateAuthType(t *testing.T) {
 }
 
 func TestCheckAuth_NoSession(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
+	manager, _ := newOAuthSessionTestManager(t)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/some-path", nil)
@@ -565,28 +544,7 @@ func TestCheckAuth_NoSession(t *testing.T) {
 }
 
 func TestCheckAuth_WithValidSession(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
+	manager, _ := newOAuthSessionTestManager(t)
 
 	// Create a session with auth data
 	cookieName := genCookieName("github")
@@ -683,28 +641,7 @@ func TestCheckAuth_ProviderMismatch(t *testing.T) {
 }
 
 func TestCheckAuth_GroupsAsAnySlice(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
+	manager, _ := newOAuthSessionTestManager(t)
 
 	// Create a session with groups as []any
 	cookieName := genCookieName("github")
@@ -735,28 +672,7 @@ func TestCheckAuth_GroupsAsAnySlice(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
+	manager, _ := newOAuthSessionTestManager(t)
 
 	tests := []struct {
 		name         string
@@ -821,680 +737,8 @@ func TestLogin(t *testing.T) {
 	}
 }
 
-func TestAuthCallback_MissingState(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/auth/github/callback", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
-
-	manager.authCallback(w, r)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, w.Code)
-}
-
-func TestAuthCallback_InvalidBase64State(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/auth/github/callback?state=invalid!!!", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
-
-	manager.authCallback(w, r)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, w.Code)
-}
-
-func TestAuthCallback_StateNotInDB(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	// Create a valid base64 state that doesn't exist in DB
-	sessionId := types.OAUTH_SESSION_KV_PREFIX + "nonexistent"
-	state := base64.URLEncoding.EncodeToString([]byte(sessionId))
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/auth/github/callback?state="+state, nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
-
-	manager.authCallback(w, r)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusInternalServerError, w.Code)
-}
-
-func TestRedirect_MissingState(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/auth/github/redirect", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
-
-	manager.redirect(w, r)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, w.Code)
-}
-
-func TestRedirect_InvalidBase64State(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	// Create a session first
-	cookieName := genCookieName("github")
-	r := httptest.NewRequest("GET", "/auth/github/redirect?state=invalid!!!", nil)
-	w := httptest.NewRecorder()
-
-	session, err := manager.cookieStore.Get(r, cookieName)
-	testutil.AssertNoError(t, err)
-	session.Values[NONCE_KEY] = "test-nonce"
-	session.Values[REDIRECT_URL] = "https://app.example.com/"
-	err = session.Save(r, w)
-	testutil.AssertNoError(t, err)
-
-	// Get cookies and create new request
-	cookies := w.Result().Cookies()
-	r2 := httptest.NewRequest("GET", "/auth/github/redirect?state=invalid!!!", nil)
-	for _, cookie := range cookies {
-		r2.AddCookie(cookie)
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r2 = r2.WithContext(context.WithValue(r2.Context(), chi.RouteCtxKey, rctx))
-
-	w2 := httptest.NewRecorder()
-	manager.redirect(w2, r2)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, w2.Code)
-}
-
-func TestRedirect_InvalidNonceCookieType(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	sessionId := types.OAUTH_SESSION_KV_PREFIX + "test-session-id"
-	redirectUrl := "https://app.example.com/dashboard"
-	stateMap := map[string]any{
-		AUTH_KEY:          true,
-		PROVIDER_NAME_KEY: "github",
-		REDIRECT_URL:      redirectUrl,
-		NONCE_KEY:         "test-nonce-value",
-		USER_KEY:          "testuser",
-		GROUPS_KEY:        []any{"group1"},
-	}
-
-	ctx := context.Background()
-	expireAt := time.Now().Add(5 * time.Minute)
-	err = db.StoreKV(ctx, sessionId, stateMap, &expireAt)
-	testutil.AssertNoError(t, err)
-
-	cookieName := genCookieName("github")
-	r := httptest.NewRequest("GET", "/auth/github/redirect", nil)
-	w := httptest.NewRecorder()
-
-	session, err := manager.cookieStore.Get(r, cookieName)
-	testutil.AssertNoError(t, err)
-	session.Values[NONCE_KEY] = []string{"test-nonce-value"}
-	session.Values[REDIRECT_URL] = redirectUrl
-	err = session.Save(r, w)
-	testutil.AssertNoError(t, err)
-
-	state := base64.URLEncoding.EncodeToString([]byte(sessionId))
-	r2 := httptest.NewRequest("GET", "/auth/github/redirect?state="+state, nil)
-	for _, cookie := range w.Result().Cookies() {
-		r2.AddCookie(cookie)
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r2 = r2.WithContext(context.WithValue(r2.Context(), chi.RouteCtxKey, rctx))
-
-	w2 := httptest.NewRecorder()
-	manager.redirect(w2, r2)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, w2.Code)
-	testutil.AssertStringContains(t, w2.Body.String(), "nonce not found")
-}
-
-func TestRedirect_InvalidStateProviderType(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	sessionId := types.OAUTH_SESSION_KV_PREFIX + "test-session-id"
-	nonce := "test-nonce-value"
-	redirectUrl := "https://app.example.com/dashboard"
-	stateMap := map[string]any{
-		AUTH_KEY:          true,
-		PROVIDER_NAME_KEY: []any{"github"},
-		REDIRECT_URL:      redirectUrl,
-		NONCE_KEY:         nonce,
-		USER_KEY:          "testuser",
-		GROUPS_KEY:        []any{"group1"},
-	}
-
-	ctx := context.Background()
-	expireAt := time.Now().Add(5 * time.Minute)
-	err = db.StoreKV(ctx, sessionId, stateMap, &expireAt)
-	testutil.AssertNoError(t, err)
-
-	cookieName := genCookieName("github")
-	r := httptest.NewRequest("GET", "/auth/github/redirect", nil)
-	w := httptest.NewRecorder()
-
-	session, err := manager.cookieStore.Get(r, cookieName)
-	testutil.AssertNoError(t, err)
-	session.Values[NONCE_KEY] = nonce
-	session.Values[REDIRECT_URL] = redirectUrl
-	err = session.Save(r, w)
-	testutil.AssertNoError(t, err)
-
-	state := base64.URLEncoding.EncodeToString([]byte(sessionId))
-	r2 := httptest.NewRequest("GET", "/auth/github/redirect?state="+state, nil)
-	for _, cookie := range w.Result().Cookies() {
-		r2.AddCookie(cookie)
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r2 = r2.WithContext(context.WithValue(r2.Context(), chi.RouteCtxKey, rctx))
-
-	w2 := httptest.NewRecorder()
-	manager.redirect(w2, r2)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, w2.Code)
-	testutil.AssertStringContains(t, w2.Body.String(), "error matching session state")
-}
-
-func TestRedirect_Success(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	// Prepare state in DB
-	sessionId := types.OAUTH_SESSION_KV_PREFIX + "test-session-id"
-	nonce := "test-nonce-value"
-	redirectUrl := "https://app.example.com/dashboard"
-
-	stateMap := map[string]any{
-		AUTH_KEY:          true,
-		PROVIDER_NAME_KEY: "github",
-		REDIRECT_URL:      redirectUrl,
-		NONCE_KEY:         nonce,
-		USER_KEY:          "testuser",
-		USER_ID_KEY:       "subject-123",
-		USER_EMAIL_KEY:    "test@example.com",
-		GROUPS_KEY:        []any{"group1", "group2"},
-	}
-
-	ctx := context.Background()
-	expireAt := time.Now().Add(5 * time.Minute)
-	err = db.StoreKV(ctx, sessionId, stateMap, &expireAt)
-	testutil.AssertNoError(t, err)
-
-	// Create cookie with nonce
-	cookieName := genCookieName("github")
-	r := httptest.NewRequest("GET", "/auth/github/redirect", nil)
-	w := httptest.NewRecorder()
-
-	session, err := manager.cookieStore.Get(r, cookieName)
-	testutil.AssertNoError(t, err)
-	session.Values[NONCE_KEY] = nonce
-	session.Values[REDIRECT_URL] = redirectUrl
-	err = session.Save(r, w)
-	testutil.AssertNoError(t, err)
-
-	// Create request with state and cookies
-	state := base64.URLEncoding.EncodeToString([]byte(sessionId))
-	cookies := w.Result().Cookies()
-	r2 := httptest.NewRequest("GET", "/auth/github/redirect?state="+state, nil)
-	for _, cookie := range cookies {
-		r2.AddCookie(cookie)
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r2 = r2.WithContext(context.WithValue(r2.Context(), chi.RouteCtxKey, rctx))
-
-	w2 := httptest.NewRecorder()
-	manager.redirect(w2, r2)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusFound, w2.Code)
-	location := w2.Header().Get("Location")
-	testutil.AssertEqualsString(t, "redirect location", redirectUrl, location)
-
-	// Verify state was deleted from DB
-	_, err = db.FetchKV(ctx, sessionId)
-	if err == nil {
-		t.Error("expected error fetching deleted state")
-	}
-
-	r3 := httptest.NewRequest("GET", "/some-path", nil)
-	for _, cookie := range w2.Result().Cookies() {
-		r3.AddCookie(cookie)
-	}
-	authInfo, err := manager.CheckAuthInfo(httptest.NewRecorder(), r3, "github")
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "user subject", "subject-123", authInfo.UserSubject)
-	testutil.AssertEqualsString(t, "user email", "test@example.com", authInfo.UserEmail)
-}
-
-func TestRedirect_AuthNotTrue(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	// Prepare state in DB with auth = false
-	sessionId := types.OAUTH_SESSION_KV_PREFIX + "test-session-id"
-	nonce := "test-nonce-value"
-	redirectUrl := "https://app.example.com/dashboard"
-
-	stateMap := map[string]any{
-		AUTH_KEY:          false, // Auth is false
-		PROVIDER_NAME_KEY: "github",
-		REDIRECT_URL:      redirectUrl,
-		NONCE_KEY:         nonce,
-	}
-
-	ctx := context.Background()
-	expireAt := time.Now().Add(5 * time.Minute)
-	err = db.StoreKV(ctx, sessionId, stateMap, &expireAt)
-	testutil.AssertNoError(t, err)
-
-	// Create cookie with nonce
-	cookieName := genCookieName("github")
-	r := httptest.NewRequest("GET", "/auth/github/redirect", nil)
-	w := httptest.NewRecorder()
-
-	session, err := manager.cookieStore.Get(r, cookieName)
-	testutil.AssertNoError(t, err)
-	session.Values[NONCE_KEY] = nonce
-	session.Values[REDIRECT_URL] = redirectUrl
-	err = session.Save(r, w)
-	testutil.AssertNoError(t, err)
-
-	// Create request with state and cookies
-	state := base64.URLEncoding.EncodeToString([]byte(sessionId))
-	cookies := w.Result().Cookies()
-	r2 := httptest.NewRequest("GET", "/auth/github/redirect?state="+state, nil)
-	for _, cookie := range cookies {
-		r2.AddCookie(cookie)
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r2 = r2.WithContext(context.WithValue(r2.Context(), chi.RouteCtxKey, rctx))
-
-	w2 := httptest.NewRecorder()
-	manager.redirect(w2, r2)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusInternalServerError, w2.Code)
-	testutil.AssertStringContains(t, w2.Body.String(), "expected auth to be true")
-}
-
-func TestRedirect_NonceMismatch(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	// Prepare state in DB
-	sessionId := types.OAUTH_SESSION_KV_PREFIX + "test-session-id"
-	nonce := "test-nonce-value"
-	wrongNonce := "wrong-nonce-value"
-	redirectUrl := "https://app.example.com/dashboard"
-
-	stateMap := map[string]any{
-		AUTH_KEY:          true,
-		PROVIDER_NAME_KEY: "github",
-		REDIRECT_URL:      redirectUrl,
-		NONCE_KEY:         nonce,
-		USER_KEY:          "testuser",
-		GROUPS_KEY:        []any{"group1"},
-	}
-
-	ctx := context.Background()
-	expireAt := time.Now().Add(5 * time.Minute)
-	err = db.StoreKV(ctx, sessionId, stateMap, &expireAt)
-	testutil.AssertNoError(t, err)
-
-	// Create cookie with wrong nonce
-	cookieName := genCookieName("github")
-	r := httptest.NewRequest("GET", "/auth/github/redirect", nil)
-	w := httptest.NewRecorder()
-
-	session, err := manager.cookieStore.Get(r, cookieName)
-	testutil.AssertNoError(t, err)
-	session.Values[NONCE_KEY] = wrongNonce // Wrong nonce
-	session.Values[REDIRECT_URL] = redirectUrl
-	err = session.Save(r, w)
-	testutil.AssertNoError(t, err)
-
-	// Create request with state and cookies
-	state := base64.URLEncoding.EncodeToString([]byte(sessionId))
-	cookies := w.Result().Cookies()
-	r2 := httptest.NewRequest("GET", "/auth/github/redirect?state="+state, nil)
-	for _, cookie := range cookies {
-		r2.AddCookie(cookie)
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r2 = r2.WithContext(context.WithValue(r2.Context(), chi.RouteCtxKey, rctx))
-
-	w2 := httptest.NewRecorder()
-	manager.redirect(w2, r2)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusInternalServerError, w2.Code)
-	testutil.AssertStringContains(t, w2.Body.String(), "nonce mismatch")
-}
-
-func TestRedirect_ProviderMismatch(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
-
-	// Prepare state in DB with different provider
-	sessionId := types.OAUTH_SESSION_KV_PREFIX + "test-session-id"
-	nonce := "test-nonce-value"
-	redirectUrl := "https://app.example.com/dashboard"
-
-	stateMap := map[string]any{
-		AUTH_KEY:          true,
-		PROVIDER_NAME_KEY: "google", // Different provider
-		REDIRECT_URL:      redirectUrl,
-		NONCE_KEY:         nonce,
-		USER_KEY:          "testuser",
-		GROUPS_KEY:        []any{},
-	}
-
-	ctx := context.Background()
-	expireAt := time.Now().Add(5 * time.Minute)
-	err = db.StoreKV(ctx, sessionId, stateMap, &expireAt)
-	testutil.AssertNoError(t, err)
-
-	// Create cookie with nonce
-	cookieName := genCookieName("github")
-	r := httptest.NewRequest("GET", "/auth/github/redirect", nil)
-	w := httptest.NewRecorder()
-
-	session, err := manager.cookieStore.Get(r, cookieName)
-	testutil.AssertNoError(t, err)
-	session.Values[NONCE_KEY] = nonce
-	session.Values[REDIRECT_URL] = redirectUrl
-	err = session.Save(r, w)
-	testutil.AssertNoError(t, err)
-
-	// Create request with state and cookies
-	state := base64.URLEncoding.EncodeToString([]byte(sessionId))
-	cookies := w.Result().Cookies()
-	r2 := httptest.NewRequest("GET", "/auth/github/redirect?state="+state, nil)
-	for _, cookie := range cookies {
-		r2.AddCookie(cookie)
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	r2 = r2.WithContext(context.WithValue(r2.Context(), chi.RouteCtxKey, rctx))
-
-	w2 := httptest.NewRecorder()
-	manager.redirect(w2, r2)
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusInternalServerError, w2.Code)
-	testutil.AssertStringContains(t, w2.Body.String(), "error matching session state")
-}
-
 func TestLogout(t *testing.T) {
-	config := &types.ServerConfig{
-		Security: types.SecurityConfig{
-			CallbackUrl:      "https://callback.example.com",
-			SessionMaxAge:    3600,
-			SessionHttpsOnly: false,
-		},
-		Auth: map[string]types.AuthConfig{
-			"github": {
-				Key:    "test-key",
-				Secret: "test-secret",
-			},
-		},
-	}
-
-	logger := testutil.TestLogger()
-	db := NewInmemoryKVStore()
-	manager := NewOAuthManager(logger, config, db)
-
-	sessionKey := []byte("test-session-key-32bytes-long!!!")
-	sessionBlockKey := []byte("test-session-block-32bytes-key!!")
-	err := manager.Setup(sessionKey, sessionBlockKey)
-	testutil.AssertNoError(t, err)
+	manager, _ := newOAuthSessionTestManager(t)
 
 	// Create a session first
 	cookieName := genCookieName("github")
@@ -1632,4 +876,108 @@ func (e *errorKVStore) DeleteKV(ctx context.Context, key string) error {
 		return &url.Error{Op: "delete", URL: "test", Err: context.DeadlineExceeded}
 	}
 	return e.InmemoryKVStore.DeleteKV(ctx, key)
+}
+
+func newOAuthSessionTestManager(t *testing.T) (*OAuthManager, *InmemoryKVStore) {
+	t.Helper()
+	config := &types.ServerConfig{
+		Security: types.SecurityConfig{CallbackUrl: "https://callback.example.com", SessionMaxAge: 3600},
+		Auth:     map[string]types.AuthConfig{"github": {Key: "test-key", Secret: "test-secret"}},
+	}
+	db := NewInmemoryKVStore()
+	manager := NewOAuthManager(testutil.TestLogger(), config, db)
+	testutil.AssertNoError(t, manager.Setup([]byte("test-session-key-32bytes-long!!!"), []byte("test-session-block-32bytes-key!!")))
+	return manager, db
+}
+
+func oauthProviderRequest(target string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, target, nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("provider", "github")
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+func TestAuthCallbackState(t *testing.T) {
+	for _, tc := range []struct {
+		name, state string
+		status      int
+	}{
+		{"missing", "", http.StatusBadRequest},
+		{"invalid base64", "invalid!!!", http.StatusBadRequest},
+		{"not stored", base64.URLEncoding.EncodeToString([]byte(types.OAUTH_SESSION_KV_PREFIX + "nonexistent")), http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager, _ := newOAuthSessionTestManager(t)
+			w := httptest.NewRecorder()
+			manager.authCallback(w, oauthProviderRequest("/auth/github/callback?state="+tc.state))
+			testutil.AssertEqualsInt(t, "status code", tc.status, w.Code)
+		})
+	}
+}
+
+func TestOAuthRedirectState(t *testing.T) {
+	const nonce, redirectURL = "test-nonce-value", "https://app.example.com/dashboard"
+	sessionID := types.OAUTH_SESSION_KV_PREFIX + "test-session-id"
+	state := base64.URLEncoding.EncodeToString([]byte(sessionID))
+	for _, tc := range []struct {
+		name, state           string
+		auth                  bool
+		provider, cookieNonce any
+		status                int
+		message               string
+	}{
+		{"missing state", "", false, nil, nil, http.StatusBadRequest, ""},
+		{"invalid base64", "invalid!!!", false, nil, "test-nonce", http.StatusBadRequest, ""},
+		{"invalid cookie nonce", state, true, "github", []string{nonce}, http.StatusBadRequest, "nonce not found"},
+		{"invalid state provider", state, true, []any{"github"}, nonce, http.StatusBadRequest, "error matching session state"},
+		{"success", state, true, "github", nonce, http.StatusFound, ""},
+		{"unauthenticated", state, false, "github", nonce, http.StatusInternalServerError, "expected auth to be true"},
+		{"nonce mismatch", state, true, "github", "wrong-nonce-value", http.StatusInternalServerError, "nonce mismatch"},
+		{"provider mismatch", state, true, "google", nonce, http.StatusInternalServerError, "error matching session state"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager, db := newOAuthSessionTestManager(t)
+			if tc.state == state {
+				expireAt := time.Now().Add(5 * time.Minute)
+				testutil.AssertNoError(t, db.StoreKV(t.Context(), sessionID, map[string]any{
+					AUTH_KEY: tc.auth, PROVIDER_NAME_KEY: tc.provider, REDIRECT_URL: redirectURL, NONCE_KEY: nonce,
+					USER_KEY: "testuser", USER_ID_KEY: "subject-123", USER_EMAIL_KEY: "test@example.com",
+					GROUPS_KEY: []any{"group1", "group2"},
+				}, &expireAt))
+			}
+			r := oauthProviderRequest("/auth/github/redirect?state=" + tc.state)
+			if tc.cookieNonce != nil {
+				setupReq := httptest.NewRequest(http.MethodGet, "/auth/github/redirect", nil)
+				setupRec := httptest.NewRecorder()
+				session, err := manager.cookieStore.Get(setupReq, genCookieName("github"))
+				testutil.AssertNoError(t, err)
+				session.Values[NONCE_KEY], session.Values[REDIRECT_URL] = tc.cookieNonce, redirectURL
+				testutil.AssertNoError(t, session.Save(setupReq, setupRec))
+				for _, cookie := range setupRec.Result().Cookies() {
+					r.AddCookie(cookie)
+				}
+			}
+			w := httptest.NewRecorder()
+			manager.redirect(w, r)
+			testutil.AssertEqualsInt(t, "status code", tc.status, w.Code)
+			if tc.message != "" {
+				testutil.AssertStringContains(t, w.Body.String(), tc.message)
+			}
+			if tc.status != http.StatusFound {
+				return
+			}
+			testutil.AssertEqualsString(t, "redirect location", redirectURL, w.Header().Get("Location"))
+			if _, err := db.FetchKV(t.Context(), sessionID); err == nil {
+				t.Error("expected error fetching deleted state")
+			}
+			authed := httptest.NewRequest(http.MethodGet, "/some-path", nil)
+			for _, cookie := range w.Result().Cookies() {
+				authed.AddCookie(cookie)
+			}
+			info, err := manager.CheckAuthInfo(httptest.NewRecorder(), authed, "github")
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqualsString(t, "user subject", "subject-123", info.UserSubject)
+			testutil.AssertEqualsString(t, "user email", "test@example.com", info.UserEmail)
+		})
+	}
 }

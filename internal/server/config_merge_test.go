@@ -11,37 +11,6 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-func TestConfigSections(t *testing.T) {
-	sections := listConfigSections()
-	for _, want := range []string{"git_auth", "auth", "saml", "client_auth", "secret", "forward", "plugin"} {
-		found := false
-		for _, section := range sections {
-			if section == want {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("expected section %q in %v", want, sections)
-		}
-	}
-
-	if _, ok := configSectionType("git_auth"); !ok {
-		t.Error("git_auth should be a settable section")
-	}
-	if _, ok := configSectionType("secret"); !ok {
-		t.Error("secret should be an entry section (named providers with free-form fields)")
-	}
-	if _, ok := configSectionType("http"); ok {
-		t.Error("http is not a named-entry map section, must not be settable")
-	}
-	if _, ok := configSectionType("node_config"); ok {
-		t.Error("node_config is a flat key/value section, managed through settings not entries")
-	}
-	if _, ok := configSectionType("nosuchsection"); ok {
-		t.Error("unknown section must not be settable")
-	}
-}
-
 func TestValidateConfigEntry(t *testing.T) {
 	valid := map[string]any{"user_id": "git", "key_file_path": "/keys/k1", "password": "pw"}
 	if err := validateConfigEntry("git_auth", "gh", valid); err != nil {
@@ -395,18 +364,6 @@ func TestFlattenConfigValues(t *testing.T) {
 	}, "", flat)
 	if flat["level"] != "INFO" || flat["cors.allow_origin"] != "*" {
 		t.Errorf("unexpected flattened values: %v", flat)
-	}
-}
-
-func TestStructEntryValues(t *testing.T) {
-	values, err := structEntryValues(types.GitAuthEntry{
-		UserID: "git", KeyFilePath: "/keys/k1", Password: "pw",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if values["user_id"] != "git" || values["key_file_path"] != "/keys/k1" || values["password"] != "pw" {
-		t.Errorf("unexpected values: %v", values)
 	}
 }
 

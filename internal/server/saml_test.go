@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -251,35 +252,6 @@ func TestSAMLManager_ValidateSAMLProvider(t *testing.T) {
 	}
 }
 
-func TestSAMLManager_Metadata(t *testing.T) {
-	t.Parallel()
-
-	t.Run("provider not found", func(t *testing.T) {
-		t.Parallel()
-
-		logger := testutil.TestLogger()
-		config := &types.ServerConfig{}
-		cookieStore := sessions.NewCookieStore([]byte("test-key"))
-		db := &metadata.Metadata{}
-
-		manager := NewSAMLManager(logger, config, cookieStore, db)
-		manager.providers = make(map[string]*saml2.SAMLServiceProvider)
-
-		w := httptest.NewRecorder()
-
-		// Call metadata logic directly
-		sp := manager.providers["nonexistent"]
-		if sp == nil {
-			http.Error(w, "provider not found", http.StatusNotFound)
-		}
-
-		resp := w.Result()
-		defer resp.Body.Close() //nolint:errcheck
-
-		testutil.AssertEqualsInt(t, "status code", http.StatusNotFound, resp.StatusCode)
-	})
-}
-
 func TestSAMLManager_Setup(t *testing.T) {
 	t.Parallel()
 
@@ -364,290 +336,6 @@ func TestSAMLManager_SetupInitializationState(t *testing.T) {
 	}
 }
 
-func TestSAMLManager_CheckSAMLAuth_AuthenticatedUser(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{}
-	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
-	db := &metadata.Metadata{}
-
-	manager := NewSAMLManager(logger, config, cookieStore, db)
-	manager.providers = map[string]*saml2.SAMLServiceProvider{
-		"saml_okta": {},
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-
-	// Create a session with authenticated user
-	session, err := cookieStore.Get(req, "saml_okta_openrun_saml_session")
-	testutil.AssertNoError(t, err)
-
-	session.Values[AUTH_KEY] = true
-	session.Values[PROVIDER_NAME_KEY] = "saml_okta"
-	session.Values[USER_KEY] = "user@example.com"
-	session.Values[GROUPS_KEY] = []string{"developers", "admins"}
-
-	err = session.Save(req, w)
-	testutil.AssertNoError(t, err)
-
-	// Copy cookies from response to request
-	for _, cookie := range w.Result().Cookies() {
-		req.AddCookie(cookie)
-	}
-
-	// Reset response writer
-	w = httptest.NewRecorder()
-
-	// Call CheckSAMLAuth
-	userId, groups, err := manager.CheckSAMLAuth(w, req, "saml_okta")
-
-	testutil.AssertNoError(t, err)
-	testutil.AssertEqualsString(t, "user id", "saml_okta:user@example.com", userId)
-	testutil.AssertEqualsInt(t, "groups count", 2, len(groups))
-	testutil.AssertEqualsString(t, "group 0", "developers", groups[0])
-	testutil.AssertEqualsString(t, "group 1", "admins", groups[1])
-}
-
-func TestSAMLManager_CheckSAMLAuth_SessionError(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{}
-	// Use invalid key to trigger session error
-	cookieStore := sessions.NewCookieStore([]byte("short"))
-
-	manager := NewSAMLManager(logger, config, cookieStore, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
-	w := httptest.NewRecorder()
-
-	// Add a cookie with invalid value to trigger error in session retrieval
-	req.AddCookie(&http.Cookie{
-		Name:  "saml_okta_openrun_saml_session",
-		Value: "invalid-cookie-value",
-	})
-
-	userId, groups, err := manager.CheckSAMLAuth(w, req, "saml_okta")
-
-	// When session error occurs, should return empty values and redirect
-	testutil.AssertEqualsString(t, "user id should be empty", "", userId)
-	if groups != nil {
-		t.Error("groups should be nil when session error")
-	}
-	if err != nil {
-		t.Error("error should be nil when redirecting")
-	}
-}
-
-func TestSAMLManager_CheckSAMLAuth_EmptyUserID(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{}
-	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
-
-	manager := NewSAMLManager(logger, config, cookieStore, nil)
-	manager.providers = map[string]*saml2.SAMLServiceProvider{
-		"saml_okta": {},
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-
-	// Create a session with empty user ID
-	session, err := cookieStore.Get(req, "saml_okta_openrun_saml_session")
-	testutil.AssertNoError(t, err)
-
-	session.Values[AUTH_KEY] = true
-	session.Values[PROVIDER_NAME_KEY] = "saml_okta"
-	session.Values[USER_KEY] = "" // Empty user ID
-
-	err = session.Save(req, w)
-	testutil.AssertNoError(t, err)
-
-	// Copy cookies to request
-	for _, cookie := range w.Result().Cookies() {
-		req.AddCookie(cookie)
-	}
-
-	// Reset response writer
-	w = httptest.NewRecorder()
-
-	userId, groups, err := manager.CheckSAMLAuth(w, req, "saml_okta")
-
-	// Should return error due to empty user ID
-	testutil.AssertEqualsString(t, "user id should be empty", "", userId)
-	if groups != nil {
-		t.Error("groups should be nil when user ID empty")
-	}
-	testutil.AssertErrorContains(t, err, "no user key in session")
-}
-
-func TestSAMLManager_CheckSAMLAuth_MissingUserKey(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{}
-	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
-	db := &metadata.Metadata{}
-
-	manager := NewSAMLManager(logger, config, cookieStore, db)
-	manager.providers = map[string]*saml2.SAMLServiceProvider{
-		"saml_okta": {},
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-
-	// Create a session without user key
-	session, err := cookieStore.Get(req, "saml_okta_openrun_saml_session")
-	testutil.AssertNoError(t, err)
-
-	session.Values[AUTH_KEY] = true
-	session.Values[PROVIDER_NAME_KEY] = "saml_okta"
-	// No USER_KEY set
-
-	err = session.Save(req, w)
-	testutil.AssertNoError(t, err)
-
-	// Copy cookies from response to request
-	for _, cookie := range w.Result().Cookies() {
-		req.AddCookie(cookie)
-	}
-
-	// Reset response writer
-	w = httptest.NewRecorder()
-
-	userId, groups, err := manager.CheckSAMLAuth(w, req, "saml_okta")
-
-	testutil.AssertEqualsString(t, "user id should be empty", "", userId)
-	if groups != nil {
-		t.Error("groups should be nil when user key missing")
-	}
-	testutil.AssertErrorContains(t, err, "no user key in session")
-}
-
-func TestSAMLManager_CheckSAMLAuth_GroupsParsing(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name           string
-		groupsValue    any
-		expectedGroups []string
-	}{
-		{
-			name:           "groups as string slice",
-			groupsValue:    []string{"group1", "group2"},
-			expectedGroups: []string{"group1", "group2"},
-		},
-		{
-			name:           "groups as any slice with strings",
-			groupsValue:    []any{"group1", "group2"},
-			expectedGroups: []string{"group1", "group2"},
-		},
-		{
-			name:           "groups as any slice mixed types",
-			groupsValue:    []any{"group1", 123, "group2"},
-			expectedGroups: []string{"group1", "group2"},
-		},
-		{
-			name:           "no groups key",
-			groupsValue:    nil,
-			expectedGroups: []string{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			logger := testutil.TestLogger()
-			config := &types.ServerConfig{}
-			cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
-			db := &metadata.Metadata{}
-
-			manager := NewSAMLManager(logger, config, cookieStore, db)
-			manager.providers = map[string]*saml2.SAMLServiceProvider{
-				"saml_okta": {},
-			}
-
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			w := httptest.NewRecorder()
-
-			session, err := cookieStore.Get(req, "saml_okta_openrun_saml_session")
-			testutil.AssertNoError(t, err)
-
-			session.Values[AUTH_KEY] = true
-			session.Values[PROVIDER_NAME_KEY] = "saml_okta"
-			session.Values[USER_KEY] = "user@example.com"
-			if tt.groupsValue != nil {
-				session.Values[GROUPS_KEY] = tt.groupsValue
-			}
-
-			err = session.Save(req, w)
-			testutil.AssertNoError(t, err)
-
-			// Copy cookies from response to request
-			for _, cookie := range w.Result().Cookies() {
-				req.AddCookie(cookie)
-			}
-
-			// Reset response writer
-			w = httptest.NewRecorder()
-
-			userId, groups, err := manager.CheckSAMLAuth(w, req, "saml_okta")
-
-			testutil.AssertNoError(t, err)
-			testutil.AssertEqualsString(t, "user id", "saml_okta:user@example.com", userId)
-			testutil.AssertEqualsInt(t, "groups count", len(tt.expectedGroups), len(groups))
-
-			for i, expected := range tt.expectedGroups {
-				testutil.AssertEqualsString(t, "group", expected, groups[i])
-			}
-		})
-	}
-}
-
-func TestSAMLManager_CheckSAMLAuth_HTMXRequest(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{}
-	// Use invalid key to trigger session error
-	cookieStore := sessions.NewCookieStore([]byte("short"))
-
-	manager := NewSAMLManager(logger, config, cookieStore, nil)
-
-	// Create request with full URL for HTMX
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
-	req.Header.Set("HX-Request", "true")
-	// Add invalid cookie to trigger session error
-	req.AddCookie(&http.Cookie{
-		Name:  "saml_okta_openrun_saml_session",
-		Value: "invalid",
-	})
-	w := httptest.NewRecorder()
-
-	// This should trigger an error and set HX-Redirect header
-	userId, groups, err := manager.CheckSAMLAuth(w, req, "saml_okta")
-
-	testutil.AssertEqualsString(t, "user id should be empty", "", userId)
-	if groups != nil {
-		t.Error("groups should be nil")
-	}
-	if err != nil {
-		t.Error("error should be nil")
-	}
-
-	// Check for HX-Redirect header
-	hxRedirect := w.Header().Get("HX-Redirect")
-	if hxRedirect == "" {
-		t.Error("expected HX-Redirect header to be set")
-	}
-}
-
 func TestSAMLManager_Login_ProviderNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -706,87 +394,6 @@ func TestSAMLManager_Login_Success(t *testing.T) {
 	if !strings.Contains(location, "https://idp.example.com/sso") {
 		t.Errorf("expected redirect to IdP SSO URL, got: %s", location)
 	}
-}
-
-func TestSAMLManager_ACS_ProviderNotFound(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{}
-	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
-	db := NewInmemoryKVStore()
-
-	manager := NewSAMLManager(logger, config, cookieStore, db)
-	manager.providers = make(map[string]*saml2.SAMLServiceProvider)
-
-	w := httptest.NewRecorder()
-
-	// Mock chi.URLParam by setting the provider in context
-	// Since we can't easily set chi context, directly test the provider lookup logic
-	sp := manager.providers["nonexistent"]
-	if sp == nil {
-		http.Error(w, "provider not found", http.StatusNotFound)
-	}
-
-	resp := w.Result()
-	defer resp.Body.Close() //nolint:errcheck
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusNotFound, resp.StatusCode)
-}
-
-func TestSAMLManager_ACS_MissingSAMLResponse(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{}
-	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
-	db := NewInmemoryKVStore()
-
-	manager := NewSAMLManager(logger, config, cookieStore, db)
-	manager.providers = map[string]*saml2.SAMLServiceProvider{
-		"saml_okta": {},
-	}
-
-	// Create request with no SAMLResponse
-	req := httptest.NewRequest(http.MethodPost, "http://example.com/_openrun/sso/saml_okta/acs", nil)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	// Manually parse form (simulating what acs does)
-	err := req.ParseForm()
-	testutil.AssertNoError(t, err)
-
-	b64Response := req.PostFormValue("SAMLResponse")
-	if b64Response == "" {
-		http.Error(w, "missing SAMLResponse", http.StatusBadRequest)
-	}
-
-	resp := w.Result()
-	defer resp.Body.Close() //nolint:errcheck
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, resp.StatusCode)
-}
-
-func TestSAMLManager_Redirect_MissingRelay(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{}
-	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
-	db := NewInmemoryKVStore()
-
-	manager := NewSAMLManager(logger, config, cookieStore, db)
-
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/_openrun/sso/saml_okta/redirect", nil)
-	w := httptest.NewRecorder()
-
-	// Test redirect with missing relay parameter
-	manager.redirect(w, req)
-
-	resp := w.Result()
-	defer resp.Body.Close() //nolint:errcheck
-
-	testutil.AssertEqualsInt(t, "status code", http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestSAMLManager_Routes_Metadata(t *testing.T) {
@@ -1327,92 +934,75 @@ func TestSAMLManager_Routes_LogoutSuccess(t *testing.T) {
 	testutil.AssertEqualsString(t, "redirect location", "/", location)
 }
 
-func TestSAMLManager_CheckSAMLAuth_ProviderMismatch(t *testing.T) {
+func TestSAMLSessionAuth(t *testing.T) {
 	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{}
-	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
-	db := NewInmemoryKVStore()
-
-	manager := NewSAMLManager(logger, config, cookieStore, db)
-	manager.providers = map[string]*saml2.SAMLServiceProvider{
-		"saml_okta":  {},
-		"saml_azure": {},
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
-	w := httptest.NewRecorder()
-
-	// Create a session with one provider
-	session, err := cookieStore.Get(req, "saml_okta_openrun_saml_session")
-	testutil.AssertNoError(t, err)
-	session.Values[AUTH_KEY] = true
-	session.Values[PROVIDER_NAME_KEY] = "saml_azure" // Different provider
-	session.Values[USER_KEY] = "user@example.com"
-	err = session.Save(req, w)
-	testutil.AssertNoError(t, err)
-
-	// Copy cookies from response to request
-	for _, cookie := range w.Result().Cookies() {
-		req.AddCookie(cookie)
-	}
-
-	// Reset response writer
-	w = httptest.NewRecorder()
-
-	// Check auth with different provider - should redirect to login
-	userId, groups, err := manager.CheckSAMLAuth(w, req, "saml_okta")
-
-	testutil.AssertEqualsString(t, "user id should be empty", "", userId)
-	if groups != nil {
-		t.Error("groups should be nil")
-	}
-	if err != nil {
-		t.Error("error should be nil when redirecting")
-	}
-}
-
-func TestSAMLManager_CheckSAMLAuth_NoAuthKey(t *testing.T) {
-	t.Parallel()
-
-	logger := testutil.TestLogger()
-	config := &types.ServerConfig{}
-	cookieStore := sessions.NewCookieStore([]byte("test-key-12345678901234567890123456"))
-	db := NewInmemoryKVStore()
-
-	manager := NewSAMLManager(logger, config, cookieStore, db)
-	manager.providers = map[string]*saml2.SAMLServiceProvider{
-		"saml_okta": {},
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
-	w := httptest.NewRecorder()
-
-	// Create a session without AUTH_KEY
-	session, err := cookieStore.Get(req, "saml_okta_openrun_saml_session")
-	testutil.AssertNoError(t, err)
-	session.Values[PROVIDER_NAME_KEY] = "saml_okta"
-	// No AUTH_KEY set
-	err = session.Save(req, w)
-	testutil.AssertNoError(t, err)
-
-	// Copy cookies from response to request
-	for _, cookie := range w.Result().Cookies() {
-		req.AddCookie(cookie)
-	}
-
-	// Reset response writer
-	w = httptest.NewRecorder()
-
-	// Should redirect to login
-	userId, groups, err := manager.CheckSAMLAuth(w, req, "saml_okta")
-
-	testutil.AssertEqualsString(t, "user id should be empty", "", userId)
-	if groups != nil {
-		t.Error("groups should be nil")
-	}
-	if err != nil {
-		t.Error("error should be nil when redirecting")
+	const user = "saml_okta:user@example.com"
+	for _, tc := range []struct {
+		name          string
+		values        map[any]any
+		user          string
+		groups        []string
+		err           string
+		corrupt, htmx bool
+	}{
+		{name: "authenticated", values: map[any]any{GROUPS_KEY: []string{"developers", "admins"}}, user: user, groups: []string{"developers", "admins"}},
+		{name: "string groups", values: map[any]any{GROUPS_KEY: []string{"group1", "group2"}}, user: user, groups: []string{"group1", "group2"}},
+		{name: "any groups", values: map[any]any{GROUPS_KEY: []any{"group1", "group2"}}, user: user, groups: []string{"group1", "group2"}},
+		{name: "mixed groups", values: map[any]any{GROUPS_KEY: []any{"group1", 123, "group2"}}, user: user, groups: []string{"group1", "group2"}},
+		{name: "no groups", user: user, groups: []string{}},
+		{name: "empty user", values: map[any]any{USER_KEY: ""}, err: "no user key in session"},
+		{name: "missing user", values: map[any]any{USER_KEY: nil}, err: "no user key in session"},
+		{name: "invalid cookie", corrupt: true},
+		{name: "invalid HTMX cookie", corrupt: true, htmx: true},
+		{name: "provider mismatch", values: map[any]any{PROVIDER_NAME_KEY: "saml_azure"}},
+		{name: "missing authentication", values: map[any]any{AUTH_KEY: nil}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			key := "test-key-12345678901234567890123456"
+			if tc.corrupt {
+				key = "short"
+			}
+			store := sessions.NewCookieStore([]byte(key))
+			manager := NewSAMLManager(testutil.TestLogger(), &types.ServerConfig{}, store, NewInmemoryKVStore())
+			req := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
+			if tc.htmx {
+				req.Header.Set("HX-Request", "true")
+			}
+			if tc.corrupt {
+				req.AddCookie(&http.Cookie{Name: genSAMLCookieName("saml_okta"), Value: "invalid-cookie-value"})
+			} else {
+				manager.providers = map[string]*saml2.SAMLServiceProvider{"saml_okta": {}, "saml_azure": {}}
+				session, err := store.Get(req, genSAMLCookieName("saml_okta"))
+				testutil.AssertNoError(t, err)
+				session.Values[AUTH_KEY], session.Values[PROVIDER_NAME_KEY], session.Values[USER_KEY] = true, "saml_okta", "user@example.com"
+				for key, value := range tc.values {
+					if value == nil {
+						delete(session.Values, key)
+					} else {
+						session.Values[key] = value
+					}
+				}
+				setup := httptest.NewRecorder()
+				testutil.AssertNoError(t, session.Save(req, setup))
+				for _, cookie := range setup.Result().Cookies() {
+					req.AddCookie(cookie)
+				}
+			}
+			w := httptest.NewRecorder()
+			userID, groups, err := manager.CheckSAMLAuth(w, req, "saml_okta")
+			if tc.err == "" {
+				testutil.AssertNoError(t, err)
+			} else {
+				testutil.AssertErrorContains(t, err, tc.err)
+			}
+			testutil.AssertEqualsString(t, "user id", tc.user, userID)
+			if !reflect.DeepEqual(groups, tc.groups) {
+				t.Errorf("groups = %v, want %v", groups, tc.groups)
+			}
+			if tc.htmx && w.Header().Get("HX-Redirect") == "" {
+				t.Error("expected HX-Redirect header")
+			}
+		})
 	}
 }
