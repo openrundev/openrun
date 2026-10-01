@@ -492,20 +492,29 @@ tests:
     stdout: "App: /actapps/spec"
     exit-code: 0
   action0310: # routing: unclaimed paths go to the upstream, the action path, the actions
-    # API and the MCP region (bearer only, hence the challenge) are OpenRun's
+    # API and the MCP region are OpenRun's. The app has auth none, so the region is
+    # served without a token as the anonymous user (no OAuth metadata, no challenge);
+    # a presented token is still verified
     command: |
       curl -s http://localhost:${MAIN_HTTP_PORT}/actapps/spec/internal/orders | jq -cS .
       curl -s http://localhost:${MAIN_HTTP_PORT}/actapps/spec/ | jq -r .upstream
       curl -s http://localhost:${MAIN_HTTP_PORT}/actapps/spec/api | jq -r '.actions[] | [.name, .ui_path] | join(" ")'
       curl -s http://localhost:${MAIN_HTTP_PORT}/actapps/spec/orders | grep -o "<title>[^<]*</title>"
-      curl -s -o /dev/null -w 'mcp=%{http_code}\n' -X POST http://localhost:${MAIN_HTTP_PORT}/actapps/spec/mcp
+      mcp() { curl -s -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+        -H 'MCP-Protocol-Version: 2025-03-26' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$@" \
+        http://localhost:${MAIN_HTTP_PORT}/actapps/spec/mcp; }
+      mcp | sed -n 's/^data: //p' | jq -r '[.result.tools[].name] | join(" ") | "tools=" + .'
+      mcp -o /dev/null -w 'badtoken=%{http_code}\n' -H 'Authorization: bearer orun_pat_bad'
+      curl -s -o /dev/null -w 'prm=%{http_code}\n' http://localhost:${MAIN_HTTP_PORT}/.well-known/oauth-protected-resource/actapps/spec/mcp
     stdout:
       contains:
         - '[{"id":1,"status":"open"},{"id":2,"status":"closed"}]'
         - "root"
         - "List Orders /actapps/spec/orders"
         - "<title>"
-        - "mcp=401"
+        - "tools=orders orders_cancel"
+        - "badtoken=401"
+        - "prm=404"
     exit-code: 0
   action0320: # only the action_params.star params are presented, not the spec's
     command: |

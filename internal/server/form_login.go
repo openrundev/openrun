@@ -60,7 +60,7 @@ import (
 // dev-mode install runs the tailwind watcher that generates style.css; see
 // login_html/sync_from_app.sh.
 
-//go:embed login_html/login.go.html login_html/logout.go.html
+//go:embed login_html/login.go.html login_html/logout.go.html login_html/oauth_login.go.html login_html/oauth_consent.go.html
 var loginTemplateFS embed.FS
 
 //go:embed login_html/style.css
@@ -518,6 +518,23 @@ func (s *FormLoginManager) render(w http.ResponseWriter, authType, state, errorM
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "login.go.html", data); err != nil {
 		s.Error().Err(err).Msg("error rendering login page")
+	}
+}
+
+// renderOAuthPage writes a page of the OAuth authorization server (the
+// authorize login page or the consent page, oauth_api.go) from the embedded
+// templates, with the stylesheets and the security headers of the login
+// page. form-action is not set for the same reason as there: the form post
+// ends in a redirect to the client's redirect uri or to the federated
+// provider, which Chromium drops when form-action does not list the target
+func (s *FormLoginManager) renderOAuthPage(w http.ResponseWriter, name string, data map[string]any) {
+	data["StyleHref"] = s.styleHref
+	data["ExtraHref"] = s.extraHref
+	data["FontsHref"] = s.fontsHref
+	setSecurityHeaders(w)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, name, map[string]any{"Data": data}); err != nil {
+		s.Error().Err(err).Msg("error rendering oauth page " + name)
 	}
 }
 

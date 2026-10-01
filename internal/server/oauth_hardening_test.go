@@ -190,7 +190,7 @@ func TestOAuthConsentPageHardening(t *testing.T) {
 	if !strings.Contains(page, "https://tool.example.com/cb") {
 		t.Fatal("consent page must show the redirect target")
 	}
-	if !strings.Contains(page, "registered itself dynamically") {
+	if !strings.Contains(page, "Unverified client") {
 		t.Fatal("consent page must flag dynamically registered clients")
 	}
 
@@ -199,6 +199,15 @@ func TestOAuthConsentPageHardening(t *testing.T) {
 	testutil.AssertEqualsString(t, "frame-options", "DENY", resp.Header.Get("X-Frame-Options"))
 	if !strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatal("consent page must set a CSP")
+	}
+	// Self-hosted stylesheets only, no inline style. The form post ends in a
+	// redirect to the client (or the federated provider), which Chromium
+	// drops under a form-action that does not list the target: not set
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "style-src 'self'") || strings.Contains(csp, "form-action") {
+		t.Fatalf("unexpected oauth page csp %q", csp)
+	}
+	if !strings.Contains(page, formStylePath) {
+		t.Fatal("oauth page must link the login stylesheet")
 	}
 
 	// The pre-registered CLI client gets no unverified warning
@@ -213,7 +222,7 @@ func TestOAuthConsentPageHardening(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read body: %v", err)
 	}
-	if strings.Contains(string(body), "registered itself dynamically") {
+	if strings.Contains(string(body), "Unverified client") {
 		t.Fatal("the pre-registered CLI client must not be flagged as unverified")
 	}
 }

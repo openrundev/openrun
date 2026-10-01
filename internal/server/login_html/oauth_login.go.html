@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign in - OpenRun</title>
+    {{/* OAuth authorize page (API and MCP clients): sign in and approve in
+       one step. Same styling and strict CSP as the login page: no inline
+       scripts or styles. */}}
+    <link rel="stylesheet" href="{{ .Data.StyleHref }}" />
+    <link rel="stylesheet" href="{{ .Data.ExtraHref }}" />
+    <link rel="stylesheet" href="{{ .Data.FontsHref }}" />
+  </head>
+  <body class="min-h-screen bg-base-200 flex items-center justify-center p-4">
+    <main class="w-full max-w-sm">
+      <h1 class="login-title text-2xl md:text-3xl font-extrabold italic tracking-tight mb-4">
+        OpenRun
+      </h1>
+      <div class="card bg-base-100 border border-base-300">
+        <div class="card-body p-5 gap-4">
+          <div>
+            <h2 class="text-lg font-semibold">Sign in</h2>
+            <p class="text-sm text-base-content/70">
+              <b>{{ .Data.ClientName }}</b> wants access to <b>{{ .Data.Resource }}</b>.
+            </p>
+          </div>
+          <dl class="oauth-details">
+            {{ if .Data.CIMDClient }}
+              <dt>Client</dt>
+              <dd>{{ .Data.ClientId }}</dd>
+            {{ end }}
+            <dt>Returns to</dt>
+            <dd>{{ .Data.RedirectUri }}</dd>
+          </dl>
+          {{ if .Data.DynamicClient }}
+            <p class="oauth-note">Unverified client: the name is self-reported, check the return address.</p>
+          {{ else if .Data.LoopbackOnly }}
+            <p class="oauth-note">Unverified local client: approve only if you started this sign-in.</p>
+          {{ end }}
+          {{ if .Data.Error }}
+            <div role="alert" class="alert alert-error text-sm py-2">
+              <span>{{ .Data.Error }}</span>
+            </div>
+          {{ end }}
+          {{ range .Data.Federated }}
+            <form method="post" action="{{ $.Data.FederatedAction }}">
+              {{ range $k, $v := $.Data.Params }}<input type="hidden" name="{{ $k }}" value="{{ $v }}" />{{ end }}
+              <input type="hidden" name="mechanism" value="{{ .Name }}" />
+              <button
+                type="submit"
+                class="btn {{ if not $.Data.PasswordLogin }}btn-primary{{ end }} w-full transition-transform duration-150 active:scale-95">
+                Continue with {{ .Label }}
+              </button>
+            </form>
+          {{ end }}
+          {{ if .Data.PasswordLogin }}
+            <form method="post" action="{{ .Data.Action }}" class="flex flex-col gap-4">
+              {{ range $k, $v := .Data.Params }}<input type="hidden" name="{{ $k }}" value="{{ $v }}" />{{ end }}
+              <div>
+                <label class="block text-sm font-medium mb-1" for="or_username">Username</label>
+                <input
+                  id="or_username"
+                  name="or_username"
+                  type="text"
+                  required
+                  autofocus
+                  autocomplete="username"
+                  autocapitalize="none"
+                  spellcheck="false"
+                  class="input w-full" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-1" for="or_password">Password</label>
+                <input
+                  id="or_password"
+                  name="or_password"
+                  type="password"
+                  required
+                  autocomplete="current-password"
+                  class="input w-full" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-1" for="or_scope">Scope</label>
+                <input
+                  id="or_scope"
+                  name="or_scope"
+                  type="text"
+                  value="{{ .Data.Scope }}"
+                  autocapitalize="none"
+                  spellcheck="false"
+                  class="input w-full" />
+              </div>
+              <button
+                type="submit"
+                class="btn btn-primary w-full transition-transform duration-150 active:scale-95">
+                Sign in and approve
+              </button>
+            </form>
+          {{ end }}
+          {{ if and (not .Data.PasswordLogin) (not .Data.Federated) (not .Data.Error) }}
+            <div role="alert" class="alert alert-error text-sm py-2">
+              <span>No login mechanism is configured for this resource.</span>
+            </div>
+          {{ end }}
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

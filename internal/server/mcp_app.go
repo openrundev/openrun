@@ -30,7 +30,10 @@ import (
 // and the resource server: the MCP region of the app accepts only OpenRun
 // bearer credentials bound to this app instance, verifies them, applies
 // RBAC app:access and the app's tool scopes, strips the token and forwards
-// the request with the X-Openrun-* identity headers. Design:
+// the request with the X-Openrun-* identity headers. An app with auth none
+// has no login to bind a token to: its region is served without a token as
+// the anonymous user and publishes no protected resource metadata, so
+// clients connect with no OAuth flow. Design:
 // arch/docs/mcp-app-auth-design.md
 
 const (
@@ -94,14 +97,25 @@ func (s *Server) appMCPPRMUrl(appPath, domain string, mcp *types.MCPConfig) stri
 	return resource.Scheme + "://" + resource.Host + mcpPRMPrefix + resource.Path
 }
 
-// appMCPChallenge builds the WWW-Authenticate value for the region
-func (s *Server) appMCPChallenge(appPath, domain string, mcp *types.MCPConfig, errCode, scope string) string {
+// mcpAppAuthNone reports whether an MCP app's resolved auth type is none:
+// the region is then open (no token needed) and has no OAuth flow
+func (s *Server) mcpAppAuthNone(appAuth types.AppAuthnType) bool {
+	baseType, _, _ := strings.Cut(resolveAppAuth(appAuth, s.Config()), types.AUTH_MODIFIER_DELIMITER)
+	return baseType == string(types.AppAuthnNone)
+}
+
+// appMCPChallenge builds the WWW-Authenticate value for the region.
+// withMetadata is false for an auth none app, which has no protected
+// resource document to point at
+func (s *Server) appMCPChallenge(appPath, domain string, mcp *types.MCPConfig, errCode, scope string, withMetadata bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `Bearer realm="%s"`, REALM)
 	if errCode != "" {
 		fmt.Fprintf(&b, `, error="%s"`, errCode)
 	}
-	fmt.Fprintf(&b, `, resource_metadata="%s"`, s.appMCPPRMUrl(appPath, domain, mcp))
+	if withMetadata {
+		fmt.Fprintf(&b, `, resource_metadata="%s"`, s.appMCPPRMUrl(appPath, domain, mcp))
+	}
 	if scope != "" {
 		fmt.Fprintf(&b, `, scope="%s"`, scope)
 	}
@@ -271,14 +285,16 @@ func (h *Handler) appPRMMatch(r *http.Request) (types.AppInfo, bool) {
 
 // serveAppPRM serves the RFC 9728 protected resource metadata for MCP apps:
 // the path-inserted form /.well-known/oauth-protected-resource<app path>
-// <region path>, and the root form for an app at / whose region is /
+// <region path>, and the root form for an app at / whose region is /. An
+// auth none app has no document: a client that probes for one before its
+// first request would otherwise start an OAuth flow that cannot complete
 func (h *Handler) serveAppPRM(w http.ResponseWriter, r *http.Request) {
 	if !h.server.mcpTransportAllowed(r) {
 		http.NotFound(w, r)
 		return
 	}
 	info, ok := h.appPRMMatch(r)
-	if !ok {
+	if !ok || h.server.mcpAppAuthNone(info.Auth) {
 		http.NotFound(w, r)
 		return
 	}
@@ -395,8 +411,12 @@ func requiredToolScope(mcp *types.MCPConfig, method, name string) string {
 
 // credentialScoped reports whether a credential's scope list restricts it:
 // API keys minted without --scopes are unscoped (RBAC alone governs); OAuth
-// tokens always carry the consented set, so an empty list means no scope
+// tokens always carry the consented set, so an empty list means no scope.
+// A token-less call to an auth none app has no credential and is unscoped
 func credentialScoped(cred *types.Credential) bool {
+	if cred == nil {
+		return false
+	}
 	if cred.Type == types.CredentialTypePAT {
 		return len(cred.Scopes) > 0
 	}
@@ -406,6 +426,25 @@ func credentialScoped(cred *types.Credential) bool {
 func originAllowed(origin string, allowed []string) bool {
 	origin = strings.ToLower(strings.TrimSuffix(origin, "/"))
 	return slices.Contains(allowed, origin)
+}
+
+// mcpBearerToken extracts the bearer token of a request. The scheme is
+// matched case-insensitively (RFC 9110). presented reports whether the
+// request carries any Authorization header at all, usable or not, so the
+// caller can tell "no credential" from one it does not recognize
+func mcpBearerToken(r *http.Request) (token string, presented bool) {
+	values := r.Header.Values("Authorization")
+	if len(values) == 0 {
+		return "", false
+	}
+	if len(values) > 1 {
+		return "", true
+	}
+	scheme, rest, _ := strings.Cut(strings.TrimSpace(values[0]), " ")
+	if !strings.EqualFold(scheme, "Bearer") {
+		return "", true
+	}
+	return strings.TrimSpace(rest), true
 }
 
 // serveMCPApp is the request path for the MCP region of an MCP app (called
@@ -448,27 +487,45 @@ func (s *Server) serveMCPApp(w http.ResponseWriter, r *http.Request, application
 		return
 	}
 	resource := s.appMCPResource(appPath, domain, mcp)
+	authNone := s.mcpAppAuthNone(application.Metadata.AuthnType)
 	challenge := func(errCode string) {
-		w.Header().Set("WWW-Authenticate", s.appMCPChallenge(appPath, domain, mcp, errCode, mcp.DefaultScope))
+		w.Header().Set("WWW-Authenticate", s.appMCPChallenge(appPath, domain, mcp, errCode, mcp.DefaultScope, !authNone))
 		deny(http.StatusUnauthorized, "Unauthorized")
 	}
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || token == "" {
-		s.insertAuthFailureEvent(r, "mcp_app", "missing bearer token")
+	principal, groups := types.ANONYMOUS_USER, []string{}
+	var cred *types.Credential
+	var identity *types.Identity
+	var err error
+	token, presented := mcpBearerToken(r)
+	if token != "" {
+		// A presented token is always verified, on an auth none app too: an
+		// API key bound to the app identifies its user there
+		principal, groups, _, cred, identity, err = s.verifyApiToken(r.Context(), token, resource)
+		if err != nil {
+			detail := err.Error()
+			if _, id, _, parseErr := parseApiToken(token); parseErr == nil {
+				detail += " cred=" + id
+			}
+			s.Warn().Str("app", application.AppPathDomain().String()).Msg("MCP app bearer auth failed: " + detail)
+			s.insertAuthFailureEvent(r, "mcp_app", detail)
+			challenge("invalid_token")
+			return
+		}
+	} else if presented || !authNone || s.Config().Security.AuthRequired {
+		// An Authorization header that is not a usable bearer credential is
+		// refused on an auth none app too: only a request that presents no
+		// credential at all is anonymous
+		detail := "missing bearer token"
+		if presented {
+			detail = "unrecognized authorization header"
+		}
+		s.insertAuthFailureEvent(r, "mcp_app", detail)
 		challenge("")
 		return
 	}
-	principal, groups, _, cred, identity, err := s.verifyApiToken(r.Context(), token, resource)
-	if err != nil {
-		detail := err.Error()
-		if _, id, _, parseErr := parseApiToken(token); parseErr == nil {
-			detail += " cred=" + id
-		}
-		s.Warn().Str("app", application.AppPathDomain().String()).Msg("MCP app bearer auth failed: " + detail)
-		s.insertAuthFailureEvent(r, "mcp_app", detail)
-		challenge("invalid_token")
-		return
-	}
+	// else auth none app, no credential presented: served as the anonymous
+	// user, as the rest of the app is. RBAC app:access below decides whether
+	// anonymous may reach it; the app's tool scopes do not apply
 
 	grantPathDomain := mainAppPathDomain(application.AppPathDomain(), application.MainApp, application.LinkedAppPath)
 	authorized, err := s.rbacManager.AuthorizeAppAccess(principal, grantPathDomain, groups, application.UserID)
@@ -492,7 +549,7 @@ func (s *Server) serveMCPApp(w http.ResponseWriter, r *http.Request, application
 			credentialScoped(cred) && !slices.Contains(cred.Scopes, required) {
 			// Spec step-up: name only what this operation needs; the client
 			// accumulates and re-consents
-			w.Header().Set("WWW-Authenticate", s.appMCPChallenge(appPath, domain, mcp, "insufficient_scope", required))
+			w.Header().Set("WWW-Authenticate", s.appMCPChallenge(appPath, domain, mcp, "insufficient_scope", required, !authNone))
 			deny(http.StatusForbidden, fmt.Sprintf("Forbidden: tool %s requires scope %s", op.Name, required))
 			return
 		}
@@ -528,7 +585,9 @@ func (s *Server) serveMCPApp(w http.ResponseWriter, r *http.Request, application
 	}
 	authCtx.rbacEnabled = appRBACEnabled
 	ctx = system.WithApiInvoker(ctx, types.API_INVOKER_MCP)
-	ctx = system.WithApiCredential(ctx, cred)
+	if cred != nil {
+		ctx = system.WithApiCredential(ctx, cred)
+	}
 	if credentialScoped(cred) {
 		ctx = system.WithApiScopes(ctx, cred.Scopes)
 	}

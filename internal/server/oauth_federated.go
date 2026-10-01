@@ -12,7 +12,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"net/url"
 	"strings"
@@ -289,40 +288,11 @@ func (h *Handler) oauthAuthorizeContinue(w http.ResponseWriter, r *http.Request)
 	h.renderOAuthConsent(w, r, id, authz, res, principal, groups, "")
 }
 
-var oauthConsentTemplate = template.Must(template.New("consent").Parse(`<!DOCTYPE html>
-<html><head><title>OpenRun Login</title><style>
-body{font-family:system-ui,sans-serif;max-width:26rem;margin:4rem auto;padding:0 1rem;color:#222}
-input,button{width:100%;padding:.5rem;margin:.25rem 0 .75rem;box-sizing:border-box}
-button{background:#2563eb;color:#fff;border:0;border-radius:4px;padding:.6rem;cursor:pointer}
-.err{color:#b91c1c}.meta{color:#555;font-size:.9rem}.warn{color:#92400e;font-size:.9rem}
-</style></head><body>
-<h2>Approve access</h2>
-<p class="meta">Signed in as <b>{{.Principal}}</b>.</p>
-<p class="meta">Application <b>{{.ClientName}}</b> is requesting access to
-<b>{{.Resource}}</b>{{if .Scope}} with scope <b>{{.Scope}}</b>{{end}}.</p>
-<p class="meta">After approval the access code is sent to <b>{{.RedirectUri}}</b>.</p>
-{{if .DynamicClient}}<p class="warn">This application registered itself dynamically;
-its name is self-reported and not verified. Check that the address above is the
-application you intend to authorize.</p>{{end}}
-{{if .CIMDClient}}<p class="meta">This application identifies itself by the document at
-<b>{{.ClientId}}</b>; its name is taken from that document.</p>{{end}}
-{{if .LoopbackOnly}}<p class="warn">This application only redirects to your own computer
-(localhost). Any website can publish such a document and claim to be a local application;
-approve only if you started this login from an application you trust.</p>{{end}}
-{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
-<form method="post" action="{{.Action}}">
-<input type="hidden" name="authz" value="{{.Authz}}">
-<input type="hidden" name="nonce" value="{{.Nonce}}">
-<label>Granted scope (narrow to limit this token)</label><input name="or_scope" value="{{.Scope}}">
-<button type="submit">Approve</button>
-</form></body></html>`))
-
 func (h *Handler) renderOAuthConsent(w http.ResponseWriter, r *http.Request, id string, authz *oauthAuthzRequest,
 	res *oauthResource, principal string, groups []string, errMsg string) {
 	scope := strings.Join(h.server.oauthGrantScopes(res, parseScopeParam(authz.Scope)), " ")
 	clientName, cimdClient, loopbackOnly := h.oauthClientDisplay(r.Context(), authz.ClientId)
-	setOAuthPageHeaders(w)
-	_ = oauthConsentTemplate.Execute(w, map[string]any{
+	h.server.formLogin.renderOAuthPage(w, "oauth_consent.go.html", map[string]any{
 		"Principal":     principal,
 		"ClientName":    clientName,
 		"Resource":      res.Label(),

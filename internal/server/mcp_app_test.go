@@ -441,9 +441,92 @@ func TestMCPAppRegionAndAuthNone(t *testing.T) {
 	gotPath, _, _ = upstream.last()
 	testutil.AssertEqualsString(t, "region path forwarded as is", "/mcp", gotPath)
 
-	// auth none: keys still work (an admin minted one for a user), but the
-	// browser flow has no login mechanism
-	createMCPTestApp(t, server, "/apps/anon", upstream.server.URL, "none", "true")
+	// auth none: the region is served without a token as the anonymous user
+	// (the tool scope map does not apply), with no protected resource
+	// document for a client to start an OAuth flow from
+	createMCPTestApp(t, server, "/apps/anon", upstream.server.URL, "none",
+		`{"scopes":["orders:write"],"tools":{"cancel_order":"orders:write"}}`)
+	// RBAC still decides whether anonymous may reach the app
+	resp = mcpCall(t, ts, "/apps/anon", "", nil, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	readBody(t, resp)
+	testutil.AssertEqualsInt(t, "auth none without an anonymous grant", http.StatusForbidden, resp.StatusCode)
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
+		Grants: []types.RBACGrant{
+			{Description: "alice dev", Users: []string{"builtin:alice"}, Roles: []string{"openrun-developer"},
+				Targets: []string{"/apps/**"}},
+			{Description: "open app", Users: []string{"*"}, Roles: []string{"openrun-user"},
+				Targets: []string{"/apps/anon"}},
+		},
+	}); err != nil {
+		t.Fatalf("rbac config update: %v", err)
+	}
+	resp = mcpCall(t, ts, "/apps/anon", "", nil, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"cancel_order"}}`)
+	readBody(t, resp)
+	testutil.AssertEqualsInt(t, "auth none without token", http.StatusOK, resp.StatusCode)
+	testutil.AssertEqualsString(t, "no challenge", "", resp.Header.Get("WWW-Authenticate"))
+	_, gotHeaders, _ := upstream.last()
+	testutil.AssertEqualsString(t, "anonymous user", types.ANONYMOUS_USER, gotHeaders.Get(types.OPENRUN_HEADER_USER))
+	testutil.AssertEqualsString(t, "no client id", "", gotHeaders.Get(types.OPENRUN_HEADER_CLIENT_ID))
+
+	resp, err = client.Get(ts.URL + "/.well-known/oauth-protected-resource/apps/anon")
+	if err != nil {
+		t.Fatalf("anon prm: %v", err)
+	}
+	readBody(t, resp)
+	testutil.AssertEqualsInt(t, "auth none has no prm", http.StatusNotFound, resp.StatusCode)
+
+	// A disallowed browser origin is refused before anything is served
+	resp = mcpCall(t, ts, "/apps/anon", "", map[string]string{"Origin": "https://evil.example"}, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	readBody(t, resp)
+	testutil.AssertEqualsInt(t, "auth none origin check", http.StatusForbidden, resp.StatusCode)
+
+	// A presented token is still verified: a bad one is refused (the
+	// challenge names no metadata document), a key bound to the app
+	// identifies its user and its scopes apply
+	resp = mcpCall(t, ts, "/apps/anon", "bad-token", nil, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	readBody(t, resp)
+	testutil.AssertEqualsInt(t, "auth none bad token", http.StatusUnauthorized, resp.StatusCode)
+	if ch := resp.Header.Get("WWW-Authenticate"); !strings.Contains(ch, "invalid_token") || strings.Contains(ch, "resource_metadata") {
+		t.Fatalf("auth none challenge must not name a metadata document, got %q", ch)
+	}
+	resp = mcpCall(t, ts, "/apps/anon", appKey.Key, nil, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	readBody(t, resp)
+	testutil.AssertEqualsInt(t, "key for another app", http.StatusUnauthorized, resp.StatusCode)
+	// Any Authorization header that is not a usable bearer credential is
+	// refused, never served as anonymous
+	for _, header := range []string{"bearer bad-token", "BEARER bad-token", "Bearer", "Bearer ", "Basic YWxpY2U6YWxpY2Vwdw==", "bad-token"} {
+		resp = mcpCall(t, ts, "/apps/anon", "", map[string]string{"Authorization": header}, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+		readBody(t, resp)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("Authorization %q must be refused, got %d", header, resp.StatusCode)
+		}
+	}
+	anonKey, err := server.CreateApiKey(system.WithTrustedOperation(t.Context()),
+		&types.ApiKeyCreateRequest{User: "builtin:alice", Resources: []string{"app:/apps/anon"}})
+	if err != nil {
+		t.Fatalf("anon app key: %v", err)
+	}
+	resp = mcpCall(t, ts, "/apps/anon", anonKey.Key, nil, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	readBody(t, resp)
+	testutil.AssertEqualsInt(t, "auth none with app key", http.StatusOK, resp.StatusCode)
+	_, gotHeaders, _ = upstream.last()
+	testutil.AssertEqualsString(t, "key user", "builtin:alice", gotHeaders.Get(types.OPENRUN_HEADER_USER))
+	testutil.AssertEqualsString(t, "key client id", "apikey", gotHeaders.Get(types.OPENRUN_HEADER_CLIENT_ID))
+	// The scheme is case-insensitive: the key keeps its identity
+	resp = mcpCall(t, ts, "/apps/anon", "", map[string]string{"Authorization": "bearer " + anonKey.Key}, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	readBody(t, resp)
+	testutil.AssertEqualsInt(t, "lowercase scheme with app key", http.StatusOK, resp.StatusCode)
+	_, gotHeaders, _ = upstream.last()
+	testutil.AssertEqualsString(t, "lowercase scheme key user", "builtin:alice", gotHeaders.Get(types.OPENRUN_HEADER_USER))
+
+	// security.auth_required closes the token-less path
+	server.staticConfig.Security.AuthRequired = true
+	resp = mcpCall(t, ts, "/apps/anon", "", nil, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	readBody(t, resp)
+	testutil.AssertEqualsInt(t, "auth_required without token", http.StatusUnauthorized, resp.StatusCode)
+	server.staticConfig.Security.AuthRequired = false
+
+	// The browser flow has no login mechanism
 	form := url.Values{
 		"response_type": {"code"}, "client_id": {"openrun-cli"},
 		"redirect_uri": {"http://127.0.0.1:39999/callback"}, "code_challenge": {strings.Repeat("a", 43)},

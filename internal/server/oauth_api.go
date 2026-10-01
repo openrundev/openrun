@@ -15,7 +15,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"net/url"
 	"slices"
@@ -475,7 +474,8 @@ func (h *Handler) oauthValidateAuthorizeParams(ctx context.Context, clientId, re
 // validateOAuthRedirect checks the redirect uri against the client's
 // registration. The pre-registered openrun-cli client allows loopback http
 // redirects on any port (RFC 8252 §7.3); CIMD clients (https client_id)
-// and DCR clients require an exact match against their redirect list
+// and DCR clients require a match against their redirect list: exact,
+// except that a registered loopback http uri matches on any port
 func (h *Handler) validateOAuthRedirect(ctx context.Context, clientId, redirectUri string) error {
 	if clientId == oauthCLIClientId {
 		parsed, err := url.Parse(redirectUri)
@@ -498,56 +498,34 @@ func (h *Handler) validateOAuthRedirect(ctx context.Context, clientId, redirectU
 		}
 		registered = client.RedirectUris
 	}
-	if slices.Contains(registered, redirectUri) {
+	if slices.Contains(registered, redirectUri) || matchesLoopbackRedirect(registered, redirectUri) {
 		return nil
 	}
 	return fmt.Errorf("redirect_uri is not registered for this client")
 }
 
-var oauthLoginTemplate = template.Must(template.New("login").Parse(`<!DOCTYPE html>
-<html><head><title>OpenRun Login</title><style>
-body{font-family:system-ui,sans-serif;max-width:26rem;margin:4rem auto;padding:0 1rem;color:#222}
-input,button{width:100%;padding:.5rem;margin:.25rem 0 .75rem;box-sizing:border-box}
-button{background:#2563eb;color:#fff;border:0;border-radius:4px;padding:.6rem;cursor:pointer}
-.err{color:#b91c1c}.meta{color:#555;font-size:.9rem}.warn{color:#92400e;font-size:.9rem}
-</style></head><body>
-<h2>OpenRun Login</h2>
-<p class="meta">Application <b>{{.ClientName}}</b> is requesting access to
-<b>{{.Resource}}</b>{{if .Scope}} with scope <b>{{.Scope}}</b>{{end}}.</p>
-<p class="meta">After approval the access code is sent to <b>{{.RedirectUri}}</b>.</p>
-{{if .DynamicClient}}<p class="warn">This application registered itself dynamically;
-its name is self-reported and not verified. Check that the address above is the
-application you intend to authorize.</p>{{end}}
-{{if .CIMDClient}}<p class="meta">This application identifies itself by the document at
-<b>{{.ClientId}}</b>; its name is taken from that document.</p>{{end}}
-{{if .LoopbackOnly}}<p class="warn">This application only redirects to your own computer
-(localhost). Any website can publish such a document and claim to be a local application;
-approve only if you started this login from an application you trust.</p>{{end}}
-{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
-{{range .Federated}}<form method="post" action="{{$.FederatedAction}}">
-{{range $k, $v := $.Params}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
-<input type="hidden" name="mechanism" value="{{.Name}}">
-<button type="submit">Continue with {{.Label}}</button>
-</form>{{end}}
-{{if .PasswordLogin}}<form method="post" action="{{.Action}}">
-{{range $k, $v := .Params}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
-<label>Username</label><input name="or_username" autocomplete="username" autofocus>
-<label>Password</label><input name="or_password" type="password" autocomplete="current-password">
-<label>Granted scope (narrow to limit this token)</label><input name="or_scope" value="{{.Scope}}">
-<button type="submit">Log in and approve</button>
-</form>{{end}}
-{{if and (not .PasswordLogin) (not .Federated)}}<p class="err">No login mechanism is configured for this resource.</p>{{end}}
-</body></html>`))
-
-// setOAuthPageHeaders hardens the credential/consent pages: no scripts, no
-// framing, no referrer, never cached. style-src allows the page's own
-// inline style block; there is no injection surface for it
-func setOAuthPageHeaders(w http.ResponseWriter) {
-	w.Header().Set("Content-Security-Policy",
-		"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
-	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+// matchesLoopbackRedirect reports whether redirectUri equals a registered
+// loopback http redirect uri in everything but the port. Native clients
+// listen on an ephemeral port chosen at request time and register the uri
+// without one (http://localhost/callback), so the port is not compared
+// (RFC 8252 §7.3). The host is: localhost and 127.0.0.1 are distinct
+// registrations
+func matchesLoopbackRedirect(registered []string, redirectUri string) bool {
+	parsed, err := url.Parse(redirectUri)
+	if err != nil || parsed.Scheme != "http" || !isLoopbackHost(parsed.Hostname()) || parsed.User != nil || parsed.Fragment != "" {
+		return false
+	}
+	for _, uri := range registered {
+		reg, err := url.Parse(uri)
+		if err != nil || reg.Scheme != "http" || !isLoopbackHost(reg.Hostname()) {
+			continue
+		}
+		if strings.EqualFold(reg.Hostname(), parsed.Hostname()) && reg.EscapedPath() == parsed.EscapedPath() &&
+			reg.RawQuery == parsed.RawQuery && reg.User == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // oauthClientDisplay resolves the client's display name and the consent
@@ -623,8 +601,7 @@ func (h *Handler) renderOAuthLogin(w http.ResponseWriter, r *http.Request, get f
 		"code_challenge", "code_challenge_method", "resource", "scope"} {
 		params[name] = get(name)
 	}
-	setOAuthPageHeaders(w)
-	_ = oauthLoginTemplate.Execute(w, map[string]any{
+	h.server.formLogin.renderOAuthPage(w, "oauth_login.go.html", map[string]any{
 		"ClientName":      clientName,
 		"Resource":        res.Label(),
 		"Scope":           scope,
@@ -757,7 +734,8 @@ func parseScopeParam(scope string) []string {
 // [api.<surface>] auth list for a surface; for an MCP app, the app's own
 // auth setting (system -> admin, builtin -> builtin, an [auth.*] or
 // [saml.*] name -> that federated login). Apps with auth none or client
-// certs cannot issue tokens (no identity to bind them to)
+// certs cannot issue tokens (no identity to bind them to); an auth none
+// app serves its MCP region without one (serveMCPApp)
 func (s *Server) oauthLoginMechanisms(res *oauthResource) ([]string, error) {
 	if res.App == nil {
 		surfaceConfig, _ := s.Config().Api.Surface(res.Surface)
@@ -777,7 +755,7 @@ func (s *Server) oauthLoginMechanisms(res *oauthResource) ([]string, error) {
 	case coreAuth == string(types.AppAuthnBuiltin):
 		return []string{"builtin"}, nil
 	case coreAuth == string(types.AppAuthnNone):
-		return nil, fmt.Errorf("app %s has auth none: set an auth type on the app so MCP tokens can be bound to a user", res.App.AppPathDomain)
+		return nil, fmt.Errorf("app %s has auth none: its MCP endpoint is served without a token, set an auth type on the app to bind MCP tokens to a user", res.App.AppPathDomain)
 	case coreAuth == "cert" || strings.HasPrefix(coreAuth, "cert_"):
 		return nil, fmt.Errorf("app %s uses client certificate auth, which cannot be used for the OAuth login page", res.App.AppPathDomain)
 	}

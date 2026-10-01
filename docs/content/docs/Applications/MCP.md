@@ -10,7 +10,7 @@ An app deployed through OpenRun can be an [MCP](https://modelcontextprotocol.io)
 
 - OpenRun serves the OAuth protected-resource metadata for the app and acts as the OAuth 2.1 authorization server (the same one that protects the [Remote API and MCP]({{< ref "docs/configuration/remoteaccess" >}}) surfaces).
 - Users log in with the app's configured `auth` (the admin account, builtin users, an `[auth.*]` OAuth/OIDC provider such as GitHub or Google, or a `[saml.*]` provider) and approve the client on a consent page. Federated logins refresh the user's group snapshot used by RBAC. Access requires the same `app:access` grant the app's web UI requires when RBAC is on.
-- The MCP endpoint accepts only OpenRun-issued bearer tokens bound to that app. Cookies, basic auth and login redirects do not apply there.
+- The MCP endpoint accepts only OpenRun-issued bearer tokens bound to that app. Cookies, basic auth and login redirects do not apply there there. The exception is an app with `auth none`, whose endpoint is [open]({{< ref "#open-mcp-apps-auth-none" >}}).
 - The token is stripped before the request reaches the app. The app receives the usual `X-Openrun-User`, `X-Openrun-User-Id`, `X-Openrun-User-Email` and `X-Openrun-Perms` headers plus `X-Openrun-Scopes` (the granted scopes) and `X-Openrun-Client-Id` (the OAuth client holding the token, or `apikey`).
 
 The app itself implements no authentication. Any MCP server that speaks Streamable HTTP without its own auth works unchanged.
@@ -72,6 +72,17 @@ openrun apikey create --resource app:apps.example.com:/orders      # app on a sp
 ```
 
 An app-bound key is valid for exactly that app. Staging and preview apps are separate resources: a token for the production app does not work at the staging URL and vice versa. Use `app:<stage domain>:<path>` for a staging key.
+
+### Open MCP apps (auth none)
+
+An MCP app with `--auth none` has no login to bind a token to, so its MCP endpoint is served without a token: the client adds the URL and connects, with no browser login. Requests run as the `anonymous` user, as they do for the rest of the app.
+
+- No OAuth metadata is published for the app and the authorization page refuses it, so clients do not start a login flow.
+- RBAC still applies: the `anonymous` user needs `app:access` on the app. The default grant (users `*`) includes it; a server with narrower grants needs one for `*` or `anonymous` on the app.
+- The `tools` scope map does not apply to token-less calls, there is no token to carry a scope. Any tool is callable by anyone who can reach the app.
+- An API key bound to the app still works and identifies its user; its scopes apply as usual. An invalid token is refused, it does not fall back to anonymous.
+- With `security.auth_required` set, token-less calls are refused and only API keys work.
+- `allowed_origins` and the HTTPS (or loopback) transport requirement are unchanged.
 
 ## Scopes and tool policy
 

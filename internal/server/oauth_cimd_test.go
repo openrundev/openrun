@@ -108,10 +108,10 @@ func TestOAuthCIMDFullFlow(t *testing.T) {
 	resp.Body.Close() //nolint:errcheck
 	page := string(body)
 	testutil.AssertEqualsInt(t, "consent status", http.StatusOK, resp.StatusCode)
-	if !strings.Contains(page, "Doc Client") || !strings.Contains(page, "identifies itself by the document") {
+	if !strings.Contains(page, "Doc Client") || !strings.Contains(page, "<dt>Client</dt>") {
 		t.Fatalf("consent page must show the document client name and note, got %s", page)
 	}
-	if strings.Contains(page, "registered itself dynamically") || strings.Contains(page, "localhost") {
+	if strings.Contains(page, "Unverified client") || strings.Contains(page, "localhost") {
 		t.Fatal("consent page must not show the DCR or loopback warnings for an https-redirect CIMD client")
 	}
 
@@ -165,7 +165,7 @@ func TestOAuthCIMDLoopbackWarningAndTokenExchangeWithoutRegistration(t *testing.
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close() //nolint:errcheck
-	if !strings.Contains(string(body), "only redirects to your own computer") {
+	if !strings.Contains(string(body), "Unverified local client") {
 		t.Fatal("consent page must warn for loopback-only CIMD clients")
 	}
 	// No row was created for the CIMD client
@@ -325,5 +325,28 @@ func TestCIMDHelpers(t *testing.T) {
 	}
 	if err := server.cimdDomainAllowed("x.bad.example.com"); err == nil {
 		t.Fatal("deny must win over allow")
+	}
+}
+
+func TestMatchesLoopbackRedirect(t *testing.T) {
+	// The redirect list of a native client's metadata document: no port
+	registered := []string{"http://localhost/callback", "http://127.0.0.1/callback", "https://app.example.com/cb"}
+	for uri, want := range map[string]bool{
+		"http://localhost:50694/callback":      true,
+		"http://127.0.0.1:39999/callback":      true,
+		"http://localhost/callback":            true,
+		"http://[::1]:50694/callback":          false, // host not registered
+		"http://localhost:50694/other":         false,
+		"http://localhost:50694/callback?x=1":  false,
+		"https://localhost:50694/callback":     false,
+		"http://evil.example:50694/callback":   false,
+		"http://localhost.evil.com/callback":   false,
+		"http://u@localhost:50694/callback":    false,
+		"https://app.example.com:8443/cb":      false, // non-loopback stays exact
+		"http://localhost:50694/callback#frag": false,
+	} {
+		if got := matchesLoopbackRedirect(registered, uri); got != want {
+			t.Errorf("matchesLoopbackRedirect(%q) = %v, want %v", uri, got, want)
+		}
 	}
 }

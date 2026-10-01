@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Approve access - OpenRun</title>
+    {{/* OAuth consent page shown after a federated (OAuth/OIDC/SAML) sign-in.
+       Same styling and strict CSP as the login page: no inline scripts or
+       styles. */}}
+    <link rel="stylesheet" href="{{ .Data.StyleHref }}" />
+    <link rel="stylesheet" href="{{ .Data.ExtraHref }}" />
+    <link rel="stylesheet" href="{{ .Data.FontsHref }}" />
+  </head>
+  <body class="min-h-screen bg-base-200 flex items-center justify-center p-4">
+    <main class="w-full max-w-sm">
+      <h1 class="login-title text-2xl md:text-3xl font-extrabold italic tracking-tight mb-4">
+        OpenRun
+      </h1>
+      <div class="card bg-base-100 border border-base-300">
+        <div class="card-body p-5 gap-4">
+          <div>
+            <h2 class="text-lg font-semibold">Approve access</h2>
+            <p class="text-sm text-base-content/70">
+              <b>{{ .Data.ClientName }}</b> wants access to <b>{{ .Data.Resource }}</b>.
+            </p>
+          </div>
+          <dl class="oauth-details">
+            <dt>Signed in as</dt>
+            <dd>{{ .Data.Principal }}</dd>
+            {{ if .Data.CIMDClient }}
+              <dt>Client</dt>
+              <dd>{{ .Data.ClientId }}</dd>
+            {{ end }}
+            <dt>Returns to</dt>
+            <dd>{{ .Data.RedirectUri }}</dd>
+          </dl>
+          {{ if .Data.DynamicClient }}
+            <p class="oauth-note">Unverified client: the name is self-reported, check the return address.</p>
+          {{ else if .Data.LoopbackOnly }}
+            <p class="oauth-note">Unverified local client: approve only if you started this sign-in.</p>
+          {{ end }}
+          {{ if .Data.Error }}
+            <div role="alert" class="alert alert-error text-sm py-2">
+              <span>{{ .Data.Error }}</span>
+            </div>
+          {{ end }}
+          <form method="post" action="{{ .Data.Action }}" class="flex flex-col gap-4">
+            <input type="hidden" name="authz" value="{{ .Data.Authz }}" />
+            <input type="hidden" name="nonce" value="{{ .Data.Nonce }}" />
+            <div>
+              <label class="block text-sm font-medium mb-1" for="or_scope">Scope</label>
+              <input
+                id="or_scope"
+                name="or_scope"
+                type="text"
+                value="{{ .Data.Scope }}"
+                autofocus
+                autocapitalize="none"
+                spellcheck="false"
+                class="input w-full" />
+            </div>
+            <button
+              type="submit"
+              class="btn btn-primary w-full transition-transform duration-150 active:scale-95">
+              Approve
+            </button>
+          </form>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

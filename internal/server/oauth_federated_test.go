@@ -123,7 +123,7 @@ func TestOAuthFederatedLoginForMCPApp(t *testing.T) {
 	}
 	page := readBody(t, resp)
 	testutil.AssertEqualsInt(t, "consent", http.StatusOK, resp.StatusCode)
-	if !strings.Contains(page, "Signed in as <b>github:jane@example.com</b>") || !strings.Contains(page, "mcp test app") {
+	if !strings.Contains(page, "<dd>github:jane@example.com</dd>") || !strings.Contains(page, "mcp test app") {
 		t.Fatalf("consent page: %s", page)
 	}
 	testutil.AssertEqualsString(t, "frame-options", "DENY", resp.Header.Get("X-Frame-Options"))
