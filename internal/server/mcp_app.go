@@ -127,7 +127,7 @@ func (s *Server) appMCPChallenge(appPath, domain string, mcp *types.MCPConfig, e
 // not tell the two audiences apart. Both surface resources live under
 // /_openrun, which no app path can occupy, so this is a defensive check
 func (s *Server) validateAppMCPResource(appPath, domain string, mcp *types.MCPConfig) error {
-	if mcp == nil {
+	if mcp == nil || mcp.Disable {
 		return nil
 	}
 	resource := s.appMCPResource(appPath, domain, mcp)
@@ -142,7 +142,10 @@ func (s *Server) validateAppMCPResource(appPath, domain string, mcp *types.MCPCo
 
 // hasMCPApps reports whether any app is an MCP app: the OAuth endpoints and
 // the AS metadata are served while one exists, even with both management
-// surfaces disabled
+// surfaces disabled. A dev app counts by what it serves now (withLoadedMCP):
+// its first action makes it an MCP endpoint without a deploy, and a client
+// which finds its protected resource document must find the authorization
+// server too
 func (s *Server) hasMCPApps() bool {
 	if s.apps == nil {
 		return false
@@ -152,6 +155,7 @@ func (s *Server) hasMCPApps() bool {
 		return false
 	}
 	for _, info := range apps {
+		s.withLoadedMCP(&info)
 		if info.MCP != nil {
 			return true
 		}
@@ -173,11 +177,29 @@ func (s *Server) hasMCPAppsUncached() bool {
 		return false
 	}
 	for _, info := range apps {
-		if info.MCP != nil {
+		// Apps which asked for MCP only. The implicit actions endpoint of
+		// an app with actions is best effort (served where an issuer
+		// exists): it must not pin the issuer config of nearly every server
+		if info.MCP != nil && !info.MCPImplicit {
 			return true
 		}
 	}
 	return false
+}
+
+// withLoadedMCP fills in the effective MCP config of a dev app from the app
+// loaded on this node. AppInfo derives the implicit actions endpoint from
+// the action definitions stored with the app version; a dev app's source
+// changes without a deploy, so its stored definitions can be behind
+func (s *Server) withLoadedMCP(info *types.AppInfo) {
+	if info.MCP != nil || !info.IsDev || info.MCPDisabled {
+		return
+	}
+	if loaded, err := s.apps.GetApp(info.AppPathDomain); err == nil {
+		if mcp := loaded.EffectiveMCP(); mcp != nil {
+			info.MCP, info.MCPImplicit = mcp, true
+		}
+	}
 }
 
 // resolveAppResource maps an RFC 8707 resource URI (from an authorize
@@ -202,6 +224,9 @@ func (s *Server) resolveAppResource(resource string) (*types.AppInfo, string, er
 		return nil, "", fmt.Errorf("resource %q does not name a domain served here", resource)
 	}
 	info, err := s.MatchApp(host, cmp.Or(parsed.Path, "/"))
+	if err == nil {
+		s.withLoadedMCP(&info)
+	}
 	if err != nil || info.MCP == nil {
 		return nil, "", fmt.Errorf("resource %q does not name an MCP app", resource)
 	}
@@ -234,6 +259,7 @@ func (s *Server) resolveAppReference(ref string) (*types.AppInfo, string, error)
 	}
 	for _, info := range apps {
 		if info.Path == pathDomain.Path && info.Domain == pathDomain.Domain {
+			s.withLoadedMCP(&info)
 			if info.MCP == nil {
 				return nil, "", fmt.Errorf("app %s is not an MCP app", pathDomain)
 			}
@@ -277,6 +303,9 @@ func isLoopbackRemote(remoteAddr string) bool {
 func (h *Handler) appPRMMatch(r *http.Request) (types.AppInfo, bool) {
 	suffix := normalizePath(cmp.Or(strings.TrimPrefix(r.URL.Path, mcpPRMPrefix), "/"))
 	info, err := h.server.MatchApp(system.GetHostname(r.Host), suffix)
+	if err == nil {
+		h.server.withLoadedMCP(&info)
+	}
 	if err != nil || info.MCP == nil || suffix != appMCPRegion(info.Path, info.MCP) {
 		return types.AppInfo{}, false
 	}
@@ -544,6 +573,13 @@ func (s *Server) serveMCPApp(w http.ResponseWriter, r *http.Request, application
 		deny(status, msg)
 		return
 	}
+	// From here the request is audited as MCP calls (the mcp event type),
+	// a call refused for a missing scope included
+	if contextShared, ok := r.Context().Value(types.SHARED).(*ContextShared); ok {
+		contextShared.UserId = principal
+		contextShared.AppId = string(application.Id)
+	}
+	markMCPRequest(r.Context(), mcpEndpointApp, ops, cred, "app="+application.AppPathDomain().String())
 	for _, op := range ops {
 		if required := requiredToolScope(mcp, op.Method, op.Name); required != "" &&
 			credentialScoped(cred) && !slices.Contains(cred.Scopes, required) {
@@ -554,11 +590,6 @@ func (s *Server) serveMCPApp(w http.ResponseWriter, r *http.Request, application
 			return
 		}
 	}
-	method, name := "", ""
-	if len(ops) > 0 {
-		method, name = ops[0].Method, ops[0].Name
-	}
-
 	// Federated identities carry the provider subject and verified email, so
 	// the app sees the same X-Openrun-User-Id / -User-Email it gets from a
 	// browser session of that user; builtin and admin have neither
@@ -590,13 +621,6 @@ func (s *Server) serveMCPApp(w http.ResponseWriter, r *http.Request, application
 	}
 	if credentialScoped(cred) {
 		ctx = system.WithApiScopes(ctx, cred.Scopes)
-	}
-	if contextShared := ctx.Value(types.SHARED); contextShared != nil {
-		cs := contextShared.(*ContextShared)
-		cs.UserId = principal
-		cs.AppId = string(application.Id)
-		cs.MCPMethod = method
-		cs.MCPName = name
 	}
 	r = r.WithContext(ctx)
 

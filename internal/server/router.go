@@ -184,6 +184,9 @@ func NewTCPHandler(logger *types.Logger, config *types.ServerConfig, server *Ser
 		// never collide with an app's document
 		router.Get(mcpPRMPrefix+types.INTERNAL_URL_PREFIX+"/rest", wellKnownGate(handler.serveOAuthPRM(ApiResourceRest)))
 		router.Get(mcpPRMPrefix+types.INTERNAL_URL_PREFIX+"/mcp", wellKnownGate(handler.serveOAuthPRM(ApiResourceMCP)))
+		// The aggregate app actions endpoint: its own gate (https, or
+		// plaintext on loopback), like the MCP apps
+		router.Get(mcpPRMPrefix+aggMCPEndpointPath, handler.serveAggMCPPRM)
 		// MCP apps: path-inserted documents for /<app path><region path> on
 		// any app domain, and the root document for an app at /. Transport
 		// gate inside the handler (https, or plaintext on loopback for dev)
@@ -1989,6 +1992,7 @@ func (h *Handler) serveInternal(remote bool) http.Handler {
 func (h *Handler) serveRemoteInternal() http.Handler {
 	restHandler := h.serveInternal(true)
 	mcpHandler := h.server.mcpHTTPHandler()
+	aggMCPHandler := h.server.aggMCPHTTPHandler()
 	oauthHandler := h.serveOAuth()
 	mcpPath := types.INTERNAL_URL_PREFIX + "/mcp"
 	oauthPrefix := types.INTERNAL_URL_PREFIX + "/oauth/"
@@ -2004,11 +2008,17 @@ func (h *Handler) serveRemoteInternal() http.Handler {
 				return
 			}
 			if !apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) &&
-				!apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) && !h.server.hasMCPApps() {
+				!apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) && !aggMCPEnabled(config) && !h.server.hasMCPApps() {
 				http.NotFound(w, r)
 				return
 			}
 			oauthHandler.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == aggMCPEndpointPath {
+			// The aggregate app actions endpoint applies its own transport
+			// rule (https, or plaintext on loopback) and enablement check
+			aggMCPHandler.ServeHTTP(w, r)
 			return
 		}
 		if !secure {

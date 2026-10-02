@@ -241,6 +241,16 @@ func (s *Server) CreateApiKey(ctx context.Context, req *types.ApiKeyCreateReques
 		if resource == ApiResourceRest || resource == ApiResourceMCP {
 			continue
 		}
+		if name, auth, _ := strings.Cut(resource, ":"); name == ApiResourceAppMCP {
+			// app_mcp or app_mcp:<auth>: the aggregate app actions endpoint,
+			// for the login mechanism (default: the app default auth)
+			uri, err := s.aggMCPKeyResource(auth)
+			if err != nil {
+				return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
+			}
+			resources[i] = uri
+			continue
+		}
 		info, uri, err := s.resolveAppReference(resource)
 		if err != nil {
 			return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
@@ -594,10 +604,21 @@ func (s *Server) apiTokenIdentityContext(ctx context.Context, principal string, 
 // disabled - and returns ok=false
 func (s *Server) authenticateApiRequest(w http.ResponseWriter, r *http.Request,
 	surface string, operation string) (context.Context, *types.Credential, bool) {
+	// The MCP endpoint url may name the login to use (?auth=<name>): the
+	// challenge passes it on to the client. Not read on the REST surface,
+	// where auth is a param of some operations
+	mechanism := ""
+	if surface == ApiResourceMCP {
+		var err error
+		if mechanism, err = s.surfaceAuthParam(surface, r.URL.Query().Get(aggMCPAuthParam)); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return nil, nil, false
+		}
+	}
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || token == "" {
 		s.insertAuthFailureEvent(r, operation, "missing bearer token")
-		w.Header().Add("WWW-Authenticate", s.apiAuthChallenge(surface))
+		w.Header().Add("WWW-Authenticate", s.apiAuthChallenge(surface, mechanism))
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return nil, nil, false
 	}
@@ -612,7 +633,7 @@ func (s *Server) authenticateApiRequest(w http.ResponseWriter, r *http.Request,
 		}
 		s.Warn().Str("path", r.URL.Path).Str("surface", surface).Msg("API bearer auth failed: " + detail)
 		s.insertAuthFailureEvent(r, operation, detail)
-		w.Header().Add("WWW-Authenticate", s.apiAuthChallenge(surface))
+		w.Header().Add("WWW-Authenticate", s.apiAuthChallenge(surface, mechanism))
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return nil, nil, false
 	}

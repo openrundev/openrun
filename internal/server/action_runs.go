@@ -182,6 +182,12 @@ func (s *Server) listActionRunsAcrossApps(ctx context.Context, appPathGlob, sele
 			if err != nil {
 				return nil
 			}
+			if !strings.HasPrefix(string(entry.Id), types.ID_PREFIX_APP_STAGE) {
+				// No staging instance (a dev app): its runs belong to the
+				// other listing. Returning them here too showed every run
+				// of a dev app twice to a caller which merges both
+				return nil
+			}
 			info = types.AppInfo{Id: entry.Id, AppPathDomain: entry.AppPathDomain(), MainApp: entry.MainApp, LinkedAppPath: entry.LinkedAppPath,
 				Auth: entry.Metadata.AuthnType, UserID: entry.UserID}
 		}

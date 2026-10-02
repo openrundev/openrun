@@ -59,9 +59,17 @@ func TestParseMCPArg(t *testing.T) {
 	if err != nil || doc != `{"path":"/"}` {
 		t.Fatalf("true: %q %v", doc, err)
 	}
-	doc, err = ParseMCPArg("false")
+	// false and disable turn all MCP off (a stored document); default
+	// clears the document, back to the default behavior
+	for _, value := range []string{"false", MCPValueDisable, `{"disable":true,"path":"/mcp","scopes":["r"]}`} {
+		doc, err = ParseMCPArg(value)
+		if err != nil || doc != `{"disable":true}` {
+			t.Fatalf("%s: %q %v", value, doc, err)
+		}
+	}
+	doc, err = ParseMCPArg(MCPValueDefault)
 	if err != nil || doc != "" {
-		t.Fatalf("false: %q %v", doc, err)
+		t.Fatalf("default: %q %v", doc, err)
 	}
 	doc, err = ParseMCPArg("/mcp")
 	if err != nil || doc != `{"path":"/","container_path":"/mcp"}` {
@@ -132,5 +140,45 @@ func TestMCPActionsSource(t *testing.T) {
 		if _, err := ParseMCPConfig(doc); err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("doc %s: want error %q, got %v", doc, want, err)
 		}
+	}
+}
+
+func TestEffectiveMCP(t *testing.T) {
+	explicit := &MCPConfig{Path: "/", ContainerPath: "/mcp"}
+	for _, tc := range []struct {
+		name       string
+		stored     *MCPConfig
+		hasActions bool
+		wantNil    bool
+		wantPath   string
+		implicit   bool
+	}{
+		{"nothing stored, no actions", nil, false, true, "", false},
+		{"nothing stored, actions: implicit endpoint", nil, true, false, MCPActionsDefaultPath, true},
+		{"stored document wins", explicit, true, false, "/", false},
+		{"stored document without actions", explicit, false, false, "/", false},
+		{"disabled with actions", &MCPConfig{Disable: true}, true, true, "", false},
+		{"disabled without actions", &MCPConfig{Disable: true}, false, true, "", false},
+	} {
+		config, implicit := EffectiveMCP(tc.stored, tc.hasActions)
+		if (config == nil) != tc.wantNil || implicit != tc.implicit {
+			t.Fatalf("%s: got %v implicit %v", tc.name, config, implicit)
+		}
+		if config != nil && config.Path != tc.wantPath {
+			t.Fatalf("%s: path %q, want %q", tc.name, config.Path, tc.wantPath)
+		}
+		if tc.implicit && !config.ServesActions() {
+			t.Fatalf("%s: the implicit endpoint serves the actions", tc.name)
+		}
+	}
+	if (&MCPConfig{Disable: true, Source: MCPSourceActions}).ServesActions() {
+		t.Fatal("a disabled document serves nothing")
+	}
+	if !MCPDisabled(&MCPConfig{Disable: true}) || MCPDisabled(nil) || MCPDisabled(explicit) {
+		t.Fatal("MCPDisabled")
+	}
+	if !ActionsTakeMCPPath([]ActionDef{{Path: "/a"}, {Path: "/mcp/x"}}) || !ActionsTakeMCPPath([]ActionDef{{Path: "mcp"}}) ||
+		ActionsTakeMCPPath([]ActionDef{{Path: "/mcpx"}, {Path: "/a/mcp"}}) {
+		t.Fatal("ActionsTakeMCPPath")
 	}
 }

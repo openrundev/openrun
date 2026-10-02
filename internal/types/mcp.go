@@ -21,7 +21,7 @@ type MCPConfig struct {
 	// Path is the MCP region within the app: "/" (default) makes the
 	// whole app the MCP endpoint; "/mcp" makes only that subtree the
 	// endpoint while the rest of the app keeps its human auth
-	Path string `json:"path"`
+	Path string `json:"path,omitzero"`
 	// ContainerPath is the path the upstream (container or proxied url)
 	// serves MCP at when it differs from Path. Only allowed with Path "/":
 	// the app root is rewritten to this path when proxying, so the public
@@ -47,18 +47,64 @@ type MCPConfig struct {
 	// on the region. A request carrying any other Origin header is
 	// refused; requests without an Origin (native clients) are unaffected
 	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+	// Disable turns all MCP off for the app: no MCP region (neither the
+	// actions endpoint an app with actions gets by default, nor an upstream
+	// one), the app is left out of the aggregate endpoint
+	// (/_openrun/app_mcp) and the management action tools refuse it when
+	// called over MCP. A document with Disable carries nothing else
+	Disable bool `json:"disable,omitzero"`
 }
 
 const (
 	MCPSourceActions       = "actions"
 	MCPActionsDefaultPath  = "/mcp"
 	mcpSourceUpstreamAlias = "upstream"
+	MCPValueDisable        = "disable" // --mcp value: all MCP off for the app
+	MCPValueDefault        = "default" // --mcp value: clear the document, back to the default behavior
+	mcpDisabledDoc         = `{"disable":true}`
 )
+
+// EffectiveMCP returns the MCP config an app runs with, from the stored
+// document and whether the app defines actions: the stored document when
+// there is one (nil for a disable document), else, for an app with actions,
+// the implicit actions endpoint at /mcp. implicit reports the latter: the
+// endpoint was not asked for, so it must never fail a load or a create
+func EffectiveMCP(stored *MCPConfig, hasActions bool) (config *MCPConfig, implicit bool) {
+	switch {
+	case stored != nil && stored.Disable:
+		return nil, false
+	case stored != nil:
+		return stored, false
+	case hasActions:
+		return &MCPConfig{Path: MCPActionsDefaultPath, Source: MCPSourceActions}, true
+	}
+	return nil, false
+}
+
+// MCPDisabled reports whether the stored document turns MCP off
+func MCPDisabled(stored *MCPConfig) bool {
+	return stored != nil && stored.Disable
+}
+
+// ActionsTakeMCPPath reports whether an action sits at or under the default
+// MCP endpoint path: the implicit endpoint is then not enabled
+func ActionsTakeMCPPath(defs []ActionDef) bool {
+	for _, def := range defs {
+		actionPath := def.Path
+		if !strings.HasPrefix(actionPath, "/") {
+			actionPath = "/" + actionPath
+		}
+		if actionPath == MCPActionsDefaultPath || strings.HasPrefix(actionPath, MCPActionsDefaultPath+"/") {
+			return true
+		}
+	}
+	return false
+}
 
 // ServesActions reports whether OpenRun serves the app's actions as MCP tools
 // in the region
 func (m *MCPConfig) ServesActions() bool {
-	return m != nil && m.Source == MCPSourceActions
+	return m != nil && !m.Disable && m.Source == MCPSourceActions
 }
 
 // UpstreamPath returns the path the upstream serves MCP at: the container
@@ -72,6 +118,9 @@ func (m *MCPConfig) UpstreamPath() string {
 
 // Canonical returns the normalized JSON document
 func (m *MCPConfig) Canonical() string {
+	if m.Disable {
+		return mcpDisabledDoc
+	}
 	doc, _ := json.Marshal(m)
 	return string(doc)
 }
@@ -99,6 +148,9 @@ func ParseMCPConfig(doc string) (*MCPConfig, error) {
 	var config MCPConfig
 	if err := json.Unmarshal([]byte(doc), &config); err != nil {
 		return nil, fmt.Errorf("invalid mcp config: %w", err)
+	}
+	if config.Disable {
+		return &MCPConfig{Disable: true}, nil
 	}
 	switch config.Source {
 	case "", mcpSourceUpstreamAlias:
@@ -174,7 +226,9 @@ func ParseMCPConfig(doc string) (*MCPConfig, error) {
 // /mcp; "/path" = the whole app is the endpoint, rewritten to that upstream
 // path; "{...}" = the full document; "@file" = a local
 // file holding the document (CLI only: the server never reads files named
-// by a request, see ParseMCPValue). Returns "" for "false"
+// by a request, see ParseMCPValue); "disable" (or "false") = all MCP off
+// for the app; "default" = no document, the default behavior (an app with
+// actions serves them as MCP tools at /mcp). Returns "" for "default"
 func ParseMCPArg(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if strings.HasPrefix(value, "@") {
@@ -196,8 +250,10 @@ func ParseMCPArg(value string) (string, error) {
 func ParseMCPValue(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	switch {
-	case value == "false":
+	case value == MCPValueDefault:
 		return "", nil
+	case value == MCPValueDisable || value == "false":
+		return mcpDisabledDoc, nil
 	case value == "" || value == "true":
 		return (&MCPConfig{Path: "/"}).Canonical(), nil
 	case value == MCPSourceActions:
@@ -215,7 +271,7 @@ func ParseMCPValue(value string) (string, error) {
 		}
 		doc = (&MCPConfig{Path: "/", ContainerPath: containerPath}).Canonical()
 	} else {
-		return "", fmt.Errorf("invalid mcp value %q: expected actions, a container path (/mcp), a JSON object or @file", value)
+		return "", fmt.Errorf("invalid mcp value %q: expected actions, disable, default, a container path (/mcp), a JSON object or @file", value)
 	}
 	config, err := ParseMCPConfig(doc)
 	if err != nil {

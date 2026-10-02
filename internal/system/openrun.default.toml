@@ -116,6 +116,15 @@ auth = ["admin"]                 # login mechanisms for openrun login; at least 
 enable_apis = []                 # ops disabled by default for the remote REST API, opted back in
 disable_apis = []                # additional ops turned off for the remote REST API
 
+[api.app_mcp]                    # the aggregate MCP endpoint (/_openrun/app_mcp): the actions of all the
+                                 # apps the caller can run, each as a tool. ?apps=<glob> selects the apps,
+                                 # ?auth=<name> the login (default: security.app_default_auth_type)
+enable = true                    # on by default; false turns the endpoint off. Not served on a server
+                                 # with security.unsafe_disable_rbac (its per app checks need RBAC)
+list_ttl = "3m"                  # freshness hint of the tool list
+max_tools = 300                  # tools/list fails above this many tools, narrow the apps glob
+allowed_auth = []                # login mechanisms the auth param may name; empty = any configured one
+
 [security]
 admin_password_bcrypt = ""       # the password bcrypt value
 session_max_age = 86400          # session idle lifetime in seconds; sessions in use are renewed, so this is the max time

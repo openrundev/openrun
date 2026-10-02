@@ -1,0 +1,395 @@
+# MCP for app actions e2e. Covers: an app with actions serves them as MCP
+# tools at <app>/mcp by default (no --mcp flag), --mcp=disable turning all MCP
+# off for an app, the implicit endpoint yielding to an app route at /mcp; the
+# aggregate endpoint /_openrun/app_mcp (one endpoint for the actions of all
+# the apps the caller can run: tool names, the apps glob, the auth param and
+# the token audience, the token-less anonymous view, permits, the apps which
+# stay out, the OAuth flow); and the auth param of the management MCP
+# endpoint (/_openrun/mcp?auth=<name>).
+config:
+  env:
+    CL_CONFIG_FILE: openrun.toml
+    GOCOVERDIR: ${GOCOVERDIR}/../client
+    MAIN_HTTPS_PORT: ${MAIN_HTTPS_PORT}
+    MAIN_HTTP_PORT: ${MAIN_HTTP_PORT}
+tests:
+  aggmcp0010: # app sources: an orders app (a root action and a permit restricted one),
+    # an open app, an app with its own route at /mcp
+    command: |
+      rm -rf agg_src agg_open agg_routed && mkdir -p agg_src agg_open agg_routed
+      cat > agg_src/app.star <<'EOF'
+      def orders(dry_run, args):
+          if dry_run:
+              return ace.result("Arguments are valid")
+          rows = [{"id": i + 1, "status": args.status} for i in range(args.count)]
+          return ace.result("Listed %d orders" % args.count, rows, ace.TABLE)
+
+      def cancel(dry_run, args):
+          return ace.result("Cancelled")
+
+      app = ace.app("Orders",
+          actions=[
+              ace.action("List Orders", "/", orders, description="List the orders"),
+              ace.action("Cancel Order", "/cancel", cancel, permit=["ops_admin"], description="Cancel an order", hidden=["count", "status"]),
+          ])
+      EOF
+      cat > agg_src/params.star <<'EOF'
+      param("count", type=INT, description="Number of orders", default=2)
+      param("status", description="Order status", default="open")
+      EOF
+      cat > agg_open/app.star <<'EOF'
+      def ping(dry_run, args):
+          return ace.result("pong")
+
+      app = ace.app("Open", actions=[ace.action("Ping", "/ping", ping, description="Check the app")])
+      EOF
+      cat > agg_routed/app.star <<'EOF'
+      def own(req):
+          return {"own": "route"}
+
+      def run(dry_run, args):
+          return ace.result("ran")
+
+      app = ace.app("Routed", routes=[ace.api("/mcp", own, type=ace.JSON)],
+          actions=[ace.action("Run", "/run", run)])
+      EOF
+      echo "sources written"
+    stdout: "sources written"
+    exit-code: 0
+  aggmcp0020: # users and RBAC without the default grant: alice and carol use the apps
+    # under /aggapps (carol also holds the ops_admin permit), bob has nothing,
+    # the anonymous user reaches the two open apps
+    command: |
+      set -e
+      cat > agg_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {"ops": ["custom:ops_admin"]}, "grants": [
+        {"description": "alice uses apps under /aggapps", "users": ["builtin:alice"], "roles": ["openrun-user"], "targets": ["/aggapps/**"]},
+        {"description": "carol uses and operates apps under /aggapps", "users": ["builtin:carol"], "roles": ["openrun-user", "ops"], "targets": ["/aggapps/**"]},
+        {"description": "open apps", "users": ["anonymous"], "roles": ["openrun-user"], "targets": ["/aggapps/open-app", "/aggapps/routed"]}
+      ]}}
+      EOF
+      ../openrun server update-config --force agg_rbac.json > /dev/null
+      ../openrun user add alice --value alicepw > /dev/null
+      ../openrun user add bob --value bobpw > /dev/null
+      ../openrun user add carol --value carolpw > /dev/null
+      ../openrun app create --approve --auth builtin ./agg_src /aggapps/orders > /dev/null
+      ../openrun app create --approve --auth builtin ./agg_src /aggapps/under_score > /dev/null
+      ../openrun app create --approve --auth builtin --mcp=disable ./agg_src /aggapps/off > /dev/null
+      ../openrun app create --approve --auth builtin \
+        --mcp='{"source":"actions","scopes":["o:w"],"tools":{"cancel":"o:w"}}' ./agg_src /aggapps/scoped > /dev/null
+      ../openrun app create --approve --auth none ./agg_open /aggapps/open-app > /dev/null
+      ../openrun app create --approve --auth none ./agg_routed /aggapps/routed
+      for user in alice bob carol; do
+        ../openrun apikey create --user builtin:$user --resource app_mcp:builtin --scopes app:access | grep -o "orun_pat_[0-9a-f_]*" > agg_$user.txt
+      done
+      ../openrun apikey create --user builtin:alice --resource app:/aggapps/orders | grep -o "orun_pat_[0-9a-f_]*" > agg_alice_app.txt
+      ../openrun apikey create --user builtin:alice --resource mcp --scopes "*" | grep -o "orun_pat_[0-9a-f_]*" > agg_alice_mgmt.txt
+    stdout: "App: /aggapps/routed"
+    exit-code: 0
+  aggmcp0030: # default on: an app with actions and no --mcp flag is an MCP endpoint at
+    # <app>/mcp, with the challenge, the metadata document and the tools
+    command: |
+      { curl -sk -o /dev/null -D - -X POST https://localhost:${MAIN_HTTPS_PORT}/aggapps/orders/mcp | grep -i "^www-authenticate" | tr -d '\r'
+      curl -sk https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/aggapps/orders/mcp | jq -r .resource
+      curl -sk -X POST -H "Authorization: Bearer $(cat agg_alice_app.txt)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' https://localhost:${MAIN_HTTPS_PORT}/aggapps/orders/mcp \
+        | sed -n 's/^data: //p' | jq -r '[.result.tools[].name] | join(" ") | "tools=" + .'
+      ../openrun app list -i -f json /aggapps/orders | jq -r '.[0].metadata.mcp // "stored=none" | tostring'; } | sed "s/localhost:${MAIN_HTTPS_PORT}/localhost:PORT/g"
+    stdout:
+      contains:
+        - 'Bearer realm='
+        - 'resource_metadata="https://localhost:PORT/.well-known/oauth-protected-resource/aggapps/orders/mcp"'
+        - "https://localhost:PORT/aggapps/orders/mcp"
+        - "tools=list_orders"
+        - "stored=none"
+      not-contains:
+        - "cancel"
+    exit-code: 0
+  aggmcp0040: # --mcp=disable: no MCP region (the path is an ordinary app path with the
+    # app's login) and no metadata; the management action tools refuse the app over
+    # MCP while the CLI still runs its actions. An app route at /mcp is not shadowed
+    # by the implicit endpoint
+    command: |
+      mgmt() { curl -sk -X POST -H "Authorization: Bearer $(cat agg_alice_mgmt.txt)" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d "$1" \
+        https://localhost:${MAIN_HTTPS_PORT}/_openrun/mcp | sed -n 's/^data: //p'; }
+      curl -sk -o /dev/null -D - -X POST https://localhost:${MAIN_HTTPS_PORT}/aggapps/off/mcp | grep -ci "www-authenticate: bearer" | sed 's/^/off_bearer=/'
+      curl -sk -o /dev/null -w 'off_prm=%{http_code}\n' https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/aggapps/off/mcp
+      ../openrun app list -i -f json /aggapps/off | jq -r '.[0].metadata.mcp | tostring'
+      mgmt '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_action","arguments":{"path":"/aggapps/off","action":"list_orders"}}}' | jq -r '.result.content[0].text // .error.message'
+      mgmt '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_action","arguments":{"path":"/aggapps/orders","action":"list_orders"}}}' | jq -r '.result.structuredContent.status // .result.content[0].text'
+      mgmt '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_actions","arguments":{"path_glob":"/aggapps/**"}}}' | jq -r '[.result.structuredContent.actions[].app_path] | unique | join(" ") | "listed=" + .'
+      ../openrun --as builtin:alice action run -q --format csv /aggapps/off list_orders count=1
+      curl -s http://localhost:${MAIN_HTTP_PORT}/aggapps/routed/mcp | jq -r '"routed=" + .own'
+    stdout:
+      contains:
+        - "off_bearer=0"
+        - "off_prm=404"
+        - '{"disable":true}'
+        - "MCP is disabled for app /aggapps/off"
+        - "Listed 2 orders"
+        - "1,open"
+        - "routed=route"
+      not-contains:
+        - "/aggapps/off "
+    exit-code: 0
+  aggmcp0100: # the aggregate endpoint, default auth (none on this server): token-less,
+    # the anonymous user sees the open apps only. No metadata document, no challenge.
+    # Served over plaintext on loopback like the MCP apps
+    command: |
+      amcp() { url="$1"; shift; curl -sk -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+        -H 'MCP-Protocol-Version: 2025-03-26' "$@" "$url" | sed -n 's/^data: //p'; }
+      amcp http://localhost:${MAIN_HTTP_PORT}/_openrun/app_mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' > agg_list.json
+      jq -r '[.result.tools[].name] | join(" ") | "tools=" + .' agg_list.json
+      jq -r '.result.tools[] | select(.name == "aggapps_open-app__ping") | [.title, (.description | split("\n")[0])] | join(" / ")' agg_list.json
+      amcp http://localhost:${MAIN_HTTP_PORT}/_openrun/app_mcp -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"aggapps_open-app__ping","arguments":{}}}' | jq -r '.result.structuredContent.status'
+      curl -sk -o /dev/null -w 'prm=%{http_code}\n' https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/_openrun/app_mcp
+      curl -sk -o /dev/null -w 'badtoken=%{http_code}\n' -X POST -H 'Authorization: Bearer orun_pat_bad' https://localhost:${MAIN_HTTPS_PORT}/_openrun/app_mcp
+    stdout:
+      contains:
+        - "tools=aggapps_open-app__ping aggapps_routed__run"
+        - "Open: Ping / App /aggapps/open-app"
+        - "pong"
+        - "prm=404"
+        - "badtoken=401"
+    exit-code: 0
+  aggmcp0110: # auth=builtin: a login is needed. The challenge and the metadata document
+    # carry the mechanism, which is part of the token audience
+    command: |
+      { curl -sk -o /dev/null -D - -X POST "https://localhost:${MAIN_HTTPS_PORT}/_openrun/app_mcp?auth=builtin&apps=/aggapps/**" | grep -i "^www-authenticate" | tr -d '\r'
+      curl -sk "https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/_openrun/app_mcp?auth=builtin" | jq -r '.resource, (.scopes_supported | join(","))'
+      curl -sk "https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/_openrun/app_mcp?auth=system" | jq -r '.resource'; } | sed "s/localhost:${MAIN_HTTPS_PORT}/localhost:PORT/g"
+    stdout:
+      contains:
+        - 'resource_metadata="https://localhost:PORT/.well-known/oauth-protected-resource/_openrun/app_mcp?auth=builtin", scope="app:access"'
+        - "https://localhost:PORT/_openrun/app_mcp?auth=builtin"
+        - "app:access"
+        - "https://localhost:PORT/_openrun/app_mcp?auth=system"
+    exit-code: 0
+  aggmcp0120: # the tools of a user: every action of the apps they can use, each named
+    # for its app. Plain paths map without a hash, a path with an underscore carries
+    # one (and is cut to the 24 char limit of the app part). Left out: the permit
+    # restricted action, the app with a tool scope map and the app with MCP disabled.
+    # Open apps accept any login which has access: bob, with no grant, sees nothing
+    command: |
+      amcp() { url="$1"; shift; curl -sk -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+        -H 'MCP-Protocol-Version: 2025-03-26' "$@" "$url" | sed -n 's/^data: //p'; }
+      URL="https://localhost:${MAIN_HTTPS_PORT}/_openrun/app_mcp?auth=builtin"
+      list() { amcp "$2" -H "Authorization: Bearer $(cat agg_$1.txt)" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'; }
+      list alice "$URL" > agg_list.json
+      jq -r '[.result.tools[].name] | join(" ") | "alice=" + .' agg_list.json | sed 's/under_score--[0-9a-f]\{8\}/under_score--HASH/g'
+      jq -r '.result.tools[] | select(.name == "aggapps_orders__list_orders") | [.title, (.description | split("\n")[0]), (.inputSchema.properties | keys | join(","))] | join(" / ")' agg_list.json
+      list carol "$URL" | jq -r '[.result.tools[].name | select(test("cancel"))] | join(" ") | "carol=" + .' | sed 's/under_score--[0-9a-f]\{8\}/under_score--HASH/g'
+      list bob "$URL" | jq -r '[.result.tools[].name] | join(" ") | "bob=" + .'
+      list alice "$URL&apps=/aggapps/open*" | jq -r '[.result.tools[].name] | join(" ") | "glob=" + .'
+      list alice "$URL&stage=true" | jq -r '[.result.tools[].name] | length | "stage_count=" + tostring'
+    stdout:
+      contains:
+        - "alice=aggapps_open-app__ping aggapps_orders__list_orders aggapps_routed__run ps_under_score--HASH__list_orders"
+        - "Orders: List Orders / App /aggapps/orders / count,dry_run,status"
+        - "carol=aggapps_orders__cancel ps_under_score--HASH__cancel"
+        - "bob="
+        - "glob=aggapps_open-app__ping"
+        - "stage_count=4"
+      not-contains:
+        - "scoped"
+        - "aggapps_off"
+    exit-code: 0
+  aggmcp0130: # calling: the action runs as the caller under the app's checks. A tool the
+    # caller cannot see (the permit, an app outside the glob, a scoped or disabled
+    # app, an unknown name) is an unknown tool
+    command: |
+      amcp() { url="$1"; shift; curl -sk -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+        -H 'MCP-Protocol-Version: 2025-03-26' "$@" "$url" | sed -n 's/^data: //p'; }
+      URL="https://localhost:${MAIN_HTTPS_PORT}/_openrun/app_mcp?auth=builtin"
+      call() { user="$1"; url="$2"; name="$3"; args="$4"; amcp "$url" -H "Authorization: Bearer $(cat agg_$user.txt)" \
+        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$name\",\"arguments\":$args}}"; }
+      result() { jq -r 'if .error then "error " + .error.message else [(.result.isError // false), (.result.structuredContent.status // .result.content[0].text)] | join(" ") end'; }
+      HASHED=$(jq -r '.result.tools[].name | select(test("under_score.*list_orders"))' agg_list.json)
+      echo "$HASHED" | grep -c "^ps_under_score--[0-9a-f]\{8\}__list_orders$" | sed 's/^/hashed_name=/' 
+      call alice "$URL" aggapps_orders__list_orders '{"count":3,"status":"closed"}' > agg_call.json
+      result < agg_call.json
+      jq -r '.result.structuredContent.values | length | "rows=" + tostring' agg_call.json
+      call alice "$URL" aggapps_orders__list_orders '{"dry_run":true}' | result
+      call alice "$URL" "$HASHED" '{"count":1}' | result
+      call carol "$URL" aggapps_orders__cancel '{}' | result
+      call alice "$URL" aggapps_orders__cancel '{}' | result | sed 's/^/permit: /'
+      call alice "$URL&apps=/aggapps/open*" aggapps_orders__list_orders '{}' | result | sed 's/^/glob: /'
+      call alice "$URL" aggapps_scoped__list_orders '{}' | result | sed 's/^/scoped: /'
+      call alice "$URL" aggapps_off__list_orders '{}' | result | sed 's/^/off: /'
+      call bob "$URL" aggapps_orders__list_orders '{}' | result | sed 's/^/bob: /'
+      call alice "$URL" nosuch__tool '{}' | result | sed 's/^/nosuch: /'
+    stdout:
+      contains:
+        - "hashed_name=1"
+        - "false Listed 3 orders"
+        - "rows=3"
+        - "false Arguments are valid"
+        - "false Listed 1 orders"
+        - "false Cancelled"
+        - 'permit: error unknown tool "aggapps_orders__cancel"'
+        - 'glob: error unknown tool "aggapps_orders__list_orders"'
+        - 'scoped: error unknown tool "aggapps_scoped__list_orders"'
+        - 'off: error unknown tool "aggapps_off__list_orders"'
+        - 'bob: error unknown tool "aggapps_orders__list_orders"'
+        - 'nosuch: error unknown tool "nosuch__tool"'
+    exit-code: 0
+  aggmcp0140: # audiences are separate: an app_mcp key is refused by the management
+    # endpoint and by an app's own endpoint, a management key and an app key by the
+    # aggregate, and a key for one mechanism by the url of another. Browser origins,
+    # a bad glob and logins which cannot be used are refused
+    command: |
+      code() { curl -sk -o /dev/null -w "$1=%{http_code}\n" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$@"; }
+      BASE="https://localhost:${MAIN_HTTPS_PORT}"
+      code agg_at_mgmt -H "Authorization: Bearer $(cat agg_alice.txt)" "$BASE/_openrun/mcp" | tail -1
+      code agg_at_app -H "Authorization: Bearer $(cat agg_alice.txt)" "$BASE/aggapps/orders/mcp" | tail -1
+      code mgmt_at_agg -H "Authorization: Bearer $(cat agg_alice_mgmt.txt)" "$BASE/_openrun/app_mcp?auth=builtin" | tail -1
+      code app_at_agg -H "Authorization: Bearer $(cat agg_alice_app.txt)" "$BASE/_openrun/app_mcp?auth=builtin" | tail -1
+      code builtin_at_system -H "Authorization: Bearer $(cat agg_alice.txt)" "$BASE/_openrun/app_mcp?auth=system" | tail -1
+      code builtin_at_default -H "Authorization: Bearer $(cat agg_alice.txt)" "$BASE/_openrun/app_mcp" | tail -1
+      code ok -H "Authorization: Bearer $(cat agg_alice.txt)" "$BASE/_openrun/app_mcp?auth=builtin" | tail -1
+      code origin -H "Origin: https://evil.example" "$BASE/_openrun/app_mcp" | tail -1
+      code badglob "$BASE/_openrun/app_mcp?apps=a:b:c:d" | tail -1
+      code cert "$BASE/_openrun/app_mcp?auth=cert_test1" | tail -1
+      code unknown "$BASE/_openrun/app_mcp?auth=nosuchlogin" | tail -1
+      code badstage "$BASE/_openrun/app_mcp?stage=maybe" | tail -1
+    stdout:
+      contains:
+        - "agg_at_mgmt=401"
+        - "agg_at_app=401"
+        - "mgmt_at_agg=401"
+        - "app_at_agg=401"
+        - "builtin_at_system=401"
+        - "builtin_at_default=401"
+        - "ok=200"
+        - "origin=403"
+        - "badglob=400"
+        - "cert=400"
+        - "unknown=400"
+        - "badstage=400"
+    exit-code: 0
+  aggmcp0150: # the OAuth flow for the endpoint: the resource carries the mechanism, the
+    # login is the builtin one (the admin account is not accepted through it), the
+    # token works at the endpoint and nowhere else
+    command: |
+      BASE="https://localhost:${MAIN_HTTPS_PORT}"
+      RES="$BASE/_openrun/app_mcp?auth=builtin"
+      VERIFIER=$(printf 'v%.0s' $(seq 1 50))
+      CHALLENGE=$(printf %s "$VERIFIER" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+      authorize() { curl -sk -o agg_page.html -D - --data-urlencode "response_type=code" --data-urlencode "client_id=openrun-cli" \
+        --data-urlencode "redirect_uri=http://127.0.0.1:39999/callback" --data-urlencode "state=st" --data-urlencode "code_challenge=$CHALLENGE" \
+        --data-urlencode "code_challenge_method=S256" --data-urlencode "resource=$1" --data-urlencode "or_username=$2" \
+        --data-urlencode "or_password=$3" "$BASE/_openrun/oauth/authorize" | tr -d '\r'; }
+      authorize "$RES&apps=/aggapps/**" admin qwerty | grep -ci "^location:" | sed 's/^/admin_redirects=/'
+      grep -o "invalid username or password" agg_page.html | head -1
+      grep -o "wants access to <b>[^<]*</b>" agg_page.html | head -1
+      CODE=$(authorize "$RES&apps=/aggapps/**" alice alicepw | grep -i "^location:" | sed 's/.*code=\([0-9a-f]*\).*/\1/')
+      curl -sk -d grant_type=authorization_code -d "code=$CODE" -d client_id=openrun-cli --data-urlencode "redirect_uri=http://127.0.0.1:39999/callback" \
+        -d "code_verifier=$VERIFIER" --data-urlencode "resource=$RES" "$BASE/_openrun/oauth/token" > agg_token.json
+      jq -r '"scope=" + .scope' agg_token.json
+      TOKEN=$(jq -r .access_token agg_token.json)
+      tools() { curl -sk -o /dev/null -w "$1=%{http_code}\n" -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$2"; }
+      tools token_at_agg "$RES"
+      tools token_at_mgmt "$BASE/_openrun/mcp"
+      authorize "$BASE/_openrun/app_mcp" alice alicepw | grep -ci "^location:" | sed 's/^/none_redirects=/'
+      grep -o "served without a token" agg_page.html | head -1
+    stdout:
+      contains:
+        - "admin_redirects=0"
+        - "invalid username or password"
+        - "wants access to <b>app actions</b>"
+        - "scope=app:access"
+        - "token_at_agg=200"
+        - "token_at_mgmt=401"
+        - "none_redirects=0"
+        - "served without a token"
+    exit-code: 0
+  aggmcp0200: # the management endpoint takes the login as a query param too. It selects
+    # the login page (one of api.mcp auth), the audience stays the surface: the
+    # challenge and the document carry it, the admin account is not accepted through
+    # an auth=builtin page, and the token is a normal mcp token
+    command: |
+      BASE="https://localhost:${MAIN_HTTPS_PORT}"
+      { curl -sk -o /dev/null -D - -X POST "$BASE/_openrun/mcp?auth=builtin" | grep -i "^www-authenticate" | tr -d '\r'
+      curl -sk "$BASE/.well-known/oauth-protected-resource/_openrun/mcp?auth=builtin" | jq -r .resource
+      curl -sk "$BASE/.well-known/oauth-protected-resource/_openrun/mcp" | jq -r '"plain=" + .resource'; } | sed "s/localhost:${MAIN_HTTPS_PORT}/localhost:PORT/g"
+      curl -sk -o /dev/null -w 'bad_auth=%{http_code}\n' -X POST "$BASE/_openrun/mcp?auth=nosuchlogin"
+      curl -sk -o /dev/null -w 'bad_auth_prm=%{http_code}\n' "$BASE/.well-known/oauth-protected-resource/_openrun/mcp?auth=nosuchlogin"
+      VERIFIER=$(printf 'v%.0s' $(seq 1 50))
+      CHALLENGE=$(printf %s "$VERIFIER" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+      authorize() { curl -sk -o agg_page.html -D - --data-urlencode "response_type=code" --data-urlencode "client_id=openrun-cli" \
+        --data-urlencode "redirect_uri=http://127.0.0.1:39999/callback" --data-urlencode "code_challenge=$CHALLENGE" \
+        --data-urlencode "code_challenge_method=S256" --data-urlencode "resource=$1" --data-urlencode "or_username=$2" \
+        --data-urlencode "or_password=$3" "$BASE/_openrun/oauth/authorize" | tr -d '\r'; }
+      authorize "$BASE/_openrun/mcp?auth=builtin" admin qwerty | grep -ci "^location:" | sed 's/^/admin_via_builtin=/'
+      authorize "$BASE/_openrun/mcp" admin qwerty | grep -ci "^location:" | sed 's/^/admin_plain=/'
+      CODE=$(authorize "$BASE/_openrun/mcp?auth=builtin" alice alicepw | grep -i "^location:" | sed 's/.*code=\([0-9a-f]*\).*/\1/')
+      TOKEN=$(curl -sk -d grant_type=authorization_code -d "code=$CODE" -d client_id=openrun-cli --data-urlencode "redirect_uri=http://127.0.0.1:39999/callback" \
+        -d "code_verifier=$VERIFIER" --data-urlencode "resource=$BASE/_openrun/mcp?auth=builtin" "$BASE/_openrun/oauth/token" | jq -r .access_token)
+      for url in "$BASE/_openrun/mcp?auth=builtin" "$BASE/_openrun/mcp"; do
+        curl -sk -o /dev/null -w 'token=%{http_code}\n' -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+          -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$url"
+      done
+    stdout:
+      contains:
+        - 'resource_metadata="https://localhost:PORT/.well-known/oauth-protected-resource/_openrun/mcp?auth=builtin"'
+        - "https://localhost:PORT/_openrun/mcp?auth=builtin"
+        - "plain=https://localhost:PORT/_openrun/mcp"
+        - "bad_auth=400"
+        - "bad_auth_prm=400"
+        - "admin_via_builtin=0"
+        - "admin_plain=1"
+      not-contains:
+        - "token=401"
+        - "token=400"
+        - "plain=https://localhost:PORT/_openrun/mcp?"
+    exit-code: 0
+  aggmcp0300: # every MCP call is an audit event of the mcp type, for the three kinds of
+    # endpoint: the method, the tool, the endpoint, the client and the outcome. A
+    # served MCP request leaves no http event (one refused before the caller is
+    # known, like a missing token, stays an http event). (Read from the audit database; skipped without sqlite3)
+    command: |
+      DB=metadata/clace_audit.db
+      if ! command -v sqlite3 > /dev/null; then
+        for check in apps_call apps_list anonymous unknown app_list mgmt_failed mgmt_ok oauth_client no_http; do echo "$check=1"; done
+        exit 0
+      fi
+      sleep 1
+      q() { sqlite3 "$DB" "select count(*) > 0 from audit where event_type = 'mcp' and $1"; }
+      q "operation = 'tools/call' and target = 'aggapps_orders__list_orders' and user_id = 'builtin:alice' and status = 'Success' and detail like '%endpoint=apps %auth=builtin%' and detail like '%client=apikey cred=%'" | sed 's/^/apps_call=/'
+      q "operation = 'tools/list' and user_id = 'builtin:alice' and detail like '%endpoint=apps %'" | sed 's/^/apps_list=/'
+      q "target = 'aggapps_open-app__ping' and user_id = 'anonymous' and detail like '%client=none%'" | sed 's/^/anonymous=/'
+      q "target = 'nosuch__tool' and status = 'Failed' and detail like '%unknown tool%'" | sed 's/^/unknown=/'
+      q "operation = 'tools/list' and user_id = 'builtin:alice' and detail like '%endpoint=app %app=/aggapps/orders%' and app_id != ''" | sed 's/^/app_list=/'
+      q "target = 'run_action' and status = 'Failed' and detail like '%endpoint=management%' and detail like '%MCP is disabled%'" | sed 's/^/mgmt_failed=/'
+      q "target = 'run_action' and status = 'Success' and detail like '%endpoint=management%'" | sed 's/^/mgmt_ok=/'
+      q "user_id = 'builtin:alice' and detail like '%client=openrun-cli cred=%'" | sed 's/^/oauth_client=/'
+      sqlite3 "$DB" "select count(*) = 0 from audit where event_type = 'http' and status = '200' and (target like '%/_openrun/app_mcp' or target like '%/aggapps/orders/mcp' or target like '%/_openrun/mcp')" | sed 's/^/no_http=/' 
+    stdout:
+      contains:
+        - "apps_call=1"
+        - "apps_list=1"
+        - "anonymous=1"
+        - "unknown=1"
+        - "app_list=1"
+        - "mgmt_failed=1"
+        - "mgmt_ok=1"
+        - "oauth_client=1"
+        - "no_http=1"
+    exit-code: 0
+  aggmcp0900: # cleanup: apps, users, keys, RBAC, working files
+    command: |
+      for app in orders under_score off scoped open-app routed; do ../openrun app delete /aggapps/$app; done
+      ../openrun user delete alice
+      ../openrun user delete bob
+      ../openrun user delete carol
+      for id in $(../openrun apikey list --all -f json | jq -r '.[].id'); do ../openrun apikey delete "$id" > /dev/null; done
+      cat > agg_rbac.json <<EOF
+      {"version_id": "force", "rbac": {"groups": {}, "roles": {}, "grants": [{"description": "Default: authenticated principals can access and list apps", "users": ["*"], "roles": ["openrun-user"], "targets": ["all"]}]}}
+      EOF
+      ../openrun server update-config --force agg_rbac.json
+      rm -rf agg_src agg_open agg_routed agg_rbac.json agg_list.json agg_call.json agg_token.json agg_page.html agg_alice.txt agg_bob.txt agg_carol.txt agg_alice_app.txt agg_alice_mgmt.txt
+    exit-code: 0

@@ -94,6 +94,12 @@ Clients identify themselves in one of three ways, in the order the MCP spec reco
 claude mcp add --transport http openrun https://openrun.example.com:25223/_openrun/mcp
 ```
 
+The endpoint url can name the login to use: `https://<host>/_openrun/mcp?auth=<name>`, where the name is one of `[api.mcp] auth` (`system` is accepted for `admin`). The login page then offers that login only, a single federated one is started right away, and credentials of the other listed logins are not accepted through it. This only selects the login: the token is a normal MCP token, valid at the endpoint with or without the param.
+
+```sh
+claude mcp add --transport http openrun "https://openrun.example.com:25223/_openrun/mcp?auth=google_openrun"
+```
+
 **API key** — mint an MCP-bound key and pass it as a bearer header:
 
 ```sh
@@ -181,7 +187,7 @@ Note on secrets: `secret_create` **is** enabled for MCP by default, which means 
 - **Bind keys to one surface.** The `rest`/`mcp` resource binding stops a key leaked from an MCP client config being replayed against the REST API and vice versa; avoid `--resource all`.
 - **Let keys expire.** Keep the 90 day default, rotate CI keys, and audit `openrun apikey list --all` for stale `never` keys. Deleting a key takes effect immediately.
 - **Use real certificates.** `skip_cert_check` and self-signed certs are for trials; [automatic TLS]({{< ref "networking" >}}) makes real certificates easy. Only list actual TLS-terminating proxies in `security.trusted_proxies`, and bind the plaintext listener to a private address in that setup.
-- **Watch the audit log.** Every remote call carries `invoker=rest` or `invoker=mcp` plus `cred=<id>` in the audit detail, and calls refused by the per-surface operation policy are audited too — "what has MCP done (or tried)" is a single filter.
+- **Watch the audit log.** Every MCP call, to this endpoint, to an app's MCP endpoint and to `/_openrun/app_mcp`, is an audit event of type `mcp` naming the method, the tool, the client and the credential, so "what did this AI client call" is one filter. Every remote call carries `invoker=rest` or `invoker=mcp` plus `cred=<id>` in the audit detail, and calls refused by the per-surface operation policy are audited too — "what has MCP done (or tried)" is a single filter.
 - **Keep `unsafe_*` flags off in production.** `security.unsafe_disable_rbac` and friends are dev-only; they cannot be set through the dynamic config API, and disabling RBAC also disables the remote surfaces.
 - **Narrow the default grant if apps should not be reachable by every authenticated user.** Replace the default `*` grant with group-scoped grants in the [RBAC config]({{< ref "rbac" >}}).
 
@@ -208,4 +214,12 @@ enable = false
 auth = ["admin"]                 # login mechanisms for openrun login (never empty)
 enable_apis = []
 disable_apis = []
+
+[api.app_mcp]                    # /_openrun/app_mcp: the actions of all apps as MCP tools
+enable = true                    # on by default
+list_ttl = "3m"                  # freshness hint of the tool list
+max_tools = 300                  # the tool list fails above this, narrow the apps glob
+allowed_auth = []                # logins the auth url param may name; empty = any configured one
 ```
+
+`[api.app_mcp]` is the [MCP endpoint for the actions of all apps]({{< ref "actions/#one-endpoint-for-all-apps" >}}). It has no `auth` list: the login comes from the url (`?auth=`), by default `security.app_default_auth_type`. Unlike the two management surfaces it is on by default: it gives a user nothing the apps' own pages do not, each action runs under the app's checks. It is not served with `security.unsafe_disable_rbac` set, and a login needs an OAuth issuer origin (https, or http on localhost for development); without one only the token-less `auth=none` view works. With it on, the OAuth authorization server endpoints (`/_openrun/oauth/*`) are active on the server.

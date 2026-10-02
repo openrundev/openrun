@@ -299,6 +299,9 @@ func (s *Server) parseAppMCPConfig(value string) (*types.MCPConfig, error) {
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
+	if config.Disable {
+		return config, nil // nothing is served, no issuer needed
+	}
 	if err := validateMCPAppIssuer(s.Config()); err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -989,7 +992,7 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 	// segments and doubled slashes (chi CleanPath), so "//mcp" or
 	// "/ui/../mcp" reach the same handler as "/mcp" and must get the same
 	// authentication
-	if mcp := app.Metadata.MCP; mcp != nil && inMCPRegion(path.Clean(r.URL.Path), appMCPRegion(app.Path, mcp)) {
+	if mcp := app.EffectiveMCP(); mcp != nil && inMCPRegion(path.Clean(r.URL.Path), appMCPRegion(app.Path, mcp)) {
 		// The MCP region accepts only OpenRun bearer credentials bound to
 		// this app: no cookies, no basic auth, no login redirects
 		s.serveMCPApp(w, r, app, mcp)

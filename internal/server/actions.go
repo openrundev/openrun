@@ -55,6 +55,7 @@ type actionTarget struct {
 	grantPath  types.AppPathDomain // the main app path for stage and preview apps, RBAC grants are on it
 	authn      types.AppAuthnType
 	owner      string
+	mcp        *types.MCPConfig // the stored mcp document, nil when the app has none
 }
 
 func actionTargetOfApp(application *app.App) actionTarget {
@@ -64,6 +65,7 @@ func actionTargetOfApp(application *app.App) actionTarget {
 		grantPath:  mainAppPathDomain(application.AppPathDomain(), application.MainApp, application.LinkedAppPath),
 		authn:      application.Metadata.AuthnType,
 		owner:      application.UserID,
+		mcp:        application.Metadata.MCP,
 	}
 }
 
@@ -74,6 +76,7 @@ func actionTargetOfInfo(info types.AppInfo) actionTarget {
 		grantPath:  mainAppPathDomain(info.AppPathDomain, info.MainApp, info.LinkedAppPath),
 		authn:      info.Auth,
 		owner:      info.UserID,
+		mcp:        storedMCPOfInfo(info),
 	}
 }
 
@@ -82,8 +85,15 @@ func actionTargetOfInfo(info types.AppInfo) actionTarget {
 // actions of an app whose users log in through saml_okta, even when a group
 // grant would let it through RBAC. Not checked for trusted calls (the unix
 // socket without --as), for the admin user and for callers holding the admin
-// permission; apps with auth none accept any principal
+// permission; apps with auth none accept any principal. An app with MCP
+// disabled (--mcp=disable) is refused to every MCP caller first
 func (s *Server) actionProviderMatch(ctx context.Context, target actionTarget) error {
+	if types.MCPDisabled(target.mcp) && system.GetContextApiInvoker(ctx) == InvokerMCP {
+		// --mcp=disable turns every MCP route to the app's actions off, the
+		// management action tools included; the CLI, the REST API and the
+		// form UI are not MCP and keep working
+		return types.CreateRequestError(fmt.Sprintf("MCP is disabled for app %s", target.pathDomain), http.StatusForbidden)
+	}
 	if !s.rbacManager.APIEnforced(ctx) {
 		return nil
 	}
@@ -161,7 +171,20 @@ func actionTargetOfEntry(entry *types.AppEntry) actionTarget {
 		grantPath:  mainAppPathDomain(entry.AppPathDomain(), entry.MainApp, entry.LinkedAppPath),
 		authn:      entry.Metadata.AuthnType,
 		owner:      entry.UserID,
+		mcp:        entry.Metadata.MCP,
 	}
+}
+
+// storedMCPOfInfo returns the stored mcp document of an app from its info,
+// which carries the effective config: nil for the implicit actions endpoint
+func storedMCPOfInfo(info types.AppInfo) *types.MCPConfig {
+	switch {
+	case info.MCPDisabled:
+		return &types.MCPConfig{Disable: true}
+	case info.MCPImplicit:
+		return nil
+	}
+	return info.MCP
 }
 
 // definitionApp returns an app with its definition loaded, without
@@ -763,7 +786,7 @@ func (s *Server) ActionFile(ctx context.Context, appPath, selector, fileURL stri
 		return nil, types.CreateRequestError(fmt.Sprintf("url %s is not within app %s, fetch it directly", fileURL, appPath), http.StatusBadRequest)
 	}
 	localPath, _, _ := strings.Cut(localURL, "?")
-	if mcp := resolved.app.Metadata.MCP; mcp != nil && inMCPRegion(path.Clean(localPath), appMCPRegion(resolved.app.Path, mcp)) {
+	if mcp := resolved.app.EffectiveMCP(); mcp != nil && inMCPRegion(path.Clean(localPath), appMCPRegion(resolved.app.Path, mcp)) {
 		// The MCP region accepts only bearer credentials bound to the app,
 		// it is not reachable through this route
 		return nil, types.CreateRequestError(fmt.Sprintf("url %s is in the MCP endpoint of app %s", fileURL, appPath), http.StatusBadRequest)

@@ -215,8 +215,8 @@ func appDefToApplyInfo(appDef *starlarkstruct.Struct) (*types.CreateAppRequest, 
 
 // mcpEntry reads the app entry's mcp attribute: True (the whole app is the
 // MCP endpoint), a string (upstream path or JSON document) or a dict with
-// the MCPConfig fields, normalized to the canonical JSON document. "" when
-// unset or False
+// the MCPConfig fields, normalized to the canonical JSON document. False is
+// the disable document; "" when unset
 func mcpEntry(appDef *starlarkstruct.Struct) (string, error) {
 	v, err := appDef.Attr("mcp")
 	if err != nil || v == nil || v == starlark.None {
@@ -225,10 +225,12 @@ func mcpEntry(appDef *starlarkstruct.Struct) (string, error) {
 	var value string
 	switch item := v.(type) {
 	case starlark.Bool:
-		if !bool(item) {
-			return "", nil
-		}
+		// False turns all MCP off for the app (the disable document); leave
+		// mcp unset for the default behavior
 		value = "true"
+		if !bool(item) {
+			value = types.MCPValueDisable
+		}
 	case starlark.String:
 		value = item.GoString()
 		if value == "" {
@@ -245,7 +247,7 @@ func mcpEntry(appDef *starlarkstruct.Struct) (string, error) {
 		}
 		value = string(data)
 	default:
-		return "", fmt.Errorf("mcp must be True, a path/JSON string or a dict, got %s", v.Type())
+		return "", fmt.Errorf("mcp must be True, False, a path/JSON string or a dict, got %s", v.Type())
 	}
 	doc, err := types.ParseMCPValue(value)
 	if err != nil {

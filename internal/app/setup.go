@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -578,7 +579,11 @@ func (a *App) initActions(router *chi.Mux) error {
 // with mcp source "actions". The region is reachable through the bearer path
 // of the server only (serveMCPApp), which attaches the caller identity
 func (a *App) mountActionsMCP(router *chi.Mux) (err error) {
-	mcp := a.Metadata.MCP
+	// The effective config: the stored document, or for an app with actions
+	// and no document the implicit actions endpoint at /mcp. Staged here and
+	// published with the router (EffectiveMCP)
+	a.newMCP = nil
+	mcp, implicit := types.EffectiveMCP(a.Metadata.MCP, len(a.actions) > 0)
 	if mcp == nil {
 		return nil
 	}
@@ -588,10 +593,18 @@ func (a *App) mountActionsMCP(router *chi.Mux) (err error) {
 			return fmt.Errorf("app is an MCP app but has no container or proxy serving MCP: use --mcp=%s to serve the app's actions as MCP tools",
 				types.MCPSourceActions)
 		}
+		a.newMCP = mcp
 		return nil
 	}
 	if len(a.actions) == 0 {
 		return fmt.Errorf("mcp source %s needs the app to define actions", types.MCPSourceActions)
+	}
+	if implicit && routesTakePath(router, mcp.Path) {
+		// The endpoint was not asked for: it must not shadow a route or an
+		// action of the app, nor fail the load. A catch-all route (a proxy
+		// or container app) does not count, the endpoint claims the path
+		a.Warn().Msgf("app has a route at %s, its actions are not served as MCP tools there: set an mcp path to serve them", mcp.Path)
+		return nil
 	}
 
 	defer func() {
@@ -609,7 +622,86 @@ func (a *App) mountActionsMCP(router *chi.Mux) (err error) {
 	}
 	router.Handle(mcp.Path, handler)
 	router.Handle(mcp.Path+"/*", handler)
+	a.newMCP = mcp
 	return nil
+}
+
+// routesTakePath reports whether a route of the router overlaps the subtree
+// of the path (a single segment, like /mcp): the endpoint mounted there
+// would answer requests the route answers now, for any method. A route
+// overlaps when its first segment can be that segment: the literal, or a
+// param (/{page}, /{page}/status, /{id:[a-z]+}), whatever follows it. The
+// root catch-all (the mount of a proxy or container app, the file server of
+// a static app) is not counted: what is behind it is not known, the
+// endpoint claims the path
+func routesTakePath(router chi.Routes, path string) bool {
+	segment := strings.TrimPrefix(path, "/")
+	taken := false
+	_ = chi.Walk(router, func(_ string, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if firstSegmentMatches(route, segment) {
+			taken = true
+		}
+		return nil
+	})
+	return taken
+}
+
+// firstSegmentMatches reports whether the first segment of a chi route
+// pattern can match the segment. A bare wildcard does not count
+func firstSegmentMatches(route, segment string) bool {
+	// The first segment ends at the first "/" outside a {param:regexp}
+	first, depth := strings.TrimPrefix(route, "/"), 0
+	for i, r := range first {
+		if r == '{' {
+			depth++
+		} else if r == '}' {
+			depth--
+		} else if r == '/' && depth == 0 {
+			first = first[:i]
+			break
+		}
+	}
+	if first == "" || first == "*" {
+		return false
+	}
+	// As a regexp: literals quoted, {name} one or more non-slash characters,
+	// {name:regexp} the regexp
+	var expr strings.Builder
+	expr.WriteString("^")
+	for len(first) > 0 {
+		open := strings.IndexByte(first, '{')
+		if open < 0 {
+			expr.WriteString(regexp.QuoteMeta(first))
+			break
+		}
+		expr.WriteString(regexp.QuoteMeta(first[:open]))
+		end, depth := -1, 0
+		for i := open; i < len(first); i++ {
+			if first[i] == '{' {
+				depth++
+			} else if first[i] == '}' {
+				if depth--; depth == 0 {
+					end = i
+					break
+				}
+			}
+		}
+		if end < 0 {
+			return true // not a pattern this understands: assume it overlaps
+		}
+		if _, paramExpr, ok := strings.Cut(first[open+1:end], ":"); ok {
+			expr.WriteString("(?:" + paramExpr + ")")
+		} else {
+			expr.WriteString("[^/]+")
+		}
+		first = first[end+1:]
+	}
+	expr.WriteString("$")
+	compiled, err := regexp.Compile(expr.String())
+	if err != nil {
+		return true
+	}
+	return compiled.MatchString(segment)
 }
 
 // mountActionsAPI mounts the actions REST API router at the reserved /api path

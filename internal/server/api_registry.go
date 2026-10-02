@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
@@ -495,6 +496,9 @@ func validateApiSurfaceConfig(config *types.ServerConfig) error {
 	if err := validateApiConfig(config); err != nil {
 		return err
 	}
+	if err := validateAggMCPConfig(config); err != nil {
+		return err
+	}
 	if !apiSurfaceEnabled(config, string(types.ApiSurfaceRest)) && !apiSurfaceEnabled(config, string(types.ApiSurfaceMCP)) {
 		return nil
 	}
@@ -520,11 +524,53 @@ func validateApiSurfaceConfig(config *types.ServerConfig) error {
 			switch mechanism {
 			case "builtin", "admin":
 			default:
-				_, isOAuth := config.Auth[mechanism]
-				_, isSAML := config.SAML[mechanism]
-				if !isOAuth && !isSAML {
-					return fmt.Errorf("%s auth: unknown login mechanism %q (valid: builtin, admin, or an [auth.*]/[saml.*] entry name)", section, mechanism)
+				// The bare [saml.*] key was accepted here before the prefixed
+				// form was: kept, so that a config which validated still does
+				_, bareSAML := config.SAML[mechanism]
+				if !federatedMechanismConfigured(config, mechanism) && !bareSAML {
+					return fmt.Errorf("%s auth: unknown login mechanism %q (valid: builtin, admin, an [auth.*] entry name or saml_<name> for a [saml.*] entry)", section, mechanism)
 				}
+			}
+		}
+	}
+	return nil
+}
+
+// federatedMechanismConfigured reports whether a login mechanism name is a
+// configured federated login: an [auth.*] entry by its name, a [saml.*]
+// entry as saml_<name>. That is the name the mechanism has at runtime (an
+// app's auth setting, the auth url param), while the config map is keyed
+// by the bare name
+func federatedMechanismConfigured(config *types.ServerConfig, mechanism string) bool {
+	if name, ok := strings.CutPrefix(mechanism, SAML_AUTH_PREFIX); ok {
+		_, isSAML := config.SAML[name]
+		return isSAML
+	}
+	_, isOAuth := config.Auth[mechanism]
+	return isOAuth
+}
+
+// validateAggMCPConfig checks the values of the [api.app_mcp] section (the
+// aggregate app actions MCP endpoint). The endpoint is on by default, so
+// what it needs to be served (RBAC enforcement, see aggMCPEnabled; an
+// issuer origin for logins) is not validated here: a server without them
+// must still start
+func validateAggMCPConfig(config *types.ServerConfig) error {
+	appMCP := config.Api.AppMCP
+	if appMCP.ListTTL != "" {
+		if d, err := time.ParseDuration(appMCP.ListTTL); err != nil || d < 0 {
+			return fmt.Errorf("api.app_mcp list_ttl %q is not a valid duration", appMCP.ListTTL)
+		}
+	}
+	if appMCP.MaxTools < 0 {
+		return fmt.Errorf("api.app_mcp max_tools must not be negative")
+	}
+	for _, mechanism := range appMCP.AllowedAuth {
+		switch {
+		case mechanism == string(types.AppAuthnNone), mechanism == string(types.AppAuthnSystem), mechanism == string(types.AppAuthnBuiltin):
+		default:
+			if !federatedMechanismConfigured(config, mechanism) {
+				return fmt.Errorf("api.app_mcp allowed_auth: unknown login mechanism %q (valid: none, system, builtin, an [auth.*] entry name or saml_<name> for a [saml.*] entry)", mechanism)
 			}
 		}
 	}

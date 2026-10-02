@@ -405,12 +405,19 @@ openrun action list                                                   # the acti
 
 ## MCP Tools
 
-With the `--mcp=actions` option the app serves its actions as [MCP](https://modelcontextprotocol.io) tools, for AI clients like Claude Code, Cursor and VS Code. No change is required in the app code. The MCP endpoint is at `/mcp` under the app path (an action cannot be defined at that path); the form UI and the REST API stay as they are.
+An app with actions serves them as [MCP](https://modelcontextprotocol.io) tools, for AI clients like Claude Code, Cursor and VS Code. No option and no change in the app code is required. The MCP endpoint is at `/mcp` under the app path; the form UI and the REST API stay as they are.
 
 ```sh
-openrun app create --approve --auth builtin --mcp=actions ./orders /orders
+openrun app create --approve --auth builtin ./orders /orders
 claude mcp add --transport http orders https://apps.example.com/orders/mcp
 ```
+
+The endpoint is on by default:
+
+- `--mcp=disable` (or `openrun app update mcp disable /orders`) turns all MCP off for the app: no endpoint, the app is left out of the [endpoint for all apps]({{< ref "#one-endpoint-for-all-apps" >}}), and the management action tools refuse it when called over MCP. The CLI, the REST API and the form UI are not affected. `openrun app update mcp default /orders` goes back to the default.
+- `--mcp=actions` is the same endpoint as an explicit setting; the JSON form changes the path or adds scopes (below). With an explicit setting an action cannot be defined at the endpoint path, and the app create fails when the server has no usable OAuth issuer origin.
+- Without a setting the endpoint never gets in the way: when the app has a route or an action at `/mcp`, that route is served and the actions are not exposed there (set another `path` to serve them). A container or proxy app, whose routes OpenRun cannot see, gives up its upstream path `/mcp` to the endpoint; use `--mcp=disable` or another `path` when the upstream needs it.
+- The endpoint is served over HTTPS (and over plain HTTP on localhost, for development) on a server with an OAuth issuer origin, as for any [MCP app]({{< ref "docs/applications/mcp" >}}).
 
 The client connects with the OAuth flow described in [MCP Apps]({{< ref "docs/applications/mcp" >}}): the user logs in with the app's `auth`, the token is bound to the app, RBAC `app:access` applies, and the app's `scopes` and per tool scope requirements (`tools`) can be declared with the JSON form, `--mcp='{"source":"actions","scopes":[...],"tools":{"cancel_order":"orders:write"}}'`. `"path"` moves the endpoint from the default `/mcp`. API keys bound to the app (`openrun apikey create --resource app:/orders`) work for clients which cannot run a browser flow.
 
@@ -431,7 +438,32 @@ For an action which [streams]({{< ref "#streaming-output" >}}) a command, the ca
 
 The tool of an [async action]({{< ref "#async-actions" >}}) returns the `run_id` and `run_status` of the started run; its optional `wait_seconds` argument (up to 60) waits for the run and returns the result as a sync tool would. An app with async actions has three more tools: `get_run` (`run_id`, `wait_seconds`) returns a run with its result or the tail of its output, `list_runs` lists the runs and `cancel_run` stops one.
 
-Actions of all apps are also available through the generic `list_actions`, `get_action`, `run_action` and `suggest_action` tools of the [management MCP surface]({{< ref "docs/configuration/remoteaccess/#what-mcp-can-do" >}}), without the `--mcp` option on the app; `list_action_runs`, `get_action_run` and `cancel_action_run` manage the runs of async actions there, and `run_action` takes `wait_seconds` for them.
+### One endpoint for all apps
+
+`/_openrun/app_mcp` is a single MCP endpoint whose tools are the actions of every app the user can run, each action its own tool. It is on by default; `[api.app_mcp] enable = false` turns it off. It is not served on a server which runs with `security.unsafe_disable_rbac`.
+
+```sh
+claude mcp add --transport http apps https://openrun.example.com/_openrun/app_mcp
+claude mcp add --transport http team "https://openrun.example.com/_openrun/app_mcp?apps=/team/**"
+claude mcp add --transport http sso  "https://openrun.example.com/_openrun/app_mcp?auth=google_openrun"
+```
+
+| URL param | Default | Meaning |
+|---|---|---|
+| `apps` | `all` | App path glob selecting the apps of the view (`/team/**`, `example.com:/**`). A filter for the client's convenience, not an access boundary |
+| `auth` | `security.app_default_auth_type` | The login: `none`, `system`, `builtin`, an `[auth.*]` entry name or `saml_<name>` |
+| `stage` | `false` | `true` lists and runs the staging version of each app |
+
+- **Who can run what** is decided per app exactly as for `run_action`: RBAC `app:access`, the app's login (below) and the action's `permit`. Apps and actions the user cannot use are not listed, and calling one answers as an unknown tool does.
+- **One login per URL.** An action runs only for a user who logged in the way the app's users do. An `auth=builtin` entry therefore lists the apps which use builtin auth, plus the apps with auth `none` (which accept any login). A user with apps on two logins adds two entries. The login is part of the token: a token for one `auth` value is not accepted at another, nor at the management endpoint or an app's own endpoint.
+- **`auth=none` needs no login.** Requests run as the `anonymous` user and list the apps with auth `none` only. That is what a bare URL does on a server whose `app_default_auth_type` is `none` (the default): add `?auth=<login>` to see your own apps too.
+- **Tool names** are `<app>__<action>`. The app part is the app path with `/` as `_` (`/team/orders` gives `team_orders__cancel_order`, `/my-app` gives `my-app__ping`). An app whose path has other characters (`_`, `.`), an app on another domain and the root app carry a short hash of their path instead of clashing with another app (`team_orders--3fa2c41b__cancel`). A name depends on its app alone, it does not change when other apps are added. The app part is at most 24 characters and the action part 38, longer ones are cut and carry a hash.
+- **Left out**: apps with `--mcp=disable`, and apps whose mcp setting has a `tools` scope map (their tools need scopes only the app's own endpoint can grant).
+- The tools behave as on the app's own endpoint: `dry_run`, the suggest tools, the confirmation of destructive actions, results with files, and the run tools of async actions (`<app>__get_run` and so on).
+- The list fails when it has more tools than `[api.app_mcp] max_tools` (default 300), asking for a narrower `apps` glob, rather than hide tools silently.
+- API keys: `openrun apikey create --resource app_mcp:builtin --scopes app:access` (`app_mcp` alone is the default login). Browser based clients are not supported, a request with an `Origin` header is refused.
+
+Actions of all apps are also available through the generic `list_actions`, `get_action`, `run_action` and `suggest_action` tools of the [management MCP surface]({{< ref "docs/configuration/remoteaccess/#what-mcp-can-do" >}}), unless the app has `--mcp=disable`; `list_action_runs`, `get_action_run` and `cancel_action_run` manage the runs of async actions there, and `run_action` takes `wait_seconds` for them.
 
 ## Multiple Actions
 

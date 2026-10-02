@@ -442,6 +442,9 @@ func formatMCPArg(doc string) string {
 	if err != nil {
 		return quoteStarlark(doc)
 	}
+	if config.Disable {
+		return "False"
+	}
 	if config.Path == "/" && len(config.Scopes) == 0 && config.DefaultScope == "" &&
 		len(config.Tools) == 0 && len(config.AllowedOrigins) == 0 {
 		if config.ContainerPath == "" {

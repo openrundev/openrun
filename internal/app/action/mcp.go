@@ -87,9 +87,33 @@ type MCPTool struct {
 // handler. An action with a required file upload param cannot be called with
 // a JSON args document and gets no tool
 func MCPTools(actions []*Action) ([]*MCPTool, error) {
-	names := ToolNames(actions)
-	suggestNames := suggestToolNames(actions, names)
-	runNames := runToolNames(actions, names, suggestNames)
+	return MCPToolsNamed(actions, nil)
+}
+
+// MCPToolsNamed is MCPTools with the tool names mapped by namer (nil: the
+// names as they are). The aggregate endpoint of the server serves the tools
+// of many apps under one name space, so each app's tools are built with the
+// names they are listed under there: the names the tools refer to each
+// other by (the get_run tool named in the result of an async action, the
+// suggest tool in a description, the action argument and the rows of
+// list_runs) are then the listed ones, not the app local ones
+func MCPToolsNamed(actions []*Action, namer func(local string) string) ([]*MCPTool, error) {
+	localNames := ToolNames(actions)
+	suggestNames := suggestToolNames(actions, localNames)
+	runNames := runToolNames(actions, localNames, suggestNames)
+	names := localNames
+	if namer != nil {
+		names = make(map[*Action]string, len(localNames))
+		for act, name := range localNames {
+			names[act] = namer(name)
+		}
+		for act, name := range suggestNames {
+			suggestNames[act] = namer(name)
+		}
+		if runNames.get != "" {
+			runNames = runToolNameSet{get: namer(runNames.get), list: namer(runNames.list), cancel: namer(runNames.cancel)}
+		}
+	}
 	tools := make([]*MCPTool, 0, len(actions))
 	for _, act := range actions {
 		if act.HasRequiredFileParam() {
@@ -181,7 +205,7 @@ func MCPTools(actions []*Action) ([]*MCPTool, error) {
 			})
 		}
 	}
-	tools = append(tools, runTools(actions, names, runNames)...)
+	tools = append(tools, runTools(actions, names, localNames, runNames)...)
 	return tools, nil
 }
 
@@ -230,7 +254,7 @@ const (
 // runTools returns the run tools of an app with async actions: get_run,
 // list_runs and cancel_run. A run is visible to a caller who may run its
 // action
-func runTools(actions []*Action, names map[*Action]string, runNames runToolNameSet) []*MCPTool {
+func runTools(actions []*Action, names, localNames map[*Action]string, runNames runToolNameSet) []*MCPTool {
 	async := make([]*Action, 0)
 	for _, act := range actions {
 		if act.IsAsync() {
@@ -322,7 +346,7 @@ func runTools(actions []*Action, names map[*Action]string, runNames runToolNameS
 		}
 		merged := make([]listedRun, 0)
 		for _, act := range async {
-			if in.Action != "" && names[act] != in.Action && act.actionPath != in.Action {
+			if in.Action != "" && names[act] != in.Action && localNames[act] != in.Action && act.actionPath != in.Action {
 				continue
 			}
 			if authorized, err := act.Authorized(ctx); err != nil || !authorized {
@@ -537,11 +561,7 @@ func BuildMCPHandler(appName string, listTTL time.Duration, actions []*Action) (
 	byName := make(map[string]*MCPTool, len(tools))
 	for _, tool := range tools {
 		byName[tool.Tool.Name] = tool
-		if tool.handler != nil {
-			srv.AddTool(tool.Tool, tool.handler)
-		} else {
-			srv.AddTool(tool.Tool, tool.handle)
-		}
+		srv.AddTool(tool.Tool, tool.Call)
 	}
 
 	// tools/list shows a caller only the tools of the actions their permit
@@ -593,6 +613,16 @@ func mcpToolError(format string, args ...any) *mcp.CallToolResult {
 	result := &mcp.CallToolResult{IsError: true}
 	result.Content = []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(format, args...)}}
 	return result
+}
+
+// Call runs the tool: an action tool (run, validate, suggest) or one of the
+// run tools of an app with async actions, which are not bound to an action.
+// ctx is the app request context of the caller
+func (t *MCPTool) Call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if t.handler != nil {
+		return t.handler(ctx, req)
+	}
+	return t.handle(ctx, req)
 }
 
 func (t *MCPTool) handle(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {

@@ -44,7 +44,7 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		newStringFlag("scopes", "s", "Comma separated permission globs limiting the key (like app:*,sync:read)."+
 			" RBAC still applies; scopes are a ceiling. Default: unscoped, except mcp-only keys which"+
 			" default to read-only: *:read plus app:read_detail (pass --scopes \"*\" for a write-capable MCP key)", ""),
-		newStringFlag("resource", "r", "What the key is valid for: rest, mcp, all, or an MCP app (app:<path>, app:<domain>:<path>, or the app's MCP url)", "rest"),
+		newStringFlag("resource", "r", "What the key is valid for: rest, mcp, all, an MCP app (app:<path>, app:<domain>:<path>, or the app's MCP url), or the app actions endpoint /_openrun/app_mcp (app_mcp, app_mcp:<auth>)", "rest"),
 		newStringFlag("desc", "d", "Description for the key", ""),
 	)
 
@@ -114,6 +114,11 @@ func parseApiKeyResource(resource string) ([]string, error) {
 	case "all":
 		return []string{"rest", "mcp"}, nil
 	default:
+		if resource == "app_mcp" || strings.HasPrefix(resource, "app_mcp:") {
+			// The aggregate app actions MCP endpoint (/_openrun/app_mcp),
+			// optionally for a login mechanism: app_mcp:<auth>
+			return []string{resource}, nil
+		}
 		if strings.HasPrefix(resource, "app:") || strings.HasPrefix(resource, "https://") || strings.HasPrefix(resource, "http://") {
 			// An MCP app: app:<path>, app:<domain>:<path> or the app's MCP
 			// url (http only for a loopback development issuer); resolved

@@ -1381,7 +1381,15 @@ func (m *Metadata) GetAllAppsContext(ctx context.Context, includeInternal bool) 
 			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"]), *updateTime, retainVersions,
 			metadata.AppliedSyncId, userId.String)
 		appInfo.CreatedBySyncId = metadata.CreatedBySyncId
-		appInfo.MCP = metadata.MCP
+		// The effective MCP config: an app with actions has the actions
+		// endpoint unless it says otherwise. From the stored action
+		// definitions, so nothing is loaded; not for an action sitting at
+		// the endpoint path (the loaded app applies the same rule, and also
+		// knows the routes)
+		appInfo.HasActions = len(metadata.DefinitionActions) > 0
+		appInfo.MCPDisabled = types.MCPDisabled(metadata.MCP)
+		appInfo.MCP, appInfo.MCPImplicit = types.EffectiveMCP(metadata.MCP,
+			appInfo.HasActions && !types.ActionsTakeMCPPath(metadata.DefinitionActions))
 		apps = append(apps, appInfo)
 	}
 	if err := rows.Err(); err != nil {

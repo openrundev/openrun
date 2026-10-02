@@ -273,6 +273,27 @@ type ApiConfig struct {
 
 	MCP  ApiSurfaceConfig `toml:"mcp"`  // the MCP endpoint (/_openrun/mcp)
 	Rest ApiSurfaceConfig `toml:"rest"` // the management REST API over TCP (remote CLI)
+
+	AppMCP ApiAppMCPConfig `toml:"app_mcp"` // the aggregate app actions MCP endpoint (/_openrun/app_mcp)
+}
+
+// ApiAppMCPConfig configures the aggregate MCP endpoint ([api.app_mcp],
+// /_openrun/app_mcp): the actions of all apps the caller can run, each as a
+// tool. The login mechanism comes from the request (?auth=, default
+// security.app_default_auth_type), there is no auth list
+type ApiAppMCPConfig struct {
+	// Enable turns the endpoint and its OAuth resource on. Default true
+	// (openrun.default.toml). The endpoint is served only with RBAC
+	// enforced, see the server's aggMCPEnabled
+	Enable bool `toml:"enable"`
+	// ListTTL is the freshness hint (ttlMs) of the tool list, default 3m
+	ListTTL string `toml:"list_ttl"`
+	// MaxTools caps the tool list: tools/list fails above it, the caller
+	// narrows the apps glob. Default 300
+	MaxTools int `toml:"max_tools"`
+	// AllowedAuth limits the login mechanisms the auth param may name.
+	// Empty (default): any configured mechanism
+	AllowedAuth []string `toml:"allowed_auth"`
 }
 
 // Surface returns the config of the named surface ("rest"/"mcp",
@@ -1097,9 +1118,15 @@ type AppInfo struct {
 	UpdateTime      time.Time
 	RetainVersions  int
 	AppliedSyncId   string
-	CreatedBySyncId string     // id of the sync entry which created this app, used by sync prune
-	UserID          string     // user who created the app, used for RBAC owner checks
-	MCP             *MCPConfig // set when the app is an OAuth-protected MCP server
+	CreatedBySyncId string // id of the sync entry which created this app, used by sync prune
+	UserID          string // user who created the app, used for RBAC owner checks
+	// MCP is the effective MCP config (EffectiveMCP): the stored document,
+	// or the implicit actions endpoint of an app with actions. nil when the
+	// app has no MCP endpoint
+	MCP         *MCPConfig
+	MCPImplicit bool // MCP is the implicit actions endpoint, not a stored document
+	MCPDisabled bool // the stored document turns all MCP off (--mcp=disable)
+	HasActions  bool // the app version defines actions (from the stored definitions)
 }
 
 func CreateAppPathDomain(path, domain string) AppPathDomain {
@@ -1452,6 +1479,7 @@ const (
 	EventTypeHTTP   EventType = "http"
 	EventTypeAction EventType = "action"
 	EventTypeJob    EventType = "job"
+	EventTypeMCP    EventType = "mcp" // an MCP call: a JSON-RPC request to the management, an app's or the aggregate MCP endpoint
 	EventTypeCustom EventType = "custom"
 )
 

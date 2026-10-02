@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -357,4 +358,41 @@ func TestAsyncActionsOverRest(t *testing.T) {
 	remaining, err := server.db.ListActionRuns(t.Context(), []types.AppId{stored.AppId}, nil, "", types.ActionRunCursor{}, 0)
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsInt(t, "runs after delete", 0, len(remaining))
+}
+
+// A dev app has no staging instance: its runs are in the prod listing of an
+// app path glob only. A caller which merges both listings (the console runs
+// page) must not see each run of a dev app twice
+func TestAsyncActionRunsOfDevAppListedOnce(t *testing.T) {
+	server, _ := newActionsTestServer(t)
+	trusted := system.WithTrustedOperation(t.Context())
+	dir := t.TempDir()
+	for name, content := range map[string]string{"app.star": asyncActionsAppStar, "params.star": actionsTestParamsStar} {
+		testutil.AssertNoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0600))
+	}
+	_, err := server.CreateApp(trusted, "/apps/devsite", true, false, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin", IsDev: true})
+	testutil.AssertNoError(t, err)
+	createAsyncActionsTestApp(t, server, "/apps/site")
+
+	for _, appPath := range []string{"/apps/devsite", "/apps/site"} {
+		invocation, err := server.InvokeAction(trusted, &types.ActionRunRequest{AppPath: appPath, Action: "rows"}, false, "cli", nil)
+		testutil.AssertNoError(t, err)
+		waitActionRun(t, server, invocation.outcome.Run.Id)
+		invocation.outcome.Close()
+	}
+
+	runPaths := func(stage bool) string {
+		t.Helper()
+		runs, err := server.ListActionRuns(trusted, "/apps/**", "", "", stage, 0, "")
+		testutil.AssertNoError(t, err)
+		paths := []string{}
+		for _, run := range runs.Runs {
+			paths = append(paths, run.AppPath)
+		}
+		slices.Sort(paths)
+		return strings.Join(paths, ",")
+	}
+	testutil.AssertEqualsString(t, "prod listing", "/apps/devsite,/apps/site", runPaths(false))
+	// The prod app ran in prod, the dev app has no staging instance
+	testutil.AssertEqualsString(t, "staging listing", "", runPaths(true))
 }

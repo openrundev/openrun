@@ -81,9 +81,23 @@ func (s *Server) mcpHTTPHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The identity context is attached to the HTTP request context; the
 		// stateless streamable transport propagates it into tool handlers
-		ctx, _, ok := s.authenticateApiRequest(w, r, ApiResourceMCP, "mcp")
+		ctx, cred, ok := s.authenticateApiRequest(w, r, ApiResourceMCP, "mcp")
 		if !ok {
 			return
+		}
+		// The calls of the request, for the mcp audit events. The body is
+		// read and restored; a body which cannot be read as JSON-RPC is
+		// left for the transport to refuse
+		if r.Method == http.MethodPost && r.ContentLength <= mcpBodySniffLimit {
+			ops, status, msg := mcpReadOperations(r)
+			if status == http.StatusRequestEntityTooLarge {
+				http.Error(w, msg, status)
+				return
+			}
+			if contextShared, ok := ctx.Value(types.SHARED).(*ContextShared); ok {
+				contextShared.UserId = system.GetContextUserId(ctx)
+			}
+			markMCPRequest(ctx, mcpEndpointManagement, ops, cred, "")
 		}
 		streamable.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -135,6 +149,9 @@ func addMCPTool[In any](s *Server, srv *mcp.Server, operation API_NAME,
 			Status:     string(types.EventStatusFailure),
 			Detail:     apiAuditDetail(ctx),
 		}
+		// The mcp audit event of the call links to the app the tool is
+		// called for, when its target is one app
+		setMCPCallApp(ctx, string(operation), s.appIdOfPath(event.Target))
 		// Invocation-time policy is authoritative regardless of the cached
 		// tool list a client may hold. Refused attempts are audited: "what
 		// did MCP try and get refused" is a first-class audit query
@@ -558,6 +575,7 @@ type (
 func (s *Server) buildMCPServer() *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "openrun", Version: types.GetVersion()},
 		&mcp.ServerOptions{Instructions: mcpServerInstructions})
+	srv.AddReceivingMiddleware(mcpAuditMiddleware)
 	// The tool list follows the effective [api.mcp] policy and the caller's
 	// credential: private to the caller's client, refreshed within the ttl
 	// by clients which do not listen for changes
@@ -573,6 +591,29 @@ func (s *Server) buildMCPServer() *mcp.Server {
 	})
 	s.registerMCPTools(srv)
 	return srv
+}
+
+// appIdOfPath returns the id of the app at an app path (/app or
+// domain:/app), "" when the value is not the path of one app (a glob,
+// another kind of target)
+func (s *Server) appIdOfPath(appPath string) types.AppId {
+	if appPath == "" || isAppPathGlob(appPath) || s.apps == nil {
+		return ""
+	}
+	pathDomain, err := parseAppPath(appPath)
+	if err != nil {
+		return ""
+	}
+	apps, err := s.apps.GetAllAppsInfo()
+	if err != nil {
+		return ""
+	}
+	for _, info := range apps {
+		if info.Path == pathDomain.Path && info.Domain == pathDomain.Domain {
+			return info.Id
+		}
+	}
+	return ""
 }
 
 // mcpListTTL is the freshness hint of the management tool list

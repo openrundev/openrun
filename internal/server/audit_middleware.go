@@ -4,14 +4,19 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/segmentio/ksuid"
@@ -334,11 +339,141 @@ type ContextShared struct {
 	Operation string
 	Target    string
 	DryRun    bool
-	// MCP app requests: the JSON-RPC method and tool/resource name, so the
-	// http audit event records the MCP operation (see mcp_app.go)
-	MCPMethod string
-	MCPName   string
+	// MCP requests (set by the MCP endpoints once the caller is
+	// authenticated): the request is audited as mcp events, one per JSON-RPC
+	// call, instead of the http event. MCPEndpoint is the kind of endpoint
+	// (mcpEndpoint*), MCPOps the calls of the request, MCPDetail what the
+	// endpoint adds to the event detail (the client, the credential, the
+	// view), MCPError the error of the call where the server knows it
+	MCPEndpoint string
+	MCPOps      []mcpOp
+	MCPDetail   string
+	mcpMu       sync.Mutex
+	mcpError    string
+	mcpAppIds   map[string]string // tool name -> the app the call is for, see setMCPCallApp
 }
+
+// The MCP endpoint kinds recorded in the mcp audit events
+const (
+	mcpEndpointManagement = "management" // /_openrun/mcp
+	mcpEndpointApp        = "app"        // the MCP region of an app
+	mcpEndpointApps       = "apps"       // /_openrun/app_mcp, the actions of all apps
+)
+
+// markMCPRequest records the MCP calls of the request for the audit events
+// the status middleware writes when the request is done
+func markMCPRequest(ctx context.Context, endpoint string, ops []mcpOp, cred *types.Credential, detail string) {
+	cs, ok := ctx.Value(types.SHARED).(*ContextShared)
+	if !ok {
+		return
+	}
+	cs.MCPEndpoint = endpoint
+	cs.MCPOps = ops
+	// Who is calling: the OAuth client holding the token, an API key, or
+	// no credential (an endpoint served without a token)
+	client := "none"
+	if cred != nil {
+		client = cmp.Or(cred.OAuthClientId, mcpClientIdAPIKey) + " cred=" + cred.Id
+	}
+	cs.MCPDetail = strings.TrimSpace("client=" + client + " " + detail)
+}
+
+// setMCPError records the failure of an MCP call for its audit event. The
+// HTTP status of an MCP response says little: a JSON-RPC error and a tool
+// error both come back as 200
+func setMCPError(ctx context.Context, message string) {
+	if cs, ok := ctx.Value(types.SHARED).(*ContextShared); ok {
+		cs.mcpMu.Lock()
+		cs.mcpError = message
+		cs.mcpMu.Unlock()
+	}
+}
+
+// setMCPCallApp records the app a tool call is for, for its audit event: on
+// an endpoint which serves many apps (the management tools taking an app
+// path, the endpoint for the actions of all apps) the request has no app of
+// its own
+func setMCPCallApp(ctx context.Context, tool string, appId types.AppId) {
+	if cs, ok := ctx.Value(types.SHARED).(*ContextShared); ok && appId != "" {
+		cs.mcpMu.Lock()
+		if cs.mcpAppIds == nil {
+			cs.mcpAppIds = map[string]string{}
+		}
+		cs.mcpAppIds[tool] = string(appId)
+		cs.mcpMu.Unlock()
+	}
+}
+
+// mcpAuditMiddleware reports the outcome of the calls an MCP server of this
+// process handles (the management server, the aggregate endpoint) to the
+// audit event of the request
+func mcpAuditMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if err != nil {
+			setMCPError(ctx, err.Error())
+		} else if callResult, ok := result.(*mcp.CallToolResult); ok && callResult != nil && callResult.IsError {
+			message := "tool error"
+			if len(callResult.Content) > 0 {
+				if text, ok := callResult.Content[0].(*mcp.TextContent); ok {
+					message = text.Text
+				}
+			}
+			setMCPError(ctx, message)
+		}
+		return result, err
+	}
+}
+
+// insertMCPAuditEvents writes the mcp audit events of an MCP request: one
+// per JSON-RPC call (a legacy batch carries several). Notifications are not
+// calls and are not recorded. The operation is the JSON-RPC method, the
+// target the tool (or resource, prompt) the call names, else the endpoint
+func (server *Server) insertMCPAuditEvents(r *http.Request, rid string, cs *ContextShared, path string, statusCode int, duration time.Duration) {
+	cs.mcpMu.Lock()
+	callError := cs.mcpError
+	appIds := maps.Clone(cs.mcpAppIds)
+	cs.mcpMu.Unlock()
+	status := types.EventStatusSuccess
+	if statusCode >= 400 || callError != "" {
+		status = types.EventStatusFailure
+	}
+	for _, op := range cs.MCPOps {
+		if op.Method == "" || strings.HasPrefix(op.Method, "notifications/") {
+			continue
+		}
+		detail := fmt.Sprintf("%s %s %s %d %d endpoint=%s", r.Method, r.Host, path, statusCode, duration.Milliseconds(), cs.MCPEndpoint)
+		if op.Name != "" {
+			detail += " tool=" + op.Name
+		}
+		if cs.MCPDetail != "" {
+			detail += " " + cs.MCPDetail
+		}
+		if callError != "" {
+			if len(callError) > mcpAuditErrorLimit {
+				callError = callError[:mcpAuditErrorLimit] + "..."
+			}
+			detail += " error=" + strconv.Quote(callError)
+		}
+		event := types.AuditEvent{
+			RequestId:  rid,
+			CreateTime: time.Now(),
+			UserId:     cs.UserId,
+			AppId:      types.AppId(cmp.Or(appIds[op.Name], cs.AppId)),
+			EventType:  types.EventTypeMCP,
+			Operation:  op.Method,
+			Target:     cmp.Or(op.Name, r.Host+":"+path),
+			Status:     string(status),
+			Detail:     detail,
+		}
+		if err := server.InsertAuditEvent(&event); err != nil {
+			server.Error().Err(err).Msg("error inserting mcp audit event")
+		}
+	}
+}
+
+// mcpAuditErrorLimit bounds the error text kept in an mcp audit event
+const mcpAuditErrorLimit = 300
 
 func updateTargetInContext(r *http.Request, target string, dryRun bool) {
 	contextShared := r.Context().Value(types.SHARED)
@@ -421,7 +556,7 @@ func (server *Server) handleStatus(defaultUser string) func(http.Handler) http.H
 				// (app deleted or failed to load), still log the event with defaults
 				if appInfo, ok := server.apps.GetAppInfo(types.AppId(contextShared.AppId)); ok {
 					if app, err := server.apps.GetApp(appInfo.AppPathDomain); err == nil {
-						if app.AppConfig.Audit.SkipHttpEvents {
+						if app.AppConfig.Audit.SkipHttpEvents && contextShared.MCPEndpoint == "" {
 							// http event auditing is disabled for this app
 							return
 						}
@@ -436,15 +571,15 @@ func (server *Server) handleStatus(defaultUser string) func(http.Handler) http.H
 			}
 			statusCode := wrapper.Status()
 
+			if contextShared.MCPEndpoint != "" {
+				// An MCP request: mcp events, one per call, in place of the
+				// http event. "What did this agent call" is one query
+				server.insertMCPAuditEvents(r, rid, contextShared, path, statusCode, duration)
+				return
+			}
+
 			operation := r.Method
 			detail := fmt.Sprintf("%s %s %s %d %d", r.Method, r.Host, path, statusCode, duration.Milliseconds())
-			if contextShared.MCPMethod != "" {
-				// MCP app call: "what did this agent call" is one query
-				operation = "mcp_" + contextShared.MCPMethod
-				if contextShared.MCPName != "" {
-					detail += " tool=" + contextShared.MCPName
-				}
-			}
 			event := types.AuditEvent{
 				RequestId:  rid,
 				CreateTime: time.Now(),

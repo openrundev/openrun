@@ -35,9 +35,11 @@ openrun app create --auth builtin \
     ./src /shop
 ```
 
-A fourth form, `--mcp=actions`, is for [action apps]({{< ref "actions/#mcp-tools" >}}): OpenRun itself serves the app's actions as MCP tools at `<app url>/mcp`, there is no upstream MCP server. Everything below about login, tokens, scopes and API keys applies to it. The tools carry the [side-effect hints]({{< ref "actions/#side-effect-hints" >}}) of the actions as annotations, a `destructive=True` action is confirmed by the user before it runs (for clients on MCP protocol 2026-07-28 or later with the elicitation capability), and the tool list is private to the caller with a freshness hint of `action.mcp_list_ttl` (default `3m`).
+[Action apps]({{< ref "actions/#mcp-tools" >}}) need no `--mcp` option: an app with actions serves them as MCP tools at `<app url>/mcp` by default, OpenRun itself is the MCP server and there is no upstream. `--mcp=actions` is that endpoint as an explicit setting. Everything below about login, tokens, scopes and API keys applies to it. The tools carry the [side-effect hints]({{< ref "actions/#side-effect-hints" >}}) of the actions as annotations, a `destructive=True` action is confirmed by the user before it runs (for clients on MCP protocol 2026-07-28 or later with the elicitation capability), and the tool list is private to the caller with a freshness hint of `action.mcp_list_ttl` (default `3m`).
 
-`--mcp=@file` reads the JSON document from a local file (the CLI expands it; the API only accepts the document itself). `openrun app update mcp <value> <glob>` changes it later (`-` clears it); updates are staged and promoted like other metadata. In apply files the `app()` entry takes `mcp=True`, `mcp="/mcp"` or `mcp={...}`.
+`--mcp=@file` reads the JSON document from a local file (the CLI expands it; the API only accepts the document itself). `openrun app update mcp <value> <glob>` changes it later (`-` or `default` clears it); updates are staged and promoted like other metadata. In apply files the `app()` entry takes `mcp=True`, `mcp=False`, `mcp="/mcp"` or `mcp={...}`.
+
+`--mcp=disable` (`mcp=False` in an apply file) turns all MCP off for an app: no MCP endpoint (an upstream MCP path becomes an ordinary app path with the app's normal login), the app's actions are not exposed over any MCP route, including the [endpoint for all apps]({{< ref "actions/#one-endpoint-for-all-apps" >}}) and the management action tools.
 
 The JSON document fields:
 
@@ -97,4 +99,4 @@ RBAC decides who may reach the app at all: with RBAC on, the user needs `app:acc
 
 - Browser-based MCP clients need their origin in `allowed_origins`; CORS preflight requests from an allowed origin are passed to the app without a token so the app's CORS handler can answer them.
 - Legacy MCP clients that use sessions (`Mcp-Session-Id`, GET streams) pass through unchanged. On Kubernetes with several replicas such clients need a stateless-mode server; OpenRun does not pin sessions to pods.
-- Every MCP call is recorded in the app's HTTP audit log with the JSON-RPC method (`mcp_tools/call`) and the tool name.
+- Every MCP call is recorded in the audit log as an event of type `mcp` (in place of the `http` event of the request): the operation is the JSON-RPC method (`tools/call`, `tools/list`, `initialize`), the target the tool name, and the detail has the request, the endpoint (`endpoint=app`, `management` for `/_openrun/mcp`, `apps` for `/_openrun/app_mcp`), the app, and the client (`client=<oauth client id or apikey> cred=<credential id>`, `client=none` for a call without a token). Notifications are not recorded. The status is `Failed` for a refused request and, where OpenRun runs the tool itself (the management tools and the endpoint for all apps), for a call which returned an error, with the message in the detail. The console's Audit Logs page filters on the `mcp` type.

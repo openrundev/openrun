@@ -133,6 +133,17 @@ type App struct {
 	// which must not wait for initMutex (held by a reload for as long as a
 	// container build takes). nil until the definition has been loaded
 	publishedActions atomic.Pointer[[]*action.Action]
+	// newMCP is the effective MCP config staged by a load (mountActionsMCP),
+	// publishedMCP that of the last published load: the stored document, or
+	// the implicit actions endpoint of an app with actions; nil when the app
+	// has no MCP region
+	newMCP       *types.MCPConfig
+	publishedMCP atomic.Pointer[types.MCPConfig]
+	// aggregateTools is the tool set built for the aggregate MCP endpoint of
+	// the server, for the actions of one published load
+	aggregateMu    sync.Mutex
+	aggregateFor   *[]*action.Action
+	aggregateTools []*action.MCPTool
 	// configSource returns the effective server config, for the settings
 	// which change dynamically; nil in tests without a server
 	configSource   func() *types.ServerConfig
@@ -279,6 +290,38 @@ func (a *App) LoadedActions() (actions []*action.Action, loaded bool) {
 		return nil, false
 	}
 	return slices.Clone(*published), true
+}
+
+// EffectiveMCP returns the MCP config the app runs with, as of the last
+// published load: the stored mcp document, or for an app with actions and
+// no document the implicit actions endpoint at /mcp. nil when the app has no
+// MCP region (no document and no actions, MCP disabled, or the implicit
+// path taken by a route of the app)
+func (a *App) EffectiveMCP() *types.MCPConfig {
+	return a.publishedMCP.Load()
+}
+
+// AggregateMCPTools returns the app's actions as MCP tools named by namer,
+// for the aggregate MCP endpoint of the server (which serves the tools of
+// many apps, each under a name carrying its app). Built once per published
+// load: namer has to be a pure function of the app. The app definition has
+// to be loaded
+func (a *App) AggregateMCPTools(namer func(local string) string) ([]*action.MCPTool, error) {
+	published := a.publishedActions.Load()
+	if published == nil {
+		return nil, fmt.Errorf("app %s is not loaded", a.Path)
+	}
+	a.aggregateMu.Lock()
+	defer a.aggregateMu.Unlock()
+	if a.aggregateFor == published {
+		return a.aggregateTools, nil
+	}
+	tools, err := action.MCPToolsNamed(*published, namer)
+	if err != nil {
+		return nil, err
+	}
+	a.aggregateFor, a.aggregateTools = published, tools
+	return tools, nil
 }
 
 // RunServices are the server services async action runs need: the run
@@ -753,6 +796,7 @@ func (a *App) Reload(ctx context.Context, force, immediate bool, dryRun types.Dr
 	a.initialized = true
 	publishedActions := slices.Clone(a.actions)
 	a.publishedActions.Store(&publishedActions)
+	a.publishedMCP.Store(a.newMCP)
 	a.updateActiveContainerNameLocked()
 
 	// Retire plugin providers (external processes and in-process hosts) only
@@ -941,7 +985,7 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 	if err != nil {
 		return fmt.Errorf("error creating container handler: %w", err)
 	}
-	if mcp := a.Metadata.MCP; mcp != nil && !mcp.ServesActions() && a.containerHandler.GetHealthUrl(health) == "/" {
+	if mcp := a.Metadata.MCP; mcp != nil && !mcp.Disable && !mcp.ServesActions() && a.containerHandler.GetHealthUrl(health) == "/" {
 		// MCP app with no health path configured anywhere (neither the
 		// definition's health= nor container.health_url): a GET on the
 		// endpoint does not answer 200, probe with the JSON-RPC request

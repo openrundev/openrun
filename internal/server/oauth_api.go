@@ -180,6 +180,9 @@ func (s *Server) apiResourceURI(surface string) string {
 // surfaceForResource maps a requested RFC 8707 resource URI to the logical
 // surface name; "" when unknown. Exact canonical comparison, never a prefix
 func (s *Server) surfaceForResource(resource string) string {
+	// The query (the auth selection of a management surface url, see
+	// surfaceAuthParam) is not part of the surface's identity
+	resource, _, _ = strings.Cut(resource, "?")
 	switch strings.TrimSuffix(resource, "/") {
 	case s.apiResourceURI(ApiResourceRest):
 		return ApiResourceRest
@@ -196,6 +199,12 @@ type oauthResource struct {
 	Surface string
 	App     *types.AppInfo
 	URI     string
+	// Mechanism is the login mechanism the resource names with its auth
+	// query param: for the app_mcp endpoint its one mechanism (part of the
+	// audience, URI is the canonical resource), for a management surface a
+	// selection among the surface's auth list ("" = all of them; the
+	// audience stays the surface name)
+	Mechanism string
 }
 
 // Label names the resource on the consent page
@@ -203,17 +212,42 @@ func (o *oauthResource) Label() string {
 	if o.App != nil {
 		return fmt.Sprintf("app %s (%s)", cmp.Or(o.App.Name, o.App.String()), o.URI)
 	}
+	if o.Surface == ApiResourceAppMCP {
+		return "app actions"
+	}
 	return o.Surface + " API"
 }
 
 // resolveOAuthResource maps a requested resource to a surface or an MCP
 // app, refusing surfaces that are disabled and unknown apps
 func (s *Server) resolveOAuthResource(resource string) (*oauthResource, error) {
+	if strings.TrimSpace(resource) == "" {
+		// A client sends no resource when it found no protected resource
+		// document: it started a login the endpoint did not ask for. That
+		// is the case for the endpoints served without a token (an app with
+		// auth none, /_openrun/app_mcp with the auth none default)
+		return nil, fmt.Errorf("invalid_target: the request names no resource. The MCP endpoint did not ask for a login: " +
+			"an endpoint served without a token (auth none) needs no authentication, reconnect the client instead of authenticating. " +
+			"For /_openrun/app_mcp, add ?auth=<login> to the url to log in")
+	}
+	if mechanism, isAppMCP, err := s.aggMCPResourceMechanism(resource); isAppMCP {
+		if !aggMCPEnabled(s.Config()) {
+			return nil, fmt.Errorf("invalid_target: the %s endpoint is not enabled", ApiResourceAppMCP)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("invalid_target: %w", err)
+		}
+		return &oauthResource{Surface: ApiResourceAppMCP, Mechanism: mechanism, URI: s.aggMCPResourceURI(mechanism)}, nil
+	}
 	if surface := s.surfaceForResource(resource); surface != "" {
 		if !apiSurfaceEnabled(s.Config(), surface) {
 			return nil, fmt.Errorf("invalid_target: the %s surface is not enabled", surface)
 		}
-		return &oauthResource{Surface: surface, URI: surface}, nil
+		mechanism, err := s.surfaceAuthParam(surface, resourceAuthParam(resource))
+		if err != nil {
+			return nil, fmt.Errorf("invalid_target: %w", err)
+		}
+		return &oauthResource{Surface: surface, URI: surface, Mechanism: mechanism}, nil
 	}
 	if strings.Contains(resource, "://") {
 		info, uri, err := s.resolveAppResource(resource)
@@ -230,6 +264,15 @@ func (s *Server) resolveOAuthResource(resource string) (*oauthResource, error) {
 // name or app resource URI) for refresh: the surface must still be enabled,
 // the app must still exist and still be an MCP app
 func (s *Server) oauthStoredResource(stored string) (*oauthResource, error) {
+	if mechanism, isAppMCP, err := s.aggMCPResourceMechanism(stored); isAppMCP {
+		if !aggMCPEnabled(s.Config()) {
+			return nil, fmt.Errorf("the %s endpoint is no longer enabled", ApiResourceAppMCP)
+		}
+		if err != nil || s.aggMCPResourceURI(mechanism) != stored {
+			return nil, fmt.Errorf("the login mechanism of resource %s is no longer valid", stored)
+		}
+		return &oauthResource{Surface: ApiResourceAppMCP, Mechanism: mechanism, URI: stored}, nil
+	}
 	if stored == ApiResourceRest || stored == ApiResourceMCP {
 		if !apiSurfaceEnabled(s.Config(), stored) {
 			return nil, fmt.Errorf("the %s surface is no longer enabled", stored)
@@ -255,7 +298,7 @@ var mcpDefaultScopes = []string{"*:read", string(types.PermissionReadDetail)}
 // resource metadata pointer and the surface's default scope ask (CLI gets *,
 // MCP gets read-only by default - a single consent must not hand an AI
 // client broad destructive authority)
-func (s *Server) apiAuthChallenge(surface string) string {
+func (s *Server) apiAuthChallenge(surface, mechanism string) string {
 	external := s.apiExternalUrl()
 	if external == "" {
 		return fmt.Sprintf(`Bearer realm="%s"`, REALM)
@@ -264,8 +307,44 @@ func (s *Server) apiAuthChallenge(surface string) string {
 	if surface == ApiResourceMCP {
 		scope = strings.Join(mcpDefaultScopes, " ")
 	}
-	return fmt.Sprintf(`Bearer realm="%s", resource_metadata="%s/.well-known/oauth-protected-resource%s/%s", scope="%s"`,
-		REALM, external, types.INTERNAL_URL_PREFIX, surface, scope)
+	query := ""
+	if mechanism != "" {
+		query = "?" + aggMCPAuthParam + "=" + url.QueryEscape(mechanism)
+	}
+	return fmt.Sprintf(`Bearer realm="%s", resource_metadata="%s/.well-known/oauth-protected-resource%s/%s%s", scope="%s"`,
+		REALM, external, types.INTERNAL_URL_PREFIX, surface, query, scope)
+}
+
+// resourceAuthParam returns the auth query param of a resource url, ""
+// when it has none
+func resourceAuthParam(resource string) string {
+	parsed, err := url.Parse(resource)
+	if err != nil {
+		return ""
+	}
+	return parsed.Query().Get(aggMCPAuthParam)
+}
+
+// surfaceAuthParam validates the auth query param of a management surface
+// url (/_openrun/mcp?auth=<name>): the login to use, one of the surface's
+// auth list ("system" is accepted for the admin account, the app auth
+// spelling). The param selects the login page only; the token audience
+// stays the surface, so existing credentials are unaffected. "" when the
+// param is not set
+func (s *Server) surfaceAuthParam(surface, param string) (string, error) {
+	param = strings.TrimSpace(param)
+	if param == "" {
+		return "", nil
+	}
+	if param == string(types.AppAuthnSystem) {
+		param = "admin"
+	}
+	surfaceConfig, _ := s.Config().Api.Surface(surface)
+	if !slices.Contains(surfaceConfig.Auth, param) {
+		return "", fmt.Errorf("auth %s is not a login mechanism of the %s surface (api.%s auth: %s)",
+			param, surface, surface, strings.Join(surfaceConfig.Auth, ", "))
+	}
+	return param, nil
 }
 
 // serveOAuthMetadata handles the well-known documents: the RFC 8414
@@ -275,7 +354,7 @@ func (h *Handler) serveOAuthASMetadata(w http.ResponseWriter, r *http.Request) {
 	external := h.server.apiExternalUrl()
 	config := h.server.Config()
 	if external == "" || (!apiSurfaceEnabled(config, ApiResourceRest) && !apiSurfaceEnabled(config, ApiResourceMCP) &&
-		!h.server.hasMCPApps()) {
+		!aggMCPEnabled(config) && !h.server.hasMCPApps()) {
 		// The AS exists only while a remote surface is enabled or an MCP
 		// app is deployed (checked per request: [api] is dynamically
 		// settable and apps come and go)
@@ -303,9 +382,20 @@ func (h *Handler) serveOAuthPRM(surface string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		// The login selection of the surface url (?auth=) travels in the
+		// resource: the client sends it to the authorize endpoint verbatim
+		mechanism, err := h.server.surfaceAuthParam(surface, r.URL.Query().Get(aggMCPAuthParam))
+		if err != nil {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		resource := h.server.apiResourceURI(surface)
+		if mechanism != "" {
+			resource += "?" + aggMCPAuthParam + "=" + url.QueryEscape(mechanism)
+		}
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		writeOAuthJSON(w, http.StatusOK, map[string]any{
-			"resource":                 h.server.apiResourceURI(surface),
+			"resource":                 resource,
 			"authorization_servers":    []string{external},
 			"bearer_methods_supported": []string{"header"},
 		})
@@ -737,10 +827,22 @@ func parseScopeParam(scope string) []string {
 // certs cannot issue tokens (no identity to bind them to); an auth none
 // app serves its MCP region without one (serveMCPApp)
 func (s *Server) oauthLoginMechanisms(res *oauthResource) ([]string, error) {
+	if res.Surface == ApiResourceAppMCP {
+		return aggMCPLoginMechanisms(res.Mechanism)
+	}
 	if res.App == nil {
 		surfaceConfig, _ := s.Config().Api.Surface(res.Surface)
 		if len(surfaceConfig.Auth) == 0 {
 			return nil, fmt.Errorf("api.%s auth is not configured: set the login mechanisms (builtin, admin) for the surface", res.Surface)
+		}
+		if res.Mechanism != "" {
+			// The url named one of the surface's logins (?auth=): the page
+			// offers that one only, and credentials for another listed
+			// mechanism are not accepted through it
+			if !slices.Contains(surfaceConfig.Auth, res.Mechanism) {
+				return nil, fmt.Errorf("auth %s is not a login mechanism of the %s surface (api.%s auth)", res.Mechanism, res.Surface, res.Surface)
+			}
+			return []string{res.Mechanism}, nil
 		}
 		return surfaceConfig.Auth, nil
 	}
@@ -802,6 +904,9 @@ func (s *Server) oauthGrantScopes(res *oauthResource, requested []string) []stri
 	if res.App == nil {
 		if len(requested) > 0 {
 			return requested
+		}
+		if res.Surface == ApiResourceAppMCP {
+			return []string{aggMCPScope}
 		}
 		if res.Surface == ApiResourceMCP {
 			return slices.Clone(mcpDefaultScopes)
