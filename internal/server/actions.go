@@ -406,7 +406,12 @@ func forEachAppParallel(ctx context.Context, apps []types.AppInfo, fn func(ctx c
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(actionListConcurrency)
 	for i, info := range apps {
-		group.Go(func() error {
+		group.Go(func() (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("panic processing app %s: %v", info.AppPathDomain, r)
+				}
+			}()
 			return fn(groupCtx, i, info)
 		})
 	}

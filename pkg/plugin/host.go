@@ -161,7 +161,7 @@ func (h *Host) InitApp(info AppInfo) error {
 // runs the initialization, the others wait for its outcome, so exactly one
 // instance is ever built (a failed init is forgotten, so a later call
 // retries fresh).
-func (h *Host) InitModule(ctx context.Context, module, account string, settings map[string]any) error {
+func (h *Host) InitModule(ctx context.Context, module, account string, settings map[string]any) (retErr error) {
 	def, ok := h.config.Modules[module]
 	if !ok {
 		return fmt.Errorf("%w: provider does not serve module %q", ErrUnknownModule, module)
@@ -195,6 +195,20 @@ func (h *Host) InitModule(ctx context.Context, module, account string, settings 
 	h.initWG.Add(1)
 	appId, appPath, isDev, appSchema := h.appId, h.appPath, h.isDev, h.appSchema
 	h.mu.Unlock()
+
+	// A panic in the module code must release the in-flight entry, otherwise
+	// later calls for the module and Host.Close block forever
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = fmt.Errorf("panic initializing module %s: %v", module, r)
+			h.mu.Lock()
+			delete(h.initing, key)
+			inflight.err = retErr
+			h.mu.Unlock()
+			close(inflight.done)
+			h.initWG.Done()
+		}
+	}()
 
 	instance := def.Builder()
 	if instance == nil {

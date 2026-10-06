@@ -125,6 +125,9 @@ func (c *sharedRepoCache) getBranchHead(key sharedRepoBranchKey, maxAge time.Dur
 func (c *sharedRepoCache) putBranchHead(key sharedRepoBranchKey, hash string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.branchHead == nil {
+		return // the cache is closed
+	}
 	if _, exists := c.branchHead[key]; !exists && len(c.branchHead) >= c.maxEntries*4 {
 		var oldestKey sharedRepoBranchKey
 		var oldestTime time.Time
@@ -184,6 +187,10 @@ func (c *sharedRepoCache) finish(key sharedRepoKey, dir CacheDir, fullRepo bool,
 	defer c.mu.Unlock()
 	flight := c.flights[key]
 	delete(c.flights, key)
+	if err == nil && c.entries == nil {
+		// The cache was closed while the checkout was in flight
+		err = fmt.Errorf("git checkout cache is closed")
+	}
 	if err == nil {
 		c.clock++
 		c.entries[key] = &sharedRepoEntry{
@@ -505,7 +512,13 @@ func (r *RepoCache) CheckoutRepo(ctx context.Context, sourceUrl, branch, commit,
 			if retErr != nil && sharedTargetPath != "" {
 				os.RemoveAll(sharedTargetPath) //nolint:errcheck
 			}
-			r.shared.finish(sharedKey, sharedResult, sharedFullRepo, retErr)
+			finishErr := retErr
+			if finishErr == nil && sharedResult.dir == "" {
+				// The checkout panicked: fail the flight, an entry without a
+				// directory would break every later checkout of the key
+				finishErr = fmt.Errorf("git checkout did not complete")
+			}
+			r.shared.finish(sharedKey, sharedResult, sharedFullRepo, finishErr)
 		}()
 	}
 
@@ -537,10 +550,18 @@ func (r *RepoCache) CheckoutRepo(ctx context.Context, sourceUrl, branch, commit,
 	if isDev {
 		// We don't have a previous dev checkout for this repo, create a new one
 		repoName := filepath.Base(repo)
-		targetPath = getUnusedRepoPath(os.ExpandEnv("$OPENRUN_HOME/app_src/"), repoName)
-		if err := os.MkdirAll(targetPath, 0744); err != nil {
+		// The directory is created exclusively, so it is owned by this
+		// checkout and safe to remove on failure
+		targetPath, err = createUnusedRepoPath(os.ExpandEnv("$OPENRUN_HOME/app_src/"), repoName)
+		if err != nil {
 			return "", "", "", "", err
 		}
+		defer func() {
+			if retErr != nil {
+				// Do not leave a partial checkout behind
+				os.RemoveAll(targetPath) //nolint:errcheck
+			}
+		}()
 	} else if sharedLeader {
 		targetPath, err = r.shared.newCheckoutDir()
 		if err != nil {
@@ -766,17 +787,24 @@ func materializeGitCommit(sourceDir, targetDir, commit, folder string) (string, 
 	return commitObject.Message, commitObject.Hash.String(), nil
 }
 
-func getUnusedRepoPath(targetDir, repoName string) string {
-	if _, err := os.Stat(path.Join(targetDir, repoName)); os.IsNotExist(err) {
-		return path.Join(targetDir, repoName)
+// createUnusedRepoPath creates and returns an unused directory for the repo
+// under targetDir (repoName, repoName2, ...). Mkdir fails if the directory
+// exists, so concurrent callers never get the same path
+func createUnusedRepoPath(targetDir, repoName string) (string, error) {
+	if err := os.MkdirAll(targetDir, 0744); err != nil {
+		return "", err
 	}
-	count := 2
-	for {
-		unusedName := fmt.Sprintf("%s%d", repoName, count)
-		if _, err := os.Stat(path.Join(targetDir, unusedName)); os.IsNotExist(err) {
-			return path.Join(targetDir, unusedName)
+	name := repoName
+	for count := 2; ; count++ {
+		candidate := path.Join(targetDir, name)
+		err := os.Mkdir(candidate, 0744)
+		if err == nil {
+			return candidate, nil
 		}
-		count++
+		if !os.IsExist(err) {
+			return "", err
+		}
+		name = fmt.Sprintf("%s%d", repoName, count)
 	}
 }
 

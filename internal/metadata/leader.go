@@ -158,7 +158,13 @@ func (l *LeaderElection) StartLoop(parentCtx context.Context) {
 			l.Info().Msg("Became leader")
 		}
 
-		t := time.NewTicker(time.Duration(l.heartbeatIntervalSecs) * time.Second)
+		interval := time.Duration(l.heartbeatIntervalSecs) * time.Second
+		if interval <= 0 {
+			interval = 10 * time.Second // NewTicker panics on a non-positive interval
+		}
+		lease := time.Duration(l.heartbeatLeaseSecs) * time.Second
+		lastHeartbeat := time.Now()
+		t := time.NewTicker(interval)
 		defer t.Stop()
 
 		for {
@@ -167,12 +173,21 @@ func (l *LeaderElection) StartLoop(parentCtx context.Context) {
 				l.Info().Msg("Leader election loop stopped")
 				return
 			case <-t.C:
+				// Bound each call so a hung connection cannot stall the loop
+				callCtx, callCancel := context.WithTimeout(ctx, interval)
 				if l.isLeader.Load() {
-					_, ok, err := l.heartbeat(ctx)
+					_, ok, err := l.heartbeat(callCtx)
+					callCancel()
 					if err != nil {
 						l.Error().Err(err).Msg("heartbeat error")
+						// Without a successful heartbeat the lease runs out and
+						// another node can take over, stop acting as the leader
+						if time.Since(lastHeartbeat) >= lease-interval && l.isLeader.Swap(false) {
+							l.Warn().Msg("Lost leadership, heartbeat failing")
+						}
 						continue
 					}
+					lastHeartbeat = time.Now()
 					if !ok {
 						// Lost leadership
 						if l.isLeader.Swap(false) {
@@ -180,12 +195,14 @@ func (l *LeaderElection) StartLoop(parentCtx context.Context) {
 						}
 					}
 				} else {
-					_, acquired, err := l.tryAcquire(ctx)
+					_, acquired, err := l.tryAcquire(callCtx)
+					callCancel()
 					if err != nil {
 						l.Error().Err(err).Msg("try-acquire error")
 						continue
 					}
 					if acquired {
+						lastHeartbeat = time.Now()
 						if !l.isLeader.Swap(true) {
 							l.Info().Msg("Became leader")
 						}

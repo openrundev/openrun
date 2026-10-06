@@ -450,12 +450,15 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 
 			encoder := encoderPool.Get().(*pooled)
 			encoder.buf.Reset()
-			err := json.MarshalEncode(encoder.enc, handlerResponse)
-			_, err2 := w.Write(encoder.buf.Bytes())
-			encoderPool.Put(encoder)
-			if err == nil {
-				err = err2
+			if err := json.MarshalEncode(encoder.enc, handlerResponse); err != nil {
+				// A failed marshal leaves the encoder state invalid, it is
+				// not returned to the pool. Nothing has been written yet, so
+				// the error status can still be sent
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 			}
+			_, err := w.Write(encoder.buf.Bytes())
+			encoderPool.Put(encoder)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return

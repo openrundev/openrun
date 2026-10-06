@@ -48,6 +48,12 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 		Load:  a.loader,
 	}
 	thread.SetLocal(types.TL_APP_URL, a.appUrl)
+	// Release the plugin sessions opened by plugin calls done during the load
+	defer func() {
+		if err := action.RunDeferredCleanup(thread); err != nil {
+			a.Warn().Err(err).Msg("error cleaning up plugins after app load")
+		}
+	}()
 
 	builtin, err := a.createBuiltin()
 	if err != nil {
@@ -238,7 +244,9 @@ func (a *App) addSchemaTypes(builtin starlark.StringDict) (starlark.StringDict, 
 }
 
 func (a *App) addParams(builtin starlark.StringDict) (starlark.StringDict, error) {
-	a.paramValuesStr = make(map[string]string)
+	// Built in locals and assigned once at the end, job runs read the maps
+	// concurrently with a dev mode reload
+	paramValuesStr := make(map[string]string)
 
 	// Create a copy of the builtins, don't modify the original
 	newBuiltins := starlark.StringDict{}
@@ -247,23 +255,23 @@ func (a *App) addParams(builtin starlark.StringDict) (starlark.StringDict, error
 	}
 
 	// Add param module for referencing param values
-	a.paramDict = starlark.StringDict{}
+	paramDict := starlark.StringDict{}
 	for _, p := range a.allParamInfo() {
-		a.paramDict[p.Name] = p.DefaultValue
+		paramDict[p.Name] = p.DefaultValue
 
 		if p.DefaultValue != starlark.None {
 			switch p.Type {
 			// Set the default value in the paramMap (in the string format)
 			case starlark_type.STRING:
-				a.paramValuesStr[p.Name] = string(p.DefaultValue.(starlark.String))
+				paramValuesStr[p.Name] = string(p.DefaultValue.(starlark.String))
 			case starlark_type.INT:
 				intVal, ok := p.DefaultValue.(starlark.Int).Int64()
 				if !ok {
 					return nil, fmt.Errorf("param %s is not an int", p.Name)
 				}
-				a.paramValuesStr[p.Name] = fmt.Sprintf("%d", intVal)
+				paramValuesStr[p.Name] = fmt.Sprintf("%d", intVal)
 			case starlark_type.BOOLEAN:
-				a.paramValuesStr[p.Name] = strconv.FormatBool(bool(p.DefaultValue.(starlark.Bool)))
+				paramValuesStr[p.Name] = strconv.FormatBool(bool(p.DefaultValue.(starlark.Bool)))
 			case starlark_type.DICT, starlark_type.LIST:
 				val, err := starlark_type.ToGo(p.DefaultValue)
 				if err != nil {
@@ -273,7 +281,7 @@ func (a *App) addParams(builtin starlark.StringDict) (starlark.StringDict, error
 				if err != nil {
 					return nil, err
 				}
-				a.paramValuesStr[p.Name] = string(jsonVal)
+				paramValuesStr[p.Name] = string(jsonVal)
 			}
 		}
 
@@ -289,12 +297,12 @@ func (a *App) addParams(builtin starlark.StringDict) (starlark.StringDict, error
 			continue
 		}
 
-		a.paramValuesStr[p.Name] = valueStr
+		paramValuesStr[p.Name] = valueStr
 		value, err := apptype.ParamStringToType(p.Name, p.Type, valueStr)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing param %s: %w", p.Name, err)
 		}
-		a.paramDict[p.Name] = value
+		paramDict[p.Name] = value
 
 		if p.Type == starlark_type.STRING && p.Required && valueStr == "" && !isActionParam {
 			return nil, fmt.Errorf("param %s is a required param, value cannot be empty", p.Name)
@@ -303,16 +311,18 @@ func (a *App) addParams(builtin starlark.StringDict) (starlark.StringDict, error
 
 	paramModule := starlarkstruct.Module{
 		Name:    apptype.PARAM_MODULE,
-		Members: a.paramDict,
+		Members: paramDict,
 	}
 
 	newBuiltins[apptype.PARAM_MODULE] = &paramModule
 
 	for k, v := range a.Metadata.ParamValues {
-		if _, ok := a.paramDict[k]; !ok {
-			a.paramValuesStr[k] = v // add additional param values to paramMap
+		if _, ok := paramDict[k]; !ok {
+			paramValuesStr[k] = v // add additional param values to paramMap
 		}
 	}
+	a.paramValuesStr = paramValuesStr
+	a.paramDict = paramDict
 	return newBuiltins, nil
 }
 
@@ -388,7 +398,11 @@ func (a *App) checkAppPathStripping() (bool, error) {
 				return false, err
 			}
 
-			if urlValue.(starlark.String).GoString() != apptype.CONTAINER_URL {
+			urlStr, ok := urlValue.(starlark.String)
+			if !ok {
+				return false, fmt.Errorf("proxy config url is not a string")
+			}
+			if urlStr.GoString() != apptype.CONTAINER_URL {
 				// Not proxying to container url, ignore
 				continue
 			}
@@ -398,7 +412,11 @@ func (a *App) checkAppPathStripping() (bool, error) {
 				return false, err
 			}
 
-			return bool(stripAppValue.(starlark.Bool)), nil
+			stripApp, ok := stripAppValue.(starlark.Bool)
+			if !ok {
+				return false, fmt.Errorf("proxy config strip_app is not a bool")
+			}
+			return bool(stripApp), nil
 		}
 	}
 
@@ -1101,8 +1119,9 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	// proxied routes survive container re-creates that change the host port
 	resolveProxyTarget := func() *url.URL { return urlParsed }
 	if originalUrlStr == apptype.CONTAINER_URL {
+		containerHandler := a.containerHandler // a reload can replace or clear the field
 		resolveProxyTarget = func() *url.URL {
-			current, err := url.Parse(a.containerHandler.GetProxyUrl())
+			current, err := url.Parse(containerHandler.GetProxyUrl())
 			if err != nil || current.Host == "" {
 				// keep the last known address rather than emitting a
 				// hostless upstream url

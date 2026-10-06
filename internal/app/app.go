@@ -831,6 +831,13 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 	containerConfig, err := a.appDef.Attr("container")
 	if err != nil || containerConfig == starlark.None {
 		// Plugin not authorized, skip any container files
+		if a.containerHandler != nil {
+			// The container config was removed on reload, release the previous handler
+			if closeErr := a.containerHandler.Close(); closeErr != nil {
+				a.Warn().Err(closeErr).Msg("error closing container handler")
+			}
+			a.containerHandler = nil
+		}
 		return nil
 	}
 

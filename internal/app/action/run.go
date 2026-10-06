@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -256,6 +257,13 @@ func (a *Action) startRun(ctx context.Context, inv Invocation, args starlark.Str
 		defer release()
 		defer host.Registry.Remove(run.Id)
 		defer cancel()
+		defer func() {
+			// performRun recovers a handler panic; this covers the rest
+			// (plugin cleanup, the finish record)
+			if r := recover(); r != nil {
+				a.Error().Str("run", run.Id).Str("trace", string(debug.Stack())).Msgf("panic in action run worker: %v", r)
+			}
+		}()
 		a.performRun(runCtx, &workerRun, args, tempDir)
 	}()
 	return run, nil
@@ -317,15 +325,25 @@ func (a *Action) performRun(ctx context.Context, run *types.ActionRun, args star
 	}
 
 	argsValue := Args{members: args}
-	ret, callErr := a.callHandler(thread, a.run, starlark.Tuple{starlark.False, &argsValue})
-	close(threadDone)
-	var status, message string
-	switch {
-	case callErr != nil:
-		status, message = runErrorStatus(ctx, callErr)
-	default:
-		status, message = a.recordResult(ctx, run, ret, recorder)
-	}
+	// The worker goroutine has no caller to recover a panic (plugin cursor
+	// iterators panic on errors): a panic fails the run instead of taking
+	// down the server
+	status, message := func() (status, message string) {
+		defer func() {
+			if r := recover(); r != nil {
+				a.Error().Str("run", run.Id).Str("trace", string(debug.Stack())).Msgf("panic in action run: %v", r)
+				status, message = runErrorStatus(ctx, fmt.Errorf("%v", r))
+			}
+		}()
+		ret, callErr := func() (starlark.Value, *InvokeError) {
+			defer close(threadDone)
+			return a.callHandler(thread, a.run, starlark.Tuple{starlark.False, &argsValue})
+		}()
+		if callErr != nil {
+			return runErrorStatus(ctx, callErr)
+		}
+		return a.recordResult(ctx, run, ret, recorder)
+	}()
 	if status == types.ActionRunCanceled {
 		// Record who asked for the cancel (a user, the app delete, the
 		// server shutdown)

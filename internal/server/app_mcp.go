@@ -383,6 +383,7 @@ func (s *Server) buildAggMCPServer(r *http.Request) *mcp.Server {
 	if d, err := time.ParseDuration(s.Config().Api.AppMCP.ListTTL); err == nil && d >= 0 && s.Config().Api.AppMCP.ListTTL != "" {
 		listTTL = d
 	}
+	srv.AddReceivingMiddleware(s.mcpRecoverMiddleware)
 	srv.AddReceivingMiddleware(mcpAuditMiddleware)
 	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {

@@ -102,6 +102,9 @@ func Setup(ctx context.Context, config *types.ServerConfig, logger *types.Logger
 	if config.Telemetry.Metrics {
 		metricExporter, err := otlpmetrichttp.New(ctx, metricExporterOptions(config)...)
 		if err != nil {
+			// Release the tracer provider created above, the caller continues
+			// without telemetry and does not shut down a failed setup
+			_ = providers.Shutdown(ctx)
 			return providers, fmt.Errorf("initialize OpenTelemetry metric exporter: %w", err)
 		}
 		mp := sdkmetric.NewMeterProvider(

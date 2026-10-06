@@ -13,7 +13,9 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
@@ -618,7 +620,15 @@ func mcpToolError(format string, args ...any) *mcp.CallToolResult {
 // Call runs the tool: an action tool (run, validate, suggest) or one of the
 // run tools of an app with async actions, which are not bound to an action.
 // ctx is the app request context of the caller
-func (t *MCPTool) Call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *MCPTool) Call(ctx context.Context, req *mcp.CallToolRequest) (res *mcp.CallToolResult, err error) {
+	// The MCP SDK runs the call on its own goroutine, with no recover: a
+	// panic (plugin cursor iterators panic on errors) would take down the server
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "panic in mcp tool call: %v\n%s\n", r, debug.Stack())
+			res, err = mcpToolError("internal error: %v", r), nil
+		}
+	}()
 	if t.handler != nil {
 		return t.handler(ctx, req)
 	}

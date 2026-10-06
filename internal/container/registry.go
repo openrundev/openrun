@@ -257,8 +257,11 @@ func getDockerConfig(ctx context.Context, imageRef string, registryConfig *types
 		svc := ecr.NewFromConfig(awsCfg)
 		input := &ecr.GetAuthorizationTokenInput{}
 		authOut, err := svc.GetAuthorizationToken(ctx, input)
-		if err != nil || len(authOut.AuthorizationData) == 0 {
+		if err != nil {
 			return nil, nil, fmt.Errorf("ecr auth token: %w", err)
+		}
+		if len(authOut.AuthorizationData) == 0 || authOut.AuthorizationData[0].AuthorizationToken == nil {
+			return nil, nil, fmt.Errorf("ecr auth token: no authorization data returned")
 		}
 		enc := *authOut.AuthorizationData[0].AuthorizationToken
 		dec, _ := base64.StdEncoding.DecodeString(enc) // "AWS:<password>"

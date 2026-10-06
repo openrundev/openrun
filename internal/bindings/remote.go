@@ -234,6 +234,17 @@ func (b *remoteServiceBinding) call(ctx context.Context, retryable bool, fn func
 		return fmt.Errorf("service binding not initialized")
 	}
 
+	if provider.Exited() {
+		// The provider process is gone (crashed, or killed after an earlier
+		// transport error). Nothing was sent yet, so respawning is safe for
+		// non-idempotent operations too
+		newProvider, respawnErr := b.respawnLocked(ctx, errors.New("provider process exited"))
+		if respawnErr != nil {
+			return respawnErr
+		}
+		provider = newProvider
+	}
+
 	err := fn(provider)
 	var providerError *binding.ProviderError
 	if err == nil || errors.As(err, &providerError) {
@@ -258,22 +269,33 @@ func (b *remoteServiceBinding) call(ctx context.Context, retryable bool, fn func
 		b.logger.Warn().Err(err).Str("service_type", b.serviceType).Msg("binding provider transport error, respawning provider")
 	}
 	provider.Kill()
+	newProvider, respawnErr := b.respawnLocked(ctx, err)
+	if respawnErr != nil {
+		return respawnErr
+	}
+
+	return fn(newProvider)
+}
+
+// respawnLocked launches a new provider process and replays
+// InitializeService. cause is the failure which made the respawn necessary.
+// b.mu has to be held
+func (b *remoteServiceBinding) respawnLocked(ctx context.Context, cause error) (*binding.Provider, error) {
 	newProvider, launchErr := b.launch()
 	if launchErr != nil {
 		b.provider = nil
 		b.initialized = false
-		return fmt.Errorf("binding provider failed (%s) and could not be respawned: %w", err, launchErr)
+		return nil, fmt.Errorf("binding provider failed (%s) and could not be respawned: %w", cause, launchErr)
 	}
 	if initErr := newProvider.InitializeService(ctx, b.serviceType, b.serviceConfig,
 		binding.ServiceBindingRuntime{LocalhostBindingHostname: b.runtime.LocalhostBindingHostname}); initErr != nil {
 		newProvider.Kill()
 		b.provider = nil
 		b.initialized = false
-		return fmt.Errorf("binding provider failed (%s) and could not be reinitialized: %w", err, initErr)
+		return nil, fmt.Errorf("binding provider failed (%s) and could not be reinitialized: %w", cause, initErr)
 	}
 	b.provider = newProvider
-
-	return fn(newProvider)
+	return newProvider, nil
 }
 
 func (b *remoteServiceBinding) GenerateAccount(ctx context.Context, bindingId, bindingPath string, bindingMetadata types.BindingMetadata,

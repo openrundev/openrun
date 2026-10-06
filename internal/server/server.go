@@ -378,10 +378,10 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}()
 	server.secretsManager.Store(secretsManager)
 	server.forwardAuthHTTPClient = newForwardAuthHTTPClient(config)
+	server.apps = NewAppStore(l, server) // before the notify funcs, which use it
 	db.AppNotifyFunc = server.appNotifyHandler
 	db.ConfigNotifyFunc = server.configNotifyHandler
 	db.ProviderNotifyFunc = server.providerNotifyHandler
-	server.apps = NewAppStore(l, server)
 	server.generatedAdminPassword = generatedAdminPassword
 	server.authHandler = NewAdminBasicAuth(l, config)
 	server.authHandler.generated = adminHash
@@ -968,6 +968,10 @@ func (s *Server) appNotifyHandler(updatePayload types.AppUpdatePayload) {
 	}
 	s.Debug().Str("server_id", string(updatePayload.ServerId)).Msgf(
 		"Received app update notification from %s for %s", updatePayload.ServerId, updatePayload.AppPathDomains)
+	if s.apps == nil {
+		// The notification arrived before the server finished initializing
+		return
+	}
 	s.apps.ClearAppsNoNotify(updatePayload.AppPathDomains)
 }
 
@@ -978,6 +982,11 @@ func (s *Server) configNotifyHandler(updatePayload types.ConfigUpdatePayload) {
 	}
 	s.Debug().Str("server_id", string(updatePayload.ServerId)).Msgf(
 		"Received config update notification from %s", updatePayload.ServerId)
+	if s.rbacManager == nil {
+		// The notification arrived before the server finished initializing,
+		// the startup reads the config from the database anyway
+		return
+	}
 	dynamicConfig, err := s.db.GetConfig() // get the latest dynamic config from database
 	if err != nil {
 		s.Error().Err(err).Msg("error getting dynamic config")
@@ -1566,7 +1575,10 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 						_, keyErr = os.Stat(certKeyPath)
 						if certErr != nil || keyErr != nil {
 							s.Info().Msgf("Generating mkcert certificate for domain %s", domain)
-							cmd := exec.Command(mkcertPath, "-cert-file", certFilePath, "-key-file", certKeyPath, domain)
+							// Bounded, mkcertsLock is held
+							mkcertCtx, mkcertCancel := context.WithTimeout(context.Background(), 30*time.Second)
+							defer mkcertCancel()
+							cmd := exec.CommandContext(mkcertCtx, mkcertPath, "-cert-file", certFilePath, "-key-file", certKeyPath, domain)
 							if err := cmd.Run(); err != nil {
 								return nil, fmt.Errorf("error generating certificate using mkcert: %w", err)
 							}

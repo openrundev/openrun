@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strings"
@@ -577,9 +578,25 @@ type (
 // buildMCPServer registers the tool set. Ops disabled for the MCP invoker
 // (registry defaults like stop_server/secret_reveal, minus [api.mcp] enable,
 // plus [api.mcp] disable) are not registered at all
+// mcpRecoverMiddleware turns a panic in an MCP method handler into an error.
+// The MCP SDK runs each request on its own goroutine with no recover, so the
+// http recover middleware does not cover it and a panic would take down the server
+func (s *Server) mcpRecoverMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (res mcp.Result, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				s.Error().Str("method", method).Str("trace", string(debug.Stack())).Msgf("panic in mcp handler: %v", r)
+				res, err = nil, fmt.Errorf("internal error: %v", r)
+			}
+		}()
+		return next(ctx, method, req)
+	}
+}
+
 func (s *Server) buildMCPServer() *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "openrun", Version: types.GetVersion()},
 		&mcp.ServerOptions{Instructions: mcpServerInstructions})
+	srv.AddReceivingMiddleware(s.mcpRecoverMiddleware)
 	srv.AddReceivingMiddleware(mcpAuditMiddleware)
 	// The tool list follows the effective [api.mcp] policy and the caller's
 	// credential: private to the caller's client, refreshed within the ttl

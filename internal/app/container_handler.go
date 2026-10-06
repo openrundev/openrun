@@ -186,6 +186,9 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		for _, child := range result.AST.Children {
 			switch strings.ToUpper(child.Value) {
 			case "EXPOSE":
+				if child.Next == nil {
+					continue
+				}
 				portVal, err := strconv.ParseInt(strings.TrimSpace(child.Next.Value), 10, 32)
 				if err != nil {
 					// Can fail if value is an arg like $PORT
@@ -302,19 +305,7 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		devInferredEnv:  devInferredEnv,
 	}
 
-	if containerConfig.IdleShutdownSecs > 0 &&
-		(!app.IsDev || containerConfig.IdleShutdownDevApps) {
-		// Start the idle shutdown check
-		h.idleShutdownTicker = time.NewTicker(time.Duration(containerConfig.IdleShutdownSecs) * time.Second)
-		go h.idleAppShutdown(context.Background())
-	}
-
 	h.health = h.GetHealthUrl(health)
-	if containerConfig.StatusCheckIntervalSecs > 0 && h.lifetime != types.CONTAINER_LIFETIME_COMMAND {
-		// Start the health check goroutine
-		h.healthCheckTicker = time.NewTicker(time.Duration(containerConfig.StatusCheckIntervalSecs) * time.Second)
-		go h.healthChecker(context.Background())
-	}
 
 	excludeGlob := []string{}
 	templateFiles, err := fs.Glob(sourceFS, "*.go.html")
@@ -384,6 +375,20 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 		return nil, err
 	}
 
+	// The background checks are started last, an error return above would
+	// otherwise leave them running with no handler to close them
+	if containerConfig.IdleShutdownSecs > 0 &&
+		(!app.IsDev || containerConfig.IdleShutdownDevApps) {
+		// Start the idle shutdown check
+		h.idleShutdownTicker = time.NewTicker(time.Duration(containerConfig.IdleShutdownSecs) * time.Second)
+		go h.idleAppShutdown(context.Background())
+	}
+	if containerConfig.StatusCheckIntervalSecs > 0 && h.lifetime != types.CONTAINER_LIFETIME_COMMAND {
+		// Start the health check goroutine
+		h.healthCheckTicker = time.NewTicker(time.Duration(containerConfig.StatusCheckIntervalSecs) * time.Second)
+		go h.healthChecker(context.Background())
+	}
+
 	return h, nil
 }
 
@@ -418,7 +423,17 @@ func dedupVolumes(volumes []string) []string {
 	return ret
 }
 
+// containerStopTimeout bounds the container stop done by the background
+// idle and health checks
+const containerStopTimeout = 2 * time.Minute
+
 func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			h.Error().Msgf("Recovered from panic in idle checker: %s", r)
+		}
+	}()
+
 	defer h.Debug().Msgf("Idle checker stopped for app %s", h.app.Id)
 	for {
 		select {
@@ -491,7 +506,10 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 		}
 		h.currentState = ContainerStateIdleShutdown
 
-		err = h.manager.StopContainer(ctx, containerName)
+		// Bounded, stateLock is held: a hung stop would block the app
+		stopCtx, stopCancel := context.WithTimeout(ctx, containerStopTimeout)
+		err = h.manager.StopContainer(stopCtx, containerName)
+		stopCancel()
 		if err != nil {
 			h.Error().Err(err).Msgf("Error stopping idle app %s", h.app.Id)
 		}
@@ -571,7 +589,9 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 		h.stateLock.Lock()
 		h.currentState = ContainerStateHealthFailure
 
-		err = h.manager.StopContainer(ctx, containerName)
+		stopCtx, stopCancel := context.WithTimeout(ctx, containerStopTimeout)
+		err = h.manager.StopContainer(stopCtx, containerName)
+		stopCancel()
 		if err != nil {
 			h.Error().Err(err).Msgf("Error stopping app %s after health failure", h.app.Id)
 		}
@@ -1964,6 +1984,11 @@ func (h *ContainerHandler) prodReloadKubernetes(ctx context.Context, fullHash st
 	litestreamSpec := h.litestreamSpec()
 	if litestreamSpec != nil {
 		if err := h.buildLitestreamRestores(ctx, litestreamSpec); err != nil {
+			if sourceDir != "" {
+				if rmErr := os.RemoveAll(sourceDir); rmErr != nil {
+					h.Warn().Err(rmErr).Msgf("error removing temp source dir for app %s", h.app.Id)
+				}
+			}
 			return err
 		}
 	}

@@ -850,7 +850,9 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	}, newInfo.Spec, liveApp.Metadata.Spec, clobber)
 	if specChanged {
 		if newInfo.Spec == "" {
-			liveApp.Metadata.SpecFiles = nil
+			// Not nil, setupApp dereferences the spec files
+			emptySpecFiles := make(types.SpecFiles)
+			liveApp.Metadata.SpecFiles = &emptySpecFiles
 			liveApp.Metadata.Spec = ""
 		} else {
 			appFiles := s.GetAppSpec(newInfo.Spec)
@@ -876,6 +878,20 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		if gitCommitChanged {
 			liveApp.Metadata.VersionMetadata.GitCommit = newInfo.GitCommit
 		}
+	}
+
+	// mergeMap updates the live maps in place, they cannot be nil
+	if liveApp.Metadata.ParamValues == nil {
+		liveApp.Metadata.ParamValues = map[string]string{}
+	}
+	if liveApp.Metadata.ContainerOptions == nil {
+		liveApp.Metadata.ContainerOptions = map[string]string{}
+	}
+	if liveApp.Metadata.ContainerArgs == nil {
+		liveApp.Metadata.ContainerArgs = map[string]string{}
+	}
+	if liveApp.Metadata.AppConfig == nil {
+		liveApp.Metadata.AppConfig = map[string]string{}
 	}
 
 	var oldParams map[string]string

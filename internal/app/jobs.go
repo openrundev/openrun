@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -37,7 +38,8 @@ func (a *App) loadJobs() error {
 	if err != nil {
 		return err
 	}
-	a.jobs = nil
+	// Built in a local and assigned once, job runs read a.jobs concurrently
+	var jobs []jobDef
 	if jobsAttr != nil && jobsAttr != starlark.None {
 		list, ok := jobsAttr.(*starlark.List)
 		if !ok {
@@ -67,17 +69,18 @@ func (a *App) loadJobs() error {
 			if spec.IsRun() && def.run == nil {
 				return fmt.Errorf("job %s: run function is missing", spec.Name)
 			}
-			a.jobs = append(a.jobs, def)
+			jobs = append(jobs, def)
 		}
 	}
 
-	definition := make([]string, 0, len(a.jobs))
-	for _, def := range a.jobs {
+	definition := make([]string, 0, len(jobs))
+	for _, def := range jobs {
 		definition = append(definition, def.spec.String())
 	}
 	if len(definition) == 0 {
 		definition = nil
 	}
+	a.jobs = jobs
 	a.Metadata.DefinitionJobs = definition
 
 	effective, _, err := a.EffectiveJobs()
@@ -258,6 +261,14 @@ type JobRunResult struct {
 // fails the run; otherwise the run succeeds with the result status (or the
 // value's string form) as the message
 func (a *App) RunJobFunction(ctx context.Context, spec types.JobSpec, runArgs map[string]string) (result JobRunResult, retErr error) {
+	// Job runs are on background goroutines, a panic (plugin cursor iterators
+	// panic on errors) fails the run instead of taking down the server
+	defer func() {
+		if r := recover(); r != nil {
+			a.Error().Str("trace", string(debug.Stack())).Msgf("panic in job %s: %v", spec.Name, r)
+			retErr = fmt.Errorf("panic in job %s: %v", spec.Name, r)
+		}
+	}()
 	var callable starlark.Callable
 	for _, def := range a.jobs {
 		if def.spec.Name == spec.Name {

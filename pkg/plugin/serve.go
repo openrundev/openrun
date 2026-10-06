@@ -286,7 +286,9 @@ func (s *providerServer) Call(ctx context.Context, req *pb.CallRequest) (*pb.Cal
 			resp = &pb.CallResponse{Value: value}
 		}
 	}
-	resp.StrictKeys = result.StrictKeys
+	if result != nil {
+		resp.StrictKeys = result.StrictKeys
+	}
 	return resp, nil
 }
 

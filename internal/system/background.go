@@ -5,6 +5,9 @@ package system
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"runtime/debug"
 	"time"
 )
 
@@ -18,8 +21,21 @@ type BackgroundTask struct {
 func StartBackgroundTask(parent context.Context, run func(context.Context)) *BackgroundTask {
 	ctx, cancel := context.WithCancel(parent)
 	task := &BackgroundTask{cancel: cancel, done: make(chan struct{})}
-	go func() { defer close(task.done); defer cancel(); run(ctx) }()
+	go func() {
+		defer close(task.done)
+		defer cancel()
+		defer recoverBackgroundPanic()
+		run(ctx)
+	}()
 	return task
+}
+
+// recoverBackgroundPanic keeps a panic in a background goroutine from taking
+// down the process
+func recoverBackgroundPanic() {
+	if r := recover(); r != nil {
+		fmt.Fprintf(os.Stderr, "panic in background task: %v\n%s\n", r, debug.Stack())
+	}
 }
 
 func (t *BackgroundTask) Stop() {
@@ -46,7 +62,11 @@ func StartPeriodicTask(parent context.Context, interval time.Duration, immediate
 			if ctx.Err() != nil {
 				return
 			}
-			pass(ctx)
+			// A panic in one pass must not end the periodic task
+			func() {
+				defer recoverBackgroundPanic()
+				pass(ctx)
+			}()
 			immediate = false
 		}
 	})

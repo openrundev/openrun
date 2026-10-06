@@ -278,6 +278,9 @@ func (s *Server) VersionSwitch(ctx context.Context, mainAppPath string, dryRun b
 	if err != nil {
 		return nil, fmt.Errorf("error getting version %d: %w", versionInt, err)
 	}
+	if newVersion.Metadata == nil {
+		return nil, fmt.Errorf("version %d has no metadata", versionInt)
+	}
 
 	// The restored metadata may re-attach bindings that were since removed
 	// from the app: switching hands their credentials back to the app, so

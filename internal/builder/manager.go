@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -408,6 +409,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, name, prompt, spec,
 	firstPrompt := composePrompt(config.AppBuilder.SystemPrompt, spec, specKind, prompt, profile, editApp,
 		services, containersAvailable)
 	go func() {
+		defer m.recoverSession(ls)
 		if err := m.launch(ls); err != nil {
 			m.failSession(ls, fmt.Errorf("starting sandbox: %w", err))
 			return
@@ -605,6 +607,7 @@ func (m *Manager) launch(ls *liveSession) error {
 
 	// If the sandbox dies unexpectedly, detach the session
 	go func() {
+		defer m.recoverSession(ls)
 		<-sb.exited
 		ls.mu.Lock()
 		current := ls.sandbox
@@ -645,7 +648,10 @@ func (m *Manager) SendMessage(ctx context.Context, id, userID, text string) erro
 	ls.mu.Unlock()
 
 	m.appendActivity(id, userID, "prompt", text, nil)
-	go m.runTurn(ls, text, true)
+	go func() {
+		defer m.recoverSession(ls)
+		m.runTurn(ls, text, true)
+	}()
 	return nil
 }
 
@@ -669,6 +675,7 @@ func (m *Manager) runTurn(ls *liveSession, text string, claimed bool) {
 	ls.turnCancel = cancel
 	ls.turnCancelled = false
 	ls.approvals = 0
+	ls.toolTitles = map[string]string{}
 	ls.msgBuf.Reset()
 	ls.chunkBreak = false
 	ls.lastActive = time.Now()
@@ -823,6 +830,7 @@ func (m *Manager) ResumeSession(ctx context.Context, id, userID string) error {
 
 	m.appendActivity(id, userID, "lifecycle", "session resumed", nil)
 	go func() {
+		defer m.recoverSession(ls)
 		if err := m.launch(ls); err != nil {
 			m.failSession(ls, fmt.Errorf("resuming sandbox: %w", err))
 		}
@@ -1051,6 +1059,16 @@ func (m *Manager) stopLive(ls *liveSession, status types.BuilderSessionStatus) {
 	ls.closeSubscribers()
 }
 
+// recoverSession is deferred in the session goroutines: a panic (in the ACP
+// calls or the turn done callback, which loads the agent written app) fails
+// the session instead of taking down the server
+func (m *Manager) recoverSession(ls *liveSession) {
+	if r := recover(); r != nil {
+		m.Error().Str("session", ls.id).Str("trace", string(debug.Stack())).Msgf("panic in builder session: %v", r)
+		m.failSession(ls, fmt.Errorf("internal error: %v", r))
+	}
+}
+
 func (m *Manager) failSession(ls *liveSession, failure error) {
 	if ls.ctx.Err() != nil {
 		return
@@ -1156,6 +1174,9 @@ func (m *Manager) VerifyProfile(ctx context.Context, name string, testPrompt boo
 		if err != nil {
 			return err
 		}
+		// The verify sandbox's state volume is not tied to a builder session,
+		// remove it after the container is stopped
+		defer RemoveStateVolume(context.WithoutCancel(ctx), cli, "bld_ses_verify_"+p.name) //nolint:errcheck
 		sb, err = startSandbox(cli, image, "bld_ses_verify_"+p.name, workspace, p, env)
 		if err != nil {
 			return err
@@ -1164,6 +1185,7 @@ func (m *Manager) VerifyProfile(ctx context.Context, name string, testPrompt boo
 	defer sb.stop()
 
 	ls := newLiveSession("verify", "verify")
+	defer ls.cancel()
 	conn := acp.NewClientSideConnection(&driverClient{manager: m, session: ls}, sb.stdin, sb.stdout)
 	handshakeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()

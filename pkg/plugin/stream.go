@@ -5,6 +5,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
@@ -33,6 +34,17 @@ func PushCursor(parent context.Context, typeName, leakKey string, stream bool, s
 			defer close(done)
 			defer close(ch)
 			defer cancel()
+			defer func() {
+				// seq is plugin code; a panic is reported to the consumer
+				// instead of taking down the process
+				if r := recover(); r != nil {
+					select {
+					case ch <- streamItem{err: fmt.Errorf("stream producer panic: %v", r)}:
+					case <-stopped:
+					case <-producerCtx.Done():
+					}
+				}
+			}()
 			seq(producerCtx, func(v any, err error) bool {
 				select {
 				case ch <- streamItem{value: v, err: err}:

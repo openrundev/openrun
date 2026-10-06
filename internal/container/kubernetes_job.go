@@ -37,6 +37,10 @@ func jobObjectName(name ContainerName) string {
 	return suffixedKubernetesName(s[:len(s)-suffixLen], s[len(s)-suffixLen:])
 }
 
+// maxJobGetErrors is the number of consecutive status poll failures after
+// which RunJob gives up on the Job
+const maxJobGetErrors = 5
+
 // RunJob creates a batch/v1 Job for the run and waits for it to finish. The
 // Job is left in place (with a one day TTL backstop) so JobLogs can read the
 // pod until the run record is retired. Canceling ctx deletes the Job
@@ -144,6 +148,7 @@ func (k *KubernetesCM) RunJob(ctx context.Context, req JobRunRequest) (int, erro
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	getErrors := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -160,8 +165,21 @@ func (k *KubernetesCM) RunJob(ctx context.Context, req JobRunRequest) (int, erro
 			if ctx.Err() != nil {
 				continue
 			}
+			// Tolerate transient API errors; when giving up, delete the job
+			// so that it is not left running after the run is marked failed
+			getErrors++
+			if getErrors < maxJobGetErrors {
+				k.Warn().Err(err).Msgf("error getting job %s, retrying", name)
+				continue
+			}
+			delCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if delErr := k.RemoveJob(delCtx, req.ContainerName); delErr != nil {
+				k.Warn().Err(delErr).Msgf("error deleting job %s", name)
+			}
+			cancel()
 			return -1, fmt.Errorf("get job %s: %w", name, err)
 		}
+		getErrors = 0
 		done := false
 		failed := false
 		for _, cond := range current.Status.Conditions {

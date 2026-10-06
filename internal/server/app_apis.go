@@ -847,6 +847,11 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 	if deletedBindings {
 		s.approvalCacheGen.Add(1)
 	}
+	for _, appId := range deletedAppIds {
+		s.actionLists.Delete(appId)
+		s.appToolLists.Delete(appId)
+		s.approvalCache.Delete(appId)
+	}
 
 	// Remove from in memory app cache
 	for _, appInfo := range filteredApps {

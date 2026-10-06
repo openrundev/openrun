@@ -39,7 +39,7 @@ var buildLockChannel chan string // channel to hold the build ids, max size is M
 func acquireBuildLock(ctx context.Context, config *types.SystemConfig, buildId string) (func(), error) {
 	mu.Lock()
 	if buildLockChannel == nil {
-		buildLockChannel = make(chan string, config.MaxConcurrentBuilds)
+		buildLockChannel = make(chan string, max(1, config.MaxConcurrentBuilds))
 	}
 	mu.Unlock()
 
@@ -226,7 +226,7 @@ func buildImageCommand(ctx context.Context, logger *types.Logger, config *types.
 	}
 
 	args = append(args, ".")
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 
 	logger.Debug().Msgf("Running command: %s", cmd.String())
 	cmd.Dir = sourceUrl
@@ -864,7 +864,7 @@ func (c CommandCM) VolumeExists(ctx context.Context, name VolumeName) bool {
 func (c CommandCM) VolumeCreate(ctx context.Context, name VolumeName, size string) error {
 	// docker/podman named volumes are not sized, size is ignored
 	c.Debug().Msgf("Creating volume %s", name)
-	cmd := exec.Command(c.config.System.ContainerCommand, "volume", "create", string(name))
+	cmd := exec.CommandContext(ctx, c.config.System.ContainerCommand, "volume", "create", string(name))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error creating volume %s: %w %s", name, err, output)

@@ -78,7 +78,11 @@ func SaveLogin(login *StoredLogin) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // LoadLogin returns the stored login for the server url, nil when absent

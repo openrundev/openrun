@@ -38,6 +38,11 @@ func (s *Server) prefetchApplyAppSources(ctx context.Context, applyConfig map[ty
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					s.Error().Msgf("git prefetch: panic checking out apply source: %v", r)
+				}
+			}()
 			workers <- struct{}{}
 			defer func() { <-workers }()
 			branch := cmp.Or(request.GitBranch, "main")

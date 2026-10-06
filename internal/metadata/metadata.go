@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -138,7 +139,15 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 			ReconnectDelay: 2 * time.Second,
 		}
 
-		var handler pgxlisten.HandlerFunc = func(ctx context.Context, notification *pgconn.Notification, conn *pgx.Conn) error {
+		var handler pgxlisten.HandlerFunc = func(ctx context.Context, notification *pgconn.Notification, conn *pgx.Conn) (retErr error) {
+			// The listener goroutine has no recover, a panic in a notify func
+			// would take down the server
+			defer func() {
+				if r := recover(); r != nil {
+					m.Error().Str("trace", string(debug.Stack())).Msgf("panic handling postgres notification: %v", r)
+					retErr = fmt.Errorf("panic handling notification: %v", r)
+				}
+			}()
 			if notification.Payload == "" {
 				return nil
 			}
@@ -160,7 +169,11 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 				}
 				// Called synchronously (pgxlisten serializes handler calls) so
 				// updates for the same app are applied in order
-				m.AppNotifyFunc(updateMsg.Payload)
+				// The funcs are set by the server after NewMetadata returns,
+				// a notification can arrive before that
+				if m.AppNotifyFunc != nil {
+					m.AppNotifyFunc(updateMsg.Payload)
+				}
 			case types.MessageTypeConfigUpdate:
 				updateMsg := types.ConfigUpdateMessage{}
 				err := json.Unmarshal([]byte(notification.Payload), &updateMsg)
@@ -168,7 +181,9 @@ func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, e
 					m.Error().Err(err).Msg("error unmarshalling config update message")
 					return err
 				}
-				m.ConfigNotifyFunc(updateMsg.Payload)
+				if m.ConfigNotifyFunc != nil {
+					m.ConfigNotifyFunc(updateMsg.Payload)
+				}
 			case types.MessageTypeProviderUpdate:
 				updateMsg := types.ProviderUpdateMessage{}
 				err := json.Unmarshal([]byte(notification.Payload), &updateMsg)

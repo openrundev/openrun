@@ -173,6 +173,11 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 	// process commits to the handoff unconditionally once Ready returns
 	if err := server.Ready(); err != nil {
 		fmt.Printf("Error signaling readiness: %s\n", err)
+		// The server is running at this point, stop it so that app child
+		// processes are not orphaned
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), server.DrainTimeout())
+		_ = server.Stop(stopCtx)
+		stopCancel()
 		system.NotifyServiceFailed(1)
 		os.Exit(1)
 	}

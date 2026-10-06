@@ -158,6 +158,9 @@ func (r *RunRegistry) Reserve(group string, limit int) (func(), bool) {
 			if r.reserved[group] > 0 {
 				r.reserved[group]--
 			}
+			if r.reserved[group] == 0 {
+				delete(r.reserved, group)
+			}
 		})
 	}, true
 }

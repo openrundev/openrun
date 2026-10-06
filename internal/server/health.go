@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -70,6 +72,13 @@ func (s *Server) healthCacheGet(key, updateKey string) (any, bool) {
 }
 
 func (s *Server) healthCachePut(key, updateKey string, result any) {
+	// Drop expired entries, deleted services and bindings are not removed otherwise
+	s.healthCache.Range(func(k, v any) bool {
+		if time.Since(v.(healthCacheEntry).checkedAt) > healthCacheTTL {
+			s.healthCache.Delete(k)
+		}
+		return true
+	})
 	s.healthCache.Store(key, healthCacheEntry{updateKey: updateKey, checkedAt: time.Now(), result: result})
 }
 
@@ -94,6 +103,11 @@ func runHealthChecks(ctx context.Context, checks []func(ctx context.Context)) {
 		sem <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "panic in health check: %v\n%s\n", r, debug.Stack())
+				}
+			}()
 			tctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
 			defer cancel()
 			check(tctx)

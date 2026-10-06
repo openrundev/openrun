@@ -663,9 +663,15 @@ func saveActionFiles(cCtx *cli.Context, clientConfig *types.ClientConfig, client
 		}
 	}
 
+	// One client for all the direct downloads, so that connections are reused
+	// across files and released when done
+	httpClient := system.NewPlainHttpClient(clientConfig.Client.SkipCertCheck)
+	httpClient.Timeout = 0 // the size of the file is not known
+	defer httpClient.CloseIdleConnections()
+
 	used := map[string]bool{}
 	for i, file := range files {
-		body, err := openActionFile(cCtx, clientConfig, client, req, file)
+		body, err := openActionFile(cCtx, httpClient, client, req, file)
 		if err != nil {
 			return fmt.Errorf("error fetching %s: %w", cmp.Or(file.name, file.url), err)
 		}
@@ -717,7 +723,7 @@ type actionFileClient interface {
 	GetRaw(ctx context.Context, apiPath string, params url.Values) (*http.Response, error)
 }
 
-func openActionFile(cCtx *cli.Context, clientConfig *types.ClientConfig, client actionFileClient,
+func openActionFile(cCtx *cli.Context, httpClient *http.Client, client actionFileClient,
 	req *types.ActionRunRequest, file actionFile) (io.ReadCloser, error) {
 	var resp *http.Response
 	var err error
@@ -729,8 +735,6 @@ func openActionFile(cCtx *cli.Context, clientConfig *types.ClientConfig, client 
 		if fileReq, err = http.NewRequestWithContext(cCtx.Context, http.MethodGet, file.url, nil); err != nil {
 			return nil, err
 		}
-		httpClient := system.NewPlainHttpClient(clientConfig.Client.SkipCertCheck)
-		httpClient.Timeout = 0 // the size of the file is not known
 		resp, err = httpClient.Do(fileReq)
 	} else {
 		values := url.Values{}

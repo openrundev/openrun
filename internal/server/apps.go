@@ -278,8 +278,15 @@ func (a *AppStore) ResumeIdleShutdown() {
 }
 
 func (a *AppStore) ClearLinkedApps(pathDomain types.AppPathDomain) error {
+	// The notify (a db call) is done after the unlock, the lock blocks request routing
+	return a.server.db.NotifyAppUpdate(a.clearLinkedApps(pathDomain))
+}
+
+// clearLinkedApps clears the app and the apps linked to it from the cache,
+// returns the cleared paths
+func (a *AppStore) clearLinkedApps(pathDomain types.AppPathDomain) []types.AppPathDomain {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer a.mu.Unlock() // deferred: closing an app can panic in plugin code
 
 	appPaths := []types.AppPathDomain{}
 	appPaths = append(appPaths, pathDomain)
@@ -299,7 +306,7 @@ func (a *AppStore) ClearLinkedApps(pathDomain types.AppPathDomain) error {
 
 	a.clearApp(pathDomain)
 	a.resetAllAppCache()
-	return a.server.db.NotifyAppUpdate(appPaths)
+	return appPaths
 }
 
 // CloseAll closes all cached apps, stopping their background resources (dev
@@ -336,12 +343,14 @@ func (a *AppStore) ClearApps(pathDomains []types.AppPathDomain) {
 		return
 	}
 
-	a.mu.Lock()
-	for _, pd := range pathDomains {
-		a.clearApp(pd)
-	}
-	a.resetAllAppCache()
-	a.mu.Unlock()
+	func() {
+		a.mu.Lock()
+		defer a.mu.Unlock() // deferred: closing an app can panic in plugin code
+		for _, pd := range pathDomains {
+			a.clearApp(pd)
+		}
+		a.resetAllAppCache()
+	}()
 
 	err := a.server.db.NotifyAppUpdate(pathDomains)
 	if err != nil {

@@ -544,7 +544,9 @@ func (s *Server) scheduleCronJobs(ctx context.Context) {
 				s.Warn().Err(err).Msgf("skipping job %s of %s", spec.Name, entry.AppPathDomain())
 				continue
 			}
-			for tick := sched.Next(windowStart); !tick.After(now); tick = sched.Next(tick) {
+			// Next returns the zero time for a schedule which never fires
+			// (like Feb 30), which would loop forever
+			for tick := sched.Next(windowStart); !tick.IsZero() && !tick.After(now) && ctx.Err() == nil; tick = sched.Next(tick) {
 				s.startCronRun(ctx, entry, spec, tick.UTC())
 			}
 		}

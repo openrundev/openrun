@@ -310,6 +310,8 @@ func (s *Server) prepareDeploy(ctx context.Context, appPathDomain types.AppPathD
 	}
 	defer cleanup()
 	defer application.Close() //nolint:errcheck
+	// Removes the temp source dir when the build is not reached
+	defer application.DiscardContainerBuild(plan)
 
 	gates, err := application.BeforeDeployJobs()
 	if err != nil {

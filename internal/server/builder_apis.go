@@ -1140,6 +1140,7 @@ func (s *Server) builderPublishGit(ctx context.Context, session *types.BuilderSe
 	if err != nil {
 		return "", err
 	}
+	defer repoCache.Cleanup()
 	auth, err := repoCache.createAuthMethod(gitCfg.Auth)
 	if err != nil {
 		return "", err
@@ -1642,6 +1643,7 @@ func (s *Server) builderVerify(ctx context.Context, testPrompt bool) []BuilderCh
 			if err != nil {
 				return err
 			}
+			defer repoCache.Cleanup()
 			auth, err := repoCache.createAuthMethod(gitCfg.Auth)
 			if err != nil {
 				return err

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"text/template"
 	"text/template/parse"
+	"time"
 	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -167,7 +168,10 @@ func (s *SecretManager) appTemplateSecretFunc(checkAppPerms bool, appPerms [][]s
 		secretKey = fmt.Sprintf(printfStr, args...)
 	}
 
-	ret, err := provider.GetSecret(context.Background(), secretKey)
+	// Bounded so that a stalled secret provider cannot hang the caller
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	ret, err := provider.GetSecret(ctx, secretKey)
 	if err != nil {
 		panic(fmt.Errorf("error getting secret %s from %s: %w", secretKey, providerName, err))
 	}
