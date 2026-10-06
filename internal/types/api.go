@@ -158,10 +158,14 @@ type AppListResponse struct {
 }
 
 type AppCreateResponse struct {
-	AppPathDomain  AppPathDomain   `json:"app_path_domain"`
-	DryRun         bool            `json:"dry_run"`
-	HttpUrl        string          `json:"http_url"`
-	HttpsUrl       string          `json:"https_url"`
+	AppPathDomain AppPathDomain `json:"app_path_domain"`
+	DryRun        bool          `json:"dry_run"`
+	HttpUrl       string        `json:"http_url"`
+	HttpsUrl      string        `json:"https_url"`
+	// Auth is the effective login of the app (its auth setting resolved
+	// through security.app_default_auth_type): the app is reachable at its
+	// urls as soon as it is created, "none" means by anyone
+	Auth           string          `json:"auth"`
 	ApproveResults []ApproveResult `json:"approve_results"`
 	OrigSourceUrl  string          `json:"orig_source_url"`
 	SourceUrl      string          `json:"source_url"`
@@ -569,6 +573,54 @@ type ServerInfo struct {
 	ContainerRuntime    string                   `json:"container_runtime"` // resolved: docker | podman | kubernetes | ""
 	IsLeader            bool                     `json:"is_leader"`
 	MetadataReplication []ReplicationStatusEntry `json:"metadata_replication"`
+	// Api is the state of the remote API and MCP surfaces, for the console's
+	// MCP page and its API Access settings: what is on, what a login needs
+	Api ApiStatus `json:"api"`
+}
+
+// ApiStatus describes the remote API surfaces of a server as configured
+// (effective config: static plus dynamic): the transport prerequisites an
+// enabled surface needs and each surface's state. Config facts only, no
+// secrets; readable with config:basic_read like the rest of ServerInfo
+type ApiStatus struct {
+	// ExternalUrl is the issuer origin (api.external_url, else
+	// security.callback_url, else the HTTPS listener on the default
+	// domain); the MCP urls below are built from it. Empty when none applies
+	ExternalUrl string `json:"external_url"`
+	// HttpsListener is set when the HTTPS listener is on (https.port is
+	// not -1); TrustedProxies when security.trusted_proxies names a TLS
+	// terminating proxy. An enabled management surface needs one of them
+	HttpsListener  bool `json:"https_listener"`
+	TrustedProxies bool `json:"trusted_proxies"`
+	// RBACEnforced is false under security.unsafe_disable_rbac: no surface
+	// is served then
+	RBACEnforced bool `json:"rbac_enforced"`
+	// AppDefaultAuth is security.app_default_auth_type, the login of apps
+	// with auth default and of the app actions endpoint without ?auth=
+	AppDefaultAuth string `json:"app_default_auth"`
+	// Logins are the login mechanism names the surfaces and the app actions
+	// endpoint can name: none, system, builtin and the [auth.*]/saml_<name>
+	// entries, in display order
+	Logins []string         `json:"logins"`
+	MCP    ApiSurfaceStatus `json:"mcp"`     // the management MCP endpoint (/_openrun/mcp)
+	Rest   ApiSurfaceStatus `json:"rest"`    // the management REST API (remote CLI)
+	AppMCP AppMCPStatus     `json:"app_mcp"` // the app actions MCP endpoint (/_openrun/app_mcp)
+}
+
+// ApiSurfaceStatus is the state of one management surface
+type ApiSurfaceStatus struct {
+	Enabled bool     `json:"enabled"`
+	Auth    []string `json:"auth"`          // login mechanisms ([api.<surface>] auth)
+	Url     string   `json:"url,omitempty"` // the endpoint url, when an external url applies
+}
+
+// AppMCPStatus is the state of the aggregate app actions MCP endpoint
+type AppMCPStatus struct {
+	Enabled     bool     `json:"enabled"`       // [api.app_mcp] enable
+	Served      bool     `json:"served"`        // enabled and RBAC enforced: the endpoint answers
+	Url         string   `json:"url,omitempty"` // the endpoint url, when an external url applies
+	AllowedAuth []string `json:"allowed_auth"`  // logins the ?auth= param may name; empty = any configured one
+	MaxTools    int      `json:"max_tools"`
 }
 
 // Credential types stored in the credentials table

@@ -570,6 +570,59 @@ func (s *Server) ListActions(ctx context.Context, appPathGlob string) (*types.Ac
 	return ret, nil
 }
 
+// implicitMCPEntry caches what effectiveAppMCP resolved for a prod app
+// version: the implicit actions endpoint, or nil when the app serves none
+type implicitMCPEntry struct {
+	version int
+	mcp     *types.MCPConfig
+}
+
+// effectiveAppMCP returns the MCP config an app instance serves, and whether
+// it is the implicit actions endpoint: what the app's own load decides
+// (app.mountActionsMCP), not a guess from its metadata.
+//
+// A stored document answers by itself (nil for a disable document). Without
+// one the app may serve the implicit endpoint at /mcp, which depends on more
+// than its action definitions: the load leaves the endpoint out when an
+// action or any ordinary ROUTE of the app can match the path (/mcp, a param
+// route like /{page}). So the answer is the EffectiveMCP of the app's
+// loaded definition (definitionApp: the app loaded on this node, else a
+// definition only load, no container). The stored action definitions only
+// rule the endpoint out early (no actions, or an action at the path), and a
+// prod version's answer is cached, as it cannot change without a deploy; a
+// dev app follows its source. No endpoint is reported when the definition
+// cannot be loaded
+func (s *Server) effectiveAppMCP(ctx context.Context, entry *types.AppEntry) (mcp *types.MCPConfig, implicit bool) {
+	if stored := entry.Metadata.MCP; stored != nil {
+		if stored.Disable {
+			return nil, false
+		}
+		return stored, false
+	}
+	if defs := entry.Metadata.DefinitionActions; !entry.IsDev && defs != nil &&
+		(len(defs) == 0 || types.ActionsTakeMCPPath(defs)) {
+		return nil, false
+	}
+	version := entry.Metadata.VersionMetadata.Version
+	if !entry.IsDev {
+		if cached, ok := s.implicitMCPs.Load(entry.Id); ok {
+			if cachedEntry := cached.(*implicitMCPEntry); cachedEntry.version == version {
+				return cachedEntry.mcp, cachedEntry.mcp != nil
+			}
+		}
+	}
+	application, release, err := s.definitionApp(ctx, entry)
+	if err != nil {
+		return nil, false
+	}
+	defer release()
+	mcp = application.EffectiveMCP()
+	if !entry.IsDev {
+		s.implicitMCPs.Store(entry.Id, &implicitMCPEntry{version: version, mcp: mcp})
+	}
+	return mcp, mcp != nil
+}
+
 // GetAction returns the param definitions of an action
 func (s *Server) GetAction(ctx context.Context, appPath, selector string, stage bool) (*types.ActionDetailResponse, error) {
 	resolved, err := s.resolveAction(ctx, appPath, selector, stage, false)

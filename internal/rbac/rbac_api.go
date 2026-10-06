@@ -139,8 +139,8 @@ func (h *RBACManager) authorizeAPICtx(ctx context.Context, perm types.RBACPermis
 		if scopes, ok := system.GetContextApiScopes(ctx); ok && !ScopesAllow(scopes, perm) {
 			return false, types.CreateRequestError(
 				fmt.Sprintf("credential scope ceiling: this token's scopes %v do not include %s."+
-					" Re-authenticate with a broader scope (openrun login --scopes, or the manage preset)"+
-					" or use an API key that grants %s. The user's RBAC grants were not evaluated",
+					" Re-authenticate with a broader scope (the CLI: openrun login --scopes; an MCP client: reconnect and widen the scope on the consent page)"+
+					" or use an API key that grants %s (openrun apikey create --scopes). The user's RBAC grants were not evaluated",
 					scopes, perm, perm), http.StatusForbidden)
 		}
 		// live config enforcement; test URL directives and sync snapshots are

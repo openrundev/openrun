@@ -307,7 +307,7 @@
         "type": "string"
       },
       "resources": {
-        "description": "surfaces the key is valid for: rest and/or mcp",
+        "description": "what the key is valid for: rest (the management REST API), mcp (the management MCP endpoint), app:<path> or app:<domain>:<path> (one app's MCP endpoint), app_mcp or app_mcp:<auth> (the actions of all apps at /_openrun/app_mcp, for a login mechanism). Default rest",
         "items": {
           "type": "string"
         },
@@ -340,9 +340,21 @@
         "description": "approve the app's plugin permissions immediately (requires app:approve)",
         "type": "boolean"
       },
+      "auth": {
+        "description": "the app's login: none (anonymous), system (the admin account), builtin, or an [auth.*]/saml_<name> entry. Default security.app_default_auth_type. The app is reachable as soon as it is created, so set this for an app which must not be anonymous",
+        "type": "string"
+      },
       "dry_run": {
         "description": "preview without applying",
         "type": "boolean"
+      },
+      "git_auth": {
+        "description": "the [git_auth.*] entry for a private git source",
+        "type": "string"
+      },
+      "mcp": {
+        "description": "the app's MCP setting: an app with actions serves them as MCP tools at <app>/mcp by default; disable turns all MCP off; actions, /upstream_path or a JSON document as for the --mcp flag",
+        "type": "string"
       },
       "params": {
         "additionalProperties": {

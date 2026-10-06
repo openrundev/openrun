@@ -33,8 +33,10 @@ import (
 // security model is invoker policy + scopes + RBAC, never annotations.
 
 const mcpServerInstructions = `OpenRun is an app deployment platform. Apps deploy from git or local
-sources to a path (like /myapp) with a staging version (path_cl_stage) that
-promote pushes to prod. Apps may use services (postgres, redis, ...) through
+sources (a path on the server, not on the client) to a path (like /myapp).
+A created app is live at once, prod and staging at the same version; later
+reloads land in the staging instance (stage.<domain> or path_cl_stage,
+per system.stage_at) until promote_apps pushes them to prod. Apps may use services (postgres, redis, ...) through
 bindings. Sync entries keep apps in sync with git declaratively. Operations
 run as the authenticated user; RBAC decides what is allowed. Destructive
 tools (delete_apps, promote_apps, version_switch) support dry_run=true to
@@ -301,6 +303,9 @@ type (
 		Spec      string            `json:"spec,omitzero" jsonschema:"app spec name, like image or python-streamlit. Empty auto-detects for known frameworks"`
 		Approve   bool              `json:"approve,omitzero" jsonschema:"approve the app's plugin permissions immediately (requires app:approve)"`
 		Params    map[string]string `json:"params,omitzero" jsonschema:"app parameter values"`
+		Auth      string            `json:"auth,omitzero" jsonschema:"the app's login: none (anonymous), system (the admin account), builtin, or an [auth.*]/saml_<name> entry. Default security.app_default_auth_type. The app is reachable as soon as it is created, so set this for an app which must not be anonymous"`
+		GitAuth   string            `json:"git_auth,omitzero" jsonschema:"the [git_auth.*] entry for a private git source"`
+		MCP       string            `json:"mcp,omitzero" jsonschema:"the app's MCP setting: an app with actions serves them as MCP tools at <app>/mcp by default; disable turns all MCP off; actions, /upstream_path or a JSON document as for the --mcp flag"`
 		DryRun    bool              `json:"dry_run,omitzero" jsonschema:"preview without applying"`
 	}
 	mcpDeleteAppsIn struct {
@@ -534,7 +539,7 @@ type (
 		User        string   `json:"user,omitzero" jsonschema:"the key's user identity; empty for the caller. Another user requires admin"`
 		ExpiresIn   string   `json:"expires_in,omitzero" jsonschema:"lifetime: Go duration, <N>d, or never. Default 90d"`
 		Scopes      []string `json:"scopes,omitzero" jsonschema:"permission glob scopes limiting the key"`
-		Resources   []string `json:"resources,omitzero" jsonschema:"surfaces the key is valid for: rest and/or mcp"`
+		Resources   []string `json:"resources,omitzero" jsonschema:"what the key is valid for: rest (the management REST API), mcp (the management MCP endpoint), app:<path> or app:<domain>:<path> (one app's MCP endpoint), app_mcp or app_mcp:<auth> (the actions of all apps at /_openrun/app_mcp, for a login mechanism). Default rest"`
 		Description string   `json:"description,omitzero" jsonschema:"description for the key"`
 	}
 	mcpApiKeyIdIn struct {
@@ -651,6 +656,16 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 				SourceUrl:   in.SourceUrl,
 				Spec:        types.AppSpec(in.Spec),
 				ParamValues: in.Params,
+				AppAuthn:    types.AppAuthnType(in.Auth),
+				GitAuthName: in.GitAuth,
+				MCP:         in.MCP,
+			}
+			if in.MCP != "" {
+				doc, err := types.ParseMCPValue(in.MCP)
+				if err != nil {
+					return nil, types.CreateRequestError("mcp: "+err.Error(), http.StatusBadRequest)
+				}
+				req.MCP = doc
 			}
 			return s.CreateApp(ctx, in.Path, in.Approve, in.DryRun, req)
 		})

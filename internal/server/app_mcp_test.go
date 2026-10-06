@@ -169,7 +169,7 @@ func TestAggMCPAsyncToolsAndNames(t *testing.T) {
 	// lists by name
 	testutil.AssertEqualsString(t, "tools",
 		"apps_ops__list_orders apps_ops__list_orders_suggest apps_ops__stream apps_site__build apps_site__cancel_run "+
-			"apps_site__get_run apps_site__list_runs apps_site__rows", names)
+			"apps_site__get_run apps_site__list_runs apps_site__rows openrun_status", names)
 
 	// The names tools refer to each other by are the listed ones
 	result := message["result"].(map[string]any)
@@ -218,7 +218,20 @@ func TestAggMCPAsyncToolsAndNames(t *testing.T) {
 		t.Fatalf("expected the max_tools error, got %v", message)
 	}
 	_, message = aggCall(t, ts, "?auth=builtin&apps=/apps/ops", alice, aggList)
-	testutil.AssertEqualsInt(t, "narrowed view", 3, len(aggToolNames(t, message)))
+	testutil.AssertEqualsInt(t, "narrowed view", 4, len(aggToolNames(t, message)))
+
+	// The status tool is always there and reports the view and its size
+	// (without itself), also for a view with no action tools
+	_, message = aggCall(t, ts, "?auth=builtin&apps=/apps/ops", alice, aggToolCall(aggMCPStatusToolName, `{}`))
+	statusDoc := message["result"].(map[string]any)["structuredContent"].(map[string]any)
+	testutil.AssertEqualsString(t, "status user", "builtin:alice", statusDoc["user"].(string))
+	testutil.AssertEqualsString(t, "status auth", "builtin", statusDoc["auth"].(string))
+	testutil.AssertEqualsString(t, "status apps", "/apps/ops", statusDoc["apps"].(string))
+	testutil.AssertEqualsInt(t, "status tools", 3, int(statusDoc["tool_count"].(float64)))
+	_, message = aggCall(t, ts, "?auth=builtin&apps=/nothing/**", alice, aggList)
+	testutil.AssertEqualsString(t, "empty view", aggMCPStatusToolName, strings.Join(aggToolNames(t, message), " "))
+	_, message = aggCall(t, ts, "?auth=builtin&apps=/nothing/**", alice, aggToolCall(aggMCPStatusToolName, `{}`))
+	testutil.AssertStringContains(t, message["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string), "0 action tools")
 	_, message = aggCall(t, ts, "?auth=builtin", alice, aggToolCall("apps_ops__list_orders", `{"count":1}`))
 	if message["error"] != nil {
 		t.Fatalf("call under a capped list: %v", message)
@@ -251,9 +264,9 @@ func TestAggMCPStagingView(t *testing.T) {
 	// The prod view lists what is deployed, the staging view the staging
 	// version under the same names. A dev app has no staging instance
 	_, message := aggCall(t, ts, "?auth=builtin", alice, aggList)
-	testutil.AssertEqualsString(t, "prod view", "apps_dev__one apps_stg__one", strings.Join(aggToolNames(t, message), " "))
+	testutil.AssertEqualsString(t, "prod view", "apps_dev__one apps_stg__one openrun_status", strings.Join(aggToolNames(t, message), " "))
 	_, message = aggCall(t, ts, "?auth=builtin&stage=true", alice, aggList)
-	testutil.AssertEqualsString(t, "staging view", "apps_stg__one apps_stg__two", strings.Join(aggToolNames(t, message), " "))
+	testutil.AssertEqualsString(t, "staging view", "apps_stg__one apps_stg__two openrun_status", strings.Join(aggToolNames(t, message), " "))
 
 	status := func(query, tool string) string {
 		t.Helper()

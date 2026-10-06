@@ -4,6 +4,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -747,7 +748,8 @@ func (c *openrunPlugin) GetApp(ctx context.Context, call *sdk.Call) (any, error)
 	// has_detail is false when the caller holds app:read but not
 	// app:read_detail: the source/git/spec/params/bindings fields above are
 	// then blank (see types.AppEntry.BasicInfo)
-	v["has_detail"] = c.server.appDetailAllowedEntry(ctx, &entry.AppEntry)
+	detail := c.server.appDetailAllowedEntry(ctx, &entry.AppEntry)
+	v["has_detail"] = detail
 	if entry.UpdateTime != nil {
 		v["update_time"] = *entry.UpdateTime
 	} else {
@@ -780,7 +782,65 @@ func (c *openrunPlugin) GetApp(ctx context.Context, call *sdk.Call) (any, error)
 	}
 	v["job_count"] = c.server.appJobCount(ctx, jobEntry)
 	v["action_count"] = c.server.appActionCount(ctx, jobEntry)
+	maps.Copy(v, c.server.appMCPValues(ctx, jobEntry, detail))
 	return v, nil
+}
+
+// appMCPValues describes the MCP endpoint of an app for the console: the
+// stored setting (mcp_setting: default, actions, disable or custom), whether
+// the effective endpoint is the implicit one of an app with actions, and its
+// url (mcp_url, empty when the app serves no MCP). The endpoint is what the
+// app's load decides (effectiveAppMCP), so an app whose route takes /mcp
+// reports none.
+//
+// The entry is the stored one, not the caller's redacted view, so the
+// configuration document (mcp_doc: tool scope mappings, allowed origins) is
+// returned only with detail, the caller's app:read_detail on the app. The
+// endpoint status needs app:read alone: it is what the app serves publicly.
+//
+// The url is the canonical resource of the endpoint (appMCPResource: the
+// external origin's scheme and port) whenever the server has an issuer
+// origin - behind a TLS terminating proxy the listener url (GetAppUrl) is
+// the internal http port, not what a client connects to. A server without
+// one (plaintext local development) falls back to the listener url
+func (s *Server) appMCPValues(ctx context.Context, entry *types.AppEntry, detail bool) map[string]any {
+	stored := entry.Metadata.MCP
+	setting := "default"
+	switch {
+	case types.MCPDisabled(stored):
+		setting = types.MCPValueDisable
+	case stored == nil:
+	case stored.ServesActions() && stored.Path == types.MCPActionsDefaultPath && len(stored.Scopes) == 0:
+		setting = types.MCPSourceActions
+	default:
+		setting = "custom"
+	}
+	doc := ""
+	if stored != nil && detail {
+		doc = stored.Canonical()
+	}
+
+	mcp, implicit := s.effectiveAppMCP(ctx, entry)
+	mcpUrl, source := "", ""
+	if mcp != nil {
+		if s.apiExternalUrl() != "" {
+			mcpUrl = s.appMCPResource(entry.Path, entry.Domain, mcp)
+		} else {
+			mcpUrl = strings.TrimSuffix(types.GetAppUrl(entry.AppPathDomain(), s.Config()), "/")
+			if mcp.Path != "" && mcp.Path != "/" {
+				mcpUrl += mcp.Path
+			}
+		}
+		source = cmp.Or(mcp.Source, "upstream")
+	}
+	return map[string]any{
+		"mcp_setting":  setting,
+		"mcp_doc":      doc,
+		"mcp_url":      mcpUrl,
+		"mcp_source":   source,
+		"mcp_implicit": implicit,
+		"mcp_disabled": types.MCPDisabled(stored),
+	}
 }
 
 // appActionCount counts the actions of an app instance: the definition
@@ -1492,8 +1552,65 @@ func (c *openrunPlugin) ServerInfo(ctx context.Context, call *sdk.Call) (any, er
 		ContainerRuntime:    runtime,
 		IsLeader:            s.db.IsLeader(),
 		MetadataReplication: mdRepl,
+		Api:                 s.apiStatus(),
 	}
 	return structValue(&info)
+}
+
+// apiStatus reports the state of the remote API and MCP surfaces from the
+// effective config: the transport prerequisites an enabled management
+// surface needs (validateApiSurfaceConfig) and each surface's state, with
+// the endpoint urls built from the issuer origin. Config facts only
+func (s *Server) apiStatus() types.ApiStatus {
+	config := s.Config()
+	external := apiExternalUrlFor(config)
+	nonNil := func(list []string) []string {
+		if list == nil {
+			return []string{}
+		}
+		return list
+	}
+	surfaceUrl := func(resource string) string {
+		if external == "" {
+			return ""
+		}
+		return external + types.INTERNAL_URL_PREFIX + "/" + resource
+	}
+	// The login names the surfaces and the ?auth= param can carry: the
+	// fixed accounts first, then the federated entries by their runtime
+	// names. Client cert entries are not browser logins
+	logins := []string{string(types.AppAuthnNone), string(types.AppAuthnSystem), string(types.AppAuthnBuiltin)}
+	for _, auth := range s.ListAppAuths() {
+		if auth == string(types.AppAuthnDefault) || slices.Contains(logins, auth) ||
+			auth == "cert" || strings.HasPrefix(auth, "cert_") {
+			continue
+		}
+		logins = append(logins, auth)
+	}
+	return types.ApiStatus{
+		ExternalUrl:    external,
+		HttpsListener:  config.Https.Port != -1,
+		TrustedProxies: len(config.Security.TrustedProxies) > 0,
+		RBACEnforced:   !config.Security.UnsafeDisableRBAC,
+		AppDefaultAuth: config.Security.AppDefaultAuthType,
+		Logins:         logins,
+		MCP: types.ApiSurfaceStatus{
+			Enabled: config.Api.MCP.Enable,
+			Auth:    nonNil(config.Api.MCP.Auth),
+			Url:     surfaceUrl(ApiResourceMCP),
+		},
+		Rest: types.ApiSurfaceStatus{
+			Enabled: config.Api.Rest.Enable,
+			Auth:    nonNil(config.Api.Rest.Auth),
+		},
+		AppMCP: types.AppMCPStatus{
+			Enabled:     config.Api.AppMCP.Enable,
+			Served:      aggMCPEnabled(config),
+			Url:         surfaceUrl(ApiResourceAppMCP),
+			AllowedAuth: nonNil(config.Api.AppMCP.AllowedAuth),
+			MaxTools:    cmp.Or(config.Api.AppMCP.MaxTools, aggMCPDefaultMax),
+		},
+	}
 }
 
 // ListAuths returns the auth types an app can be configured with: the

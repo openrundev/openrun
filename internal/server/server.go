@@ -190,7 +190,8 @@ type Server struct {
 	csrfMiddleware   *http.CrossOriginProtection
 	mcpServerState
 	aggMCPState
-	actionLists sync.Map // types.AppId -> *actionListEntry: app versions without DefinitionActions metadata, see appActionList
+	actionLists  sync.Map // types.AppId -> *actionListEntry: app versions without DefinitionActions metadata, see appActionList
+	implicitMCPs sync.Map // types.AppId -> *implicitMCPEntry: the implicit actions MCP endpoint of a prod app version, see effectiveAppMCP
 	oauthState
 	telemetry *telemetry.Providers
 

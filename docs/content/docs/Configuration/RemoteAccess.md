@@ -28,7 +28,7 @@ enable = true
 auth = ["admin"]   # login mechanisms for MCP OAuth clients
 ```
 
-API keys work on any enabled surface whatever its login mechanisms. The [console]({{< ref "/console-tour" >}}) manages these settings on its API Access page.
+API keys work on any enabled surface whatever its login mechanisms. The [console]({{< ref "/console-tour" >}}) manages the external url, the token lifetimes and the REST surface on its API Access page; its MCP page (Configuration → MCP) holds the MCP settings, shows the state of every MCP endpoint, enables the management endpoint with one click once the prerequisites below hold, and gives the connect commands for Claude Code and Codex.
 
 The server refuses to start with a surface enabled unless the transport prerequisites are met:
 
@@ -82,7 +82,15 @@ openrun app list
 
 ## Connect an MCP Client
 
-This section covers OpenRun's own management MCP endpoint. To expose an MCP server you deploy as an app with the same OAuth flow, see [MCP Apps]({{< ref "docs/applications/mcp" >}}).
+This section covers OpenRun's own management MCP endpoint. OpenRun serves three kinds of MCP endpoint:
+
+| Endpoint | Tools | Login | On by default |
+|---|---|---|---|
+| `/_openrun/app_mcp` | the [actions of every app]({{< ref "actions/#one-endpoint-for-all-apps" >}}) the user can run, one tool each | the app login named by `?auth=`; the server's default app auth without it | yes |
+| `<app>/mcp` | the [actions of one app]({{< ref "actions/#mcp-tools" >}}), or the [MCP server the app deploys]({{< ref "docs/applications/mcp" >}}) | the app's own `auth` | yes, for an app with actions |
+| `/_openrun/mcp` | management: apps, versions, services, secrets, config, and the generic `run_action` | `[api.mcp] auth` | no |
+
+A fresh install has no apps and therefore no action tools: the first two endpoints list nothing until an app with actions is deployed, which the client shows as an empty tool list, not a failed connection.
 
 The MCP endpoint is `https://<external_url host>/_openrun/mcp`. There are two ways to authenticate:
 
@@ -127,6 +135,18 @@ openrun apikey delete <id>
 - A key created by a remote (credential-authenticated) caller can only be as powerful as the creating credential: scopes and resources must be subsets, and the new key cannot outlive its parent.
 - Expired and revoked credentials are pruned automatically 30 days after they die.
 
+Keys for common AI client tasks (each is still limited by the user's RBAC grants):
+
+```sh
+openrun apikey create --resource mcp                                   # inspect: read-only management (the default scopes)
+openrun apikey create --resource mcp --scopes "app:*"                  # deploy: create, reload, promote, delete apps (approve needs app:approve named)
+openrun apikey create --resource mcp --scopes "*:read,app:read_detail,app:access"   # inspect and run actions through run_action
+openrun apikey create --user builtin:alice --resource app_mcp:builtin --scopes app:access   # run actions through /_openrun/app_mcp as the builtin user alice (without --user the key is the caller's: admin on the unix socket)
+openrun apikey create --resource app:/orders                           # one app's own MCP endpoint
+```
+
+Four layers decide whether a call succeeds, and their errors name themselves: the client's own approval policy (Codex and Claude Code ask before a tool runs, independently of OpenRun; `skip_destructive_confirm` only removes OpenRun's confirmation prompt), the credential's scopes (`credential scope ceiling`), the user's RBAC grants (`does not have ... permission`), and the operations disabled for the surface (`disabled for the mcp API surface`). Running an app's actions also needs the app's plugin permissions approved.
+
 ## What MCP Can Do
 
 The MCP tool set mirrors the management API: apps (list/create/delete/approve/reload/promote/preview/versions), sync, services, bindings, secrets metadata, config read, API key self-management and more. RBAC decides per identity what actually succeeds, and every call is audited with the invoker type and credential id.
@@ -163,8 +183,10 @@ Note on secrets: `secret_create` **is** enabled for MCP by default, which means 
 
 | Setting | Default |
 |---|---|
-| `api.rest enable`, `api.mcp enable` | `false` — no remote surface |
+| `api.rest enable`, `api.mcp enable` | `false` — no management surface |
+| `api.app_mcp enable` | `true` — the [actions of all apps]({{< ref "actions/#one-endpoint-for-all-apps" >}}) are served at `/_openrun/app_mcp` (not with `security.unsafe_disable_rbac`) |
 | `api.rest auth`, `api.mcp auth` | `["admin"]` — the admin account is the only login mechanism |
+| `/_openrun/app_mcp` login | `?auth=` on the url, default `security.app_default_auth_type` (`none`: no login, open apps only) |
 | Transport | HTTPS only (or `security.trusted_proxies`); plaintext is a 404 |
 | RBAC | Always on; default grant gives every principal `app:access` + `app:read` |
 | API key expiry (`api.pat_default_ttl`) | 90 days; `--expires=never` must be explicit |

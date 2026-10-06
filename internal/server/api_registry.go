@@ -194,7 +194,7 @@ func init() {
 		API_GET_APP: {Description: "Get one app's details by path",
 			Scope: types.PermissionRead, ReadOnly: true,
 			Method: http.MethodGet, Path: "/app", ApiFunc: (*Handler).getApp},
-		API_CREATE_APP: {Description: "Create a new app from a source url at the given path. The app starts in staging; promote_apps pushes it to prod",
+		API_CREATE_APP: {Description: "Create a new app from a source url at the given path. The app is live at its path as soon as it is created, with its staging instance at the same version (later reloads land in staging until promote_apps). Its login is the auth value, default security.app_default_auth_type (none unless configured): set auth to protect a new app",
 			Scope:  types.PermissionCreate,
 			Method: http.MethodPost, Path: "/app", ApiFunc: (*Handler).createApp},
 		API_DELETE_APPS: {Description: "Delete the apps matching a path glob",

@@ -443,10 +443,16 @@ The tool of an [async action]({{< ref "#async-actions" >}}) returns the `run_id`
 `/_openrun/app_mcp` is a single MCP endpoint whose tools are the actions of every app the user can run, each action its own tool. It is on by default; `[api.app_mcp] enable = false` turns it off. It is not served on a server which runs with `security.unsafe_disable_rbac`.
 
 ```sh
+# Claude Code
 claude mcp add --transport http apps https://openrun.example.com/_openrun/app_mcp
 claude mcp add --transport http team "https://openrun.example.com/_openrun/app_mcp?apps=/team/**"
 claude mcp add --transport http sso  "https://openrun.example.com/_openrun/app_mcp?auth=google_openrun"
+# Codex
+codex mcp add apps --url https://openrun.example.com/_openrun/app_mcp
+codex mcp add apps_builtin --url "https://openrun.example.com/_openrun/app_mcp?auth=builtin"
 ```
+
+A bare url connects without a login when the server's default app auth is `none` (the default), and then lists only the actions of apps with auth `none`; add `?auth=<login>` to log in and see your own apps. The tool list is empty until an app with actions is deployed. The server's instructions, which the client receives on connecting, say who is connected and what the view is.
 
 | URL param | Default | Meaning |
 |---|---|---|
@@ -461,7 +467,8 @@ claude mcp add --transport http sso  "https://openrun.example.com/_openrun/app_m
 - **Left out**: apps with `--mcp=disable`, and apps whose mcp setting has a `tools` scope map (their tools need scopes only the app's own endpoint can grant).
 - The tools behave as on the app's own endpoint: `dry_run`, the suggest tools, the confirmation of destructive actions, results with files, and the run tools of async actions (`<app>__get_run` and so on).
 - The list fails when it has more tools than `[api.app_mcp] max_tools` (default 300), asking for a narrower `apps` glob, rather than hide tools silently.
-- API keys: `openrun apikey create --resource app_mcp:builtin --scopes app:access` (`app_mcp` alone is the default login). Browser based clients are not supported, a request with an `Origin` header is refused.
+- The `openrun_status` tool is always listed: it reports the connected user and login, the view and the number of action tools in it, so an empty view can be told from a failed connection.
+- API keys: `openrun apikey create --user builtin:alice --resource app_mcp:builtin --scopes app:access` (`app_mcp` alone is the default login; without `--user` the key is the caller's). Browser based clients are not supported, a request with an `Origin` header is refused.
 
 Actions of all apps are also available through the generic `list_actions`, `get_action`, `run_action` and `suggest_action` tools of the [management MCP surface]({{< ref "docs/configuration/remoteaccess/#what-mcp-can-do" >}}), unless the app has `--mcp=disable`; `list_action_runs`, `get_action_run` and `cancel_action_run` manage the runs of async actions there, and `run_action` takes `wait_seconds` for them.
 

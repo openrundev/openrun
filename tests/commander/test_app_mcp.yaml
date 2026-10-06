@@ -143,13 +143,15 @@ tests:
       amcp http://localhost:${MAIN_HTTP_PORT}/_openrun/app_mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' > agg_list.json
       jq -r '[.result.tools[].name] | join(" ") | "tools=" + .' agg_list.json
       jq -r '.result.tools[] | select(.name == "aggapps_open-app__ping") | [.title, (.description | split("\n")[0])] | join(" / ")' agg_list.json
+      amcp http://localhost:${MAIN_HTTP_PORT}/_openrun/app_mcp -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"openrun_status","arguments":{}}}' | jq -r '.result.structuredContent | [.user, .auth, .apps, (.tool_count | tostring)] | join(" ")' | sed 's/^/status=/' 
       amcp http://localhost:${MAIN_HTTP_PORT}/_openrun/app_mcp -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"aggapps_open-app__ping","arguments":{}}}' | jq -r '.result.structuredContent.status'
       curl -sk -o /dev/null -w 'prm=%{http_code}\n' https://localhost:${MAIN_HTTPS_PORT}/.well-known/oauth-protected-resource/_openrun/app_mcp
       curl -sk -o /dev/null -w 'badtoken=%{http_code}\n' -X POST -H 'Authorization: Bearer orun_pat_bad' https://localhost:${MAIN_HTTPS_PORT}/_openrun/app_mcp
     stdout:
       contains:
-        - "tools=aggapps_open-app__ping aggapps_routed__run"
+        - "tools=aggapps_open-app__ping aggapps_routed__run openrun_status"
         - "Open: Ping / App /aggapps/open-app"
+        - "status=anonymous none all 2"
         - "pong"
         - "prm=404"
         - "badtoken=401"
@@ -171,7 +173,8 @@ tests:
     # for its app. Plain paths map without a hash, a path with an underscore carries
     # one (and is cut to the 24 char limit of the app part). Left out: the permit
     # restricted action, the app with a tool scope map and the app with MCP disabled.
-    # Open apps accept any login which has access: bob, with no grant, sees nothing
+    # Open apps accept any login which has access: bob, with no grant, sees only the
+    # status tool, which is always there
     command: |
       amcp() { url="$1"; shift; curl -sk -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
         -H 'MCP-Protocol-Version: 2025-03-26' "$@" "$url" | sed -n 's/^data: //p'; }
@@ -186,12 +189,12 @@ tests:
       list alice "$URL&stage=true" | jq -r '[.result.tools[].name] | length | "stage_count=" + tostring'
     stdout:
       contains:
-        - "alice=aggapps_open-app__ping aggapps_orders__list_orders aggapps_routed__run ps_under_score--HASH__list_orders"
+        - "alice=aggapps_open-app__ping aggapps_orders__list_orders aggapps_routed__run openrun_status ps_under_score--HASH__list_orders"
         - "Orders: List Orders / App /aggapps/orders / count,dry_run,status"
         - "carol=aggapps_orders__cancel ps_under_score--HASH__cancel"
-        - "bob="
-        - "glob=aggapps_open-app__ping"
-        - "stage_count=4"
+        - "bob=openrun_status"
+        - "glob=aggapps_open-app__ping openrun_status"
+        - "stage_count=5"
       not-contains:
         - "scoped"
         - "aggapps_off"

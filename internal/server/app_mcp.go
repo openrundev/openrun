@@ -334,11 +334,8 @@ func (s *Server) buildAggMCPServer(r *http.Request) *mcp.Server {
 		maxTools = aggMCPDefaultMax
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "openrun-apps", Version: types.GetVersion()}, &mcp.ServerOptions{
-		Instructions: "Tools are the actions of the apps deployed on this OpenRun server which you can run, " +
-			"named <app>" + aggMCPNameSep + "<action>; each tool description starts with its app. They run as the authenticated user. " +
-			"Pass dry_run=true to a tool to validate its arguments without running it. " +
-			"A tool named <app>" + aggMCPNameSep + "<action>_suggest, where present, suggests argument values.",
-		PageSize: max(maxTools, mcp.DefaultPageSize),
+		Instructions: aggMCPInstructions(ctx, view),
+		PageSize:     max(maxTools, mcp.DefaultPageSize),
 		// The list is per caller and the transport stateless: no change
 		// notifications, clients refresh within the ttl
 		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: false}},
@@ -346,6 +343,10 @@ func (s *Server) buildAggMCPServer(r *http.Request) *mcp.Server {
 	if view == nil {
 		return srv
 	}
+	// The status tool is always there, so a client (and its user) can tell
+	// an empty view from a failed connection: who is connected, what the
+	// view is and how many tools it holds
+	srv.AddTool(aggMCPStatusTool, s.aggMCPStatusHandler(view))
 
 	var listErr error
 	listed := false
@@ -398,6 +399,82 @@ func (s *Server) buildAggMCPServer(r *http.Request) *mcp.Server {
 		}
 	})
 	return srv
+}
+
+var aggMCPStatusTool = &mcp.Tool{
+	Name:  aggMCPStatusToolName,
+	Title: "OpenRun connection status",
+	Description: "Report the connection to this OpenRun actions endpoint: the user and login it runs as, the view (apps glob, " +
+		"staging) and how many action tools the view holds. Call it when the tool list is empty or a tool is missing.",
+	InputSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
+	Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+}
+
+const aggMCPStatusToolName = "openrun_status" // no separator: never the name of an app's tool
+
+// aggMCPStatusHandler answers the status tool for a request's view
+func (s *Server) aggMCPStatusHandler(view *aggMCPView) mcp.ToolHandler {
+	return func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		tools, err := s.aggMCPListTools(ctx, view)
+		if err != nil {
+			return aggMCPToolError("%s", err), nil
+		}
+		user := cmp.Or(system.GetContextUserId(ctx), types.ANONYMOUS_USER)
+		status := map[string]any{
+			"server":     s.apiExternalUrl(),
+			"user":       user,
+			"auth":       view.mechanism,
+			"apps":       view.glob,
+			"stage":      view.stage,
+			"tool_count": len(tools),
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "Connected to OpenRun as %s with login %s; view apps=%s", user, view.mechanism, view.glob)
+		if view.stage {
+			b.WriteString(" (staging instances)")
+		}
+		fmt.Fprintf(&b, "; %d action tools.", len(tools))
+		switch {
+		case len(tools) > 0:
+			b.WriteString(" List the tools to see them.")
+		case view.mechanism == string(types.AppAuthnNone):
+			b.WriteString(" No login: only apps with auth none are visible. Add ?auth=<login> to the server url to log in and see your apps, or deploy an app with actions.")
+		default:
+			b.WriteString(" No app in the view has an action you may run: an action needs app:access on its app and, when restricted, " +
+				"one of its permit permissions; apps with MCP disabled are not listed. Change the apps glob of the url, or deploy an app with actions.")
+		}
+		return &mcp.CallToolResult{StructuredContent: status, Content: []mcp.Content{&mcp.TextContent{Text: b.String()}}}, nil
+	}
+}
+
+// aggMCPInstructions is the instructions text of the endpoint for a
+// request: who is connected and what the view is, so that a client (and its
+// user) can tell an empty tool list from a failed connection and knows what
+// to change
+func aggMCPInstructions(ctx context.Context, view *aggMCPView) string {
+	var b strings.Builder
+	b.WriteString("Tools are the actions of the apps deployed on this OpenRun server which you can run, " +
+		"named <app>" + aggMCPNameSep + "<action>; each tool description starts with its app. They run as the authenticated user. " +
+		"Pass dry_run=true to a tool to validate its arguments without running it. " +
+		"A tool named <app>" + aggMCPNameSep + "<action>_suggest, where present, suggests argument values.")
+	if view == nil {
+		return b.String()
+	}
+	fmt.Fprintf(&b, "\nConnected as %s", cmp.Or(system.GetContextUserId(ctx), types.ANONYMOUS_USER))
+	if view.mechanism == string(types.AppAuthnNone) {
+		b.WriteString(" (no login: only apps with auth none are visible; add ?auth=<login> to the url to log in and see your apps)")
+	} else {
+		fmt.Fprintf(&b, " (login %s: apps using that login and apps with auth none are visible)", view.mechanism)
+	}
+	fmt.Fprintf(&b, ", view apps=%s", view.glob)
+	if view.stage {
+		b.WriteString(" (staging instances)")
+	}
+	b.WriteString(". The " + aggMCPStatusToolName + " tool reports this connection and the number of action tools. " +
+		"A view with no action tools means no app in it has an action you may run: " +
+		"an action needs app:access on its app and, when restricted, one of its permit permissions; " +
+		"apps with MCP disabled are not listed. Change the apps glob or the auth param of the url to change the view.")
+	return b.String()
 }
 
 // aggMCPNotCallable backs the tools of a list request, which are never called

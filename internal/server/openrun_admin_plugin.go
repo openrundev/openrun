@@ -29,6 +29,7 @@ func initAdminPlugin(server *Server) {
 					{Name: "update_params", Type: sdk.WRITE, Method: "UpdateParams"},
 					{Name: "update_auth", Type: sdk.WRITE, Method: "UpdateAuth"},
 					{Name: "update_bindings", Type: sdk.WRITE, Method: "UpdateBindings"},
+					{Name: "update_mcp", Type: sdk.WRITE, Method: "UpdateMCP"},
 					{Name: "create_sync", Type: sdk.WRITE, Method: "CreateSync"},
 					{Name: "run_sync", Type: sdk.WRITE, Method: "RunSync"},
 					{Name: "run_job", Type: sdk.WRITE, Method: "RunJob"},
@@ -85,19 +86,30 @@ func (c *openrunAdminPlugin) Close(ctx context.Context) error {
 // bindings entries are binding paths or service sources (serviceType or
 // serviceType/name), for which an auto binding is created
 func (c *openrunAdminPlugin) CreateApp(ctx context.Context, call *sdk.Call) (any, error) {
-	var appPath, sourceUrl, auth, spec, gitBranch, gitAuth string
+	var appPath, sourceUrl, auth, spec, gitBranch, gitAuth, mcpValue string
 	var params map[string]any
 	var bindings []string
 	var dryRun, approve bool
 	if err := sdk.UnpackArgs("create_app", call, "path", &appPath, "source_url", &sourceUrl,
 		"approve?", &approve, "auth?", &auth, "spec?", &spec, "git_branch?", &gitBranch,
-		"git_auth?", &gitAuth, "params?", &params, "bindings?", &bindings, "dry_run?", &dryRun); err != nil {
+		"git_auth?", &gitAuth, "params?", &params, "bindings?", &bindings, "dry_run?", &dryRun,
+		"mcp?", &mcpValue); err != nil {
 		return nil, err
 	}
 
 	paramValues, err := dictToStringMap(params, "params")
 	if err != nil {
 		return nil, err
+	}
+
+	// mcp is any --mcp value (actions, disable, default, /upstream_path or a
+	// JSON document); empty and default leave the app on the default
+	// behavior (actions served at /mcp when the app defines any)
+	mcpDoc := ""
+	if mcpValue != "" {
+		if mcpDoc, err = types.ParseMCPValue(mcpValue); err != nil {
+			return nil, fmt.Errorf("mcp: %w", err)
+		}
 	}
 
 	appRequest := &types.CreateAppRequest{
@@ -109,6 +121,7 @@ func (c *openrunAdminPlugin) CreateApp(ctx context.Context, call *sdk.Call) (any
 		GitAuthName: gitAuth,
 		ParamValues: paramValues,
 		Bindings:    bindings,
+		MCP:         mcpDoc,
 	}
 
 	result, err := c.server.CreateApp(ctx, appPath, approve, dryRun, appRequest)
@@ -261,6 +274,38 @@ func (c *openrunAdminPlugin) UpdateBindings(ctx context.Context, call *sdk.Call)
 	updateMetadata := types.CreateUpdateAppMetadataRequest()
 	updateMetadata.ConfigType = types.AppMetadataBindings
 	updateMetadata.ConfigEntries = bindings
+
+	metadataArgs := map[string]any{
+		"metadata": updateMetadata,
+		"dryRun":   dryRun,
+	}
+	result, err := c.server.StagedUpdate(ctx, pathGlob, dryRun, promote,
+		c.server.updateMetadataHandler, metadataArgs, "update_metadata")
+	if err != nil {
+		return nil, err
+	}
+	return structValue(result)
+}
+
+// UpdateMCP sets the mcp document of the apps matching the glob: any --mcp
+// value (actions, disable, default or "-" to clear, /upstream_path, a JSON
+// document). The change is version controlled like bindings: it applies to
+// staging and is promoted to prod when promote is true
+func (c *openrunAdminPlugin) UpdateMCP(ctx context.Context, call *sdk.Call) (any, error) {
+	var pathGlob, mcpValue string
+	var dryRun bool
+	promote := true
+	if err := sdk.UnpackArgs("update_mcp", call, "path_glob", &pathGlob, "mcp", &mcpValue,
+		"promote?", &promote, "dry_run?", &dryRun); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(mcpValue) == "" {
+		return nil, fmt.Errorf("mcp value is required: actions, disable, default (or - to clear), /upstream_path or a JSON document")
+	}
+
+	updateMetadata := types.CreateUpdateAppMetadataRequest()
+	updateMetadata.ConfigType = types.AppMetadataMCP
+	updateMetadata.ConfigEntries = []string{mcpValue}
 
 	metadataArgs := map[string]any{
 		"metadata": updateMetadata,

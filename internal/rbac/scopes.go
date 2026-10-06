@@ -80,8 +80,36 @@ func ScopeCovered(parent []string, child string) bool {
 // ValidateScopes checks that every scope is a known permission name or a
 // syntactically valid glob pattern. Custom (custom:) and role (role:)
 // entries are not valid scopes: scopes bound management API permissions only
+// hasUnbracedComma reports whether a scope has a comma outside a {...}
+// alternation: a list of scopes passed as one value
+func hasUnbracedComma(scope string) bool {
+	depth := 0
+	for _, r := range scope {
+		switch r {
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func ValidateScopes(scopes []string) error {
 	for _, scope := range scopes {
+		if scope == "" || strings.ContainsAny(scope, " \t\n") || hasUnbracedComma(scope) {
+			// One scope per list entry: a space or comma separated list passed
+			// as one value would otherwise validate as a glob and match
+			// nothing. A comma inside braces is a glob alternation
+			// (app:{read,access}) and stays
+			return fmt.Errorf("invalid scope %q: scopes are separate values (comma separated on the command line), a scope has no spaces", scope)
+		}
 		if strings.HasPrefix(scope, RBAC_CUSTOM_PREFIX) || strings.HasPrefix(scope, RBAC_ROLE_PREFIX) {
 			return fmt.Errorf("invalid scope %q: custom permissions and roles are not valid scopes", scope)
 		}

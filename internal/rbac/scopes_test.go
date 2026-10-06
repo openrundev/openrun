@@ -52,17 +52,33 @@ func TestScopesAllow(t *testing.T) {
 }
 
 func TestValidateScopes(t *testing.T) {
-	if err := ValidateScopes([]string{"app:read", "app:*", "*:read", "*", "secret:reveal"}); err != nil {
+	if err := ValidateScopes([]string{"app:read", "app:*", "*:read", "*", "secret:reveal", "app:{read,access}", "{app,sync}:read"}); err != nil {
 		t.Fatalf("valid scopes rejected: %v", err)
 	}
 	for _, invalid := range [][]string{
-		{"app:bogus"},          // unknown permission
-		{"role:openrun-admin"}, // roles are not scopes
-		{"custom:something"},   // custom permissions are not scopes
-		{"app:[invalid"},       // malformed glob
+		{"app:bogus"},           // unknown permission
+		{"role:openrun-admin"},  // roles are not scopes
+		{"custom:something"},    // custom permissions are not scopes
+		{"app:[invalid"},        // malformed glob
+		{"*:read app:access"},   // a space separated list passed as one scope
+		{"app:read,app:access"}, // a comma separated list passed as one scope
+		{""},                    // empty
 	} {
 		if err := ValidateScopes(invalid); err == nil {
 			t.Fatalf("invalid scopes %v accepted", invalid)
+		}
+	}
+}
+
+// A brace alternation is one scope and matches each of its alternatives
+func TestScopeAlternation(t *testing.T) {
+	scopes := []string{"app:{read,access}"}
+	if !ScopesAllow(scopes, "app:read") || !ScopesAllow(scopes, "app:access") || ScopesAllow(scopes, "app:delete") {
+		t.Fatal("alternation scope must match exactly its alternatives")
+	}
+	for scope, want := range map[string]bool{"app:{read,access}": false, "app:read,app:access": true, "{a,b}:read,x": true, "app:read": false} {
+		if hasUnbracedComma(scope) != want {
+			t.Fatalf("hasUnbracedComma(%q) != %v", scope, want)
 		}
 	}
 }
