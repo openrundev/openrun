@@ -7,6 +7,15 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added the global CLI flag `--server-uri <uri>` (or the `OPENRUN_SERVER_URI` env variable): the server uri to connect to, a unix socket path or `https://host[:port]`. When set it takes precedence over `server_uri` in the config file, so one client config can be used against multiple servers (`openrun --server-uri https://staging.example.com:25223 app list`).
+
+## [v0.20.0] - 2026-09-28
+
+This release adds support for running Actions through CLI and MCP (in addition to the web UI interface). See https://openrun.dev/docs/actions/#mcp-tools
+Support is added for running Actions asynchronously. Async actions run without being tied to the client session, run history is maintained for async actions https://openrun.dev/docs/actions/#async-actions
+
 ### Security
 
 - Updated `gosaml2` to v0.12.0 and `goxmldsig` to v1.6.1 to reject unsigned logout responses, bound XML parsing complexity, and reject malformed encrypted assertions without panicking. Delayed logout responses no longer clear a newer login session.
@@ -21,6 +30,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added the `list_actions`, `get_action`, `run_action`, `suggest_action` and `action_file` operations to the management REST API and MCP surface. A credential limited by scopes needs `app:access` to use them.
 - MCP apps: `openrun app create --mcp` (also `--mcp=/upstream-path`, `--mcp='{...}'`, `app update mcp`, and `mcp=` in apply files) marks a deployed app as an MCP server whose endpoint OpenRun protects with OAuth 2.1. OpenRun serves the protected resource metadata, issues tokens bound to the app after a login and consent using the app's `auth`, enforces RBAC `app:access` and optional app-declared scopes with per-tool requirements, strips the token and forwards the identity headers (plus `X-Openrun-Scopes` / `X-Openrun-Client-Id`). API keys can be bound to an app with `openrun apikey create --resource app:<path>`. MCP apps get a JSON-RPC health probe (TCP probes on Kubernetes) and stage/preview apps accept MCP POSTs.
 - The OAuth authorization server accepts Client ID Metadata Documents (https client ids), with `api.cimd_allowed_domains`, `api.cimd_denied_domains` and `api.cimd_allow_private_hosts`; dynamic client registration remains as the fallback. Pending authorization codes are stored in the metadata database so multi-node deployments work.
+
+### Fixed
+
+- The page the browser shows after an `openrun login` flow is now styled like the server's login page (stylesheets and fonts loaded from the server just signed in to) and names the server.
+- CLI error reporting for management API calls goes through one path for every command. A call that gets no response names the configured server instead of Go's internal request text: a unix socket that is not there says the server may not be running and how to start it, a remote server that cannot be reached says so, and a certificate the client does not trust points at `client.skip_cert_check`. A remote call rejected with 401 reports why instead of a bare `Unauthorized`: no credential found for the server (with the `openrun login --server <url>` and `OPENRUN_API_KEY` ways to provide one), or the credential sent was rejected (expired or revoked login or api key). Other error responses report the server's message as before.
 
 ## [v0.19.4] - 2026-09-08
 

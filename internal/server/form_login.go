@@ -4,6 +4,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -60,7 +61,7 @@ import (
 // dev-mode install runs the tailwind watcher that generates style.css; see
 // login_html/sync_from_app.sh.
 
-//go:embed login_html/login.go.html login_html/logout.go.html login_html/oauth_login.go.html login_html/oauth_consent.go.html
+//go:embed login_html/login.go.html login_html/logout.go.html login_html/oauth_login.go.html login_html/oauth_consent.go.html login_html/cli_login_done.go.html
 var loginTemplateFS embed.FS
 
 //go:embed login_html/style.css
@@ -220,6 +221,30 @@ func NewFormLoginManager(logger *types.Logger, getConfig func() *types.ServerCon
 
 		sessionAbsoluteMaxAge: getConfig().Security.SessionAbsoluteMaxAge,
 	}, nil
+}
+
+// LoginCompletePage renders the page the openrun CLI shows in the browser
+// once an `openrun login` flow has delivered its code to the loopback
+// callback. The CLI serves it from its own port, so the stylesheets and fonts
+// are linked from the server at serverUrl (the one the user just signed in
+// to), which keeps the page styled like the server's login page
+func LoginCompletePage(serverUrl string) ([]byte, error) {
+	tmpl, err := template.ParseFS(loginTemplateFS, "login_html/cli_login_done.go.html")
+	if err != nil {
+		return nil, err
+	}
+	serverUrl = strings.TrimSuffix(strings.TrimSpace(serverUrl), "/")
+	data := map[string]any{
+		"ServerUrl": serverUrl,
+		"StyleHref": serverUrl + formStylePath,
+		"ExtraHref": serverUrl + formExtraPath,
+		"FontsHref": serverUrl + formFontsCSSPath,
+	}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "cli_login_done.go.html", map[string]any{"Data": data}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func contentHash(b []byte) string {

@@ -20,6 +20,7 @@ import (
 )
 
 const configFileFlagName = "config-file"
+const serverUriFlagName = "server-uri"
 
 func getAllCommands(clientConfig *types.ClientConfig, serverConfig *types.ServerConfig) ([]*cli.Command, error) {
 	var allCommands []*cli.Command
@@ -56,6 +57,11 @@ func globalFlags(globalConfig *types.GlobalConfig, clientConfig *types.ClientCon
 			Usage:       "TOML configuration file",
 			Destination: &globalConfig.ConfigFile,
 			EnvVars:     []string{"CL_CONFIG_FILE"},
+		},
+		&cli.StringFlag{
+			Name:    serverUriFlagName,
+			Usage:   "The server uri to connect to (unix socket path or https://host[:port]). Takes precedence over server_uri in the config file",
+			EnvVars: []string{"OPENRUN_SERVER_URI"},
 		},
 		&cli.StringFlag{
 			Name:        "as",
@@ -223,6 +229,18 @@ func parseConfig(cCtx *cli.Context, globalConfig *types.GlobalConfig, clientConf
 	return nil
 }
 
+// applyGlobalOverrides applies the global flags which override values read
+// from the config file. The flags cannot use a Destination for these since
+// the toml load in parseConfig would overwrite the flag value
+func applyGlobalOverrides(cCtx *cli.Context, globalConfig *types.GlobalConfig, clientConfig *types.ClientConfig, serverConfig *types.ServerConfig) {
+	if cCtx.IsSet(serverUriFlagName) {
+		serverUri := cCtx.String(serverUriFlagName)
+		globalConfig.ServerUri = serverUri
+		clientConfig.ServerUri = serverUri
+		serverConfig.ServerUri = serverUri
+	}
+}
+
 // fatalError prints the error to stderr and exits
 // fatalError prints the error and exits. A command can choose the exit code
 // by returning a cli.ExitCoder (the action commands: 2 for param errors, the
@@ -300,6 +318,7 @@ func main() {
 		Flags:                     globalFlags,
 		Before: func(ctx *cli.Context) error {
 			err := parseConfig(ctx, globalConfig, clientConfig, serverConfig)
+			applyGlobalOverrides(ctx, globalConfig, clientConfig, serverConfig)
 			if ctx.Command != nil && ctx.Args().Len() > 0 && ctx.Args().Get(0) == "password" {
 				// For password command, ignore error parsing config
 				return nil

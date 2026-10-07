@@ -570,11 +570,7 @@ func invokeActionCommand(cCtx *cli.Context, clientConfig *types.ClientConfig, ap
 		return handleStartedRun(cCtx, clientConfig, started, status, req, output, outputPath)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		var reqErr types.RequestError
-		if json.Unmarshal(data, &reqErr) == nil && reqErr.Code != 0 {
-			return reqErr
-		}
-		return types.RequestError{Code: resp.StatusCode, Message: cmp.Or(doc.Error, strings.TrimSpace(string(data)))}
+		return client.ResponseError(resp.StatusCode, data)
 	}
 	if parseErr != nil {
 		return fmt.Errorf("error parsing response: %w", parseErr)
@@ -721,12 +717,14 @@ func writeActionFile(target string, body io.Reader) (int64, error) {
 // actionFileClient is the management API client call used for file downloads
 type actionFileClient interface {
 	GetRaw(ctx context.Context, apiPath string, params url.Values) (*http.Response, error)
+	ResponseError(status int, body []byte) error
 }
 
 func openActionFile(cCtx *cli.Context, httpClient *http.Client, client actionFileClient,
 	req *types.ActionRunRequest, file actionFile) (io.ReadCloser, error) {
 	var resp *http.Response
 	var err error
+	viaApi := false // fetched through the management API client, not directly
 	if parsed, parseErr := url.Parse(file.url); parseErr == nil && (parsed.IsAbs() || parsed.Host != "") {
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
 			return nil, fmt.Errorf("unsupported url %s", file.url)
@@ -742,6 +740,7 @@ func openActionFile(cCtx *cli.Context, httpClient *http.Client, client actionFil
 		values.Add("action", req.Action)
 		values.Add("stage", strconv.FormatBool(req.Stage))
 		values.Add("url", file.url)
+		viaApi = true
 		resp, err = client.GetRaw(cCtx.Context, "/_openrun/actions/file", values)
 	}
 	if err != nil {
@@ -750,11 +749,11 @@ func openActionFile(cCtx *cli.Context, httpClient *http.Client, client actionFil
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		resp.Body.Close() //nolint:errcheck
-		var reqErr types.RequestError
-		if json.Unmarshal(data, &reqErr) == nil && reqErr.Message != "" {
-			return nil, reqErr
+		if viaApi {
+			return nil, client.ResponseError(resp.StatusCode, data)
 		}
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		// A direct fetch from an external url, not the openrun server
+		return nil, fmt.Errorf("%s: status %d: %s", file.url, resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return resp.Body, nil
 }

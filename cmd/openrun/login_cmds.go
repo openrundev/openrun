@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openrundev/openrun/internal/server"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/urfave/cli/v2"
@@ -151,7 +152,7 @@ func runLoginFlow(cCtx *cli.Context, clientConfig *types.ClientConfig, serverUrl
 
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
-	server := &http.Server{Handler: loginCallbackHandler(state, codeCh, errCh)}
+	server := &http.Server{Handler: loginCallbackHandler(serverUrl, state, codeCh, errCh)}
 	go server.Serve(listener) //nolint:errcheck
 	defer server.Close()      //nolint:errcheck
 
@@ -218,7 +219,13 @@ func runLoginFlow(cCtx *cli.Context, clientConfig *types.ClientConfig, serverUrl
 }
 
 // loginCallbackHandler must not block on duplicate callbacks after the login waiter exits.
-func loginCallbackHandler(state string, codeCh chan<- string, errCh chan<- error) http.Handler {
+// The completion page is styled like the server's login page (its assets are
+// linked from serverUrl); a plain page is the fallback if rendering fails
+func loginCallbackHandler(serverUrl, state string, codeCh chan<- string, errCh chan<- error) http.Handler {
+	donePage, err := server.LoginCompletePage(serverUrl)
+	if err != nil {
+		donePage = []byte("<html><body><h3>Login complete</h3>You can close this window and return to the terminal.</body></html>")
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/callback" {
 			http.NotFound(w, r)
@@ -241,8 +248,8 @@ func loginCallbackHandler(state string, codeCh chan<- string, errCh chan<- error
 			http.Error(w, "missing code", http.StatusBadRequest)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, "<html><body><h3>Login complete</h3>You can close this window and return to the terminal.</body></html>") //nolint:errcheck
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(donePage) //nolint:errcheck
 		select {
 		case codeCh <- code:
 		default:

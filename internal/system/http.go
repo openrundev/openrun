@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -28,10 +29,11 @@ const (
 )
 
 type HttpClient struct {
-	client    *http.Client
-	serverUri string
-	apiKey    string
-	headers   map[string]string // extra headers sent with every request
+	client     *http.Client
+	serverUri  string
+	displayUri string // the configured server uri (socket path or url), for messages
+	apiKey     string
+	headers    map[string]string // extra headers sent with every request
 }
 
 // NewHttpClient creates a new HttpClient instance. apiKey is the bearer
@@ -39,6 +41,7 @@ type HttpClient struct {
 // credential is needed (filesystem permissions authenticate the caller)
 func NewHttpClient(serverUri, apiKey string, skipCertCheck bool) *HttpClient {
 	serverUri = os.ExpandEnv(serverUri)
+	displayUri := serverUri
 
 	// Change to OPENRUN_HOME directory, helps avoid length limit on UDS file (around 104 chars).
 	// If the directory does not exist (server never started), skip the chdir and
@@ -77,9 +80,10 @@ func NewHttpClient(serverUri, apiKey string, skipCertCheck bool) *HttpClient {
 	}
 
 	return &HttpClient{
-		client:    client,
-		serverUri: serverUri,
-		apiKey:    apiKey,
+		client:     client,
+		serverUri:  serverUri,
+		displayUri: displayUri,
+		apiKey:     apiKey,
 	}
 }
 
@@ -159,7 +163,89 @@ func (h *HttpClient) rawRequest(ctx context.Context, method, apiPath string, par
 
 	streamClient := *h.client
 	streamClient.Timeout = 0
-	return streamClient.Do(request)
+	resp, err := streamClient.Do(request)
+	if err != nil {
+		return nil, h.transportError(err)
+	}
+	return resp, nil
+}
+
+// IsRemote reports whether the client talks to a TCP server (http/https)
+// rather than the trusted unix domain socket
+func (h *HttpClient) IsRemote() bool {
+	return strings.HasPrefix(h.displayUri, "http://") || strings.HasPrefix(h.displayUri, "https://")
+}
+
+// ResponseError turns a non-success response of the management API into
+// the error the CLI reports. All response error handling goes through here
+// so every command gets the same message shape: the server's structured
+// error when the body is one (RequestError, or an {"error": ...} document),
+// the body text otherwise, with a hint added for the statuses where the
+// client knows what to do about it (401: how to provide a credential)
+func (h *HttpClient) ResponseError(status int, body []byte) error {
+	text := strings.TrimSpace(string(body))
+	if status == http.StatusUnauthorized && h.IsRemote() {
+		return h.unauthorizedError(text)
+	}
+	var reqErr types.RequestError
+	if json.Unmarshal(body, &reqErr) == nil && (reqErr.Code != 0 || reqErr.Message != "") {
+		if reqErr.Code == 0 {
+			reqErr.Code = status
+		}
+		return reqErr
+	}
+	var doc struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &doc) == nil && doc.Error != "" {
+		return types.RequestError{Code: status, Message: doc.Error}
+	}
+	if text == "" {
+		text = http.StatusText(status)
+	}
+	return types.RequestError{Code: status, Message: text}
+}
+
+// unauthorizedError explains a 401 from a remote server: the server body is a
+// bare "Unauthorized", which does not tell the user whether no credential was
+// sent or the one sent was rejected
+func (h *HttpClient) unauthorizedError(body string) types.RequestError {
+	if h.apiKey == "" {
+		return types.RequestError{Code: http.StatusUnauthorized, Message: fmt.Sprintf(
+			"Unauthorized: no credential for %s. Run 'openrun login --server %s', or set OPENRUN_API_KEY (or client.api_key) to a key from 'openrun apikey create'",
+			h.displayUri, h.displayUri)}
+	}
+	detail := ""
+	if body != "" && body != "Unauthorized" {
+		detail = " (" + body + ")"
+	}
+	return types.RequestError{Code: http.StatusUnauthorized, Message: fmt.Sprintf(
+		"Unauthorized: %s rejected the credential%s. The login or api key may be expired or revoked: run 'openrun login --server %s' again or check OPENRUN_API_KEY / client.api_key",
+		h.displayUri, detail, h.displayUri)}
+}
+
+// transportError explains a request that got no response: a server that is
+// not running (unix socket) or not reachable, or a TLS certificate the client
+// does not trust. The Go error text ('Get "http+unix://openrun/...": dial
+// unix ...') names internals the user never configured, so the message is
+// rebuilt around the configured server uri
+func (h *HttpClient) transportError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		err = urlErr.Err
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		if !h.IsRemote() {
+			return fmt.Errorf("cannot connect to the openrun server at %s: %w. Is the server running? Start it with 'openrun server start'", h.displayUri, err)
+		}
+		return fmt.Errorf("cannot connect to %s: %w", h.displayUri, err)
+	}
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return fmt.Errorf("cannot verify the certificate of %s: %w. For a self-signed certificate set client.skip_cert_check = true", h.displayUri, err)
+	}
+	return fmt.Errorf("request to %s failed: %w", h.displayUri, err)
 }
 
 func (h *HttpClient) request(method, apiPath string, params url.Values, input any, output any) error {
@@ -200,7 +286,7 @@ func (h *HttpClient) request(method, apiPath string, params url.Values, input an
 
 	resp, err = h.client.Do(request)
 	if err != nil {
-		return err
+		return h.transportError(err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
@@ -208,13 +294,7 @@ func (h *HttpClient) request(method, apiPath string, params url.Values, input an
 		if err != nil {
 			return err
 		}
-		var errResp types.RequestError
-		parseErr := json.Unmarshal(errBody, &errResp)
-		if parseErr != nil || errResp.Code == 0 {
-			errResp.Code = resp.StatusCode
-			errResp.Message = string(errBody)
-		}
-		return errResp
+		return h.ResponseError(resp.StatusCode, errBody)
 	}
 
 	if resp.StatusCode == http.StatusNoContent {

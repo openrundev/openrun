@@ -4,7 +4,7 @@
 # it with `openrun app create --dev <apps-repo>/openrun/login /login_dev` on a
 # dev server (with system.tailwindcss_command configured) so the tailwind
 # watcher regenerates static/gen/css/style.css, verify the preview pages
-# (/login_dev/, /system, /error, /expired, /oauth, /oauth_consent), then run this script to copy the
+# (/login_dev/, /system, /error, /expired, /oauth, /oauth_consent, /cli_done), then run this script to copy the
 # template and generated CSS here for embedding into the openrun binary.
 #
 # Usage: sync_from_app.sh [path-to-login-app]   (default: sibling checkout)
@@ -13,8 +13,8 @@ set -euo pipefail
 dir="$(cd "$(dirname "$0")" && pwd)"
 src="${1:-$dir/../../../../apps/openrun/login}"
 
-if [[ ! -f "$src/index.go.html" || ! -f "$src/logout.go.html" || ! -f "$src/oauth_login.go.html" || ! -f "$src/oauth_consent.go.html" || ! -s "$src/static/gen/css/style.css" || ! -f "$src/static/css/login_extra.css" ]]; then
-    echo "Error: $src does not contain index.go.html, logout.go.html, oauth_login.go.html, oauth_consent.go.html, static/css/login_extra.css and a non-empty static/gen/css/style.css"
+if [[ ! -f "$src/index.go.html" || ! -f "$src/logout.go.html" || ! -f "$src/oauth_login.go.html" || ! -f "$src/oauth_consent.go.html" || ! -f "$src/cli_login_done.go.html" || ! -s "$src/static/gen/css/style.css" || ! -f "$src/static/css/login_extra.css" ]]; then
+    echo "Error: $src does not contain index.go.html, logout.go.html, oauth_login.go.html, oauth_consent.go.html, cli_login_done.go.html, static/css/login_extra.css and a non-empty static/gen/css/style.css"
     echo "Install the app in dev mode first so the tailwind CSS is generated"
     exit 1
 fi
@@ -23,6 +23,7 @@ cp "$src/index.go.html" "$dir/login.go.html"
 cp "$src/logout.go.html" "$dir/logout.go.html"
 cp "$src/oauth_login.go.html" "$dir/oauth_login.go.html"
 cp "$src/oauth_consent.go.html" "$dir/oauth_consent.go.html"
+cp "$src/cli_login_done.go.html" "$dir/cli_login_done.go.html"
 cp "$src/static/gen/css/style.css" "$dir/style.css"
 cp "$src/static/css/login_extra.css" "$dir/login_extra.css"
-echo "Synced login.go.html, logout.go.html, oauth_login.go.html, oauth_consent.go.html, style.css and login_extra.css from $src"
+echo "Synced login.go.html, logout.go.html, oauth_login.go.html, oauth_consent.go.html, cli_login_done.go.html, style.css and login_extra.css from $src"

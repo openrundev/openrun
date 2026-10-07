@@ -56,6 +56,12 @@ server_uri = "https://openrun.example.com:25223"
 skip_cert_check = false  # true only for self-signed certs
 ```
 
+The global `--server-uri` flag (or the `OPENRUN_SERVER_URI` env variable) takes precedence over `server_uri` in the config file, which allows one client config to be used against multiple servers:
+
+```sh
+openrun --server-uri https://staging.example.com:25223 app list
+```
+
 Then either log in interactively:
 
 ```sh

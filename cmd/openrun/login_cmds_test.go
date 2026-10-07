@@ -6,6 +6,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,7 +22,7 @@ func TestLoginCallbackDuplicatesDoNotBlock(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			codes, errs := make(chan string, 1), make(chan error, 1)
-			handler := loginCallbackHandler("expected", codes, errs)
+			handler := loginCallbackHandler("https://openrun.example.com", "expected", codes, errs)
 			// No consumer: a completed login no longer reads these channels.
 			for range 3 {
 				response := httptest.NewRecorder()
@@ -57,4 +58,28 @@ func TestLoginCallbackDuplicatesDoNotBlock(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoginCallbackPageStyledLikeLogin(t *testing.T) {
+	codes, errs := make(chan string, 1), make(chan error, 1)
+	handler := loginCallbackHandler("https://openrun.example.com/", "expected", codes, errs)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/callback?state=expected&code=code", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	body := response.Body.String()
+	for _, want := range []string{
+		"Login complete",
+		"return to the terminal",
+		`href="https://openrun.example.com/_openrun/auth/login/style.css"`,
+		`href="https://openrun.example.com/_openrun/auth/login/fonts.css"`,
+		"Signed in to https://openrun.example.com.",
+		`class="login-title`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page does not contain %q:\n%s", want, body)
+		}
+	}
+	<-codes
 }

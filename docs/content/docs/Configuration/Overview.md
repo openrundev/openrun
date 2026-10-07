@@ -26,7 +26,7 @@ Automatic first-start initialization applies only to this final fallback. With a
 
 ## OpenRun Client CLI
 
-By default, the OpenRun client uses Unix domain sockets to connect to the OpenRun server. `$OPENRUN_HOME` should point to the same location for server and client. If no changes are done for the server defaults, then the client can connect to the server locally without any other configuration being required. See [Remote API and MCP]({{< ref "remoteaccess" >}}) for the client configuration when connecting to a remote server.
+By default, the OpenRun client uses Unix domain sockets to connect to the OpenRun server. `$OPENRUN_HOME` should point to the same location for server and client. If no changes are done for the server defaults, then the client can connect to the server locally without any other configuration being required. See [Remote API and MCP]({{< ref "remoteaccess" >}}) for the client configuration when connecting to a remote server. The global `--server-uri` flag (or `OPENRUN_SERVER_URI`) overrides the `server_uri` value from the config file for one command.
 
 ## App Config
 
