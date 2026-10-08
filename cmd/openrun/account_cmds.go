@@ -5,7 +5,9 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 	"strconv"
 
 	"github.com/openrundev/openrun/internal/types"
@@ -31,7 +33,7 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 
 	return &cli.Command{
 		Name:      "link",
-		Usage:     "Link an app to to use specific account for a plugin",
+		Usage:     "Link an app to use specific account for a plugin",
 		Flags:     flags,
 		ArgsUsage: "<pluginName> <accountName> <appPathGlob>",
 		UsageText: `args: <pluginName> <accountName> <appPathGlob>
@@ -39,13 +41,13 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 <pluginName> is the first required argument. This is the name of the plugin, like store.in or http.in#google.
 <accountName> is the second required argument. This is the name of the account to link to for the plugin. Use "-" to unlink the existing account.
 <appPathGlob> is the third required argument. ` + PATH_SPEC_HELP + `
-	Examples:
-	  Link db plugin: openrun account link store.in temp /myapp
-	  Link in dryrun mode: openrun account link --dry-run rest.in testaccount example.com:/
-	  Unlink the account: openrun account link store.in - /myapp`,
+Examples:
+  Link db plugin: openrun account link store.in temp /myapp
+  Link in dryrun mode: openrun account link --dry-run rest.in testaccount example.com:/
+  Unlink the account: openrun account link store.in - /myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 3 {
-				return fmt.Errorf("requires three arguments: <pluginName> <accountName> <appPathGlob>")
+				return fmt.Errorf("expected three arguments: <pluginName> <accountName> <appPathGlob>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -64,7 +66,7 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			}
 
 			for _, linkedApp := range linkResponse.StagedUpdateResults {
-				fmt.Printf("Linked app %s\n", linkedApp)
+				printStdout(cCtx, "Linked app %s\n", linkedApp)
 			}
 
 			if len(linkResponse.PromoteResults) > 0 {
@@ -81,7 +83,7 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			printStdout(cCtx, "%d app(s) linked, %d app(s) promoted.\n", len(linkResponse.StagedUpdateResults), len(linkResponse.PromoteResults))
 
 			if linkResponse.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE) //nolint:errcheck
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil
@@ -104,12 +106,12 @@ func accountListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 <appPath> is a required argument. The optional domain and path are separated by a ":". This is the app for which the accounts are to be listed.
 With --stage, the staging instance of the app is listed, which holds links not yet promoted.
 
-	Examples:
-	  List account links for app: openrun account list /myapp
-	  List the staged account links: openrun account list --stage example.com:/`,
+Examples:
+  List account links for app: openrun account list /myapp
+  List the staged account links: openrun account list --stage example.com:/`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("requires one argument: <appPath>")
+				return fmt.Errorf("expected one argument: <appPath>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -167,12 +169,12 @@ func updateParamsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 <paramValue> is the second required argument. This is the value to set the param to. Use "-" to unset the parameter.
 <appPathGlob> is the third required argument. ` + PATH_SPEC_HELP + `
 
-	Examples:
-	  Update parameter value: openrun param update port 8888 /myapp
-	  Delete parameter value: openrun param update port - /myapp`,
+Examples:
+  Update parameter value: openrun param update port 8888 /myapp
+  Delete parameter value: openrun param update port - /myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 3 {
-				return fmt.Errorf("requires three arguments: <paramName> <paramValue> <appPathGlob>")
+				return fmt.Errorf("expected three arguments: <paramName> <paramValue> <appPathGlob>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -191,7 +193,7 @@ func updateParamsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			}
 
 			for _, app := range updateResponse.StagedUpdateResults {
-				fmt.Printf("Updated app %s\n", app) //nolint:errcheck
+				printStdout(cCtx, "Updated app %s\n", app)
 			}
 
 			if len(updateResponse.PromoteResults) > 0 {
@@ -208,7 +210,7 @@ func updateParamsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			printStdout(cCtx, "%d app(s) updated, %d app(s) promoted.\n", len(updateResponse.StagedUpdateResults), len(updateResponse.PromoteResults))
 
 			if updateResponse.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE) //nolint:errcheck
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil
@@ -231,12 +233,12 @@ func paramListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 <appPath> is a required argument. The optional domain and path are separated by a ":". This is the app for which the params are to be listed.
 With --stage, the staging instance of the app is listed, which holds param updates not yet promoted.
 
-	Examples:
-	  List params for app: openrun param list /myapp
-	  List the staged params: openrun param list --stage example.com:/`,
+Examples:
+  List params for app: openrun param list /myapp
+  List the staged params: openrun param list --stage example.com:/`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("requires one argument: <appPath>")
+				return fmt.Errorf("expected one argument: <appPath>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -257,8 +259,8 @@ With --stage, the staging instance of the app is listed, which holds param updat
 				return nil
 			}
 			printStdout(cCtx, "Param values for app %s : %s\n", appInfo.AppPathDomain(), appInfo.Id)
-			for name, value := range appInfo.Metadata.ParamValues {
-				printStdout(cCtx, "  %s: %s\n", name, value)
+			for _, name := range slices.Sorted(maps.Keys(appInfo.Metadata.ParamValues)) {
+				printStdout(cCtx, "  %s: %s\n", name, appInfo.Metadata.ParamValues[name])
 			}
 
 			return nil

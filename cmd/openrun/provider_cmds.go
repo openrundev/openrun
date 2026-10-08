@@ -44,8 +44,8 @@ func providerInstallCommand(commonFlags []cli.Flag, clientConfig *types.ClientCo
 		Name:      "install",
 		Usage:     "Install (or update) an out-of-process provider",
 		Flags:     flags,
-		ArgsUsage: "<provider_name>",
-		UsageText: `args: <provider_name>
+		ArgsUsage: "<providerName>",
+		UsageText: `args: <providerName>
 
 The provider name carries the provider type: "plugin/<name>" installs a
 Starlark plugin provider (modules loaded by apps as <module>.ex), a bare
@@ -66,7 +66,7 @@ Examples:
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <provider_name>")
+				return fmt.Errorf("expected one argument: <providerName>")
 			}
 			request := types.ProviderInstallRequest{
 				Name:      cCtx.Args().First(),
@@ -101,10 +101,10 @@ func providerUninstallCommand(commonFlags []cli.Flag, clientConfig *types.Client
 		Name:      "uninstall",
 		Usage:     "Uninstall an out-of-process provider; the name carries the type, e.g. plugin/store",
 		Flags:     flags,
-		ArgsUsage: "<provider_name>",
+		ArgsUsage: "<providerName>",
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <provider_name>")
+				return fmt.Errorf("expected one argument: <providerName>")
 			}
 			name := cCtx.Args().First()
 
@@ -166,6 +166,12 @@ func printProviderList(cCtx *cli.Context, providers []types.BindingProvider, for
 	case FORMAT_CSV:
 		for _, p := range providers {
 			printStdout(cCtx, "%s,%s,%s,%s\n", p.Type, p.Name, p.Version, strings.Join(p.ServiceTypes, " "))
+		}
+	case FORMAT_BASIC:
+		formatStr := "%-10s %-20s %-s\n"
+		printStdout(cCtx, formatStr, "Type", "Name", "Version")
+		for _, p := range providers {
+			printStdout(cCtx, formatStr, p.Type, p.Name, p.Version)
 		}
 	default:
 		formatStr := "%-10s %-20s %-15s %-30s %-s\n"

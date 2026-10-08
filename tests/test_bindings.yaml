@@ -394,7 +394,7 @@ tests:
 
   binding0242: # --staging is an alias of --stage
     command: ../openrun binding health --staging /apps/b1
-    stdout: "Binding /apps/b1 is healthy (staging)"
+    stdout: "Binding /apps/b1 is healthy (stage)"
 
   binding0243: # health of a missing service fails
     command: ../openrun service health postgres/missinghealth
@@ -410,12 +410,12 @@ tests:
   binding0300: # create requires <source> and <binding_path> args
     command: ../openrun binding create postgres/testbind
     exit-code: 1
-    stderr: "expected two args"
+    stderr: "expected two arguments"
 
   binding0301: # too many args to create
     command: ../openrun binding create postgres/testbind /apps/x extra
     exit-code: 1
-    stderr: "expected two args"
+    stderr: "expected two arguments"
 
   binding0302: # invalid config entry on create
     command: ../openrun binding create --config nope postgres/testbind /apps/b_bad
@@ -465,7 +465,7 @@ tests:
   binding0311: # list does not accept positional args
     command: ../openrun binding list extra
     exit-code: 1
-    stderr: "expected no args"
+    stderr: "expected no arguments"
 
   binding0312: # show-account requires <path> arg
     command: ../openrun binding show-account

@@ -5,6 +5,7 @@ package main
 
 import (
 	"cmp"
+	"encoding/csv"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -185,9 +186,9 @@ func actionRunsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 	flags := make([]cli.Flag, 0, len(commonFlags)+4)
 	flags = append(flags, commonFlags...)
 	flags = append(flags, newFormatFlag())
-	flags = append(flags, newBoolFlag("stage", "s", "The stage instance of the app instead of prod", false))
+	flags = append(flags, stageFlag("List the runs of the staging instance of the app instead of prod"))
 	flags = append(flags, newStringFlag("status", "", "Only the runs with this status: running, succeeded, failed, timed_out, canceled or lost", ""))
-	flags = append(flags, newIntFlag("limit", "l", "Maximum runs to list", 50))
+	flags = append(flags, newIntFlag("limit", "n", "Maximum number of runs to list", 50))
 
 	return &cli.Command{
 		Name:      "runs",
@@ -199,13 +200,13 @@ func actionRunsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 <appPathGlob> defaults to all. ` + PATH_SPEC_HELP + `
 ` + actionSelectHelp + ` Without an action, the runs of every async action are listed.
 
-	Examples:
-	  List the recent runs of every app: openrun action runs
-	  List the runs of an app: openrun action runs /site
-	  Failed runs of one action: openrun action runs --status failed /site rebuild`,
+Examples:
+  List the recent runs of every app: openrun action runs
+  List the runs of an app: openrun action runs /site
+  Failed runs of one action: openrun action runs --status failed /site rebuild`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() > 2 {
-				return fmt.Errorf("expected args: [<appPathGlob>] [<action>]")
+				return fmt.Errorf("expected at most two arguments: [<appPathGlob>] [<action>]")
 			}
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
@@ -240,23 +241,43 @@ func printActionRuns(cCtx *cli.Context, runs []types.ActionRun, format string) e
 			}
 		}
 		return nil
+	case FORMAT_CSV:
+		w := csv.NewWriter(cCtx.App.Writer)
+		for _, run := range runs {
+			w.Write([]string{run.Id, run.AppPath, run.ActionName, run.Status, formatJobTime(run.StartedAt), //nolint:errcheck
+				actionRunDuration(run), run.Actor, run.Message})
+		}
+		w.Flush()
+		return w.Error()
 	}
 	if len(runs) == 0 {
 		fmt.Fprintln(cCtx.App.ErrWriter, "no runs") //nolint:errcheck
 		return nil
 	}
 	w := tabwriter.NewWriter(cCtx.App.Writer, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "Run\tApp\tAction\tStatus\tStarted\tDuration\tBy\tMessage") //nolint:errcheck
-	for _, run := range runs {
-		end := time.Now()
-		if run.EndedAt != nil {
-			end = *run.EndedAt
+	if format == FORMAT_BASIC {
+		fmt.Fprintln(w, "Run\tApp\tAction\tStatus\tStarted (UTC)") //nolint:errcheck
+		for _, run := range runs {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", run.Id, run.AppPath, run.ActionName, run.Status, formatJobTime(run.StartedAt)) //nolint:errcheck
 		}
-		duration := end.Sub(run.StartedAt).Round(time.Second)
+		return w.Flush()
+	}
+	fmt.Fprintln(w, "Run\tApp\tAction\tStatus\tStarted (UTC)\tDuration\tBy\tMessage") //nolint:errcheck
+	for _, run := range runs {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", run.Id, run.AppPath, run.ActionName, run.Status, //nolint:errcheck
-			run.StartedAt.Local().Format("2006-01-02 15:04:05"), duration, run.Actor, firstLine(run.Message))
+			formatJobTime(run.StartedAt), actionRunDuration(run), run.Actor, firstLine(run.Message))
 	}
 	return w.Flush()
+}
+
+// actionRunDuration is the elapsed time of a run, measured to now while it
+// is still running
+func actionRunDuration(run types.ActionRun) string {
+	end := time.Now()
+	if run.EndedAt != nil {
+		end = *run.EndedAt
+	}
+	return end.Sub(run.StartedAt).Round(time.Second).String()
 }
 
 func actionOutputCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -276,12 +297,12 @@ action.output_head_bytes and action.output_tail_bytes settings), with a marker f
 what was left out. For an action which returns values instead of a stream, the values
 are printed as JSON.
 
-	Examples:
-	  Print the output: openrun action output 3jhhmxbf4wluuppt8ygefuzu1dg
-	  Follow a running action: openrun action output --follow 3jhhmxbf4wluuppt8ygefuzu1dg`,
+Examples:
+  Print the output: openrun action output 3jhhmxbf4wluuppt8ygefuzu1dg
+  Follow a running action: openrun action output --follow 3jhhmxbf4wluuppt8ygefuzu1dg`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <runId>")
+				return fmt.Errorf("expected one argument: <runId>")
 			}
 			runId := cCtx.Args().First()
 			client := newHttpClient(clientConfig)
@@ -310,11 +331,11 @@ func actionCancelCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		ArgsUsage: "<runId>",
 		UsageText: `args: <runId>
 
-	Examples:
-	  openrun action cancel 3jhhmxbf4wluuppt8ygefuzu1dg`,
+Examples:
+  openrun action cancel 3jhhmxbf4wluuppt8ygefuzu1dg`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <runId>")
+				return fmt.Errorf("expected one argument: <runId>")
 			}
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()

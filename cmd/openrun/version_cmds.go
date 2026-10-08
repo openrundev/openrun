@@ -43,12 +43,12 @@ func versionListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 <appPath> is a required argument. The optional domain and path are separated by a ":". This is the app for which versions are listed.
 With --stage, the versions of the app's staging instance are listed. The staging instance can also be named by its own path.
 
-	Examples:
-	  List the prod versions: openrun version list example.com:/myapp
-	  List the staging versions: openrun version list --stage example.com:/myapp`,
+Examples:
+  List the prod versions: openrun version list example.com:/myapp
+  List the staging versions: openrun version list --stage example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("requires one argument: <appPath>")
+				return fmt.Errorf("expected one argument: <appPath>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -83,7 +83,6 @@ func printVersionList(cCtx *cli.Context, versions []types.AppVersion, format str
 		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, version := range versions {
 			json.MarshalEncode(enc, version, deterministicJSON) //nolint:errcheck
-			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:
 		formatStrHead := "%6s %8s %8s %-20s\n"
@@ -133,12 +132,12 @@ func versionFilesCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 <appPath> is a required argument. The optional domain and path are separated by a ":". This is the app whose files are listed.
 --version selects the version, the active version by default. With --stage, the staging instance of the app is used.
 
-	Examples:
-	  Files of the active prod version: openrun version files example.com:/myapp
-	  Files of version 3 of the staging instance: openrun version files --stage --version 3 example.com:/myapp`,
+Examples:
+  Files of the active prod version: openrun version files example.com:/myapp
+  Files of version 3 of the staging instance: openrun version files --stage --version 3 example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("requires one argument: <appPath>")
+				return fmt.Errorf("expected one argument: <appPath>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -176,7 +175,6 @@ func printFileList(cCtx *cli.Context, files []types.AppFile, format string) {
 		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, f := range files {
 			json.MarshalEncode(enc, f, deterministicJSON) //nolint:errcheck
-			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:
 		fallthrough
@@ -222,14 +220,14 @@ func versionSwitchCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <appPath> is a required second argument. The optional domain and path are separated by a ":". This is the app whose version is switched.
 With --stage, the staging instance of the app is switched. The staging instance can also be named by its own path.
 
-	Examples:
-	  Switch prod to the next version: openrun version switch next example.com:/myapp
-	  Switch staging to version 123: openrun version switch --stage 123 /myapp
-	  Switch prod to the previous version: openrun version switch previous /test`,
+Examples:
+  Switch prod to the next version: openrun version switch next example.com:/myapp
+  Switch staging to version 123: openrun version switch --stage 123 /myapp
+  Switch prod to the previous version: openrun version switch previous /test`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
-				return fmt.Errorf("requires two arguments: <version> <appPath>")
+				return fmt.Errorf("expected two arguments: <version> <appPath>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -249,7 +247,7 @@ With --stage, the staging instance of the app is switched. The staging instance 
 			printStdout(cCtx, "Switched %s from version %d to version %d\n", instanceLabel(cCtx.Args().Get(1), cCtx.Bool(STAGE_FLAG)), response.FromVersion, response.ToVersion)
 
 			if response.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil
@@ -273,13 +271,13 @@ func versionRevertCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <appPath> is a required argument. The optional domain and path are separated by a ":". This is the app whose version is reverted to the previous one.
 With --stage, the staging instance of the app is reverted. The staging instance can also be named by its own path.
 
-	Examples:
-	  Revert prod: openrun version revert example.com:/myapp
-	  Revert staging: openrun version revert --stage /myapp`,
+Examples:
+  Revert prod: openrun version revert example.com:/myapp
+  Revert staging: openrun version revert --stage /myapp`,
 
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("requires one argument: <appPath>")
+				return fmt.Errorf("expected one argument: <appPath>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -299,7 +297,7 @@ With --stage, the staging instance of the app is reverted. The staging instance 
 			printStdout(cCtx, "Reverted %s from version %d to version %d\n", instanceLabel(cCtx.Args().First(), cCtx.Bool(STAGE_FLAG)), response.FromVersion, response.ToVersion)
 
 			if response.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil

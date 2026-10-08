@@ -96,7 +96,7 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 					ArgsUsage: "<configFilePath>",
 					UsageText: `args: <configFilePath>
 
-	<configFilePath> is the path to the new server config file.`,
+<configFilePath> is the path to the new server config file.`,
 					Action: func(cCtx *cli.Context) error {
 						return updateConfig(cCtx, clientConfig)
 					},
@@ -114,13 +114,13 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 	apiConfig := api.ServerConfig{ServerConfig: serverConfig}
 	server, err := api.NewServer(&apiConfig)
 	if err != nil {
-		fmt.Printf("Error initializing server: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Error initializing server: %s\n", err)
 		system.NotifyServiceFailed(1)
 		os.Exit(1)
 	}
 	err = server.Start()
 	if err != nil {
-		fmt.Printf("Error starting server: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Error starting server: %s\n", err)
 		system.NotifyServiceFailed(1)
 		os.Exit(1)
 	}
@@ -172,7 +172,7 @@ func startServer(cCtx *cli.Context, serverConfig *types.ServerConfig) error {
 	// failing to start would leave no server running, since the previous
 	// process commits to the handoff unconditionally once Ready returns
 	if err := server.Ready(); err != nil {
-		fmt.Printf("Error signaling readiness: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Error signaling readiness: %s\n", err)
 		// The server is running at this point, stop it so that app child
 		// processes are not orphaned
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), server.DrainTimeout())
@@ -299,7 +299,7 @@ func waitForServerExit(clientConfig *types.ClientConfig, pid int) error {
 	return fmt.Errorf("timed out waiting for the server to exit")
 }
 
-func serverStatus(_ *cli.Context, clientConfig *types.ClientConfig) error {
+func serverStatus(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
 	defer client.CloseIdleConnections()
 
@@ -308,11 +308,11 @@ func serverStatus(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(response.Status)
+	printStdout(cCtx, "%s\n", response.Status)
 	return nil
 }
 
-func serverVersion(_ *cli.Context, clientConfig *types.ClientConfig) error {
+func serverVersion(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
 	defer client.CloseIdleConnections()
 
@@ -321,7 +321,7 @@ func serverVersion(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s (commit %s)\n", response.Version, response.Commit)
+	printStdout(cCtx, "%s (commit %s)\n", response.Version, response.Commit)
 	return nil
 }
 
@@ -354,7 +354,7 @@ func printMetadataStatus(cCtx *cli.Context, response types.MetadataHealthRespons
 	return nil
 }
 
-func restartServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
+func restartServer(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
 	defer client.CloseIdleConnections()
 
@@ -365,11 +365,11 @@ func restartServer(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Server restarted: %v\n", response["status"])
+	printStdout(cCtx, "Server restarted: %v\n", response["status"])
 	return nil
 }
 
-func showConfig(_ *cli.Context, clientConfig *types.ClientConfig) error {
+func showConfig(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	client := newHttpClient(clientConfig)
 	defer client.CloseIdleConnections()
 
@@ -382,7 +382,7 @@ func showConfig(_ *cli.Context, clientConfig *types.ClientConfig) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s\n", string(json))
+	printStdout(cCtx, "%s\n", string(json))
 	return nil
 }
 
@@ -417,6 +417,6 @@ func updateConfig(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s\n", string(json))
+	printStdout(cCtx, "%s\n", string(json))
 	return nil
 }

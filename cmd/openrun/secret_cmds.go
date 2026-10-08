@@ -76,7 +76,7 @@ Examples:
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() > 1 {
-				return fmt.Errorf("expected at most one arg: <prefix>")
+				return fmt.Errorf("expected at most one argument: <prefix>")
 			}
 			prefix := cCtx.Args().Get(0)
 			name := cCtx.String(SECRET_NAME_FLAG)
@@ -180,7 +180,7 @@ func secretListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() > 1 {
-				return fmt.Errorf("expected at most one arg: <glob>")
+				return fmt.Errorf("expected at most one argument: <glob>")
 			}
 
 			values := url.Values{}
@@ -221,7 +221,7 @@ func secretShowCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <name>")
+				return fmt.Errorf("expected one argument: <name>")
 			}
 			reveal := cCtx.Bool(SECRET_REVEAL_FLAG)
 
@@ -278,7 +278,7 @@ func secretDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <name>")
+				return fmt.Errorf("expected one argument: <name>")
 			}
 
 			values := url.Values{}
@@ -317,7 +317,7 @@ Examples:
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 0 {
-				return fmt.Errorf("expected no args")
+				return fmt.Errorf("expected no arguments")
 			}
 
 			values := url.Values{}

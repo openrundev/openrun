@@ -60,7 +60,7 @@ Examples:
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg : <filePath>")
+				return fmt.Errorf("expected one argument: <filePath>")
 			}
 
 			reloadMode := types.AppReloadOption(cmp.Or(cCtx.String("reload"), string(types.AppReloadOptionMatched)))
@@ -102,9 +102,9 @@ Examples:
 
 			printApplyResponse(cCtx, &syncResponse.SyncJobStatus.ApplyResponse)
 
-			fmt.Printf("\nSync job created with Id: %s\n", syncResponse.Id)
+			printStdout(cCtx, "\nSync job created with Id: %s\n", syncResponse.Id)
 			if syncResponse.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil
@@ -123,8 +123,8 @@ func syncListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 		Flags:     flags,
 		ArgsUsage: "",
 		UsageText: `
-	Examples:
-	  List sync jobs: openrun sync list`,
+Examples:
+  List sync jobs: openrun sync list`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() > 0 {
 				return fmt.Errorf("no args expected")
@@ -157,11 +157,11 @@ func syncRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 		ArgsUsage: "<syncId>",
 		UsageText: `args: <syncId>
 
-	Examples:
-	  Run sync job: openrun sync run cl_sync_44asd232`,
+Examples:
+  Run sync job: openrun sync run cl_sync_44asd232`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <syncId>")
+				return fmt.Errorf("expected one argument: <syncId>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -182,7 +182,7 @@ func syncRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 
 			printApplyResponse(cCtx, &response.ApplyResponse)
 			if response.ApplyResponse.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil
@@ -202,11 +202,11 @@ func syncDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 		ArgsUsage: "<syncId>",
 		UsageText: `args: <syncId>
 
-	Examples:
-	  Delete sync job: openrun sync delete cl_sync_44asd232`,
+Examples:
+  Delete sync job: openrun sync delete cl_sync_44asd232`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <syncId>")
+				return fmt.Errorf("expected one argument: <syncId>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -225,7 +225,7 @@ func syncDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			}
 
 			if response.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil

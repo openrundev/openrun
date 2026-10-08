@@ -51,10 +51,10 @@ func bindingHealthCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Name:      "health",
 		Usage:     "Check the health of a binding: connect as the binding account and run a no-op operation",
 		Flags:     flags,
-		ArgsUsage: "<binding_name>",
-		UsageText: `args: <binding_name>
+		ArgsUsage: "<bindingPath>",
+		UsageText: `args: <bindingPath>
 
-<binding_name> is the binding path.
+<bindingPath> is the unique path of the binding.
 
 Examples:
   Check the prod account: openrun binding health /apps/p1
@@ -62,7 +62,7 @@ Examples:
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <binding_name>")
+				return fmt.Errorf("expected one argument: <bindingPath>")
 			}
 			bindingName := cCtx.Args().First()
 
@@ -79,7 +79,7 @@ Examples:
 
 			env := "prod"
 			if cCtx.Bool(STAGE_FLAG) {
-				env = "staging"
+				env = "stage"
 			}
 			printStdout(cCtx, "Binding %s is healthy (%s)\n", bindingName, env)
 			return nil
@@ -107,11 +107,11 @@ func bindingCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Name:      "create",
 		Usage:     "Create a new binding entry",
 		Flags:     flags,
-		ArgsUsage: "<source> <binding_path>",
-		UsageText: `args: <source> <binding_path>
+		ArgsUsage: "<source> <bindingPath>",
+		UsageText: `args: <source> <bindingPath>
 
 <source> is the service id or base binding path.
-<binding_path> is the unique path of the binding.
+<bindingPath> is the unique path of the binding.
 
 Examples:
   Create a binding: openrun binding create --config inherit_default:true postgres/p1 /apps/p1
@@ -119,7 +119,7 @@ Examples:
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
-				return fmt.Errorf("expected two args: <source> <binding_path>")
+				return fmt.Errorf("expected two arguments: <source> <bindingPath>")
 			}
 			source := cCtx.Args().Get(0)
 			path := cCtx.Args().Get(1)
@@ -149,7 +149,7 @@ Examples:
 
 			printStdout(cCtx, "Binding %s created\n", response.Path)
 			if cCtx.Bool(DRY_RUN_FLAG) {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 			return nil
 		},
@@ -177,10 +177,10 @@ func bindingUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Name:      "update",
 		Usage:     "Update an existing binding entry",
 		Flags:     flags,
-		ArgsUsage: "<path>",
-		UsageText: `args: <path>
+		ArgsUsage: "<bindingPath>",
+		UsageText: `args: <bindingPath>
 
-<path> is the unique path of the binding.
+<bindingPath> is the unique path of the binding.
 
 Examples:
   Add a grant: openrun binding update /apps/p2 --add-grant "read:*"
@@ -190,7 +190,7 @@ Examples:
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <path>")
+				return fmt.Errorf("expected one argument: <bindingPath>")
 			}
 			path := cCtx.Args().First()
 			addGrants := cCtx.StringSlice(ADD_GRANT_FLAG)
@@ -221,7 +221,7 @@ Examples:
 
 			printStdout(cCtx, "Binding %s updated\n", response.Path)
 			if cCtx.Bool(DRY_RUN_FLAG) {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 			return nil
 		},
@@ -237,17 +237,17 @@ func bindingDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Name:      "delete",
 		Usage:     "Delete a binding entry",
 		Flags:     flags,
-		ArgsUsage: "<path>",
-		UsageText: `args: <path>
+		ArgsUsage: "<bindingPath>",
+		UsageText: `args: <bindingPath>
 
-<path> is the unique path of the binding.
+<bindingPath> is the unique path of the binding.
 
 Examples:
   Delete binding: openrun binding delete /apps/p1
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <path>")
+				return fmt.Errorf("expected one argument: <bindingPath>")
 			}
 			path := cCtx.Args().First()
 
@@ -264,7 +264,7 @@ Examples:
 
 			printStdout(cCtx, "Binding %s deleted\n", path)
 			if cCtx.Bool(DRY_RUN_FLAG) {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 			return nil
 		},
@@ -280,17 +280,17 @@ func bindingGetCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 		Name:      "get",
 		Usage:     "Get a binding entry by path",
 		Flags:     flags,
-		ArgsUsage: "<path>",
-		UsageText: `args: <path>
+		ArgsUsage: "<bindingPath>",
+		UsageText: `args: <bindingPath>
 
-<path> is the unique path of the binding.
+<bindingPath> is the unique path of the binding.
 
 Examples:
   Get binding: openrun binding get /apps/p1
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <path>")
+				return fmt.Errorf("expected one argument: <bindingPath>")
 			}
 			path := cCtx.Args().First()
 
@@ -319,10 +319,10 @@ func bindingShowAccountCommand(commonFlags []cli.Flag, clientConfig *types.Clien
 		Name:      "show-account",
 		Usage:     "Show binding account info as JSON",
 		Flags:     flags,
-		ArgsUsage: "<path>",
-		UsageText: `args: <path>
+		ArgsUsage: "<bindingPath>",
+		UsageText: `args: <bindingPath>
 
-<path> is the unique path of the binding.
+<bindingPath> is the unique path of the binding.
 
 Examples:
   Show account: openrun binding show-account /apps/p1
@@ -330,7 +330,7 @@ Examples:
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <path>")
+				return fmt.Errorf("expected one argument: <bindingPath>")
 			}
 			path := cCtx.Args().First()
 
@@ -368,7 +368,7 @@ func bindingListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 0 {
-				return fmt.Errorf("expected no args")
+				return fmt.Errorf("expected no arguments")
 			}
 
 			values := url.Values{}
@@ -398,10 +398,10 @@ func bindingRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 		Name:      "run-command",
 		Usage:     "Run a command through a binding account",
 		Flags:     flags,
-		ArgsUsage: "<binding_name> <sql>",
-		UsageText: `args: <binding_name> <sql>
+		ArgsUsage: "<bindingPath> <sql>",
+		UsageText: `args: <bindingPath> <sql>
 
-<binding_name> is the binding path.
+<bindingPath> is the unique path of the binding.
 <sql> is the command to run.
 
 Examples:
@@ -410,7 +410,7 @@ Examples:
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() < 2 {
-				return fmt.Errorf("expected two args: <binding_name> <sql>")
+				return fmt.Errorf("expected two arguments: <bindingPath> <sql>")
 			}
 			bindingName := cCtx.Args().Get(0)
 			sql := strings.Join(cCtx.Args().Slice()[1:], " ")

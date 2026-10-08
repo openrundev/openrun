@@ -142,7 +142,7 @@ tests:
     stdout: "3 19b8d5c59e421f037fe563007c7254eb8d98bc221b278c3db3e5fdbbfd52e273 static_root/rootfile.txt"
   versions0193: # a positional version is rejected
     command: ../openrun version files /versions_local1_cl_stage 3
-    stderr: "requires one argument"
+    stderr: "expected one argument"
     exit-code: 1
 
   versions0195: # change to zero versions retention

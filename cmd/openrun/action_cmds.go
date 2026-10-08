@@ -81,12 +81,12 @@ func actionListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 
 <appPathGlob> defaults to all. ` + PATH_SPEC_HELP + `
 
-	Examples:
-	  List all actions: openrun action list
-	  List the actions of one app: openrun action list /orders`,
+Examples:
+  List all actions: openrun action list
+  List the actions of one app: openrun action list /orders`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() > 1 {
-				return fmt.Errorf("expected at most one arg: <appPathGlob>")
+				return fmt.Errorf("expected at most one argument: <appPathGlob>")
 			}
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
@@ -165,7 +165,7 @@ func actionShowCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 	flags := make([]cli.Flag, 0, len(commonFlags)+2)
 	flags = append(flags, commonFlags...)
 	flags = append(flags, newFormatFlag())
-	flags = append(flags, newBoolFlag("stage", "s", "Use the stage instance of the app instead of prod", false))
+	flags = append(flags, stageFlag("Use the staging instance of the app instead of prod"))
 
 	return &cli.Command{
 		Name:      "show",
@@ -173,15 +173,14 @@ func actionShowCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 		Flags:     flags,
 		ArgsUsage: "<appPath> [<action>]",
 		UsageText: `args: <appPath> [<action>]
-
 ` + actionSelectHelp + `
 
-	Examples:
-	  Show the params: openrun action show /orders cancel
-	  As JSON, with the JSON schema of the args: openrun action show --format json /orders cancel`,
+Examples:
+  Show the params: openrun action show /orders cancel
+  As JSON, with the JSON schema of the args: openrun action show --format json /orders cancel`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() < 1 || cCtx.NArg() > 2 {
-				return fmt.Errorf("expected args: <appPath> [<action>]")
+				return fmt.Errorf("expected one or two arguments: <appPath> [<action>]")
 			}
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
@@ -261,7 +260,7 @@ func actionInvokeFlags(commonFlags []cli.Flag) []cli.Flag {
 	flags := make([]cli.Flag, 0, len(commonFlags)+6)
 	flags = append(flags, commonFlags...)
 	flags = append(flags, newFormatFlag())
-	flags = append(flags, newBoolFlag("stage", "s", "Use the stage instance of the app instead of prod", false))
+	flags = append(flags, stageFlag("Use the staging instance of the app instead of prod"))
 	flags = append(flags, newStringFlag("json", "j", "The args as a JSON object. @file reads the object from a file, - from stdin", ""))
 	flags = append(flags, newBoolFlag("quiet", "q", "Do not print the status line", false))
 	flags = append(flags, newStringFlag("output", "o", "Save the files of a download or image result: a file name, a directory (needed when the result has several files) or - for stdout", ""))
@@ -278,9 +277,7 @@ func actionRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		Flags:     flags,
 		ArgsUsage: "<appPath> [<action>] [name=value ...]",
 		UsageText: `args: <appPath> [<action>] [name=value ...]
-
 ` + actionSelectHelp + `
-
 ` + actionArgsHelp + `
 
 The result is written to stdout: a table, lines of text or JSON, as the action reports it
@@ -293,14 +290,14 @@ An async action (is_async=True) starts a background run and prints its run id;
 --wait polls the run and prints its result as above, --follow prints its output as it
 is produced. "openrun action runs", "action output" and "action cancel" manage the runs.
 
-	Examples:
-	  Run an action: openrun action run /orders cancel id=42 reason=customer
-	  Start a background run and wait for it: openrun action run --wait /site rebuild target=all
-	  Run the only action of an app: openrun action run /report month=2026-08
-	  Typed args from a file: openrun action run /orders import --json=@args.json
-	  Upload a file: openrun action run /orders import data=@orders.csv
-	  Rows as JSON lines: openrun action run --format jsonl /orders list status=open | jq .id
-	  Save the file an action returns: openrun action run -o report.pdf /orders report month=2026-08`,
+Examples:
+  Run an action: openrun action run /orders cancel id=42 reason=customer
+  Start a background run and wait for it: openrun action run --wait /site rebuild target=all
+  Run the only action of an app: openrun action run /report month=2026-08
+  Typed args from a file: openrun action run /orders import --json=@args.json
+  Upload a file: openrun action run /orders import data=@orders.csv
+  Rows as JSON lines: openrun action run --format jsonl /orders list status=open | jq .id
+  Save the file an action returns: openrun action run -o report.pdf /orders report month=2026-08`,
 		Action: func(cCtx *cli.Context) error {
 			return invokeActionCommand(cCtx, clientConfig, "/_openrun/actions/run", false)
 		},
@@ -314,15 +311,13 @@ func actionValidateCommand(commonFlags []cli.Flag, clientConfig *types.ClientCon
 		Flags:     actionInvokeFlags(commonFlags),
 		ArgsUsage: "<appPath> [<action>] [name=value ...]",
 		UsageText: `args: <appPath> [<action>] [name=value ...]
-
 ` + actionSelectHelp + `
-
 ` + actionArgsHelp + `
 
 The action handler is called with dry_run set. The exit code is 2 when the args have errors.
 
-	Examples:
-	  Validate: openrun action validate /orders cancel id=42`,
+Examples:
+  Validate: openrun action validate /orders cancel id=42`,
 		Action: func(cCtx *cli.Context) error {
 			return invokeActionCommand(cCtx, clientConfig, "/_openrun/actions/run", true)
 		},
@@ -336,15 +331,13 @@ func actionSuggestCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Flags:     actionInvokeFlags(commonFlags),
 		ArgsUsage: "<appPath> [<action>] [name=value ...]",
 		UsageText: `args: <appPath> [<action>] [name=value ...]
-
 ` + actionSelectHelp + `
-
 ` + actionArgsHelp + `
 
 The suggested values are printed as name=value lines, which can be passed to "action run".
 
-	Examples:
-	  Suggest values: openrun action suggest /orders cancel id=42`,
+Examples:
+  Suggest values: openrun action suggest /orders cancel id=42`,
 		Action: func(cCtx *cli.Context) error {
 			return invokeActionCommand(cCtx, clientConfig, "/_openrun/actions/suggest", false)
 		},
@@ -354,7 +347,7 @@ The suggested values are printed as name=value lines, which can be passed to "ac
 func actionOpenAPICommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+1)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newBoolFlag("stage", "s", "Use the stage instance of the app instead of prod", false))
+	flags = append(flags, stageFlag("Use the staging instance of the app instead of prod"))
 
 	return &cli.Command{
 		Name:      "openapi",
@@ -363,11 +356,11 @@ func actionOpenAPICommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 
-	Examples:
-	  Save the spec: openrun action openapi /orders > orders-openapi.json`,
+Examples:
+  Save the spec: openrun action openapi /orders > orders-openapi.json`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <appPath>")
+				return fmt.Errorf("expected one argument: <appPath>")
 			}
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
@@ -390,7 +383,7 @@ func actionOpenAPICommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 // name=value pair. name=@path entries are file uploads
 func parseActionArgs(cCtx *cli.Context, stdin io.Reader) (*types.ActionRunRequest, map[string]string, error) {
 	if cCtx.NArg() < 1 {
-		return nil, nil, fmt.Errorf("expected args: <appPath> [<action>] [name=value ...]")
+		return nil, nil, fmt.Errorf("expected at least one argument: <appPath> [<action>] [name=value ...]")
 	}
 	positional := cCtx.Args().Slice()
 	req := &types.ActionRunRequest{AppPath: positional[0], Stage: cCtx.Bool("stage"), Args: map[string]jsontext.Value{}}

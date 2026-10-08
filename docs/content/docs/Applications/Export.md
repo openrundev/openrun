@@ -11,7 +11,7 @@ summary: "Move existing apps and bindings into declarative GitOps configuration,
 ```sh
 openrun export --output apps.ace
 openrun export --exclude-declarative --output unmanaged.ace
-openrun export --exact-commit --service-ref exact --git-auth exact --output snapshot.ace
+openrun export --exact-commit --service-ref exact --git-auth-ref exact --output snapshot.ace
 openrun export "example.com:**"
 ```
 

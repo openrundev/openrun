@@ -38,12 +38,12 @@ func previewCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <gitCommitId> is the required first argument. This is the commit from which the preview app is to be created.
 <appPath> is the required second argument. The optional domain and path are separated by a ":". This is the app for which the preview app is to be created.
 
-	Examples:
-	  Preview and approve: openrun preview create --approve 86c24c88ceda21589801895e9f871617a716ad47 /myapp
-	  Preview app in dryrun mode: openrun preview create --dry-run 86c24c88ceda21589801895e9f871617a716ad47 example.com:/myapp`,
+Examples:
+  Preview and approve: openrun preview create --approve 86c24c88ceda21589801895e9f871617a716ad47 /myapp
+  Preview app in dryrun mode: openrun preview create --dry-run 86c24c88ceda21589801895e9f871617a716ad47 example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
-				return fmt.Errorf("requires two arguments: <gitCommitId> <appPath>")
+				return fmt.Errorf("expected two arguments: <gitCommitId> <appPath>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -61,8 +61,8 @@ func previewCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			}
 
 			approveResult := previewResponse.ApproveResult
-			fmt.Printf("App audit results %s - %s\n", approveResult.AppPathDomain, approveResult.Id)
-			printApproveResult(approveResult)
+			printStdout(cCtx, "App audit results %s - %s\n", approveResult.AppPathDomain, approveResult.Id)
+			printApproveResult(cCtx, approveResult)
 
 			status := "failed"
 			if previewResponse.Success {
@@ -70,23 +70,23 @@ func previewCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 			}
 			if approveResult.NeedsApproval {
 				if cCtx.Bool("approve") {
-					fmt.Printf("App creation %s. Permissions have been approved\n", status)
+					printStdout(cCtx, "App creation %s. Permissions have been approved\n", status)
 				} else {
-					fmt.Printf("App creation %s, permissions need to be approved, add the --approve option\n", status)
+					printStdout(cCtx, "App creation %s, permissions need to be approved, add the --approve option\n", status)
 				}
 			} else {
-				fmt.Printf("App creation %s. No approval required\n", status)
+				printStdout(cCtx, "App creation %s. No approval required\n", status)
 			}
 
 			if previewResponse.HttpUrl != "" {
-				fmt.Printf("\n HTTP Url: %s\n", previewResponse.HttpUrl)
+				printStdout(cCtx, "\n HTTP Url: %s\n", previewResponse.HttpUrl)
 			}
 			if previewResponse.HttpsUrl != "" {
-				fmt.Printf("HTTPS Url: %s\n", previewResponse.HttpsUrl)
+				printStdout(cCtx, "HTTPS Url: %s\n", previewResponse.HttpsUrl)
 			}
 
 			if previewResponse.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			if !previewResponse.Success {

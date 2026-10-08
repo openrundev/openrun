@@ -38,13 +38,13 @@ func webhookListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 
-    <appPath> is a required argument. The optional domain and path are separated by a ":". This is the app for which webhooks are listed.
+<appPath> is a required argument. The optional domain and path are separated by a ":". This is the app for which webhooks are listed.
 
-	Examples:
-		openrun app-webhook list example.com:/myapp`,
+Examples:
+  openrun app-webhook list example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("requires one argument: <appPath>")
+				return fmt.Errorf("expected one argument: <appPath>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -78,7 +78,6 @@ func printWebhookList(cCtx *cli.Context, tokens []types.AppToken, format string)
 		enc := newJSONEncoder(cCtx.App.Writer, true)
 		for _, f := range tokens {
 			json.MarshalEncode(enc, f, deterministicJSON) //nolint:errcheck
-			printStdout(cCtx, "\n")
 		}
 	case FORMAT_BASIC:
 		fallthrough
@@ -110,14 +109,14 @@ func webhookCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		ArgsUsage: "<webhookType> <appPath>",
 		UsageText: `args: <webhookType> <appPath>
 
-    <webhookType> is the required first argument. Supported types are: reload, reload_promote and promote.
-    <appPath> is the required second argument. The optional domain and path are separated by a ":". This is the app for which webhooks are created.
+<webhookType> is the required first argument. Supported types are: reload, reload_promote and promote.
+<appPath> is the required second argument. The optional domain and path are separated by a ":". This is the app for which webhooks are created.
 
-	Examples:
-		openrun app-webhook create reload example.com:/myapp`,
+Examples:
+  openrun app-webhook create reload example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
-				return fmt.Errorf("requires two arguments: <webhookType> <appPath>")
+				return fmt.Errorf("expected two arguments: <webhookType> <appPath>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -133,11 +132,11 @@ func webhookCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 				return err
 			}
 
-			fmt.Printf("Token: %s\n", response.Token.Token)
-			fmt.Printf("Url  : %s\n", response.Token.Url)
+			printStdout(cCtx, "Token: %s\n", response.Token.Token)
+			printStdout(cCtx, "Url  : %s\n", response.Token.Url)
 
 			if response.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil
@@ -157,14 +156,14 @@ func webhookDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		ArgsUsage: "<webhookType> <appPath>",
 		UsageText: `args: <webhookType> <appPath>
 
-    <webhookType> is the required first argument. Supported types are: reload, reload_promote and promote.
-    <appPath> is the required second argument. The optional domain and path are separated by a ":". This is the app for which webhooks are deleted.
+<webhookType> is the required first argument. Supported types are: reload, reload_promote and promote.
+<appPath> is the required second argument. The optional domain and path are separated by a ":". This is the app for which webhooks are deleted.
 
-	Examples:
-		openrun app-webhook delete reload example.com:/myapp`,
+Examples:
+  openrun app-webhook delete reload example.com:/myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
-				return fmt.Errorf("requires two arguments: <webhookType> <appPath>")
+				return fmt.Errorf("expected two arguments: <webhookType> <appPath>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -180,10 +179,10 @@ func webhookDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 				return err
 			}
 
-			fmt.Printf("Token deleted.\n")
+			printStdout(cCtx, "Token deleted.\n")
 
 			if response.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil

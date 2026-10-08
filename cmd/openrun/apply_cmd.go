@@ -87,7 +87,7 @@ Examples:
 
 			printApplyResponse(cCtx, &applyResponse)
 			if applyResponse.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil
@@ -144,10 +144,10 @@ func printApplyResponse(cCtx *cli.Context, applyResponse *types.AppApplyResponse
 		for _, approveResult := range applyResponse.ApproveResults {
 			if !approveResult.NeedsApproval {
 				// Server does not return these for reload to reduce the noise
-				fmt.Printf("No approval required. %s - %s\n", approveResult.AppPathDomain, approveResult.Id)
+				printStdout(cCtx, "No approval required. %s - %s\n", approveResult.AppPathDomain, approveResult.Id)
 			} else {
-				fmt.Printf("App permissions have been approved %s - %s\n", approveResult.AppPathDomain, approveResult.Id)
-				printApproveResult(approveResult)
+				printStdout(cCtx, "App permissions have been approved %s - %s\n", approveResult.AppPathDomain, approveResult.Id)
+				printApproveResult(cCtx, approveResult)
 			}
 		}
 	}
@@ -300,7 +300,7 @@ Examples:
 				len(deleteResponse.DeletedApps), len(deleteResponse.DeletedBindings),
 				len(deleteResponse.MissingApps)+len(deleteResponse.MissingBindings))
 			if deleteResponse.DryRun {
-				fmt.Print(DRY_RUN_MESSAGE)
+				printStdout(cCtx, "%s", DRY_RUN_MESSAGE)
 			}
 
 			return nil

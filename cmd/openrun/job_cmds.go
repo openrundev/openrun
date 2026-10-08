@@ -46,12 +46,12 @@ func jobListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 
 <appPathGlob> defaults to all. ` + PATH_SPEC_HELP + `
 
-	Examples:
-	  List all jobs: openrun job list
-	  List the jobs of one app: openrun job list /orders`,
+Examples:
+  List all jobs: openrun job list
+  List the jobs of one app: openrun job list /orders`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() > 1 {
-				return fmt.Errorf("expected at most one arg: <appPathGlob>")
+				return fmt.Errorf("expected at most one argument: <appPathGlob>")
 			}
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
@@ -87,6 +87,16 @@ func printJobList(cCtx *cli.Context, jobs []types.JobInfo, format string) {
 		for _, j := range jobs {
 			printStdout(cCtx, "%s,%s,%s,%s,%s,%s,%t,%s,%s,%s\n", j.AppPath, j.Stage, j.Spec.Name, j.Origin, jobExecutor(j.Spec), jobTriggerText(j.Spec),
 				j.Spec.IsEnabled(), jobNextRun(j), jobLastStatus(j), jobLastRunId(j))
+		}
+	case FORMAT_BASIC:
+		formatStr := "%-30s %-6s %-20s %-28s %-10s\n"
+		printStdout(cCtx, formatStr, "App", "Stage", "Job", "Trigger", "LastStatus")
+		for _, j := range jobs {
+			if len(j.Warnings) > 0 {
+				printStdout(cCtx, formatStr, j.AppPath, j.Stage, "-", strings.Join(j.Warnings, "; "), "")
+				continue
+			}
+			printStdout(cCtx, formatStr, j.AppPath, j.Stage, j.Spec.Name, jobTriggerText(j.Spec), jobLastStatus(j))
 		}
 	default:
 		formatStr := "%-30s %-6s %-20s %-10s %-8s %-28s %-8s %-20s %-10s %-s\n"
@@ -144,7 +154,7 @@ func jobLastRunId(j types.JobInfo) string {
 func jobRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+5)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newBoolFlag("stage", "s", "Run on the stage instance instead of prod", false))
+	flags = append(flags, stageFlag("Run on the staging instance of the app instead of prod"))
 	flags = append(flags, newBoolFlag("wait", "w", "Wait for the run to finish and report its status", false))
 	flags = append(flags, newBoolFlag("force", "f", "Run a disabled job, or run alongside an active run of the job", false))
 	flags = append(flags, &cli.StringSliceFlag{
@@ -160,13 +170,13 @@ func jobRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cl
 		ArgsUsage: "<job> <appPath>",
 		UsageText: `args: <job> <appPath>
 
-	Examples:
-	  Run a job on prod: openrun job run nightly-report /orders
-	  Run on stage and wait: openrun job run --stage --wait migrate /orders
-	  Run with arguments: openrun job run --arg region=eu nightly-report /orders`,
+Examples:
+  Run a job on prod: openrun job run nightly-report /orders
+  Run on the staging instance and wait: openrun job run --stage --wait migrate /orders
+  Run with arguments: openrun job run --arg region=eu nightly-report /orders`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 2 {
-				return fmt.Errorf("expected two args: <job> <appPath>")
+				return fmt.Errorf("expected two arguments: <job> <appPath>")
 			}
 			args := map[string]string{}
 			for _, arg := range cCtx.StringSlice("arg") {
@@ -191,17 +201,17 @@ func jobRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cl
 			}
 			run := response.Run
 			if cCtx.Bool("wait") {
-				fmt.Printf("Run %s of job %s on %s: %s", run.Id, run.JobName, run.AppPath, run.Status)
+				printStdout(cCtx, "Run %s of job %s on %s: %s", run.Id, run.JobName, run.AppPath, run.Status)
 				if run.Message != "" {
-					fmt.Printf(" (%s)", run.Message)
+					printStdout(cCtx, " (%s)", run.Message)
 				}
-				fmt.Println()
+				printStdout(cCtx, "\n")
 				if run.Status != types.JobRunSucceeded {
 					return fmt.Errorf("job run %s %s", run.Id, run.Status)
 				}
 				return nil
 			}
-			fmt.Printf("Started run %s of job %s on %s. Logs: openrun job logs %s\n", run.Id, run.JobName, run.AppPath, run.Id)
+			printStdout(cCtx, "Started run %s of job %s on %s. Logs: openrun job logs %s\n", run.Id, run.JobName, run.AppPath, run.Id)
 			return nil
 		},
 	}
@@ -217,17 +227,20 @@ func jobRunsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 
 	return &cli.Command{
 		Name:      "runs",
-		Usage:     "List the job runs of an app (prod and stage instances), newest first",
+		Usage:     "List the job runs of one app (its prod and staging instances), newest first",
 		Flags:     flags,
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 
-	Examples:
-	  List runs: openrun job runs /orders
-	  Failed runs of one job: openrun job runs --job nightly-report --status failed /orders`,
+<appPath> names one app; the runs of its prod and staging instances are both listed (see the Stage column).
+Use "openrun job list" to look across apps with a path glob.
+
+Examples:
+  List runs: openrun job runs /orders
+  Failed runs of one job: openrun job runs --job nightly-report --status failed /orders`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <appPath>")
+				return fmt.Errorf("expected one argument: <appPath>")
 			}
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
@@ -283,6 +296,12 @@ func printJobRuns(cCtx *cli.Context, runs []types.JobRun, format string) {
 			printStdout(cCtx, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n", r.Id, r.AppPath, r.JobName, r.Stage(), r.Trigger, r.Status,
 				r.StartedAt.UTC().Format(time.RFC3339), jobRunDuration(r), r.Actor, r.Message)
 		}
+	case FORMAT_BASIC:
+		formatStr := "%-32s %-20s %-8s %-10s %-s\n"
+		printStdout(cCtx, formatStr, "Run", "Job", "Stage", "Status", "Started (UTC)")
+		for _, r := range runs {
+			printStdout(cCtx, formatStr, r.Id, r.JobName, r.Stage(), r.Status, formatJobTime(r.StartedAt))
+		}
 	default:
 		formatStr := "%-32s %-20s %-8s %-14s %-10s %-21s %-10s %-12s %-s\n"
 		printStdout(cCtx, formatStr, "Run", "Job", "Stage", "Trigger", "Status", "Started (UTC)", "Duration", "Actor", "Message")
@@ -304,11 +323,11 @@ func jobLogsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 		ArgsUsage: "<runId>",
 		UsageText: `args: <runId>
 
-	Examples:
-	  Show run output: openrun job logs run_2abc...`,
+Examples:
+  Show run output: openrun job logs run_2abc...`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <runId>")
+				return fmt.Errorf("expected one argument: <runId>")
 			}
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
@@ -320,11 +339,11 @@ func jobLogsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 				return err
 			}
 			run := response.Run
-			fmt.Printf("Run %s job %s app %s status %s\n", run.Id, run.JobName, run.AppPath, run.Status)
+			printStdout(cCtx, "Run %s job %s app %s status %s\n", run.Id, run.JobName, run.AppPath, run.Status)
 			if run.Message != "" && run.ContainerName != "" {
-				fmt.Printf("Message: %s\n", run.Message)
+				printStdout(cCtx, "Message: %s\n", run.Message)
 			}
-			fmt.Println(response.Logs)
+			printStdout(cCtx, "%s\n", response.Logs)
 			return nil
 		},
 	}
@@ -341,7 +360,7 @@ func jobCancelCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		ArgsUsage: "<runId>",
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <runId>")
+				return fmt.Errorf("expected one argument: <runId>")
 			}
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
@@ -352,7 +371,7 @@ func jobCancelCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			if err := client.Post("/_openrun/jobs/cancel", values, nil, &response); err != nil {
 				return err
 			}
-			fmt.Printf("Cancel requested for run %s of job %s\n", response.Run.Id, response.Run.JobName)
+			printStdout(cCtx, "Cancel requested for run %s of job %s\n", response.Run.Id, response.Run.JobName)
 			return nil
 		},
 	}

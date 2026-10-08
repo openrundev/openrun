@@ -70,9 +70,9 @@ func generatePassword(cCtx *cli.Context) error {
 		return cli.Exit(err, 1)
 	}
 
-	fmt.Printf("# Auto generated password hash, add to openrun.toml\n")
-	fmt.Printf("[security]\n")
-	fmt.Printf("admin_password_bcrypt = \"%s\"\n", bcryptPassword)
+	printStdout(cCtx, "# Auto generated password hash, add to openrun.toml\n")
+	printStdout(cCtx, "[security]\n")
+	printStdout(cCtx, "admin_password_bcrypt = \"%s\"\n", bcryptPassword)
 	return nil
 }
 
@@ -131,5 +131,5 @@ func readPassword() (string, error) {
 }
 
 func printVersion(cCtx *cli.Context) {
-	fmt.Printf("OpenRun version %s build %s\n", types.GetVersion(), types.GetCommit())
+	printStdout(cCtx, "OpenRun version %s build %s\n", types.GetVersion(), types.GetCommit())
 }

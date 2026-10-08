@@ -147,7 +147,7 @@ func TestActionRunErrors(t *testing.T) {
 	}
 
 	_, stderr, code = runActionCli(t, ats, "run")
-	if code != actionExitError || !strings.Contains(stderr, "expected args") {
+	if code != actionExitError || !strings.Contains(stderr, "expected at least one argument") {
 		t.Fatalf("missing args: %d %q", code, stderr)
 	}
 	_, stderr, _ = runActionCli(t, ats, "run", "/orders", "list_orders", "novalue")

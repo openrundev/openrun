@@ -40,7 +40,7 @@ func replicationStatusCommand(commonFlags []cli.Flag, clientConfig *types.Client
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 0 {
-				return fmt.Errorf("expected no args")
+				return fmt.Errorf("expected no arguments")
 			}
 
 			client := newHttpClient(clientConfig)

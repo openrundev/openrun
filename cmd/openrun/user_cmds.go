@@ -109,7 +109,7 @@ Examples:
 		UsageText: usageText,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <username>")
+				return fmt.Errorf("expected one argument: <username>")
 			}
 			username := cCtx.Args().Get(0)
 
@@ -174,7 +174,7 @@ func userDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
   Delete a user: openrun user delete alice`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <username>")
+				return fmt.Errorf("expected one argument: <username>")
 			}
 
 			values := url.Values{}
@@ -206,7 +206,7 @@ func userListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
   List users: openrun user list`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 0 {
-				return fmt.Errorf("expected no args")
+				return fmt.Errorf("expected no arguments")
 			}
 
 			client := newHttpClient(clientConfig)

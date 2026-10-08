@@ -5,6 +5,7 @@ package main
 
 import (
 	"cmp"
+	"encoding/csv"
 	"encoding/json/v2"
 	"fmt"
 	"net/url"
@@ -45,7 +46,7 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 			" RBAC still applies; scopes are a ceiling. Default: unscoped, except mcp-only keys which"+
 			" default to read-only: *:read plus app:read_detail (pass --scopes \"*\" for a write-capable MCP key)", ""),
 		newStringFlag("resource", "r", "What the key is valid for: rest, mcp, all, an MCP app (app:<path>, app:<domain>:<path>, or the app's MCP url), or the app actions endpoint /_openrun/app_mcp (app_mcp, app_mcp:<auth>)", "rest"),
-		newStringFlag("desc", "d", "Description for the key", ""),
+		&cli.StringFlag{Name: "description", Aliases: []string{"d", "desc"}, Usage: "Description for the key"},
 	)
 
 	return &cli.Command{
@@ -53,7 +54,7 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 		Usage: "Create an API key. The key value is shown once and never stored",
 		Flags: flags,
 		UsageText: `Examples:
-  Key for oneself (remote CLI):     openrun apikey create --desc "laptop"
+  Key for oneself (remote CLI):     openrun apikey create --description "laptop"
   Key for an MCP client (readonly): openrun apikey create --resource mcp
   Write-capable MCP key:            openrun apikey create --resource mcp --scopes "*"
   Key for another user (admin):     openrun apikey create --user builtin:alice
@@ -61,7 +62,7 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
   Read-only scoped key:             openrun apikey create --scopes "*:read"`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 0 {
-				return fmt.Errorf("expected no args")
+				return fmt.Errorf("expected no arguments")
 			}
 			resources, err := parseApiKeyResource(cCtx.String("resource"))
 			if err != nil {
@@ -71,7 +72,7 @@ func apiKeyCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 				User:        cCtx.String("user"),
 				ExpiresIn:   cCtx.String("expires"),
 				Resources:   resources,
-				Description: cCtx.String("desc"),
+				Description: cCtx.String("description"),
 			}
 			if scopes := cCtx.String("scopes"); scopes != "" {
 				for scope := range strings.SplitSeq(scopes, ",") {
@@ -145,7 +146,7 @@ func apiKeyListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
   List all keys:       openrun apikey list --all`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 0 {
-				return fmt.Errorf("expected no args")
+				return fmt.Errorf("expected no arguments")
 			}
 			values := url.Values{}
 			values.Add("all", strconv.FormatBool(cCtx.Bool("all")))
@@ -177,25 +178,39 @@ func printApiKeyList(cCtx *cli.Context, keys []types.ApiKeyInfo, format string) 
 		for _, k := range keys {
 			json.MarshalEncode(enc, k, deterministicJSON) //nolint:errcheck
 		}
+	case FORMAT_CSV:
+		w := csv.NewWriter(cCtx.App.Writer)
+		for _, k := range keys {
+			w.Write([]string{k.Id, k.User, k.Type, strings.Join(k.Resources, ";"), apiKeyTime(k.ExpiresAt, "never"), //nolint:errcheck
+				apiKeyTime(k.LastUsedAt, ""), strings.Join(k.Scopes, ";"), k.Description})
+		}
+		w.Flush()
+	case FORMAT_BASIC:
+		formatStr := "%-18s %-24s %-12s %-20s %s\n"
+		printStdout(cCtx, formatStr, "Id", "User", "Resources", "Expires", "Description")
+		for _, k := range keys {
+			printStdout(cCtx, formatStr, k.Id, k.User, strings.Join(k.Resources, ","), apiKeyTime(k.ExpiresAt, "never"), k.Description)
+		}
 	default:
 		formatStr := "%-18s %-24s %-14s %-12s %-20s %-20s %-24s %s\n"
 		printStdout(cCtx, formatStr, "Id", "User", "Type", "Resources", "Expires", "Last Used", "Scopes", "Description")
 		for _, k := range keys {
-			expires := "never"
-			if k.ExpiresAt != nil {
-				expires = k.ExpiresAt.Format("2006-01-02 15:04")
-			}
-			lastUsed := "-"
-			if k.LastUsedAt != nil {
-				lastUsed = k.LastUsedAt.Format("2006-01-02 15:04")
-			}
 			scopes := strings.Join(k.Scopes, ",")
 			if scopes == "" {
 				scopes = "-"
 			}
-			printStdout(cCtx, formatStr, k.Id, k.User, k.Type, strings.Join(k.Resources, ","), expires, lastUsed, scopes, k.Description)
+			printStdout(cCtx, formatStr, k.Id, k.User, k.Type, strings.Join(k.Resources, ","), apiKeyTime(k.ExpiresAt, "never"), apiKeyTime(k.LastUsedAt, "-"), scopes, k.Description)
 		}
 	}
+}
+
+// apiKeyTime formats an optional key timestamp, missing printing as the
+// given placeholder
+func apiKeyTime(t *time.Time, missing string) string {
+	if t == nil {
+		return missing
+	}
+	return t.Format("2006-01-02 15:04")
 }
 
 func apiKeyDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -208,7 +223,7 @@ func apiKeyDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
   Delete a key: openrun apikey delete 1a2b3c4d5e6f7a8b`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one arg: <id>")
+				return fmt.Errorf("expected one argument: <id>")
 			}
 			values := url.Values{}
 			values.Add("id", cCtx.Args().Get(0))

@@ -18,7 +18,7 @@ func initExportCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 	flags = append(flags, commonFlags...)
 	flags = append(flags, newStringFlag("service-ref", "s",
 		"How binding service references are written: \"default\" uses the target's default service of that type, \"exact\" uses the service name", types.ExportRefDefault))
-	flags = append(flags, newStringFlag("git-auth", "g",
+	flags = append(flags, newStringFlag("git-auth-ref", "",
 		"How git auth references are written: \"default\" omits git_auth (target uses default_git_auth), \"exact\" uses the git_auth entry name", types.ExportRefDefault))
 	flags = append(flags, newBoolFlag("exact-commit", "c", "Pin apps to the currently deployed git commit instead of tracking the branch", false))
 	flags = append(flags, newBoolFlag("exclude-declarative", "x", "Exclude apps and bindings which are already declaratively managed", false))
@@ -58,7 +58,7 @@ Examples:
 			values := url.Values{}
 			values.Add("appPathGlob", appPathGlob)
 			values.Add("serviceRef", cCtx.String("service-ref"))
-			values.Add("gitAuthRef", cCtx.String("git-auth"))
+			values.Add("gitAuthRef", cCtx.String("git-auth-ref"))
 			values.Add("exactCommit", strconv.FormatBool(cCtx.Bool("exact-commit")))
 			values.Add("excludeDeclarative", strconv.FormatBool(cCtx.Bool("exclude-declarative")))
 
@@ -95,7 +95,7 @@ Starlark logic (helper functions, conditionals, config() lookups) is evaluated a
 replaced with the resulting literal values.
 
 NOTE: Since starlark logic is evaluated, the output may not be exactly the same as the input.
-If there are any functions or conditionals n the output, the output will be as seen after evaluation for the conditional logic.
+If there are any functions or conditionals in the output, the output will be as seen after evaluation for the conditional logic.
 
 Examples:
   Print formatted config: openrun pretty-print ./apps.ace
