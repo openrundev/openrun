@@ -30,7 +30,7 @@ tests:
 
   # Second service of same type does not become default
   service0020:
-    command: ../openrun service create --staging p1 --config url=${TEST_POSTGRES_URL} postgres/p2
+    command: ../openrun service create --stage p1 --config url=${TEST_POSTGRES_URL} postgres/p2
     stdout: "Service postgres/p2 created"
 
   service0021: # second service is_default stays false (not requested)
@@ -92,7 +92,7 @@ tests:
     stdout: "3"
 
   service0046: # staging service can be set on update
-    command: ../openrun service update --staging p3 postgres/p1
+    command: ../openrun service update --stage p3 postgres/p1
     stdout: "Service postgres/p1 updated"
 
   service0047:
@@ -206,7 +206,7 @@ tests:
     command: ../openrun service list -f json postgres/p3 | jq -r '.[0].is_default'
     stdout: "true"
 
-  service0114: # make p1 depend on p2 before deleting p2
+  service0114: # make p1 depend on p2 before deleting p2 (--staging is an alias of --stage)
     command: ../openrun service update --staging p2 postgres/p1
     stdout: "Service postgres/p1 updated"
 

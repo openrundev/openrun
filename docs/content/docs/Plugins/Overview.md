@@ -196,7 +196,7 @@ If specific account config is required for an app, then the app can be linked to
 db_connection = "sqlite:/tmp/openrun_app.db"
 ```
 
-For an app `/myapp` using `store.in`, run `openrun account link --promote /myapp store.in tmpaccount`
+For an app `/myapp` using `store.in`, run `openrun account link --promote store.in tmpaccount /myapp`
 
 This links the `myapp` app to use the `tmpaccount` account.
 
@@ -209,7 +209,7 @@ load("http.in#google", "googlehttp")
 ```
 
 then the app will use the `http.in#google` account config by default. This also can be overridden using account links, by
-running `openrun account link --promote /myapp http.in#google myaccount`
+running `openrun account link --promote http.in#google myaccount /myapp`
 
 This approach is useful if an app has to access multiple accounts for the same plugin. The account linking approach is recommended for normal scenarios.
 

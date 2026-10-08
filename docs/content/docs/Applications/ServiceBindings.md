@@ -144,15 +144,15 @@ openrun service create postgres/stage \
 
 openrun service create postgres/main \
   --is-default \
-  --staging stage \
+  --stage stage \
   --config url=postgres://admin:secret@prod-db.example.com:5432/appdb
 ```
 
 You can add, change, or clear the staging service later:
 
 ```shell
-openrun service update postgres/main --staging stage
-openrun service update postgres/main --staging ""
+openrun service update postgres/main --stage stage
+openrun service update postgres/main --stage ""
 ```
 
 The staging service cannot refer to itself. If no staging service is linked, then stage bindings are created on the same endpoint as the prod, just a separate schema/database. Stage performance issues can impact prod in that case.
@@ -176,14 +176,14 @@ not hold it by default).
 
 ```shell
 openrun binding show-account /apps/reporting-db
-openrun binding show-account --staging /apps/reporting-db
+openrun binding show-account --stage /apps/reporting-db
 ```
 
 For testing, SQL can be run as the binding account. Output can be truncated for large results sets.
 
 ```shell
 openrun binding run-command /apps/reporting-db "select current_user"
-openrun binding run-command --staging /apps/reporting-db "select current_user"
+openrun binding run-command --stage /apps/reporting-db "select current_user"
 ```
 
 ## Create Derived Bindings
@@ -252,10 +252,10 @@ Verify a service or a binding account end to end — the server actually connect
 ```shell
 openrun service health postgres/main
 openrun binding health /apps/reporting-db
-openrun binding health --staging /apps/reporting-db
+openrun binding health --stage /apps/reporting-db
 ```
 
-`service health` connects with the service's admin credentials (secret references resolved the same way as other operations). `binding health` connects **as** the binding's generated account — the production account by default, the staged account (against the linked staging service, when one is configured) with `--staging`. A healthy check exits 0; any failure exits non-zero with the backend error.
+`service health` connects with the service's admin credentials (secret references resolved the same way as other operations). `binding health` connects **as** the binding's generated account — the production account by default, the staged account (against the linked staging service, when one is configured) with `--stage`. A healthy check exits 0; any failure exits non-zero with the backend error.
 
 The checks work uniformly for the built-in service types and installed provider service types (a provider built with an SDK that predates health checks reports that the provider needs an update). SQLite bindings have no endpoint or accounts to probe; their checks validate the binding configuration and otherwise always report healthy.
 

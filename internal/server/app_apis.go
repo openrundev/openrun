@@ -725,21 +725,18 @@ func (s *Server) getAppBindings(ctx context.Context, inpTx types.Transaction, ap
 	return bindings, nil
 }
 
-func (s *Server) GetAppApi(ctx context.Context, appPath string) (*types.AppGetResponse, error) {
+// GetAppApi returns the app entry at appPath, or its stage instance when
+// stage is set
+func (s *Server) GetAppApi(ctx context.Context, appPath string, stage bool) (*types.AppGetResponse, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	pathDomain, err := parseAppPath(appPath)
+	appEntry, err := s.getAppEntryOrStage(ctx, tx, appPath, stage)
 	if err != nil {
 		return nil, err
-	}
-
-	appEntry, error := s.db.GetAppEntryTx(ctx, tx, pathDomain)
-	if error != nil {
-		return nil, error
 	}
 
 	if err := s.enforceAppPermEntry(ctx, types.PermissionRead, appEntry); err != nil {

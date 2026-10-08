@@ -23,6 +23,9 @@ const (
 	FORMAT_JSONL        = "jsonl"
 	FORMAT_JSONL_PRETTY = "jsonl_pretty"
 	FORMAT_CSV          = "csv"
+
+	STAGE_FLAG   = "stage"
+	STAGING_FLAG = "staging" // alias of --stage; also the wire name of the binding and service APIs
 )
 
 var validFormats = []string{FORMAT_TABLE, FORMAT_BASIC, FORMAT_CSV, FORMAT_JSON, FORMAT_JSONL, FORMAT_JSONL_PRETTY}
@@ -72,6 +75,16 @@ func isTerminal(f *os.File) bool {
 		return false
 	}
 	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// stageFlag selects the staging instance of an app or binding instead of
+// prod. --staging is accepted as an alias
+func stageFlag(usage string) *cli.BoolFlag {
+	return &cli.BoolFlag{
+		Name:    STAGE_FLAG,
+		Aliases: []string{"s", STAGING_FLAG},
+		Usage:   usage,
+	}
 }
 
 func newStringFlag(name, alias, usage, value string) *cli.StringFlag {

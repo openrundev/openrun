@@ -148,7 +148,7 @@ func addMCPTool[In any](s *Server, srv *mcp.Server, operation API_NAME,
 			UserId:     apiCallerPrincipal(ctx),
 			EventType:  types.EventTypeSystem,
 			Operation:  string(operation),
-			Target:     mcpInputTarget(in),
+			Target:     s.mcpEventTarget(ctx, in),
 			Status:     string(types.EventStatusFailure),
 			Detail:     apiAuditDetail(ctx),
 		}
@@ -235,7 +235,7 @@ func addMCPTool[In any](s *Server, srv *mcp.Server, operation API_NAME,
 				if auditErr := s.InsertAuditEvent(&event); auditErr != nil {
 					s.Error().Err(auditErr).Msg("error inserting audit event for MCP preview")
 				}
-				message := mcpConfirmMessage(operation, entry, mcpInputTarget(in), preview)
+				message := mcpConfirmMessage(operation, entry, event.Target, preview)
 				if entry.ConfirmMessage != nil {
 					message = entry.ConfirmMessage(ctx, s, in, preview)
 				}
@@ -295,8 +295,14 @@ type (
 		PathGlob   string `json:"path_glob,omitzero" jsonschema:"app path glob to match, like /myapp, example.com:/**, or all. Empty matches all apps across all domains"`
 		FullOutput bool   `json:"full_output,omitzero" jsonschema:"return complete objects instead of the default compact summary"`
 	}
-	mcpAppPathIn struct {
-		Path string `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+	mcpGetAppIn struct {
+		Path  string `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		Stage bool   `json:"stage,omitzero" jsonschema:"the staging instance of the app instead of prod"`
+	}
+	mcpListVersionsIn struct {
+		Path       string `json:"path" jsonschema:"the app path, like /myapp or example.com:/myapp"`
+		Stage      bool   `json:"stage,omitzero" jsonschema:"the versions of the staging instance instead of prod"`
+		FullOutput bool   `json:"full_output,omitzero" jsonschema:"return complete objects instead of the default compact summary"`
 	}
 	mcpCreateAppIn struct {
 		Path      string            `json:"path" jsonschema:"the app path to create, like /myapp"`
@@ -327,6 +333,7 @@ type (
 	mcpVersionSwitchIn struct {
 		Path    string `json:"path" jsonschema:"the app path"`
 		Version string `json:"version" jsonschema:"target version number, or previous/next"`
+		Stage   bool   `json:"stage,omitzero" jsonschema:"switch the staging instance instead of prod"`
 		DryRun  bool   `json:"dry_run,omitzero" jsonschema:"preview without applying"`
 	}
 	mcpListServicesIn struct {
@@ -375,6 +382,7 @@ type (
 	mcpListFilesIn struct {
 		Path       string `json:"path" jsonschema:"the app path"`
 		Version    string `json:"version,omitzero" jsonschema:"the version to list files of; empty for current"`
+		Stage      bool   `json:"stage,omitzero" jsonschema:"the staging instance of the app instead of prod"`
 		FullOutput bool   `json:"full_output,omitzero" jsonschema:"return complete objects instead of the default compact summary"`
 	}
 	mcpWebhookIn struct {
@@ -657,13 +665,13 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 		})
 
 	addMCPTool(s, srv, API_GET_APP,
-		func(ctx context.Context, in mcpAppPathIn) (any, error) {
-			return s.GetAppApi(ctx, in.Path)
+		func(ctx context.Context, in mcpGetAppIn) (any, error) {
+			return s.GetAppApi(ctx, in.Path, in.Stage)
 		})
 
 	addMCPTool(s, srv, API_LIST_VERSIONS,
-		func(ctx context.Context, in mcpAppPathListIn) (any, error) {
-			return s.VersionList(ctx, in.Path)
+		func(ctx context.Context, in mcpListVersionsIn) (any, error) {
+			return s.VersionList(ctx, in.Path, in.Stage)
 		})
 
 	addMCPTool(s, srv, API_CREATE_APP,
@@ -709,7 +717,7 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 
 	addMCPTool(s, srv, API_VERSION_SWITCH,
 		func(ctx context.Context, in mcpVersionSwitchIn) (any, error) {
-			return s.VersionSwitch(ctx, in.Path, in.DryRun, in.Version)
+			return s.VersionSwitch(ctx, in.Path, in.DryRun, in.Version, in.Stage)
 		})
 
 	addMCPTool(s, srv, API_LIST_SERVICES,
@@ -774,7 +782,7 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 
 	addMCPTool(s, srv, API_LIST_FILES,
 		func(ctx context.Context, in mcpListFilesIn) (any, error) {
-			return s.VersionFiles(ctx, in.Path, in.Version)
+			return s.VersionFiles(ctx, in.Path, in.Version, in.Stage)
 		})
 
 	addMCPTool(s, srv, API_LIST_WEBHOOKS,
@@ -1140,6 +1148,26 @@ func mcpInputTarget(in any) string {
 		}
 	}
 	return ""
+}
+
+// mcpEventTarget is the audit target of a tool call: the input's target, or
+// for an input whose stage field selects the staging instance of the app at
+// its path, that instance's own path (what a call naming it directly
+// records), so that the audit event, its app link and the confirmation
+// prompt name the instance acted on
+func (s *Server) mcpEventTarget(ctx context.Context, in any) string {
+	target := mcpInputTarget(in)
+	value := reflect.ValueOf(in)
+	if value.Kind() != reflect.Struct {
+		return target
+	}
+	stage := value.FieldByName("Stage")
+	path := value.FieldByName("Path")
+	if stage.IsValid() && stage.Kind() == reflect.Bool && stage.Bool() &&
+		path.IsValid() && path.Kind() == reflect.String && path.String() == target {
+		return s.stageTargetPath(ctx, target, true)
+	}
+	return target
 }
 
 // mcpConfirmKey is the input-request id used for destructive-op confirmation,

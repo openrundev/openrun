@@ -482,6 +482,10 @@
       "path": {
         "description": "the app path, like /myapp or example.com:/myapp",
         "type": "string"
+      },
+      "stage": {
+        "description": "the staging instance of the app instead of prod",
+        "type": "boolean"
       }
     },
     "required": [
@@ -590,6 +594,10 @@
       "path": {
         "description": "the app path",
         "type": "string"
+      },
+      "stage": {
+        "description": "the staging instance of the app instead of prod",
+        "type": "boolean"
       },
       "version": {
         "description": "the version to list files of; empty for current",
@@ -706,6 +714,10 @@
       "path": {
         "description": "the app path, like /myapp or example.com:/myapp",
         "type": "string"
+      },
+      "stage": {
+        "description": "the versions of the staging instance instead of prod",
+        "type": "boolean"
       }
     },
     "required": [
@@ -1447,6 +1459,10 @@
       "path": {
         "description": "the app path",
         "type": "string"
+      },
+      "stage": {
+        "description": "switch the staging instance instead of prod",
+        "type": "boolean"
       },
       "version": {
         "description": "target version number, or previous/next",

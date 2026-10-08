@@ -54,6 +54,34 @@ func TestReadDetailBasicView(t *testing.T) {
 		t.Errorf("alice full view must carry the source url: %+v", aliceGet.AppEntry)
 	}
 
+	// get_app with stage: the staging instance, under the same split. The
+	// grants on the main app path cover its staging instance, no more
+	var carolStage, aliceStage types.AppGetResponse
+	if err := remoteClient(ts, carolKey).Get("/_openrun/app",
+		url.Values{"appPath": {"/apps/remote-test"}, "stage": {"true"}}, &carolStage); err != nil {
+		t.Fatalf("carol get stage app: %v", err)
+	}
+	if !strings.HasPrefix(string(carolStage.AppEntry.Id), types.ID_PREFIX_APP_STAGE) {
+		t.Errorf("stage=true must return the staging instance, got id %s", carolStage.AppEntry.Id)
+	}
+	if carolStage.AppEntry.SourceUrl != "" || len(carolStage.AppEntry.Metadata.Loads) != 0 {
+		t.Errorf("carol basic view of the stage app leaks detail fields: %+v", carolStage.AppEntry)
+	}
+	if err := remoteClient(ts, aliceKey).Get("/_openrun/app",
+		url.Values{"appPath": {"/apps/remote-test"}, "stage": {"true"}}, &aliceStage); err != nil {
+		t.Fatalf("alice get stage app: %v", err)
+	}
+	if aliceStage.AppEntry.Id != carolStage.AppEntry.Id || aliceStage.AppEntry.SourceUrl == "" {
+		t.Errorf("alice full view of the stage app: %+v", aliceStage.AppEntry)
+	}
+	// bob has no grant at all: denied on the staging instance as on prod
+	bobKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:bob"})
+	var bobGet types.AppGetResponse
+	if err := remoteClient(ts, bobKey).Get("/_openrun/app",
+		url.Values{"appPath": {"/apps/remote-test"}, "stage": {"true"}}, &bobGet); err == nil {
+		t.Error("bob must be denied the staging instance")
+	}
+
 	// list_apps: basic for carol, full for alice
 	var carolList, aliceList types.AppListResponse
 	if err := remoteClient(ts, carolKey).Get("/_openrun/apps",
@@ -77,7 +105,7 @@ func TestReadDetailBasicView(t *testing.T) {
 // TestReadDetailGatesDetailApis verifies the version, files and export APIs
 // need app:read_detail: denied for carol (app:read), allowed for alice
 func TestReadDetailGatesDetailApis(t *testing.T) {
-	_, ts, mintKey := newRemoteApiTestServer(t)
+	server, ts, mintKey := newRemoteApiTestServer(t)
 	carolKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:carol"})
 	aliceKey := mintKey(t, &types.ApiKeyCreateRequest{User: "builtin:alice"})
 
@@ -88,6 +116,10 @@ func TestReadDetailGatesDetailApis(t *testing.T) {
 	}{
 		{"version list", "/_openrun/version", url.Values{"appPath": {"/apps/remote-test"}}},
 		{"version files", "/_openrun/version/files", url.Values{"appPath": {"/apps/remote-test"}}},
+		// The staging instance selected with stage=true, or by its own path
+		{"stage version list", "/_openrun/version", url.Values{"appPath": {"/apps/remote-test"}, "stage": {"true"}}},
+		{"stage version files", "/_openrun/version/files", url.Values{"appPath": {"/apps/remote-test"}, "stage": {"true"}}},
+		{"stage path version list", "/_openrun/version", url.Values{"appPath": {"stage.127.0.0.1:/apps/remote-test"}}},
 	}
 	for _, c := range calls {
 		var resp map[string]any
@@ -99,6 +131,24 @@ func TestReadDetailGatesDetailApis(t *testing.T) {
 		if err := remoteClient(ts, aliceKey).Get(c.path, c.args, &resp); err != nil {
 			t.Errorf("alice %s: %v", c.name, err)
 		}
+	}
+
+	// The audit events of the stage calls name the staging instance, as a
+	// call naming it by its own path does: alice's stage list, stage files
+	// and stage-path list record the stage path, the two prod calls the
+	// prod path
+	server.FlushAuditEvents()
+	var stageEvents, prodEvents int
+	if err := server.auditDB.QueryRow("select count(*) from audit where event_type = 'system' and user_id = 'builtin:alice' and target = ?",
+		"stage.127.0.0.1:/apps/remote-test").Scan(&stageEvents); err != nil {
+		t.Fatalf("query stage audit events: %v", err)
+	}
+	if err := server.auditDB.QueryRow("select count(*) from audit where event_type = 'system' and user_id = 'builtin:alice' and target = ?",
+		"/apps/remote-test").Scan(&prodEvents); err != nil {
+		t.Fatalf("query prod audit events: %v", err)
+	}
+	if stageEvents != 3 || prodEvents != 2 {
+		t.Errorf("audit targets: %d stage, %d prod events, want 3 and 2", stageEvents, prodEvents)
 	}
 
 	// The glob export filters apps by app:read_detail (like listing filters

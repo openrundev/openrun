@@ -111,7 +111,10 @@ func TestResponseTypes(t *testing.T) {
 				testutil.AssertErrorContains(t, err, tc.loadError)
 				return
 			}
-			testutil.AssertNoError(t, err)
+			if err != nil {
+				// A failed create leaves no app to serve from
+				t.Fatalf("create app: %s", err)
+			}
 			response := httptest.NewRecorder()
 			path, status := tc.path, tc.status
 			if path == "" {

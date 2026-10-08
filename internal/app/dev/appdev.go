@@ -5,6 +5,7 @@ package dev
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -15,6 +16,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
@@ -67,6 +69,60 @@ func NewAppDev(logger *types.Logger, sourceFS *appfs.WritableSourceFs, workFS *a
 	return dev
 }
 
+const (
+	downloadAttempts = 3
+	downloadTimeout  = 30 * time.Second
+)
+
+// fetchUrl downloads a url, retrying a transient failure (a connection or
+// TLS handshake error, a timeout, a 5xx or 429 response) a few times with a
+// backoff, so that a brief CDN hiccup does not fail the app load. A 4xx
+// response is returned at once
+func fetchUrl(url string) ([]byte, error) {
+	var lastErr error
+	for attempt := 1; attempt <= downloadAttempts; attempt++ {
+		if attempt > 1 {
+			time.Sleep(time.Duration(attempt-1) * time.Second)
+		}
+		data, retry, err := fetchUrlOnce(url)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !retry {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+// fetchUrlOnce is one attempt of fetchUrl; retry reports whether the
+// failure is worth another attempt
+func fetchUrlOnce(url string) (data []byte, retry bool, err error) {
+	// http.DefaultClient (not a private client) so that tests can stub the
+	// transport; the timeout bounds the whole attempt
+	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, true, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		retry = resp.StatusCode >= http.StatusInternalServerError || resp.StatusCode == http.StatusTooManyRequests
+		return nil, retry, fmt.Errorf("error downloading %s : status %d", url, resp.StatusCode)
+	}
+	var buf bytes.Buffer
+	if _, err = io.Copy(&buf, resp.Body); err != nil {
+		return nil, true, err
+	}
+	return buf.Bytes(), false, nil
+}
+
 // downloadFile downloads the files from the url, unless it was already loaded for this app in the current
 // server session.
 func (a *AppDev) downloadFile(url string, appFS *appfs.WritableSourceFs, path string) error {
@@ -83,17 +139,11 @@ func (a *AppDev) downloadFile(url string, appFS *appfs.WritableSourceFs, path st
 
 	a.Info().Msgf("Downloading %s into %s", url, path)
 
-	resp, err := http.Get(url)
+	data, err := fetchUrl(url)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close() //nolint:errcheck
-
-	var buf bytes.Buffer
-	if _, err = io.Copy(&buf, resp.Body); err != nil {
-		return err
-	}
-	if err = appFS.Write(path, buf.Bytes()); err != nil {
+	if err = appFS.Write(path, data); err != nil {
 		return err
 	}
 	alreadyDone = append(alreadyDone, path)
@@ -111,20 +161,11 @@ func (a *AppDev) downloadWorkFile(url string, path string) error {
 
 	a.Info().Msgf("Downloading %s into %s", url, path)
 
-	resp, err := http.Get(url)
+	data, err := fetchUrl(url)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("error downloading %s : status %d", url, resp.StatusCode)
-	}
-
-	var buf bytes.Buffer
-	if _, err = io.Copy(&buf, resp.Body); err != nil {
-		return err
-	}
-	if err = a.workFS.Write(path, buf.Bytes()); err != nil {
+	if err = a.workFS.Write(path, data); err != nil {
 		return err
 	}
 	a.filesDownloaded[url] = append(a.filesDownloaded[url], path)

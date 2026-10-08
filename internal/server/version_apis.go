@@ -19,19 +19,57 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 )
 
-func (s *Server) VersionList(ctx context.Context, mainAppPath string) (*types.AppVersionListResponse, error) {
-	appPathDomain, err := parseAppPath(mainAppPath)
+// getAppEntryOrStage reads the app entry at appPath, or its stage instance
+// when stage is set. The stage instance can also be named directly by its
+// own path (the _cl_stage suffix or the stage domain); with stage set on a
+// path which already is a stage instance, that instance is returned. A dev
+// app has no stage instance and is returned as is. tx may be empty, the
+// entries are then read outside a transaction
+func (s *Server) getAppEntryOrStage(ctx context.Context, tx types.Transaction, appPath string, stage bool) (*types.AppEntry, error) {
+	appPathDomain, err := parseAppPath(appPath)
 	if err != nil {
 		return nil, err
 	}
+	var appEntry *types.AppEntry
+	if tx.IsInitialized() {
+		appEntry, err = s.db.GetAppEntryTx(ctx, tx, appPathDomain)
+	} else {
+		appEntry, err = s.db.GetAppEntry(ctx, appPathDomain)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if stage && strings.HasPrefix(string(appEntry.Id), types.ID_PREFIX_APP_PROD) {
+		return s.getStageApp(ctx, tx, appEntry)
+	}
+	return appEntry, nil
+}
 
+// stageTargetPath returns the audit target of a call on appPath: with stage
+// set, the path of the app's staging instance, what a call naming that
+// instance directly records, so that the audit log and the MCP confirmation
+// name the instance acted on. Without stage, or when the staging instance
+// cannot be resolved (the call itself then fails on the same lookup),
+// appPath is returned
+func (s *Server) stageTargetPath(ctx context.Context, appPath string, stage bool) string {
+	if !stage {
+		return appPath
+	}
+	appEntry, err := s.getAppEntryOrStage(ctx, types.Transaction{}, appPath, true)
+	if err != nil {
+		return appPath
+	}
+	return appEntry.AppPathDomain().String()
+}
+
+func (s *Server) VersionList(ctx context.Context, mainAppPath string, stage bool) (*types.AppVersionListResponse, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
+	appEntry, err := s.getAppEntryOrStage(ctx, tx, mainAppPath, stage)
 	if err != nil {
 		return nil, err
 	}
@@ -60,19 +98,14 @@ func (s *Server) VersionList(ctx context.Context, mainAppPath string) (*types.Ap
 	return &types.AppVersionListResponse{Versions: versions}, nil
 }
 
-func (s *Server) VersionFiles(ctx context.Context, mainAppPath, version string) (*types.AppVersionFilesResponse, error) {
-	appPathDomain, err := parseAppPath(mainAppPath)
-	if err != nil {
-		return nil, err
-	}
-
+func (s *Server) VersionFiles(ctx context.Context, mainAppPath, version string, stage bool) (*types.AppVersionFilesResponse, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
+	appEntry, err := s.getAppEntryOrStage(ctx, tx, mainAppPath, stage)
 	if err != nil {
 		return nil, err
 	}
@@ -111,20 +144,15 @@ func (s *Server) VersionFiles(ctx context.Context, mainAppPath, version string) 
 // resolution and the file listing happen eagerly; the producer runs later,
 // at response-write time, streaming the zip to the client (chunked) with
 // backpressure - the archive is never fully held in memory or staged to
-// disk. Use the stage path for staging versions
-func (s *Server) VersionFilesZip(ctx context.Context, mainAppPath, version string) (func(w io.Writer) error, string, error) {
-	appPathDomain, err := parseAppPath(mainAppPath)
-	if err != nil {
-		return nil, "", err
-	}
-
+// disk. stage selects the staging instance of the app
+func (s *Server) VersionFilesZip(ctx context.Context, mainAppPath, version string, stage bool) (func(w io.Writer) error, string, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, "", err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
+	appEntry, err := s.getAppEntryOrStage(ctx, tx, mainAppPath, stage)
 	if err != nil {
 		return nil, "", err
 	}
@@ -189,26 +217,21 @@ func (s *Server) VersionFilesZip(ctx context.Context, mainAppPath, version strin
 		return writer.Close()
 	}
 
-	name := zipNameSanitizer.ReplaceAllString(strings.Trim(appPathDomain.String(), "/"), "_")
+	name := zipNameSanitizer.ReplaceAllString(strings.Trim(appEntry.AppPathDomain().String(), "/"), "_")
 	if name == "" {
 		name = "app"
 	}
 	return producer, fmt.Sprintf("%s-v%d.zip", name, versionInt), nil
 }
 
-func (s *Server) VersionSwitch(ctx context.Context, mainAppPath string, dryRun bool, version string) (*types.AppVersionSwitchResponse, error) {
-	appPathDomain, err := parseAppPath(mainAppPath)
-	if err != nil {
-		return nil, err
-	}
-
+func (s *Server) VersionSwitch(ctx context.Context, mainAppPath string, dryRun bool, version string, stage bool) (*types.AppVersionSwitchResponse, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	appEntry, err := s.db.GetAppEntryTx(ctx, tx, appPathDomain)
+	appEntry, err := s.getAppEntryOrStage(ctx, tx, mainAppPath, stage)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +342,7 @@ func (s *Server) VersionSwitch(ctx context.Context, mainAppPath string, dryRun b
 		return nil, err
 	}
 
-	err = s.apps.ClearAppsAudit(ctx, []types.AppPathDomain{appPathDomain}, "version_switch")
+	err = s.apps.ClearAppsAudit(ctx, []types.AppPathDomain{appEntry.AppPathDomain()}, "version_switch")
 	if err != nil {
 		return nil, err
 	}

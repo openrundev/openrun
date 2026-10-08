@@ -996,15 +996,16 @@ func (c *openrunPlugin) GetActionRun(ctx context.Context, call *sdk.Call) (any, 
 	return structValue(result)
 }
 
-// ListVersions returns the versions for the app at the given path. Use the
-// _cl_stage path suffix for the staging app's versions
+// ListVersions returns the versions for the app at the given path. stage
+// selects the staging instance (its own path also works)
 func (c *openrunPlugin) ListVersions(ctx context.Context, call *sdk.Call) (any, error) {
 	var path string
-	if err := sdk.UnpackArgs("list_versions", call, "path", &path); err != nil {
+	var stage bool
+	if err := sdk.UnpackArgs("list_versions", call, "path", &path, "stage?", &stage); err != nil {
 		return nil, err
 	}
 
-	result, err := c.server.VersionList(ctx, path)
+	result, err := c.server.VersionList(ctx, path, stage)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,14 +1013,16 @@ func (c *openrunPlugin) ListVersions(ctx context.Context, call *sdk.Call) (any, 
 }
 
 // ListVersionFiles returns the files in a version of the app at the given
-// path. version defaults to the active version
+// path. version defaults to the active version, stage selects the staging
+// instance
 func (c *openrunPlugin) ListVersionFiles(ctx context.Context, call *sdk.Call) (any, error) {
 	var path, version string
-	if err := sdk.UnpackArgs("list_version_files", call, "path", &path, "version?", &version); err != nil {
+	var stage bool
+	if err := sdk.UnpackArgs("list_version_files", call, "path", &path, "version?", &version, "stage?", &stage); err != nil {
 		return nil, err
 	}
 
-	result, err := c.server.VersionFiles(ctx, path, version)
+	result, err := c.server.VersionFiles(ctx, path, version, stage)
 	if err != nil {
 		return nil, err
 	}
@@ -1078,15 +1081,16 @@ func (c *openrunPlugin) GetVersionFile(ctx context.Context, call *sdk.Call) (any
 // GetVersionZip returns a download value whose content is a lazily produced
 // zip of one app version's files. The zip is built at response-write time by
 // the download handler, streaming to the client (chunked) with backpressure,
-// so the archive is never fully held in memory or staged to disk. Use the
-// stage path for staging versions
+// so the archive is never fully held in memory or staged to disk. stage
+// selects the staging instance
 func (c *openrunPlugin) GetVersionZip(ctx context.Context, call *sdk.Call) (any, error) {
 	var path, version string
-	if err := sdk.UnpackArgs("get_version_zip", call, "path", &path, "version?", &version); err != nil {
+	var stage bool
+	if err := sdk.UnpackArgs("get_version_zip", call, "path", &path, "version?", &version, "stage?", &stage); err != nil {
 		return nil, err
 	}
 
-	producer, fileName, err := c.server.VersionFilesZip(ctx, path, version)
+	producer, fileName, err := c.server.VersionFilesZip(ctx, path, version, stage)
 	if err != nil {
 		return nil, err
 	}

@@ -36,7 +36,7 @@ func previewCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		UsageText: `args: <gitCommitId> <appPath>
 
 <gitCommitId> is the required first argument. This is the commit from which the preview app is to be created.
-<app_path> is the required second argument. The optional domain and path are separated by a ":". This is the app for which the preview app is to be created.
+<appPath> is the required second argument. The optional domain and path are separated by a ":". This is the app for which the preview app is to be created.
 
 	Examples:
 	  Preview and approve: openrun preview create --approve 86c24c88ceda21589801895e9f871617a716ad47 /myapp

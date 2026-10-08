@@ -19,8 +19,18 @@ const (
 	SET_DEFAULT_FLAG = "set-default"
 	IS_DEFAULT_FLAG  = "is-default"
 	CONFIG_FLAG      = "config"
-	STAGING_FLAG     = "staging"
 )
+
+// stagingServiceFlag names the staging service of a service: a string flag,
+// unlike the bool --stage of the app and binding commands. --staging is
+// accepted as an alias
+func stagingServiceFlag(usage string) *cli.StringFlag {
+	return &cli.StringFlag{
+		Name:    STAGE_FLAG,
+		Aliases: []string{STAGING_FLAG},
+		Usage:   usage,
+	}
+}
 
 func initServiceCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	return &cli.Command{
@@ -101,7 +111,7 @@ func serviceCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 	flags := make([]cli.Flag, 0, len(commonFlags)+4)
 	flags = append(flags, commonFlags...)
 	flags = append(flags, newBoolFlag(IS_DEFAULT_FLAG, "", "Mark this service as the default for its service type", false))
-	flags = append(flags, newStringFlag(STAGING_FLAG, "", "Set the staging service name for this service", ""))
+	flags = append(flags, stagingServiceFlag("The name of the staging service for this service, of the same service type"))
 	flags = append(flags,
 		&cli.StringSliceFlag{
 			Name:    CONFIG_FLAG,
@@ -122,6 +132,7 @@ func serviceCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 Examples:
   Create a postgres service: openrun service create postgres/p1 --is-default --config url=postgres://localhost
   Create a postgres service: openrun service create postgres/p2 --config url=postgres://host:5432/db --config user=admin
+  Create with a staging service: openrun service create postgres/main --stage stage --config url=postgres://host:5432/db
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -141,7 +152,7 @@ Examples:
 				Name:        name,
 				ServiceType: serviceType,
 				IsDefault:   cCtx.Bool(IS_DEFAULT_FLAG),
-				Staging:     cCtx.String(STAGING_FLAG),
+				Staging:     cCtx.String(STAGE_FLAG),
 				Config:      config,
 			}
 
@@ -167,8 +178,8 @@ Examples:
 func serviceUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+4)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newBoolFlag(SET_DEFAULT_FLAG, "", "Set the is_default flag (true/false)", false))
-	flags = append(flags, newStringFlag(STAGING_FLAG, "", "Set the staging service name. Empty value clears staging", ""))
+	flags = append(flags, newBoolFlag(SET_DEFAULT_FLAG, "", "Mark this service as the default for its service type; --set-default=false clears it", false))
+	flags = append(flags, stagingServiceFlag("Set the name of the staging service. An empty value (--stage \"\") clears it"))
 	flags = append(flags,
 		&cli.StringSliceFlag{
 			Name:    CONFIG_FLAG,
@@ -187,7 +198,10 @@ func serviceUpdateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <service_id> is <service_type>/<service_name>. 
 
 Examples:
-  Mark service as default: openrun service update postgres/p1 --set-default=true
+  Mark service as default: openrun service update postgres/p1 --set-default
+  Clear the default flag: openrun service update postgres/p1 --set-default=false
+  Set the staging service: openrun service update postgres/p1 --stage p1_stage
+  Clear the staging service: openrun service update postgres/p1 --stage ""
   Update a config value: openrun service update postgres/p1 --config url=postgres://host:5432/db
   Delete a config key: openrun service update postgres/p1 --config password=
 `,
@@ -222,8 +236,8 @@ Examples:
 			if cCtx.IsSet(SET_DEFAULT_FLAG) {
 				service.IsDefault = cCtx.Bool(SET_DEFAULT_FLAG)
 			}
-			if cCtx.IsSet(STAGING_FLAG) {
-				service.Staging = cCtx.String(STAGING_FLAG)
+			if cCtx.IsSet(STAGE_FLAG) {
+				service.Staging = cCtx.String(STAGE_FLAG)
 			}
 
 			for _, entry := range cCtx.StringSlice(CONFIG_FLAG) {

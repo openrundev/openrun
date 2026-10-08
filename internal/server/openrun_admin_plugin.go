@@ -206,17 +206,17 @@ func (c *openrunAdminPlugin) UpdateParams(ctx context.Context, call *sdk.Call) (
 	return structValue(result)
 }
 
-// SwitchVersion switches the app at path (use the staging app's path for
-// staging) to the given version. version can be a number, "previous", "next"
+// SwitchVersion switches the app at path (or its staging instance, with
+// stage) to the given version. version can be a number, "previous", "next"
 // or "revert"
 func (c *openrunAdminPlugin) SwitchVersion(ctx context.Context, call *sdk.Call) (any, error) {
 	var path, version string
-	var dryRun bool
-	if err := sdk.UnpackArgs("switch_version", call, "path", &path, "version", &version, "dry_run?", &dryRun); err != nil {
+	var dryRun, stage bool
+	if err := sdk.UnpackArgs("switch_version", call, "path", &path, "version", &version, "dry_run?", &dryRun, "stage?", &stage); err != nil {
 		return nil, err
 	}
 
-	result, err := c.server.VersionSwitch(ctx, path, dryRun, version)
+	result, err := c.server.VersionSwitch(ctx, path, dryRun, version, stage)
 	if err != nil {
 		return nil, err
 	}

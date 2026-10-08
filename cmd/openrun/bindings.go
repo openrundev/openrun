@@ -45,7 +45,7 @@ func initBindingCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 func bindingHealthCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+1)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newBoolFlag(STAGING_FLAG, "s", "Check the staged binding account", false))
+	flags = append(flags, stageFlag("Check the staged binding account instead of prod"))
 
 	return &cli.Command{
 		Name:      "health",
@@ -58,7 +58,7 @@ func bindingHealthCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 
 Examples:
   Check the prod account: openrun binding health /apps/p1
-  Check the staged account: openrun binding health --staging /apps/p1
+  Check the staged account: openrun binding health --stage /apps/p1
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -68,7 +68,7 @@ Examples:
 
 			values := url.Values{}
 			values.Add("name", bindingName)
-			values.Add("staging", strconv.FormatBool(cCtx.Bool(STAGING_FLAG)))
+			values.Add("staging", strconv.FormatBool(cCtx.Bool(STAGE_FLAG)))
 
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
@@ -78,7 +78,7 @@ Examples:
 			}
 
 			env := "prod"
-			if cCtx.Bool(STAGING_FLAG) {
+			if cCtx.Bool(STAGE_FLAG) {
 				env = "staging"
 			}
 			printStdout(cCtx, "Binding %s is healthy (%s)\n", bindingName, env)
@@ -313,7 +313,7 @@ Examples:
 func bindingShowAccountCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+1)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newBoolFlag(STAGING_FLAG, "s", "Show the staged binding account", false))
+	flags = append(flags, stageFlag("Show the staged binding account instead of prod"))
 
 	return &cli.Command{
 		Name:      "show-account",
@@ -326,7 +326,7 @@ func bindingShowAccountCommand(commonFlags []cli.Flag, clientConfig *types.Clien
 
 Examples:
   Show account: openrun binding show-account /apps/p1
-  Show staged account: openrun binding show-account --staging /apps/p1
+  Show staged account: openrun binding show-account --stage /apps/p1
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
@@ -336,7 +336,7 @@ Examples:
 
 			values := url.Values{}
 			values.Add("path", path)
-			values.Add(STAGING_FLAG, strconv.FormatBool(cCtx.Bool(STAGING_FLAG)))
+			values.Add(STAGING_FLAG, strconv.FormatBool(cCtx.Bool(STAGE_FLAG)))
 
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
@@ -392,7 +392,7 @@ func bindingListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 func bindingRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+1)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newBoolFlag(STAGING_FLAG, "s", "Run using the staged binding account", false))
+	flags = append(flags, stageFlag("Run using the staged binding account instead of prod"))
 
 	return &cli.Command{
 		Name:      "run-command",
@@ -402,11 +402,11 @@ func bindingRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 		UsageText: `args: <binding_name> <sql>
 
 <binding_name> is the binding path.
-<command> is the command to run.
+<sql> is the command to run.
 
 Examples:
   Run a select: openrun binding run-command /apps/p1 "select * from items"
-  Run using staged account: openrun binding run-command --staging /apps/p1 "select current_user"
+  Run using staged account: openrun binding run-command --stage /apps/p1 "select current_user"
 `,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() < 2 {
@@ -417,7 +417,7 @@ Examples:
 
 			request := types.RunBindingCommandRequest{
 				BindingName: bindingName,
-				UseStaging:  cCtx.Bool(STAGING_FLAG),
+				UseStaging:  cCtx.Bool(STAGE_FLAG),
 				Command:     sql,
 			}
 

@@ -177,9 +177,9 @@ func appUpdateAppSpec(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		Name:      "spec",
 		Usage:     "Update app spec for apps",
 		Flags:     flags,
-		ArgsUsage: "<value:spec_name|none> <appPathGlob>",
+		ArgsUsage: "<value:spec_name|-> <appPathGlob>",
 
-		UsageText: `args: <value:spec_name|none> <appPathGlob>
+		UsageText: `args: <value:spec_name|-> <appPathGlob>
 
 The first required argument <value> is a string, a valid app spec name or - (to unset spec).
 The last required argument is <appPathGlob>. ` + PATH_SPEC_HELP + `

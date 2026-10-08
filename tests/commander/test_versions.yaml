@@ -50,6 +50,12 @@ tests:
   versions0150: # version list
     command: ../openrun version list /versions_local1_cl_stage | wc -l
     stdout: "3" # two versions for stage, plus header
+  versions0150a: # version list, stage selected with --stage on the prod path
+    command: ../openrun version list --stage /versions_local1 | wc -l
+    stdout: "3"
+  versions0150b: # --stage on the stage path is the stage path
+    command: ../openrun version list --stage /versions_local1_cl_stage | wc -l
+    stdout: "3"
   versions0151: # version list
     command: ../openrun version list /versions_local1_cl_stage | tail -n 1
     stdout: "=====>        2" # second version is current
@@ -81,8 +87,8 @@ tests:
     command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1/rootfile.txt
     stdout: "33"
   versions0170: # switch stage back
-    command: ../openrun version switch previous /versions_local1_cl_stage
-    stdout: "Switched /versions_local1_cl_stage from version 3 to version 2"
+    command: ../openrun version switch --stage previous /versions_local1
+    stdout: "Switched /versions_local1 (stage) from version 3 to version 2"
   versions0171: # local1 stage is updated to version 2
     command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1_cl_stage/rootfile.txt
     stdout: "22"
@@ -99,7 +105,7 @@ tests:
     command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/versions_local1/rootfile.txt
     stdout: "1"
   versions0175: # version list
-    command: ../openrun version list /versions_local1_cl_stage
+    command: ../openrun version list --stage /versions_local1
     stdout: "=====>        2" # second version is current
   versions0176: # version list
     command: ../openrun version list /versions_local1
@@ -129,11 +135,15 @@ tests:
     command: ../openrun version files -f csv /versions_local1_cl_stage | grep rootfile
     stdout: "1,6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
   versions0191: # files
-    command: ../openrun version files -f csv /versions_local1_cl_stage 3 | grep rootfile
+    command: ../openrun version files -f csv --version 3 /versions_local1_cl_stage | grep rootfile
     stdout: "3,19b8d5c59e421f037fe563007c7254eb8d98bc221b278c3db3e5fdbbfd52e273"
-  versions0192: # files
-    command: ../openrun version files  /versions_local1_cl_stage 3 | grep rootfile
+  versions0192: # files, stage selected with --stage
+    command: ../openrun version files --stage --version 3 /versions_local1 | grep rootfile
     stdout: "3 19b8d5c59e421f037fe563007c7254eb8d98bc221b278c3db3e5fdbbfd52e273 static_root/rootfile.txt"
+  versions0193: # a positional version is rejected
+    command: ../openrun version files /versions_local1_cl_stage 3
+    stderr: "requires one argument"
+    exit-code: 1
 
   versions0195: # change to zero versions retention
     command: ../openrun app update conf --promote fs.retain_versions=0 /versions_local2

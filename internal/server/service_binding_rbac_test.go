@@ -444,7 +444,7 @@ func TestVersionSwitchBindingRBAC(t *testing.T) {
 		t.Fatalf("rbac config update: %v", err)
 	}
 	switcherCtx := rbacEnforcedCtx(ctx, "switcher")
-	_, err = server.VersionSwitch(switcherCtx, "/apps/vs", true, "1")
+	_, err = server.VersionSwitch(switcherCtx, "/apps/vs", true, "1", false)
 	if err == nil || !strings.Contains(err.Error(), string(types.PermissionBindingUse)) {
 		t.Fatalf("expected binding:use denial on version switch, got %v", err)
 	}
@@ -461,7 +461,7 @@ func TestVersionSwitchBindingRBAC(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("rbac config update: %v", err)
 	}
-	result, err := server.VersionSwitch(switcherCtx, "/apps/vs", true, "1")
+	result, err := server.VersionSwitch(switcherCtx, "/apps/vs", true, "1", false)
 	if err != nil {
 		t.Fatalf("version switch with binding:use granted: %v", err)
 	}

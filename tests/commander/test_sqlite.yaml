@@ -86,7 +86,7 @@ tests:
     stdout: "/mydata/auto"
 
   sqlite0034: # the params drove the account
-    command: ../openrun binding list -f json | jq -r '[.[] | select(.service_type == "sqlite" and .staged_metadata.config.example == "val2")][0].path' | xargs -I{} ../openrun binding show-account --staging {} | jq -r '.dir'
+    command: ../openrun binding list -f json | jq -r '[.[] | select(.service_type == "sqlite" and .staged_metadata.config.example == "val2")][0].path' | xargs -I{} ../openrun binding show-account --stage {} | jq -r '.dir'
     stdout: "/mydata/auto"
 
   sqlite0035: # re-referencing the auto binding with different params conflicts

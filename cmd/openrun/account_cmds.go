@@ -33,15 +33,16 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 		Name:      "link",
 		Usage:     "Link an app to to use specific account for a plugin",
 		Flags:     flags,
-		ArgsUsage: "<appPathGlob> <pluginName> <accountName>",
-		UsageText: `args: <appPathGlob> <pluginName> <accountName>
+		ArgsUsage: "<pluginName> <accountName> <appPathGlob>",
+		UsageText: `args: <pluginName> <accountName> <appPathGlob>
 
-<appPathGlob> is the first required argument. ` + PATH_SPEC_HELP + `<pluginName> is the required second argument. This is the name of the plugin.
-<accountName> is the required third argument. This is the name of the account to link to for the plugin. Use "-" to unlink the existing account.
-
+<pluginName> is the first required argument. This is the name of the plugin, like store.in or http.in#google.
+<accountName> is the second required argument. This is the name of the account to link to for the plugin. Use "-" to unlink the existing account.
+<appPathGlob> is the third required argument. ` + PATH_SPEC_HELP + `
 	Examples:
-	  Link db plugin: openrun account link /myapp store.in temp
-	  Link in dryrun mode: openrun account link --dry-run example.com:/ rest.in testaccount`,
+	  Link db plugin: openrun account link store.in temp /myapp
+	  Link in dryrun mode: openrun account link --dry-run rest.in testaccount example.com:/
+	  Unlink the account: openrun account link store.in - /myapp`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 3 {
 				return fmt.Errorf("requires three arguments: <pluginName> <accountName> <appPathGlob>")
@@ -91,7 +92,7 @@ func accountLinkCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 func accountListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+2)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, dryRunFlag())
+	flags = append(flags, stageFlag("List the account links of the staging instance of the app instead of prod"))
 
 	return &cli.Command{
 		Name:      "list",
@@ -100,11 +101,12 @@ func accountListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 
-    <app_path> is a required first argument. The optional domain and path are separated by a ":". This is the app for which the accounts are to be listed.
+<appPath> is a required argument. The optional domain and path are separated by a ":". This is the app for which the accounts are to be listed.
+With --stage, the staging instance of the app is listed, which holds links not yet promoted.
 
 	Examples:
-	  List plugins for app: openrun account list /myapp
-	  List plugins for app: openrun account list example.com:/`,
+	  List account links for app: openrun account list /myapp
+	  List the staged account links: openrun account list --stage example.com:/`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
 				return fmt.Errorf("requires one argument: <appPath>")
@@ -114,6 +116,7 @@ func accountListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
+			values.Add(STAGE_FLAG, strconv.FormatBool(cCtx.Bool(STAGE_FLAG)))
 
 			var response types.AppGetResponse
 			err := client.Get("/_openrun/app", values, &response)
@@ -216,7 +219,7 @@ func updateParamsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 func paramListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+2)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, dryRunFlag())
+	flags = append(flags, stageFlag("List the params of the staging instance of the app instead of prod"))
 
 	return &cli.Command{
 		Name:      "list",
@@ -225,11 +228,12 @@ func paramListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 
-    <app_path> is a required first argument. The optional domain and path are separated by a ":". This is the app for which the params are to be listed.
+<appPath> is a required argument. The optional domain and path are separated by a ":". This is the app for which the params are to be listed.
+With --stage, the staging instance of the app is listed, which holds param updates not yet promoted.
 
 	Examples:
 	  List params for app: openrun param list /myapp
-	  List params for app: openrun param list example.com:/`,
+	  List the staged params: openrun param list --stage example.com:/`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
 				return fmt.Errorf("requires one argument: <appPath>")
@@ -239,6 +243,7 @@ func paramListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) 
 			defer client.CloseIdleConnections()
 			values := url.Values{}
 			values.Add("appPath", cCtx.Args().First())
+			values.Add(STAGE_FLAG, strconv.FormatBool(cCtx.Bool(STAGE_FLAG)))
 
 			var response types.AppGetResponse
 			err := client.Get("/_openrun/app", values, &response)

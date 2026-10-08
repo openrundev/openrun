@@ -88,8 +88,8 @@ tests:
     command: ../openrun binding show-account /apps/b3 | jq -r '.url | startswith("postgres://")'
     stdout: "true"
 
-  binding0036: # staged account url is available through show-account --staging
-    command: ../openrun binding show-account --staging /apps/b3 | jq -r '.url | startswith("postgres://")'
+  binding0036: # staged account url is available through show-account --stage
+    command: ../openrun binding show-account --stage /apps/b3 | jq -r '.url | startswith("postgres://")'
     stdout: "true"
 
   binding0037: # account url automatically maps localhost to a container hostname
@@ -392,7 +392,7 @@ tests:
     command: ../openrun binding health /apps/b1
     stdout: "Binding /apps/b1 is healthy (prod)"
 
-  binding0242:
+  binding0242: # --staging is an alias of --stage
     command: ../openrun binding health --staging /apps/b1
     stdout: "Binding /apps/b1 is healthy (staging)"
 

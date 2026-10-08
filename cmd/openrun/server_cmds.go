@@ -93,8 +93,8 @@ func getServerCommands(serverConfig *types.ServerConfig, clientConfig *types.Cli
 					Name:      "update-config",
 					Usage:     "Update the server dynamic config",
 					Flags:     []cli.Flag{newBoolFlag("force", "f", "Force update even if the config version id is different", false)},
-					ArgsUsage: "configFilePath",
-					UsageText: `args: configFilePath
+					ArgsUsage: "<configFilePath>",
+					UsageText: `args: <configFilePath>
 
 	<configFilePath> is the path to the new server config file.`,
 					Action: func(cCtx *cli.Context) error {

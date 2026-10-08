@@ -38,7 +38,7 @@ func webhookListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 		ArgsUsage: "<appPath>",
 		UsageText: `args: <appPath>
 
-    <app_path> is a required first argument. The optional domain and path are separated by a ":". This is the app for which webhooks are listed.
+    <appPath> is a required argument. The optional domain and path are separated by a ":". This is the app for which webhooks are listed.
 
 	Examples:
 		openrun app-webhook list example.com:/myapp`,
@@ -108,10 +108,10 @@ func webhookCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Usage:     "Create webhooks for an app",
 		Flags:     flags,
 		ArgsUsage: "<webhookType> <appPath>",
-		UsageText: `args: <webhookType> appPath>
+		UsageText: `args: <webhookType> <appPath>
 
     <webhookType> is the required first argument. Supported types are: reload, reload_promote and promote.
-    <app_path> is the required second argument. The optional domain and path are separated by a ":". This is the app for which webhooks are created.
+    <appPath> is the required second argument. The optional domain and path are separated by a ":". This is the app for which webhooks are created.
 
 	Examples:
 		openrun app-webhook create reload example.com:/myapp`,
@@ -155,10 +155,10 @@ func webhookDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 		Usage:     "Delete webhooks for an app",
 		Flags:     flags,
 		ArgsUsage: "<webhookType> <appPath>",
-		UsageText: `args: <webhookType> appPath>
+		UsageText: `args: <webhookType> <appPath>
 
     <webhookType> is the required first argument. Supported types are: reload, reload_promote and promote.
-    <app_path> is the required second argument. The optional domain and path are separated by a ":". This is the app for which webhooks are deleted.
+    <appPath> is the required second argument. The optional domain and path are separated by a ":". This is the app for which webhooks are deleted.
 
 	Examples:
 		openrun app-webhook delete reload example.com:/myapp`,
@@ -180,7 +180,7 @@ func webhookDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 				return err
 			}
 
-			fmt.Printf("Token deleted.")
+			fmt.Printf("Token deleted.\n")
 
 			if response.DryRun {
 				fmt.Print(DRY_RUN_MESSAGE)

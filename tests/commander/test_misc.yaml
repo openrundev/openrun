@@ -112,6 +112,49 @@ tests:
   param0180:
     command: ../openrun param list /test_param1
     stdout: No param values
+  param0190: # an unpromoted update is on the stage instance only
+    command: ../openrun param update abc staged /test_param1
+  param0191:
+    command: ../openrun param list /test_param1
+    stdout: No param values
+  param0192:
+    command: ../openrun param list --stage /test_param1
+    stdout: staged
+  param0193: # promote and the prod instance has it
+    command: ../openrun app promote /test_param1
+  param0194:
+    command: ../openrun param list /test_param1
+    stdout: staged
+
+  # Test account links: <plugin> <account> <appPathGlob>
+  account0090:
+    command: ../openrun app create --approve ./testapp /test_account1
+  account0100:
+    command: ../openrun account list /test_account1
+    stdout: No account links
+  account0110:
+    command: ../openrun account link store.in temp /test_account1
+    stdout: 1 app(s) linked, 0 app(s) promoted
+  account0120: # not promoted yet, the link is on the stage instance
+    command: ../openrun account list /test_account1
+    stdout: No account links
+  account0130:
+    command: ../openrun account list --stage /test_account1
+    stdout: "store.in: temp"
+  account0140:
+    command: ../openrun account link --promote store.in temp2 /test_account1
+    stdout: 1 app(s) linked, 1 app(s) promoted
+  account0150:
+    command: ../openrun account list /test_account1
+    stdout: "store.in: temp2"
+  account0160: # unlink with -
+    command: ../openrun account link --promote store.in - /test_account1
+  account0170:
+    command: ../openrun account list /test_account1
+    stdout: No account links
+  account0180: # the old arg order is rejected: the account name is not a valid glob target
+    command: ../openrun account link /test_account1 store.in temp
+    stdout: 0 app(s) linked
 
   # Test static spec
   static0100: # Create app, with test folder user as input

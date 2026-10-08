@@ -116,7 +116,6 @@ func syncListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 	flags := make([]cli.Flag, 0, len(commonFlags)+2)
 	flags = append(flags, commonFlags...)
 	flags = append(flags, newFormatFlag())
-	flags = append(flags, dryRunFlag())
 
 	return &cli.Command{
 		Name:      "list",
@@ -133,11 +132,9 @@ func syncListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 
 			client := newHttpClient(clientConfig)
 			defer client.CloseIdleConnections()
-			values := url.Values{}
-			values.Add("appPath", cCtx.Args().First())
 
 			var response types.SyncListResponse
-			err := client.Get("/_openrun/sync", values, &response)
+			err := client.Get("/_openrun/sync", nil, &response)
 			if err != nil {
 				return err
 			}
@@ -157,13 +154,14 @@ func syncRunCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *c
 		Name:      "run",
 		Usage:     "Run specified sync job",
 		Flags:     flags,
-		ArgsUsage: "args: <syncId>",
-		UsageText: `
+		ArgsUsage: "<syncId>",
+		UsageText: `args: <syncId>
+
 	Examples:
 	  Run sync job: openrun sync run cl_sync_44asd232`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one args: <syncId>")
+				return fmt.Errorf("expected one arg: <syncId>")
 			}
 
 			client := newHttpClient(clientConfig)
@@ -201,13 +199,14 @@ func syncDeleteCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 		Name:      "delete",
 		Usage:     "Delete specified sync job",
 		Flags:     flags,
-		ArgsUsage: "args: <syncId>",
-		UsageText: `
+		ArgsUsage: "<syncId>",
+		UsageText: `args: <syncId>
+
 	Examples:
-	  Delete sync jobs: openrun sync delete cl_sync_44asd232`,
+	  Delete sync job: openrun sync delete cl_sync_44asd232`,
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() != 1 {
-				return fmt.Errorf("expected one args: <syncId>")
+				return fmt.Errorf("expected one arg: <syncId>")
 			}
 
 			client := newHttpClient(clientConfig)

@@ -1080,10 +1080,14 @@ func (h *Handler) getApp(r *http.Request) (any, error) {
 	if appPath == "" {
 		return nil, types.CreateRequestError("appPath is required", http.StatusBadRequest)
 	}
-	updateTargetInContext(r, appPath, false)
+	stage, err := parseBoolArg(r.URL.Query().Get("stage"), false)
+	if err != nil {
+		return nil, err
+	}
+	updateTargetInContext(r, h.server.stageTargetPath(r.Context(), appPath, stage), false)
 	updateOperationInContext(r, "get_app")
 
-	ret, err := h.server.GetAppApi(r.Context(), appPath)
+	ret, err := h.server.GetAppApi(r.Context(), appPath, stage)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1156,10 +1160,14 @@ func (h *Handler) versionList(r *http.Request) (any, error) {
 	if appPath == "" {
 		return nil, types.CreateRequestError("appPath is required", http.StatusBadRequest)
 	}
-	updateTargetInContext(r, appPath, false)
+	stage, err := parseBoolArg(r.URL.Query().Get("stage"), false)
+	if err != nil {
+		return nil, err
+	}
+	updateTargetInContext(r, h.server.stageTargetPath(r.Context(), appPath, stage), false)
 	updateOperationInContext(r, genOperationName("version_list", false, false))
 
-	ret, err := h.server.VersionList(r.Context(), appPath)
+	ret, err := h.server.VersionList(r.Context(), appPath, stage)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1172,11 +1180,15 @@ func (h *Handler) versionFiles(r *http.Request) (any, error) {
 	if appPath == "" {
 		return nil, types.CreateRequestError("appPath is required", http.StatusBadRequest)
 	}
-	updateTargetInContext(r, appPath, false)
+	stage, err := parseBoolArg(r.URL.Query().Get("stage"), false)
+	if err != nil {
+		return nil, err
+	}
+	updateTargetInContext(r, h.server.stageTargetPath(r.Context(), appPath, stage), false)
 	version := r.URL.Query().Get("version")
 	updateOperationInContext(r, genOperationName("version_files", false, false))
 
-	ret, err := h.server.VersionFiles(r.Context(), appPath, version)
+	ret, err := h.server.VersionFiles(r.Context(), appPath, version, stage)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1194,10 +1206,14 @@ func (h *Handler) versionSwitch(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	updateTargetInContext(r, appPath, dryRun)
+	stage, err := parseBoolArg(r.URL.Query().Get("stage"), false)
+	if err != nil {
+		return nil, err
+	}
+	updateTargetInContext(r, h.server.stageTargetPath(r.Context(), appPath, stage), dryRun)
 	updateOperationInContext(r, genOperationName("version_switch", false, false))
 
-	ret, err := h.server.VersionSwitch(r.Context(), appPath, dryRun, version)
+	ret, err := h.server.VersionSwitch(r.Context(), appPath, dryRun, version, stage)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}

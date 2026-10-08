@@ -5,6 +5,7 @@ package dev
 
 import (
 	"bytes"
+	"errors"
 	"html/template"
 	"io"
 	"net/http"
@@ -245,5 +246,40 @@ func TestGeneratedHtmxImport(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestFetchUrlRetriesTransientFailures verifies a library download retries
+// a connection failure and a 5xx response, and gives up at once on a 4xx
+func TestFetchUrlRetriesTransientFailures(t *testing.T) {
+	old := http.DefaultClient
+	t.Cleanup(func() { http.DefaultClient = old })
+
+	var calls int
+	responses := []func() (*http.Response, error){
+		func() (*http.Response, error) { return nil, errors.New("tls handshake timeout") },
+		func() (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(strings.NewReader(""))}, nil
+		},
+		func() (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("lib"))}, nil
+		},
+	}
+	http.DefaultClient = &http.Client{Transport: htmxRoundTripper(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return responses[calls-1]()
+	})}
+	data, err := fetchUrl("https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js")
+	if err != nil || string(data) != "lib" || calls != 3 {
+		t.Fatalf("fetch after transient failures: data=%q err=%v calls=%d", data, err, calls)
+	}
+
+	calls = 0
+	http.DefaultClient = &http.Client{Transport: htmxRoundTripper(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+	if _, err := fetchUrl("https://unpkg.com/htmx.org@nosuch/dist/htmx.min.js"); err == nil || calls != 1 {
+		t.Fatalf("a 404 must fail at once: err=%v calls=%d", err, calls)
 	}
 }
