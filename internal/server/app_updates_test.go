@@ -43,8 +43,7 @@ func TestReloadAppsVerifiedPrePass(t *testing.T) {
 				t.Fatalf("write apply file: %v", err)
 			}
 
-			_, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
-				types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+			_, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil)
 			if err != nil {
 				t.Fatalf("apply: %v", err)
 			}
@@ -55,7 +54,7 @@ func TestReloadAppsVerifiedPrePass(t *testing.T) {
 				t.Fatalf("update app.star: %v", err)
 			}
 
-			response, err := server.ReloadApps(ctx, "/apps/prebuild", true, false, true, "", "", "", false, true)
+			response, err := server.ReloadApps(ctx, "/apps/prebuild", DeployOptions{Approve: true, Promote: true, Verify: true}, GitRef{})
 			if err != nil {
 				t.Fatalf("reload: %v", err)
 			}

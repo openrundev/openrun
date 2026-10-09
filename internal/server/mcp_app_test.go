@@ -79,7 +79,7 @@ app = ace.app("mcp test app", routes=[ace.proxy("/", proxy.config(%q))],
 		t.Fatalf("write app.star: %v", err)
 	}
 	ctx := system.WithTrustedOperation(t.Context())
-	if _, err := server.CreateApp(ctx, appPath, true, false, &types.CreateAppRequest{
+	if _, err := server.CreateApp(ctx, appPath, DeployOptions{Approve: true}, &types.CreateAppRequest{
 		SourceUrl: dir, AppAuthn: types.AppAuthnType(auth), MCP: mcp}); err != nil {
 		t.Fatalf("create mcp app: %v", err)
 	}
@@ -621,7 +621,7 @@ app = ace.app("x", routes=[ace.proxy("/", proxy.config(%q))], permissions=[ace.p
 		"garbage":                    `nope`,
 		"file reference at the api":  `@/etc/hostname`,
 	} {
-		if _, err := server.CreateApp(ctx, "/apps/bad", true, false, &types.CreateAppRequest{SourceUrl: dir, MCP: doc}); err == nil {
+		if _, err := server.CreateApp(ctx, "/apps/bad", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir, MCP: doc}); err == nil {
 			t.Fatalf("%s: create must fail", name)
 		}
 	}
@@ -629,7 +629,7 @@ app = ace.app("x", routes=[ace.proxy("/", proxy.config(%q))], permissions=[ace.p
 	// /rest or /mcp on the issuer host is fine: distinct audiences
 	tsHost, _ := url.Parse(server.staticConfig.Api.ExternalUrl)
 	for _, p := range []string{tsHost.Hostname() + ":/rest", tsHost.Hostname() + ":/mcp"} {
-		if _, err := server.CreateApp(ctx, p, true, false, &types.CreateAppRequest{SourceUrl: dir, MCP: "true"}); err != nil {
+		if _, err := server.CreateApp(ctx, p, DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir, MCP: "true"}); err != nil {
 			t.Fatalf("mcp app at %s must be allowed: %v", p, err)
 		}
 	}
@@ -638,22 +638,20 @@ app = ace.app("x", routes=[ace.proxy("/", proxy.config(%q))], permissions=[ace.p
 	external := server.staticConfig.Api.ExternalUrl
 	server.staticConfig.Api.ExternalUrl = ""
 	server.staticConfig.Security.CallbackUrl = ""
-	if _, err := server.CreateApp(ctx, "/apps/noissuer", true, false, &types.CreateAppRequest{SourceUrl: dir, MCP: "true"}); err == nil ||
+	if _, err := server.CreateApp(ctx, "/apps/noissuer", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir, MCP: "true"}); err == nil ||
 		!strings.Contains(err.Error(), "external_url") {
 		t.Fatalf("mcp app without issuer must fail with a config hint, got %v", err)
 	}
 	server.staticConfig.Api.ExternalUrl = external
 
 	// Metadata update: set, replace and clear
-	if _, err := server.CreateApp(ctx, "/apps/upd", true, false, &types.CreateAppRequest{SourceUrl: dir}); err != nil {
+	if _, err := server.CreateApp(ctx, "/apps/upd", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	update := func(value string) error {
-		_, err := server.StagedUpdate(ctx, "/apps/upd", false, true, server.updateMetadataHandler, map[string]any{
-			"metadata": types.UpdateAppMetadataRequest{Spec: types.StringValueUndefined,
-				ConfigType: types.AppMetadataMCP, ConfigEntries: []string{value}},
-			"dryRun": false,
-		}, "update_metadata")
+		_, err := server.StagedUpdate(ctx, "/apps/upd", DeployOptions{Promote: true},
+			server.updateMetadataHandler(types.UpdateAppMetadataRequest{Spec: types.StringValueUndefined,
+				ConfigType: types.AppMetadataMCP, ConfigEntries: []string{value}}), "update_metadata")
 		return err
 	}
 	if err := update("/mcp"); err != nil {
@@ -761,8 +759,7 @@ app("/apps/region", %q, auth="builtin", mcp={"path": "/mcp", "scopes": ["r", "w"
 		t.Fatalf("write apply file: %v", err)
 	}
 	ctx := system.WithTrustedOperation(t.Context())
-	if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all",
-		true, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", ApplyOptions{DeployOptions: DeployOptions{Approve: true}, Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	server.apps.ResetAllAppCache()
@@ -795,8 +792,7 @@ app("/apps/region", %q, auth="builtin", mcp={"path": "/mcp", "scopes": ["r", "w"
 	}
 
 	// Re-applying the same file is a no-op for mcp (change detection)
-	if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all",
-		true, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", ApplyOptions{DeployOptions: DeployOptions{Approve: true}, Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("re-apply: %v", err)
 	}
 

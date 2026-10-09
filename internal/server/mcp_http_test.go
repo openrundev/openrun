@@ -81,8 +81,7 @@ func TestMCPConfirmationOverHTTP(t *testing.T) {
 	// Apply an app to delete
 	applyPath := t.TempDir() + "/app.ace"
 	writeSyncApplyFile(t, applyPath, "/apps/http-confirm")
-	if _, _, err := server.Apply(applyCtx, types.Transaction{}, applyPath, "all",
-		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(applyCtx, types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	server.apps.ResetAllAppCache()
@@ -120,8 +119,7 @@ func TestMCPConfirmationOverHTTP(t *testing.T) {
 	// call fails client-side, and the server is untouched and fully usable
 	applyPath2 := t.TempDir() + "/app.ace"
 	writeSyncApplyFile(t, applyPath2, "/apps/http-abandon")
-	if _, _, err := server.Apply(applyCtx, types.Transaction{}, applyPath2, "all",
-		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(applyCtx, types.Transaction{}, applyPath2, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	server.apps.ResetAllAppCache()

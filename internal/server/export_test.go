@@ -346,13 +346,12 @@ app("/apps/declared", %q, bindings=["/apps/derived"], stage_at="path", params={"
 	if err := os.WriteFile(applyPath, []byte(applyData), 0600); err != nil {
 		t.Fatalf("write apply file: %v", err)
 	}
-	if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "/apps/**", false, false, false,
-		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "/apps/**", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
 	// Imperatively created app, with an auto binding to the applytest service
-	if _, err := server.CreateApp(ctx, "/apps/imperative", false, false, &types.CreateAppRequest{
+	if _, err := server.CreateApp(ctx, "/apps/imperative", DeployOptions{}, &types.CreateAppRequest{
 		SourceUrl:   appSourceDir,
 		ParamValues: map[string]string{"ip": "iv"},
 		Bindings:    []string{"applytest/primary"},
@@ -534,8 +533,7 @@ app("example.com:/apps/domain", %q, params={"dp": "dv"})
 		t.Fatalf("write apply file: %v", err)
 	}
 
-	if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
-		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 

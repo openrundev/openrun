@@ -166,13 +166,13 @@ func (s *Server) buildGateImage(ctx context.Context, application *apppkg.App, pl
 // hashing and compression of the files. appEntry is updated with the git info
 // and the version the load will assign, as the transaction does. Returns a
 // nil prep when there is nothing to reload
-func (s *Server) prepareAppCode(ctx context.Context, appEntry *types.AppEntry, branch, commit, gitAuth string,
+func (s *Server) prepareAppCode(ctx context.Context, appEntry *types.AppEntry, ref GitRef,
 	repoCache *RepoCache, forceReload bool) (*appPrep, error) {
-	upToDate, err := s.appCodeUpToDate(ctx, appEntry, branch, commit, gitAuth, repoCache, forceReload)
+	upToDate, err := s.appCodeUpToDate(ctx, appEntry, ref, repoCache, forceReload)
 	if err != nil || upToDate {
 		return nil, err
 	}
-	loadDir, err := s.checkoutAppSource(ctx, appEntry, branch, commit, gitAuth, repoCache)
+	loadDir, err := s.checkoutAppSource(ctx, appEntry, ref, repoCache)
 	if err != nil {
 		return nil, err
 	}
@@ -223,8 +223,8 @@ func (s *Server) setupPrepApp(appEntry *types.AppEntry, prep *appPrep, bindings 
 // there is nothing to reload. The prep carries the compressed files for the
 // transaction's load. cleanup releases the app object's source dir stand-in
 // (see setupPrepApp): the caller runs it once done with the app
-func (s *Server) prepareAppImage(ctx context.Context, appPathDomain types.AppPathDomain, approve bool,
-	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool) (_ *apppkg.App, _ *apppkg.BuildPlan, _ *appPrep, cleanup func(), _ error) {
+func (s *Server) prepareAppImage(ctx context.Context, appPathDomain types.AppPathDomain, opts DeployOptions,
+	ref GitRef, repoCache *RepoCache) (_ *apppkg.App, _ *apppkg.BuildPlan, _ *appPrep, cleanup func(), _ error) {
 	appEntry, err := s.db.GetAppEntry(ctx, appPathDomain)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -235,7 +235,7 @@ func (s *Server) prepareAppImage(ctx context.Context, appPathDomain types.AppPat
 		}
 	}
 
-	prep, err := s.prepareAppCode(ctx, appEntry, branch, commit, gitAuth, repoCache, forceReload)
+	prep, err := s.prepareAppCode(ctx, appEntry, ref, repoCache, opts.ForceReload)
 	if err != nil || prep == nil {
 		return nil, nil, nil, nil, err
 	}
@@ -261,10 +261,10 @@ func (s *Server) prepareAppImage(ctx context.Context, appPathDomain types.AppPat
 	if err != nil {
 		return fail(fmt.Errorf("error auditing app %s: %w", appEntry, err))
 	}
-	if auditResult.NeedsApproval && !approve {
+	if auditResult.NeedsApproval && !opts.Approve {
 		return fail(fmt.Errorf("app %s needs approval", appEntry))
 	}
-	if approve {
+	if opts.Approve {
 		s.approveAuditResult(application, auditResult)
 	}
 
@@ -288,15 +288,16 @@ func (s *Server) prepareAppImage(ctx context.Context, appPathDomain types.AppPat
 // committed when this returns; the containers are registered on the
 // operation's deploy scope (which must be in ctx) for rollback. The returned
 // prep (nil when there is nothing to reload) carries the compressed files
-// for the transaction's load
-func (s *Server) prepareDeploy(ctx context.Context, appPathDomain types.AppPathDomain, approve, promote, verify bool,
-	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool, reason string) (*appPrep, error) {
+// for the transaction's load.
+// Reads opts.Approve, Promote, ForceReload and Verify.
+func (s *Server) prepareDeploy(ctx context.Context, appPathDomain types.AppPathDomain, opts DeployOptions,
+	ref GitRef, repoCache *RepoCache, reason string) (*appPrep, error) {
 	current, err := s.db.GetAppEntry(ctx, appPathDomain)
 	if err != nil {
 		return nil, err
 	}
 	if current.IsDev {
-		return s.prepareDevDeploy(ctx, current, approve, branch, commit, gitAuth, repoCache, forceReload)
+		return s.prepareDevDeploy(ctx, current, opts, ref, repoCache)
 	}
 	stageEntry, err := s.getStageAppNoTx(ctx, current)
 	if err != nil {
@@ -304,7 +305,7 @@ func (s *Server) prepareDeploy(ctx context.Context, appPathDomain types.AppPathD
 	}
 	previousVersion := stageEntry.Metadata.VersionMetadata.Version
 
-	application, plan, prep, cleanup, err := s.prepareAppImage(ctx, appPathDomain, approve, branch, commit, gitAuth, repoCache, forceReload)
+	application, plan, prep, cleanup, err := s.prepareAppImage(ctx, appPathDomain, opts, ref, repoCache)
 	if err != nil || application == nil {
 		return nil, err
 	}
@@ -331,7 +332,7 @@ func (s *Server) prepareDeploy(ctx context.Context, appPathDomain types.AppPathD
 		if err := s.runDeployGates(ctx, types.Transaction{}, application, stageEntry, reason, newVersion, previousVersion); err != nil {
 			return nil, err
 		}
-		if promote {
+		if opts.Promote {
 			if err := s.runDeployGates(ctx, types.Transaction{}, application, current, "promote", newVersion, current.Metadata.VersionMetadata.Version); err != nil {
 				return nil, err
 			}
@@ -340,11 +341,11 @@ func (s *Server) prepareDeploy(ctx context.Context, appPathDomain types.AppPathD
 
 	// Start and health check the new version's containers, as the
 	// transaction's reload will: it then finds them running and reuses them
-	if err := s.prepareInstance(ctx, application, verify); err != nil {
+	if err := s.prepareInstance(ctx, application, opts.Verify); err != nil {
 		return nil, err
 	}
-	if promote {
-		if err := s.preparePromotedInstance(ctx, current, application.AppEntry, prep, verify); err != nil {
+	if opts.Promote {
+		if err := s.preparePromotedInstance(ctx, current, application.AppEntry, prep, opts.Verify); err != nil {
 			return nil, err
 		}
 	}
@@ -360,9 +361,9 @@ func (s *Server) prepareDeploy(ctx context.Context, appPathDomain types.AppPathD
 // gates and are not registered for rollback: their container serves the
 // source dir, which is already changed. Returns nil when there is nothing to
 // reload
-func (s *Server) prepareDevDeploy(ctx context.Context, entry *types.AppEntry, approve bool,
-	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool) (*appPrep, error) {
-	prep, err := s.prepareAppCode(ctx, entry, branch, commit, gitAuth, repoCache, forceReload)
+func (s *Server) prepareDevDeploy(ctx context.Context, entry *types.AppEntry, opts DeployOptions,
+	ref GitRef, repoCache *RepoCache) (*appPrep, error) {
+	prep, err := s.prepareAppCode(ctx, entry, ref, repoCache, opts.ForceReload)
 	if err != nil || prep == nil {
 		return nil, err
 	}
@@ -371,7 +372,7 @@ func (s *Server) prepareDevDeploy(ctx context.Context, entry *types.AppEntry, ap
 		return nil, fmt.Errorf("error setting up app %s: %w", entry, err)
 	}
 	defer application.Close() //nolint:errcheck
-	if err := s.prepareDevInstance(ctx, application, approve); err != nil {
+	if err := s.prepareDevInstance(ctx, application, opts.Approve); err != nil {
 		return nil, err
 	}
 	prep.devPrepared = true
@@ -418,13 +419,13 @@ func (s *Server) preparePromotedInstance(ctx context.Context, prodEntry, stageEn
 }
 
 // prepareDeploys runs prepareDeploy for each app, in app path order
-func (s *Server) prepareDeploys(ctx context.Context, apps []types.AppPathDomain, approve, promote, verify bool,
-	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool, reason string) (deployPreps, error) {
+func (s *Server) prepareDeploys(ctx context.Context, apps []types.AppPathDomain, opts DeployOptions,
+	ref GitRef, repoCache *RepoCache, reason string) (deployPreps, error) {
 	sorted := append([]types.AppPathDomain{}, apps...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].String() < sorted[j].String() })
 	preps := deployPreps{}
 	for _, appPathDomain := range sorted {
-		prep, err := s.prepareDeploy(ctx, appPathDomain, approve, promote, verify, branch, commit, gitAuth, repoCache, forceReload, reason)
+		prep, err := s.prepareDeploy(ctx, appPathDomain, opts, ref, repoCache, reason)
 		if err != nil {
 			return nil, err
 		}
@@ -494,14 +495,15 @@ func (s *Server) preparePromote(ctx context.Context, appPathDomain types.AppPath
 // verify of the created app will (which then reuses them). On an error the
 // prep is returned along with it, still owning the cleanup of the resources
 // the pass created (see appPrep.finish, to be run after the deploy scope's
-// rollback); the deploy scope must be in ctx
-func (s *Server) prepareCreate(ctx context.Context, appPath string, approve, dryRun, verify bool,
+// rollback); the deploy scope must be in ctx.
+// Reads opts.Approve, DryRun and Verify.
+func (s *Server) prepareCreate(ctx context.Context, appPath string, opts DeployOptions,
 	appRequest *types.CreateAppRequest, repoCache *RepoCache) (*appPrep, error) {
 	appId, err := newAppID(appRequest.IsDev)
 	if err != nil {
 		return nil, err
 	}
-	prep := newCreatePrep(appId, appRequest.IsDev, dryRun)
+	prep := newCreatePrep(appId, appRequest.IsDev, opts.DryRun)
 	appEntry, err := s.newCreateAppEntry(ctx, appPath, appRequest)
 	if err != nil {
 		return nil, err
@@ -519,14 +521,14 @@ func (s *Server) prepareCreate(ctx context.Context, appPath string, approve, dry
 		// verify in the transaction would (which then skips the container).
 		// A git source is checked out first: the entry then points at the
 		// local checkout, as the transaction's load makes it
-		if !verify || dryRun {
+		if !opts.Verify || opts.DryRun {
 			return prep, nil
 		}
-		if _, err := s.checkoutAppSource(ctx, appEntry, appRequest.GitBranch, appRequest.GitCommit, appRequest.GitAuthName, repoCache); err != nil {
+		if _, err := s.checkoutAppSource(ctx, appEntry, createRequestGitRef(appRequest), repoCache); err != nil {
 			s.Debug().Err(err).Msgf("create pre-pass: error checking out %s", appEntry.SourceUrl)
 			return prep, nil
 		}
-		return s.prepareDevCreate(ctx, appEntry, approve, appRequest.Bindings, prep)
+		return s.prepareDevCreate(ctx, appEntry, opts.Approve, appRequest.Bindings, prep)
 	}
 	// The create loads the code into, and gates, the stage instance
 	stageEntry, err := s.prepareStageAppEntry(ctx, appEntry, appRequest)
@@ -536,7 +538,7 @@ func (s *Server) prepareCreate(ctx context.Context, appPath string, approve, dry
 
 	// Locate the source, checking out a git source into the repo cache (the
 	// transaction's load then hits the cache), and compress its files
-	loadDir, err := s.checkoutAppSource(ctx, stageEntry, appRequest.GitBranch, appRequest.GitCommit, appRequest.GitAuthName, repoCache)
+	loadDir, err := s.checkoutAppSource(ctx, stageEntry, createRequestGitRef(appRequest), repoCache)
 	if err != nil {
 		s.Debug().Err(err).Msgf("create pre-pass: error checking out %s", stageEntry.SourceUrl)
 		return prep, nil
@@ -575,21 +577,21 @@ func (s *Server) prepareCreate(ctx context.Context, appPath string, approve, dry
 	if err != nil {
 		return prep, types.CreateRequestError(fmt.Sprintf("app %s audit failed: %s", stageEntry.Id, err), http.StatusBadRequest)
 	}
-	if auditResult.NeedsApproval && !approve {
+	if auditResult.NeedsApproval && !opts.Approve {
 		// The transaction skips the definition load and the gates as well
 		return prep, nil
 	}
 	application.Metadata.Loads = auditResult.NewLoads
 	application.Metadata.Permissions = auditResult.NewPermissions
 
-	_, reloadErr := application.Reload(ctx, true, true, types.DryRun(dryRun), apppkg.ReloadOptions{SkipContainer: true})
+	_, reloadErr := application.Reload(ctx, true, true, types.DryRun(opts.DryRun), apppkg.ReloadOptions{SkipContainer: true})
 	var gates []types.JobSpec
 	if reloadErr == nil {
 		if gates, err = application.BeforeDeployJobs(); err != nil {
 			return prep, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 		}
 	}
-	if !complete && (reloadErr != nil || len(gates) > 0 || verify) {
+	if !complete && (reloadErr != nil || len(gates) > 0 || opts.Verify) {
 		// Some bindings are created inside the transaction; a definition that
 		// may need them, gates that do, and the verify's containers run there
 		s.Debug().Msgf("create pre-pass: app %s has bindings created by the transaction, its before_deploy gates run there", appPath)
@@ -605,7 +607,7 @@ func (s *Server) prepareCreate(ctx context.Context, appPath string, approve, dry
 	prep.loaded = true
 	prep.definitionJobs = application.Metadata.DefinitionJobs
 	prep.definitionActions = application.Metadata.DefinitionActions
-	if dryRun {
+	if opts.DryRun {
 		// Gates and container starts have side effects, never on a dry run
 		return prep, nil
 	}
@@ -622,7 +624,7 @@ func (s *Server) prepareCreate(ctx context.Context, appPath string, approve, dry
 			return prep, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 		}
 	}
-	if !verify {
+	if !opts.Verify {
 		return prep, nil
 	}
 	// Verified create (apply --verify): the stage and prod containers are

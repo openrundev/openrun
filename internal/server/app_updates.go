@@ -22,10 +22,12 @@ import (
 // source is loaded as a new version of the stage (or dev) instance, which is
 // audited and reloaded with its container, and promoted to prod when asked.
 // prep, from prepareDeploy, holds the source already hashed and compressed by
-// the pre-pass, leaving only the inserts for the transaction; nil loads it here
+// the pre-pass, leaving only the inserts for the transaction; nil loads it here.
+// Reads all the opts flags; ref selects the revision (empty fields keep the
+// app's recorded branch and git auth)
 func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, stageAppEntry *types.AppEntry,
-	approve, dryRun, promote bool, branch, commit, gitAuth string, repoCache *RepoCache, forceReload, verify bool, prep *appPrep) (*types.AppReloadResult, error) {
-	verify = verify && !dryRun
+	opts DeployOptions, ref GitRef, repoCache *RepoCache, prep *appPrep) (*types.AppReloadResult, error) {
+	opts.Verify = opts.Verify && !opts.DryRun
 	prodAppEntry := appEntry
 	var err error
 	if !appEntry.IsDev {
@@ -40,12 +42,12 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 	}
 
 	var reloaded bool
-	if reloaded, err = s.loadAppCode(ctx, tx, appEntry, branch, commit, gitAuth, repoCache, forceReload, prep); err != nil {
+	if reloaded, err = s.loadAppCode(ctx, tx, appEntry, ref, repoCache, opts.ForceReload, prep); err != nil {
 		return nil, err
 	}
 	if !reloaded {
 		ret := &types.AppReloadResult{
-			DryRun:         dryRun,
+			DryRun:         opts.DryRun,
 			ApproveResult:  nil,
 			ReloadResults:  []types.AppPathDomain{},
 			PromoteResults: []types.AppPathDomain{},
@@ -76,10 +78,10 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 		}
 
 		var approvalResult *types.ApproveResult
-		if auditResult.NeedsApproval && !approve {
+		if auditResult.NeedsApproval && !opts.Approve {
 			return nil, fmt.Errorf("app %s needs approval", appEntry)
 		}
-		if approve {
+		if opts.Approve {
 			s.approveAuditResult(app, auditResult)
 			if err := s.db.UpdateAppMetadata(ctx, tx, app.AppEntry); err != nil {
 				return nil, err
@@ -90,7 +92,7 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 		}
 		reloadResults := make([]types.AppPathDomain, 0)
 		promoteResults := make([]types.AppPathDomain, 0)
-		if err := s.reloadInstanceOpts(ctx, app, dryRun, instanceReloadOptions(appEntry, verify, prep)); err != nil {
+		if err := s.reloadInstanceOpts(ctx, app, opts.DryRun, instanceReloadOptions(appEntry, opts.Verify, prep)); err != nil {
 			return nil, err
 		}
 		// Persist name in metadata
@@ -99,13 +101,13 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 		}
 
 		reloadResults = append(reloadResults, appEntry.AppPathDomain())
-		if promote && !appEntry.IsDev {
+		if opts.Promote && !appEntry.IsDev {
 			if err = s.promoteApp(ctx, tx, appEntry, prodAppEntry); err != nil {
 				return nil, err
 			}
 			promoteResults = append(promoteResults, appEntry.AppPathDomain())
 			_, err = withTemporaryApp(s, ctx, prodAppEntry, tx, func(prodApp *apppkg.App) (bool, error) {
-				return false, s.reloadInstance(ctx, prodApp, dryRun, verify)
+				return false, s.reloadInstance(ctx, prodApp, opts.DryRun, opts.Verify)
 			})
 			if err != nil {
 				return nil, err
@@ -119,7 +121,7 @@ func (s *Server) ReloadApp(ctx context.Context, tx types.Transaction, appEntry *
 		}
 
 		ret := &types.AppReloadResult{
-			DryRun:         dryRun,
+			DryRun:         opts.DryRun,
 			ApproveResult:  approvalResult,
 			ReloadResults:  reloadResults,
 			PromoteResults: promoteResults,
@@ -174,9 +176,12 @@ func (s *Server) reloadInstanceOpts(ctx context.Context, application *apppkg.App
 	return fmt.Errorf("error reloading app %s: %w", application.AppEntry, err)
 }
 
-func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dryRun, promote bool,
-	branch, commit, gitAuth string, forceReload, verify bool) (_ *types.AppReloadResponse, retErr error) {
-	verify = verify && !dryRun
+// ReloadApps reloads the code of the apps matching the glob from their
+// source, landing in staging (promoted to prod with opts.Promote). Reads all
+// the opts flags; ref overrides the apps' recorded branch/commit/git auth
+func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, opts DeployOptions,
+	ref GitRef) (_ *types.AppReloadResponse, retErr error) {
+	opts.Verify = opts.Verify && !opts.DryRun
 	filteredApps, err := s.FilterApps(appPathGlob, false)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
@@ -185,14 +190,14 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	if err := s.enforceAppPermInfos(ctx, types.PermissionReload, filteredApps); err != nil {
 		return nil, err
 	}
-	if approve {
+	if opts.Approve {
 		// An approving reload approves plugin permissions, needs app:approve
 		// on every matched app
 		if err := s.enforceAppPermInfos(ctx, types.PermissionApprove, filteredApps); err != nil {
 			return nil, err
 		}
 	}
-	if promote {
+	if opts.Promote {
 		// A reload with promote pushes staging to prod, which needs app:promote
 		if err := s.enforceAppPermInfos(ctx, types.PermissionPromote, filteredApps); err != nil {
 			return nil, err
@@ -214,7 +219,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	for _, appInfo := range filteredApps {
 		appPaths = append(appPaths, appInfo.AppPathDomain)
 	}
-	s.prefetchAppSources(ctx, appPaths, branch, commit, gitAuth, repoCache, forceReload)
+	s.prefetchAppSources(ctx, appPaths, ref, repoCache, opts.ForceReload)
 
 	// Pre-transaction pass: the new code is checked out, hashed and
 	// compressed, its image built, the before_deploy jobs run against the
@@ -230,12 +235,12 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	// rolled-back DB transaction. Opened before the pre-pass, whose
 	// containers register on it, and before the transaction, so the rollback
 	// of the transaction runs before the cluster rollback
-	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	ctx, deployScope := s.beginDeployScope(ctx, true, opts.DryRun)
 	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	var preps deployPreps
-	if !dryRun {
-		if preps, err = s.prepareDeploys(ctx, appPaths, approve, promote, verify, branch, commit, gitAuth, repoCache, forceReload, "reload"); err != nil {
+	if !opts.DryRun {
+		if preps, err = s.prepareDeploys(ctx, appPaths, opts, ref, repoCache, "reload"); err != nil {
 			return nil, err
 		}
 	}
@@ -264,8 +269,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 				return nil, err
 			}
 		}
-		ret, err := s.ReloadApp(ctx, tx, appEntry, stageAppEntry, approve, dryRun, promote,
-			branch, commit, gitAuth, repoCache, forceReload, verify, preps[appInfo.AppPathDomain])
+		ret, err := s.ReloadApp(ctx, tx, appEntry, stageAppEntry, opts, ref, repoCache, preps[appInfo.AppPathDomain])
 		if err != nil {
 			return nil, err
 		}
@@ -281,7 +285,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	// Commit the transaction if not dry run and update the in memory app store
 	updatedApps := make([]types.AppPathDomain, 0, len(reloadResults))
 	updatedApps = append(updatedApps, reloadResults...)
-	if err := s.CompleteTransaction(ctx, tx, updatedApps, dryRun, "reload"); err != nil {
+	if err := s.CompleteTransaction(ctx, tx, updatedApps, opts.DryRun, "reload"); err != nil {
 		return nil, err
 	}
 	if err := deployScope.commit(ctx); err != nil {
@@ -289,7 +293,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 	}
 
 	ret := &types.AppReloadResponse{
-		DryRun:         dryRun,
+		DryRun:         opts.DryRun,
 		ReloadResults:  reloadResults,
 		ApproveResults: approveResults,
 		PromoteResults: promoteResults,
@@ -302,7 +306,7 @@ func (s *Server) ReloadApps(ctx context.Context, appPathGlob string, approve, dr
 // appCodeUpToDate reports whether a reload of the app's code can be skipped:
 // a git source already at the requested commit, or at the latest commit of
 // the branch when no commit is requested. A disk source always reloads
-func (s *Server) appCodeUpToDate(ctx context.Context, appEntry *types.AppEntry, branch, commit, gitAuth string,
+func (s *Server) appCodeUpToDate(ctx context.Context, appEntry *types.AppEntry, ref GitRef,
 	repoCache *RepoCache, forceReload bool) (bool, error) {
 	if forceReload || !system.IsGit(appEntry.SourceUrl) {
 		return false, nil
@@ -311,13 +315,14 @@ func (s *Server) appCodeUpToDate(ctx context.Context, appEntry *types.AppEntry, 
 	if currentSha == "" {
 		return false, nil
 	}
+	commit := ref.Commit
 	if currentSha == commit {
 		// Commit is specified and matches the current version, skip reload
 		s.Info().Msgf("App %s already at requested commit %s, skipping reload", appEntry.AppPathDomain(), currentSha)
 		return true, nil
 	}
-	branch = checkoutBranch(branch, appEntry)
-	gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
+	branch := checkoutBranch(ref.Branch, appEntry)
+	gitAuth := cmp.Or(ref.GitAuth, appEntry.Metadata.GitAuthName)
 	newSha, err := repoCache.GetSha(ctx, appEntry.SourceUrl, branch, gitAuth)
 	if err != nil {
 		return false, fmt.Errorf("error getting git commit sha for %s: %w", appEntry.SourceUrl, err)
@@ -333,20 +338,24 @@ func (s *Server) appCodeUpToDate(ctx context.Context, appEntry *types.AppEntry, 
 // loadAppCode loads the app's current source into the database as a new
 // version, unless the code is up to date (see appCodeUpToDate). Returns
 // whether the code was loaded. prep is as for ReloadApp
-func (s *Server) loadAppCode(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, branch, commit, gitAuth string,
+func (s *Server) loadAppCode(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, ref GitRef,
 	repoCache *RepoCache, forceReload bool, prep *appPrep) (bool, error) {
 	s.Debug().Msgf("Reloading app code %v", appEntry)
-	upToDate, err := s.appCodeUpToDate(ctx, appEntry, branch, commit, gitAuth, repoCache, forceReload)
+	upToDate, err := s.appCodeUpToDate(ctx, appEntry, ref, repoCache, forceReload)
 	if err != nil || upToDate {
 		return false, err
 	}
-	if err := s.loadAppSource(ctx, tx, appEntry, branch, commit, gitAuth, repoCache, prep); err != nil {
+	if err := s.loadAppSource(ctx, tx, appEntry, ref, repoCache, prep); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, promote bool, handler stagedUpdateHandler, args map[string]any, op string) (_ *types.AppStagedUpdateResponse, retErr error) {
+// StagedUpdate runs handler on the stage entry of each app matching the glob,
+// as a new version, and promotes it with opts.Promote. Reads DryRun and
+// Promote, and passes opts on to the handler. op names the operation for
+// RBAC (stagedUpdatePerms) and audit
+func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, opts DeployOptions, handler stagedUpdateHandler, op string) (_ *types.AppStagedUpdateResponse, retErr error) {
 	if s.rbacManager.APIEnforced(ctx) {
 		perm, ok := stagedUpdatePerms[op]
 		if !ok {
@@ -359,7 +368,7 @@ func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, p
 		if err := s.enforceAppPermInfos(ctx, perm, filteredApps); err != nil {
 			return nil, err
 		}
-		if promote {
+		if opts.Promote {
 			// A staged update with promote pushes staging to prod, which needs app:promote
 			if err := s.enforceAppPermInfos(ctx, types.PermissionPromote, filteredApps); err != nil {
 				return nil, err
@@ -371,7 +380,7 @@ func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, p
 	// accounts through the scope's account manager (carried in ctx), so the
 	// accounts are removed from the service if this transaction rolls back
 	// (which happens first, the scope is opened before the transaction)
-	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	ctx, deployScope := s.beginDeployScope(ctx, true, opts.DryRun)
 	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	tx, err := s.db.BeginTransaction(ctx)
@@ -380,18 +389,18 @@ func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, p
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	result, entries, promoteResults, err := s.StagedUpdateAppsTx(ctx, tx, appPathGlob, promote, handler, args)
+	result, entries, promoteResults, err := s.StagedUpdateAppsTx(ctx, tx, appPathGlob, opts, handler)
 	if err != nil {
 		return nil, err
 	}
 
 	ret := &types.AppStagedUpdateResponse{
-		DryRun:              dryRun,
+		DryRun:              opts.DryRun,
 		StagedUpdateResults: result,
 		PromoteResults:      promoteResults,
 	}
 
-	if err := s.CompleteTransaction(ctx, tx, entries, dryRun, op); err != nil {
+	if err := s.CompleteTransaction(ctx, tx, entries, opts.DryRun, op); err != nil {
 		return nil, err
 	}
 	if err := deployScope.commit(ctx); err != nil {
@@ -401,9 +410,15 @@ func (s *Server) StagedUpdate(ctx context.Context, appPathGlob string, dryRun, p
 	return ret, nil
 }
 
-type stagedUpdateHandler func(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, args map[string]any) (any, types.AppPathDomain, error)
+// stagedUpdateHandler applies a staged update to one app entry (the stage
+// entry for a prod app). The operation's own arguments are bound in the
+// handler (see updateMetadataHandler); opts are the StagedUpdate options,
+// the one source of the dry run flag
+type stagedUpdateHandler func(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, opts DeployOptions) (any, types.AppPathDomain, error)
 
-func (s *Server) StagedUpdateAppsTx(ctx context.Context, tx types.Transaction, appPathGlob string, promote bool, handler stagedUpdateHandler, args map[string]any) ([]any, []types.AppPathDomain, []types.AppPathDomain, error) {
+// StagedUpdateAppsTx runs handler on the apps matching the glob, on the
+// caller's transaction. Reads opts.Promote; opts is passed on to the handler
+func (s *Server) StagedUpdateAppsTx(ctx context.Context, tx types.Transaction, appPathGlob string, opts DeployOptions, handler stagedUpdateHandler) ([]any, []types.AppPathDomain, []types.AppPathDomain, error) {
 	filteredApps, err := s.FilterApps(appPathGlob, false)
 	if err != nil {
 		return nil, nil, nil, err
@@ -437,7 +452,7 @@ func (s *Server) StagedUpdateAppsTx(ctx context.Context, tx types.Transaction, a
 			}
 		}
 
-		result, app, err := handler(ctx, tx, appEntry, args)
+		result, app, err := handler(ctx, tx, appEntry, opts)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -446,7 +461,7 @@ func (s *Server) StagedUpdateAppsTx(ctx context.Context, tx types.Transaction, a
 			return nil, nil, nil, err
 		}
 
-		if promote && prodAppEntry != nil {
+		if opts.Promote && prodAppEntry != nil {
 			if err = s.promoteApp(ctx, tx, appEntry, prodAppEntry); err != nil {
 				return nil, nil, nil, err
 			}
@@ -463,7 +478,7 @@ func (s *Server) StagedUpdateAppsTx(ctx context.Context, tx types.Transaction, a
 	return results, entries, promoteResults, nil
 }
 
-func (s *Server) auditHandler(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, args map[string]any) (any, types.AppPathDomain, error) {
+func (s *Server) auditHandler(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, _ DeployOptions) (any, types.AppPathDomain, error) {
 	appPathDomain := appEntry.AppPathDomain()
 	result, err := withTemporaryApp(s, ctx, appEntry, tx, func(app *apppkg.App) (any, error) {
 		result, err := s.auditApp(ctx, tx, app, true)
@@ -484,36 +499,34 @@ func (s *Server) auditHandler(ctx context.Context, tx types.Transaction, appEntr
 }
 
 // ApproveApps approves the plugin and permission usage for apps matching the
-// glob. With dryRun, the pending permissions are returned without approving
-func (s *Server) ApproveApps(ctx context.Context, appPathGlob string, dryRun, promote bool) (*types.AppStagedUpdateResponse, error) {
-	return s.StagedUpdate(ctx, appPathGlob, dryRun, promote, s.auditHandler, map[string]any{}, "approve")
+// glob. With opts.DryRun, the pending permissions are returned without
+// approving. Reads DryRun and Promote
+func (s *Server) ApproveApps(ctx context.Context, appPathGlob string, opts DeployOptions) (*types.AppStagedUpdateResponse, error) {
+	return s.StagedUpdate(ctx, appPathGlob, opts, s.auditHandler, "approve")
 }
 
 // UpdateAppParams updates a single param value for apps matching the glob.
 // A value of "-" deletes the param. The change applies to staging and is
-// promoted to prod when promote is set
-func (s *Server) UpdateAppParams(ctx context.Context, appPathGlob string, dryRun, promote bool, paramName, paramValue string) (*types.AppStagedUpdateResponse, error) {
-	args := map[string]any{
-		"paramName":  paramName,
-		"paramValue": paramValue,
-	}
-	return s.StagedUpdate(ctx, appPathGlob, dryRun, promote, s.updateParamHandler, args, "update-param")
+// promoted to prod with opts.Promote. Reads DryRun and Promote
+func (s *Server) UpdateAppParams(ctx context.Context, appPathGlob string, opts DeployOptions, paramName, paramValue string) (*types.AppStagedUpdateResponse, error) {
+	return s.StagedUpdate(ctx, appPathGlob, opts, s.updateParamHandler(paramName, paramValue), "update-param")
 }
 
 // ReplaceAppParams replaces all the param values for apps matching the glob.
-// The change applies to staging and is promoted to prod when promote is set
-func (s *Server) ReplaceAppParams(ctx context.Context, appPathGlob string, dryRun, promote bool, params map[string]string) (*types.AppStagedUpdateResponse, error) {
-	args := map[string]any{
-		"params": params,
-	}
-	return s.StagedUpdate(ctx, appPathGlob, dryRun, promote, s.replaceParamsHandler, args, "update-param")
+// The change applies to staging and is promoted to prod with opts.Promote.
+// Reads DryRun and Promote
+func (s *Server) ReplaceAppParams(ctx context.Context, appPathGlob string, opts DeployOptions, params map[string]string) (*types.AppStagedUpdateResponse, error) {
+	return s.StagedUpdate(ctx, appPathGlob, opts, s.replaceParamsHandler(params), "update-param")
 }
 
-func (s *Server) replaceParamsHandler(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, args map[string]any) (any, types.AppPathDomain, error) {
-	params := args["params"].(map[string]string)
-	appEntry.Metadata.ParamValues = maps.Clone(params)
-	appPathDomain := appEntry.AppPathDomain()
-	return appPathDomain, appPathDomain, nil
+// replaceParamsHandler returns the staged update handler replacing all the
+// param values with params
+func (s *Server) replaceParamsHandler(params map[string]string) stagedUpdateHandler {
+	return func(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, _ DeployOptions) (any, types.AppPathDomain, error) {
+		appEntry.Metadata.ParamValues = maps.Clone(params)
+		appPathDomain := appEntry.AppPathDomain()
+		return appPathDomain, appPathDomain, nil
+	}
 }
 
 func (s *Server) PromoteApps(ctx context.Context, appPathGlob string, dryRun bool) (*types.AppPromoteResponse, error) {
@@ -719,104 +732,108 @@ func (s *Server) updateAppSettings(ctx context.Context, tx types.Transaction, ap
 	return ret, nil
 }
 
-func (s *Server) accountLinkHandler(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, args map[string]any) (any, types.AppPathDomain, error) {
-	if appEntry.Metadata.Accounts == nil {
-		appEntry.Metadata.Accounts = []types.AccountLink{}
-	}
-
-	plugin := args["plugin"].(string)
-	account := args["account"].(string)
-
-	matchIndex := -1
-	for i, accountLink := range appEntry.Metadata.Accounts {
-		if accountLink.Plugin == plugin {
-			// Update existing value
-			accountLink.AccountName = account
-			matchIndex = i
-			break
+// accountLinkHandler returns the staged update handler linking plugin to
+// account ("-" removes the link)
+func (s *Server) accountLinkHandler(plugin, account string) stagedUpdateHandler {
+	return func(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, _ DeployOptions) (any, types.AppPathDomain, error) {
+		if appEntry.Metadata.Accounts == nil {
+			appEntry.Metadata.Accounts = []types.AccountLink{}
 		}
-	}
-	if matchIndex == -1 {
-		// Add new value
-		appEntry.Metadata.Accounts = append(appEntry.Metadata.Accounts, types.AccountLink{
-			Plugin:      plugin,
-			AccountName: account,
-		})
-	} else {
-		if account == "-" {
-			// Delete the entry
-			appEntry.Metadata.Accounts = append(appEntry.Metadata.Accounts[:matchIndex], appEntry.Metadata.Accounts[matchIndex+1:]...)
-		} else {
-			// Update existing value
-			appEntry.Metadata.Accounts[matchIndex].AccountName = account
-		}
-	}
 
-	appPathDomain := appEntry.AppPathDomain()
-	return appPathDomain, appPathDomain, nil
-}
-
-func (s *Server) updateParamHandler(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, args map[string]any) (any, types.AppPathDomain, error) {
-	paramName := args["paramName"].(string)
-	paramValue := args["paramValue"].(string)
-
-	if appEntry.Metadata.ParamValues == nil {
-		appEntry.Metadata.ParamValues = make(map[string]string)
-	}
-
-	paramValue = types.StripQuotes(strings.TrimSpace(paramValue))
-	if paramValue == "-" {
-		// Delete the entry
-		delete(appEntry.Metadata.ParamValues, paramName)
-	} else {
-		// Update existing value
-		appEntry.Metadata.ParamValues[paramName] = paramValue
-	}
-
-	appPathDomain := appEntry.AppPathDomain()
-	return appPathDomain, appPathDomain, nil
-}
-
-func (s *Server) updateMetadataHandler(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, args map[string]any) (any, types.AppPathDomain, error) {
-	updateMetadata := args["metadata"].(types.UpdateAppMetadataRequest)
-	dryRun, _ := args["dryRun"].(bool)
-
-	if updateMetadata.Spec != types.StringValueUndefined {
-		// The type is being updated
-		var appFiles types.SpecFiles
-		if updateMetadata.Spec != "-" {
-			appFiles = s.GetAppSpec(types.AppSpec(updateMetadata.Spec))
-			if appFiles == nil {
-				return nil, appEntry.AppPathDomain(), fmt.Errorf("invalid app spec %s", updateMetadata.Spec)
+		matchIndex := -1
+		for i, accountLink := range appEntry.Metadata.Accounts {
+			if accountLink.Plugin == plugin {
+				// Update existing value
+				accountLink.AccountName = account
+				matchIndex = i
+				break
 			}
-			appEntry.Metadata.Spec = types.AppSpec(updateMetadata.Spec)
+		}
+		if matchIndex == -1 {
+			// Add new value
+			appEntry.Metadata.Accounts = append(appEntry.Metadata.Accounts, types.AccountLink{
+				Plugin:      plugin,
+				AccountName: account,
+			})
 		} else {
-			appFiles = make(types.SpecFiles)
-			appEntry.Metadata.Spec = types.AppSpec("")
+			if account == "-" {
+				// Delete the entry
+				appEntry.Metadata.Accounts = append(appEntry.Metadata.Accounts[:matchIndex], appEntry.Metadata.Accounts[matchIndex+1:]...)
+			} else {
+				// Update existing value
+				appEntry.Metadata.Accounts[matchIndex].AccountName = account
+			}
 		}
 
-		appEntry.Metadata.SpecFiles = &appFiles
+		appPathDomain := appEntry.AppPathDomain()
+		return appPathDomain, appPathDomain, nil
 	}
+}
 
-	if updateMetadata.ConfigType != "" && updateMetadata.ConfigType != types.AppMetadataConfigType(types.StringValueUndefined) {
-		accounts := bindingEffectsFromContext(ctx)
-		if accounts == nil {
-			return nil, appEntry.AppPathDomain(), fmt.Errorf("internal error: no operation scope for metadata update")
+// updateParamHandler returns the staged update handler setting one param
+// value ("-" deletes the param)
+func (s *Server) updateParamHandler(paramName, paramValue string) stagedUpdateHandler {
+	// Normalized once here: the handler runs for every matched app
+	paramValue = types.StripQuotes(strings.TrimSpace(paramValue))
+	return func(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, _ DeployOptions) (any, types.AppPathDomain, error) {
+		if appEntry.Metadata.ParamValues == nil {
+			appEntry.Metadata.ParamValues = make(map[string]string)
 		}
-		err := s.updateAppMetadataConfig(ctx, tx, appEntry, updateMetadata.ConfigType, updateMetadata.ConfigEntries, dryRun, accounts)
-		if err != nil {
+
+		if paramValue == "-" {
+			// Delete the entry
+			delete(appEntry.Metadata.ParamValues, paramName)
+		} else {
+			// Update existing value
+			appEntry.Metadata.ParamValues[paramName] = paramValue
+		}
+
+		appPathDomain := appEntry.AppPathDomain()
+		return appPathDomain, appPathDomain, nil
+	}
+}
+
+// updateMetadataHandler returns the staged update handler applying the
+// metadata update request
+func (s *Server) updateMetadataHandler(updateMetadata types.UpdateAppMetadataRequest) stagedUpdateHandler {
+	return func(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, opts DeployOptions) (any, types.AppPathDomain, error) {
+		if updateMetadata.Spec != types.StringValueUndefined {
+			// The type is being updated
+			var appFiles types.SpecFiles
+			if updateMetadata.Spec != "-" {
+				appFiles = s.GetAppSpec(types.AppSpec(updateMetadata.Spec))
+				if appFiles == nil {
+					return nil, appEntry.AppPathDomain(), fmt.Errorf("invalid app spec %s", updateMetadata.Spec)
+				}
+				appEntry.Metadata.Spec = types.AppSpec(updateMetadata.Spec)
+			} else {
+				appFiles = make(types.SpecFiles)
+				appEntry.Metadata.Spec = types.AppSpec("")
+			}
+
+			appEntry.Metadata.SpecFiles = &appFiles
+		}
+
+		if updateMetadata.ConfigType != "" && updateMetadata.ConfigType != types.AppMetadataConfigType(types.StringValueUndefined) {
+			accounts := bindingEffectsFromContext(ctx)
+			if accounts == nil {
+				return nil, appEntry.AppPathDomain(), fmt.Errorf("internal error: no operation scope for metadata update")
+			}
+			err := s.updateAppMetadataConfig(ctx, tx, appEntry, updateMetadata.ConfigType, updateMetadata.ConfigEntries, opts.DryRun, accounts)
+			if err != nil {
+				return nil, appEntry.AppPathDomain(), err
+			}
+		}
+
+		// A spec change to static_disk or an app config change enabling
+		// static_from_disk requires a local disk source to serve from
+		if err := s.validateStaticFromDisk(appEntry); err != nil {
 			return nil, appEntry.AppPathDomain(), err
 		}
-	}
 
-	// A spec change to static_disk or an app config change enabling
-	// static_from_disk requires a local disk source to serve from
-	if err := s.validateStaticFromDisk(appEntry); err != nil {
-		return nil, appEntry.AppPathDomain(), err
+		appPathDomain := appEntry.AppPathDomain()
+		return appPathDomain, appPathDomain, nil
 	}
-
-	appPathDomain := appEntry.AppPathDomain()
-	return appPathDomain, appPathDomain, nil
 }
 
 // canonicalSidecars validates sidecar JSON documents and returns them in

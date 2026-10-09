@@ -509,7 +509,7 @@ func TestPreviewAndBuilderBindingRBAC(t *testing.T) {
 		t.Fatalf("rbac config update: %v", err)
 	}
 	previewerCtx := rbacEnforcedCtx(ctx, "previewer")
-	_, err = server.PreviewApp(previewerCtx, "/apps/pv", "abc123", false, false)
+	_, err = server.PreviewApp(previewerCtx, "/apps/pv", "abc123", DeployOptions{})
 	if err == nil || !strings.Contains(err.Error(), string(types.PermissionBindingUse)) {
 		t.Fatalf("expected binding:use denial on preview, got %v", err)
 	}
@@ -527,7 +527,7 @@ func TestPreviewAndBuilderBindingRBAC(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("rbac config update: %v", err)
 	}
-	_, err = server.PreviewApp(previewerCtx, "/apps/pv", "abc123", false, false)
+	_, err = server.PreviewApp(previewerCtx, "/apps/pv", "abc123", DeployOptions{})
 	if err == nil || !strings.Contains(err.Error(), "source is not git") {
 		t.Fatalf("expected non-git source error after the binding gate, got %v", err)
 	}

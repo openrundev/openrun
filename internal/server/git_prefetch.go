@@ -63,7 +63,7 @@ func (s *Server) prefetchApplyAppSources(ctx context.Context, applyConfig map[ty
 // writes) for the duration of the fetch. Best-effort: errors are logged and
 // left for the real in-transaction pass to report.
 func (s *Server) prefetchAppSources(ctx context.Context, appPaths []types.AppPathDomain,
-	branch, commit, gitAuth string, repoCache *RepoCache, forceReload bool) {
+	ref GitRef, repoCache *RepoCache, forceReload bool) {
 	for _, appPath := range appPaths {
 		appEntry, err := s.db.GetAppEntry(ctx, appPath)
 		if err != nil {
@@ -81,19 +81,19 @@ func (s *Server) prefetchAppSources(ctx context.Context, appPaths []types.AppPat
 				continue
 			}
 		}
-		s.prefetchAppSource(ctx, appEntry, branch, commit, gitAuth, repoCache, forceReload)
+		s.prefetchAppSource(ctx, appEntry, ref, repoCache, forceReload)
 	}
 }
 
 // prefetchAppSource warms the repo cache for one app entry, mirroring the
 // branch/auth resolution and the up-to-date skip checks of loadAppCode so the
 // cache keys match and no checkout happens when the reload would skip anyway.
-func (s *Server) prefetchAppSource(ctx context.Context, appEntry *types.AppEntry, branch, commit, gitAuth string,
+func (s *Server) prefetchAppSource(ctx context.Context, appEntry *types.AppEntry, ref GitRef,
 	repoCache *RepoCache, forceReload bool) {
 	if !system.IsGit(appEntry.SourceUrl) {
 		return
 	}
-	upToDate, err := s.appCodeUpToDate(ctx, appEntry, branch, commit, gitAuth, repoCache, forceReload)
+	upToDate, err := s.appCodeUpToDate(ctx, appEntry, ref, repoCache, forceReload)
 	if err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error getting sha for %s", appEntry.SourceUrl)
 		return
@@ -101,8 +101,8 @@ func (s *Server) prefetchAppSource(ctx context.Context, appEntry *types.AppEntry
 	if upToDate {
 		return // the reload will skip without a checkout
 	}
-	if _, _, _, _, err := repoCache.CheckoutRepo(ctx, appEntry.SourceUrl, checkoutBranch(branch, appEntry), commit,
-		cmp.Or(gitAuth, appEntry.Metadata.GitAuthName), appEntry.IsDev); err != nil {
+	if _, _, _, _, err := repoCache.CheckoutRepo(ctx, appEntry.SourceUrl, checkoutBranch(ref.Branch, appEntry), ref.Commit,
+		cmp.Or(ref.GitAuth, appEntry.Metadata.GitAuthName), appEntry.IsDev); err != nil {
 		s.Debug().Err(err).Msgf("git prefetch: error checking out %s", appEntry.SourceUrl)
 	}
 }

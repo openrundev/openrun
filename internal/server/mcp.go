@@ -556,9 +556,6 @@ type (
 	}
 	mcpUpdateSettingsIn struct {
 		PathGlob           string `json:"path_glob" jsonschema:"app path glob to update"`
-		AuthnType          string `json:"authn_type,omitzero" jsonschema:"app auth type (system, none, or an auth entry name); empty leaves unchanged"`
-		GitAuthName        string `json:"git_auth_name,omitzero" jsonschema:"git auth entry name; empty leaves unchanged"`
-		Spec               string `json:"spec,omitzero" jsonschema:"app spec name; empty leaves unchanged"`
 		StageWriteAccess   *bool  `json:"stage_write_access,omitzero" jsonschema:"staging write plugin access; omit to leave unchanged"`
 		PreviewWriteAccess *bool  `json:"preview_write_access,omitzero" jsonschema:"preview write plugin access; omit to leave unchanged"`
 		DryRun             bool   `json:"dry_run,omitzero" jsonschema:"preview without applying"`
@@ -692,7 +689,7 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 				}
 				req.MCP = doc
 			}
-			return s.CreateApp(ctx, in.Path, in.Approve, in.DryRun, req)
+			return s.CreateApp(ctx, in.Path, DeployOptions{Approve: in.Approve, DryRun: in.DryRun}, req)
 		})
 
 	addMCPTool(s, srv, API_DELETE_APPS,
@@ -702,12 +699,12 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 
 	addMCPTool(s, srv, API_APPROVE_APPS,
 		func(ctx context.Context, in mcpStagedUpdateIn) (any, error) {
-			return s.ApproveApps(ctx, in.PathGlob, in.DryRun, in.Promote)
+			return s.ApproveApps(ctx, in.PathGlob, DeployOptions{DryRun: in.DryRun, Promote: in.Promote})
 		})
 
 	addMCPTool(s, srv, API_RELOAD_APPS,
 		func(ctx context.Context, in mcpReloadAppsIn) (any, error) {
-			return s.ReloadApps(ctx, in.PathGlob, in.Approve, in.DryRun, in.Promote, "", "", "", false, false)
+			return s.ReloadApps(ctx, in.PathGlob, DeployOptions{Approve: in.Approve, DryRun: in.DryRun, Promote: in.Promote}, GitRef{})
 		})
 
 	addMCPTool(s, srv, API_PROMOTE_APPS,
@@ -772,12 +769,12 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 
 	addMCPTool(s, srv, API_UPDATE_PARAMS,
 		func(ctx context.Context, in mcpUpdateParamsIn) (any, error) {
-			return s.UpdateAppParams(ctx, in.PathGlob, in.DryRun, in.Promote, in.Name, in.Value)
+			return s.UpdateAppParams(ctx, in.PathGlob, DeployOptions{DryRun: in.DryRun, Promote: in.Promote}, in.Name, in.Value)
 		})
 
 	addMCPTool(s, srv, API_CREATE_PREVIEW,
 		func(ctx context.Context, in mcpPreviewIn) (any, error) {
-			return s.PreviewApp(ctx, in.Path, in.Commit, in.Approve, in.DryRun)
+			return s.PreviewApp(ctx, in.Path, in.Commit, DeployOptions{Approve: in.Approve, DryRun: in.DryRun})
 		})
 
 	addMCPTool(s, srv, API_LIST_FILES,
@@ -804,14 +801,17 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 		func(ctx context.Context, in mcpApplyIn) (any, error) {
 			glob := cmp.Or(in.PathGlob, "all")
 			reload := types.AppReloadOption(cmp.Or(in.Reload, string(types.AppReloadOptionUpdated)))
-			result, _, err := s.Apply(ctx, types.Transaction{}, in.Path, glob, in.Approve, in.DryRun, in.Promote,
-				reload, "", "", "", in.Clobber, false, false, "", nil, false)
+			result, _, err := s.Apply(ctx, types.Transaction{}, in.Path, glob, ApplyOptions{
+				DeployOptions: DeployOptions{Approve: in.Approve, DryRun: in.DryRun, Promote: in.Promote},
+				Reload:        reload,
+				Clobber:       in.Clobber,
+			}, nil)
 			return result, err
 		})
 
 	addMCPTool(s, srv, API_APPLY_DELETE,
 		func(ctx context.Context, in mcpApplyDeleteIn) (any, error) {
-			return s.ApplyDelete(ctx, in.Path, cmp.Or(in.PathGlob, "all"), in.DryRun, "", "", "")
+			return s.ApplyDelete(ctx, in.Path, cmp.Or(in.PathGlob, "all"), in.DryRun, GitRef{})
 		})
 
 	addMCPTool(s, srv, API_SYNC_CREATE,
@@ -821,7 +821,7 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 				Promote:           in.Promote,
 				ScheduleFrequency: in.ScheduleFrequency,
 			}
-			return s.CreateSyncEntry(ctx, in.Path, in.ScheduleFrequency > 0, in.DryRun, sync)
+			return s.CreateSyncEntry(ctx, in.Path, SyncCreateOptions{Scheduled: in.ScheduleFrequency > 0, DryRun: in.DryRun}, sync)
 		})
 
 	addMCPTool(s, srv, API_SYNC_RUN,
@@ -836,7 +836,7 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 
 	addMCPTool(s, srv, API_RUN_JOB,
 		func(ctx context.Context, in mcpJobRunIn) (any, error) {
-			return s.RunJob(ctx, in.Path, in.Job, in.Stage, in.Wait, in.Force, in.Args)
+			return s.RunJob(ctx, in.Path, in.Job, JobRunOptions{Stage: in.Stage, Wait: in.Wait, Force: in.Force, Args: in.Args})
 		})
 
 	addMCPTool(s, srv, API_LIST_JOB_RUNS,
@@ -962,7 +962,7 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 	addMCPTool(s, srv, API_BINDING_UPDATE,
 		func(ctx context.Context, in mcpBindingUpdateIn) (any, error) {
 			binding, err := s.UpdateBinding(ctx, types.UpdateBindingRequest{
-				Path: in.Path, AddGrants: in.AddGrants, DeleteGrants: in.DeleteGrants}, in.DryRun, in.Promote, false)
+				Path: in.Path, AddGrants: in.AddGrants, DeleteGrants: in.DeleteGrants}, BindingUpdateOptions{DryRun: in.DryRun, Promote: in.Promote})
 			if err != nil {
 				return nil, err
 			}
@@ -1003,15 +1003,6 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 	addMCPTool(s, srv, API_UPDATE_SETTINGS,
 		func(ctx context.Context, in mcpUpdateSettingsIn) (any, error) {
 			req := types.CreateUpdateAppRequest()
-			if in.AuthnType != "" {
-				req.AuthnType = types.StringValue(in.AuthnType)
-			}
-			if in.GitAuthName != "" {
-				req.GitAuthName = types.StringValue(in.GitAuthName)
-			}
-			if in.Spec != "" {
-				req.Spec = types.StringValue(in.Spec)
-			}
 			if in.StageWriteAccess != nil {
 				req.StageWriteAccess = boolToBoolValue(*in.StageWriteAccess)
 			}
@@ -1031,14 +1022,14 @@ func (s *Server) registerMCPTools(srv *mcp.Server) {
 				req.ConfigType = types.AppMetadataConfigType(in.ConfigType)
 				req.ConfigEntries = in.ConfigEntries
 			}
-			args := map[string]any{"metadata": req, "dryRun": in.DryRun}
-			return s.StagedUpdate(ctx, in.PathGlob, in.DryRun, in.Promote, s.updateMetadataHandler, args, "update_metadata")
+			return s.StagedUpdate(ctx, in.PathGlob, DeployOptions{DryRun: in.DryRun, Promote: in.Promote},
+				s.updateMetadataHandler(req), "update_metadata")
 		})
 
 	addMCPTool(s, srv, API_UPDATE_LINKS,
 		func(ctx context.Context, in mcpUpdateLinksIn) (any, error) {
-			args := map[string]any{"plugin": in.Plugin, "account": in.Account}
-			return s.StagedUpdate(ctx, in.PathGlob, in.DryRun, in.Promote, s.accountLinkHandler, args, "account-link")
+			return s.StagedUpdate(ctx, in.PathGlob, DeployOptions{DryRun: in.DryRun, Promote: in.Promote},
+				s.accountLinkHandler(in.Plugin, in.Account), "account-link")
 		})
 
 	addMCPTool(s, srv, API_REPLICATION_STATUS,

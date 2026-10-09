@@ -76,7 +76,7 @@ func mcpValuesTestApp(t *testing.T, server *Server, appPath, appStar, mcpDoc str
 		}
 	}
 	ctx := system.WithTrustedOperation(t.Context())
-	if _, err := server.CreateApp(ctx, appPath, true, false, &types.CreateAppRequest{SourceUrl: dir, MCP: mcpDoc}); err != nil {
+	if _, err := server.CreateApp(ctx, appPath, DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir, MCP: mcpDoc}); err != nil {
 		t.Fatalf("create app %s: %v", appPath, err)
 	}
 	server.apps.ResetAllAppCache()
@@ -199,5 +199,73 @@ func TestCreateAppPluginMCPArg(t *testing.T) {
 	_, err = plugin.UpdateMCP(context.Background(), pluginCall(types.ADMIN_USER, []any{"/orders", "  "}))
 	if err == nil || !strings.Contains(err.Error(), "mcp value is required") {
 		t.Fatalf("update_mcp with an empty value: %v", err)
+	}
+}
+
+// TestUpdateAuthPlugin checks that update_auth changes the app auth type: the
+// auth type is versioned app metadata, staged and then promoted (it was
+// silently ignored when routed through the app settings update)
+func TestUpdateAuthPlugin(t *testing.T) {
+	server, db, ctx := newApplyTestServer(t)
+	defer db.Close()
+	if err := server.initAuditDB("sqlite:" + filepath.Join(t.TempDir(), "audit.db")); err != nil {
+		t.Fatalf("init audit db: %v", err)
+	}
+	plugin := &openrunAdminPlugin{server: server}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "app.star"), []byte("app = ace.app(\"authApp\")\n"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := server.CreateApp(ctx, "/authapp", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	authOf := func(stage bool) types.AppAuthnType {
+		t.Helper()
+		entry, err := db.GetAppEntry(ctx, types.AppPathDomain{Path: "/authapp"})
+		if err == nil && stage {
+			entry, err = server.getStageAppNoTx(ctx, entry)
+		}
+		if err != nil {
+			t.Fatalf("get app (stage %t): %v", stage, err)
+		}
+		return entry.Metadata.AuthnType
+	}
+
+	if _, err := plugin.UpdateAuth(ctx, pluginCall(types.ADMIN_USER, []any{"/authapp", "system"}, "dry_run", true)); err != nil {
+		t.Fatalf("update_auth dry run: %v", err)
+	}
+	if auth := authOf(false); auth == types.AppAuthnSystem {
+		t.Fatalf("dry run must not change the prod auth, got %s", auth)
+	}
+	// dry_run is the third positional arg, as before promote was added
+	if _, err := plugin.UpdateAuth(ctx, pluginCall(types.ADMIN_USER, []any{"/authapp", "system", true})); err != nil {
+		t.Fatalf("update_auth positional dry run: %v", err)
+	}
+	if auth := authOf(false); auth == types.AppAuthnSystem {
+		t.Fatalf("positional dry run must not change the prod auth, got %s", auth)
+	}
+	if auth := authOf(true); auth == types.AppAuthnSystem {
+		t.Fatalf("positional dry run must not change the stage auth, got %s", auth)
+	}
+
+	if _, err := plugin.UpdateAuth(ctx, pluginCall(types.ADMIN_USER, []any{"/authapp", "system"})); err != nil {
+		t.Fatalf("update_auth: %v", err)
+	}
+	if auth := authOf(false); auth != types.AppAuthnSystem {
+		t.Fatalf("prod auth = %q, want system", auth)
+	}
+	if auth := authOf(true); auth != types.AppAuthnSystem {
+		t.Fatalf("stage auth = %q, want system", auth)
+	}
+
+	if _, err := plugin.UpdateAuth(ctx, pluginCall(types.ADMIN_USER, []any{"/authapp", "none"}, "promote", false)); err != nil {
+		t.Fatalf("update_auth without promote: %v", err)
+	}
+	if auth := authOf(true); auth != types.AppAuthnNone {
+		t.Fatalf("stage auth = %q, want none", auth)
+	}
+	if auth := authOf(false); auth != types.AppAuthnSystem {
+		t.Fatalf("prod auth must stay system without promote, got %q", auth)
 	}
 }

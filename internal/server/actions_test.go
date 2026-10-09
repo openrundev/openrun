@@ -65,7 +65,7 @@ func createActionsTestApp(t *testing.T, server *Server, appPath, auth, mcpDoc st
 		}
 	}
 	ctx := system.WithTrustedOperation(t.Context())
-	if _, err := server.CreateApp(ctx, appPath, true, false, &types.CreateAppRequest{
+	if _, err := server.CreateApp(ctx, appPath, DeployOptions{Approve: true}, &types.CreateAppRequest{
 		SourceUrl: dir, AppAuthn: types.AppAuthnType(auth), MCP: mcpDoc}); err != nil {
 		t.Fatalf("create actions app: %v", err)
 	}
@@ -447,8 +447,7 @@ app = ace.app("files", actions=[ace.action("Report", "/", report),
 			t.Fatal(err)
 		}
 	}
-	if _, err := server.CreateApp(system.WithTrustedOperation(t.Context()), "/apps/files", true, false,
-		&types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin", MCP: `{"source":"actions"}`}); err != nil {
+	if _, err := server.CreateApp(system.WithTrustedOperation(t.Context()), "/apps/files", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin", MCP: `{"source":"actions"}`}); err != nil {
 		t.Fatalf("create app: %v", err)
 	}
 	server.apps.ResetAllAppCache()
@@ -649,8 +648,7 @@ func TestActionsListDoesNotInitializeApps(t *testing.T) {
 	testutil.AssertEqualsInt(t, "stage definitions", 3, len(stageEntry.Metadata.DefinitionActions))
 	plainDir := t.TempDir()
 	testutil.AssertNoError(t, os.WriteFile(filepath.Join(plainDir, "app.star"), []byte(`app = ace.app("plain")`), 0600))
-	_, err = server.CreateApp(system.WithTrustedOperation(t.Context()), "/apps/plain", true, false,
-		&types.CreateAppRequest{SourceUrl: plainDir, AppAuthn: "builtin"})
+	_, err = server.CreateApp(system.WithTrustedOperation(t.Context()), "/apps/plain", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: plainDir, AppAuthn: "builtin"})
 	testutil.AssertNoError(t, err)
 	plainEntry, err := server.db.GetAppEntry(t.Context(), types.AppPathDomain{Path: "/apps/plain"})
 	testutil.AssertNoError(t, err)
@@ -732,9 +730,9 @@ func TestActionsDefinitionsFollowTheSource(t *testing.T) {
 	for _, dir := range []string{prodDir, devDir} {
 		testutil.AssertNoError(t, os.WriteFile(filepath.Join(dir, "app.star"), []byte(appStar(one)), 0600))
 	}
-	_, err := server.CreateApp(ctx, "/apps/prod", true, false, &types.CreateAppRequest{SourceUrl: prodDir, AppAuthn: "builtin"})
+	_, err := server.CreateApp(ctx, "/apps/prod", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: prodDir, AppAuthn: "builtin"})
 	testutil.AssertNoError(t, err)
-	_, err = server.CreateApp(ctx, "/apps/dev", true, false, &types.CreateAppRequest{SourceUrl: devDir, AppAuthn: "builtin", IsDev: true})
+	_, err = server.CreateApp(ctx, "/apps/dev", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: devDir, AppAuthn: "builtin", IsDev: true})
 	testutil.AssertNoError(t, err)
 	server.apps.ResetAllAppCache()
 
@@ -762,7 +760,7 @@ func TestActionsDefinitionsFollowTheSource(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	// Reload and promote: the new version's actions are stored with it
-	_, err = server.ReloadApps(ctx, "/apps/prod", true, false, true, "", "", "", true, false)
+	_, err = server.ReloadApps(ctx, "/apps/prod", DeployOptions{Approve: true, Promote: true, ForceReload: true}, GitRef{})
 	testutil.AssertNoError(t, err)
 	server.apps.ResetAllAppCache()
 	testutil.AssertEqualsString(t, "reloaded", "/apps/dev:one,/apps/dev:two,/apps/prod:one,/apps/prod:two", list())
@@ -799,7 +797,7 @@ func TestActionsManagementMCPConfirm(t *testing.T) {
 		testutil.AssertNoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0600))
 	}
 	ctx := system.WithTrustedOperation(t.Context())
-	_, err := server.CreateApp(ctx, "/apps/hints", true, false, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin"})
+	_, err := server.CreateApp(ctx, "/apps/hints", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin"})
 	testutil.AssertNoError(t, err)
 	server.apps.ResetAllAppCache()
 

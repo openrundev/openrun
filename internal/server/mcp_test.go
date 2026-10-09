@@ -56,8 +56,7 @@ func newMCPTestServer(t *testing.T) (*Server, func(t *testing.T, principal strin
 
 	applyPath := filepath.Join(t.TempDir(), "app.ace")
 	writeSyncApplyFile(t, applyPath, "/apps/mcp-test")
-	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all",
-		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("apply app: %v", err)
 	}
 	server.apps.ResetAllAppCache()
@@ -439,8 +438,7 @@ func TestMCPDestructiveConfirmation(t *testing.T) {
 	for _, path := range []string{"/apps/confirm-accept", "/apps/confirm-decline"} {
 		applyPath := filepath.Join(t.TempDir(), "app.ace")
 		writeSyncApplyFile(t, applyPath, path)
-		if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all",
-			false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+		if _, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 			t.Fatalf("apply %s: %v", path, err)
 		}
 	}

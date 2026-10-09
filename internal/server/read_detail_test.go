@@ -205,8 +205,7 @@ func TestReadDetailJobListBasicView(t *testing.T) {
 	if err := os.WriteFile(applyPath, []byte(applyData), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := server.Apply(system.WithTrustedOperation(context.Background()), types.Transaction{}, applyPath, "all",
-		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(system.WithTrustedOperation(context.Background()), types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("apply jobs app: %v", err)
 	}
 	server.apps.ResetAllAppCache()

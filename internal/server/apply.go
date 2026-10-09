@@ -284,13 +284,13 @@ func jobEntries(appDef *starlarkstruct.Struct) ([]string, error) {
 	})
 }
 
-func (s *Server) setupSource(ctx context.Context, applyPath, branch, commit, gitAuth string, repoCache *RepoCache, isDev bool) (string, string, error) {
+func (s *Server) setupSource(ctx context.Context, applyPath string, ref GitRef, repoCache *RepoCache, isDev bool) (string, string, error) {
 	if !system.IsGit(applyPath) {
 		return filepath.Dir(applyPath), filepath.Base(applyPath), nil
 	}
 
-	branch = cmp.Or(branch, "main")
-	repo, applyFile, _, _, err := repoCache.CheckoutRepo(ctx, applyPath, branch, commit, gitAuth, isDev)
+	branch := cmp.Or(ref.Branch, "main")
+	repo, applyFile, _, _, err := repoCache.CheckoutRepo(ctx, applyPath, branch, ref.Commit, ref.GitAuth, isDev)
 	if err != nil {
 		return "", "", err
 	}
@@ -310,16 +310,17 @@ func (s *Server) setupSource(ctx context.Context, applyPath, branch, commit, git
 // Callers that later run Apply under a database transaction call this first,
 // before opening the transaction, so the git network operations never run
 // while a transaction is held; Apply's own calls then hit the cache.
-func (s *Server) checkoutApplySource(ctx context.Context, applyPath, branch, commit, gitAuth, lastRunCommitId string,
-	forceReload bool, reload types.AppReloadOption, repoCache *RepoCache, isDev bool) (newSha, dir, file string, skipped bool, err error) {
+// Reads opts.Source, ForceReload, Reload, IsDev and LastRunCommitId.
+func (s *Server) checkoutApplySource(ctx context.Context, applyPath string, opts ApplyOptions,
+	repoCache *RepoCache) (newSha, dir, file string, skipped bool, err error) {
 	if system.IsGit(applyPath) {
-		branch = cmp.Or(branch, "main")
-		newSha, err = repoCache.GetSha(ctx, applyPath, branch, gitAuth)
+		opts.Source.Branch = cmp.Or(opts.Source.Branch, "main")
+		newSha, err = repoCache.GetSha(ctx, applyPath, opts.Source.Branch, opts.Source.GitAuth)
 		if err != nil {
 			return "", "", "", false, fmt.Errorf("error getting git commit sha for %s: %w", applyPath, err)
 		}
-		if !forceReload && (reload != types.AppReloadOptionMatched) &&
-			lastRunCommitId != "" && newSha == lastRunCommitId && (commit == "" || commit == lastRunCommitId) {
+		if !opts.ForceReload && (opts.Reload != types.AppReloadOptionMatched) &&
+			opts.LastRunCommitId != "" && newSha == opts.LastRunCommitId && (opts.Source.Commit == "" || opts.Source.Commit == opts.LastRunCommitId) {
 			// If no commit is specified, and the current version is the same as the latest commit, skip apply
 			// Only schedule sync passes in the lastRunCommitId, so this does not happen for normal apply
 			s.Debug().Msgf("Already applied commit for %s, skipping apply", applyPath)
@@ -327,7 +328,7 @@ func (s *Server) checkoutApplySource(ctx context.Context, applyPath, branch, com
 		}
 	}
 
-	dir, file, err = s.setupSource(ctx, applyPath, branch, commit, gitAuth, repoCache, isDev)
+	dir, file, err = s.setupSource(ctx, applyPath, opts.Source, repoCache, opts.IsDev)
 	if err != nil {
 		return "", "", "", false, err
 	}
@@ -401,15 +402,19 @@ func (s *Server) loadApplyConfigs(sourceFS *appfs.SourceFs, file, applyPath, bra
 	return applyConfig, bindingConfig, bindingList, nil
 }
 
-func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath string, appPathGlob string, approve, dryRun, promote bool,
-	reload types.AppReloadOption, branch, commit, gitAuth string, clobber,
-	forceReload, verify bool, lastRunCommitId string, repoCache *RepoCache, isDev bool) (_ *types.AppApplyResponse, _ []types.AppPathDomain, retErr error) {
+// Apply applies the declarations in the apply file at applyPath (a git url or
+// a server local path) to the apps matching appPathGlob. Reads all the opts
+// fields: the deploy flags apply to every matched app (Verify is also
+// enabled per app by its declaration), Source is the apply file's revision.
+// inputTx and the repo cache are passed in by sync runs, nil otherwise
+func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath string, appPathGlob string,
+	opts ApplyOptions, repoCache *RepoCache) (_ *types.AppApplyResponse, _ []types.AppPathDomain, retErr error) {
 	var tx types.Transaction
 	var err error
-	verify = verify && !dryRun
+	opts.Verify = opts.Verify && !opts.DryRun
 
-	if reload == "" {
-		reload = types.AppReloadOptionUpdated
+	if opts.Reload == "" {
+		opts.Reload = types.AppReloadOptionUpdated
 	}
 
 	if repoCache == nil {
@@ -426,18 +431,17 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	// repo cache the same way beforehand (see runSyncJob), making the calls
 	// below cache hits.
 	if system.IsGit(applyPath) {
-		branch = cmp.Or(branch, "main")
+		opts.Source.Branch = cmp.Or(opts.Source.Branch, "main")
 	} else {
-		branch = ""
+		opts.Source.Branch = ""
 	}
-	newSha, dir, file, skipped, err := s.checkoutApplySource(ctx, applyPath, branch, commit, gitAuth,
-		lastRunCommitId, forceReload, reload, repoCache, isDev)
+	newSha, dir, file, skipped, err := s.checkoutApplySource(ctx, applyPath, opts, repoCache)
 	if err != nil {
 		return nil, nil, err
 	}
 	if skipped {
 		return &types.AppApplyResponse{
-			DryRun:       dryRun,
+			DryRun:       opts.DryRun,
 			SkippedApply: true,
 			CommitId:     newSha,
 		}, nil, nil
@@ -449,14 +453,14 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	}
 	defer sourceFS.Close() //nolint:errcheck
 
-	applyConfig, bindingConfig, bindingList, err := s.loadApplyConfigs(sourceFS, file, applyPath, branch, isDev)
+	applyConfig, bindingConfig, bindingList, err := s.loadApplyConfigs(sourceFS, file, applyPath, opts.Source.Branch, opts.IsDev)
 	if err != nil {
 		return nil, nil, err
 	}
 	s.Trace().Msgf("Applying %d apps and %d bindings", len(applyConfig), len(bindingList))
 
 	filteredApps := make([]types.AppPathDomain, 0, len(applyConfig))
-	verifyRequested := verify
+	verifyRequested := opts.Verify
 	for appPathDomain := range applyConfig {
 		match, err := rbac.MatchGlob(appPathGlob, appPathDomain)
 		if err != nil {
@@ -468,7 +472,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		verifyRequested = verifyRequested || applyConfig[appPathDomain].Verify
 		filteredApps = append(filteredApps, appPathDomain)
 	}
-	s.prefetchApplyAppSources(ctx, applyConfig, filteredApps, repoCache, isDev)
+	s.prefetchApplyAppSources(ctx, applyConfig, filteredApps, repoCache, opts.IsDev)
 
 	// The pre-transaction pass: the source of the apps being created or
 	// reloaded is checked out and compressed, and their deploy gates
@@ -492,12 +496,12 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	// the commit (and therefore the rollback) and we just register into its
 	// scope. The scope is opened before the transaction so the transaction is
 	// rolled back before the external cleanup runs
-	ctx, deployScope := s.beginDeployScope(ctx, inputTx.Tx == nil, dryRun)
+	ctx, deployScope := s.beginDeployScope(ctx, inputTx.Tx == nil, opts.DryRun)
 	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 	bindingAccounts := deployScope.accounts
 
-	if inputTx.Tx == nil && !dryRun {
-		ownPreps, err = s.prepareApplyDeploys(ctx, applyConfig, filteredApps, approve, promote, verify, reload, repoCache, forceReload, isDev)
+	if inputTx.Tx == nil && !opts.DryRun {
+		ownPreps, err = s.prepareApplyDeploys(ctx, applyConfig, filteredApps, opts, repoCache)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -540,7 +544,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	// as seen by the transaction. Bindings declared in the apply file are
 	// enforced separately below (binding:create/binding:update), with the
 	// same authority the direct binding APIs require
-	if err := s.enforceApplyAppPerms(ctx, filteredApps, allAppsMap, approve, promote); err != nil {
+	if err := s.enforceApplyAppPerms(ctx, filteredApps, allAppsMap, opts.DeployOptions); err != nil {
 		return nil, nil, err
 	}
 
@@ -624,7 +628,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 				return nil, nil, err
 			}
 		}
-		updated, promoted, err := s.applyBindingUpdate(ctx, tx, bindingAccounts, applyInfo, promote, clobber, forceReload)
+		updated, promoted, err := s.applyBindingUpdate(ctx, tx, bindingAccounts, applyInfo, opts)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -640,15 +644,15 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	for _, newApp := range newApps {
 		s.Trace().Msgf("Applying create app %s", newApp)
 		applyInfo := applyConfig[newApp]
-		if isDev {
-			applyInfo.IsDev = isDev // Override the dev status from the apply command cli
+		if opts.IsDev {
+			applyInfo.IsDev = opts.IsDev // Override the dev status from the apply command cli
 		}
-		appVerify := verify || applyInfo.Verify
-		res, err := s.CreateAppTx(ctx, tx, newApp.String(), approve, dryRun, applyInfo, repoCache, bindingAccounts, preps[newApp])
+		appVerify := opts.Verify || applyInfo.Verify
+		res, err := s.CreateAppTx(ctx, tx, newApp.String(), opts.DeployOptions, applyInfo, repoCache, bindingAccounts, preps[newApp])
 		if err != nil {
 			return nil, nil, err
 		}
-		if appVerify && !dryRun {
+		if appVerify && !opts.DryRun {
 			if err := s.verifyCreatedApp(ctx, tx, newApp, preps[newApp]); err != nil {
 				return nil, nil, err
 			}
@@ -660,9 +664,9 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	for _, updateApp := range updatedApps {
 		s.Trace().Msgf("Applying update app %s", updateApp)
 		applyInfo := applyConfig[updateApp]
-		appVerify := verify || applyInfo.Verify
-		applyResult, err := s.applyAppUpdate(ctx, tx, updateApp, applyInfo, approve, dryRun,
-			promote, reload, clobber, repoCache, forceReload, appVerify, bindingAccounts, preps[updateApp])
+		appOpts := opts
+		appOpts.Verify = opts.Verify || applyInfo.Verify
+		applyResult, err := s.applyAppUpdate(ctx, tx, updateApp, applyInfo, appOpts, repoCache, bindingAccounts, preps[updateApp])
 		if err != nil {
 			return nil, nil, err
 		}
@@ -678,7 +682,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		}
 	}
 
-	if verifyRequested && !dryRun {
+	if verifyRequested && !opts.DryRun {
 		if err := s.reapplyPendingBindingGrants(ctx, tx, bindingAccounts, bindingList); err != nil {
 			return nil, nil, err
 		}
@@ -702,10 +706,10 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	allUpdatedApps = slices.Collect(maps.Keys(allAppMap))
 
 	if inputTx.Tx == nil {
-		if err := s.CompleteTransaction(ctx, tx, allUpdatedApps, dryRun, "apply"); err != nil {
+		if err := s.CompleteTransaction(ctx, tx, allUpdatedApps, opts.DryRun, "apply"); err != nil {
 			return nil, nil, err
 		}
-		committed = !dryRun
+		committed = !opts.DryRun
 	}
 	// Apply succeeded and (if we own it) the DB transaction has committed: keep
 	// the binding accounts and grants created on the services, run the deferred
@@ -716,7 +720,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	}
 
 	ret := &types.AppApplyResponse{
-		DryRun:                dryRun,
+		DryRun:                opts.DryRun,
 		CommitId:              newSha,
 		SkippedApply:          false,
 		CreateResults:         createResults,
@@ -776,11 +780,12 @@ func convertToStringMap(input map[string]any) (map[string]string, error) {
 // applyAppUpdate applies a declaration to an existing app: the declared
 // properties are merged onto the stage instance (three way, against the
 // previously applied declaration), and the code reloaded when the reload
-// option asks for it. prep is the pre-pass result for the app's reload
+// option asks for it. prep is the pre-pass result for the app's reload.
+// Reads all the opts flags except Source and IsDev; the reload uses the
+// declared revision of the app
 func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPathDomain types.AppPathDomain, newInfo *types.CreateAppRequest,
-	approve, dryRun, promote bool, reload types.AppReloadOption, clobber bool, repoCache *RepoCache, forceReload, verify bool,
-	bindingAccounts *bindingAccountManager, prep *appPrep) (*types.AppApplyResult, error) {
-	verify = verify && !dryRun
+	opts ApplyOptions, repoCache *RepoCache, bindingAccounts *bindingAccountManager, prep *appPrep) (*types.AppApplyResult, error) {
+	opts.Verify = opts.Verify && !opts.DryRun
 	liveApp, err := s.GetAppEntry(ctx, tx, appPathDomain)
 	if err != nil {
 		return nil, fmt.Errorf("app missing during update %w", err)
@@ -805,14 +810,14 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	}
 	newInfo.AppAuthn = cmp.Or(newInfo.AppAuthn, types.AppAuthnDefault)
 	newInfo.Bindings, err = s.resolveAppBindings(ctx, tx, autoBindingAppID(liveApp), newInfo.Bindings,
-		liveApp.Metadata.Bindings, dryRun, bindingAccounts)
+		liveApp.Metadata.Bindings, opts.DryRun, bindingAccounts)
 	if err != nil {
 		return nil, err
 	}
 
 	authChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
 		return info.AppAuthn
-	}, newInfo.AppAuthn, liveApp.Metadata.AuthnType, clobber)
+	}, newInfo.AppAuthn, liveApp.Metadata.AuthnType, opts.Clobber)
 	if authChanged {
 		if err := s.validateAppAuthnType(string(newInfo.AppAuthn)); err != nil {
 			return nil, err
@@ -822,7 +827,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 
 	gitAuthChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
 		return info.GitAuthName
-	}, newInfo.GitAuthName, liveApp.Metadata.GitAuthName, clobber)
+	}, newInfo.GitAuthName, liveApp.Metadata.GitAuthName, opts.Clobber)
 	if gitAuthChanged {
 		liveApp.Metadata.GitAuthName = newInfo.GitAuthName
 	}
@@ -833,7 +838,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	}
 	mcpChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
 		return info.MCP
-	}, newInfo.MCP, liveMCP, clobber)
+	}, newInfo.MCP, liveMCP, opts.Clobber)
 	if mcpChanged {
 		mcpConfig, err := s.parseAppMCPConfig(newInfo.MCP)
 		if err != nil {
@@ -847,7 +852,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 
 	specChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
 		return info.Spec
-	}, newInfo.Spec, liveApp.Metadata.Spec, clobber)
+	}, newInfo.Spec, liveApp.Metadata.Spec, opts.Clobber)
 	if specChanged {
 		if newInfo.Spec == "" {
 			// Not nil, setupApp dereferences the spec files
@@ -866,7 +871,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 
 	gitBranchChanged := checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
 		return info.GitBranch
-	}, newInfo.GitBranch, liveApp.Metadata.VersionMetadata.GitBranch, clobber)
+	}, newInfo.GitBranch, liveApp.Metadata.VersionMetadata.GitBranch, opts.Clobber)
 	if gitBranchChanged {
 		liveApp.Metadata.VersionMetadata.GitBranch = newInfo.GitBranch
 	}
@@ -874,7 +879,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	if newInfo.GitCommit != "" {
 		gitCommitChanged = checkPropertyChanged(oldInfo, func(info *types.CreateAppRequest) any {
 			return info.GitCommit
-		}, newInfo.GitCommit, liveApp.Metadata.VersionMetadata.GitCommit, clobber)
+		}, newInfo.GitCommit, liveApp.Metadata.VersionMetadata.GitCommit, opts.Clobber)
 		if gitCommitChanged {
 			liveApp.Metadata.VersionMetadata.GitCommit = newInfo.GitCommit
 		}
@@ -898,31 +903,31 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	if oldInfo != nil {
 		oldParams = oldInfo.ParamValues
 	}
-	paramsChanged := mergeMap(oldParams, newInfo.ParamValues, liveApp.Metadata.ParamValues, clobber)
+	paramsChanged := mergeMap(oldParams, newInfo.ParamValues, liveApp.Metadata.ParamValues, opts.Clobber)
 
 	var oldContOptions map[string]string
 	if oldInfo != nil {
 		oldContOptions = oldInfo.ContainerOptions
 	}
-	contConfigChanged := mergeMap(oldContOptions, newInfo.ContainerOptions, liveApp.Metadata.ContainerOptions, clobber)
+	contConfigChanged := mergeMap(oldContOptions, newInfo.ContainerOptions, liveApp.Metadata.ContainerOptions, opts.Clobber)
 
 	var oldContArgs map[string]string
 	if oldInfo != nil {
 		oldContArgs = oldInfo.ContainerArgs
 	}
-	contArgsChanged := mergeMap(oldContArgs, newInfo.ContainerArgs, liveApp.Metadata.ContainerArgs, clobber)
+	contArgsChanged := mergeMap(oldContArgs, newInfo.ContainerArgs, liveApp.Metadata.ContainerArgs, opts.Clobber)
 
 	var oldContVolumes []string
 	if oldInfo != nil {
 		oldContVolumes = oldInfo.ContainerVolumes
 	}
-	contVolsChanged := mergeSlice(oldContVolumes, newInfo.ContainerVolumes, &liveApp.Metadata.ContainerVolumes, clobber)
+	contVolsChanged := mergeSlice(oldContVolumes, newInfo.ContainerVolumes, &liveApp.Metadata.ContainerVolumes, opts.Clobber)
 
 	var oldSidecars []string
 	if oldInfo != nil {
 		oldSidecars = oldInfo.Sidecars
 	}
-	sidecarsChanged, err := mergeSidecars(oldSidecars, newInfo.Sidecars, &liveApp.Metadata.Sidecars, clobber)
+	sidecarsChanged, err := mergeSidecars(oldSidecars, newInfo.Sidecars, &liveApp.Metadata.Sidecars, opts.Clobber)
 	if err != nil {
 		return nil, fmt.Errorf("merging sidecars for %s: %w", appPathDomain, err)
 	}
@@ -931,7 +936,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	if oldInfo != nil {
 		oldJobs = oldInfo.Jobs
 	}
-	jobsChanged, err := mergeJobs(oldJobs, newInfo.Jobs, &liveApp.Metadata.Jobs, clobber)
+	jobsChanged, err := mergeJobs(oldJobs, newInfo.Jobs, &liveApp.Metadata.Jobs, opts.Clobber)
 	if err != nil {
 		return nil, fmt.Errorf("merging jobs for %s: %w", appPathDomain, err)
 	}
@@ -945,13 +950,13 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 	if oldInfo != nil {
 		oldAppConfig = oldInfo.AppConfig
 	}
-	appConfigChanged := mergeMap(oldAppConfig, newInfo.AppConfig, liveApp.Metadata.AppConfig, clobber)
+	appConfigChanged := mergeMap(oldAppConfig, newInfo.AppConfig, liveApp.Metadata.AppConfig, opts.Clobber)
 
 	var oldBindings []string
 	if oldInfo != nil {
 		oldBindings = oldInfo.Bindings
 	}
-	bindingsChanged := mergeSlice(oldBindings, newInfo.Bindings, &liveApp.Metadata.Bindings, clobber)
+	bindingsChanged := mergeSlice(oldBindings, newInfo.Bindings, &liveApp.Metadata.Bindings, opts.Clobber)
 
 	var approvalResult *types.ApproveResult
 
@@ -965,21 +970,20 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		}
 
 		updatedApps = append(updatedApps, liveApp.AppPathDomain())
-		if promote && !liveApp.IsDev {
+		if opts.Promote && !liveApp.IsDev {
 			updatedApps = append(updatedApps, prodApp.AppPathDomain())
 		}
 	}
 
-	reloadApp := reload == types.AppReloadOptionMatched || updated && reload == types.AppReloadOptionUpdated
+	reloadApp := opts.Reload == types.AppReloadOptionMatched || updated && opts.Reload == types.AppReloadOptionUpdated
 	promoteApp := false
 	ret := &types.AppApplyResult{
-		DryRun:        dryRun,
+		DryRun:        opts.DryRun,
 		ApproveResult: approvalResult,
 	}
 	if reloadApp {
 		// Reload does the version increment and promotion
-		reloadResult, err := s.ReloadApp(ctx, tx, prodApp, liveApp, approve, dryRun, promote,
-			newInfo.GitBranch, newInfo.GitCommit, newInfo.GitAuthName, repoCache, forceReload, verify, prep)
+		reloadResult, err := s.ReloadApp(ctx, tx, prodApp, liveApp, opts.DeployOptions, createRequestGitRef(newInfo), repoCache, prep)
 		if err != nil {
 			return nil, err
 		}
@@ -1006,7 +1010,7 @@ func (s *Server) applyAppUpdate(ctx context.Context, tx types.Transaction, appPa
 		if err := s.db.UpdateAppMetadata(ctx, tx, liveApp); err != nil {
 			return nil, err
 		}
-		if promote && !liveApp.IsDev {
+		if opts.Promote && !liveApp.IsDev {
 			if err = s.promoteApp(ctx, tx, liveApp, prodApp); err != nil {
 				return nil, err
 			}
@@ -1032,8 +1036,12 @@ func prepareBindingApplyInfo(newInfo *types.CreateBindingRequest) error {
 	return nil
 }
 
+// applyBindingUpdate applies a binding declaration to an existing binding
+// (three way merge onto its staged metadata, opts.Clobber overwriting
+// changes made outside the apply file) and promotes it with opts.Promote.
+// opts.ForceReload re-applies all the grants, not just the changed ones
 func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, bindingAccounts *bindingAccountManager, newInfo *types.CreateBindingRequest,
-	promote, clobber, reapplyAll bool) (bool, bool, error) {
+	opts ApplyOptions) (bool, bool, error) {
 	if err := prepareBindingApplyInfo(newInfo); err != nil {
 		return false, false, err
 	}
@@ -1075,7 +1083,7 @@ func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, b
 	if configChanged {
 		return false, false, fmt.Errorf("binding config updates are not supported for existing binding %s", newInfo.Path)
 	}
-	grantsChanged := mergeSlice(oldGrants, newInfo.Grants, &binding.StagedMetadata.Grants, clobber)
+	grantsChanged := mergeSlice(oldGrants, newInfo.Grants, &binding.StagedMetadata.Grants, opts.Clobber)
 	applyInfoChanged := string(binding.StagedMetadata.ApplyInfo) != string(newInfo.ApplyInfo)
 
 	stagingGrantsAppliedChanged := false
@@ -1091,7 +1099,7 @@ func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, b
 				return false, false, fmt.Errorf("error getting staging service: %w", err)
 			}
 		}
-		grantsApplied, err := bindingAccounts.applyGrants(ctx, stagingService, binding, derivedFrom, true, reapplyAll)
+		grantsApplied, err := bindingAccounts.applyGrants(ctx, stagingService, binding, derivedFrom, true, opts.ForceReload)
 		if err != nil {
 			return false, false, fmt.Errorf("error applying staging grants: %w", err)
 		}
@@ -1107,10 +1115,10 @@ func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, b
 	}
 
 	promoted := false
-	if promote && !stringMapEqual(binding.Metadata.Config, binding.StagedMetadata.Config) {
+	if opts.Promote && !stringMapEqual(binding.Metadata.Config, binding.StagedMetadata.Config) {
 		return false, false, fmt.Errorf("binding config promotion is not supported for existing binding %s", newInfo.Path)
 	}
-	if promote && !bindingMetadataPromoteEqual(binding.Metadata, binding.StagedMetadata) {
+	if opts.Promote && !bindingMetadataPromoteEqual(binding.Metadata, binding.StagedMetadata) {
 		binding.Metadata.Config = maps.Clone(binding.StagedMetadata.Config)
 		binding.Metadata.Grants = append([]string{}, binding.StagedMetadata.Grants...)
 		binding.Metadata.ApplyInfo = append([]byte{}, binding.StagedMetadata.ApplyInfo...)
@@ -1119,7 +1127,7 @@ func (s *Server) applyBindingUpdate(ctx context.Context, tx types.Transaction, b
 			if err != nil {
 				return false, false, err
 			}
-			binding.Metadata.GrantsApplied, err = bindingAccounts.applyGrants(ctx, service, binding, derivedFrom, false, reapplyAll)
+			binding.Metadata.GrantsApplied, err = bindingAccounts.applyGrants(ctx, service, binding, derivedFrom, false, opts.ForceReload)
 			if err != nil {
 				return false, false, err
 			}
@@ -1656,8 +1664,9 @@ func bindingDefToApplyInfo(bindingDef *starlarkstruct.Struct) (*types.CreateBind
 // like a declared base binding with derived bindings outside the file, rolls
 // the whole command back. The deleted apps' runtime assets are removed after
 // the commit, like an imperative app delete.
+// ref is the apply file's revision.
 func (s *Server) ApplyDelete(ctx context.Context, applyPath, appPathGlob string, dryRun bool,
-	branch, commit, gitAuth string) (*types.ApplyDeleteResponse, error) {
+	ref GitRef) (*types.ApplyDeleteResponse, error) {
 	repoCache, err := NewRepoCache(s)
 	if err != nil {
 		return nil, err
@@ -1665,14 +1674,14 @@ func (s *Server) ApplyDelete(ctx context.Context, applyPath, appPathGlob string,
 	defer repoCache.Cleanup()
 
 	if system.IsGit(applyPath) {
-		branch = cmp.Or(branch, "main")
+		ref.Branch = cmp.Or(ref.Branch, "main")
 	} else {
-		branch = ""
+		ref.Branch = ""
 	}
 	// The checkout runs before the transaction is opened, so no git network
 	// operations happen while the transaction below is held
-	_, dir, file, _, err := s.checkoutApplySource(ctx, applyPath, branch, commit, gitAuth,
-		"", false, types.AppReloadOptionUpdated, repoCache, false)
+	_, dir, file, _, err := s.checkoutApplySource(ctx, applyPath,
+		ApplyOptions{Source: ref, Reload: types.AppReloadOptionUpdated}, repoCache)
 	if err != nil {
 		return nil, err
 	}
@@ -1683,7 +1692,7 @@ func (s *Server) ApplyDelete(ctx context.Context, applyPath, appPathGlob string,
 	}
 	defer sourceFS.Close() //nolint:errcheck
 
-	applyConfig, _, bindingList, err := s.loadApplyConfigs(sourceFS, file, applyPath, branch, false)
+	applyConfig, _, bindingList, err := s.loadApplyConfigs(sourceFS, file, applyPath, ref.Branch, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1837,7 +1846,7 @@ func (s *Server) ApplyDelete(ctx context.Context, applyPath, appPathGlob string,
 // before the pre-pass, which runs the apps' before_deploy jobs, and again
 // inside the transaction
 func (s *Server) enforceApplyAppPerms(ctx context.Context, appPaths []types.AppPathDomain,
-	allAppsMap map[types.AppPathDomain]types.AppInfo, approve, promote bool) error {
+	allAppsMap map[types.AppPathDomain]types.AppInfo, opts DeployOptions) error {
 	if !s.rbacManager.APIEnforced(ctx) {
 		return nil
 	}
@@ -1850,12 +1859,12 @@ func (s *Server) enforceApplyAppPerms(ctx context.Context, appPaths []types.AppP
 		if err := s.enforceAppPerm(ctx, types.PermissionApply, appPath, owner); err != nil {
 			return err
 		}
-		if approve {
+		if opts.Approve {
 			if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPath, owner); err != nil {
 				return err
 			}
 		}
-		if promote {
+		if opts.Promote {
 			if err := s.enforceAppPerm(ctx, types.PermissionPromote, appPath, owner); err != nil {
 				return err
 			}
@@ -1872,8 +1881,7 @@ func (s *Server) enforceApplyAppPerms(ctx context.Context, appPaths []types.AppP
 // for the transaction, on error as well (partial): the caller owns them (see
 // deployPreps.finish) and releases them after the deploy scope's rollback
 func (s *Server) prepareApplyDeploys(ctx context.Context, applyConfig map[types.AppPathDomain]*types.CreateAppRequest,
-	filteredApps []types.AppPathDomain, approve, promote, verify bool, reload types.AppReloadOption, repoCache *RepoCache,
-	forceReload, isDev bool) (deployPreps, error) {
+	filteredApps []types.AppPathDomain, opts ApplyOptions, repoCache *RepoCache) (deployPreps, error) {
 	// The pass loads and runs code from the declared apps (their
 	// before_deploy jobs, approved in memory with approve), so the caller's
 	// authority over every affected app is checked first
@@ -1885,7 +1893,7 @@ func (s *Server) prepareApplyDeploys(ctx context.Context, applyConfig map[types.
 	for _, appInfo := range allApps {
 		allAppsMap[appInfo.AppPathDomain] = appInfo
 	}
-	if err := s.enforceApplyAppPerms(ctx, filteredApps, allAppsMap, approve, promote); err != nil {
+	if err := s.enforceApplyAppPerms(ctx, filteredApps, allAppsMap, opts.DeployOptions); err != nil {
 		return nil, err
 	}
 
@@ -1898,10 +1906,11 @@ func (s *Server) prepareApplyDeploys(ctx context.Context, applyConfig map[types.
 			// A new app. The apply create runs under the apply context marker
 			// (see Apply); the pre-pass app object needs no apply info
 			applyInfo := applyConfig[appPathDomain]
-			if isDev {
+			if opts.IsDev {
 				applyInfo.IsDev = true // Override the dev status from the apply command cli, as the create does
 			}
-			prep, err := s.prepareCreate(ctx, appPathDomain.String(), approve, false, verify || applyInfo.Verify, applyInfo, repoCache)
+			prep, err := s.prepareCreate(ctx, appPathDomain.String(),
+				DeployOptions{Approve: opts.Approve, Verify: opts.Verify || applyInfo.Verify}, applyInfo, repoCache)
 			if prep != nil {
 				preps[appPathDomain] = prep
 			}
@@ -1910,11 +1919,11 @@ func (s *Server) prepareApplyDeploys(ctx context.Context, applyConfig map[types.
 			}
 			continue
 		}
-		if reload == types.AppReloadOptionNone || entry.IsDev {
+		if opts.Reload == types.AppReloadOptionNone || entry.IsDev {
 			continue
 		}
 		newInfo := applyConfig[appPathDomain]
-		if reload == types.AppReloadOptionUpdated {
+		if opts.Reload == types.AppReloadOptionUpdated {
 			// reload=updated reloads only apps whose declaration changed; an
 			// unchanged stored apply info means no reload, so no gate
 			stageEntry, err := s.getStageAppNoTx(ctx, entry)
@@ -1929,9 +1938,9 @@ func (s *Server) prepareApplyDeploys(ctx context.Context, applyConfig map[types.
 				continue
 			}
 		}
-		appVerify := verify || newInfo.Verify
-		prep, err := s.prepareDeploy(ctx, appPathDomain, approve, promote, appVerify, newInfo.GitBranch, newInfo.GitCommit,
-			newInfo.GitAuthName, repoCache, forceReload, "apply")
+		appOpts := opts.DeployOptions
+		appOpts.Verify = opts.Verify || newInfo.Verify
+		prep, err := s.prepareDeploy(ctx, appPathDomain, appOpts, createRequestGitRef(newInfo), repoCache, "apply")
 		if err != nil {
 			return preps, err
 		}

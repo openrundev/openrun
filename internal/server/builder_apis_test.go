@@ -330,8 +330,7 @@ func TestBuilderFirstPublishConflicts(t *testing.T) {
 	// Create an app at /apps/taken (trusted, no RBAC)
 	applyPath := filepath.Join(t.TempDir(), "app.ace")
 	writeSyncApplyFile(t, applyPath, "/apps/taken")
-	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all",
-		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	server.apps.ResetAllAppCache()

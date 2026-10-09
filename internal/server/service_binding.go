@@ -1166,8 +1166,17 @@ func mergeGrantUpdates(current, addGrants, deleteGrants []string) []string {
 	return merged
 }
 
-func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBindingRequest, dryRun, promote, reapplyAll bool) (_ *types.Binding, retErr error) {
-	if len(updateRequest.AddGrants) == 0 && len(updateRequest.DeleteGrants) == 0 && !promote && !reapplyAll {
+// BindingUpdateOptions are the options of a binding grant update
+type BindingUpdateOptions struct {
+	DryRun     bool // validate and report, nothing is committed or applied on the services
+	Promote    bool // promote the staged grants to prod
+	ReapplyAll bool // apply every grant on the services again, not just the changed ones
+}
+
+// UpdateBinding updates a binding's staged grants, applying them on the
+// staging service, and with opts.Promote promotes them to prod
+func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBindingRequest, opts BindingUpdateOptions) (_ *types.Binding, retErr error) {
+	if len(updateRequest.AddGrants) == 0 && len(updateRequest.DeleteGrants) == 0 && !opts.Promote && !opts.ReapplyAll {
 		return nil, fmt.Errorf("expected at least one grant update, promote, or reapply-all")
 	}
 
@@ -1208,17 +1217,17 @@ func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBi
 		}
 	}
 
-	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	ctx, deployScope := s.beginDeployScope(ctx, true, opts.DryRun)
 	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
-	binding.StagedMetadata.GrantsApplied, err = deployScope.accounts.applyGrants(ctx, stagingService, binding, derivedFrom, true, reapplyAll)
+	binding.StagedMetadata.GrantsApplied, err = deployScope.accounts.applyGrants(ctx, stagingService, binding, derivedFrom, true, opts.ReapplyAll)
 	if err != nil {
 		return nil, fmt.Errorf("error applying staging grants: %w", err)
 	}
 
-	if promote {
+	if opts.Promote {
 		binding.Metadata.Grants = binding.StagedMetadata.Grants
-		binding.Metadata.GrantsApplied, err = deployScope.accounts.applyGrants(ctx, service, binding, derivedFrom, false, reapplyAll)
+		binding.Metadata.GrantsApplied, err = deployScope.accounts.applyGrants(ctx, service, binding, derivedFrom, false, opts.ReapplyAll)
 		if err != nil {
 			return nil, err
 		}
@@ -1228,7 +1237,7 @@ func (s *Server) UpdateBinding(ctx context.Context, updateRequest types.UpdateBi
 		return nil, err
 	}
 
-	if dryRun {
+	if opts.DryRun {
 		return binding, nil
 	}
 	if err := tx.Commit(); err != nil {

@@ -108,14 +108,14 @@ func TestSyncBackgroundPreservesCredentialCeiling(t *testing.T) {
 		t.Fatal(err)
 	}
 	creatorCtx := system.WithApiScopes(rbacEnforcedCtx(ctx, types.ADMIN_USER), []string{"sync:create"})
-	response, err := server.CreateSyncEntry(creatorCtx, applyPath, true, false, &types.SyncMetadata{})
+	response, err := server.CreateSyncEntry(creatorCtx, applyPath, SyncCreateOptions{Scheduled: true}, &types.SyncMetadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	entry := getSyncEntryForTest(t, db, ctx, response.Id)
 	writeSyncApplyFile(t, applyPath, "/apps/denied")
 	jobCtx := server.attachSyncRBAC(newBackgroundOperationContext(entry.UserID), entry)
-	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, nil)
+	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, syncRunOptions{CheckCommitHash: true}, nil)
 	if err != nil || !strings.Contains(status.Error, string(types.PermissionApply)) {
 		t.Fatalf("background sync escaped credential ceiling: status %+v, %v", status, err)
 	}
@@ -148,7 +148,7 @@ app = ace.app("job authorization", jobs=[ace.job("inspect", run=inspect), ace.jo
 	if err := os.WriteFile(filepath.Join(source, "app.star"), []byte(code), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.CreateApp(trusted, "/apps/jobs", true, false, &types.CreateAppRequest{SourceUrl: source}); err != nil {
+	if _, err := server.CreateApp(trusted, "/apps/jobs", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: source}); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
@@ -164,7 +164,7 @@ app = ace.app("job authorization", jobs=[ace.job("inspect", run=inspect), ace.jo
 			if !wait {
 				ctx = context.WithValue(ctx, types.APP_PATH_DOMAIN, types.AppPathDomain{Path: "/caller"})
 			}
-			response, err := server.RunJob(ctx, "/apps/jobs", "inspect", false, wait, false, nil)
+			response, err := server.RunJob(ctx, "/apps/jobs", "inspect", JobRunOptions{Wait: wait})
 			cancel()
 			if err != nil {
 				t.Fatal(err)
@@ -247,7 +247,7 @@ app = ace.app("job authorization", jobs=[ace.job("inspect", run=inspect), ace.jo
 
 	// Detaching an asynchronous job from its HTTP request must retain the
 	// upstream job registry's shutdown cancellation and cleanup tracking.
-	response, err := server.RunJob(rbacEnforcedCtx(trusted, "runner"), "/apps/jobs", "slow", false, false, false, nil)
+	response, err := server.RunJob(rbacEnforcedCtx(trusted, "runner"), "/apps/jobs", "slow", JobRunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -924,7 +924,7 @@ app = ace.app("audit isolation", jobs=[ace.job("reveal", run=reveal)],
 	if err := os.WriteFile(filepath.Join(source, "app.star"), []byte(code), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.CreateApp(trusted, "/jobs/audit", true, false, &types.CreateAppRequest{SourceUrl: source}); err != nil {
+	if _, err := server.CreateApp(trusted, "/jobs/audit", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: source}); err != nil {
 		t.Fatal(err)
 	}
 	return server, db, trusted
@@ -941,7 +941,7 @@ func TestJobKeepsApiSurfacePolicy(t *testing.T) {
 		{InvokerRest, "revealed"},
 	} {
 		ctx := server.apiTokenRequestContext(trusted, types.ADMIN_USER, nil, scopes, tc.invoker, nil)
-		response, err := server.RunJob(ctx, "/jobs/audit", "reveal", false, true, false, nil)
+		response, err := server.RunJob(ctx, "/jobs/audit", "reveal", JobRunOptions{Wait: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -957,7 +957,7 @@ func TestAsyncSecretRevealDoesNotMutateRequestAudit(t *testing.T) {
 	shared := &ContextShared{Operation: "run_job", Target: "/jobs/audit"}
 	ctx := context.WithValue(rbacEnforcedCtx(trusted, types.ADMIN_USER), types.SHARED, shared)
 	ctx = system.WithApiScopes(ctx, []string{"app:update", "secret:reveal"})
-	response, err := server.RunJob(ctx, "/jobs/audit", "reveal", false, false, false, nil)
+	response, err := server.RunJob(ctx, "/jobs/audit", "reveal", JobRunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

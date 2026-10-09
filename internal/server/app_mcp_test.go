@@ -248,15 +248,15 @@ func TestAggMCPStagingView(t *testing.T) {
 	dir, devDir := t.TempDir(), t.TempDir()
 	testutil.AssertNoError(t, os.WriteFile(filepath.Join(dir, "app.star"), []byte(appStar("prod", one)), 0600))
 	testutil.AssertNoError(t, os.WriteFile(filepath.Join(devDir, "app.star"), []byte(appStar("dev", one)), 0600))
-	_, err := server.CreateApp(ctx, "/apps/stg", true, false, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin"})
+	_, err := server.CreateApp(ctx, "/apps/stg", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin"})
 	testutil.AssertNoError(t, err)
-	_, err = server.CreateApp(ctx, "/apps/dev", true, false, &types.CreateAppRequest{SourceUrl: devDir, AppAuthn: "builtin", IsDev: true})
+	_, err = server.CreateApp(ctx, "/apps/dev", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: devDir, AppAuthn: "builtin", IsDev: true})
 	testutil.AssertNoError(t, err)
 
 	// A new version in staging only: another action, another result
 	testutil.AssertNoError(t, os.WriteFile(filepath.Join(dir, "app.star"),
 		[]byte(appStar("staging", one+`, ace.action("Two", "/two", handler)`)), 0600))
-	_, err = server.ReloadApps(ctx, "/apps/stg", true, false, false, "", "", "", true, false)
+	_, err = server.ReloadApps(ctx, "/apps/stg", DeployOptions{Approve: true, ForceReload: true}, GitRef{})
 	testutil.AssertNoError(t, err)
 	server.apps.ResetAllAppCache()
 	alice := aggKey(t, server, "builtin:alice")
@@ -446,7 +446,7 @@ func TestMCPImplicitEndpoint(t *testing.T) {
 	noActions := "app = ace.app(\"dev\")\n"
 	withAction := "def handler(dry_run, args):\n\treturn ace.result(\"ok\")\n\napp = ace.app(\"dev\", actions=[ace.action(\"One\", \"/one\", handler)])\n"
 	testutil.AssertNoError(t, os.WriteFile(filepath.Join(devDir, "app.star"), []byte(noActions), 0600))
-	_, err = server.CreateApp(ctx, "/apps/devmcp", true, false, &types.CreateAppRequest{SourceUrl: devDir, AppAuthn: "builtin", IsDev: true})
+	_, err = server.CreateApp(ctx, "/apps/devmcp", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: devDir, AppAuthn: "builtin", IsDev: true})
 	testutil.AssertNoError(t, err)
 	server.apps.ResetAllAppCache()
 	testutil.AssertNoError(t, os.WriteFile(filepath.Join(devDir, "app.star"), []byte(withAction), 0600))
@@ -479,7 +479,7 @@ func TestMCPDevAppEnablesOAuth(t *testing.T) {
 	ctx := system.WithTrustedOperation(t.Context())
 	devDir := t.TempDir()
 	testutil.AssertNoError(t, os.WriteFile(filepath.Join(devDir, "app.star"), []byte("app = ace.app(\"dev\")\n"), 0600))
-	_, err := server.CreateApp(ctx, "/apps/devmcp", true, false, &types.CreateAppRequest{SourceUrl: devDir, AppAuthn: "builtin", IsDev: true})
+	_, err := server.CreateApp(ctx, "/apps/devmcp", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: devDir, AppAuthn: "builtin", IsDev: true})
 	testutil.AssertNoError(t, err)
 	server.apps.ResetAllAppCache()
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/openrundev/openrun/internal/webstatic"
 )
@@ -416,6 +417,27 @@ func TestRouterServeInternalAndWebhooksRegistration(t *testing.T) {
 		}
 		if !strings.Contains(rec.Body.String(), "appPath is required") {
 			t.Fatalf("%s body: unexpected %q", endpoint, rec.Body.String())
+		}
+	}
+}
+
+// The webhook handler authenticates one app and then calls the glob based
+// reload/promote APIs with a trusted context: the glob must match that app
+// only, even when its path or domain contains glob characters
+func TestExactAppGlob(t *testing.T) {
+	apps := []types.AppPathDomain{
+		{Path: "/team/*"}, {Path: "/team/a"}, {Path: "/team/b"},
+		{Path: "/x{a,b}"}, {Path: "/xa"}, {Path: "/xb"},
+		{Path: "/q?"}, {Path: "/qq"}, {Path: "/r[st]"}, {Path: "/rs"}, {Path: `/e\*`}, {Path: "/e*"},
+		{Domain: "example.com", Path: "/team/*"}, {Domain: "example.com", Path: "/team/a"},
+	}
+	for _, target := range apps {
+		matched, err := rbac.ParseGlob(exactAppGlob(target), apps)
+		if err != nil {
+			t.Fatalf("%s: unexpected error %s", target, err)
+		}
+		if len(matched) != 1 || matched[0] != target {
+			t.Errorf("%s: glob %q matched %v, want only the app itself", target, exactAppGlob(target), matched)
 		}
 	}
 }

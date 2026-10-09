@@ -58,22 +58,18 @@ type CreateAppRequest struct {
 	// fields supported by declarative apply must be merged in applyAppUpdate
 }
 
-// UpdateAppRequest is the request body for updating an app settings
+// UpdateAppRequest is the request body for updating an app settings. Auth
+// type, git auth and spec are app metadata (versioned, staged and promoted),
+// updated through UpdateAppMetadataRequest
 type UpdateAppRequest struct {
-	AuthnType          StringValue `json:"authn_type"`
-	GitAuthName        StringValue `json:"git_auth_name"`
-	StageWriteAccess   BoolValue   `json:"stage_write_access"`
-	PreviewWriteAccess BoolValue   `json:"preview_write_access"`
-	Spec               StringValue `json:"spec"`
+	StageWriteAccess   BoolValue `json:"stage_write_access"`
+	PreviewWriteAccess BoolValue `json:"preview_write_access"`
 }
 
 func CreateUpdateAppRequest() UpdateAppRequest {
 	return UpdateAppRequest{
-		AuthnType:          StringValueUndefined,
-		GitAuthName:        StringValueUndefined,
 		StageWriteAccess:   BoolValueUndefined,
 		PreviewWriteAccess: BoolValueUndefined,
-		Spec:               StringValueUndefined,
 	}
 }
 

@@ -39,7 +39,7 @@ func TestGetAppEntryOrStage(t *testing.T) {
 			t.Fatalf("begin transaction: %v", err)
 		}
 		req.SourceUrl = sourceDir
-		if _, err := server.CreateAppTx(ctx, tx, path, true, false, req, nil, server.newBindingAccountManager(false), nil); err != nil {
+		if _, err := server.CreateAppTx(ctx, tx, path, DeployOptions{Approve: true}, req, nil, server.newBindingAccountManager(false), nil); err != nil {
 			_ = tx.Rollback()
 			t.Fatalf("create %s: %v", path, err)
 		}

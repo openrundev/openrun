@@ -56,7 +56,7 @@ func createAsyncActionsTestApp(t *testing.T, server *Server, appPath string) {
 		}
 	}
 	ctx := system.WithTrustedOperation(t.Context())
-	if _, err := server.CreateApp(ctx, appPath, true, false, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin"}); err != nil {
+	if _, err := server.CreateApp(ctx, appPath, DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin"}); err != nil {
 		t.Fatalf("create async actions app: %v", err)
 	}
 	server.apps.ResetAllAppCache()
@@ -370,7 +370,7 @@ func TestAsyncActionRunsOfDevAppListedOnce(t *testing.T) {
 	for name, content := range map[string]string{"app.star": asyncActionsAppStar, "params.star": actionsTestParamsStar} {
 		testutil.AssertNoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0600))
 	}
-	_, err := server.CreateApp(trusted, "/apps/devsite", true, false, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin", IsDev: true})
+	_, err := server.CreateApp(trusted, "/apps/devsite", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: dir, AppAuthn: "builtin", IsDev: true})
 	testutil.AssertNoError(t, err)
 	createAsyncActionsTestApp(t, server, "/apps/site")
 

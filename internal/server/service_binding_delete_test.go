@@ -289,7 +289,7 @@ func TestDeleteAppRemovesAutoBindings(t *testing.T) {
 	deleteHook := registerDeleteTestService(t, db, ctx, "delautoapp", &deletedArtifacts)
 
 	appSourceDir := writeExportTestAppSource(t)
-	if _, err := server.CreateApp(ctx, "/apps/autodel", false, false, &types.CreateAppRequest{
+	if _, err := server.CreateApp(ctx, "/apps/autodel", DeployOptions{}, &types.CreateAppRequest{
 		SourceUrl: appSourceDir,
 		Bindings:  []string{"delautoapp"},
 	}); err != nil {
@@ -352,7 +352,7 @@ func TestAutoBindingCannotBeShared(t *testing.T) {
 	registerDeleteTestService(t, db, ctx, "delautoshare", &deletedArtifacts)
 
 	appSourceDir := writeExportTestAppSource(t)
-	if _, err := server.CreateApp(ctx, "/apps/autoowner", false, false, &types.CreateAppRequest{
+	if _, err := server.CreateApp(ctx, "/apps/autoowner", DeployOptions{}, &types.CreateAppRequest{
 		SourceUrl: appSourceDir,
 		Bindings:  []string{"delautoshare"},
 	}); err != nil {
@@ -373,7 +373,7 @@ func TestAutoBindingCannotBeShared(t *testing.T) {
 	}
 
 	// Another app cannot attach the auto binding
-	_, err = server.CreateApp(ctx, "/apps/otherapp", false, false, &types.CreateAppRequest{
+	_, err = server.CreateApp(ctx, "/apps/otherapp", DeployOptions{}, &types.CreateAppRequest{
 		SourceUrl: appSourceDir,
 		Bindings:  []string{autoPath},
 	})
@@ -400,7 +400,7 @@ func TestDeleteAppBackstopBlocksDerivedFromAutoBinding(t *testing.T) {
 	registerDeleteTestService(t, db, ctx, "delautolegacy", &deletedArtifacts)
 
 	appSourceDir := writeExportTestAppSource(t)
-	if _, err := server.CreateApp(ctx, "/apps/legacyowner", false, false, &types.CreateAppRequest{
+	if _, err := server.CreateApp(ctx, "/apps/legacyowner", DeployOptions{}, &types.CreateAppRequest{
 		SourceUrl: appSourceDir,
 		Bindings:  []string{"delautolegacy"},
 	}); err != nil {

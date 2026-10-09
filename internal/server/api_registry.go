@@ -212,7 +212,7 @@ func init() {
 		API_CREATE_PREVIEW: {Description: "Create a preview app for a git commit",
 			Scope:  types.PermissionPreview,
 			Method: http.MethodPost, Path: "/preview", ApiFunc: (*Handler).previewApp},
-		API_UPDATE_SETTINGS: {Description: "Update app settings (auth type, git auth, spec, write access). Empty/omitted fields are left unchanged",
+		API_UPDATE_SETTINGS: {Description: "Update app settings: staging and preview write access. Omitted fields are left unchanged. Auth type, git auth and spec are app metadata, updated with update_metadata",
 			Scope:  types.PermissionUpdate,
 			Method: http.MethodPost, Path: "/app_settings", ApiFunc: (*Handler).updateAppSettings},
 		API_UPDATE_METADATA: {Description: "Update app metadata (spec, app config, container options) on the staging version",

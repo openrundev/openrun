@@ -413,7 +413,7 @@ func TestCreateSyncEntryKeepsBindingAccountsAfterOuterCommit(t *testing.T) {
 		t.Fatalf("write apply file: %v", err)
 	}
 
-	response, err := server.CreateSyncEntry(ctx, applyPath, true, false, &types.SyncMetadata{})
+	response, err := server.CreateSyncEntry(ctx, applyPath, SyncCreateOptions{Scheduled: true}, &types.SyncMetadata{})
 	if err != nil {
 		t.Fatalf("create sync entry: %v", err)
 	}
@@ -778,8 +778,7 @@ app("/apps/bad", %q)
 		t.Fatalf("write apply file: %v", err)
 	}
 
-	_, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, false,
-		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+	_, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil)
 	if err == nil {
 		t.Fatal("apply with missing app source did not fail")
 	}
@@ -834,8 +833,7 @@ func TestApplyDefersGrantRevokesUntilAfterCommit(t *testing.T) {
 		}
 	}
 
-	response, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, true,
-		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+	response, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", ApplyOptions{DeployOptions: DeployOptions{Promote: true}, Reload: types.AppReloadOptionNone}, nil)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -876,8 +874,7 @@ func TestApplyDefersGrantRevokesUntilAfterCommit(t *testing.T) {
 	grantCalls = nil
 	revokeCalls = nil
 	regrantCalls = nil
-	response, _, err = server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, true,
-		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+	response, _, err = server.Apply(ctx, types.Transaction{}, applyPath, "all", ApplyOptions{DeployOptions: DeployOptions{Promote: true}, Reload: types.AppReloadOptionNone}, nil)
 	if err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -903,7 +900,7 @@ func TestUpdateBindingDefersRevokesUntilAfterCommit(t *testing.T) {
 	updated, err := server.UpdateBinding(ctx, types.UpdateBindingRequest{
 		Path:         "/apps/derived",
 		DeleteGrants: []string{"read:t1"},
-	}, false, true, false)
+	}, BindingUpdateOptions{Promote: true})
 	if err != nil {
 		t.Fatalf("update binding: %v", err)
 	}
@@ -978,7 +975,7 @@ func TestCreateAppRollbackRemovesAutoBindingAccount(t *testing.T) {
 		t.Fatalf("begin app transaction: %v", err)
 	}
 	accounts := server.newBindingAccountManager(false)
-	_, err = server.CreateAppTx(ctx, appTx, "/apps/auto-rollback", false, false, &types.CreateAppRequest{
+	_, err = server.CreateAppTx(ctx, appTx, "/apps/auto-rollback", DeployOptions{}, &types.CreateAppRequest{
 		SourceUrl: filepath.Join(t.TempDir(), "does-not-exist"),
 		Bindings:  []string{"autoacct"},
 	}, nil, accounts, nil)
@@ -1024,7 +1021,7 @@ func TestRunSyncJobPersistsFailureStatus(t *testing.T) {
 		t.Fatalf("write apply file: %v", err)
 	}
 
-	response, err := server.CreateSyncEntry(ctx, applyPath, true, false, &types.SyncMetadata{})
+	response, err := server.CreateSyncEntry(ctx, applyPath, SyncCreateOptions{Scheduled: true}, &types.SyncMetadata{})
 	if err != nil {
 		t.Fatalf("create sync entry: %v", err)
 	}
@@ -1047,7 +1044,7 @@ func TestRunSyncJobPersistsFailureStatus(t *testing.T) {
 		t.Fatalf("rollback read transaction: %v", err)
 	}
 
-	status, _, err := server.runSyncJob(ctx, types.Transaction{}, entry, false, true, nil)
+	status, _, err := server.runSyncJob(ctx, types.Transaction{}, entry, syncRunOptions{CheckCommitHash: true}, nil)
 	if err != nil {
 		t.Fatalf("run sync job: %v", err)
 	}
@@ -1133,8 +1130,7 @@ func TestFinalizeRevokesSkipsConcurrentlyReAddedGrants(t *testing.T) {
 		})
 	}
 
-	_, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", false, false, true,
-		types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+	_, _, err := server.Apply(ctx, types.Transaction{}, applyPath, "all", ApplyOptions{DeployOptions: DeployOptions{Promote: true}, Reload: types.AppReloadOptionNone}, nil)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1323,7 +1319,7 @@ func TestSyncRBACSnapshotEnforcement(t *testing.T) {
 	// Create the sync as the RBAC enforced limited user; the entry must persist
 	// the creator's frozen authorization snapshot
 	creatorCtx := rbacEnforcedCtx(ctx, "creator")
-	response, err := server.CreateSyncEntry(creatorCtx, applyPath, true, false, &types.SyncMetadata{})
+	response, err := server.CreateSyncEntry(creatorCtx, applyPath, SyncCreateOptions{Scheduled: true}, &types.SyncMetadata{})
 	if err != nil {
 		t.Fatalf("create sync entry: %v", err)
 	}
@@ -1340,7 +1336,7 @@ func TestSyncRBACSnapshotEnforcement(t *testing.T) {
 	if !server.rbacManager.APIEnforced(jobCtx) {
 		t.Fatal("expected background sync context to be RBAC enforced")
 	}
-	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, nil)
+	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, syncRunOptions{CheckCommitHash: true}, nil)
 	if err != nil {
 		t.Fatalf("run sync job: %v", err)
 	}
@@ -1379,8 +1375,7 @@ func TestSyncRBACSnapshotEnforcement(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("rbac config update: %v", err)
 	}
-	status, _, err = server.runSyncJob(server.attachSyncRBAC(newBackgroundOperationContext(entry.UserID), entry),
-		types.Transaction{}, persisted, false, true, nil)
+	status, _, err = server.runSyncJob(server.attachSyncRBAC(newBackgroundOperationContext(entry.UserID), entry), types.Transaction{}, persisted, syncRunOptions{CheckCommitHash: true}, nil)
 	if err != nil {
 		t.Fatalf("run sync job after config widen: %v", err)
 	}
@@ -1398,7 +1393,7 @@ func TestSyncRBACSnapshotUnenforcedCreate(t *testing.T) {
 
 	// A trusted create call (CLI over unix socket, stamped by
 	// apiHandler) is not enforced: no snapshot is stored even though RBAC is enabled
-	response, err := server.CreateSyncEntry(system.WithTrustedOperation(ctx), applyPath, true, false, &types.SyncMetadata{})
+	response, err := server.CreateSyncEntry(system.WithTrustedOperation(ctx), applyPath, SyncCreateOptions{Scheduled: true}, &types.SyncMetadata{})
 	if err != nil {
 		t.Fatalf("create sync entry: %v", err)
 	}
@@ -1413,7 +1408,7 @@ func TestSyncRBACSnapshotUnenforcedCreate(t *testing.T) {
 	if server.rbacManager.APIEnforced(jobCtx) {
 		t.Fatal("expected run without snapshot to stay unenforced")
 	}
-	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, nil)
+	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, syncRunOptions{CheckCommitHash: true}, nil)
 	if err != nil {
 		t.Fatalf("run sync job: %v", err)
 	}
@@ -1430,7 +1425,7 @@ func TestSyncRBACSnapshotAdminCreator(t *testing.T) {
 	writeSyncApplyFile(t, applyPath, "/apps/anywhere")
 
 	adminCtx := rbacEnforcedCtx(ctx, types.ADMIN_USER)
-	response, err := server.CreateSyncEntry(adminCtx, applyPath, true, false, &types.SyncMetadata{})
+	response, err := server.CreateSyncEntry(adminCtx, applyPath, SyncCreateOptions{Scheduled: true}, &types.SyncMetadata{})
 	if err != nil {
 		t.Fatalf("create sync entry: %v", err)
 	}
@@ -1442,7 +1437,7 @@ func TestSyncRBACSnapshotAdminCreator(t *testing.T) {
 	// Admin snapshot allows everything on background runs
 	writeSyncApplyFile(t, applyPath, "/apps/anywhere", "/apps/elsewhere")
 	jobCtx := server.attachSyncRBAC(newBackgroundOperationContext(entry.UserID), entry)
-	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, nil)
+	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, syncRunOptions{CheckCommitHash: true}, nil)
 	if err != nil {
 		t.Fatalf("run sync job: %v", err)
 	}
@@ -1458,7 +1453,7 @@ func TestSyncRBACDisabledKillSwitch(t *testing.T) {
 	applyPath := filepath.Join(t.TempDir(), "sync.ace")
 	writeSyncApplyFile(t, applyPath, "/apps/allowed1")
 
-	response, err := server.CreateSyncEntry(rbacEnforcedCtx(ctx, "creator"), applyPath, true, false, &types.SyncMetadata{})
+	response, err := server.CreateSyncEntry(rbacEnforcedCtx(ctx, "creator"), applyPath, SyncCreateOptions{Scheduled: true}, &types.SyncMetadata{})
 	if err != nil {
 		t.Fatalf("create sync entry: %v", err)
 	}
@@ -1483,7 +1478,7 @@ func TestSyncRBACDisabledKillSwitch(t *testing.T) {
 	if server.rbacManager.APIEnforced(jobCtx) {
 		t.Fatal("expected disabled RBAC to disable snapshot enforcement")
 	}
-	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, false, true, nil)
+	status, _, err := server.runSyncJob(jobCtx, types.Transaction{}, entry, syncRunOptions{CheckCommitHash: true}, nil)
 	if err != nil {
 		t.Fatalf("run sync job: %v", err)
 	}
@@ -1557,8 +1552,7 @@ func TestApplyBindingRBAC(t *testing.T) {
 		t.Fatalf("write apply file: %v", err)
 	}
 	runApply := func(user string) error {
-		_, _, err := server.Apply(rbacEnforcedCtx(ctx, user), types.Transaction{}, applyPath, "all",
-			false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false)
+		_, _, err := server.Apply(rbacEnforcedCtx(ctx, user), types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil)
 		return err
 	}
 
@@ -1590,8 +1584,7 @@ func TestApplyBindingRBAC(t *testing.T) {
 	}
 
 	// Trusted calls (CLI over unix socket) stay unrestricted
-	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all",
-		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("trusted apply: %v", err)
 	}
 }
@@ -1629,8 +1622,7 @@ func TestBuilderPublishPathRBAC(t *testing.T) {
 	// there an update
 	applyPath := filepath.Join(t.TempDir(), "app.ace")
 	writeSyncApplyFile(t, applyPath, "/apps/allowed1")
-	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all",
-		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	// The direct Apply call above does not go through CompleteTransaction,
@@ -1765,8 +1757,7 @@ func TestBuilderEditableAppOwner(t *testing.T) {
 	}
 	applyPath := filepath.Join(t.TempDir(), "app.ace")
 	writeSyncApplyFile(t, applyPath, "/apps/owned1")
-	if _, _, err := server.Apply(rbacEnforcedCtx(ctx, "owner-x"), types.Transaction{}, applyPath, "all",
-		false, false, false, types.AppReloadOptionNone, "", "", "", false, false, false, "", nil, false); err != nil {
+	if _, _, err := server.Apply(rbacEnforcedCtx(ctx, "owner-x"), types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	server.apps.ResetAllAppCache()

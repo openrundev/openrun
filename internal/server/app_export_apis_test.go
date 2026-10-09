@@ -56,7 +56,7 @@ func TestExportAppVersion(t *testing.T) {
 	}
 
 	appSourceDir := writeExportTestAppSource(t)
-	if _, err := server.CreateApp(ctx, "/apps/expv", false, false, &types.CreateAppRequest{
+	if _, err := server.CreateApp(ctx, "/apps/expv", DeployOptions{}, &types.CreateAppRequest{
 		SourceUrl:   appSourceDir,
 		ParamValues: map[string]string{"P1": "v1"},
 	}); err != nil {
@@ -75,7 +75,7 @@ func TestExportAppVersion(t *testing.T) {
 
 	// Stage a param change; the staging declaration diverges from prod but
 	// still exports with the main app path
-	if _, err := server.ReplaceAppParams(ctx, "/apps/expv", false, false, map[string]string{"P1": "v2"}); err != nil {
+	if _, err := server.ReplaceAppParams(ctx, "/apps/expv", DeployOptions{}, map[string]string{"P1": "v2"}); err != nil {
 		t.Fatalf("update params: %v", err)
 	}
 	stageExport, err := server.ExportAppVersion(ctx, "/apps/expv", "stage", "")
@@ -155,7 +155,7 @@ func TestVersionFileContent(t *testing.T) {
 	defer db.Close()
 
 	appSourceDir := writeExportTestAppSource(t)
-	if _, err := server.CreateApp(ctx, "/apps/vfile", false, false, &types.CreateAppRequest{
+	if _, err := server.CreateApp(ctx, "/apps/vfile", DeployOptions{}, &types.CreateAppRequest{
 		SourceUrl: appSourceDir,
 	}); err != nil {
 		t.Fatalf("create app: %v", err)

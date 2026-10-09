@@ -116,7 +116,7 @@ func TestMCPAppIssuerDefaultAndDynamicUpdate(t *testing.T) {
 	server.staticConfig.Api.MCP.Enable = false
 
 	server.staticConfig.Https.Port = -1
-	_, err := server.CreateApp(ctx, "/apps/noissuer", true, false, &types.CreateAppRequest{SourceUrl: proxyAppDir(t, upstream.server.URL), MCP: "true"})
+	_, err := server.CreateApp(ctx, "/apps/noissuer", DeployOptions{Approve: true}, &types.CreateAppRequest{SourceUrl: proxyAppDir(t, upstream.server.URL), MCP: "true"})
 	if err == nil || !strings.Contains(err.Error(), "external_url") || !strings.Contains(err.Error(), "https.port") {
 		t.Fatalf("mcp app without issuer or listener must fail with the config hints, got %v", err)
 	}

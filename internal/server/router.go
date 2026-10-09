@@ -728,11 +728,16 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 		}
 	}
 
+	// The token authenticated the call for this one app only, and the
+	// context is trusted (no RBAC). The reload/promote APIs take a path glob:
+	// pass a glob matching exactly this app, so an app whose path contains
+	// glob characters (like /team/*) cannot reach its siblings
+	appGlob := exactAppGlob(app.AppPathDomain())
 	if reload {
-		resp, err = h.server.ReloadApps(r.Context(), appPath, false, false, promote, "", "", "", true, false)
+		resp, err = h.server.ReloadApps(r.Context(), appGlob, DeployOptions{Promote: promote, ForceReload: true}, GitRef{})
 	} else {
 		// promote operation
-		resp, err = h.server.PromoteApps(r.Context(), appPath, false)
+		resp, err = h.server.PromoteApps(r.Context(), appGlob, false)
 	}
 
 	h.Info().Msgf("Webhook call for %s, appPath: %s, promote: %t, reload: %t, response %+v err %s",
@@ -764,6 +769,21 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+// globMetaEscaper escapes the doublestar glob metacharacters (and the escape
+// character itself), so a path matches only itself as a glob
+var globMetaEscaper = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`,
+	`[`, `\[`, `]`, `\]`, `{`, `\{`, `}`, `\}`)
+
+// exactAppGlob returns an app path glob (domain:path) which matches only the
+// app at pathDomain, whatever characters its domain and path contain
+func exactAppGlob(pathDomain types.AppPathDomain) string {
+	path := globMetaEscaper.Replace(pathDomain.Path)
+	if pathDomain.Domain == "" {
+		return path
+	}
+	return globMetaEscaper.Replace(pathDomain.Domain) + ":" + path
 }
 
 func validateSignature(secret, signatureHeader string, body []byte) error {
@@ -803,6 +823,12 @@ func hashPayload(secret string, playloadBody []byte) string {
 	hm.Write(playloadBody)
 	sum := hm.Sum(nil)
 	return fmt.Sprintf("%x", sum)
+}
+
+// gitRefFromQuery reads the branch, commit and gitAuth query params
+func gitRefFromQuery(r *http.Request) GitRef {
+	query := r.URL.Query()
+	return GitRef{Branch: query.Get("branch"), Commit: query.Get("commit"), GitAuth: query.Get("gitAuth")}
 }
 
 func parseBoolArg(arg string, defaultValue bool) (bool, error) {
@@ -889,7 +915,7 @@ func (h *Handler) createApp(r *http.Request) (any, error) {
 	updateTargetInContext(r, appPath, dryRun)
 	updateOperationInContext(r, "create_app")
 
-	results, err := h.server.CreateApp(r.Context(), appPath, approve, dryRun, &appRequest)
+	results, err := h.server.CreateApp(r.Context(), appPath, DeployOptions{Approve: approve, DryRun: dryRun}, &appRequest)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -934,7 +960,7 @@ func (h *Handler) approveApps(r *http.Request) (any, error) {
 	}
 	updateOperationInContext(r, genOperationName("approve_apps", promote, false))
 
-	approveResult, err := h.server.ApproveApps(r.Context(), appPathGlob, dryRun, promote)
+	approveResult, err := h.server.ApproveApps(r.Context(), appPathGlob, DeployOptions{DryRun: dryRun, Promote: promote})
 	return approveResult, err
 }
 
@@ -955,12 +981,9 @@ func (h *Handler) accountLink(r *http.Request) (any, error) {
 	}
 	updateOperationInContext(r, genOperationName("account_link", promote, false))
 
-	args := map[string]any{
-		"plugin":  r.URL.Query().Get("plugin"),
-		"account": r.URL.Query().Get("account"),
-	}
-
-	linkResult, err := h.server.StagedUpdate(r.Context(), appPathGlob, dryRun, promote, h.server.accountLinkHandler, args, "account-link")
+	linkHandler := h.server.accountLinkHandler(r.URL.Query().Get("plugin"), r.URL.Query().Get("account"))
+	linkResult, err := h.server.StagedUpdate(r.Context(), appPathGlob, DeployOptions{DryRun: dryRun, Promote: promote},
+		linkHandler, "account-link")
 	return linkResult, err
 }
 
@@ -981,7 +1004,7 @@ func (h *Handler) updateParam(r *http.Request) (any, error) {
 		return nil, types.CreateRequestError("appPathGlob is required", http.StatusBadRequest)
 	}
 
-	updateResult, err := h.server.UpdateAppParams(r.Context(), appPathGlob, dryRun, promote,
+	updateResult, err := h.server.UpdateAppParams(r.Context(), appPathGlob, DeployOptions{DryRun: dryRun, Promote: promote},
 		r.URL.Query().Get("paramName"), r.URL.Query().Get("paramValue"))
 	return updateResult, err
 }
@@ -1017,8 +1040,8 @@ func (h *Handler) reloadApps(r *http.Request) (any, error) {
 	}
 	updateOperationInContext(r, genOperationName("reload_apps", promote, approve))
 
-	ret, err := h.server.ReloadApps(r.Context(), appPathGlob, approve, dryRun, promote,
-		r.URL.Query().Get("branch"), r.URL.Query().Get("commit"), r.URL.Query().Get("gitAuth"), forceReload, verify)
+	ret, err := h.server.ReloadApps(r.Context(), appPathGlob, DeployOptions{
+		Approve: approve, DryRun: dryRun, Promote: promote, ForceReload: forceReload, Verify: verify}, gitRefFromQuery(r))
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1067,7 +1090,7 @@ func (h *Handler) previewApp(r *http.Request) (any, error) {
 	}
 	updateOperationInContext(r, genOperationName("preview_app", false, approve))
 
-	ret, err := h.server.PreviewApp(r.Context(), appPath, commitId, approve, dryRun)
+	ret, err := h.server.PreviewApp(r.Context(), appPath, commitId, DeployOptions{Approve: approve, DryRun: dryRun})
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1145,12 +1168,8 @@ func (h *Handler) updateAppMetadata(r *http.Request) (any, error) {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 
-	args := map[string]any{
-		"metadata": updateAppRequest,
-		"dryRun":   dryRun,
-	}
-
-	updateResult, err := h.server.StagedUpdate(r.Context(), appPathGlob, dryRun, promote, h.server.updateMetadataHandler, args, "update_metadata")
+	updateResult, err := h.server.StagedUpdate(r.Context(), appPathGlob, DeployOptions{DryRun: dryRun, Promote: promote},
+		h.server.updateMetadataHandler(updateAppRequest), "update_metadata")
 	return updateResult, err
 
 }
@@ -1333,10 +1352,13 @@ func (h *Handler) apply(r *http.Request) (any, error) {
 		return nil, err
 	}
 
-	ret, _, err := h.server.Apply(r.Context(), types.Transaction{}, applyPath, appPathGlob, approve, dryRun, promote,
-		types.AppReloadOption(r.URL.Query().Get("reload")),
-		r.URL.Query().Get("branch"), r.URL.Query().Get("commit"), r.URL.Query().Get("gitAuth"),
-		clobber, forceReload, verify, "", nil, dev)
+	ret, _, err := h.server.Apply(r.Context(), types.Transaction{}, applyPath, appPathGlob, ApplyOptions{
+		DeployOptions: DeployOptions{Approve: approve, DryRun: dryRun, Promote: promote, ForceReload: forceReload, Verify: verify},
+		Source:        gitRefFromQuery(r),
+		Reload:        types.AppReloadOption(r.URL.Query().Get("reload")),
+		Clobber:       clobber,
+		IsDev:         dev,
+	}, nil)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
 	}
@@ -1362,8 +1384,7 @@ func (h *Handler) applyDelete(r *http.Request) (any, error) {
 	updateTargetInContext(r, appPathGlob, dryRun)
 	updateOperationInContext(r, "apply_delete")
 
-	ret, err := h.server.ApplyDelete(r.Context(), applyPath, appPathGlob, dryRun,
-		r.URL.Query().Get("branch"), r.URL.Query().Get("commit"), r.URL.Query().Get("gitAuth"))
+	ret, err := h.server.ApplyDelete(r.Context(), applyPath, appPathGlob, dryRun, gitRefFromQuery(r))
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusInternalServerError)
 	}
@@ -1438,7 +1459,7 @@ func (h *Handler) createSyncEntry(r *http.Request) (any, error) {
 	updateTargetInContext(r, path, dryRun)
 	updateOperationInContext(r, "sync_create")
 
-	results, err := h.server.CreateSyncEntry(r.Context(), path, scheduled, dryRun, &sync)
+	results, err := h.server.CreateSyncEntry(r.Context(), path, SyncCreateOptions{Scheduled: scheduled, DryRun: dryRun}, &sync)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -1709,7 +1730,7 @@ func (h *Handler) updateBinding(r *http.Request) (any, error) {
 	updateTargetInContext(r, updateRequest.Path, dryRun)
 	updateOperationInContext(r, "binding_update")
 
-	binding, err := h.server.UpdateBinding(r.Context(), updateRequest, dryRun, promote, reapplyAll)
+	binding, err := h.server.UpdateBinding(r.Context(), updateRequest, BindingUpdateOptions{DryRun: dryRun, Promote: promote, ReapplyAll: reapplyAll})
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}

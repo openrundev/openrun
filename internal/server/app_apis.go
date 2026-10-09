@@ -72,8 +72,10 @@ func newAppID(isDev bool) (types.AppId, error) {
 	return types.AppId(id), nil
 }
 
+// CreateApp creates an app at appPath from appRequest. Reads opts.Approve and
+// opts.DryRun; the git revision is the one in appRequest
 func (s *Server) CreateApp(ctx context.Context, appPath string,
-	approve, dryRun bool, appRequest *types.CreateAppRequest) (_ *types.AppCreateResponse, retErr error) {
+	opts DeployOptions, appRequest *types.CreateAppRequest) (_ *types.AppCreateResponse, retErr error) {
 
 	if s.rbacManager.APIEnforced(ctx) {
 		// The app does not exist yet: match grant targets against the requested path
@@ -84,7 +86,7 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 		if err := s.enforceAppPerm(ctx, types.PermissionCreate, appPathDomain, ""); err != nil {
 			return nil, err
 		}
-		if approve {
+		if opts.Approve {
 			if err := s.enforceAppPerm(ctx, types.PermissionApprove, appPathDomain, ""); err != nil {
 				return nil, err
 			}
@@ -108,13 +110,14 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 	// and the pre-pass registers the containers it starts on it. The scope is
 	// opened before the transaction so that, on failure, the transaction is
 	// rolled back before the external cleanup runs
-	ctx, deployScope := s.beginDeployScope(ctx, true, dryRun)
+	ctx, deployScope := s.beginDeployScope(ctx, true, opts.DryRun)
 	defer func() { retErr = deployScope.finish(ctx, retErr) }()
 
 	// The source checkout, file compression, definition load, image build
 	// and before_deploy gates run before the transaction is opened, so the
 	// transaction holds only the database writes
-	if prep, err = s.prepareCreate(ctx, appPath, approve, dryRun, false, appRequest, repoCache); err != nil {
+	if prep, err = s.prepareCreate(ctx, appPath, DeployOptions{Approve: opts.Approve, DryRun: opts.DryRun},
+		appRequest, repoCache); err != nil {
 		return nil, err
 	}
 
@@ -124,12 +127,12 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	result, err := s.CreateAppTx(ctx, tx, appPath, approve, dryRun, appRequest, repoCache, deployScope.accounts, prep)
+	result, err := s.CreateAppTx(ctx, tx, appPath, opts, appRequest, repoCache, deployScope.accounts, prep)
 	if err != nil {
 		return nil, err
 	}
 
-	if dryRun {
+	if opts.DryRun {
 		return result, nil
 	}
 
@@ -149,9 +152,11 @@ func (s *Server) CreateApp(ctx context.Context, appPath string,
 // holds the result of prepareCreate: the app id it was run with, the app's
 // source files hashed and compressed, and the before_deploy gate outcome, so
 // the work left inside the transaction is the database writes (see
-// prepareCreate). A nil prep runs every step inside the transaction
+// prepareCreate). A nil prep runs every step inside the transaction.
+// Reads opts.Approve and opts.DryRun; the git revision is the one in
+// appRequest.
 func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, appPath string,
-	approve, dryRun bool, appRequest *types.CreateAppRequest, repoCache *RepoCache,
+	opts DeployOptions, appRequest *types.CreateAppRequest, repoCache *RepoCache,
 	bindingAccounts *bindingAccountManager, prep *appPrep) (*types.AppCreateResponse, error) {
 	appEntry, err := s.newCreateAppEntry(ctx, appPath, appRequest)
 	if err != nil {
@@ -167,13 +172,13 @@ func (s *Server) CreateAppTx(ctx context.Context, currentTx types.Transaction, a
 		}
 	}
 
-	appEntry.Metadata.Bindings, err = s.resolveAppBindings(ctx, currentTx, appEntry.Id, appRequest.Bindings, nil, dryRun, bindingAccounts)
+	appEntry.Metadata.Bindings, err = s.resolveAppBindings(ctx, currentTx, appEntry.Id, appRequest.Bindings, nil, opts.DryRun, bindingAccounts)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
 	appRequest.Bindings = append([]string{}, appEntry.Metadata.Bindings...)
 
-	auditResult, err := s.createApp(ctx, currentTx, appEntry, approve, dryRun, appRequest.GitBranch, appRequest.GitCommit, appRequest.GitAuthName, appRequest, repoCache, prep)
+	auditResult, err := s.createApp(ctx, currentTx, appEntry, opts, appRequest, repoCache, prep)
 	if err != nil {
 		return nil, types.CreateRequestError(err.Error(), http.StatusBadRequest)
 	}
@@ -413,7 +418,7 @@ func (s *Server) validateCreateSource(appEntry *types.AppEntry) error {
 }
 
 func (s *Server) createApp(ctx context.Context, tx types.Transaction,
-	appEntry *types.AppEntry, approve, dryRun bool, branch, commit, gitAuth string, applyInfo *types.CreateAppRequest, repoCache *RepoCache, prep *appPrep) (*types.AppCreateResponse, error) {
+	appEntry *types.AppEntry, opts DeployOptions, applyInfo *types.CreateAppRequest, repoCache *RepoCache, prep *appPrep) (*types.AppCreateResponse, error) {
 	if err := s.validateCreateSource(appEntry); err != nil {
 		return nil, err
 	}
@@ -460,12 +465,12 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	// mode (a dev app serves from its source dir). The pre-pass has hashed
 	// and compressed the files, leaving the inserts for here
 	if system.IsGit(workEntry.SourceUrl) {
-		if err := s.loadAppSource(ctx, tx, workEntry, branch, commit, gitAuth, repoCache, prep); err != nil {
+		if err := s.loadAppSource(ctx, tx, workEntry, createRequestGitRef(applyInfo), repoCache, prep); err != nil {
 			return nil, fmt.Errorf("failed to load source %s from git: %w. Wrong org/repo name can show as auth error."+
 				" Use --git-auth for private repos, --branch to change branch", workEntry.SourceUrl, err)
 		}
 	} else if !workEntry.IsDev {
-		if err := s.loadAppSource(ctx, tx, workEntry, "", "", "", repoCache, prep); err != nil {
+		if err := s.loadAppSource(ctx, tx, workEntry, GitRef{}, repoCache, prep); err != nil {
 			return nil, fmt.Errorf("failed to read source %s: %w", workEntry.SourceUrl, err)
 		}
 	}
@@ -474,11 +479,11 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 	return withTemporaryApp(s, ctx, workEntry, tx, func(application *app.App) (*types.AppCreateResponse, error) {
 
 		s.Debug().Msgf("Created app %s %s", workEntry.Path, workEntry.Id)
-		auditResult, err := s.auditApp(ctx, tx, application, approve)
+		auditResult, err := s.auditApp(ctx, tx, application, opts.Approve)
 		if err != nil {
 			return nil, fmt.Errorf("app %s audit failed: %s", workEntry.Id, err)
 		}
-		if !workEntry.IsDev && (!auditResult.NeedsApproval || approve) {
+		if !workEntry.IsDev && (!auditResult.NeedsApproval || opts.Approve) {
 			if prep != nil && prep.loaded {
 				// The pre-pass loaded the definition and ran the before_deploy
 				// gates outside the transaction; persist the jobs it found
@@ -491,9 +496,9 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 				// that does not load keeps the create's lazy semantics: the error
 				// surfaces on the first request as before, and the jobs are
 				// persisted by the next reload
-				if _, err := application.Reload(ctx, true, true, types.DryRun(dryRun), app.ReloadOptions{SkipContainer: true}); err != nil {
+				if _, err := application.Reload(ctx, true, true, types.DryRun(opts.DryRun), app.ReloadOptions{SkipContainer: true}); err != nil {
 					s.Warn().Err(err).Msgf("app %s did not load at create; its jobs and before_deploy gates apply on the next reload", workEntry)
-				} else if !dryRun {
+				} else if !opts.DryRun {
 					if err := s.runCreateGates(ctx, tx, application, workEntry); err != nil {
 						return nil, err
 					}
@@ -524,7 +529,7 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 			}
 
 			prodAuditResult, err := withTemporaryApp(s, ctx, appEntry, tx, func(prodApp *app.App) (*types.ApproveResult, error) {
-				return s.auditApp(ctx, tx, prodApp, approve)
+				return s.auditApp(ctx, tx, prodApp, opts.Approve)
 			})
 			if err != nil {
 				return nil, fmt.Errorf("app %s audit failed: %s", appEntry.Id, err)
@@ -537,7 +542,7 @@ func (s *Server) createApp(ctx context.Context, tx types.Transaction,
 			HttpUrl:        s.getAppHttpUrl(appEntry),
 			HttpsUrl:       s.getAppHttpsUrl(appEntry),
 			Auth:           resolveAppAuth(appEntry.Metadata.AuthnType, s.Config()),
-			DryRun:         dryRun,
+			DryRun:         opts.DryRun,
 			ApproveResults: results,
 			OrigSourceUrl:  appEntry.Settings.OrigSourceUrl,
 			SourceUrl:      appEntry.SourceUrl,
@@ -1760,7 +1765,7 @@ func (s *Server) loadGitKey(gitAuth string) (*gitAuthEntry, error) {
 // stored on the version metadata; for a disk source the source dir, with the
 // git info cleared. Returns NO_SOURCE when no files are to be loaded (no
 // source, or an app served from disk). No database access
-func (s *Server) checkoutAppSource(ctx context.Context, appEntry *types.AppEntry, branch, commit, gitAuth string, repoCache *RepoCache) (string, error) {
+func (s *Server) checkoutAppSource(ctx context.Context, appEntry *types.AppEntry, ref GitRef, repoCache *RepoCache) (string, error) {
 	if !system.IsGit(appEntry.SourceUrl) {
 		appEntry.Metadata.VersionMetadata.GitBranch = ""
 		appEntry.Metadata.VersionMetadata.GitCommit = ""
@@ -1769,9 +1774,9 @@ func (s *Server) checkoutAppSource(ctx context.Context, appEntry *types.AppEntry
 		return s.diskLoadDir(appEntry)
 	}
 
-	gitAuth = cmp.Or(gitAuth, appEntry.Metadata.GitAuthName)
-	branch = checkoutBranch(branch, appEntry)
-	repo, folder, message, hash, err := repoCache.CheckoutRepo(ctx, appEntry.SourceUrl, branch, commit, gitAuth, appEntry.IsDev)
+	gitAuth := cmp.Or(ref.GitAuth, appEntry.Metadata.GitAuthName)
+	branch := checkoutBranch(ref.Branch, appEntry)
+	repo, folder, message, hash, err := repoCache.CheckoutRepo(ctx, appEntry.SourceUrl, branch, ref.Commit, gitAuth, appEntry.IsDev)
 	if err != nil {
 		return "", err
 	}
@@ -1790,7 +1795,7 @@ func (s *Server) checkoutAppSource(ctx context.Context, appEntry *types.AppEntry
 	// and into the app metadata by the caller
 	appEntry.Metadata.VersionMetadata.GitCommit = hash
 	appEntry.Metadata.VersionMetadata.GitMessage = message
-	if commit != "" {
+	if ref.Commit != "" {
 		appEntry.Metadata.VersionMetadata.GitBranch = ""
 	} else {
 		appEntry.Metadata.VersionMetadata.GitBranch = branch
@@ -1865,9 +1870,9 @@ func (s *Server) loadAppFiles(ctx context.Context, tx types.Transaction, appEntr
 
 // loadAppSource checks out the app's source and loads it into the database as
 // a new version: checkoutAppSource followed by loadAppFiles
-func (s *Server) loadAppSource(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, branch, commit, gitAuth string,
+func (s *Server) loadAppSource(ctx context.Context, tx types.Transaction, appEntry *types.AppEntry, ref GitRef,
 	repoCache *RepoCache, prep *appPrep) error {
-	loadDir, err := s.checkoutAppSource(ctx, appEntry, branch, commit, gitAuth, repoCache)
+	loadDir, err := s.checkoutAppSource(ctx, appEntry, ref, repoCache)
 	if err != nil {
 		return err
 	}
@@ -2006,7 +2011,9 @@ func (s *Server) GetApps(ctx context.Context, appPathGlob string, internal bool)
 	return ret, nil
 }
 
-func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, approve, dryRun bool) (*types.AppPreviewResponse, error) {
+// PreviewApp creates a preview app of the main app at mainAppPath, for the
+// git commit commitId. Reads opts.Approve and opts.DryRun
+func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, opts DeployOptions) (*types.AppPreviewResponse, error) {
 	mainAppPathDomain, err := parseAppPath(mainAppPath)
 	if err != nil {
 		return nil, err
@@ -2030,7 +2037,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 			Path: prefetchEntry.Path + types.PREVIEW_SUFFIX + "_" + commitId}
 		if _, err := s.db.GetAppEntry(ctx, previewPath); err != nil {
 			if err := s.enforceAppPermEntry(ctx, types.PermissionPreview, prefetchEntry); err == nil {
-				s.prefetchAppSource(ctx, prefetchEntry, "", commitId, prefetchEntry.Metadata.GitAuthName, repoCache, true)
+				s.prefetchAppSource(ctx, prefetchEntry, GitRef{Commit: commitId, GitAuth: prefetchEntry.Metadata.GitAuthName}, repoCache, true)
 			}
 		}
 	}
@@ -2049,7 +2056,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	if err := s.enforceAppPermEntry(ctx, types.PermissionPreview, mainAppEntry); err != nil {
 		return nil, err
 	}
-	if approve {
+	if opts.Approve {
 		if err := s.enforceAppPermEntry(ctx, types.PermissionApprove, mainAppEntry); err != nil {
 			return nil, err
 		}
@@ -2100,7 +2107,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	}
 
 	// Checkout the git repo locally and load into database
-	if err := s.loadAppSource(ctx, tx, &previewAppEntry, "", commitId, previewAppEntry.Metadata.GitAuthName, repoCache, nil); err != nil {
+	if err := s.loadAppSource(ctx, tx, &previewAppEntry, GitRef{Commit: commitId, GitAuth: previewAppEntry.Metadata.GitAuthName}, repoCache, nil); err != nil {
 		return nil, fmt.Errorf("failed to load source %s from git: %w", previewAppEntry.SourceUrl, err)
 	}
 
@@ -2108,7 +2115,7 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 	return withTemporaryApp(s, ctx, &previewAppEntry, tx, func(application *app.App) (*types.AppPreviewResponse, error) {
 
 		s.Debug().Msgf("Created preview app %s %s", previewAppEntry.Path, previewAppEntry.Id)
-		auditResult, err := s.auditApp(ctx, tx, application, approve)
+		auditResult, err := s.auditApp(ctx, tx, application, opts.Approve)
 		if err != nil {
 			return nil, fmt.Errorf("app %s audit failed: %s", previewAppEntry.Id, err)
 		}
@@ -2124,19 +2131,19 @@ func (s *Server) PreviewApp(ctx context.Context, mainAppPath, commitId string, a
 		}
 
 		ret := &types.AppPreviewResponse{
-			DryRun:        dryRun,
+			DryRun:        opts.DryRun,
 			HttpUrl:       s.getAppHttpUrl(&previewAppEntry),
 			HttpsUrl:      s.getAppHttpsUrl(&previewAppEntry),
 			ApproveResult: *auditResult,
 			Success:       true,
 		}
 
-		if auditResult.NeedsApproval && !approve {
+		if auditResult.NeedsApproval && !opts.Approve {
 			ret.Success = false // Needs approval but not approved, do not create the preview app
 			return ret, nil
 		}
 
-		if dryRun {
+		if opts.DryRun {
 			return ret, nil
 		}
 

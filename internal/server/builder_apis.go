@@ -372,7 +372,7 @@ func (s *Server) builderTurnDone(sessionId string) {
 		// context is a trusted continuation
 		Bindings: session.Services,
 	}
-	if _, err := s.CreateApp(ctx, previewPath, false, false, appRequest); err != nil {
+	if _, err := s.CreateApp(ctx, previewPath, DeployOptions{}, appRequest); err != nil {
 		s.Warn().Err(err).Str("session", sessionId).Msg("Builder preview app creation failed")
 		s.builderManager.LogActivity(sessionId, session.UserID, "error", "preview app creation failed: "+err.Error(), nil)
 		return
@@ -590,8 +590,7 @@ func (s *Server) builderRepublishEdit(ctx context.Context, session *types.Builde
 		if err := copyAppSource(session.WorkspaceDir, entry.SourceUrl); err != nil {
 			return nil, fmt.Errorf("copying app source: %w", err)
 		}
-		if _, err := s.ReloadApps(ctx, appPathDomain.String(), true /*approve*/, false, /*dryRun*/
-			false /*promote*/, "", "", "", false /*forceReload*/, false /*verify*/); err != nil {
+		if _, err := s.ReloadApps(ctx, appPathDomain.String(), DeployOptions{Approve: true}, GitRef{}); err != nil {
 			return nil, fmt.Errorf("reloading app: %w", err)
 		}
 		// Track the reloaded staging version so this session can republish again
@@ -1087,9 +1086,10 @@ func (s *Server) builderPublishLocal(ctx context.Context, session *types.Builder
 	// Apply expands relative (trailing ".") declared domains to the default
 	// domain when loading the file, so the target filter must use the
 	// RESOLVED path - the relative form would match nothing
-	resp, _, err := s.Apply(ctx, types.Transaction{}, appsFile, resolvedPath, true /*approve*/, false, /*dryRun*/
-		false /*promote*/, types.AppReloadOptionUpdated, "", "", "", false /*clobber*/, false, /*forceReload*/
-		false /*verify*/, "", nil, false)
+	resp, _, err := s.Apply(ctx, types.Transaction{}, appsFile, resolvedPath, ApplyOptions{
+		DeployOptions: DeployOptions{Approve: true},
+		Reload:        types.AppReloadOptionUpdated,
+	}, nil)
 	if err != nil {
 		rollback()
 		return err
@@ -1101,8 +1101,7 @@ func (s *Server) builderPublishLocal(ctx context.Context, session *types.Builder
 	// created nor reloaded the app, force a reload to load the updated source
 	// and record a version (the edit-session republish does the same)
 	if len(resp.CreateResults) == 0 && len(resp.ReloadResults) == 0 {
-		if _, err = s.ReloadApps(ctx, resolvedPath, true /*approve*/, false /*dryRun*/, false, /*promote*/
-			"", "", "", true /*forceReload*/, false /*verify*/); err != nil {
+		if _, err = s.ReloadApps(ctx, resolvedPath, DeployOptions{Approve: true, ForceReload: true}, GitRef{}); err != nil {
 			rollback()
 			return err
 		}

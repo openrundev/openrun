@@ -1354,17 +1354,9 @@
   "update_settings": {
     "additionalProperties": false,
     "properties": {
-      "authn_type": {
-        "description": "app auth type (system, none, or an auth entry name); empty leaves unchanged",
-        "type": "string"
-      },
       "dry_run": {
         "description": "preview without applying",
         "type": "boolean"
-      },
-      "git_auth_name": {
-        "description": "git auth entry name; empty leaves unchanged",
-        "type": "string"
       },
       "path_glob": {
         "description": "app path glob to update",
@@ -1376,10 +1368,6 @@
           "null",
           "boolean"
         ]
-      },
-      "spec": {
-        "description": "app spec name; empty leaves unchanged",
-        "type": "string"
       },
       "stage_write_access": {
         "description": "staging write plugin access; omit to leave unchanged",

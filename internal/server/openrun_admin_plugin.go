@@ -124,7 +124,7 @@ func (c *openrunAdminPlugin) CreateApp(ctx context.Context, call *sdk.Call) (any
 		MCP:         mcpDoc,
 	}
 
-	result, err := c.server.CreateApp(ctx, appPath, approve, dryRun, appRequest)
+	result, err := c.server.CreateApp(ctx, appPath, DeployOptions{Approve: approve, DryRun: dryRun}, appRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -157,8 +157,8 @@ func (c *openrunAdminPlugin) ReloadApps(ctx context.Context, call *sdk.Call) (an
 		return nil, err
 	}
 
-	result, err := c.server.ReloadApps(ctx, pathGlob, approve, dryRun, promote,
-		"", "", "", forceReload, verify)
+	result, err := c.server.ReloadApps(ctx, pathGlob, DeployOptions{
+		Approve: approve, DryRun: dryRun, Promote: promote, ForceReload: forceReload, Verify: verify}, GitRef{})
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (c *openrunAdminPlugin) ApproveApps(ctx context.Context, call *sdk.Call) (a
 		return nil, err
 	}
 
-	result, err := c.server.ApproveApps(ctx, pathGlob, dryRun, promote)
+	result, err := c.server.ApproveApps(ctx, pathGlob, DeployOptions{DryRun: dryRun, Promote: promote})
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +199,7 @@ func (c *openrunAdminPlugin) UpdateParams(ctx context.Context, call *sdk.Call) (
 		return nil, err
 	}
 
-	result, err := c.server.ReplaceAppParams(ctx, pathGlob, dryRun, promote, paramValues)
+	result, err := c.server.ReplaceAppParams(ctx, pathGlob, DeployOptions{DryRun: dryRun, Promote: promote}, paramValues)
 	if err != nil {
 		return nil, err
 	}
@@ -238,18 +238,26 @@ func (c *openrunAdminPlugin) PromoteApps(ctx context.Context, call *sdk.Call) (a
 	return structValue(result)
 }
 
-// UpdateAuth updates the authentication type for apps matching the glob
+// UpdateAuth updates the authentication type for apps matching the glob. The
+// auth type is app metadata, version controlled like bindings: the change
+// applies to staging and is promoted to prod when promote is true
 func (c *openrunAdminPlugin) UpdateAuth(ctx context.Context, call *sdk.Call) (any, error) {
 	var pathGlob, auth string
 	var dryRun bool
-	if err := sdk.UnpackArgs("update_auth", call, "path_glob", &pathGlob, "auth", &auth, "dry_run?", &dryRun); err != nil {
+	promote := true
+	// dry_run keeps its original third position: optional args are also
+	// accepted positionally, so promote (added later) has to come after it
+	if err := sdk.UnpackArgs("update_auth", call, "path_glob", &pathGlob, "auth", &auth,
+		"dry_run?", &dryRun, "promote?", &promote); err != nil {
 		return nil, err
 	}
 
-	updateRequest := types.CreateUpdateAppRequest()
-	updateRequest.AuthnType = types.StringValue(auth)
+	updateMetadata := types.CreateUpdateAppMetadataRequest()
+	updateMetadata.ConfigType = types.AppMetadataAuthnType
+	updateMetadata.ConfigEntries = []string{auth}
 
-	result, err := c.server.UpdateAppSettings(ctx, pathGlob, dryRun, updateRequest)
+	result, err := c.server.StagedUpdate(ctx, pathGlob, DeployOptions{DryRun: dryRun, Promote: promote},
+		c.server.updateMetadataHandler(updateMetadata), "update_metadata")
 	if err != nil {
 		return nil, err
 	}
@@ -275,12 +283,8 @@ func (c *openrunAdminPlugin) UpdateBindings(ctx context.Context, call *sdk.Call)
 	updateMetadata.ConfigType = types.AppMetadataBindings
 	updateMetadata.ConfigEntries = bindings
 
-	metadataArgs := map[string]any{
-		"metadata": updateMetadata,
-		"dryRun":   dryRun,
-	}
-	result, err := c.server.StagedUpdate(ctx, pathGlob, dryRun, promote,
-		c.server.updateMetadataHandler, metadataArgs, "update_metadata")
+	result, err := c.server.StagedUpdate(ctx, pathGlob, DeployOptions{DryRun: dryRun, Promote: promote},
+		c.server.updateMetadataHandler(updateMetadata), "update_metadata")
 	if err != nil {
 		return nil, err
 	}
@@ -307,12 +311,8 @@ func (c *openrunAdminPlugin) UpdateMCP(ctx context.Context, call *sdk.Call) (any
 	updateMetadata.ConfigType = types.AppMetadataMCP
 	updateMetadata.ConfigEntries = []string{mcpValue}
 
-	metadataArgs := map[string]any{
-		"metadata": updateMetadata,
-		"dryRun":   dryRun,
-	}
-	result, err := c.server.StagedUpdate(ctx, pathGlob, dryRun, promote,
-		c.server.updateMetadataHandler, metadataArgs, "update_metadata")
+	result, err := c.server.StagedUpdate(ctx, pathGlob, DeployOptions{DryRun: dryRun, Promote: promote},
+		c.server.updateMetadataHandler(updateMetadata), "update_metadata")
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +398,7 @@ func (c *openrunAdminPlugin) RunJob(ctx context.Context, call *sdk.Call) (any, e
 	if err != nil {
 		return nil, err
 	}
-	result, err := c.server.RunJob(ctx, path, job, stage, wait, force, argValues)
+	result, err := c.server.RunJob(ctx, path, job, JobRunOptions{Stage: stage, Wait: wait, Force: force, Args: argValues})
 	if err != nil {
 		return nil, err
 	}
@@ -506,7 +506,7 @@ func (c *openrunAdminPlugin) UpdateBinding(ctx context.Context, call *sdk.Call) 
 		DeleteGrants: deleteGrants,
 	}
 
-	binding, err := c.server.UpdateBinding(ctx, updateRequest, dryRun, promote, false)
+	binding, err := c.server.UpdateBinding(ctx, updateRequest, BindingUpdateOptions{DryRun: dryRun, Promote: promote})
 	if err != nil {
 		return nil, err
 	}
@@ -694,7 +694,7 @@ func (c *openrunAdminPlugin) CreateSync(ctx context.Context, call *sdk.Call) (an
 		ScheduleFrequency: int(minutes),
 	}
 
-	createResponse, err := c.server.CreateSyncEntry(ctx, path, true, dryRun, &sync)
+	createResponse, err := c.server.CreateSyncEntry(ctx, path, SyncCreateOptions{Scheduled: true, DryRun: dryRun}, &sync)
 	if err != nil {
 		return nil, err
 	}

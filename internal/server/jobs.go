@@ -766,14 +766,21 @@ func (s *Server) ListJobs(ctx context.Context, appPathGlob string) (*types.JobLi
 	return ret, nil
 }
 
+// JobRunOptions are the options of a manual job run
+type JobRunOptions struct {
+	Stage bool              // run on the app's stage instance instead of prod
+	Wait  bool              // wait for the run to finish, returning the finished run
+	Force bool              // run a disabled job, or alongside an active run
+	Args  map[string]string // the job's args
+}
+
 // RunJob starts a manual run of a job on the app's prod (or stage, or dev)
-// instance. wait returns the finished run; force runs a disabled job or
-// runs alongside an active run
-func (s *Server) RunJob(ctx context.Context, appPath, jobName string, stage, wait, force bool, args map[string]string) (*types.JobRunResponse, error) {
+// instance
+func (s *Server) RunJob(ctx context.Context, appPath, jobName string, opts JobRunOptions) (*types.JobRunResponse, error) {
 	if jobName == "" {
 		return nil, types.CreateRequestError("job name is required", http.StatusBadRequest)
 	}
-	entry, err := s.resolveJobInstance(ctx, appPath, stage)
+	entry, err := s.resolveJobInstance(ctx, appPath, opts.Stage)
 	if err != nil {
 		return nil, err
 	}
@@ -791,13 +798,13 @@ func (s *Server) RunJob(ctx context.Context, appPath, jobName string, stage, wai
 		}
 		return nil, types.CreateRequestError(err.Error(), http.StatusNotFound)
 	}
-	if !spec.IsEnabled() && !force {
+	if !spec.IsEnabled() && !opts.Force {
 		if closeApp != nil {
 			closeApp()
 		}
 		return nil, types.CreateRequestError(fmt.Sprintf("job %s is disabled, use --force to run it", jobName), http.StatusBadRequest)
 	}
-	if _, err := application.JobArgValues(spec, args); err != nil {
+	if _, err := application.JobArgValues(spec, opts.Args); err != nil {
 		if closeApp != nil {
 			closeApp()
 		}
@@ -810,13 +817,13 @@ func (s *Server) RunJob(ctx context.Context, appPath, jobName string, stage, wai
 		spec:     spec,
 		trigger:  types.JobTriggerManual,
 		actor:    cmp.Or(system.GetContextUserId(ctx), "admin"),
-		args:     args,
-		force:    force,
+		args:     opts.Args,
+		force:    opts.Force,
 		version:  entry.Metadata.VersionMetadata.Version,
 		request:  system.GetContextRequestId(ctx),
 	}
 	var run *types.JobRun
-	if wait {
+	if opts.Wait {
 		run, err = s.executeJobRun(ctx, exec)
 	} else {
 		run, err = s.startJobRun(ctx, exec)
@@ -1038,7 +1045,7 @@ func (h *Handler) runJob(r *http.Request) (any, error) {
 	}
 	updateTargetInContext(r, appPath+":"+jobName, false)
 	updateOperationInContext(r, string(API_RUN_JOB))
-	return h.server.RunJob(r.Context(), appPath, jobName, stage, wait, force, req.Args)
+	return h.server.RunJob(r.Context(), appPath, jobName, JobRunOptions{Stage: stage, Wait: wait, Force: force, Args: req.Args})
 }
 
 func (h *Handler) listJobRuns(r *http.Request) (any, error) {

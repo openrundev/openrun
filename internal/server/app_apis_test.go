@@ -248,7 +248,7 @@ func TestStaticFromDiskConfigServesFromDiskWithoutSpec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin transaction: %v", err)
 	}
-	_, err = server.CreateAppTx(ctx, tx, "/diskconf", true, false, &types.CreateAppRequest{
+	_, err = server.CreateAppTx(ctx, tx, "/diskconf", DeployOptions{Approve: true}, &types.CreateAppRequest{
 		SourceUrl: sourceDir,
 		AppConfig: map[string]string{"static_from_disk": "true"},
 		StageAt:   "path",
@@ -319,7 +319,7 @@ func TestStaticFromDiskConfigRejectsNonDiskSource(t *testing.T) {
 	defer db.Close()
 
 	for _, sourceUrl := range []string{"github.com/openrundev/openrun/examples/disk_usage", types.NO_SOURCE} {
-		_, err := server.CreateAppTx(ctx, types.Transaction{}, "/diskconfbad", true, false, &types.CreateAppRequest{
+		_, err := server.CreateAppTx(ctx, types.Transaction{}, "/diskconfbad", DeployOptions{Approve: true}, &types.CreateAppRequest{
 			SourceUrl: sourceUrl,
 			AppConfig: map[string]string{"static_from_disk": "true"},
 			StageAt:   "path",
@@ -357,7 +357,7 @@ func TestCreateAppRejectsStageDomainRouteOverlap(t *testing.T) {
 		t.Fatalf("commit existing app: %v", err)
 	}
 
-	_, err = server.CreateAppTx(ctx, types.Transaction{}, "example.com:/foo", false, false, &types.CreateAppRequest{
+	_, err = server.CreateAppTx(ctx, types.Transaction{}, "example.com:/foo", DeployOptions{}, &types.CreateAppRequest{
 		SourceUrl: t.TempDir(),
 	}, nil, server.newBindingAccountManager(false), nil)
 	if err == nil {
