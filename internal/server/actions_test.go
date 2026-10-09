@@ -169,6 +169,15 @@ func TestActionsListAndAuthorization(t *testing.T) {
 	testutil.AssertEqualsInt(t, "no app:access", http.StatusForbidden, requestErrorCode(t, err))
 	testutil.AssertErrorContains(t, err, "app:access")
 
+	// app:access is checked before the provider match: a caller without
+	// access does not learn the app's login mechanism from the error
+	_, err = server.GetAction(userApiCtx(t, server, "builtin:bob"), "/apps/sysops", "list_orders", false)
+	testutil.AssertEqualsInt(t, "no app:access on system app", http.StatusForbidden, requestErrorCode(t, err))
+	testutil.AssertErrorContains(t, err, "app:access")
+	if strings.Contains(err.Error(), "admin user only") {
+		t.Fatalf("provider match error leaked to a caller without app:access: %v", err)
+	}
+
 	// Without the permit the action is not found, as a missing one
 	_, err = server.GetAction(userApiCtx(t, server, "builtin:alice"), "/apps/ops", "restricted", false)
 	testutil.AssertEqualsInt(t, "no permit", http.StatusNotFound, requestErrorCode(t, err))

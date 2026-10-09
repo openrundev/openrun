@@ -567,6 +567,19 @@ func (s *Server) serveMCPApp(w http.ResponseWriter, r *http.Request, application
 		deny(http.StatusForbidden, fmt.Sprintf("Forbidden : %s does not have access to %s", principal, application.AppPathDomain()))
 		return
 	}
+	// The same provider match as the management API's action routes
+	// (actionProviderMatch): a principal of another login mechanism than the
+	// app's does not reach the app through a group grant. Checked after
+	// app:access, which the error of this check would otherwise leak around
+	if s.rbacManager.ConfigEnabled() {
+		if err := s.principalProviderMatch(principal, actionTargetOfApp(application), func() (bool, error) {
+			return s.rbacManager.AuthorizeUserAppPerm(principal, groups, types.PermissionAdmin, grantPathDomain, application.UserID)
+		}); err != nil {
+			s.Warn().Msgf("User %s refused at MCP app %s: %s", principal, application.AppPathDomain(), err)
+			deny(http.StatusForbidden, "Forbidden: "+err.Error())
+			return
+		}
+	}
 
 	ops, status, msg := mcpReadOperations(r)
 	if status != 0 {

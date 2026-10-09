@@ -86,7 +86,11 @@ func actionTargetOfInfo(info types.AppInfo) actionTarget {
 // grant would let it through RBAC. Not checked for trusted calls (the unix
 // socket without --as), for the admin user and for callers holding the admin
 // permission; apps with auth none accept any principal. An app with MCP
-// disabled (--mcp=disable) is refused to every MCP caller first
+// disabled (--mcp=disable) is refused to every MCP caller first.
+//
+// The check reveals the app's login mechanism in its error, so callers run
+// it AFTER the app:access check: a caller without access learns nothing
+// about the app
 func (s *Server) actionProviderMatch(ctx context.Context, target actionTarget) error {
 	if types.MCPDisabled(target.mcp) && system.GetContextApiInvoker(ctx) == InvokerMCP {
 		// --mcp=disable turns every MCP route to the app's actions off, the
@@ -97,7 +101,17 @@ func (s *Server) actionProviderMatch(ctx context.Context, target actionTarget) e
 	if !s.rbacManager.APIEnforced(ctx) {
 		return nil
 	}
-	principal := apiCallerPrincipal(ctx)
+	return s.principalProviderMatch(apiCallerPrincipal(ctx), target, func() (bool, error) {
+		return s.rbacManager.AuthorizeAPI(ctx, types.PermissionAdmin, target.grantPath, target.owner)
+	})
+}
+
+// principalProviderMatch is the provider match of actionProviderMatch for an
+// explicit principal, with RBAC known to be enforced. isAdmin reports whether
+// the principal holds the admin permission (which passes the check). Used by
+// the served MCP region of an app and by API key minting, where the
+// principal is not the request context's caller
+func (s *Server) principalProviderMatch(principal string, target actionTarget, isAdmin func() (bool, error)) error {
 	if principal == types.ADMIN_USER {
 		return nil
 	}
@@ -111,7 +125,7 @@ func (s *Server) actionProviderMatch(ctx context.Context, target actionTarget) e
 		return nil
 	}
 
-	if isAdmin, adminErr := s.rbacManager.AuthorizeAPI(ctx, types.PermissionAdmin, target.grantPath, target.owner); adminErr == nil && isAdmin {
+	if admin, adminErr := isAdmin(); adminErr == nil && admin {
 		return nil
 	}
 
@@ -211,9 +225,11 @@ func (s *Server) definitionApp(ctx context.Context, entry *types.AppEntry) (*app
 }
 
 // actionApp resolves the app instance for an app path (the staging instance
-// with stage) for a caller who passes the provider match and app:access
-// checks. The checks work from the app metadata and come first: nothing is
-// loaded, let alone started, for a caller who may not use the app. With
+// with stage) for a caller who passes the app:access and provider match
+// checks, in that order (the provider match error names the app's login
+// mechanism, which a caller without access does not get to see). The checks
+// work from the app metadata and come first: nothing is loaded, let alone
+// started, for a caller who may not use the app. With
 // initialize the served app is returned, initialized so that its actions can
 // run; without, an app with its definition loaded (definitionApp). release
 // has to be called when done with the app
@@ -223,10 +239,10 @@ func (s *Server) actionApp(ctx context.Context, appPath string, stage, initializ
 		return nil, nil, nil, err
 	}
 	target := actionTargetOfEntry(entry)
-	if err := s.actionProviderMatch(ctx, target); err != nil {
+	if err := s.enforceAppPermEntry(ctx, types.PermissionAccess, entry); err != nil {
 		return nil, nil, nil, err
 	}
-	if err := s.enforceAppPermEntry(ctx, types.PermissionAccess, entry); err != nil {
+	if err := s.actionProviderMatch(ctx, target); err != nil {
 		return nil, nil, nil, err
 	}
 	appCtx, err := s.actionAppContext(ctx, target)

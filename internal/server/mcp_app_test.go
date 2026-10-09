@@ -263,6 +263,66 @@ func TestMCPAppBearerFlow(t *testing.T) {
 	resp = mcpCall(t, ts, "/apps/orders", appKey.Key, map[string]string{"Origin": "https://evil.example.com"}, `{}`)
 	readBody(t, resp)
 	testutil.AssertEqualsInt(t, "origin refused", http.StatusForbidden, resp.StatusCode)
+
+	// Provider match, as on the management API's action routes: alice's
+	// developer grant does not admit her builtin key once the app's users
+	// log in through another mechanism (system auth is admin only)
+	ordersEntry, err := server.db.GetAppEntry(t.Context(), types.AppPathDomain{Path: "/apps/orders"})
+	if err != nil {
+		t.Fatalf("orders entry: %v", err)
+	}
+	ordersEntry.Metadata.AuthnType = types.AppAuthnSystem
+	tx, err := server.db.BeginTransaction(t.Context())
+	if err != nil {
+		t.Fatalf("tx: %v", err)
+	}
+	if err := server.db.UpdateAppMetadata(t.Context(), tx, ordersEntry); err != nil {
+		t.Fatalf("update auth: %v", err)
+	}
+	if err := server.db.CommitTransaction(tx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	server.apps.ClearApps([]types.AppPathDomain{ordersEntry.AppPathDomain()})
+	server.apps.ResetAllAppCache()
+	resp = mcpCall(t, ts, "/apps/orders", appKey.Key, nil, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	body = readBody(t, resp)
+	testutil.AssertEqualsInt(t, "provider mismatch", http.StatusForbidden, resp.StatusCode)
+	if !strings.Contains(body, "admin user only") {
+		t.Fatalf("provider mismatch body: %s", body)
+	}
+	// And no such key is minted in the first place
+	if _, err := server.CreateApiKey(system.WithTrustedOperation(t.Context()),
+		&types.ApiKeyCreateRequest{User: "builtin:alice", Resources: []string{"app:/apps/orders"}}); err == nil {
+		t.Fatal("app key for a user of another login mechanism must be refused")
+	} else if !strings.Contains(err.Error(), "cannot bind an API key for builtin:alice to app /apps/orders") {
+		t.Fatalf("mint error: %v", err)
+	}
+	// The admin principal passes the match on every app
+	if _, err := server.CreateApiKey(system.WithTrustedOperation(t.Context()),
+		&types.ApiKeyCreateRequest{User: "admin", Resources: []string{"app:/apps/orders"}}); err != nil {
+		t.Fatalf("admin app key: %v", err)
+	}
+	// Minting for a user without app:access does not disclose the login
+	// mechanism either: the key is issued and refused at the region
+	bobSysKey, err := server.CreateApiKey(system.WithTrustedOperation(t.Context()),
+		&types.ApiKeyCreateRequest{User: "builtin:bob", Resources: []string{"app:/apps/orders"}})
+	if err != nil {
+		t.Fatalf("bob key on system app: %v", err)
+	}
+	resp = mcpCall(t, ts, "/apps/orders", bobSysKey.Key, nil, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	body = readBody(t, resp)
+	testutil.AssertEqualsInt(t, "no app:access, minted on system app", http.StatusForbidden, resp.StatusCode)
+	if strings.Contains(body, "admin user only") {
+		t.Fatalf("provider match leaked to a caller without app:access: %s", body)
+	}
+	// A caller without app:access gets the access refusal, not the login
+	// mechanism: bob's key was minted while the app was builtin
+	resp = mcpCall(t, ts, "/apps/orders", bobKey.Key, nil, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	body = readBody(t, resp)
+	testutil.AssertEqualsInt(t, "no app:access, system app", http.StatusForbidden, resp.StatusCode)
+	if strings.Contains(body, "admin user only") {
+		t.Fatalf("provider match leaked to a caller without app:access: %s", body)
+	}
 }
 
 func TestMCPAppOAuthFlow(t *testing.T) {

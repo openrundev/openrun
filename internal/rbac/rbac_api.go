@@ -409,6 +409,16 @@ func (h *RBACManager) AuthorizeUserPerm(user string, groups []string, perm types
 	return h.authorizeAPIInt(user, groups, perm, types.AppPathDomain{}, "", "")
 }
 
+// AuthorizeUserAppPerm evaluates an app targeted permission for the given
+// user and groups directly, without request context, including the owner
+// rule. target must be the main app path (as with AuthorizeAPI). Used where
+// the principal is not the request's caller: the served MCP region of an app
+// (a bearer principal) and API key minting (the key's target user)
+func (h *RBACManager) AuthorizeUserAppPerm(user string, groups []string, perm types.RBACPermission,
+	target types.AppPathDomain, owner string) (bool, error) {
+	return h.authorizeAPIInt(user, groups, perm, target, "", owner)
+}
+
 // ValidatePermissionName checks that a permission entry is a valid resource:verb
 // permission or permission glob. Used for local validation of draft edits
 func ValidatePermissionName(perm types.RBACPermission) error {

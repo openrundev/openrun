@@ -301,6 +301,33 @@ func (s *Server) CreateApiKey(ctx context.Context, req *types.ApiKeyCreateReques
 	if err != nil {
 		return nil, err
 	}
+	if mcpApp != nil && s.rbacManager.ConfigEnabled() {
+		// An app-bound key is refused at the app's MCP region when the
+		// key's user is of another login mechanism than the app's
+		// (principalProviderMatch); refuse to mint such a key rather than
+		// hand out one that never works. As on the request paths, the match
+		// is evaluated only for a user holding app:access on the app: its
+		// error names the app's login mechanism, which a user without access
+		// (a self-service caller probing paths) does not get to see. A key
+		// for such a user is minted as before and refused at the region
+		groups, err := s.apiIdentityGroups(ctx, identity)
+		if err != nil {
+			return nil, err
+		}
+		appTarget := actionTargetOfInfo(*mcpApp)
+		access, err := s.rbacManager.AuthorizeUserAppPerm(target, groups, types.PermissionAccess, appTarget.grantPath, appTarget.owner)
+		if err != nil {
+			return nil, err
+		}
+		if access {
+			if err := s.principalProviderMatch(target, appTarget, func() (bool, error) {
+				return s.rbacManager.AuthorizeUserAppPerm(target, groups, types.PermissionAdmin, appTarget.grantPath, appTarget.owner)
+			}); err != nil {
+				return nil, types.CreateRequestError(
+					fmt.Sprintf("cannot bind an API key for %s to app %s: %s", target, mcpApp.AppPathDomain, err), http.StatusBadRequest)
+			}
+		}
+	}
 
 	id, secret, wireToken, err := generateApiKey()
 	if err != nil {

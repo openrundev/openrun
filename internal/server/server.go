@@ -1297,6 +1297,12 @@ func (s *Server) Start() error {
 		if err != nil {
 			return err
 		}
+		// net.Listen creates the socket file subject to the umask; restrict it
+		// to the server user (also covers a socket inherited on in-place restart)
+		if err := os.Chmod(serverUri, 0700); err != nil {
+			socket.Close() //nolint:errcheck
+			return fmt.Errorf("error setting permissions on socket file %s : %s", serverUri, err)
+		}
 		bound = append(bound, socket)
 		udsListener = s.connTracker.wrap(socket)
 
