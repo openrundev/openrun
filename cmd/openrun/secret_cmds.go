@@ -198,8 +198,7 @@ func secretListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 				return err
 			}
 
-			printSecretList(cCtx, response.Secrets, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printSecretList(cCtx, response.Secrets, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
@@ -338,7 +337,10 @@ Examples:
 	}
 }
 
-func printSecretList(cCtx *cli.Context, secrets []types.SecretInfo, format string) {
+func printSecretList(cCtx *cli.Context, secrets []types.SecretInfo, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, secrets)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -374,4 +376,5 @@ func printSecretList(cCtx *cli.Context, secrets []types.SecretInfo, format strin
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
+	return nil
 }

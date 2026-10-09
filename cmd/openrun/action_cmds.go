@@ -100,13 +100,15 @@ Examples:
 			for _, warning := range response.Warnings {
 				fmt.Fprintf(cCtx.App.ErrWriter, "warning: %s\n", warning) //nolint:errcheck
 			}
-			printActionList(cCtx, response.Actions, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printActionList(cCtx, response.Actions, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
 
-func printActionList(cCtx *cli.Context, actions []types.ActionInfo, format string) {
+func printActionList(cCtx *cli.Context, actions []types.ActionInfo, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, actions)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -136,7 +138,7 @@ func printActionList(cCtx *cli.Context, actions []types.ActionInfo, format strin
 	default:
 		if len(actions) == 0 {
 			fmt.Fprintln(cCtx.App.ErrWriter, "No actions available") //nolint:errcheck
-			return
+			return nil
 		}
 		formatStr := "%-30s %-24s %-24s %-16s %-8s %-12s %-s\n"
 		printStdout(cCtx, formatStr, "App", "Action", "Name", "Path", "Suggest", "Hints", "Description")
@@ -144,6 +146,7 @@ func printActionList(cCtx *cli.Context, actions []types.ActionInfo, format strin
 			printStdout(cCtx, formatStr, a.AppPath, a.Tool, a.Name, a.Path, strconv.FormatBool(a.Suggest), hintLabels(a.Hints), firstLine(a.Description))
 		}
 	}
+	return nil
 }
 
 // hintLabels renders the declared side-effect hints of an action (ro,
@@ -164,7 +167,7 @@ func firstLine(text string) string {
 func actionShowCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
 	flags := make([]cli.Flag, 0, len(commonFlags)+2)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newFormatFlag())
+	flags = append(flags, newFixedFormatFlag())
 	flags = append(flags, stageFlag("Use the staging instance of the app instead of prod"))
 
 	return &cli.Command{
@@ -259,7 +262,7 @@ func printActionDetail(cCtx *cli.Context, detail *types.ActionDetailResponse, st
 func actionInvokeFlags(commonFlags []cli.Flag) []cli.Flag {
 	flags := make([]cli.Flag, 0, len(commonFlags)+6)
 	flags = append(flags, commonFlags...)
-	flags = append(flags, newFormatFlag())
+	flags = append(flags, newFixedFormatFlag())
 	flags = append(flags, stageFlag("Use the staging instance of the app instead of prod"))
 	flags = append(flags, newStringFlag("json", "j", "The args as a JSON object. @file reads the object from a file, - from stdin", ""))
 	flags = append(flags, newBoolFlag("quiet", "q", "Do not print the status line", false))

@@ -139,8 +139,7 @@ Examples:
 				return err
 			}
 
-			printSyncList(cCtx, response.Entries, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printSyncList(cCtx, response.Entries, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
@@ -233,7 +232,10 @@ Examples:
 	}
 }
 
-func printSyncList(cCtx *cli.Context, sync []*types.SyncEntry, format string) {
+func printSyncList(cCtx *cli.Context, sync []*types.SyncEntry, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, sync)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -272,6 +274,7 @@ func printSyncList(cCtx *cli.Context, sync []*types.SyncEntry, format string) {
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
+	return nil
 }
 
 func getSyncType(sync *types.SyncEntry) string {

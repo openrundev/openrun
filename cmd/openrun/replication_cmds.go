@@ -54,8 +54,7 @@ func replicationStatusCommand(commonFlags []cli.Flag, clientConfig *types.Client
 				return err
 			}
 
-			printReplicationStatus(cCtx, response, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printReplicationStatus(cCtx, response, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
@@ -75,7 +74,10 @@ func replicationTarget(entry types.ReplicationStatusEntry) string {
 	return target
 }
 
-func printReplicationStatus(cCtx *cli.Context, entries []types.ReplicationStatusEntry, format string) {
+func printReplicationStatus(cCtx *cli.Context, entries []types.ReplicationStatusEntry, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, entries)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -121,4 +123,5 @@ func printReplicationStatus(cCtx *cli.Context, entries []types.ReplicationStatus
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
+	return nil
 }

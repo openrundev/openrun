@@ -364,13 +364,15 @@ Examples:
 				return err
 			}
 
-			printServiceList(cCtx, response, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printServiceList(cCtx, response, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
 
-func printServiceList(cCtx *cli.Context, services []types.Service, format string) {
+func printServiceList(cCtx *cli.Context, services []types.Service, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, services)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -405,4 +407,5 @@ func printServiceList(cCtx *cli.Context, services []types.Service, format string
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
+	return nil
 }

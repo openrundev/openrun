@@ -346,13 +346,15 @@ Examples:
 			if err != nil {
 				return err
 			}
-			printAppList(cCtx, appListResponse.Apps, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printAppList(cCtx, appListResponse.Apps, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
 
-func printAppList(cCtx *cli.Context, apps []types.AppResponse, format string) {
+func printAppList(cCtx *cli.Context, apps []types.AppResponse, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, apps)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -399,6 +401,7 @@ func printAppList(cCtx *cli.Context, apps []types.AppResponse, format string) {
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
+	return nil
 }
 
 func appType(app types.AppResponse) string {

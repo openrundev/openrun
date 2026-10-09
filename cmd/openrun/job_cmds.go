@@ -62,13 +62,15 @@ Examples:
 			if err := client.Get("/_openrun/jobs", values, &response); err != nil {
 				return err
 			}
-			printJobList(cCtx, response.Jobs, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printJobList(cCtx, response.Jobs, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
 
-func printJobList(cCtx *cli.Context, jobs []types.JobInfo, format string) {
+func printJobList(cCtx *cli.Context, jobs []types.JobInfo, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, jobs)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -110,6 +112,7 @@ func printJobList(cCtx *cli.Context, jobs []types.JobInfo, format string) {
 				strconv.FormatBool(j.Spec.IsEnabled()), jobNextRun(j), jobLastStatus(j), jobLastRunId(j))
 		}
 	}
+	return nil
 }
 
 func jobExecutor(spec types.JobSpec) string {
@@ -254,8 +257,7 @@ Examples:
 			if err := client.Get("/_openrun/jobs/runs", values, &response); err != nil {
 				return err
 			}
-			printJobRuns(cCtx, response.Runs, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printJobRuns(cCtx, response.Runs, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
@@ -276,7 +278,10 @@ func jobRunDuration(run types.JobRun) string {
 	return run.EndedAt.Sub(run.StartedAt).Round(time.Second).String()
 }
 
-func printJobRuns(cCtx *cli.Context, runs []types.JobRun, format string) {
+func printJobRuns(cCtx *cli.Context, runs []types.JobRun, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, runs)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -310,6 +315,7 @@ func printJobRuns(cCtx *cli.Context, runs []types.JobRun, format string) {
 				jobRunDuration(r), r.Actor, strings.ReplaceAll(r.Message, "\n", " "))
 		}
 	}
+	return nil
 }
 
 func jobLogsCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {

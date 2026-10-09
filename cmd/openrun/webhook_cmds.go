@@ -58,13 +58,15 @@ Examples:
 				return err
 			}
 
-			printWebhookList(cCtx, response.Tokens, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printWebhookList(cCtx, response.Tokens, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
 
-func printWebhookList(cCtx *cli.Context, tokens []types.AppToken, format string) {
+func printWebhookList(cCtx *cli.Context, tokens []types.AppToken, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, tokens)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -95,6 +97,7 @@ func printWebhookList(cCtx *cli.Context, tokens []types.AppToken, format string)
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
+	return nil
 }
 
 func webhookCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {

@@ -157,13 +157,15 @@ func apiKeyListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig)
 			if err := client.Get("/_openrun/apikey", values, &response); err != nil {
 				return err
 			}
-			printApiKeyList(cCtx, response.Keys, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printApiKeyList(cCtx, response.Keys, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
 
-func printApiKeyList(cCtx *cli.Context, keys []types.ApiKeyInfo, format string) {
+func printApiKeyList(cCtx *cli.Context, keys []types.ApiKeyInfo, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, keys)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -202,6 +204,7 @@ func printApiKeyList(cCtx *cli.Context, keys []types.ApiKeyInfo, format string) 
 			printStdout(cCtx, formatStr, k.Id, k.User, k.Type, strings.Join(k.Resources, ","), apiKeyTime(k.ExpiresAt, "never"), apiKeyTime(k.LastUsedAt, "-"), scopes, k.Description)
 		}
 	}
+	return nil
 }
 
 // apiKeyTime formats an optional key timestamp, missing printing as the

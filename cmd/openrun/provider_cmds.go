@@ -142,13 +142,15 @@ func providerListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfi
 				return err
 			}
 
-			printProviderList(cCtx, response, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printProviderList(cCtx, response, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
 
-func printProviderList(cCtx *cli.Context, providers []types.BindingProvider, format string) {
+func printProviderList(cCtx *cli.Context, providers []types.BindingProvider, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, providers)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -180,6 +182,7 @@ func printProviderList(cCtx *cli.Context, providers []types.BindingProvider, for
 			printStdout(cCtx, formatStr, p.Type, p.Name, p.Version, strings.Join(p.ServiceTypes, ", "), p.SourceURL)
 		}
 	}
+	return nil
 }
 
 // qualifiedProviderName is the type-qualified display name; binding providers

@@ -320,6 +320,21 @@ tests:
       contains:
         - '"is_dev": false,'
     exit-code: 0
+  basic582: # Test app list command with a Go template format, one line per app with json field names
+    command: "../openrun app list --format '{{.metadata.version_metadata.version}}:{{.is_dev}}:{{.metadata.name | upper}}' /test2"
+    stdout:
+      contains:
+        - "1:false:"
+      line-count: 1
+    exit-code: 0
+  basic584: # Broken template is rejected before calling the server
+    command: "../openrun app list --format '{{.metadata.name' /test2"
+    stderr:
+      contains:
+        - "invalid format template"
+    stdout:
+      line-count: 0
+    exit-code: 1
   basic590: # Reload one app
     command: ../openrun app reload /test2
     exit-code: 0

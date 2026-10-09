@@ -63,13 +63,15 @@ Examples:
 				return err
 			}
 
-			printVersionList(cCtx, response.Versions, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printVersionList(cCtx, response.Versions, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
 
-func printVersionList(cCtx *cli.Context, versions []types.AppVersion, format string) {
+func printVersionList(cCtx *cli.Context, versions []types.AppVersion, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, versions)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -113,6 +115,7 @@ func printVersionList(cCtx *cli.Context, versions []types.AppVersion, format str
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
+	return nil
 }
 
 func versionFilesCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *cli.Command {
@@ -155,13 +158,15 @@ Examples:
 				return err
 			}
 
-			printFileList(cCtx, response.Files, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printFileList(cCtx, response.Files, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
 
-func printFileList(cCtx *cli.Context, files []types.AppFile, format string) {
+func printFileList(cCtx *cli.Context, files []types.AppFile, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, files)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -192,6 +197,7 @@ func printFileList(cCtx *cli.Context, files []types.AppFile, format string) {
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
+	return nil
 }
 
 // instanceLabel names the app instance a command acted on in its output:

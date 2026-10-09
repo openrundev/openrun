@@ -216,13 +216,15 @@ func userListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig) *
 				return err
 			}
 
-			printUserList(cCtx, response.Users, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printUserList(cCtx, response.Users, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
 
-func printUserList(cCtx *cli.Context, users []types.BuiltinUserInfo, format string) {
+func printUserList(cCtx *cli.Context, users []types.BuiltinUserInfo, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, users)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -260,4 +262,5 @@ func printUserList(cCtx *cli.Context, users []types.BuiltinUserInfo, format stri
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
+	return nil
 }

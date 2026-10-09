@@ -229,6 +229,9 @@ Examples:
 }
 
 func printActionRuns(cCtx *cli.Context, runs []types.ActionRun, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, runs)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)

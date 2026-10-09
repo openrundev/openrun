@@ -30,20 +30,46 @@ const (
 
 var validFormats = []string{FORMAT_TABLE, FORMAT_BASIC, FORMAT_CSV, FORMAT_JSON, FORMAT_JSONL, FORMAT_JSONL_PRETTY}
 
-// newFormatFlag creates the output format flag, validating the value at parse
-// time so an invalid format is reported as an error instead of a panic
+// newFormatFlag creates the output format flag of the list commands,
+// validating the value at parse time so an invalid format is reported as an
+// error instead of a panic. Besides the fixed formats, a Go template is
+// accepted and rendered once per row, see printTemplate
 func newFormatFlag() *cli.StringFlag {
+	return &cli.StringFlag{
+		Name:    "format",
+		Aliases: []string{"f"},
+		Usage: "The display format: table, basic, csv, json, jsonl, jsonl_pretty, or a Go template " +
+			"rendered per row with the field names of the json format, like {{.metadata.name}}. " +
+			"Sprig functions are available, {{json .}} prints a row as JSON",
+		Action: func(_ *cli.Context, value string) error {
+			if isTemplateFormat(value) {
+				_, err := parseFormatTemplate(value)
+				return err
+			}
+			return checkFixedFormat(value)
+		},
+	}
+}
+
+// newFixedFormatFlag is the format flag of the commands which print a single
+// document rather than a list (action show, action run), where only the
+// fixed formats apply
+func newFixedFormatFlag() *cli.StringFlag {
 	return &cli.StringFlag{
 		Name:    "format",
 		Aliases: []string{"f"},
 		Usage:   "The display format. Valid options are table, basic, csv, json, jsonl and jsonl_pretty",
 		Action: func(_ *cli.Context, value string) error {
-			if !slices.Contains(validFormats, value) {
-				return fmt.Errorf("invalid format %q: valid options are %s", value, strings.Join(validFormats, ", "))
-			}
-			return nil
+			return checkFixedFormat(value)
 		},
 	}
+}
+
+func checkFixedFormat(value string) error {
+	if !slices.Contains(validFormats, value) {
+		return fmt.Errorf("invalid format %q: valid options are %s", value, strings.Join(validFormats, ", "))
+	}
+	return nil
 }
 
 // Terminal colors, empty strings when the terminal does not support ANSI escape sequences

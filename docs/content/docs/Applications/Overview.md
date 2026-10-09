@@ -86,6 +86,23 @@ app_prd_2d6KcZmNwHIB8cSzNCotqBHpeje PROD        5 NONE main:ed7545ae739dfe85140a
 app_stg_2d6KcZmNwHIB8cSzNCotqBHpeje STG         5 NONE main:ed7545ae739dfe85140a      stage.utils.demo.clace.io:/bookmarks                         github.com/openrundev/apps/utils/bookmarks
 ```
 
+### Output Formats
+
+The list commands (`app list`, `version list`, `version files`, `binding list`, `service list`, `secret list`, `job list`, `job runs`, `action list`, `action runs`, `apikey list`, `user list`, `sync list`, `webhook list`, `provider list`, `replication status`) take a `--format` option. The fixed formats are `table` (the default), `basic` (fewer columns), `csv`, `json`, `jsonl` and `jsonl_pretty`. The `client.default_format` config entry sets the default.
+
+Any other `--format` value which contains `{{` is treated as a [Go template](https://pkg.go.dev/text/template), the way `docker --format` works. The template is rendered once per entry, one line per entry, and the data is the entry in its JSON form, so the field names are the ones `--format json` shows:
+
+```shell
+$ openrun app list --format '{{.metadata.name}} v{{.metadata.version_metadata.version}} {{.source_url}}'
+bookmarks v5 github.com/openrundev/apps/utils/bookmarks
+
+$ openrun version list --format '{{if .active}}* {{end}}{{.version}} {{.metadata.version_metadata.git_commit | trunc 8}}' /bookmarks
+  1 86385ff6
+* 2 ed7545ae
+```
+
+The [sprig](https://masterminds.github.io/sprig/) functions are available in the template, along with `json`, which prints a value as compact JSON (`{{json .}}` prints the whole entry), and `relTime`, which renders a timestamp as a relative age like `3 hours ago`. A template which does not parse is reported as an error before the server is called.
+
 Use the `version list` command to list versions for particular apps. This command works on prod app or staging app specifically.
 
 ```shell

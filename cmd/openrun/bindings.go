@@ -304,8 +304,7 @@ Examples:
 				return err
 			}
 
-			printBindingList(cCtx, []types.Binding{binding}, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printBindingList(cCtx, []types.Binding{binding}, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
@@ -383,8 +382,7 @@ func bindingListCommand(commonFlags []cli.Flag, clientConfig *types.ClientConfig
 				return err
 			}
 
-			printBindingList(cCtx, response, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
-			return nil
+			return printBindingList(cCtx, response, cmp.Or(cCtx.String("format"), clientConfig.Client.DefaultFormat))
 		},
 	}
 }
@@ -435,7 +433,10 @@ Examples:
 	}
 }
 
-func printBindingList(cCtx *cli.Context, bindings []types.Binding, format string) {
+func printBindingList(cCtx *cli.Context, bindings []types.Binding, format string) error {
+	if isTemplateFormat(format) {
+		return printTemplate(cCtx, format, bindings)
+	}
 	switch format {
 	case FORMAT_JSON:
 		enc := newJSONEncoder(cCtx.App.Writer, true)
@@ -471,6 +472,7 @@ func printBindingList(cCtx *cli.Context, bindings []types.Binding, format string
 	default:
 		panic(fmt.Errorf("unknown format %s", format))
 	}
+	return nil
 }
 
 func formatMap(m map[string]string) string {
