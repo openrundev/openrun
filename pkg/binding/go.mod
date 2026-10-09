@@ -6,7 +6,7 @@
 // server module.
 module github.com/openrundev/openrun/pkg/binding
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/hashicorp/go-hclog v1.6.3

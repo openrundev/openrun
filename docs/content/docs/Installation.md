@@ -199,7 +199,7 @@ The release binaries are available at [releases](https://github.com/openrundev/o
 
 To install from source
 
-- Install the Go toolchain required by the checked-out revision's [go.mod](https://github.com/openrundev/openrun/blob/main/go.mod). The current source requires Go 1.27.0 or newer.
+- Install the Go toolchain required by the checked-out revision's [go.mod](https://github.com/openrundev/openrun/blob/main/go.mod). The current source requires Go 1.27.2 or newer.
 - Check out the OpenRun repo.
 - The below instructions assume you are using $HOME/clhome/openrun.toml as the config file and $HOME/clhome as the work directory location.
 
