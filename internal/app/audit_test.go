@@ -245,3 +245,32 @@ func TestPatternCoversRegexDeclaration(t *testing.T) {
 		t.Fatalf("expected the secret to be granted by regex:.*, got %v", got)
 	}
 }
+
+func TestNeedsApprovalLoadOrderAndPermissionOrder(t *testing.T) {
+	t.Parallel()
+
+	isRead, isWrite := true, false
+	result := &types.ApproveResult{
+		NewLoads:      []string{"store.in", "http.in"},
+		ApprovedLoads: []string{"http.in", "store.in"},
+		NewPermissions: []types.Permission{
+			{Plugin: "http.in", Method: "get", IsRead: &isRead},
+			{Plugin: "http.in", Method: "get", Arguments: []string{"https://a"}, IsRead: &isWrite},
+		},
+		ApprovedPermissions: []types.Permission{
+			{Plugin: "http.in", Method: "get", IsRead: &isRead},
+			{Plugin: "http.in", Method: "get", Arguments: []string{"https://a"}, IsRead: &isWrite},
+		},
+	}
+	if needsApproval(result) {
+		t.Fatal("did not expect approval when only the load order changes")
+	}
+
+	// Permission order is enforced: the first matching entry decides, so
+	// moving the URL-specific write rule ahead of the broad read rule changes
+	// what a call to https://a is allowed to do
+	result.NewPermissions[0], result.NewPermissions[1] = result.NewPermissions[1], result.NewPermissions[0]
+	if !needsApproval(result) {
+		t.Fatal("expected approval when the permission order changes")
+	}
+}

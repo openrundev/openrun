@@ -866,7 +866,7 @@ func (s *Server) prepareSyncDeploys(ctx context.Context, entry *types.SyncEntry,
 	if err != nil {
 		return nil, err
 	}
-	sourceFS, err := appfs.NewSourceFs(dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
+	sourceFS, err := appfs.NewSourceFs(s.Logger, dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
 	if err != nil {
 		return nil, err
 	}

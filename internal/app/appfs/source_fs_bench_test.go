@@ -28,7 +28,7 @@ func newBenchSourceFS(b *testing.B) *SourceFs {
 		b.Fatal(err)
 	}
 
-	sourceFS, err := NewSourceFs(rootDir, NewDiskReadFS(testutil.TestLogger(), rootDir, nil), false)
+	sourceFS, err := NewSourceFs(testutil.TestLogger(), rootDir, NewDiskReadFS(testutil.TestLogger(), rootDir, nil), false)
 	if err != nil {
 		b.Fatal(err)
 	}

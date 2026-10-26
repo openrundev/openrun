@@ -233,15 +233,16 @@ func (s *SqlStore) Rollback(ctx context.Context, tx *sql.Tx) error {
 	return tx.Rollback()
 }
 
-// Insert a new entry in the store
-func (s *SqlStore) Insert(ctx context.Context, tx *sql.Tx, table string, entry *Entry) (EntryId, error) {
+// Insert a new entry in the store, recording user as its creator and updater
+func (s *SqlStore) Insert(ctx context.Context, tx *sql.Tx, table string, entry *Entry, user UserId) (EntryId, error) {
 	if err := s.initialize(ctx); err != nil {
 		return -1, err
 	}
 
 	entry.CreatedAt = time.Now()
 	entry.UpdatedAt = entry.CreatedAt
-	entry.CreatedBy = "admin" // TODO update userid
+	entry.CreatedBy = user
+	entry.UpdatedBy = user
 
 	var err error
 	table, err = s.genTableName(table)
@@ -549,7 +550,7 @@ func (s *SqlStore) Count(ctx context.Context, tx *sql.Tx, table string, filter m
 }
 
 // Update an existing entry in the store
-func (s *SqlStore) Update(ctx context.Context, tx *sql.Tx, table string, entry *Entry) (int64, error) {
+func (s *SqlStore) Update(ctx context.Context, tx *sql.Tx, table string, entry *Entry, user UserId) (int64, error) {
 	if err := s.initialize(ctx); err != nil {
 		return 0, err
 	}
@@ -566,7 +567,7 @@ func (s *SqlStore) Update(ctx context.Context, tx *sql.Tx, table string, entry *
 		updatedAtMillis = origUpdateAtMillis + 1
 	}
 	entry.UpdatedAt = time.UnixMilli(updatedAtMillis)
-	entry.UpdatedBy = "admin" // TODO update userid
+	entry.UpdatedBy = user
 
 	dataJson, err := json.Marshal(entry.Data)
 	if err != nil {

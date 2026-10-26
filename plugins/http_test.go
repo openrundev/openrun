@@ -60,8 +60,7 @@ func TestSetBody(t *testing.T) {
 	}{
 		{"hallo", nil, "", nil, "hallo", ""},
 		{"", fd, "", nil, "foo=bar+baz", ""},
-		// TODO - this should check multipart form data is being set
-		{"", fd, "multipart/form-data", nil, "", ""},
+		{"", fd, "multipart/form-data", nil, "", ""}, // multipart bodies are checked by parsing the form below
 		{"", nil, "", sdk.Tuple{true, int64(1), "der"}, "[true,1,\"der\"]", ""},
 	}
 
@@ -74,6 +73,9 @@ func TestSetBody(t *testing.T) {
 		}
 
 		if strings.HasPrefix(req.Header.Get("Content-Type"), "multipart/form-data;") {
+			if req.ContentLength <= 0 {
+				t.Errorf("case %d expected content length to be set for multipart body, got %d", i, req.ContentLength)
+			}
 			if err := req.ParseMultipartForm(0); err != nil {
 				t.Fatal(err)
 			}

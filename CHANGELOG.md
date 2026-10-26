@@ -17,6 +17,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Passwords of builtin users are hashed on the server with argon2id (bcrypt hashes from earlier versions are verified and upgraded in place on the next login); the `openrun user` commands send the password as entered, the `/_openrun/user` API field `password` and the MCP `user_add` tool field `password` (was `password_hash`) take the plaintext. The server enforces a password policy (8 to 128 characters, not equal to the username) and a username syntax (letters, digits and `. _ @ + -`; `admin`, `anonymous` and the `openrun-` prefix are reserved).
 - Grants that managed users through `config:update` need `user:manage` (or the individual `user:*` permissions) now.
 - The `[builtin_auth.*]` section of `openrun.toml` is deprecated: its entries are imported as users at startup when no user of that name exists, an existing user is never changed from the file, and the section will be removed in a later release. A dynamic config document (`openrun server update-config`) carrying `entries.builtin_auth` is rejected. `openrun user list` no longer reports a static/dynamic source.
+- The store plugin records the user of the request in the `_created_by` and `_updated_by` fields of an entry (`anonymous` when the request has no authenticated user); earlier versions always stored `admin`.
+- `print()` output from `app.star` during app load and audit, and the tailwindcss watcher messages of dev apps, go to the server log instead of the server's stdout.
 
 ### Removed
 
@@ -24,6 +26,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Template globs (`routing.base_templates` and the template locations) of apps served from disk now also match files supplied by the app spec, as the other file reads already did.
+- The http plugin sends a multipart form body with a `Content-Length` header instead of chunked transfer encoding, like the other body types.
 - SAML: a configured `sp_key_file`/`sp_cert_file` now also serves as the decryption key (an `EncryptedAssertion` from the IdP failed with "no decryption certs available") and signs the response to an IdP-initiated logout. A signed `AuthnRequest` over the HTTP-Redirect binding signs the query string (`SigAlg`/`Signature`) instead of embedding an XML signature the binding does not allow. Logout to an IdP single logout endpoint no longer panics without an SP keypair (the request is sent unsigned), and over the HTTP-Redirect binding the LogoutRequest signs the query string rather than embedding an XML signature. The SP metadata endpoint works without an SP keypair, lists the single logout endpoint, and is valid for seven days rather than 24 nanoseconds.
 
 ### Security

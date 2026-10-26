@@ -638,7 +638,7 @@ func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx type
 	var sourceFS *appfs.SourceFs
 	if !appEntry.IsDev && s.staticServeFromDisk(appEntry) {
 		var err error
-		sourceFS, err = appfs.NewSourceFs(appEntry.SourceUrl,
+		sourceFS, err = appfs.NewSourceFs(appLogger, appEntry.SourceUrl,
 			appfs.NewDiskReadFS(appLogger, appEntry.SourceUrl, *appEntry.Metadata.SpecFiles),
 			false)
 		if err != nil {
@@ -654,14 +654,14 @@ func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx type
 		if err != nil {
 			return nil, err
 		}
-		sourceFS, err = appfs.NewSourceFs("", dbFs, false)
+		sourceFS, err = appfs.NewSourceFs(appLogger, "", dbFs, false)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		// Dev mode, use local disk as source
 		var err error
-		sourceFS, err = appfs.NewSourceFs(appEntry.SourceUrl,
+		sourceFS, err = appfs.NewSourceFs(appLogger, appEntry.SourceUrl,
 			&appfs.DiskWriteFS{DiskReadFS: appfs.NewDiskReadFS(appLogger, appEntry.SourceUrl, *appEntry.Metadata.SpecFiles)},
 			appEntry.IsDev)
 		if err != nil {
@@ -682,8 +682,9 @@ func (s *Server) setupApp(ctx context.Context, appEntry *types.AppEntry, tx type
 // create pre-pass, before the app's files exist in the database. bindings
 // are the app's bindings, resolved by the caller
 func (s *Server) setupAppFromDir(appEntry *types.AppEntry, dir string, bindings []*types.Binding) (*app.App, error) {
-	sourceFS, err := appfs.NewSourceFs(dir,
-		appfs.NewDiskReadFS(s.appLogger(appEntry), dir, *appEntry.Metadata.SpecFiles), false)
+	appLogger := s.appLogger(appEntry)
+	sourceFS, err := appfs.NewSourceFs(appLogger, dir,
+		appfs.NewDiskReadFS(appLogger, dir, *appEntry.Metadata.SpecFiles), false)
 	if err != nil {
 		return nil, err
 	}

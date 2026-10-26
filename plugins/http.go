@@ -583,8 +583,6 @@ func setBody(req *http.Request, body string, formData map[string]any, formEncodi
 		case formEncodingMultipart:
 			var b bytes.Buffer
 			mw := multipart.NewWriter(&b)
-			defer mw.Close() //nolint:errcheck
-
 			contentType = mw.FormDataContentType()
 
 			for k, values := range form {
@@ -598,8 +596,15 @@ func setBody(req *http.Request, body string, formData map[string]any, formEncodi
 					}
 				}
 			}
+			// Close writes the closing boundary; the body is complete only after
+			// that, and the content length avoids chunked transfer encoding (see
+			// the raw body case above)
+			if err := mw.Close(); err != nil {
+				return err
+			}
 
 			req.Body = io.NopCloser(&b)
+			req.ContentLength = int64(b.Len())
 
 		default:
 			return fmt.Errorf("unknown form encoding: %s", formEncoding)

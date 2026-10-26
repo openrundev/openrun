@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/openrundev/openrun/internal/app/appfs"
+	"github.com/openrundev/openrun/internal/testutil"
 )
 
 type staticResourceFS struct {
@@ -57,7 +58,7 @@ func TestStaticRootClosesFiles(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			source, err := appfs.NewSourceFs("", staticResourceFS{file: file}, true)
+			source, err := appfs.NewSourceFs(testutil.TestLogger(), "", staticResourceFS{file: file}, true)
 			if err != nil {
 				t.Fatal(err)
 			}

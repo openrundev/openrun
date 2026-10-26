@@ -1304,11 +1304,22 @@ func (a *App) loadSchemaInfo(sourceFS *appfs.SourceFs) error {
 
 	a.storeInfo, err = apptype.ReadStoreInfo(a.getStarPath(apptype.SCHEMA_FILE_NAME), schemaInfoData)
 	if err != nil {
+		a.logStarlarkError(err, "Error loading app schema")
 		return fmt.Errorf("error reading schema info: %w", err)
 	}
 
 	return nil
+}
 
+// logStarlarkError logs the starlark backtrace when err wraps a starlark
+// evaluation error, so the failing line of the app file is visible in the
+// logs. Other errors are returned to the caller with the message intact and
+// are not logged here
+func (a *App) logStarlarkError(err error, msg string) {
+	var evalErr *starlark.EvalError
+	if errors.As(err, &evalErr) {
+		a.Error().Err(err).Str("trace", evalErr.Backtrace()).Msg(msg)
+	}
 }
 
 func (a *App) loadParamsInfo(sourceFS *appfs.SourceFs) error {
@@ -1323,6 +1334,7 @@ func (a *App) loadParamsInfo(sourceFS *appfs.SourceFs) error {
 
 	a.paramInfo, err = apptype.ReadParamInfo(a.getStarPath(apptype.PARAMS_FILE_NAME), paramsInfoData, a.serverConfig)
 	if err != nil {
+		a.logStarlarkError(err, "Error loading app params")
 		return fmt.Errorf("error reading params info: %w", err)
 	}
 
@@ -1348,6 +1360,7 @@ func (a *App) loadActionParamsInfo(sourceFS *appfs.SourceFs) error {
 
 	info, err := apptype.ReadParamInfo(fileName, data, a.serverConfig)
 	if err != nil {
+		a.logStarlarkError(err, "Error loading action params")
 		return fmt.Errorf("error reading action params info: %w", err)
 	}
 	for name := range info {

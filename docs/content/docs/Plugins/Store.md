@@ -107,7 +107,7 @@ All tables have some fields added automatically. These are:
 | \_created_at | timestamp |                |
 | \_updated_at | timestamp |                |
 
-These fields can be accessed like regular user defined field in the store APIs. So `bookmark._id` can be used the way `bookmark.url` is used in all the APIs.
+These fields can be accessed like regular user defined field in the store APIs. So `bookmark._id` can be used the way `bookmark.url` is used in all the APIs. `_created_by` and `_updated_by` are the user id of the request which made the `insert` or `update` call, `anonymous` when the request has no authenticated user.
 
 ## Iterators
 

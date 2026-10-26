@@ -200,6 +200,8 @@ indexes=[
 	defer a.Close() //nolint:errcheck
 
 	request := httptest.NewRequest("GET", "/test", nil)
+	// The user of the request is recorded as the creator of the entries
+	request = request.WithContext(context.WithValue(request.Context(), types.USER_ID, "storeuser"))
 	response := httptest.NewRecorder()
 	a.ServeHTTP(response, request)
 
@@ -220,7 +222,7 @@ indexes=[
 	if !ok {
 		t.Fatalf("missing or invalid creator in response: %#v", ret)
 	}
-	testutil.AssertEqualsString(t, "creator", "admin", creator)
+	testutil.AssertEqualsString(t, "creator", "storeuser", creator)
 
 	stringVal, ok := ret["stringval"].(string)
 	if !ok {

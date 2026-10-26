@@ -30,7 +30,7 @@ func newHtmxTestDev(t *testing.T) *AppDev {
 	logger := testutil.TestLogger()
 	dir := t.TempDir()
 	disk := &appfs.DiskWriteFS{DiskReadFS: appfs.NewDiskReadFS(logger, dir, nil)}
-	source, err := appfs.NewSourceFs(dir, disk, true)
+	source, err := appfs.NewSourceFs(logger, dir, disk, true)
 	if err != nil {
 		t.Fatal(err)
 	}

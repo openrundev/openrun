@@ -459,7 +459,7 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		}, nil, nil
 	}
 
-	sourceFS, err := appfs.NewSourceFs(dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
+	sourceFS, err := appfs.NewSourceFs(s.Logger, dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1737,7 +1737,7 @@ func (s *Server) ApplyDelete(ctx context.Context, applyPath, appPathGlob string,
 		return nil, err
 	}
 
-	sourceFS, err := appfs.NewSourceFs(dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
+	sourceFS, err := appfs.NewSourceFs(s.Logger, dir, appfs.NewDiskReadFS(s.Logger, dir, nil), false)
 	if err != nil {
 		return nil, err
 	}

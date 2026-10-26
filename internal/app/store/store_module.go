@@ -9,6 +9,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -163,7 +164,7 @@ func (m *storeModule) Insert(ctx context.Context, call *plugin.Call) (any, error
 		return nil, err
 	}
 
-	id, err := m.sqlStore.Insert(ctx, fetchTransaction(call), table, entry)
+	id, err := m.sqlStore.Insert(ctx, fetchTransaction(call), table, entry, callUserId(call))
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +200,7 @@ func (m *storeModule) Update(ctx context.Context, call *plugin.Call) (any, error
 		return nil, err
 	}
 
-	rows, err := m.sqlStore.Update(ctx, fetchTransaction(call), table, entry)
+	rows, err := m.sqlStore.Update(ctx, fetchTransaction(call), table, entry, callUserId(call))
 	if err != nil {
 		return nil, err
 	}
@@ -312,6 +313,13 @@ func (m *storeModule) Select(ctx context.Context, call *plugin.Call) (any, error
 // entryFromStruct converts a typed entry argument into a store Entry: the
 // reserved _-fields map to Entry columns and everything else goes into the
 // JSON document.
+// callUserId is the user recorded as the creator/updater of an entry: the
+// user of the request which made the call, anonymous when the request has no
+// authenticated user (or there is no request, like during app load)
+func callUserId(call *plugin.Call) UserId {
+	return UserId(cmp.Or(call.Thread.UserId, types.ANONYMOUS_USER))
+}
+
 func entryFromStruct(s *plugin.Struct) (*Entry, error) {
 	entry := &Entry{Data: Document{}}
 	for name, value := range s.Fields {

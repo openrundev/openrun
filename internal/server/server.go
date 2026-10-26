@@ -1070,7 +1070,9 @@ func updateConfigSecrets(config *types.ServerConfig, evalSecret func(string) (st
 	if err != nil {
 		return err
 	}
-	// TODO : eval store and fs db connections secrets
+	// The store and fs plugin db connections are plugin settings
+	// (db_connection under [plugins."store.in"] and [plugins."fs.in"]), they
+	// are resolved in the plugins loop below
 
 	for name, auth := range config.Auth {
 		if auth.Key, err = evalSecret(auth.Key); err != nil {
@@ -1868,7 +1870,7 @@ func (s *Server) GetListAppsApp(ctx context.Context) (*app.App, error) {
 		return nil, fmt.Errorf("list_apps not available in binary")
 	}
 
-	sourceFS, err := appfs.NewSourceFs("", embedReadFS, false)
+	sourceFS, err := appfs.NewSourceFs(s.Logger, "", embedReadFS, false)
 	if err != nil {
 		return nil, err
 	}

@@ -451,16 +451,16 @@ func (s *AppStyle) StartWatcher(dev *AppDev) error {
 		if s.DisableWatcher {
 			return s.StopWatcher()
 		}
-		return s.startTailwindWatcher(dev.Config.Routing.TemplateLocations, dev.sourceFS, dev.workFS, dev.systemConfig)
+		return s.startTailwindWatcher(dev.Logger, dev.Config.Routing.TemplateLocations, dev.sourceFS, dev.workFS, dev.systemConfig)
 	default:
 		return fmt.Errorf("invalid style library type : %s", s.library)
 	}
 }
 
-func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *appfs.WritableSourceFs, workFS *appfs.WorkFs, systemConfig *types.SystemConfig) error {
+func (s *AppStyle) startTailwindWatcher(logger *types.Logger, templateLocations []string, sourceFS *appfs.WritableSourceFs, workFS *appfs.WorkFs, systemConfig *types.SystemConfig) error {
 	tailwindCmd := strings.TrimSpace(systemConfig.TailwindCSSCommand)
 	if tailwindCmd == "" {
-		fmt.Println("Warning: tailwindcss command not configured. Skipping tailwindcss watcher") // TODO: log
+		logger.Warn().Msg("tailwindcss command not configured, skipping tailwindcss watcher")
 		return nil
 	}
 
@@ -469,10 +469,11 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 
 	if s.watcher != nil {
 		if s.watcherState != nil && s.watcherState.library == s.library && slices.Equal(s.watcherState.templateLocations, templateLocations) {
-			fmt.Println("Warning: tailwindcss watcher already running with current config. Skipping tailwindcss watcher") // TODO: log
+			logger.Debug().Msg("tailwindcss watcher already running with current config, skipping watcher start")
 			return nil
 		}
-		fmt.Printf("Warning: tailwindcss watcher already running with older config. Stopping previous watcher %#v %#v %#v", s.watcherState, s.library, templateLocations) // TODO: log
+		logger.Info().Str("library", string(s.library)).Strs("template_locations", templateLocations).
+			Msg("tailwindcss watcher running with older config, stopping previous watcher")
 		if err := s.stopWatcherLocked(); err != nil {
 			return err
 		}
@@ -503,7 +504,7 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 	}
 	args = append(args, "-i", path.Join(workFS.Root, "style", "input.css"))
 	args = append(args, "-o", targetFile)
-	fmt.Printf("Running command %s args %#v\n", split[0], args) // TODO: log
+	logger.Info().Str("command", split[0]).Strs("args", args).Msg("Starting tailwindcss watcher")
 
 	// Setup stdin/stdout for watcher process
 	if s.watcherStdout != nil {
@@ -545,7 +546,7 @@ func (s *AppStyle) startTailwindWatcher(templateLocations []string, sourceFS *ap
 		// The watcher died on its own (crash, killed externally, stdin EOF
 		// on legacy CLIs). Clear the state so the next app reload restarts
 		// it, instead of skipping forever on the stale handle
-		fmt.Printf("tailwind watcher for %s exited (%v), restarting on next app reload\n", s.appId, err) // TODO: log
+		logger.Warn().Err(err).Str("app_id", string(s.appId)).Msg("tailwind watcher exited, restarting on next app reload")
 		s.watcher = nil
 		s.watcherState = nil
 		if s.watcherStdout != nil {

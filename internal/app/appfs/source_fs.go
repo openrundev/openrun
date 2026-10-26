@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/openrundev/openrun/internal/system"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 // ReadableFS is the interface for the file system used by app to read source files
@@ -50,6 +51,7 @@ type WritableFS interface {
 
 // SourceFs is the implementation of source file system
 type SourceFs struct {
+	*types.Logger
 	ReadableFS
 	Root  string
 	isDev bool
@@ -138,10 +140,11 @@ func (w *WritableSourceFs) Remove(name string) error {
 	return wfs.Remove(name)
 }
 
-func NewSourceFs(dir string, fs ReadableFS, isDev bool) (*SourceFs, error) {
+func NewSourceFs(logger *types.Logger, dir string, fs ReadableFS, isDev bool) (*SourceFs, error) {
 	staticFiles := fs.StaticFiles()
 
 	return &SourceFs{
+		Logger:      logger,
 		Root:        dir,
 		ReadableFS:  fs,
 		isDev:       isDev,
@@ -209,7 +212,7 @@ func (f *SourceFs) HashName(name string) string {
 	// Read file contents. Return original filename if we receive an error.
 	buf, err := fs.ReadFile(f.ReadableFS, name)
 	if err != nil {
-		fmt.Printf("HashName readfile error: %s %s\n", err, name) //TODO: log
+		f.Warn().Err(err).Str("file", name).Msg("error reading file for hash name, using original name")
 		return name
 	}
 

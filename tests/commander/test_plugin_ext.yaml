@@ -65,9 +65,9 @@ tests:
     command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/get | jq '.val'
     stdout: "10"
 
-  plugext0022: # reserved fields round trip
+  plugext0022: # reserved fields round trip: _created_by is the request user, anonymous for this none-auth app
     command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/get | jq -r '.creator'
-    stdout: "admin"
+    stdout: "anonymous"
 
   plugext0023: # count sees the inserted row
     command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/storeex/count | jq '.count'

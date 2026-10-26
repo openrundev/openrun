@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -167,7 +169,6 @@ func (d *DiskReadFS) StatNoSpec(name string) (fs.FileInfo, error) {
 }
 
 func (d *DiskReadFS) Glob(pattern string) (matches []string, err error) {
-	// TODO glob does not look at spec files
 	cleanPattern, err := system.CleanRelativePath(pattern)
 	if err != nil {
 		return nil, err
@@ -178,7 +179,34 @@ func (d *DiskReadFS) Glob(pattern string) (matches []string, err error) {
 		return nil, err
 	}
 
-	return fs.Glob(root.FS(), cleanPattern)
+	matches, err = fs.Glob(root.FS(), cleanPattern)
+	if err != nil {
+		return nil, err
+	}
+
+	// Spec files are an overlay for files missing on disk (see Open), so the
+	// names only the spec provides are part of the glob result too
+	if len(d.specFiles) == 0 {
+		return matches, nil
+	}
+	onDisk := make(map[string]bool, len(matches))
+	for _, m := range matches {
+		onDisk[m] = true
+	}
+	added := false
+	for specName := range d.specFiles {
+		if onDisk[specName] {
+			continue
+		}
+		if matched, _ := path.Match(cleanPattern, specName); matched {
+			matches = append(matches, specName)
+			added = true
+		}
+	}
+	if added {
+		slices.Sort(matches)
+	}
+	return matches, nil
 }
 
 func (d *DiskReadFS) StaticFiles() []string {

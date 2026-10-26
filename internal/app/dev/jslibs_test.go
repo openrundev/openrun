@@ -29,7 +29,7 @@ func TestSetupEsbuildWritesOutputThroughSourceFSRelativePath(t *testing.T) {
 	}
 
 	sourceDiskFS := &appfs.DiskWriteFS{DiskReadFS: appfs.NewDiskReadFS(logger, sourceDir, nil)}
-	sourceFS, err := appfs.NewSourceFs(sourceDir, sourceDiskFS, true)
+	sourceFS, err := appfs.NewSourceFs(logger, sourceDir, sourceDiskFS, true)
 	if err != nil {
 		t.Fatal(err)
 	}

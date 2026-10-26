@@ -6,9 +6,11 @@ package appfs
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/testutil"
+	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestDiskFSRejectsSymlinkEscape(t *testing.T) {
@@ -121,5 +123,48 @@ func TestDiskFSCleanNameRejectsAbsoluteAndTraversalPaths(t *testing.T) {
 		if _, _, err := readFS.cleanName(name); err == nil {
 			t.Fatalf("cleanName(%q) should reject invalid path", name)
 		}
+	}
+}
+
+func TestDiskFSGlobIncludesSpecFiles(t *testing.T) {
+	rootDir := t.TempDir()
+	for _, name := range []string{"b.go.html", "other.txt"} {
+		if err := os.WriteFile(filepath.Join(rootDir, name), []byte("disk"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	specFiles := types.SpecFiles{
+		"a.go.html": "spec",
+		"b.go.html": "spec", // also on disk, the disk file wins
+		"c.go.html": "spec",
+		"c.txt":     "spec",
+	}
+	readFS := NewDiskReadFS(testutil.TestLogger(), rootDir, specFiles)
+
+	matches, err := readFS.Glob("*.go.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{"a.go.html", "b.go.html", "c.go.html"}
+	if !slices.Equal(matches, expected) {
+		t.Fatalf("expected %v, got %v", expected, matches)
+	}
+
+	// Disk content wins for files present in both
+	data, err := readFS.ReadFile("b.go.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "disk" {
+		t.Fatalf("expected disk content for b.go.html, got %s", data)
+	}
+
+	// No spec match leaves the disk results unchanged
+	matches, err = readFS.Glob("other.*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(matches, []string{"other.txt"}) {
+		t.Fatalf("expected [other.txt], got %v", matches)
 	}
 }

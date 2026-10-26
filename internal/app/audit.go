@@ -76,7 +76,7 @@ func (a *App) Audit() (*types.ApproveResult, error) {
 
 	thread := &starlark.Thread{
 		Name:  a.Path,
-		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) }, // TODO use logger
+		Print: func(_ *starlark.Thread, msg string) { a.Info().Msg(msg) },
 		Load:  auditLoader,
 	}
 	thread.SetLocal(types.TL_APP_URL, a.appUrl)
@@ -261,7 +261,12 @@ func (a *App) auditActionsMCP(appDef *starlarkstruct.Struct) error {
 }
 
 func needsApproval(a *types.ApproveResult) bool {
-	if !slices.Equal(a.NewLoads, a.ApprovedLoads) {
+	// Loads are a set (reordering the load statements in app.star is not a
+	// change which needs a new approval). Permissions are compared in their
+	// declared order: checkPermissions uses the first matching entry, so with
+	// overlapping entries the order changes what is enforced (which is_read
+	// value or secrets apply to a call) and a reorder needs a new approval
+	if !slices.Equal(slices.Sorted(slices.Values(a.NewLoads)), slices.Sorted(slices.Values(a.ApprovedLoads))) {
 		return true
 	}
 
@@ -293,7 +298,6 @@ func needsApproval(a *types.ApproveResult) bool {
 		return true
 	}
 
-	//TODO: sort slices before checking equality
 	return !slices.EqualFunc(a.NewPermissions, a.ApprovedPermissions, permEquals)
 }
 

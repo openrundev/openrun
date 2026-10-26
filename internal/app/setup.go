@@ -45,7 +45,7 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 
 	thread := &starlark.Thread{
 		Name:  a.Path,
-		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) }, // TODO use logger
+		Print: func(_ *starlark.Thread, msg string) { a.Info().Msg(msg) },
 		Load:  a.loader,
 	}
 	thread.SetLocal(types.TL_APP_URL, a.appUrl)

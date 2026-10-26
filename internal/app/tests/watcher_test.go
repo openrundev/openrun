@@ -24,7 +24,7 @@ import (
 func createDiskDevApp(t *testing.T, dir string) *app.App {
 	t.Helper()
 	logger := testutil.TestLogger()
-	sourceFS, err := appfs.NewSourceFs(dir,
+	sourceFS, err := appfs.NewSourceFs(logger, dir,
 		&appfs.DiskWriteFS{DiskReadFS: appfs.NewDiskReadFS(logger, dir, nil)}, true)
 	if err != nil {
 		t.Fatalf("create source fs: %v", err)

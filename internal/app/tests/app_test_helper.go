@@ -159,7 +159,7 @@ func createTestAppFull(logger *types.Logger, path, domain string, fileData map[s
 	} else {
 		fs = &TestReadFS{fileData: fileData}
 	}
-	sourceFS, err := appfs.NewSourceFs("", fs, isDev)
+	sourceFS, err := appfs.NewSourceFs(logger, "", fs, isDev)
 	if err != nil {
 		return nil, nil, err
 	}

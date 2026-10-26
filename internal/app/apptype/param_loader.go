@@ -200,9 +200,7 @@ func LoadParamInfo(fileName string, data []byte, serverConfig *types.ServerConfi
 
 	_, err := starlark.ExecFileOptions(&syntax.FileOptions{}, thread, fileName, data, builtins)
 	if err != nil {
-		if evalErr, ok := err.(*starlark.EvalError); ok {
-			fmt.Printf("Error loading app params: %s\n", evalErr.Backtrace()) // TODO: log
-		}
+		// The starlark backtrace is logged by the caller (see App.logStarlarkError)
 		return nil, fmt.Errorf("error loading params: %w", err)
 	}
 
