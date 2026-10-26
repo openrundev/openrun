@@ -55,7 +55,7 @@ The `db-backup` job uses a local named volume on Docker/Podman. Copy those backu
 
 `ace.job(name, command=[], args=[], shell=False, image="", run=None, env={}, inherit_env=None, volumes=[], options={}, trigger=ace.manual(), timeout="1h", enabled=True, params=[], description="")`:
 
-- `name`: lower case letters, digits and dashes, up to 20 characters; unique across the app's jobs and sidecars.
+- `name`: lower case letters, digits and dashes, up to 20 characters, starting with a letter or digit; unique across the app's jobs and sidecars.
 - `command` and `args`: the command line, run in place of the image entrypoint. `shell=True` runs it through `sh -c`.
 - `image`: `image:<ref>` (or a bare reference) to run another image instead of the app's own. Foreign images must be allowed by the `security.allowed_job_images` server config (exact references or `regex:` entries; the default `["*"]` allows any image).
 - `run`: a Starlark function `fn(dry_run, args)` with the [action handler](/docs/actions/) shape, called in the OpenRun process instead of running a container. `dry_run` is always `False`; `args` carries the `params.star` values with the run arguments applied. Use `run` for Starlark apps, and for anything that touches an app's SQLite data: a job container must never open the database of a running app. Only `app.star` can declare `run` jobs.

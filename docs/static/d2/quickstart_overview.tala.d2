@@ -1,0 +1,44 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: right
+
+manage: {
+  label: "Manage apps"
+  declare: {
+    label: "Declaration file in Git\napps.ace\n(openrun apply / sync)"
+    style: {stroke-width: 2}
+  }
+  cli: "CLI\nopenrun app create ..."
+  console: "Management console\nweb UI"
+}
+
+openrun: {
+  label: "OpenRun server"
+  style: {stroke-width: 2}
+
+  router: "Router\nTLS, login, RBAC"
+  apps: {
+    label: "Apps"
+    stage: "Staging"
+    prod: "Production"
+  }
+  metadata: "Metadata DB\nSQLite or Postgres"
+}
+
+backends: {
+  label: "App backends"
+  containers: "Containers\nDocker, Podman, Kubernetes"
+  starlark: "Starlark handlers\nactions, hypermedia"
+}
+
+users: {
+  label: "Users"
+  shape: person
+}
+
+manage.declare -> openrun.metadata: "apply"
+manage.cli -> openrun.metadata
+manage.console -> openrun.metadata
+users -> openrun.router: "https://example.com/app"
+openrun.router -> openrun.apps.prod
+openrun.apps -> backends.containers
+openrun.apps -> backends.starlark

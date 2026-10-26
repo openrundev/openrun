@@ -15,6 +15,7 @@ container.health_attempts_after_startup = 30
 container.health_timeout_secs = 5
 container.deploy_probe_period_secs = 1
 container.deploy_health_attempts = 75
+container.deploy_progress_deadline_secs = 0 # Kubernetes rollout deadline, 0 lets OpenRun choose
 
 # Idle Shutdown Config
 container.idle_shutdown_secs = 180
@@ -44,7 +45,7 @@ kubernetes.scaling_threshold_cpu = 80
 
 A health check is done on the container after the container is started. If the health check fails `container.health_attempts_after_startup` times, the container is assumed to be down. The health check request timeout is controlled by `container.health_timeout_secs`.
 
-In Kubernetes mode, `container.deploy_probe_period_secs` is used as the native startup and readiness probe interval, and `container.deploy_health_attempts` controls how long OpenRun waits for a deployment to become ready. OpenRun watches Kubernetes Deployment status for faster readiness and rollout failure detection, but the watch uses the same configured wait budget. After blue-green promotion, OpenRun also performs a best-effort EndpointSlice convergence check; if the Kubernetes API or RBAC policy does not allow listing EndpointSlices, that check is skipped. These deployment checks are separate from the background status checks that run after the app is serving traffic.
+In Kubernetes mode, `container.deploy_probe_period_secs` is used as the native startup and readiness probe interval, and `container.deploy_health_attempts` controls how long OpenRun waits for a deployment to become ready. `container.deploy_progress_deadline_secs` overrides the Deployment's `progressDeadlineSeconds` when set above `0`; the default `0` lets OpenRun choose a deadline that fits the wait budget. OpenRun watches Kubernetes Deployment status for faster readiness and rollout failure detection, but the watch uses the same configured wait budget. After blue-green promotion, OpenRun also performs a best-effort EndpointSlice convergence check; if the Kubernetes API or RBAC policy does not allow listing EndpointSlices, that check is skipped. These deployment checks are separate from the background status checks that run after the app is serving traffic.
 
 In the running state, a status check is done on the app every `container.status_check_interval_secs` seconds. If `container.status_health_attempts` of those checks fail, then the container is assumed to be down.
 
@@ -73,6 +74,8 @@ A bare `true` or `false` is accepted in place of the quoted string. The setting 
 In Docker/Podman mode, each deploy of a prod or stage app builds an image for the new version (when the source, build args or Containerfile changed) and starts a container for it. The previous version's containers are removed when the deploy commits. The previous version's image is kept so that `version switch` and `version revert` to that version start quickly; switching to a version whose image was removed rebuilds it from the stored source.
 
 `container.retain_previous_images` controls how many older versions keep their image: the images of the current version of each app copy (prod, stage, preview), of versions newer than the current one (after a revert) and of that many older versions are kept, and any other image of the app is removed after the deploy. The default of `1` keeps the previous version's image. Set it to `0` to keep only the images in use, or to `-1` to never remove the app's images. Versions pruned by `fs.retain_versions` cannot be switched to, so their images are never kept. Stage and prod share images by default, and the images kept for either copy are kept for both. Images of versions deployed before this setting existed are not tracked and are removed on the first deploy, unless a container still uses them. On Kubernetes, images are in the registry and are not removed by OpenRun.
+
+`openrun app delete` removes the app's runtime assets: its containers and sidecars, generated images, named volumes and per app network on Docker/Podman, and its workloads, Service and volume claims on Kubernetes. Foreign sidecar images and images in a remote registry are not removed.
 
 ## Changing Config
 

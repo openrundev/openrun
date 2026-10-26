@@ -8,7 +8,7 @@ OpenRun supports secret management when working with apps. Secrets can be passed
 
 ## Supported Providers
 
-OpenRun currently supports AWS Secrets Manager (ASM), AWS Systems Manager (SSM) and HashiCorp Vault as providers for secrets management. Secrets can also be read from the environment of the OpenRun server, which can be used in development and testing. Secrets can also be read from a local properties file. In addition, OpenRun has an embedded secrets store (the `db` provider) which encrypts secret values and saves them in the metadata database, with no external service required.
+OpenRun currently supports AWS Secrets Manager (ASM), AWS Systems Manager (SSM), HashiCorp Vault and Kubernetes Secrets as providers for secrets management. Secrets can also be read from the environment of the OpenRun server, which can be used in development and testing. Secrets can also be read from a local properties file. In addition, OpenRun has an embedded secrets store (the `db` provider) which encrypts secret values and saves them in the metadata database, with no external service required.
 
 ### AWS Secrets Manager
 
@@ -81,7 +81,7 @@ file_name = "/etc/props.properties"
 
 ### Kubernetes Secrets
 
-Add a provider named `kubernetes` (or beginning with `kubernetes_`) to read native Kubernetes Secrets. In a cluster, OpenRun uses its pod service account and the namespace from `[kubernetes]`; `namespace` can be set on the provider to override it.
+Add a provider named `kubernetes` (or beginning with `kubernetes_`) to read native Kubernetes Secrets. In a cluster, OpenRun uses its pod service account and the namespace from `[kubernetes]`; `namespace` can be set on the provider to override it. Outside a cluster, `kubeconfig` can be set to the path of a kubeconfig file (the default kubeconfig loading rules apply otherwise).
 
 ```toml {filename="openrun.toml"}
 [secret.kubernetes]
@@ -149,9 +149,9 @@ $ openrun secret show --reveal myapp_token   # print the value
 $ openrun secret delete myapp_token
 ```
 
-The printed reference is used like any other secret, for example `--param MYPARAM='{{secret_from "db" "myapp_dbpass_x7f2ka9c"}}'`. The same operations are available through the `openrun_admin` plugin (`create_secret`, `get_secret`, `list_secrets`, `delete_secret`, `rekey_secrets`).
+The printed reference is used like any other secret, for example `--param MYPARAM='{{secret_from "db" "myapp_dbpass_x7f2ka9c"}}'`. `--description` adds a description shown in `secret list`/`secret show`, and `--provider` (default `db`) names the secret provider to use. The same operations are available through the `openrun_admin` plugin (`create_secret`, `get_secret`, `list_secrets`, `delete_secret`, `rekey_secrets`).
 
-When [RBAC]({{< ref "/docs/configuration/rbac" >}}) API enforcement is enabled, the operations are gated by the `secret:create`, `secret:read`, `secret:delete` and `secret:reveal` permissions. Create, update and rekey are all gated by `secret:create`. `secret:reveal` (reading back a stored value) is separate from `secret:read` (listing and metadata), so day to day operators can store and manage secrets without being able to read values back. No [built-in role]({{< ref "/docs/configuration/rbac/#built-in-roles" >}}) other than `openrun-admin` includes `secret:reveal` — it must be granted explicitly.
+With [RBAC]({{< ref "/docs/configuration/rbac" >}}) enforced (the default), the operations are gated by the `secret:create`, `secret:read`, `secret:delete` and `secret:reveal` permissions. Create, update and rekey are all gated by `secret:create`. `secret:reveal` (reading back a stored value) is separate from `secret:read` (listing and metadata), so day to day operators can store and manage secrets without being able to read values back. No [built-in role]({{< ref "/docs/configuration/rbac/#built-in-roles" >}}) other than `openrun-admin` includes `secret:reveal` — it must be granted explicitly.
 
 ## Secrets Usage
 
@@ -165,6 +165,9 @@ Secrets can be accessed using the syntax `{{secret_from "PROVIDER_NAME" "KEY_NAM
   - For password in [git_auth config]({{< ref "/docs/configuration/security/#private-repository-access" >}})
   - For string values in [plugin config]({{< ref "/docs/plugins/overview/#account-linking" >}})
   - For OTLP exporter headers in [telemetry config]({{< ref "/docs/configuration/telemetry/#collector-headers-and-secrets" >}})
+  - For the `db_connection` and `audit_db_connection` values in the `[metadata]` section
+  - For string values in the `[node_config]` section
+  - For the credentials (`access_key_id`, `secret_access_key`) in [litestream config]({{< ref "/docs/applications/litestream" >}})
 
 Secrets are always resolved late. Starlark code does not get access to the plain text secrets, except through an explicitly approved `secret_reveal` permission as described below. The secret lookup happens when the call to the plugin API is done. In case of params, the lookup happens when the param is passed to the container.
 
@@ -276,7 +279,7 @@ Like `openrun_admin.get_secret(name, reveal=True)`, `secret_reveal` enforces the
 
 If the `KEY_NAME` is a single string, it is passed as is to the provider. If multiple keys are specified, they are concatenated and passed to the provider. For example, `{{secret_from "env" "ABC" "DEF"}}` will get converted to a env lookup for `ABC_DEF`. The delimiter used depends on the provider. The defaults are:
 
-- ASM and Vault : `/`
+- ASM, SSM, Vault, Kubernetes and db : `/`
 - Env : `_`
 - Properties: `.`
 

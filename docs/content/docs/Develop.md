@@ -14,6 +14,7 @@ The structure of an OpenRun application is:
 - A global called `app`, created using `app = ace.app()` call
 - An optional default handler function called `handler`. Other handlers are referenced in the route config
 - An optional error handler function called `error_handler`. Defining the `error_handler` enables [automatic error handling]({{< ref "docs/plugins/overview#automatic-error-handling" >}})
+- Optional `params.star` ([app parameters]({{< relref "#app-parameters" >}})) and `schema.star` ([store types]({{< ref "docs/plugins/store/#schema-definition" >}})) files. Apps built from a spec can add `actions.star` and `action_params.star` for [actions]({{< ref "actions/#actions-for-spec-apps" >}}) without replacing the spec's `app.star`
 - An html template file called `index.go.html` if using custom layout
 - If not using custom layout, an html template block called `openrun_body` defined in any `*.go.html` file, for example `app.go.html`
 
@@ -187,7 +188,7 @@ The parameters are available in the app Starlark code, through the `param` names
 
 Params are set during app creation using `app create --param port=9000` or using `param update port 9000 /myapp`. Set value to `-` to delete the param. Use `param list /myapp` to list the params.
 
-For containerized apps, all params specified for the app (including ones not specified in `params.star` spec) are passed to the container at runtime as environment parameters. `CL_APP_PATH` is a special param passed to the container with the app installation path (without the domain name). `PORT` is also set with the value of the port number the app is expected to bind to within the container.
+For containerized apps, all params specified for the app (including ones not specified in `params.star` spec) are passed to the container at runtime as environment parameters. `CL_APP_PATH` is a special param passed to the container with the app installation path (without the domain name), and `CL_APP_URL` is set to the full URL the app is served at. `PORT` is also set with the value of the port number the app is expected to bind to within the container.
 
 ## Action Apps
 

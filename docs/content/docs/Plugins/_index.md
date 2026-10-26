@@ -11,4 +11,5 @@ Overview of OpenRun plugins and how to use them
 {{< card link="store" title="Store Plugin" subtitle="Persist application data safely through a scoped database storage API" icon="save" >}}
 {{< card link="container" title="Container Plugin" subtitle="Perform approved container operations securely through OpenRun’s permission-controlled plugin API" icon="cube" >}}
 {{< card link="proxy" title="Proxy Plugin" subtitle="Forward approved API requests to external services through authenticated and authorized proxy routes" icon="switch-horizontal" >}}
+{{< card link="external-plugins" title="External Plugins" subtitle="Build plugin providers with the plugin SDK and install them without rebuilding OpenRun" icon="puzzle" >}}
 {{< /cards >}}

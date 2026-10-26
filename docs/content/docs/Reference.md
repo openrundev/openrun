@@ -9,6 +9,7 @@ This page is an index of all the Starlark functions and constants available in O
 - [App declaration (`apps.star`)]({{< relref "#app-declaration-appsstar" >}}) : declarative app management files, used with `openrun apply` and sync
 - [App definition (`app.star`)]({{< relref "#app-definition-appstar" >}}) : the application definition and handler code
 - [App parameters (`params.star`)]({{< relref "#app-parameters-paramsstar" >}}) : parameter definitions for an app
+- [Spec app actions (`actions.star`, `action_params.star`)]({{< relref "#spec-app-actions-actionsstar-action_paramsstar" >}}) : actions added to an app built from a spec
 - [Store schema (`schema.star`)]({{< relref "#store-schema-schemastar" >}}) : type definitions for the document store
 
 ## App Declaration (`apps.star`)
@@ -79,7 +80,7 @@ Plugins are loaded with `load("<plugin>.in", "<plugin>")` and called from handle
 | `container.in` |  Configures the app container, sidecars and runs commands |        [Container Plugin]({{< ref "docs/plugins/container" >}})      |
 |   `proxy.in`   |             Configures proxying for proxy routes          |            [Proxy Plugin]({{< ref "docs/plugins/proxy" >}})          |
 
-Additional plugins can be added as [external plugins]({{< ref "docs/plugins/external-plugins" >}}). App parameters are available in `app.star` through the `param` namespace, like `param.port`, as defined in [`params.star`]({{< ref "docs/develop/#app-parameters" >}}).
+The privileged system plugins `openrun.in` (read-only server information, like `list_apps`), `openrun_admin.in` (management operations) and `build.in` (the AI app builder) are used by the management console; see [System Plugin Access]({{< ref "docs/configuration/security/#system-plugin-access" >}}). Additional plugins can be added as [external plugins]({{< ref "docs/plugins/external-plugins" >}}). App parameters are available in `app.star` through the `param` namespace, like `param.port`, as defined in [`params.star`]({{< ref "docs/develop/#app-parameters" >}}). When the app has a `schema.star`, the `doc` namespace has a constructor for each type (like `doc.bookmark(url=...)`) and the `table` namespace has the table name for each type (like `table.bookmark`), see [Store Types]({{< ref "docs/plugins/store/#store-types" >}}).
 
 ### Constants
 
@@ -88,7 +89,7 @@ The `ace` namespace also defines the following constants:
 |                    Constant                     |                                             Usage                                             |
 | :---------------------------------------------: | :-------------------------------------------------------------------------------------------: |
 | `ace.GET`, `ace.POST`, `ace.PUT`, `ace.DELETE`  |  HTTP method for [routes]({{< ref "docs/app/routing" >}}), like `ace.html(method=ace.POST)`   |
-|       `ace.HTML`, `ace.JSON`, `ace.TEXT`        | Response type for [`ace.api` and `ace.response`]({{< ref "docs/app/routing/#api-route" >}})   |
+|           `ace.JSON`, `ace.TEXT`                | Response type for [`ace.api` and `ace.response`]({{< ref "docs/app/routing/#api-route" >}}); `ace.response` also accepts the string `"HTML"` |
 |            `ace.READ`, `ace.WRITE`              |    Call type for [`ace.permission`]({{< ref "docs/develop/#app-permissions" >}})              |
 | `ace.AUTO`, `ace.TABLE`, `ace.DOWNLOAD`, `ace.IMAGE` | [Report types]({{< ref "docs/actions/#report-types" >}}) for action results             |
 |              `ace.CONTAINER_URL`                | The app container URL placeholder, same as [`container.URL`]({{< ref "docs/plugins/container" >}}) |
@@ -110,6 +111,10 @@ The constants available in `params.star` are:
 | :---------------------------------------: | :--------------------------------------------------------------------------------: |
 | `STRING`, `INT`, `BOOLEAN`, `LIST`, `DICT` |                     The `type` property for a param, `STRING` is the default      |
 | `FILE`, `PASSWORD`, `TEXTAREA`, `COMBO`   | The `display_type` property for string params, see [Display Types]({{< ref "docs/actions/#display-types" >}}) |
+
+## Spec App Actions (`actions.star`, `action_params.star`)
+
+An app built from a [spec]({{< ref "docs/container/appspecs" >}}) has no `app.star` of its own. It can add [actions]({{< ref "docs/actions/#actions-for-spec-apps" >}}) with two optional files: `actions.star` sets the `actions` global to a list of `ace.action` entries (and optionally `permissions` to a list of `ace.permission` entries), using the same `ace` builtins and plugin loads as `app.star`; `action_params.star` declares the params shown on the action form with the same `param` function and constants as `params.star`. When `action_params.star` exists, only its params are shown for the actions, instead of the `params.star` params.
 
 ## Store Schema (`schema.star`)
 

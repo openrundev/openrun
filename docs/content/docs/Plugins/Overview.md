@@ -25,7 +25,20 @@ permissions=[
 ],
 ```
 
-Run `openrun app approve /myapp` to authorize the app to call the `get` and `post` methods on the http plugin.
+Run `openrun app approve /myapp` to authorize the app to call the `get` and `post` methods on the http plugin. Approval also records the plugins the app is allowed to load: a `load("x.in", ...)` for a plugin which is neither approved nor listed in a server config `[[permissions.allow]]` entry fails when the app is initialized.
+
+The `ace.permission` arguments are:
+
+|  Property   | Optional |      Type       |             Notes             |
+| :---------: | :------: | :-------------: | :---------------------------: |
+|   plugin    |  false   |     string      | The plugin name, like `http.in` |
+|   method    |  false   |     string      | The plugin function name |
+|  arguments  |   true   | list of strings | Approved values for the leading positional arguments, exact or `regex:` patterns. A call passing more positional arguments than listed is allowed; arguments which are checked cannot be passed as kwargs |
+|    type     |   true   |     string      | `READ` or `WRITE`, overrides the read/write type defined by the plugin. Write calls are blocked for staging and preview apps when [write access]({{< ref "docs/applications/lifecycle/#write-mode-access" >}}) is disabled |
+|   secrets   |   true   | list of lists   | The [secrets]({{< ref "docs/configuration/secrets" >}}) the call is allowed to resolve, each entry a list of name patterns |
+|   permit    |   true   | list of strings | Custom [RBAC permissions]({{< ref "docs/configuration/rbac" >}}), the call is allowed only if the user has any one of them |
+
+Server config `[[permissions.allow]]` entries use the same fields and approve a call for all apps without an explicit approval; `[[permissions.disallow]]` entries block a call for all apps. See [default plugin permissions]({{< ref "docs/configuration/security/#default-plugin-permissions" >}}) for the defaults.
 
 In the app handler code, do
 
@@ -44,6 +57,7 @@ All plugin API calls return a `plugin_response` structure. The fields in this ar
 - `error` The error message string, empty string if no error
 - `error_code` The error code integer, zero if no error
 - `value` The actual return value for the plugin API call. The datatype for this depends on the API, check the API documentation for details.
+- `is_stream` Boolean, true when the value is a stream (like `exec.run(stream=True)`) which has to be returned from the handler instead of being read in the handler code.
 
 To check the error status of an API call:
 
@@ -177,15 +191,17 @@ Some plugins like `exec.in` do not require any account information. Others like 
 
 ```toml {filename="openrun.toml"}
 [plugin."store.in"]
-db_connection = "sqlite:$OPENRUN_HOME/clace_app_store.db"
+db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_app_store.db"
 ```
 
-Any application using the `store.in` plugin will by default use the `$OPENRUN_HOME/openrun_app.db` sqlite database. To change the default account config used by apps, update `openrun.toml` and restart the OpenRun server. For example, adding the below will overwrite the default `store.in` config for all apps.
+Any application using the `store.in` plugin will by default use the `$OPENRUN_HOME/metadata/clace_app_store.db` sqlite database. To change the default account config used by apps, update `openrun.toml` and restart the OpenRun server. For example, adding the below will overwrite the default `store.in` config for all apps.
 
 ```toml {filename="openrun.toml"}
 [plugin."store.in"]
 db_connection = "sqlite:/tmp/openrun_app.db"
 ```
+
+String values in the plugin config can be [secret references]({{< ref "docs/configuration/secrets" >}}) like `{{secret_from "env" "STORE_DB_URL"}}`, which are resolved when the server starts.
 
 ### Account Linking
 
@@ -198,14 +214,14 @@ db_connection = "sqlite:/tmp/openrun_app.db"
 
 For an app `/myapp` using `store.in`, run `openrun account link --promote store.in tmpaccount /myapp`
 
-This links the `myapp` app to use the `tmpaccount` account.
+This links the `myapp` app to use the `tmpaccount` account. The link is staged like other metadata changes, `--promote` applies it to the prod app. Use `-` as the account name to remove the link, and `openrun account list /myapp` to list the links of an app.
 
 ### Named Account
 
 In addition to using account linking, the plugin code itself can point to specific accounts. For example, if the app code has
 
 ```python {filename="app.star"}
-load("http.in#google", "googlehttp")
+load("http.in#google", googlehttp="http")
 ```
 
 then the app will use the `http.in#google` account config by default. This also can be overridden using account links, by

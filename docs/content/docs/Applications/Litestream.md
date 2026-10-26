@@ -40,6 +40,10 @@ OpenRun's Litestream integration works with:
 
 On Docker and Podman, OpenRun manages a Litestream companion container. On Kubernetes, OpenRun creates the restore init container and Litestream sidecar automatically.
 
+<picture class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
+  <img alt="Kubernetes deployment with a restore init container, app container and Litestream sidecar in the app pod, replicating the SQLite PVC to S3-compatible storage" src="/d2/k8s-litestream.svg">
+</picture>
+
 ## Litestream Configs
 
 Litestream settings are named entries in the server config. Multiple configs allow different buckets, endpoints or credentials to coexist (per team, per environment, metadata vs apps):
@@ -77,10 +81,12 @@ litestream_config = "mainbackup"           # replicate the server's own database
 | `retention`         | `24h`     | How long replica history is kept. This bounds how far back a restore can go                                       |
 | `snapshot_interval` | `24h`     | Snapshot frequency; lower values make restores faster                                                             |
 | `sidecar_image`     | `litestream/litestream:0.5` | Litestream image for app replication containers. Keep pinned: the replica format ties restores to the image series |
-| `checkpoint_interval`, `min_checkpoint_page_count`, `truncate_page_n` | | Checkpoint tuning, see [Litestream's guide](https://litestream.io/guides/wal-truncate-threshold/). Apps with long-running reads should set `truncate_page_n = 0` to disable the blocking TRUNCATE checkpoint |
+| `checkpoint_interval`, `min_checkpoint_page_count`, `truncate_page_n` | `1m`, `1000`, ~500MB of pages (Litestream defaults) | Checkpoint tuning, see [Litestream's guide](https://litestream.io/guides/wal-truncate-threshold/). Apps with long-running reads should set `truncate_page_n = 0` to disable the blocking TRUNCATE checkpoint |
 | `storage_class`, `sse_kms_key_id` | | Optional S3 storage class and server-side encryption settings                                     |
 
 Credentials cannot use the `db` secret provider: metadata replication must be resolvable before the metadata database is opened. All configured entries are validated at server startup.
+
+The verbosity of replication logs (the embedded metadata replication, written to the server log, and the app sidecar containers' own logs) is set with `logging.litestream_log_level`; empty uses the main `logging.level`.
 
 ## Metadata Replication
 
@@ -138,8 +144,9 @@ Use `-f json` for full detail, including the per-file breakdown and replica tran
 
 | State           | Meaning                                                                                                  |
 | :-------------- | :-------------------------------------------------------------------------------------------------------- |
-| `healthy`       | Replica advanced recently (metadata: local and replica are in sync)                                       |
+| `healthy`       | Replica advanced within the last 10 × `sync_interval` (at least 2 minutes); for metadata, local and replica are in sync |
 | `idle`          | Replica is reachable but has not advanced recently; normal for an app that is not writing                 |
+| `syncing`       | Metadata only: the local database is ahead of the replica and the upload is in progress                   |
 | `pending`       | Nothing replicated yet (fresh binding, or an environment that has not deployed)                           |
 | `sidecar_down`  | The replication container is not running while replicated data exists; fix by reloading the app (`app reload --promote`) |
 | `misconfigured` | The service references a litestream config that is not defined (or not usable for apps)                   |

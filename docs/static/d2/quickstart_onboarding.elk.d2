@@ -1,0 +1,16 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+# Grid with the second row reversed so the step arrows stay straight: 1 2 3 on top, 6 5 4 below.
+grid-rows: 2
+grid-columns: 3
+grid-gap: 60
+
+s1: "1. Install\ncurl -sSL https://openrun.dev/install.sh | sh"
+s2: "2. Start the server\nopenrun server start\nnote the admin password"
+s3: "3. Declare apps\napps.ace with app(...) entries"
+s6: "6. Keep it in Git\nopenrun sync schedule"
+s5: "5. Open the app\nhttps://localhost:25223/..."
+s4: "4. Apply\nopenrun apply --approve apps.ace"
+
+s1 -> s2 -> s3
+s3 -> s4
+s4 -> s5 -> s6

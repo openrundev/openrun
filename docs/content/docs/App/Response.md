@@ -46,6 +46,7 @@ If the API needs to redirect the client to another location after a POST/PUT/DEL
 | :------: | :------: | :----: | :-----: | :------------------------------: |
 |   url    |  false   | string |         |      The url to redirect to      |
 |   code   |   true   |  int   |   303   | The HTTP status code, 303 or 302 |
+| refresh  |   true   |  bool  |  False  | If True, the `HX-Refresh: true` header is set, so HTMX does a full page refresh |
 
 For example, this code does a 303 redirect after a POST API, which provides [handling](https://en.wikipedia.org/wiki/Post/Redirect/Get) for update requests.
 
@@ -64,7 +65,7 @@ In some cases, a custom response needs to be generated, with special headers. Or
 | :------: | :------: | :----: | :--------------------------------------: | :------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
 |   data   |  false   | object |                                          |                                                                          The response data                                                                           |
 |  block   |   true   | string |                                          |                                                                   Template block override; otherwise uses the route block                                                                    |
-|   type   |   true   | string | inherited from the route type definition |                                                                     If "json", block is ignored                                                                      |
+|   type   |   true   | string | inherited from the route type definition |                                  `"html"`, `"json"` (`ace.JSON`) or `"text"` (`ace.TEXT`). For json and text, block is ignored                                   |
 |   code   |   true   |  int   |                   200                    |                                                                           HTTP status code                                                                           |
 | retarget |   true   | string |                                          | [HX-Retarget](https://htmx.org/reference/#:~:text=for%20possible%20values-,HX%2DRetarget,-a%20CSS%20selector) header value, CSS selector to target, like "#error_id" |
 |  reswap  |   true   | string |                                          |                       [HX-Reswap](https://htmx.org/reference/#:~:text=the%20location%20bar-,HX%2DReswap,-allows%20you%20to), like "outerHTML"                        |

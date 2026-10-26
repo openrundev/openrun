@@ -64,15 +64,14 @@ Staging apps are created for each production app. The purpose of the staging app
 
 ```sh
 openrun app list --internal
-Id                                  Type Version GitCommit                                GitBranch       Domain:Path                    SourceUrl
-app_prd_2aMvX3fc9fH18n6i2Jew0tNxnky PROD 1                                                                example.com:/                  /home/user/mycode
-app_stg_2aMvX3fc9fH18n6i2Jew0tNxnky STG  1                                                                stage.example.com:/            /home/user/mycode
-
+Name                           Type   Ver Auth    AppPath
+mycode                         PROD     1 NONE    example.com:/
+mycode                         STG      1 NONE    stage.example.com:/
 ```
 
 The second app is the staging app for the first. `app list` shows only the main apps by default, the `--internal` option makes it show the linked apps.
 
-By default, the staging app uses a staging subdomain and the same path as the production app. So for an app at `https://example.com/`, the staging URL is `https://stage.example.com/`. For an app at `https://example.com/utils/app1`, the staging app URL is `https://stage.example.com/utils/app1`.
+By default, the staging app uses a staging subdomain (`system.default_stage_domain`, default `stage`) and the same path as the production app. So for an app at `https://example.com/`, the staging URL is `https://stage.example.com/`. For an app at `https://example.com/utils/app1`, the staging app URL is `https://stage.example.com/utils/app1`.
 
 The staging location can be changed when creating the app. Use `openrun app create --stage-at path ...` to use the older path based location, where `_cl_stage` is suffixed to the production path. Use `--stage-at <domain>` to put the staging app on a specific domain. The server default is configured with `system.stage_at`.
 
@@ -90,9 +89,9 @@ The staging app is version 2 now, prod app is still at version 1.
 
 ```sh
 openrun app list -i
-Id                                  Type  Version GitCommit                                GitBranch       Domain:Path                    SourceUrl
-app_prd_2aMvX3fc9fH18n6i2Jew0tNxnky PROD* 1                                                                example.com:/                  /home/user/mycode
-app_stg_2aMvX3fc9fH18n6i2Jew0tNxnky STG   2                                                                stage.example.com:/            /home/user/mycode
+Name                           Type   Ver Auth    AppPath
+mycode                         PROD*    1 NONE    example.com:/
+mycode                         STG      2 NONE    stage.example.com:/
 ```
 
 At this point, going to `https://stage.example.com/` will show the updated code while `https://example.com/` has not been updated.
@@ -113,9 +112,9 @@ The prod app is at the same version as the staging app now
 
 ```sh
 openrun app list -i
-Id                                  Type Version GitCommit                                GitBranch       Domain:Path                    SourceUrl
-app_prd_2aMvX3fc9fH18n6i2Jew0tNxnky PROD 2                                                                example.com:/                  /home/user/mycode
-app_stg_2aMvX3fc9fH18n6i2Jew0tNxnky STG  2                                                                stage.example.com:/            /home/user/mycode
+Name                           Type   Ver Auth    AppPath
+mycode                         PROD     2 NONE    example.com:/
+mycode                         STG      2 NONE    stage.example.com:/
 ```
 
 If the application code change requires new permissions, the reload operation will fail unless `--approve` is added.
@@ -164,4 +163,4 @@ To restrict existing apps, run `openrun app settings stage-write-access false al
 
 To allow preview apps access to WRITE operation, run `openrun app settings preview-write-access true example.com:/`. This changes the existing preview apps and any new preview apps created for example.com:/ to allow write operations, if the permissions have been approved.
 
-These controls apply to Starlark plugin calls. They do not make a proxied container or its database read-only. Use separate staging credentials and appropriately restricted [service bindings]({{< ref "servicebindings" >}}) to control database access.
+For Starlark apps these controls apply to plugin calls. For proxied (containerized) apps, a staging or preview app without write access refuses every proxied request whose method is not GET, HEAD or OPTIONS with `403`; MCP calls authenticated with a bearer token are governed by RBAC and the app's tool scopes instead. The container itself and its database are not made read-only. Use separate staging credentials and appropriately restricted [service bindings]({{< ref "servicebindings" >}}) to control database access.

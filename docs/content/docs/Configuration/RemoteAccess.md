@@ -72,7 +72,7 @@ openrun app list
 openrun logout            # revokes the session server side
 ```
 
-When `[api.rest] auth` lists more than one mechanism the login page offers the choice; `openrun login --auth <name>` selects an `[auth.*]` or `saml_<name>` login directly. Listing the auth provider of an app lets the users of that app log in from the CLI and [run its actions]({{< ref "actions/#command-line" >}}) as themselves.
+When `[api.rest] auth` lists more than one mechanism the login page offers the choice; `openrun login --auth <name>` selects an `[auth.*]` or `saml_<name>` login directly. Listing the auth provider of an app lets the users of that app log in from the CLI and [run its actions]({{< ref "actions/#command-line" >}}) as themselves. `openrun login --server https://host[:port]` logs in to a server other than `server_uri`, and `--no-browser` prints the login url instead of opening a browser (for SSH sessions). The tokens are stored in the OS keychain, falling back to a file under `$OPENRUN_HOME/config` when no keychain service is available; set the `OPENRUN_NO_KEYRING` env variable to always use the file.
 
 or use an API key (for CI and headless use):
 
@@ -131,10 +131,12 @@ Destructive tools (delete, promote, version switch, ...) support `dry_run`, and 
 
 ```sh
 openrun apikey create [--user builtin:alice] [--expires 30d|never] \
-    [--scopes "app:*,sync:read"] [--resource rest|mcp|all] [--desc "text"]
+    [--scopes "app:*,sync:read"] [--resource rest|mcp|all] [--confirm skip] [--desc "text"]
 openrun apikey list [--all]     # --all (every user's keys) requires admin
 openrun apikey delete <id>
 ```
+
+`openrun api-key` is an alias for `openrun apikey`. Creating, listing and deleting one's own keys requires the `apikey:manage:self` permission (held by the `openrun-operator` and `openrun-developer` roles).
 
 - The key value is shown **once** at creation and stored only as a hash.
 - `--user` defaults to the caller. Creating a key for another user requires `admin` and is prominently audited.
@@ -238,6 +240,7 @@ auth = ["admin"]                 # login mechanisms: "admin", "builtin", [auth.*
 enable_apis = []                 # default-disabled operations opted back in
 disable_apis = []                # additional operations turned off
 destructive_confirm = "require"  # what happens to a destructive tool call from a client which cannot confirm
+                                 # (empty means "require"; the older skip_destructive_confirm = true is the same as "skip")
 
 [api.rest]                       # the management REST API over TCP (remote CLI)
 enable = false

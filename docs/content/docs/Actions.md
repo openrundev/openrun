@@ -88,6 +88,7 @@ The handler returns an `ace.result` struct. The fields in this structure are:
 |    values    |   true   |  list  |    []    |                                                                                         The actions output, list of strings or list of dicts                                                                                          |
 |    report    |   true   | string | ace.AUTO | The type of report to generate. Default is `ace.AUTO`, where it is selected based on response type. Other options are `ace.JSON`, `ace.TEXT`, `ace.TABLE`, `ace.DOWNLOAD` and `ace.IMAGE`. Any other value is a custom template name. |
 | param_errors |   true   |  dict  |    {}    |                                                               The validation errors to report for each param. The key is the param name, the value is the error message                                                               |
+|    stream    |   true   | object |   none   |                                     The response of a plugin call made with `stream=True`, see [Streaming Output]({{< ref "#streaming-output" >}}). Cannot be combined with `values`, `report` or `param_errors`                                      |
 
 ## Validating Params
 
@@ -164,7 +165,7 @@ A streamed result has no `values` or `report` (the output is the report) and can
 
 The audit event for the action records success only when the command exits with status 0.
 
-See the actiontail app [code](https://github.com/openrundev/apps/tree/main/misc/actiontail) for a runnable sample: a shell loop whose output is tailed live, cancelled when the page is left.
+See the async_action example [code](https://github.com/openrundev/openrun/tree/main/examples/async_action) for a runnable sample: its `Build` action streams a shell loop's output live, as an [async action]({{< ref "#async-actions" >}}) whose run can be watched and canceled from the run page, beside a sync `Ping` action for comparison.
 
 ## Async Actions
 
@@ -386,7 +387,7 @@ The CLI runs actions through the management API as the calling user, under the s
 
 Listing actions does not load or start apps: the actions of an app version are stored with its metadata when the app is created, reloaded or promoted. Apps in dev mode are listed from their current source. `action show` loads the app definition, and only running an action (or its suggest handler) starts the app's container.
 
-`action list` shows only the actions which pass all three checks, and runs are recorded in the [audit log]({{< ref "docs/applications/audit" >}}) under that user, with the operation `mgmt_execute`, `mgmt_validate` or `mgmt_suggest`.
+`action list` shows only the actions which pass all three checks, and runs are recorded in the [audit log]({{< ref "docs/applications/audit" >}}) under that user, with the operation `cli_execute`, `cli_validate` or `cli_suggest` (the form UI records `execute`, `validate` and `suggest`, the REST API `api_execute`, `api_validate` and `api_suggest`).
 
 On the server machine the CLI uses the unix domain socket and runs as the admin user; `--as builtin:user1` runs the command as that user instead. A remote CLI runs as the user who did `openrun login`, or as the user an [API key]({{< ref "docs/configuration/remoteaccess/#api-keys" >}}) belongs to. For the users of an app to log in from the CLI, add the app's auth provider to the login mechanisms of the REST API surface:
 
@@ -452,7 +453,7 @@ The tool of an [async action]({{< ref "#async-actions" >}}) returns the `run_id`
 
 ### One endpoint for all apps
 
-`/_openrun/app_mcp` is a single MCP endpoint whose tools are the actions of every app the user can run, each action its own tool. It is on by default; `[api.app_mcp] enable = false` turns it off. It is not served on a server which runs with `security.unsafe_disable_rbac`.
+`/_openrun/app_mcp` is a single MCP endpoint whose tools are the actions of every app the user can run, each action its own tool. It is on by default; `[api.app_mcp] enable = false` turns it off. It is not served on a server which runs with `security.unsafe_disable_rbac`. The other `[api.app_mcp]` settings are `list_ttl` (default `3m`, the freshness hint of the tool list), `max_tools` (below) and `allowed_auth` (the logins the `auth` param may name; empty allows any configured one).
 
 ```sh
 # Claude Code

@@ -23,6 +23,8 @@ admin_password_bcrypt = "" # the password bcrypt value
 
 in the config file. If the value is undefined or empty in an existing config, a random password is generated for that server session and printed during startup. This temporary password changes on every restart. Normal installation and first-start setup persist the hash, so the generated password remains valid across restarts.
 
+The admin username is `admin` by default. It can be changed with the top-level `admin_user` key in `openrun.toml`.
+
 To configure a value for the admin user password, use the `password` helper command:
 
 ```bash
@@ -41,7 +43,7 @@ This will prompt for the password and print out the bcrypt hash to add to the co
 
 ## Admin API Access
 
-By default, the OpenRun client uses Unix domain sockets to connect to the OpenRun server. Admin API calls to manage applications are disabled over HTTP/HTTPS by default. Unix sockets work when the client is on the same machine as the server, the client does not need to pass any credentials to connect over unix sockets. Only local CLI requests over the unix domain socket are treated as transport-trusted and skip the RBAC checks; remote requests are always attributed to their credential's user.
+By default, the OpenRun client uses Unix domain sockets to connect to the OpenRun server. Admin API calls to manage applications are disabled over HTTP/HTTPS by default. Unix sockets work when the client is on the same machine as the server, the client does not need to pass any credentials to connect over unix sockets. The socket is created at `server_uri` (default `$OPENRUN_HOME/run/openrun.sock`) with file mode `0700`, so only the OS user running the server (and root) can connect. Only local CLI requests over the unix domain socket are treated as transport-trusted and skip the RBAC checks; remote requests are always attributed to their credential's user.
 
 To manage the server from another machine (the remote CLI) or connect an AI client over MCP, enable the remote API surfaces. See [Remote API and MCP]({{< ref "remoteaccess" >}}) for the setup walkthrough, API keys, `openrun login`, defaults and security best practices.
 
@@ -159,6 +161,18 @@ allowed_mounts = ["$OPENRUN_HOME/mounts", "/srv/openrun/shared"]
 ```
 
 `security.allowed_mounts` entries are expanded with environment variables before validation.
+
+Related allowlists in the `[security]` section: `allowed_container_args` (raw Docker/Podman flags apps may set, see [Container Config]({{< ref "docs/container/overview" >}})), `allowed_sidecar_images` (foreign images sidecars may use, empty allows any) and `allowed_job_images` (foreign images [jobs]({{< ref "docs/applications/jobs" >}}) may use, default `["*"]`).
+
+## Development-only Flags
+
+The `unsafe_*` settings turn off a safety boundary and are meant for development and test setups only. They are static config: none of them can be set through the dynamic config API.
+
+- `security.unsafe_disable_rbac`: turns off all [RBAC]({{< ref "rbac" >}}) enforcement. Setting it also disables the remote API surfaces.
+- `security.unsafe_allow_system_plugins_anon`: lets anonymous callers use the privileged system plugins, see [System Plugin Access](#system-plugin-access).
+- `security.unsafe_enable_testurl_rbac`: enables the `_cl_perm=<perm>` and `_cl_role=<role>` URL path directives (for example `/myapp/_cl_perm=appread/page`) on dev mode apps with `none` auth, to simulate RBAC permissions and roles while developing an app which uses [custom permissions]({{< ref "rbac/#custom-permissions" >}}).
+- `security.unsafe_agent_without_sandbox`: runs [app builder]({{< ref "docs/appbuilder" >}}) agents on the host instead of in a container sandbox.
+- `bindings.unsafe_allow_http`: allows plain `http` source urls for `openrun provider install`.
 
 ## System Plugin Access
 

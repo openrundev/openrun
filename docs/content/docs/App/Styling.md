@@ -83,7 +83,7 @@ daisyui_url = "https://internal.example.com/daisyui.js"
 
 If the download fails (for example, no network access), OpenRun falls back to the `@plugin "daisyui"` node_modules based reference, which requires `npm install daisyui` such that daisyui is resolvable from the app work directory.
 
-If using [Actions]({{< ref "/docs/actions/" >}}), DaisyUI styles are automatically included. The themes can be customized using the `light` and `dark` property.
+If using [Actions]({{< ref "/docs/actions/" >}}), DaisyUI styles are automatically included. The themes can be customized using the `light` and `dark` property. When the app defines no `style`, the Actions UI uses the built-in `openrun-light` and `openrun-dark` themes.
 
 ### Custom Themes
 

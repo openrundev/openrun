@@ -20,3 +20,7 @@ hugo --source docs --destination /tmp/openrun-docs --panicOnWarning
 ```
 
 Use the Hugo version specified in `.github/workflows/docs.yml` when checking publishing compatibility. Check command examples against `openrun <command> --help` and config defaults against `internal/system/openrun.default.toml`. Prefer Hugo `ref` links for documentation pages so builds catch missing targets.
+
+## Diagrams
+
+Diagram sources are d2 files in `static/d2/`, named `<name>.<engine>.d2` where the engine is `dagre`, `elk` or `tala`. `make update-diagrams` (GNU make 4+, `gmake` on macOS) renders each source with the engine from its file name into `<name>.svg` (light and dark via `prefers-color-scheme`), `<name>_light.svg` and `<name>_dark.svg` (for the `theme-image` shortcode), `<name>.png` and `<name>_small.png`. Pick the engine per diagram by rendering with all three and comparing; keep remote icons to formats the d2 PNG export accepts, since its SVG importer is strict.

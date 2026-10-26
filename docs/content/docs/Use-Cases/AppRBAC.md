@@ -148,7 +148,7 @@ To try RBAC policies without setting up OAuth or SAML, use [builtin users]({{< r
 
 ```sh
 openrun user add alice --groups engineering
-openrun app update --auth builtin /engg/reports
+openrun app update auth --promote builtin /engg/reports
 curl -u alice:password https://localhost:25223/engg/reports/api/reports
 ```
 

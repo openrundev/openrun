@@ -147,7 +147,7 @@ This will upload the RBAC config to the metadata server (and also update the fil
 
 ## SAML instead of OIDC
 
-If [SAML]({{< ref "docs/configuration/authentication/#saml" >}}) needs to be used instead of OIDC, much of the setup remains the same. Create the SAML app in the IdP. The Single sign-on URL should be set to `https://apps.example.com:25223/_openrun/sso/saml_okta_test/acs` and the Audience URI (SP Entity ID) should be set to `https://apps.example.com:25223/_openrun/sso/saml_okta_test/metadata`.
+If [SAML]({{< ref "docs/configuration/authentication/#saml" >}}) needs to be used instead of OIDC, much of the setup remains the same. Create the SAML app in the IdP. The Single sign-on URL should be set to `https://apps.example.com/_openrun/sso/saml_okta_test/acs` and the Audience URI (SP Entity ID) should be set to `https://apps.example.com/_openrun/sso/saml_okta_test/metadata`.
 
 In the `openrun.toml`, instead of the `[auth.oidc_okta]` section, add a section like
 
@@ -156,7 +156,7 @@ In the `openrun.toml`, instead of the `[auth.oidc_okta]` section, add a section 
 metadata_url = "https://integrator-336XXXXX.okta.com/app/exkvzxe13XXXXX/sso/saml/metadata" # CHANGEME
 ```
 
-and for `app_default_auth_type`, set the value to `saml_okta_test`. The IdP has to be configures to provide the group information under the `groups` attribute.
+and for `app_default_auth_type`, set the value to `saml_okta_test`. The IdP has to be configured to provide the group information under the `groups` attribute.
 
 For both OIDC and SAML, in addition to the group info coming from the IdP, additional groups can be defined in the OpenRun RBAC config. The user names would have to be provided in the RBAC config, prefixed with the provider name, like `oidc_okta:user1@example.com` or `saml_okta_test:user1@example.com`.
 

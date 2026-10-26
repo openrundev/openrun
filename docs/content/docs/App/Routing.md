@@ -125,6 +125,8 @@ The proxy configuration `proxy.config` has the options:
 |      url      |  False   | string  |         |                                    The url to forward the requests to                                    |
 |  strip_path   |   True   | string  |         | Additional path components to strip from the request path. The app installation path is always stripped. |
 | preserve_host |  True    | boolean |  false  |   Whether to preserve the Host header. Default false, the Host header is set to the target host value    |
+|   strip_app   |   True   | boolean |  true   |      Whether to strip the app installation path from the proxied request path. Default true      |
+| response_headers | True  |  dict   |   {}    | Headers to set on the proxied response, header name to string value. `$url` in a value is replaced with the request path |
 
 For example, an app which forwards requests to `www.google.com` is
 
@@ -142,7 +144,7 @@ app = ace.app("Proxy",
 
 ```
 
-The plugin is authorized to allow proxying to `https://www.google.com`. Any request to the app will be forwarded after stripping the app path. So if app is installed at `/test`, a request to `/test/abc/def` will be forwarded to `/abc/def`. In addition, if the proxy is configured with `strip_path="/abc"`, then the request will be sent to `/def`.
+The plugin is authorized to allow proxying to `https://www.google.com`. Any request to the app will be forwarded after stripping the app path. So if app is installed at `/test`, a request to `/test/abc/def` will be forwarded to `/abc/def`. In addition, if the proxy is configured with `strip_path="/abc"`, then the request will be sent to `/def`. Setting `strip_app=False` keeps the app path in the forwarded request (`/test/abc/def` is forwarded as is).
 
 If proxying is enabled for `/` route, then `/static` file serving is disabled for the app since requests to static path are also forwarded to the upstream service. `/static_root` serving is available and overrides the proxy config.
 

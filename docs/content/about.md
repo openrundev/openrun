@@ -52,7 +52,7 @@ Declarative configuration is what makes Kubernetes and Terraform useful. OpenRun
 
 OpenRun can deploy any web app which runs in a single container, with optional [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}) for background workers and companion services. OpenRun supports [AppSpecs]({{< ref "docs/container/appspecs" >}}) which allow zero-config deployment of frameworks like Streamlit/Gradio/FastHTML/NiceGUI/Shiny/Reflex based apps. For frameworks which have an AppSpec, no Dockerfile is required and no code changes are required in the app source. For frameworks which do not have an AppSpec defined, a Dockerfile needs to be present in the app source repo.
 
-OpenRun does NOT support apps which require multiple containers using Docker Compose. The target use case is internal tools talking to existing API endpoints and web apps where the database is externally managed. OpenRun support service bindings, which is a better abstraction for managing endpoints.
+OpenRun does NOT support apps which require multiple containers using Docker Compose. The target use case is internal tools talking to existing API endpoints and web apps where the database is externally managed. OpenRun supports service bindings, which is a better abstraction for managing endpoints.
 
 ### Does OpenRun support deployment of internal tools by teams?
 
@@ -70,7 +70,7 @@ For every app. Configure [OAuth, OpenID Connect, SAML or client certificate auth
 
 ### How do apps get access to a database?
 
-Through [service bindings]({{< ref "docs/applications/servicebindings" >}}). A PostgreSQL or MySQL service is registered once with admin credentials. Each app that requests a binding automatically gets an isolated schema and role (Postgres) or database and user (MySQL), with generated credentials injected into the app environment. Operational work like backups, monitoring and capacity planning needs to be set up only once, for the shared service, instead of once per app database. The [service bindings blog post]({{< ref "/blog/service-binding" >}}) describes the design.
+Through [service bindings]({{< ref "docs/applications/servicebindings" >}}). A PostgreSQL, MySQL or Redis/Valkey service is registered once with admin credentials. Each app that requests a binding automatically gets an isolated schema and role (Postgres), database and user (MySQL) or key-prefix scoped ACL user (Redis), with generated credentials injected into the app environment. SQL Server, Oracle, MongoDB, Snowflake and ClickHouse are supported through installable binding providers. Operational work like backups, monitoring and capacity planning needs to be set up only once, for the shared service, instead of once per app database. The [service bindings blog post]({{< ref "/blog/service-binding" >}}) describes the design.
 
 For lighter apps, OpenRun manages [SQLite with Litestream]({{< ref "docs/applications/litestream" >}}): persistent volumes, continuous replication to S3-compatible storage and automatic restore.
 
@@ -128,6 +128,8 @@ The current status is:
 - Application sandboxing checks so that only audited operations are allowed.
 - Staged deployments and preview app creation.
 - App data persistence to SQLite with managed tables.
+- Sidecar containers, scheduled jobs and before-deploy hooks for container apps.
+- Apps and actions served as MCP tools, with a remote CLI and management API protected by OAuth 2.1.
 
 ## Who is behind this project?
 

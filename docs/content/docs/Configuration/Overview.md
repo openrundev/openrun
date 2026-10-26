@@ -8,9 +8,31 @@ summary: "Overview of OpenRun configuration, at the server level and client leve
 
 The OpenRun server picks up its configuration from the config file at startup. All the parameters have default values, specified in the code at [openrun.default.toml](https://github.com/openrundev/openrun/blob/main/internal/system/openrun.default.toml).
 
-Select a config file with the global `--config-file` flag, or with `CL_CONFIG_FILE`. The flag takes precedence. Otherwise, OpenRun uses `$OPENRUN_HOME/openrun.toml` or discovers an existing installation as described below.
+Select a config file with the global `--config-file` (`-c`) flag, or with `CL_CONFIG_FILE`. The flag takes precedence. Otherwise, OpenRun uses `$OPENRUN_HOME/openrun.toml` or discovers an existing installation as described below.
 
 Values in the user specified config take precedence over the default config values in the source code.
+
+### Server Commands
+
+The server is managed with the `openrun server` sub-commands:
+
+- `start`: start the server in the foreground (install as a service, see [Installation]({{< ref "docs/installation" >}})).
+- `stop [--wait]`: stop the server. `--wait` blocks until the server process has fully exited (the final litestream sync runs as the process exits).
+- `status`: prints `ok` when the server connection works. `version`: reports the server's build version and commit.
+- `restart`: zero downtime in-place restart (Linux/macOS): re-executes the server binary, reloading `openrun.toml` and picking up a new binary while handing over the listeners. `SIGHUP` does the same. `[restart] drain_timeout_secs` (default 300) is the max wait on shutdown for in-flight requests and websockets, `upgrade_timeout_secs` (default 90) the max wait for the new process to report ready.
+- `show-config` / `update-config <file> [--force]`: read and update the [dynamic config](#dynamic-config).
+- `metadata-status`: reports the metadata database connection health and SQLite maintenance metrics as JSON (exit code 1 when unhealthy).
+
+### Environment Variables
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENRUN_HOME` | Home directory for the server and client, see below |
+| `CL_CONFIG_FILE` | Config file path, same as `--config-file` |
+| `OPENRUN_SERVER_URI` | Server to connect to, same as the global `--server-uri` flag; takes precedence over `server_uri` in the config file |
+| `OPENRUN_API_KEY` | Bearer credential for a [remote server]({{< ref "remoteaccess" >}}); takes precedence over `client.api_key` |
+| `OPENRUN_AS_USER` | User id to run the command as, same as the global `--as` flag (see [RBAC]({{< ref "rbac" >}})) |
+| `OPENRUN_NO_KEYRING` | When set, `openrun login` stores tokens in `$OPENRUN_HOME/config` instead of the OS keychain |
 
 ## Home Directory
 
@@ -27,6 +49,18 @@ Automatic first-start initialization applies only to this final fallback. With a
 ## OpenRun Client CLI
 
 By default, the OpenRun client uses Unix domain sockets to connect to the OpenRun server. `$OPENRUN_HOME` should point to the same location for server and client. If no changes are done for the server defaults, then the client can connect to the server locally without any other configuration being required. See [Remote API and MCP]({{< ref "remoteaccess" >}}) for the client configuration when connecting to a remote server. The global `--server-uri` flag (or `OPENRUN_SERVER_URI`) overrides the `server_uri` value from the config file for one command.
+
+The client settings and their defaults are:
+
+```toml {filename="openrun.toml"}
+server_uri = "$OPENRUN_HOME/run/openrun.sock" # unix domain socket path, or https://host[:port] for a remote server
+admin_user = "admin"                          # the system admin username (used by the server too)
+
+[client]
+api_key = ""             # API key for a remote server; the OPENRUN_API_KEY env var takes precedence
+skip_cert_check = false  # skip TLS certificate verification for self-signed server certs
+default_format = "basic" # default output format: table, basic, csv, json, jsonl or jsonl_pretty
+```
 
 ## App Config
 
@@ -95,7 +129,7 @@ will fetch the default value. Adding in `openrun.toml` config
 systems = ["local", "stage", "test"]
 ```
 
-will result in the configured value being available in the code. This allows for installation specific properties, while keeping the source code same across environments.
+will result in the configured value being available in the code. This allows for installation specific properties, while keeping the source code same across environments. In string values, references to the environment variables listed in `system.allowed_env` (default `["HOME", "OPENRUN_HOME", "PATH"]`) are expanded, so `data_dir = "$OPENRUN_HOME/data"` resolves to the server's home directory.
 
 In app declaration, same can be accessed as
 
@@ -139,4 +173,52 @@ The basic format of this config is
 
 [RBAC]({{< ref "RBAC" >}}) has more details about using the dynamic config.
 
-Making a config update will automatically update the `$OPENRUN_HOME/config/dynamic_config.json` file on all instances. The `show-config` command can also show the latest config. The version id is auto-generated with a unique value. Subsequent updates need to pass the current version id, the `update-config` will fail if a stale id is passed in. The `--force` option can be used to overwrite the config.
+Besides `rbac`, the dynamic config can carry two more sections, which take precedence over the static `openrun.toml` values:
+
+- `entries`: named config entries, mirroring the named-entry sections of `openrun.toml` (`git_auth`, `auth`, `saml`, `builtin_auth`, ...). This is what `openrun user add` and the console config forms write. Dynamic entries shadow a static entry with the same name.
+- `settings`: individual fields of the other sections, as section name to dotted field key, for example `{"security": {"default_git_auth": "mykey"}, "app_config": {"cors.allow_origin": "origin"}, "api": {"rest.enable": true}}`.
+
+The `logging` and `telemetry` sections, `security.trusted_proxies` and every `unsafe_*` flag are static only and are rejected in a dynamic update.
+
+Making a config update will automatically update the `$OPENRUN_HOME/config/dynamic_config.json` file on all instances. The `show-config` command can also show the latest config. The version id is auto-generated with a unique value. Subsequent updates need to pass the current version id, the `update-config` will fail if a stale id is passed in. The `--force` option can be used to overwrite the config. The server keeps the last `metadata.config_history_versions` (default 20) config snapshots.
+
+## Other Server Settings
+
+Most server sections are documented on their own pages: [Ports and Certificates]({{< ref "networking" >}}) for `[http]`, `[https]` and the domain settings in `[system]`, [Security]({{< ref "security" >}}), [Remote API and MCP]({{< ref "remoteaccess" >}}) for `[api]`, [Secrets]({{< ref "secrets" >}}), [Telemetry]({{< ref "telemetry" >}}) for `[telemetry]` and `[logging]`, [Container]({{< ref "docs/container" >}}) for the container, build and Kubernetes settings and [Litestream]({{< ref "docs/applications/litestream" >}}) for `[litestream.*]`. The remaining general settings, with their defaults, are:
+
+```toml {filename="openrun.toml"}
+[metadata]
+db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_metadata.db"
+audit_db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_audit.db"
+file_cache_connection = "sqlite:$OPENRUN_HOME/metadata/file_cache.db"
+auto_upgrade = true                    # upgrade the metadata schema automatically at startup
+ignore_higher_version = false          # start even if the database schema is newer than the binary supports
+config_history_versions = 20           # dynamic config snapshots retained
+# SQLite self-maintenance for the metadata, audit and file cache databases
+sqlite_journal_size_limit = 33554432   # WAL size in bytes the file is truncated back to on checkpoint, <=0 for no limit
+sqlite_maintenance_interval_secs = 60  # background checkpoint/vacuum period, <=0 disables
+sqlite_truncate_checkpoint_every = 10  # maintenance passes between truncate checkpoints, <=0 disables
+sqlite_vacuum_pages = 2000             # max free pages returned to the OS per pass, <=0 disables
+
+[system]
+enable_compression = true              # compress HTTP responses
+early_hints = false                    # HTTP early hints for HTML responses
+file_watcher_debounce_millis = 300     # debounce for dev mode file watching
+watch_ignore_patterns = ["**/.git/**", "**/node_modules/**"] # file watcher ignore globs (the default list is longer)
+node_path = ""                         # node module lookup paths for esbuild
+git_checkout_cache_entries = 0         # immutable git checkouts reused across operations, 0 disables
+git_remote_check_interval_secs = 0     # reuse checked branch heads for this long, 0 always checks the remote
+git_operation_timeout_secs = 600       # timeout for each remote git operation, <=0 disables
+max_concurrent_builds = 1              # concurrent container builds
+max_build_wait_secs = 120              # max wait for a build lock
+file_workers = 4                       # parallel workers for file compression during app version creation
+leader_election_lease_secs = 30        # multi-node leader election lease and heartbeat
+leader_election_heartbeat_interval_secs = 10
+allowed_env = ["HOME", "OPENRUN_HOME", "PATH"] # env variables expanded in [node_config] values
+
+[kubernetes]
+namespace = "openrun"                  # namespace for app workloads
+use_node_port = false                  # NodePort instead of ClusterIP services
+```
+
+The metadata connection strings support `{{secret ...}}` references and `postgres://` URLs in addition to SQLite.

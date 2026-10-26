@@ -114,7 +114,7 @@ func bindingCreateCommand(commonFlags []cli.Flag, clientConfig *types.ClientConf
 <bindingPath> is the unique path of the binding.
 
 Examples:
-  Create a binding: openrun binding create --config inherit_default:true postgres/p1 /apps/p1
+  Create a binding: openrun binding create --config inherit_default=true postgres/p1 /apps/p1
   Create with grants: openrun binding create --grant "read:*" /apps/p1 /apps/p2
 `,
 		Action: func(cCtx *cli.Context) error {

@@ -26,6 +26,7 @@ For HTTPS requests, the OpenRun service listens on port 25223 by default, on the
 host = "0.0.0.0" # bind to all interfaces (if port is >= 0)
 port = 25223 # port for HTTPS
 enable_cert_lookup = true # enable looking for domain specific certificate files on disk
+mkcert_path = "" # mkcert binary path for local dev certs, looked up on PATH by default; "disable" turns mkcert off
 service_email = "" # email address for registering with the ACME CA. Set a value to enable automatic certs
 use_staging = true # use Let's Encrypt staging server (ignored when acme_ca_url is set)
 acme_ca_url = "" # custom ACME CA directory URL, overrides Let's Encrypt. Set a value to enable automatic certs
@@ -35,10 +36,10 @@ acme_eab_mac_key = "" # ACME External Account Binding MAC key, required by some 
 enable_http_challenge = false # answer ACME HTTP-01 challenges on the HTTP port (in addition to TLS-ALPN)
 cert_location = "$OPENRUN_HOME/config/certificates" # where to look for existing certificate files
 storage_location = "$OPENRUN_HOME/run/certmagic" # where to cache dynamically created certificates
-
+disable_client_certs = true # set to false to enable client certificate (mTLS) authentication for apps
 ```
 
-Port 0 means bind to any available port. Port -1 means disable HTTPS access.
+Port 0 means bind to any available port. Port -1 means disable HTTPS access. See [Client Cert Authentication]({{< ref "authentication/#client-cert-authentication-mtls" >}}) for `disable_client_certs`.
 
 {{<callout type="info" >}}
 Using the HTTPS port is recommended even for the local environment. HTTP/2 works with HTTPS only. Server Sent Events (SSE) are used by OpenRun for live reload of dev apps, [SSE works best with HTTP/2](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#listening_for_custom_events). Without HTTP/2, there can be connection limit issues with HTTP causing connections from browser to OpenRun server to hang.

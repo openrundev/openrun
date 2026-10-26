@@ -33,7 +33,7 @@ OpenRun brings the serverless container deployment model to infrastructure you c
 | Staged deployment | Yes, staging app per app with promote step | Revisions with traffic splitting | Deployments replace the service |
 | Run on a private network behind a VPN | Yes | No, runs in Google Cloud (private ingress available) | No |
 | Custom domains with automatic TLS | Yes | Yes | Yes |
-| Database provisioning for apps | Service bindings to Postgres/MySQL, managed SQLite + Litestream | Separate Cloud SQL setup | Separate RDS setup |
+| Database provisioning for apps | Service bindings to Postgres/MySQL/Redis, managed SQLite + Litestream | Separate Cloud SQL setup | Separate RDS setup |
 | Audit logs | Built in, app operations and API calls | Cloud Audit Logs | CloudTrail |
 | Vendor lock-in | Low: Apache-2.0 open source, runs on any infrastructure; app declarations use OpenRun's Starlark config format | Google Cloud | AWS |
 

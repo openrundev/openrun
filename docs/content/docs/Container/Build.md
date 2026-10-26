@@ -46,6 +46,8 @@ Set the same `builder_auth_token` value on the main install and on every delegat
 
 For single node installation, OpenRun checks if the required container image is available locally. If not, the source code is checked out and the container manager command CLI is used to build the image.
 
+Builds on a node are serialized: `system.max_concurrent_builds` (default `1`) is the number of image builds that run at the same time, and a build waits up to `system.max_build_wait_secs` (default `120`) for a build slot before failing. The same limits apply on delegated builder nodes.
+
 ## Staging and Production Image Reuse
 
 For production apps, OpenRun creates a staging app and a production app. By default, container image names are based on the source files, build args, container file and build directory, and do not include the staging or production app id prefix. This allows the production app to reuse the image that was already built for the staging app when the build inputs are the same.

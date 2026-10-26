@@ -118,6 +118,12 @@ Update service default status with:
 openrun service update postgres/main --set-default=true
 ```
 
+Service config values can be changed in place with `--config key=value`; an empty value (`--config key=`) deletes the key. The new config is used from the next operation on the service. Accounts already generated for existing bindings are not changed:
+
+```shell
+openrun service update postgres/main --config url=postgres://admin:newsecret@db.example.com:5432/appdb
+```
+
 Delete a service with:
 
 ```shell
@@ -132,7 +138,7 @@ Service connection URLs are used in two different places: OpenRun uses the admin
 
 Generated binding accounts include both `url` and `url_direct`. `url` is intended for app containers and can replace the service URL hostname using the service config key `binding_hostname`. `url_direct` keeps the original service URL hostname and is used by OpenRun commands such as `binding run-command`.
 
-This matters for local database services. If a Postgres or MySQL service URL points at `localhost` or `127.0.0.1`, app containers usually cannot use that hostname to reach the host database. Outside Kubernetes, OpenRun automatically maps those local hostnames to a container-reachable hostname. Docker uses `host.docker.internal`; other local container runtimes use `host.containers.internal`. Set `binding_hostname` explicitly to override that value, or set `binding_hostname=disable` to keep the service URL hostname unchanged.
+This matters for local database services. If a Postgres, MySQL or Redis service URL points at `localhost`, `127.0.0.1` or `::1`, app containers usually cannot use that hostname to reach the host database. Outside Kubernetes, OpenRun automatically maps those local hostnames to a container-reachable hostname. Docker uses `host.docker.internal`; other local container runtimes use `host.containers.internal`. Set `binding_hostname` explicitly to override that value, or set `binding_hostname=disable` to keep the service URL hostname unchanged.
 
 ## Staging Services
 
@@ -168,8 +174,10 @@ openrun binding create mysql/main /apps/inventory-db
 
 Base bindings cannot have grants. The generated account owns the bindings schema or database.
 
-The account information is not shown by `binding get` or `binding list`. Use
-`binding show-account` to view the generated connection information. With RBAC
+The account information is not shown by `binding get` or `binding list`
+(`binding list --source postgres/main` lists the bindings created from a service
+or base binding). Use `binding show-account` to view the generated connection
+information. With RBAC
 enabled, `show-account` needs the `binding:reveal` permission, which requires
 an explicit grant (it is not implied by `binding:manage` and binding owners do
 not hold it by default).
@@ -301,9 +309,22 @@ openrun app update bindings /apps/reporting-read /apps/metrics-read /reporting
 
 This updates staging. Add `--promote` to update prod in the same command.
 
+### Environment Variables
+
+Each attached binding's account is injected into the app container as environment variables named `<SERVICE_TYPE>_<FIELD>` (upper-cased), one variable per account field:
+
+| Service type     | Account fields                                        | Example variables                                                 |
+| :--------------- | :---------------------------------------------------- | :---------------------------------------------------------------- |
+| `postgres`       | `url`, `url_direct`, `schema`, `role`                 | `POSTGRES_URL`, `POSTGRES_URL_DIRECT`, `POSTGRES_SCHEMA`, `POSTGRES_ROLE` |
+| `mysql`          | `url`, `url_direct`, `database`, `user`, `host`       | `MYSQL_URL`, `MYSQL_DATABASE`, `MYSQL_USER`                       |
+| `redis`/`valkey` | `url`, `url_direct`, `username`, `password`, `key_prefix` | `REDIS_URL`, `REDIS_KEY_PREFIX` (`VALKEY_URL`, ... for the `valkey` type) |
+| `sqlite`         | `url`, `db_path`, `dir`                               | `SQLITE_URL`, `SQLITE_DB_PATH`, `SQLITE_DIR`                      |
+
+When an app has several bindings of the same service type, the second and later ones get a numeric suffix on the type, in binding order: `POSTGRES_URL`, `POSTGRES2_URL`, `POSTGRES3_URL`. Production apps receive the prod account; staging, preview and dev apps receive the staged account. Provider service types follow the same scheme with the account fields the provider defines.
+
 ## Binding Access Control
 
-Access to services and bindings is controlled through [RBAC]({{< ref "/docs/configuration/rbac" >}}). The `service:*` and `binding:*` permissions are scoped by the grant's `service:<glob>` / `binding:<glob>` target entries. Attaching a binding to an app requires the `binding:use` permission on that binding path (or `service:bind` on the service, for auto bindings created from a service source), in addition to the app permission for the update itself. The creator of a service or binding holds the owner permissions (`service:manage` / `binding:manage` by default) on their own entries.
+Access to services and bindings is controlled through [RBAC]({{< ref "/docs/configuration/rbac" >}}). The `service:*` and `binding:*` permissions are scoped by the grant's `service:<glob>` / `binding:<glob>` target entries. Attaching a binding to an app requires the `binding:use` permission on that binding path (or `service:bind` on the service — and on its linked staging service, when one is configured — for auto bindings created from a service source), in addition to the app permission for the update itself. Creating a base binding likewise needs `service:bind` on the service. `binding run-command` requires `binding:run_command`, `binding show-account` requires `binding:reveal`, and the health checks require `service:read` / `binding:read`. Making a service the default of its type also requires `service:update` on the service it displaces. The creator of a service or binding holds the owner permissions (`service:manage` / `binding:manage` by default) on their own entries.
 
 When RBAC is not enabled, management operations are restricted to the admin user, so no separate approval step applies to binding access.
 
@@ -581,6 +602,8 @@ openrun provider install sqlserver --version v0.1.0
 openrun provider list
 ```
 
+`--sha256 <hex>[,<hex>]` pins the accepted binary digests (one per platform for mixed-architecture deployments) and fails the install on a mismatch. `--source-url` installs from another URL (with `{version}`, `{os}` and `{arch}` placeholders) or from a server-local file path; `--version` is required when no `--source-url` is given.
+
 The provider's service types then work exactly like the built-in ones:
 
 ```shell
@@ -589,7 +612,19 @@ openrun service create sqlserver/main \
 openrun binding create sqlserver/main /apps/reporting-db
 ```
 
-Provider processes are launched on demand when a service connection is needed and stopped when it is closed. `openrun provider uninstall <name>` removes a provider once no services of its types exist. For declarative, config-managed deployments, providers can instead be declared in the `[bindings.install]` server config section (or the equivalent [Helm values / Terraform variables for Kubernetes]({{< ref "/docs/container/kubernetes/#binding-providers" >}})), with optional `@sha256:<hex>` digest pinning. Per-provider configuration details (service config keys, grant semantics) are documented in the [bindings repository](https://github.com/openrundev/bindings).
+Provider processes are launched on demand when a service connection is needed and stopped when it is closed. `openrun provider uninstall <name>` removes a provider once no services of its types exist (`--force` removes it regardless). For declarative, config-managed deployments, providers can instead be declared in the `[bindings.install]` server config section (or the equivalent [Helm values / Terraform variables for Kubernetes]({{< ref "/docs/container/kubernetes/#binding-providers" >}})), with optional `@sha256:<hex>` digest pinning. Per-provider configuration details (service config keys, grant semantics) are documented in the [bindings repository](https://github.com/openrundev/bindings).
+
+The `[bindings]` server config section controls how providers are installed:
+
+| Key                    | Default                    | Description                                                                                                                                                                                                                           |
+| :--------------------- | :------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cache_dir`            | `$OPENRUN_HOME/bindings`   | Node-local cache where installed provider executables are materialized                                                                                                                                                                 |
+| `release_url_template` | openrundev/bindings GitHub releases | Download URL used when no `--source-url` is given; `{provider}`, `{version}`, `{os}`, `{arch}` and `{ext}` (`.exe` on Windows) are replaced. Point it at a mirror for restricted networks                                   |
+| `install`              |                            | `[bindings.install]` table of `name = "version"` (or `"version@sha256:<hex>[,<hex>]"`) entries installed at server startup. Providers listed here cannot be changed with the provider CLI; removing an entry does not uninstall the provider |
+| `unsafe_allow_http`    | `false`                    | Allow plain `http://` provider source URLs. Not recommended: the downloaded binaries run as the server user                                                                                                                             |
+| `preinstalled_dir`     |                            | Directory of pre-placed `openrun-binding-<name>` executables, registered at startup without downloads or database registration (used by the Kubernetes OCI image path)                                                                  |
+| `disable_install`      | `false`                    | Reject the imperative `provider install/uninstall` API/CLI; providers come only from `install` or `preinstalled_dir`                                                                                                                    |
+| `dev_providers`        |                            | `[bindings.dev_providers.<name>]` with `path = "/path/to/executable"` registers a provider from a local path, skipping checksum verification. Development use only                                                                       |
 
 ## Frequently Asked Questions
 

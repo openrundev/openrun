@@ -27,6 +27,8 @@ To install the latest release build on Linux, macOS or Windows with WSL, run the
 curl -sSL https://openrun.dev/install.sh | sh
 ```
 
+The script installs the latest release under `$OPENRUN_HOME` (default `$HOME/openrun`, or `/var/lib/openrun` if that directory exists), adds `$OPENRUN_HOME/bin` to the PATH in the shell profile and, if no `openrun.toml` is present, creates one with a generated `admin` password. To install a specific release, pass the version: `curl -sSL https://openrun.dev/install.sh | sh -s v0.20.3`.
+
 Open a new terminal to get the updated environment values, then run:
 
 ```shell
@@ -121,7 +123,7 @@ Alternatively, install using the install script:
 powershell -Command "irm https://openrun.dev/install.ps1 | iex"
 ```
 
-The app is installed under `$env:OPENRUN_HOME`, defaulting to `$HOME\openrun`. Note down the generated password for the admin user. Open a new terminal to get the updated environment values, then run:
+The app is installed under `$env:OPENRUN_HOME`, defaulting to `$HOME\openrun`, and the script sets the `OPENRUN_HOME` user environment variable and adds the `bin` directory to the user PATH. To install a specific release, set `$v="v0.20.3"` before running the script. Note down the generated password for the admin user. Open a new terminal to get the updated environment values, then run:
 
 ```powershell
 openrun server start
@@ -201,12 +203,12 @@ To install from source
 
 - Install the Go toolchain required by the checked-out revision's [go.mod](https://github.com/openrundev/openrun/blob/main/go.mod). The current source requires Go 1.27.3 or newer.
 - Check out the OpenRun repo.
-- The below instructions assume you are using $HOME/clhome/openrun.toml as the config file and $HOME/clhome as the work directory location.
+- The below instructions assume you are using $HOME/openrun/openrun.toml as the config file and $HOME/openrun as the work directory location.
 
 First add the below env variables to your shell .profile or .bash_profile:
 
 ```shell
-export OPENRUN_HOME=$HOME/clhome
+export OPENRUN_HOME=$HOME/openrun
 export PATH=$OPENRUN_HOME/bin/:$PATH
 ```
 
@@ -249,6 +251,8 @@ openrun server start
 ```
 
 The service logs will be going to $OPENRUN_HOME/logs. The service will be started on [https://localhost:25223](https://localhost:25223) by default.
+
+`openrun server status` reports `ok` when the CLI can connect to the server and `openrun server version` reports the server build version. `openrun server stop` stops the server; add `--wait` to block until the server process has fully exited.
 
 ## Load an App
 

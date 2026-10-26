@@ -29,7 +29,7 @@ One command sets up continuous deployment:
 openrun sync schedule --approve --promote github.com/myorg/platform/apps.star
 ```
 
-OpenRun [polls the repo]({{< ref "docs/applications/overview/#automated-sync" >}}), creates newly declared apps, applies config changes and deploys code updates. Updates across apps are atomic: all changes apply or none do. Staged (blue-green) deployment applies to config changes as well as code changes.
+OpenRun [polls the repo]({{< ref "docs/applications/overview/#automated-sync" >}}), creates newly declared apps, applies config changes and deploys code updates; with `--prune`, apps and bindings removed from the file are deleted too. Updates across apps are atomic: all changes apply or none do. Staged (blue-green) deployment applies to config changes as well as code changes.
 
 ## Access Control Per Team
 
@@ -59,5 +59,6 @@ OpenRun runs as a single binary on a Linux server with Docker or Podman. The sam
 - [Secrets management]({{< ref "docs/configuration/secrets/" >}}) through AWS Secrets Manager, HashiCorp Vault and other providers
 - Automatic [TLS certificates]({{< ref "docs/configuration/networking/#enable-automatic-signed-certificate" >}}) with domain based and path based routing
 - A browser-based [management console]({{< ref "console-tour" >}}) for apps, syncs, service bindings, containers, audit logs and server config
+- A [remote CLI, REST API and MCP endpoint]({{< ref "docs/configuration/remoteaccess/" >}}) with scoped API keys, so the server can be managed from a laptop or by an AI agent
 
 For a comparison with building a platform yourself, see [OpenRun vs DIY on Kubernetes]({{< ref "compare/diy-kubernetes" >}}).

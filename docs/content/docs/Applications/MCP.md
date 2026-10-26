@@ -10,7 +10,7 @@ An app deployed through OpenRun can be an [MCP](https://modelcontextprotocol.io)
 
 - OpenRun serves the OAuth protected-resource metadata for the app and acts as the OAuth 2.1 authorization server (the same one that protects the [Remote API and MCP]({{< ref "docs/configuration/remoteaccess" >}}) surfaces).
 - Users log in with the app's configured `auth` (the admin account, builtin users, an `[auth.*]` OAuth/OIDC provider such as GitHub or Google, or a `[saml.*]` provider) and approve the client on a consent page. Federated logins refresh the user's group snapshot used by RBAC. Access requires the same `app:access` grant the app's web UI requires when RBAC is on.
-- The MCP endpoint accepts only OpenRun-issued bearer tokens bound to that app. Cookies, basic auth and login redirects do not apply there there. The exception is an app with `auth none`, whose endpoint is [open]({{< ref "#open-mcp-apps-auth-none" >}}).
+- The MCP endpoint accepts only OpenRun-issued bearer tokens bound to that app. Cookies, basic auth and login redirects do not apply there. The exception is an app with `auth none`, whose endpoint is [open]({{< ref "#open-mcp-apps-auth-none" >}}).
 - The token is stripped before the request reaches the app. The app receives the usual `X-Openrun-User`, `X-Openrun-User-Id`, `X-Openrun-User-Email` and `X-Openrun-Perms` headers plus `X-Openrun-Scopes` (the granted scopes) and `X-Openrun-Client-Id` (the OAuth client holding the token, or `apikey`).
 
 The app itself implements no authentication. Any MCP server that speaks Streamable HTTP without its own auth works unchanged.
@@ -35,7 +35,7 @@ openrun app create --auth builtin \
     ./src /shop
 ```
 
-[Action apps]({{< ref "actions/#mcp-tools" >}}) need no `--mcp` option: an app with actions serves them as MCP tools at `<app url>/mcp` by default, OpenRun itself is the MCP server and there is no upstream. `--mcp=actions` is that endpoint as an explicit setting. Everything below about login, tokens, scopes and API keys applies to it. The tools carry the [side-effect hints]({{< ref "actions/#side-effect-hints" >}}) of the actions as annotations, a `destructive=True` action is confirmed by the user before it runs (for clients on MCP protocol 2026-07-28 or later with the elicitation capability), and the tool list is private to the caller with a freshness hint of `action.mcp_list_ttl` (default `3m`).
+[Action apps]({{< ref "actions/#mcp-tools" >}}) need no `--mcp` option: an app with actions serves them as MCP tools at `<app url>/mcp` by default, OpenRun itself is the MCP server and there is no upstream. `--mcp=actions` is that endpoint as an explicit setting. Everything below about login, tokens, scopes and API keys applies to it. The tools carry the [side-effect hints]({{< ref "actions/#side-effect-hints" >}}) of the actions as annotations, a `destructive=True` action is confirmed by the user before it runs (clients on MCP protocol 2026-07-28 or later with the elicitation capability are asked; by default a client which cannot confirm is refused, the `[api.mcp] destructive_confirm` mode, overridable per app with `action.destructive_confirm` and per API key with `openrun apikey create --confirm skip`, see [MCP tools]({{< ref "actions/#mcp-tools" >}})), and the tool list is private to the caller with a freshness hint of `action.mcp_list_ttl` (default `3m`).
 
 `--mcp=@file` reads the JSON document from a local file (the CLI expands it; the API only accepts the document itself). `openrun app update mcp <value> <glob>` changes it later (`-` or `default` clears it); updates are staged and promoted like other metadata. In apply files the `app()` entry takes `mcp=True`, `mcp=False`, `mcp="/mcp"` or `mcp={...}`.
 
@@ -66,6 +66,8 @@ Add the app URL to the client. The client discovers the metadata, opens the Open
 ```sh
 claude mcp add --transport http orders https://apps.example.com/orders
 ```
+
+The actions of every app the user may run are also available together at the aggregate `/_openrun/app_mcp` endpoint (`[api.app_mcp]`, on by default), see [one endpoint for all apps]({{< ref "actions/#one-endpoint-for-all-apps" >}}).
 
 For clients that cannot run a browser flow (CI agents, server-side tools), mint an API key bound to the app and configure it as a static bearer header:
 

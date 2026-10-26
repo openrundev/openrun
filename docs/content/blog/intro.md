@@ -18,7 +18,7 @@ OpenRun is an [open-source](https://github.com/openrundev/openrun) platform to e
 
 OpenRun is built to solve two different types of use-cases:
 
-- Custom applications: With fully customizable UI, this would be similar to solutions like [Retool](https://retool.com/). A low-code approach is used, with a focus on [Hypermedia driven applications](https://hypermedia.systems/hypermedia-reintroduction/).
+- Custom applications: With fully customizable UI, this would be similar to solutions like [Retool](https://retool.com/). A low-code approach is used, with a focus on [Hypermedia driven applications](https://hypermedia.systems/hypermedia-a-reintroduction/).
 - Actions: This would be similar to solutions like [Rundeck](https://www.rundeck.com/). A way to automate internal applications, with a form based interface, with support for triggered and scheduled execution.
 
 One of the aims of OpenRun is to make it possible for everyone, especially backend engineers, to develop and use simple web interfaces. For use-cases where a CLI was developed previously, an OpenRun-based UI could be built. The backend service could invoke the CLI command or directly call the internal API that needs to be exposed. Development and use of simple web interfaces for all types of use-cases should be made easier with OpenRun.

@@ -18,8 +18,10 @@ audit_db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_audit.db"
 The events which are logged are
 
 - All HTTP requests except GET, HEAD and OPTIONS
-- System events, like app updates and any metadata changes
-- Action invocations (suggest, validate and exec)
+- System events, like app updates and any metadata changes (webhook calls included)
+- Action invocations (`execute`, `validate` and `suggest`, prefixed with `api_`, `cli_` or `mcp_` when not run from the form UI) and async action run completions (`run_finish`)
+- Job runs: every finished [job]({{< ref "jobs" >}}) run writes a `job` event with the run id and status
+- MCP calls: every JSON-RPC request to the management, an app's or the aggregate MCP endpoint is an `mcp` event, see [MCP apps]({{< ref "mcp/#transport-notes" >}})
 - Custom events, as defined in app code
 
 ## Configuration
@@ -69,3 +71,7 @@ openrun app create --approve --auth system github.com/openrundev/apps/openrun/au
 ```
 
 The event viewer shows events for all apps. This app can be installed with access by admins only.
+
+## Access Log
+
+Separately from the audit database, every HTTP request (GET included) is written to the access log `$OPENRUN_HOME/logs/access.log` when `logging.access_logging` is `true` (the default). Each entry is a JSON line with `method`, `host`, `url`, `proto`, `remote`, `status`, `bytes`, `duration`, `request_id`, `user_id` and `app_id`. The `request_id` is the same id recorded on the audit events of that request, so the two can be correlated; `user_id` and `app_id` are empty for unauthenticated and non-app requests. Rotation follows `logging.max_size_mb` and `logging.max_backups`.

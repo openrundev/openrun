@@ -84,7 +84,7 @@ cascade:
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Motivation" icon="flag" subtitle="<br>OpenRun is built with these goals:<br><br>➣ True GitOps: create and configure apps through Git, not just update code<br>➣ Start on single-node, scale to Kubernetes if needed<br>➣ Make auth and RBAC easy for internal tools<br>➣ Easy SAML support without paying the SSO tax<br>➣ Run thousands of apps - zero idle resource usage" class="openrun-feature-card openrun-feature-card-dark" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="OpenRun Features" icon="light-bulb" subtitle="<br>Some of the unique features of OpenRun are:<br>➣ Create and manage apps declaratively<br>➣ Easily upgrade from single-node to K8S <br>➣ Domain based or path based routing, with auto-TLS<br>➣ OAuth/OpenID/SAML/Cert auth, with RBAC<br>➣ Scales idle apps down to zero<br>➣ Staged deployment, for code and config changes<br>➣ Atomic (all or nothing) updates across apps<br>➣ Managed SQLite + Litestream replication to S3" class="openrun-feature-card openrun-feature-card-dark" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="OpenRun Features" icon="light-bulb" subtitle="<br>Some of the unique features of OpenRun are:<br>➣ Create and manage apps declaratively<br>➣ Easily upgrade from single-node to K8S <br>➣ Domain based or path based routing, with auto-TLS<br>➣ OAuth/OpenID/SAML/Cert auth, with RBAC<br>➣ Scales idle apps down to zero<br>➣ Staged deployment, for code and config changes<br>➣ Atomic (all or nothing) updates across apps<br>➣ Managed SQLite + Litestream replication to S3<br>➣ Sidecar containers, scheduled jobs and deploy hooks<br>➣ Apps and actions served as MCP tools, with a remote CLI and API" class="openrun-feature-card openrun-feature-card-dark" >}}
 
 {{< /hextra/feature-grid >}}
 
@@ -199,7 +199,7 @@ function copyCode(codeId, buttonElem) {
 {{< hextra/feature-grid >}}
 
 <!-- prettier-ignore -->
-{{< hextra/feature-card title="Container management" link="docs/quickstart/#containerized-applications" subtitle="Build and deploy containerized web applications declaratively across Docker, Podman or Kubernetes using one consistent platform configuration."  icon="docker" class="openrun-feature-card openrun-feature-card-light" >}}
+{{< hextra/feature-card title="Container management" link="docs/quickstart/managing-apps/#containerized-applications" subtitle="Build and deploy containerized web applications declaratively across Docker, Podman or Kubernetes using one consistent platform configuration."  icon="docker" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore -->
 {{< hextra/feature-card title="Declarative GitOps" link="docs/applications/lifecycle/#github-reload" subtitle="Manage staged deployments, versioned releases and preview environments through declarative GitOps workflows connected to GitHub or GitLab."  icon="github" class="openrun-feature-card openrun-feature-card-light" >}}

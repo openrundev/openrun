@@ -12,36 +12,59 @@ NAME:
    openrun - OpenRun client and server https://openrun.dev/
 
 USAGE:
-   openrun [global options] command [command options] [arguments...]
+   openrun [global options] command [command options]
 
 COMMANDS:
-   server       Manage the OpenRun server
-   app          Manage OpenRun apps
-   preview      Manage OpenRun preview apps
-   account      Manage OpenRun accounts
-   param        Manage app parameter values
-   version      Manage app versions
-   app-webhook  Manage app level webhooks
-   password     Generate a password bcrypt config entry
-   help, h      Shows a list of commands or help for one command
+   server             Manage the OpenRun server
+   app                Manage OpenRun apps
+   apply              Apply app configuration declaratively
+   delete             Delete the apps and bindings declared in an apply file
+   export             Export current app and binding config as a declarative config file
+   pretty-print, fmt  Pretty print a declarative config file
+   sync               Manage sync operations, scheduled and webhook
+   job                Run and inspect app jobs (scheduled, manual and before_deploy). Jobs are defined in app.star, apps.ace, --job or app update jobs
+   action             List and run app actions. Actions are the operations an app exposes, they run as the logged in user
+   service            Manage service entries
+   provider           Manage out-of-process providers (binding and Starlark plugin providers)
+   binding            Manage binding entries
+   replication        Litestream replication status
+   secret             Manage secrets in the embedded secrets store
+   param              Manage app parameter values
+   version            Manage app versions
+   app-webhook        Manage app level webhooks
+   preview            Manage OpenRun preview apps
+   account            Manage OpenRun accounts
+   user               Manage builtin auth users, for apps using the "builtin" auth type
+   api-key, apikey    Manage API keys for remote CLI and MCP access
+   login              Log in to a remote OpenRun server (browser flow, tokens stored in the OS keychain)
+   logout             Log out from a remote OpenRun server (revokes the grant, clears stored tokens)
+   password           Generate a password bcrypt config entry
+   help, h            Shows a list of commands or help for one command
+
+GLOBAL OPTIONS:
+   --config-file value, -c value  TOML configuration file [$CL_CONFIG_FILE]
+   --server-uri value             The server uri to connect to (unix socket path or https://host[:port]). Takes precedence over server_uri in the config file [$OPENRUN_SERVER_URI]
+   --as value                     Run the command as this user id (like builtin:user1) with RBAC enforcement. Requires RBAC to be enabled; supported over the unix domain socket only [$OPENRUN_AS_USER]
+   --version, -v                  Print version info (default: false)
+   --help, -h                     show help
 
 $ openrun app
 NAME:
    openrun app - Manage OpenRun apps
 
 USAGE:
-   openrun app command [command options] [arguments...]
+   openrun app command [command options]
 
 COMMANDS:
-   create           Create a new app
-   list             List apps
-   delete           Delete an app
-   approve          Approve app permissions
-   reload           Reload the app source code
-   promote          Promote the app from staging to production
-   settings  Update OpenRun apps settings. Settings changes are NOT staged, they apply immediately to matched stage, prod and preview apps.
-   update  Update OpenRun app metadata. Metadata updates are staged and have to be promoted to prod. Use "openrun param" to update app parameter metadata.
-   help, h          Shows a list of commands or help for one command
+   create    Create a new app
+   list      List apps
+   delete    Delete an app
+   approve   Approve app permissions
+   reload    Reload the app source code
+   promote   Promote the app from staging to production
+   settings  Update OpenRun apps settings. Settings changes are NOT staged, they apply immediately to matched staging, prod and preview apps.
+   update    Update OpenRun app metadata. Metadata updates are staged and have to be promoted to prod. Use "openrun param" to update app parameter metadata.
+   help, h   Shows a list of commands or help for one command
 ```
 
 The app management subcommands are under `app`. The `preview` and `version` commands manage previews and versions, and `account` manages saved app login accounts. Other workflows include declarative `apply`/`delete`, scheduled `sync`, [export and formatting]({{< ref "export" >}}), [service bindings]({{< ref "servicebindings" >}}), [jobs]({{< ref "jobs" >}}) and [webhooks]({{< ref "webhooks" >}}).
@@ -63,32 +86,33 @@ Multi-app operations commit app metadata atomically: if an app fails before the 
 Use the `app list` command to list apps. If the `--internal` option is used, then the internal staging and preview apps for each matched prod app are also listed.
 
 ```shell
-
 $ openrun app list
-Id                                  Type  Version Auth GitInfo                        Domain:Path                                                  SourceUrl
-app_prd_2d3kCRk43FOuIGy979NbBWakRMm PROD        3 NONE main:9ce5e1adfc28983f7894      memory.demo.clace.io:/                                       github.com/openrundev/openrun/examples/memory_usage/
-app_prd_2d3kCZ28w6VIzoXMsT9yldwijxL PROD        3 NONE main:9ce5e1adfc28983f7894      cowbull.co:/                                                 github.com/openrundev/openrun/examples/cowbull
-app_prd_2d3kCjmw8ldQ2LaOd0CLmWXDApq PROD        3 NONE main:9ce5e1adfc28983f7894      /                                                            github.com/openrundev/openrun/examples/demo
-app_prd_2d3kKVvSsSgUHqtNGZaD95NuLK3 PROD        3 NONE main:9ce5e1adfc28983f7894      du.demo.clace.io:/                                           github.com/openrundev/openrun/examples/disk_usage/
-app_prd_2d6KcZmNwHIB8cSzNCotqBHpeje PROD        5 NONE main:ed7545ae739dfe85140a      utils.demo.clace.io:/bookmarks                               github.com/openrundev/apps/utils/bookmarks
+Name                           Type   Ver Auth    AppPath
+Memory Usage                   PROD     3 NONE    memory.demo.clace.io:/
+Cowbull                        PROD     3 NONE    cowbull.co:/
+Demo                           PROD     3 NONE    /
+Disk Usage                     PROD     3 NONE    du.demo.clace.io:/
+Bookmarks                      PROD     5 NONE    utils.demo.clace.io:/bookmarks
 
 $ openrun app list -i
-Id                                  Type  Version Auth GitInfo                        Domain:Path                                                  SourceUrl
-app_prd_2d3kCRk43FOuIGy979NbBWakRMm PROD        3 NONE main:9ce5e1adfc28983f7894      memory.demo.clace.io:/                                       github.com/openrundev/openrun/examples/memory_usage/
-app_stg_2d3kCRk43FOuIGy979NbBWakRMm STG         3 NONE main:9ce5e1adfc28983f7894      stage.memory.demo.clace.io:/                                 github.com/openrundev/openrun/examples/memory_usage/
-app_prd_2d3kCZ28w6VIzoXMsT9yldwijxL PROD        3 NONE main:9ce5e1adfc28983f7894      cowbull.co:/                                                 github.com/openrundev/openrun/examples/cowbull
-app_stg_2d3kCZ28w6VIzoXMsT9yldwijxL STG         3 NONE main:9ce5e1adfc28983f7894      stage.cowbull.co:/                                           github.com/openrundev/openrun/examples/cowbull
-app_prd_2d3kCjmw8ldQ2LaOd0CLmWXDApq PROD        3 NONE main:9ce5e1adfc28983f7894      /                                                            github.com/openrundev/openrun/examples/demo
-app_stg_2d3kCjmw8ldQ2LaOd0CLmWXDApq STG         3 NONE main:9ce5e1adfc28983f7894      stage.demo.clace.io:/                                        github.com/openrundev/openrun/examples/demo
-app_prd_2d3kKVvSsSgUHqtNGZaD95NuLK3 PROD        3 NONE main:9ce5e1adfc28983f7894      du.demo.clace.io:/                                           github.com/openrundev/openrun/examples/disk_usage/
-app_stg_2d3kKVvSsSgUHqtNGZaD95NuLK3 STG         3 NONE main:9ce5e1adfc28983f7894      stage.du.demo.clace.io:/                                     github.com/openrundev/openrun/examples/disk_usage/
-app_prd_2d6KcZmNwHIB8cSzNCotqBHpeje PROD        5 NONE main:ed7545ae739dfe85140a      utils.demo.clace.io:/bookmarks                               github.com/openrundev/apps/utils/bookmarks
-app_stg_2d6KcZmNwHIB8cSzNCotqBHpeje STG         5 NONE main:ed7545ae739dfe85140a      stage.utils.demo.clace.io:/bookmarks                         github.com/openrundev/apps/utils/bookmarks
+Name                           Type   Ver Auth    AppPath
+Memory Usage                   PROD     3 NONE    memory.demo.clace.io:/
+Memory Usage                   STG      3 NONE    stage.memory.demo.clace.io:/
+Cowbull                        PROD     3 NONE    cowbull.co:/
+Cowbull                        STG      3 NONE    stage.cowbull.co:/
+Demo                           PROD     3 NONE    /
+Demo                           STG      3 NONE    stage.localhost:/
+Disk Usage                     PROD     3 NONE    du.demo.clace.io:/
+Disk Usage                     STG      3 NONE    stage.du.demo.clace.io:/
+Bookmarks                      PROD     5 NONE    utils.demo.clace.io:/bookmarks
+Bookmarks                      STG      5 NONE    stage.utils.demo.clace.io:/bookmarks
 ```
+
+The `Type` column is `PROD`, `STG` (staging), `VIEW` (preview) or `DEV`. The `table` format (`--format table`) adds the app id, source URL, spec and git branch/commit columns.
 
 ### Output Formats
 
-The list commands (`app list`, `version list`, `version files`, `binding list`, `service list`, `secret list`, `job list`, `job runs`, `action list`, `action runs`, `apikey list`, `user list`, `sync list`, `webhook list`, `provider list`, `replication status`) take a `--format` option. The fixed formats are `table` (the default), `basic` (fewer columns), `csv`, `json`, `jsonl` and `jsonl_pretty`. The `client.default_format` config entry sets the default.
+The list commands (`app list`, `version list`, `version files`, `binding list`, `service list`, `secret list`, `job list`, `job runs`, `action list`, `action runs`, `apikey list`, `user list`, `sync list`, `app-webhook list`, `provider list`, `replication status`) take a `--format` option. The fixed formats are `basic` (the default, fewer columns), `table`, `csv`, `json`, `jsonl` and `jsonl_pretty`. The `client.default_format` config entry (default `basic`) sets the default. The `version list` examples on this page use the `table` format.
 
 Any other `--format` value which contains `{{` is treated as a [Go template](https://pkg.go.dev/text/template), the way `docker --format` works. The template is rendered once per entry, one line per entry, and the data is the entry in its JSON form, so the field names are the ones `--format json` shows:
 
@@ -245,6 +269,7 @@ The declarative app configuration uses Starlark syntax. An app is defined using 
 |    bindings    |   true   | list string |         | The paths of the [service bindings]({{< ref "docs/applications/servicebindings" >}}) to attach to the app |
 |      jobs      |   true   |    list     |   []    | [Jobs and deploy hooks]({{< ref "jobs" >}}), declared with `job(...)`, dictionaries or JSON strings |
 |     verify     |   true   |    bool     |  false  |                   Verify reload for this app only                   |
+|      mcp       |   true   | bool/string/dict |    | [MCP]({{< ref "mcp" >}}) setting: `True`, `False` (all MCP off), `"/path"` or a dict with the same fields as `--mcp` |
 
 For example, a definition like
 
@@ -276,8 +301,8 @@ USAGE:
 
 COMMANDS:
    schedule  Create scheduled sync job for updating app config
+   run       Run specified sync job
    list      List the sync jobs
-   run       Run a sync immediately
    delete    Delete specified sync job
    help, h   Shows a list of commands or help for one command
 ```
@@ -308,8 +333,8 @@ OPTIONS:
    --approve, -a               Approve the app permissions (default: false)
    --reload value, -r value    Which apps to reload: none, updated, matched
    --promote, -p               Promote changes from stage to prod (default: false)
-   --minutes value, -s value   Schedule sync for every N minutes (default: 0)
    --verify                    Verify reload by reloading app containers (default: false)
+   --minutes value, -s value   Schedule sync for every N minutes (default: 0)
    --clobber                   Force update app config, overwriting non-declarative changes (default: false)
    --force-reload, -f          Force reload even if there are no new commits (default: false)
    --prune                     Delete apps and bindings created by this sync that are no longer declared (default: false)
@@ -321,7 +346,7 @@ Scheduled sync takes all the same options as the `apply` command except `--dev` 
 
 If `--prune` is set, each sync run deletes the apps and bindings this sync itself created that are no longer present in the apply file, making the file the full source of truth for the resources it manages. Only resources originally created by the sync are pruned: apps and bindings created imperatively (or by another sync), even if they were later updated by this sync, are left alone. Pruned apps are fully deleted, containers, images, volumes and networks included; pruned bindings drop their backend objects the same way `binding delete` does. Pruning runs in the same transaction as the apply, so a blocked delete (for example a pruned base binding that still has derived bindings created outside the sync) fails and rolls back that sync run.
 
-Use `openrun sync list` to list syncs, `openrun sync run <sync_id>` to run one immediately, and `openrun sync delete <sync_id>` to remove its schedule. Deleting a sync does not delete its deployed apps or bindings.
+Use `openrun sync list` to list syncs, `openrun sync run <sync_id>` to run one immediately, and `openrun sync delete <sync_id>` to remove its schedule. Deleting a sync does not delete its deployed apps or bindings. A scheduled sync which fails `system.max_sync_failure_count` times in a row (default 5) is marked `Disabled` in `sync list` and skipped by the scheduler; a successful `openrun sync run <sync_id>` resets the failure count and re-enables it.
 
 ## Sync Frequency
 

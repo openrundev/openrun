@@ -20,7 +20,7 @@ The handler function is passed one argument which has the details about the API 
 |   IsPartial    |   bool   |             Is this an HTMX driven partial request              |
 |   PushEvents   |   bool   |         Whether push events are enabled for this app            |
 |  HtmxVersion   |  string  |                 The HTMX version configured for the app         |
-|    Headers     |   dict   |                      The incoming HTTP headers                  |
+|    Headers     |   dict   | The incoming HTTP headers. Incoming `X-Openrun-*` headers are dropped and replaced with the ones OpenRun sets for the authenticated user (`X-Openrun-User`, `X-Openrun-Perms` etc) |
 |    RemoteIP    |  string  | The resolved client IP address, honoring forwarded headers only from configured trusted proxies |
 |   UrlParams    |   dict   |           The url parameters, if used in the url spec           |
 |      Form      |   dict   |             The form data, including body and query             |

@@ -97,7 +97,16 @@ container_command = "kubernetes"
 
 is the main config which enables Kubernetes mode. By default, Kaniko based builds are used. Delegated builds can be configured instead, see [delegated builds]({{< ref "/docs/container/build/#delegated-build-mode" >}}). See [registry]({{< ref "/docs/container/build/#builder-and-registry-config" >}}) for registry config.
 
-OpenRun service and Kaniko jobs run in the main namespace (default `openrun`). Applications are started in the `<main_ns>-apps` namespace (default `openrun-apps`), which is automatically created by the Helm chart. To clear all apps (including any volume data), run `kubectl delete namespace openrun-apps; kubectl create namespace openrun-apps`.
+OpenRun service and Kaniko jobs run in the main namespace (default `openrun`). When the server runs as a pod, its own namespace is used; otherwise `kubernetes.namespace` in `openrun.toml` sets it. Applications are started in the `<main_ns>-apps` namespace (default `openrun-apps`), which is automatically created by the Helm chart. It has to exist before apps are started.
+
+```toml {filename="openrun.toml"}
+[kubernetes]
+namespace = "openrun"  # main namespace, used when the server is not running as a pod
+use_node_port = false  # expose app Services as NodePort instead of ClusterIP, for a k3s style
+                       # single node cluster where the OpenRun server runs outside the cluster
+```
+
+To clear all apps (including any volume data), run `kubectl delete namespace openrun-apps; kubectl create namespace openrun-apps`.
 
 ## Resources and Autoscaling
 

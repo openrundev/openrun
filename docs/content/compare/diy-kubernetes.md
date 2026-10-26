@@ -67,7 +67,7 @@ Knative is the closest single component to OpenRun's runtime model, providing sc
 
 A DIY platform is the right choice when:
 
-- You run workloads beyond single-container web apps: microservice meshes, operators, batch jobs, StatefulSets. OpenRun targets web apps and internal tools; it does not replace general Kubernetes usage and does not deploy Docker Compose style multi-container apps.
+- You run workloads beyond single-container web apps: microservice meshes, operators, general batch processing, StatefulSets. OpenRun targets web apps and internal tools, with [jobs]({{< ref "docs/applications/jobs/" >}}) limited to scheduled, manual and before-deploy tasks belonging to an app; it does not replace general Kubernetes usage and does not deploy Docker Compose style multi-container apps.
 - You need fine-grained control over ingress behavior, network policies or a service mesh.
 - You already operate ArgoCD, Jenkins and friends with a platform team, and the marginal cost of another app on that stack is low.
 

@@ -56,11 +56,11 @@ type("tag",
 
 Multiple types can be specified. Each type has a name, list of fields and list of indexes. Each field has a name and a type, the valid types are `INT`, `STRING`, `BOOLEAN`, `LIST` and `DICT`.
 
-Each type maps to one table in the underlying database. Indexes can be created on the fields. Each index is specified as list of field names. Adding `:desc` to the field name changes the index to be sorted descending instead of default ascending. Setting `unique` property to `True` makes it a unique index.
+Each type maps to one table in the underlying database. Indexes can be created on the fields. Each index is specified as list of field names. Adding `:desc` to the field name changes the index to be sorted descending instead of default ascending (`:asc` is accepted and is the default). Setting `unique` property to `True` makes it a unique index. The `indexes` argument of `type` is optional.
 
 ## Schema Design
 
-SQL tables are used as underlying storage, but joins are not supported by the `store.in` interface. The schema design to use would be same as schema used for a [document database](https://www.mongodb.com/developer/products/mongodb/mongodb-schema-design-best-practices/). Since `LIST` and `DICT` data types are supported, de-normalized schema is recommended instead of normalized schema.
+SQL tables are used as underlying storage, but joins are not supported by the `store.in` interface. The schema design to use would be same as schema used for a [document database](https://www.mongodb.com/docs/manual/data-modeling/). Since `LIST` and `DICT` data types are supported, de-normalized schema is recommended instead of normalized schema.
 
 ## Store Types
 
@@ -92,7 +92,9 @@ The APIs in the `store.in` plugin and their arguments and response are:
 
 ## Transactions
 
-The transaction handling APIs `begin`, `commit` and `rollback` take no arguments. All the other APIs take the table name as the first argument. The transaction created by the `begin` is saved in a thread local, there is no need to pass the transaction manually to subsequent API calls. The transaction `rollback` is automatically done at the end of the API handler if `commit` is not done explicitly.
+The transaction handling APIs `begin`, `commit` and `rollback` take no arguments. All the other APIs take the table name as the first argument. The transaction created by the `begin` is saved in the request state, there is no need to pass the transaction manually to subsequent API calls. Only one transaction can be active at a time, a second `begin` fails. The transaction `rollback` is automatically done at the end of the API handler if `commit` is not done explicitly.
+
+`select_by_id` and `select_one` fail with an error when no matching entry is found. `update` and `delete_by_id` return a count of zero in that case.
 
 ## Automatic Fields
 
@@ -104,8 +106,8 @@ All tables have some fields added automatically. These are:
 |  \_version   |    int    | Schema version |
 | \_created_by |  string   |    User id     |
 | \_updated_by |  string   |    User id     |
-| \_created_at | timestamp |                |
-| \_updated_at | timestamp |                |
+| \_created_at |    int    | Creation time, Unix epoch milliseconds |
+| \_updated_at |    int    | Last update time, Unix epoch milliseconds |
 
 These fields can be accessed like regular user defined field in the store APIs. So `bookmark._id` can be used the way `bookmark.url` is used in all the APIs. `_created_by` and `_updated_by` are the user id of the request which made the `insert` or `update` call, `anonymous` when the request has no authenticated user.
 
@@ -141,18 +143,18 @@ The filter is a dictionary whose keys name the fields to test. A scalar value te
 
 For example, a filter `{"age": 30}` is equivalent to sql where clause `age = ?` with the parameter bound to 30. Filter `{"age": 30, "city": "New York", "state": "California"}` is same as sql `age = ? AND city = ? AND state = ?`, with the appropriate bindings. To express an or condition, do filter as `{"age": 30, "$or": [{"city": "New York"}, {"state": "California"}]}`. That translates to `age = ? AND ( city = ? OR state = ? )`
 
-To express an inequality condition, do `{"age": {"$gt": 30}}` which becomes `age > ?`.
+To express an inequality condition, do `{"age": {"$gt": 30}}` which becomes `age > ?`. Multiple operators on one field are combined with AND: `{"age": {"$gte": 18, "$lt": 65}}`. A logical operator can also be used within a field condition, each entry having one operator: `{"age": {"$or": [{"$lt": 18}, {"$gt": 65}]}}` becomes `( age < ? OR age > ? )`.
 
 The logical operators supported are `$AND` and `$OR`, case insensitive.
 
-The filter operators supported (case insensitive) are
+The filter operators supported (lower case) are
 
 | Filter | SQL  |                                              Notes                                              |
 | :----: | :--: | :---------------------------------------------------------------------------------------------: |
-|  $GT   |  >   |                                                                                                 |
-|  $LT   |  <   |                                                                                                 |
-|  $GTE  |  >=  |                                                                                                 |
-|  $LTE  |  <=  |                                                                                                 |
-|  $EQ   |  =   |                                Default when value is not a dict                                 |
-|  $NE   |  !=  |                                                                                                 |
-| $LIKE  | like | Value has to be passed with % added, <br> it is not added automatically. For example `"%test%"` |
+|  $gt   |  >   |                                                                                                 |
+|  $lt   |  <   |                                                                                                 |
+|  $gte  |  >=  |                                                                                                 |
+|  $lte  |  <=  |                                                                                                 |
+|  $eq   |  =   |                                Default when value is not a dict                                 |
+|  $ne   |  !=  |                                                                                                 |
+| $like  | like | Value has to be passed with % added, <br> it is not added automatically. For example `"%test%"` |

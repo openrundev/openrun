@@ -70,7 +70,7 @@ With the default server config, both `proxy.config(container.URL)` and `containe
 
 The `sidecar` API declares one sidecar container: a background worker running the app's own image with a different command, or a companion service from another image. The result is passed to `container.config` in the `sidecars` list. The API supports the following parameters:
 
-- **name** (string, required) : the sidecar name, lower case letters, digits and dashes. Used as the container name suffix and in the `CL_SIDECAR_<NAME>_ADDR` env var name
+- **name** (string, required) : the sidecar name, 1 to 20 lower case letters, digits and dashes, starting with a letter or digit. Used as the container name suffix and in the `CL_SIDECAR_<NAME>_ADDR` env var name
 - **image** (string, optional) : the image for the sidecar, like `image:memcached:1.6-alpine` (the `image:` prefix is optional). If empty, the sidecar runs the app's own image
 - **command** (list of strings, optional) : overrides the image entrypoint. Required for sidecars running the app image, since the image default command is the app's web server
 - **args** (list of strings, optional) : arguments passed to the command (or to the image entrypoint)
@@ -109,8 +109,8 @@ The `run` API runs a command inside a new container created from the app's image
 - **path** (string, required) : the command to run inside the container
 - **args** (list of strings, optional) : arguments to pass to the command
 - **process_partial** (bool, optional) : whether to process the output when the command fails
-- **stdout_file** (bool, optional) : whether to send the stdout for the command to a temporary file on disk. The response `value` is then the temp file name; the app is responsible for deleting the file
-- **parse** (string, optional) : whether to parse the stdout. Supported options are `json` (the whole output is one JSON document) and `jsonlines` (each output line is a JSON document)
+- **stdout_file** (bool, optional) : whether to send the stdout for the command to a temporary file on disk. The response `value` is then the temp file name; the app is responsible for deleting the file. Not supported with `stream`
+- **parse** (string, optional) : whether to parse the stdout. Supported options are `json` (the whole output is one JSON object, returned as a list with that one dict) and `jsonlines` (each output line is a JSON object, returned as a list of dicts)
 - **stream** (bool, optional) : return the output as a stream which is read as the response is being generated, instead of buffering the full output; an action handler can return it in `ace.result(stream=...)` to show the output live (see [streaming output]({{< ref "docs/actions/#streaming-output" >}})). Not supported with `parse="json"`
 - **include_stderr** (bool, optional, default True) : whether to include the stderr output in the command output. If False, stderr is reported only in the error message when the command fails
 

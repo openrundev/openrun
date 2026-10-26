@@ -8,7 +8,15 @@ OpenRun uses [Go HTML templates](https://pkg.go.dev/html/template@go1.21.2) for 
 
 The [Sprig template library functions](http://masterminds.github.io/sprig/) are included automatically. Two functions from Sprig which are excluded for security considerations are `env` and `expandenv`.
 
-Two extra functions `static` and `fileNonEmpty` are added for handling static file paths.
+Two extra functions `static` and `fileNonEmpty` are added for handling static file paths. These helper functions are also added:
+
+|                   Function                   |                                                                     Notes                                                                     |
+| :------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------------------------------: |
+| `pathEscape`, `pathUnescape`                 |                                                 URL path segment escaping (Go `url.PathEscape`)                                                 |
+| `queryEscape`, `queryUnescape`               |                                                URL query string escaping (Go `url.QueryEscape`)                                                 |
+| `safeHTML`                                   | Marks a string as pre-escaped HTML, opting it out of the template's contextual escaping. Any user input in the string must be escaped first |
+| `relTime`                                    | Renders a `time.Time` or RFC3339 string as a relative age, like `3 hours ago`. An optional resolution argument widens it: `{{ relTime .t 2 }}` gives `1 day 3 hours ago` |
+| `openrun_static`                             |                     Returns the content-hashed `/_openrun/static` url of a browser asset served by the OpenRun server, like `htmx.min.js`                     |
 
 ## static function
 

@@ -46,7 +46,7 @@ Staged deployments give every app a [staging environment]({{< ref "docs/applicat
 
 ## Automate Scripts, Not Just Apps
 
-[Actions]({{< ref "docs/actions/" >}}) turn a backend function into a web app with an auto-generated form UI and report view. Use actions to replace Jenkins or Rundeck style jobs and manual curl commands with access-controlled, audited web interfaces.
+[Actions]({{< ref "docs/actions/" >}}) turn a backend function into a web app with an auto-generated form UI and report view. Use actions to replace Jenkins or Rundeck style jobs and manual curl commands with access-controlled, audited web interfaces. The same actions run from the CLI with `openrun action run` and are served as [MCP tools]({{< ref "docs/configuration/remoteaccess/" >}}) for AI agents. For recurring or deploy-time work, [jobs]({{< ref "docs/applications/jobs/" >}}) run scheduled, manual or before-deploy tasks from the app's image.
 
 ## Get Started
 

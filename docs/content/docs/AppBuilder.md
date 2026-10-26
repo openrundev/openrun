@@ -40,6 +40,8 @@ openrun app approve --promote /console
 
 Open the Builder area, create a session, select a profile if prompted, and describe the app. The first session builds the agent image, so startup may take longer than subsequent sessions.
 
+The agent always runs inside a container sandbox, which is the safety boundary for its auto-approved tool calls. The `security.unsafe_agent_without_sandbox` setting runs the agent command directly on the host as the server user instead; it is a development-only escape hatch and is not recommended.
+
 ## Agents and Profiles
 
 OpenRun includes agent images for `opencode`, `claude`, `codex` and `pi`. A `[builder_agent.<name>]` entry uses the name's prefix to choose the agent type: `opencode_team` uses OpenCode. Supported agent fields are:
@@ -51,6 +53,7 @@ OpenRun includes agent images for `opencode`, `claude`, `codex` and `pi`. A `[bu
 | `config_files` | Host files mounted as `host:container[:ro]`; container paths must be absolute. |
 | `dockerfile` | A custom Dockerfile path on the OpenRun server. |
 | `command` | A command array that speaks the Agent Client Protocol over standard input/output. |
+| `type` | Optional; must match the agent type inferred from the entry name. |
 
 Names beginning with `custom_` require both `dockerfile` and `command`. The configured mounts and credentials are accessible to the agent; keep them limited to what the session needs.
 
@@ -61,8 +64,9 @@ A `[builder_profile.<name>]` combines an `agent` with optional settings:
 - `services`: backing services offered for auto bindings, such as `["postgres/main"]`. `["defaults"]` offers the default service of each type; an empty list offers none. Service permissions still apply.
 - `prompt`: instructions appended to the system prompt. Set `replace=true` to replace the system prompt instead.
 - `publish_mode` and `publish_target`: restrict publication to a path prefix (`path`), a subdomain (`subdomain`), or an app glob (`glob`). An empty mode allows any path authorized by RBAC. For subdomains, a target ending in `.` appends `system.default_domain`.
+- `description`: shown in the new-app form when the user picks a profile.
 
-The default profile comes from `app_builder.default_builder_profile`. With no explicit default, a single configured profile is selected automatically; with several profiles, the user chooses. With no profiles configured, OpenRun uses OpenCode with local publication and no profile-level path restriction.
+`app_builder.system_prompt` replaces the embedded base system prompt for all profiles when set. The default profile comes from `app_builder.default_builder_profile`. With no explicit default, a single configured profile is selected automatically; with several profiles, the user chooses. With no profiles configured, OpenRun uses OpenCode with local publication and no profile-level path restriction.
 
 ## Preview and Publish
 

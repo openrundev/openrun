@@ -26,7 +26,7 @@ To directly download a library from a CDN to the static folder, add the URL dire
 libraries=["https://unpkg.com/jquery@3.3.1/dist/jquery.min.js"]
 ```
 
-The HTMX library and its SSE extension are automatically downloaded.
+URL libraries are downloaded into `static/gen/lib`. The HTMX library (`htmx.min.js`) and its SSE extension (`sse.js`) are automatically downloaded into the same folder. The htmx version is set by the `htmx.version` [app setting]({{< ref "docs/develop#app-settings" >}}) (default `4.0.0`); an htmx runtime url listed explicitly in `libraries` pins the version instead.
 
 ## JavaScript Modules
 

@@ -19,10 +19,10 @@ The export contains the current production configuration of matching apps. Dev a
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `--service-ref` | `default` | Write a service type such as `postgres`, resolved using the destination server's default service. Use `exact` to retain names such as `postgres/main`. |
-| `--git-auth` | `default` | Omit the app's Git credential name so the destination uses `security.default_git_auth`. Use `exact` to retain the configured entry name. |
-| `--exact-commit` | `false` | Pin Git apps to their exported commit instead of following the branch. |
-| `--exclude-declarative` | `false` | Omit apps and bindings already managed declaratively. |
+| `--service-ref`, `-s` | `default` | Write a service type such as `postgres`, resolved using the destination server's default service. Use `exact` to retain names such as `postgres/main`. |
+| `--git-auth-ref` | `default` | Omit the app's Git credential name so the destination uses `security.default_git_auth`. Use `exact` to retain the configured entry name. |
+| `--exact-commit`, `-c` | `false` | Pin Git apps to their exported commit instead of following the branch. |
+| `--exclude-declarative`, `-x` | `false` | Omit apps and bindings already managed declaratively. |
 | `--output`, `-o` | stdout | Write to a local file. |
 
 Review the prerequisite and warning comments at the top of the generated file. For example, exporting with default service references can map bindings from several PostgreSQL services onto a single destination service. Use `--service-ref exact` when those services need to remain distinct.

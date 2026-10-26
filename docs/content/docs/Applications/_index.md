@@ -18,4 +18,5 @@ Details on how to install and manage OpenRun apps.
 {{< card link="export" title="Export Configuration" subtitle="Bring existing apps and bindings into declarative GitOps management" icon="document-duplicate" >}}
 {{< card link="webhooks" title="App Webhooks" subtitle="Trigger reloads and promotions from CI and GitHub pushes" icon="terminal" >}}
 {{< card link="jobs" title="Jobs and Deploy Hooks" subtitle="Run scheduled tasks, manual jobs and deployment gates" icon="terminal" >}}
+{{< card link="mcp" title="MCP Apps" subtitle="Deploy MCP servers as apps, protected by OpenRun OAuth with the app's login and RBAC" icon="chip" >}}
 {{< /cards >}}

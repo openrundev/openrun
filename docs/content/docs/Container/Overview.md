@@ -39,7 +39,7 @@ openrun param update APP_MODULE basic_app:app fasthtmlapp.localhost:/
 
 Param updates are staged, they can be promoted after verification. To delete a param, pass `-` as the value to the update. Use `openrun param list` to view app params.
 
-Params can be set to secrets, by setting the value as `{{secret "vault_prod" "MY_KEY_NAME"}}`. The secret is resolved when the container is started and the value is passed to the container in its env.
+Params can be set to secrets, by setting the value as `{{secret "vault_prod" "MY_KEY_NAME"}}`. The secret is resolved when the container is started and the value is passed to the container in its env. The app has to declare the secrets it accesses and be approved for them: with the built-in specs, the `secrets` param holds the allowlist (empty by default), for example `--param secrets='[["MY_KEY_NAME"]]'`, and `openrun app approve <path>` (or `--approve`) records the access. See [plugin access to secrets]({{< ref "docs/configuration/secrets/#plugin-access-to-secrets" >}}).
 
 {{<callout type="info" >}}
 **Note:** Staged param updates are a powerful mechanism to ensure that config changes do not break your apps. For example, if BUCKET_NAME is a param pointing to a S3 bucket, the param change can be staged. The staging app can be tested to ensure that the new bucket is functional and there are no IAM/key related errors. Once the staging app is working, the app can be promoted. Code changes are easy to test, but config changes can cause env specific errors. Configuration related issues are a common cause of outages during deployment. OpenRun enables you to avoid such errors.
@@ -184,7 +184,7 @@ app = ace.app("orders",
 
 `container.sidecar(name, image="", command=[], args=[], env={}, inherit_env=None, port=0, health="", volumes=[], always_on=None, options={})`:
 
-- `name`: lower case letters, digits and dashes; used in the container name and in the `CL_SIDECAR_<NAME>_ADDR` env var (`-` becomes `_`).
+- `name`: up to 20 lower case letters, digits and dashes; used in the container name and in the `CL_SIDECAR_<NAME>_ADDR` env var (`-` becomes `_`).
 - `image`: `image:<ref>` for a foreign image. Omit it to run the app's own image, in which case `command` is required (the image default command is the app's web server).
 - `env`: the sidecar's own env. `inherit_env` copies the app env (params, binding env vars, `CL_APP_PATH`, `CL_APP_URL`) into the sidecar first; it defaults to true for app image sidecars and false for foreign images, which should not see the app's secrets unless asked to. The app `PORT` is never inherited; a sidecar with a `port` gets `PORT` set to it.
 - `port`: the port the sidecar listens on. Port'd sidecars are readiness checked before the app container starts (a TCP connect, or an HTTP GET when `health="http:/path"` is set), and the app gets `CL_SIDECAR_<NAME>_ADDR` (`localhost:<port>` on Kubernetes, the sidecar container name on Docker/Podman) to reach it. The port must differ from the app port and from other sidecars.

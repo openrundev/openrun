@@ -25,7 +25,7 @@ layout: hextra-home
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Hypermedia web apps" link="/docs/app/routing/#html-route" subtitle="Build fast, lightweight hypermedia web apps with server-driven HTML, minimal JavaScript and substantially less frontend complexity."  icon="html5" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Secrets Management" link="/docs/configuration/secrets/" subtitle="Securely provide application secrets through AWS Secrets Manager, HashiCorp Vault and other configured secret providers."  icon="shield-exclamation" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Secrets Management" link="/docs/configuration/secrets/" subtitle="Securely provide application secrets through AWS Secrets Manager, HashiCorp Vault, an embedded encrypted store and other configured secret providers."  icon="shield-exclamation" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Auto-Stop Idle Apps" link="/docs/container/config/" subtitle="Automatically stop idle application containers and scale their resource usage down to zero until the next incoming request."  icon="pause" class="openrun-feature-card openrun-feature-card-light" >}}
 
@@ -33,7 +33,11 @@ layout: hextra-home
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Managed SQLite + Litestream" link="/docs/applications/litestream/" subtitle="Deploy SQLite apps with continuous Litestream replication to S3-compatible storage and automatic restore after volume or node loss."  icon="cloud-upload" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Autogen Actions" link="/docs/actions/" subtitle="Generate secure form-based interfaces for backend operations automatically, eliminating custom frontend development for routine administrative actions."  icon="binary-off" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Autogen Actions" link="/docs/actions/" subtitle="Generate secure form-based interfaces for backend operations automatically, eliminating custom frontend development for routine administrative actions. Actions also run from the CLI and are served as MCP tools."  icon="binary-off" class="openrun-feature-card openrun-feature-card-light" >}}
+
+<!-- prettier-ignore --> {{< hextra/feature-card title="MCP and Remote API" link="/docs/configuration/remoteaccess/" subtitle="Expose deployed apps and their actions as OAuth 2.1 protected MCP servers, and manage the server remotely through the CLI, REST API or MCP with scoped API keys."  icon="terminal" class="openrun-feature-card openrun-feature-card-light" >}}
+
+<!-- prettier-ignore --> {{< hextra/feature-card title="Jobs and Sidecars" link="/docs/applications/jobs/" subtitle="Run scheduled, manual and before-deploy jobs from the app image, and attach sidecar containers for background workers or companion services."  icon="clock" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Audit Events" link="/docs/applications/audit/" subtitle="Capture application operations and API activity automatically, with searchable audit events plus support for custom business events."  icon="view-list" class="openrun-feature-card openrun-feature-card-light" >}}
 
@@ -45,7 +49,7 @@ layout: hextra-home
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Cross-platform support" link="/docs/quickstart/#installation" subtitle="Run OpenRun consistently on Linux, Windows and macOS with Docker, Podman or Kubernetes as the container backend."  icon="globe-alt" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Auto TLS Certificates" link="/docs/configuration/networking/#enable-automatic-signed-certificate" subtitle="Generate and renew trusted TLS certificates automatically for applications served across multiple domains, subdomains and custom hostnames."  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
+<!-- prettier-ignore --> {{< hextra/feature-card title="Auto TLS Certificates" link="/docs/configuration/networking/#enable-automatic-signed-certificate" subtitle="Generate and renew trusted TLS certificates automatically for applications served across multiple domains, subdomains and custom hostnames, from Let's Encrypt or any ACME compatible CA."  icon="shield-check" class="openrun-feature-card openrun-feature-card-light" >}}
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Powerful access controls" link="/docs/configuration/authentication" subtitle="Protect applications with OAuth, OpenID Connect, SAML or client certificates, backed by flexible role-based access controls."  icon="globe-alt" icon="shield-check"  class="openrun-feature-card openrun-feature-card-light" >}}
 

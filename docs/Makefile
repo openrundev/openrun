@@ -19,9 +19,13 @@ help: ## Display this help section
 install-d2: ## Install d2
 > @curl -fsSL https://d2lang.com/install.sh | sh -s --
 
-update-diagrams: ## Update diagrams
+update-diagrams: ## Update diagrams. Source files are named <name>.<engine>.d2, engine is dagre, elk or tala
 > @for d in $(DIAGRAMS); do \
-> d2 --layout elk --theme 104 --dark-theme 201 "$$d"; \
-> d2 --layout elk --theme 104 "$$d" "$${d%.d2}.png"; \
-> magick "$${d%.d2}.png" -resize '$(ARTICLE_HEADER_SIZE)' -background white -gravity center -extent '$(ARTICLE_HEADER_SIZE)' -alpha remove -alpha off -strip -define png:compression-level=9 "$${d%.d2}_small.png"; \
+> base="$${d%.d2}"; engine="$${base##*.}"; name="$${base%.*}"; \
+> case "$$engine" in dagre|elk|tala) ;; *) echo "$$d: file name must be <name>.<dagre|elk|tala>.d2"; exit 1;; esac; \
+> d2 --layout "$$engine" --theme 104 --dark-theme 201 "$$d" "$$name.svg"; \
+> d2 --layout "$$engine" --theme 104 "$$d" "$${name}_light.svg"; \
+> d2 --layout "$$engine" --theme 201 "$$d" "$${name}_dark.svg"; \
+> d2 --layout "$$engine" --theme 104 "$$d" "$$name.png"; \
+> magick "$$name.png" -resize '$(ARTICLE_HEADER_SIZE)' -background white -gravity center -extent '$(ARTICLE_HEADER_SIZE)' -alpha remove -alpha off -strip -define png:compression-level=9 "$${name}_small.png"; \
 > done

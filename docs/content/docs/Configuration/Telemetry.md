@@ -60,6 +60,23 @@ headers = { Authorization = 'Bearer {{ secret "OTEL_TOKEN" }}' }
 
 Telemetry header values are resolved through the same secret mechanism used by other server config values. See [Secrets Management]({{< ref "secrets" >}}) for supported providers and the `secret_from` syntax.
 
+## Logging
+
+Server logs are configured in the `[logging]` section of `openrun.toml`. These settings are static (not part of the dynamic config) and are read at startup.
+
+```toml {filename="openrun.toml"}
+[logging]
+level = "INFO"            # DEBUG, INFO, WARN, ERROR or TRACE
+max_backups = 10          # rotated files kept per log
+max_size_mb = 50          # size at which a log file is rotated
+console = false           # also write the server log to stderr
+file = true               # write the server log to $OPENRUN_HOME/logs/openrun.json
+access_logging = true     # write one entry per HTTP request to $OPENRUN_HOME/logs/access.log
+litestream_log_level = "" # level for litestream replication logs; empty uses level
+```
+
+The server log (`logs/openrun.json`) and the access log (`logs/access.log`) are JSON lines. Each access log entry has the `method`, `host`, `url`, `proto`, `remote` (client address), `status`, `bytes`, `duration`, `request_id`, `user_id` and `app_id` fields. The `request_id` matches the request id of the [audit events]({{< ref "docs/applications/audit" >}}) for that request; `user_id` and `app_id` are empty for unauthenticated and non-app requests.
+
 ## Grafana Dashboards
 
 OpenRun includes starter Grafana dashboards for local testing and operations:

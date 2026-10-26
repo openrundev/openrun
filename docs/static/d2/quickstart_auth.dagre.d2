@@ -1,0 +1,26 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: right
+
+user: {
+  label: "Browser"
+  shape: person
+}
+
+openrun: {
+  label: "OpenRun server"
+  style: {stroke-width: 2}
+
+  auth: "1. Authentication\nauth type of the app:\nnone, system, builtin, <provider>"
+  rbac: "2. Authorization\nRBAC grant for app:access"
+  app: "3. App"
+
+  auth -> rbac -> app
+}
+
+idp: {
+  label: "Identity provider\nGitHub, Google, Okta, Entra\nOAuth, OIDC, SAML\n(login redirect and callback)"
+  style: {stroke-dash: 3}
+}
+
+user -> openrun.auth: "https://example.com/app"
+openrun.auth <-> idp: {style.stroke-dash: 3}

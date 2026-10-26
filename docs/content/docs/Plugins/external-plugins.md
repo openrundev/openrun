@@ -101,17 +101,18 @@ type NotesModule struct {
 func NewNotesModule() plugin.Module { return &NotesModule{} }
 
 func (m *NotesModule) InitModule(ctx context.Context, init plugin.ModuleInit) error {
-	// init.Settings come from [plugin."notes.ex"] (or the linked account
-	// block) in openrun.toml, with approved secrets already expanded.
+	// init.Settings come from [plugin."notes.in"] (or the linked account
+	// block) in openrun.toml, with secret references already resolved.
 	url, _ := init.Settings["api_url"].(string)
 	if url == "" {
-		return fmt.Errorf("api_url must be set in the notes.ex plugin config")
+		return fmt.Errorf("api_url must be set in the notes.in plugin config")
 	}
 	m.apiURL = url
 	m.logger = init.Logger
-	// init.AppId / init.AppPath identify the app; init.AppSchema holds the
-	// raw contents of the app's schema.star (nil if the app has none), for
-	// plugins that are schema-aware like the store.
+	// init.AppId / init.AppPath identify the app, init.Account is the account
+	// name ("" for the default account) and init.IsDev is set for dev apps;
+	// init.AppSchema holds the raw contents of the app's schema.star (nil if
+	// the app has none), for plugins that are schema-aware like the store.
 	return nil
 }
 
@@ -126,7 +127,7 @@ Every function declared in `FuncDef` must be an exported method with this exact 
 func (m *NotesModule) Add(ctx context.Context, call *plugin.Call) (any, error)
 ```
 
-`plugin.UnpackArgs` binds positional and keyword arguments with the same rules Starlark apps expect — alternating name/pointer pairs, a trailing `?` marks a parameter optional:
+`plugin.UnpackArgs` binds positional and keyword arguments with the same rules Starlark apps expect — alternating name/pointer pairs, a trailing `?` marks a parameter optional. The supported pointer types are `*string`, `*bool`, `*int64`, `*[]string`, `*[]any`, `*map[string]any`, `**plugin.Struct` and `*any`:
 
 ```go {filename="module.go"}
 func (m *NotesModule) Add(ctx context.Context, call *plugin.Call) (any, error) {
@@ -135,8 +136,8 @@ func (m *NotesModule) Add(ctx context.Context, call *plugin.Call) (any, error) {
 	if err := plugin.UnpackArgs("add", call, "text", &text, "tags?", &tags); err != nil {
 		return nil, err
 	}
-	// call.Thread has request-scoped info: UserId, UserEmail, Groups,
-	// RequestId, AppUrl
+	// call.Thread has request-scoped info: UserId, UserSubject, UserEmail,
+	// Groups, RequestId, AppUrl
 	id, err := m.addNote(ctx, call.Thread.UserId, text, tags)
 	if err != nil {
 		return nil, err // becomes response.error in the app
@@ -160,6 +161,7 @@ The return value maps to Starlark automatically:
 | `plugin.Dict`                     | `dict` with controlled entry order              |
 | `*plugin.Struct`                  | typed record with attribute access (`row.name`) |
 | `time.Time`                       | `time.time`                                     |
+| `*plugin.Download`                | download stream, usable as the data of a download response (the `Producer` writes the file content when the response is sent) |
 | `*plugin.Cursor`                  | lazy iterable (see below)                       |
 
 Arguments arrive through the same mapping in reverse: typed records passed by the app arrive as `*plugin.Struct`, string-keyed dicts as `map[string]any`, and so on.

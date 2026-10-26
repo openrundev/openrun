@@ -1,0 +1,21 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: right
+
+git: {
+  label: "Git"
+  decl: "apps.ace\napp(\"/todo\", \"github.com/myorg/todo\")"
+  src: "App source\ngithub.com/myorg/todo"
+}
+
+openrun: {
+  label: "OpenRun server"
+  style: {stroke-width: 2}
+
+  stage: "Staging app\nstage.example.com/todo\nversion 2"
+  prod: "Production app\nexample.com/todo\nversion 1"
+
+  stage -> prod: "openrun app promote\nor apply --promote"
+}
+
+git.decl -> openrun.stage: "openrun apply\nor scheduled sync"
+git.src -> openrun.stage: "source reload"
