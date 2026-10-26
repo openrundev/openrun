@@ -1797,6 +1797,10 @@ func (a *App) sseHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+	// The connection stays open for the life of the page, the server write
+	// timeout must not cut it (the client would otherwise reconnect every
+	// few minutes and miss reload events in between)
+	system.DisableWriteDeadline(w)
 
 	// Buffered so notifyClients can use a non-blocking send; a queued reload
 	// ping makes further pings redundant

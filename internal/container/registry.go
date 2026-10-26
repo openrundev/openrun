@@ -827,7 +827,14 @@ func tarGzDir(srcDir string) (io.ReadCloser, error) {
 
 	go func() {
 		// Any error here will be propagated to the reader via CloseWithError.
-		err := func() error {
+		err := func() (retErr error) {
+			defer func() {
+				// The producer runs off the request goroutine: a panic must
+				// fail the read side, not the process
+				if r := recover(); r != nil {
+					retErr = fmt.Errorf("panic building image context: %v", r)
+				}
+			}()
 			gz := gzip.NewWriter(pw)
 			defer gz.Close() //nolint:errcheck
 

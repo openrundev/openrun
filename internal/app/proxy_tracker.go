@@ -7,10 +7,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -139,6 +141,18 @@ func (w *countingResponseWriter) Write(p []byte) (int, error) {
 
 func (w *countingResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
+}
+
+// WriteHeader clears the server write timeout for an upstream event stream:
+// a container app streaming SSE (chat completions, progress feeds) keeps the
+// response open for as long as it needs, and the proxy must not cut it at
+// the timeout while the client is still connected. Other responses keep the
+// timeout. Websocket upgrades are hijacked and net/http resets the deadline
+func (w *countingResponseWriter) WriteHeader(statusCode int) {
+	if ct := w.Header().Get("Content-Type"); strings.HasPrefix(ct, "text/event-stream") {
+		system.DisableWriteDeadline(w.ResponseWriter)
+	}
+	w.ResponseWriter.WriteHeader(statusCode)
 }
 
 // Support Flush for streaming/SSE.

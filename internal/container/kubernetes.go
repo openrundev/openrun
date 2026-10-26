@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -2179,6 +2180,12 @@ func (k *KubernetesCM) RemoveAppResources(ctx context.Context, appId types.AppId
 // failures are logged and recovered by a later deploy's cleanup pass.
 func (k *KubernetesCM) cleanupInactiveWorkloadsAsync(serviceName ContainerName, appID types.AppId, phase string) {
 	go func() {
+		defer func() {
+			// Detached from any request, a panic here would end the process
+			if r := recover(); r != nil {
+				k.Error().Str("trace", string(debug.Stack())).Msgf("panic cleaning up inactive workloads for app %s %s: %v", appID, phase, r)
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		if err := k.cleanupInactiveWorkloads(ctx, serviceName); err != nil {

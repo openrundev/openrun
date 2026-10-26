@@ -240,6 +240,12 @@ func (a *Action) invoke(ctx context.Context, inv Invocation) (retOutcome *Outcom
 	// Save the request context in the starlark thread local
 	// Same code as createHandlerFunc
 	thread.SetLocal(types.TL_CONTEXT, ctx)
+	// The caller going away (client disconnect, request timeout) stops the
+	// handler at its next Starlark instruction instead of leaving it running
+	stopCancel := context.AfterFunc(ctx, func() {
+		thread.Cancel("action " + a.name + " canceled: " + context.Cause(ctx).Error())
+	})
+	defer stopCancel()
 	if a.containerProxyUrl != "" {
 		thread.SetLocal(types.TL_CONTAINER_URL, a.containerProxyUrl)
 	}

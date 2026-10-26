@@ -49,6 +49,14 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 		Load:  a.loader,
 	}
 	thread.SetLocal(types.TL_APP_URL, a.appUrl)
+	// The load runs under the caller's context (an API request, a sync run,
+	// the dev file watcher): when that ends, stop the Starlark thread so a
+	// module-level loop or a blocked plugin call cannot hold the app lock
+	// and the goroutine indefinitely
+	stopCancel := context.AfterFunc(ctx, func() {
+		thread.Cancel("app load canceled: " + context.Cause(ctx).Error())
+	})
+	defer stopCancel()
 	// Release the plugin sessions opened by plugin calls done during the load
 	defer func() {
 		if err := action.RunDeferredCleanup(thread); err != nil {

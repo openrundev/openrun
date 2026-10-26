@@ -95,6 +95,19 @@ func NewPlainHttpClient(skipCertCheck bool) *http.Client {
 	return &http.Client{Transport: transport, Timeout: 30 * time.Second}
 }
 
+// DisableWriteDeadline clears the per-response write deadline that the
+// http.Server WriteTimeout sets, for responses that legitimately stay open
+// longer than the timeout (SSE, streamed command output, large downloads).
+// WriteTimeout is absolute from the request header read, so without this a
+// stream is cut mid-body once the timeout elapses even while the client is
+// still reading. The read side is unaffected: net/http clears the read
+// deadline once the body is consumed. Every wrapper on the writer chain must
+// implement Unwrap for this to reach the connection; a chain that does not
+// keeps the timeout (the error is ignored, nothing worse than today happens)
+func DisableWriteDeadline(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+}
+
 // CloseIdleConnections releases pooled connections when the client is no longer needed.
 func (h *HttpClient) CloseIdleConnections() {
 	h.client.CloseIdleConnections()

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -137,11 +138,23 @@ func (s *Server) startJobRun(ctx context.Context, exec *jobExecution) (*types.Jo
 	// The response and worker must not share mutable status fields.
 	workerRun := *run
 	handedOff = true
-	go func() {
-		defer done()
-		s.performJobRun(runCtx, exec, &workerRun)
-	}()
+	go s.runJobWorker(runCtx, exec, &workerRun, done)
 	return run, nil
+}
+
+// runJobWorker runs a claimed job on its own goroutine. RunJobFunction
+// recovers a panic inside the Starlark handler; this covers the rest of the
+// run (image resolution, container start, the finish record) so a panic
+// fails the run instead of taking down the server. The run record is left
+// running with its lease, the lease sweep marks it stale
+func (s *Server) runJobWorker(ctx context.Context, exec *jobExecution, run *types.JobRun, done func()) {
+	defer done()
+	defer func() {
+		if r := recover(); r != nil {
+			s.Error().Str("run", run.Id).Str("job", run.JobName).Str("trace", string(debug.Stack())).Msgf("panic in job run worker: %v", r)
+		}
+	}()
+	s.performJobRun(ctx, exec, run)
 }
 
 // newJobAuthorizationContext builds the context a job runs under: the
@@ -612,7 +625,7 @@ func (s *Server) startCronRun(ctx context.Context, entry *types.AppEntry, spec t
 	exec.closeApp = closeApp
 	s.Info().Str("run", run.Id).Str("job", spec.Name).Str("app", run.AppPath).Msg("starting scheduled job run")
 	handedOff = true
-	go func() { defer done(); s.performJobRun(runCtx, exec, run) }()
+	go s.runJobWorker(runCtx, exec, run, done)
 }
 
 // cronJobContext attributes scheduled Starlark management API calls to the

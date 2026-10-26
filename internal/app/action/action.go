@@ -656,6 +656,9 @@ func (a *Action) writeStreamSSE(w http.ResponseWriter, r *http.Request, outcome 
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
 	h.Set("HX-Push-Url", a.pagePath+"?"+outcome.QueryParams.Encode())
+	// The stream lasts as long as the command runs, which can exceed the
+	// server write timeout; a client disconnect still cancels the request
+	system.DisableWriteDeadline(w)
 	w.WriteHeader(http.StatusOK)
 
 	if err := writeSSEEvent(w, "", initial.String()); err != nil {
@@ -720,6 +723,7 @@ func (a *Action) WriteStreamText(w http.ResponseWriter, r *http.Request, outcome
 	h.Set("X-Accel-Buffering", "no")
 	h.Set(streamStatusHeader, headerSafe(outcome.Status))
 	h.Set("Trailer", streamExitTrailer)
+	system.DisableWriteDeadline(w)
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 

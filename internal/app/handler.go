@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -183,6 +184,14 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 
 		// Save the request context in the starlark thread local
 		thread.SetLocal(types.TL_CONTEXT, r.Context())
+		// A client disconnect cancels the request context, which stops the
+		// Starlark thread at its next instruction. Without this a handler
+		// stuck in a loop or a long computation keeps the goroutine (and a
+		// CPU) busy indefinitely with no client left to read the result
+		stopCancel := context.AfterFunc(r.Context(), func() {
+			thread.Cancel("request canceled: " + context.Cause(r.Context()).Error())
+		})
+		defer stopCancel()
 		if containerHandler != nil {
 			thread.SetLocal(types.TL_CONTAINER_HANDLER, containerHandler)
 			thread.SetLocal(types.TL_CONTAINER_URL, containerHandler.GetProxyUrl())
@@ -777,6 +786,8 @@ func (a *App) handleDownloadResponse(w http.ResponseWriter, retStruct *starlarks
 	// on the wire the only honest failure signal left is aborting the
 	// connection - a truncated archive must not look like a completed download
 	hw := &headerWriter{w: w, code: int(code)}
+	// A large or slowly produced download outlives the server write timeout
+	system.DisableWriteDeadline(w)
 	buf := bufio.NewWriterSize(hw, downloadBufferSize)
 	if err := stream.Produce(buf); err != nil {
 		a.Error().Err(err).Msgf("error producing download %s", fileName)
@@ -848,6 +859,9 @@ func (a *App) handleStreamResponse(w http.ResponseWriter, r *http.Request, rtype
 		http.Error(w, "response writer does not support flushing", http.StatusInternalServerError)
 		return
 	}
+	// The producer decides how long the stream runs, not the server write
+	// timeout; a client disconnect still ends it through the request context
+	system.DisableWriteDeadline(w)
 
 	wroteData := false
 	for v, streamErr := range retSeq {
