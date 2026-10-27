@@ -19,7 +19,7 @@ The events which are logged are
 
 - All HTTP requests except GET, HEAD and OPTIONS
 - System events, like app updates and any metadata changes (webhook calls included)
-- Action invocations (`execute`, `validate` and `suggest`, prefixed with `api_`, `cli_` or `mcp_` when not run from the form UI) and async action run completions (`run_finish`)
+- Action invocations (`execute`, `validate` and `suggest`, prefixed with `api_`, `cli_` or `mcp_` when not run from the form UI) and async action run completions (`run_finish`); the [ops tools use case]({{< ref "docs/use-cases/jenkins-rundeck-alternative/#what-is-recorded" >}}) shows the rows a confirmed, declined and refused destructive run leave
 - Job runs: every finished [job]({{< ref "jobs" >}}) run writes a `job` event with the run id and status
 - MCP calls: every JSON-RPC request to the management, an app's or the aggregate MCP endpoint is an `mcp` event, see [MCP apps]({{< ref "mcp/#transport-notes" >}})
 - Custom events, as defined in app code

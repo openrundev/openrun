@@ -97,7 +97,7 @@ This section covers OpenRun's own management MCP endpoint. OpenRun serves three 
 | `<app>/mcp` | the [actions of one app]({{< ref "actions/#mcp-tools" >}}), or the [MCP server the app deploys]({{< ref "docs/applications/mcp" >}}) | the app's own `auth` | yes, for an app with actions |
 | `/_openrun/mcp` | management: apps, versions, services, secrets, config, and the generic `run_action` | `[api.mcp] auth` | no |
 
-A fresh install has no apps and therefore no action tools: the first two endpoints list nothing until an app with actions is deployed, which the client shows as an empty tool list, not a failed connection.
+A fresh install has no apps and therefore no action tools: the first two endpoints list nothing until an app with actions is deployed, which the client shows as an empty tool list, not a failed connection. The [ops tools use case]({{< ref "docs/use-cases/jenkins-rundeck-alternative/" >}}) walks through connecting Claude Code to the app endpoint and running a destructive action with confirmation.
 
 The MCP endpoint is `https://<external_url host>/_openrun/mcp`. There are two ways to authenticate:
 

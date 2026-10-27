@@ -19,6 +19,7 @@ OpenRun is an Apache-2.0 licensed, self-hosted PaaS alternative for declarative 
 {{< card link="applications/litestream" title="SQLite + Litestream" subtitle="Deploy persistent SQLite applications with Litestream replication and automatic recovery from S3" icon="cloud-upload" >}}
 {{< card link="develop" title="Developing apps" subtitle="Build secure hypermedia applications with routes, templates, styling and reusable JavaScript components" icon="sparkles" >}}
 {{< card link="actions" title="Action apps" subtitle="Generate secure interfaces for backend functions and operational scripts without custom frontend development" icon="terminal" >}}
+{{< card link="use-cases/jenkins-rundeck-alternative" title="Jenkins and Rundeck Alternative" subtitle="Ops tools as actions in git: a web form, a CLI command and an MCP tool for AI agents, with RBAC and audit" icon="terminal" >}}
 {{< card link="container" title="Containerized apps" subtitle="Build and deploy containerized applications consistently across Docker, Podman and Kubernetes" icon="docker_plain" >}}
 {{< card link="app" title="Hypermedia apps" subtitle="Develop server-driven hypermedia applications with HTML routes, templates and minimal JavaScript" icon="html5_plain" >}}
 {{< card link="plugins" title="Plugins" subtitle="Extend sandboxed applications with controlled APIs for storage, HTTP, containers and external services" icon="template" >}}
