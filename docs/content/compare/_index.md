@@ -1,5 +1,6 @@
 ---
-title: "Compare"
+title: "OpenRun vs Coolify, Kamal, Cloud Run and Kubernetes"
+linkTitle: "Compare"
 description: "Compare OpenRun with Coolify, CapRover, Kamal, Dokku, Google Cloud Run, AWS App Runner and DIY Kubernetes platforms for deploying web apps and internal tools."
 summary: "How OpenRun compares with other deployment platforms."
 ---

@@ -1,5 +1,7 @@
 ---
-title: "Console Tour"
+title: "OpenRun Console Tour: Deploy Apps and Manage RBAC"
+linkTitle: "Console Tour"
+description: "Screenshot tour of the OpenRun web console: create a database service, bind and deploy an app from Git, monitor containers and manage RBAC grants."
 summary: "A visual tour of the OpenRun management console"
 ---
 

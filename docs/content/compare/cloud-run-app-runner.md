@@ -2,7 +2,7 @@
 title: "OpenRun vs Google Cloud Run and AWS App Runner"
 weight: 200
 date: 2026-08-10
-description: "Compare OpenRun with Google Cloud Run and AWS App Runner: self-hosted scale-to-zero containers with GitOps, SSO and RBAC on your own servers or Kubernetes cluster instead of per-request cloud pricing."
+description: "OpenRun vs Google Cloud Run and AWS App Runner: scale-to-zero containers with GitOps, SSO and RBAC on your own servers, without per-request cloud pricing."
 summary: "OpenRun compared with managed serverless container platforms from Google and AWS."
 ---
 

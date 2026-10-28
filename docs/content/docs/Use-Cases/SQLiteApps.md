@@ -1,7 +1,7 @@
 ---
 title: "SQLite Web App Hosting"
 weight: 400
-description: "Host SQLite web apps on a self-hosted server or Kubernetes: persistent volumes per app, safe updates with staging and promotion, and continuous Litestream backups to S3."
+description: "Host SQLite web apps on your own server or Kubernetes: a persistent volume per app, staged updates and continuous Litestream backups to S3."
 summary: "Deploy SQLite-backed web apps with persistent volumes, staged updates and automatic backups, on a single node or Kubernetes."
 ---
 

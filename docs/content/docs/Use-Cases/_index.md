@@ -1,11 +1,12 @@
 ---
-title: Use Cases
+title: "Self-Hosted Web App and Internal Tool Use Cases"
+linkTitle: "Use Cases"
 weight: 250
-description: "Deploy OpenRun as a self-hosted web app platform on a VPS or private infrastructure for personal and team use."
+description: "Guides for running OpenRun as a self-hosted web app platform: personal apps on a VPS, internal team tools, app RBAC, SQLite hosting and ops tools."
 summary: "Self-hosted deployment guides for VPS installations, personal web apps, secure internal team platforms and ops tools for AI agents."
 ---
 
-Complete guides for configuring OpenRun as a self-hosted web app platform on your own VPS, server or private infrastructure, and for replacing Jenkins or Rundeck jobs with GitOps-deployed ops tools.
+Complete guides for configuring OpenRun as a self-hosted web app platform on your own VPS, server or private infrastructure, and for replacing Jenkins or Rundeck jobs with GitOps-deployed ops tools. For how different roles use OpenRun, see [Who It's For]({{< ref "solutions" >}}); for how it compares with other platforms, see the [comparisons]({{< ref "compare" >}}).
 
 {{< cards >}}
 {{< card link="personal" title="Self-Hosted Web Apps on a VPS" subtitle="Deploy personal web apps on a Linux VPS with GitOps and automatic TLS" icon="sparkles">}}

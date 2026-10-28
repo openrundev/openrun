@@ -2,7 +2,7 @@
 title: "OpenRun vs Coolify, CapRover, Kamal and Dokku"
 weight: 100
 date: 2026-08-10
-description: "Compare OpenRun with self-hosted PaaS platforms like Coolify, CapRover, Kamal and Dokku: true GitOps, SSO for apps, RBAC, scale-to-zero, service bindings and Kubernetes support."
+description: "OpenRun vs Coolify, CapRover, Kamal and Dokku: true GitOps, SSO and RBAC for every app, scale-to-zero, database bindings and Kubernetes support."
 summary: "OpenRun compared with self-hosted PaaS platforms like Coolify, CapRover, Kamal and Dokku."
 ---
 

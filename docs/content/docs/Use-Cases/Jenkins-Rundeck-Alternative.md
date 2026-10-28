@@ -1,8 +1,8 @@
 ---
-title: "Alternative to Jenkins and Rundeck Jobs for Operational Tools"
+title: "Jenkins and Rundeck Alternative for Ops Tools"
 linkTitle: "Jenkins and Rundeck Alternative"
 weight: 500
-description: "Open source, self-hosted alternative to Jenkins and Rundeck jobs: ops tools kept in git and deployed with GitOps, run from a web form, the CLI or by AI agents over MCP, with RBAC, confirmation and audit."
+description: "Open-source, self-hosted alternative to Jenkins and Rundeck jobs: ops tools in Git, run from a web form, the CLI or AI agents over MCP, with RBAC and audit."
 summary: "Replace Jenkins parameterized jobs and Rundeck jobs with actions kept in git: one function gives a web form, a CLI command and an MCP tool for AI agents, with RBAC, confirmation and audit built in."
 keywords:
   [

@@ -1,6 +1,7 @@
 ---
-title: "Features"
-description: "Explore OpenRun's self-hosted PaaS alternative features for VPS, single server and Kubernetes deployments, including GitOps, RBAC, SSO, SQLite replication and service bindings for PostgreSQL, MySQL, SQLite, Redis, SQL Server, Oracle, MongoDB, Snowflake and ClickHouse."
+title: "Features: GitOps, SSO, RBAC and Database Bindings"
+linkTitle: "Features"
+description: "OpenRun features: GitOps deployment, SSO and RBAC for every app, scale-to-zero, secrets, and managed PostgreSQL, MySQL, SQLite and Redis access."
 summary: "Self-hosted web app deployment with GitOps, RBAC, SSO, managed database access and SQLite replication."
 keywords:
   [
@@ -18,6 +19,18 @@ keywords:
   ]
 layout: hextra-home
 ---
+
+<div class="hx:mt-6 hx:mb-6">
+{{< hextra/hero-headline >}}
+  OpenRun Features
+{{< /hextra/hero-headline >}}
+</div>
+
+<div class="hx:mb-12">
+{{< hextra/hero-subtitle >}}
+  Self-hosted web app deployment with GitOps, SSO and RBAC for every app, scale-to-zero and managed database access, on a single server or Kubernetes.
+{{< /hextra/hero-subtitle >}}
+</div>
 
 {{< hextra/feature-grid >}}
 

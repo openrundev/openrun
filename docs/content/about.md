@@ -1,6 +1,7 @@
 ---
-title: "About"
-description: "What OpenRun is, why it was built and answers to common questions about GitOps, authentication, databases, scale-to-zero, Kubernetes and how OpenRun compares with alternatives."
+title: "About OpenRun: Goals, Design and FAQ"
+linkTitle: "About"
+description: "What OpenRun is, why it was built and answers to common questions on GitOps, authentication, databases, scale-to-zero and Kubernetes."
 summary: "About OpenRun"
 ---
 

@@ -1,7 +1,7 @@
 ---
 title: "Self-Hosted RBAC for Web Apps"
 weight: 300
-description: "Enable open-source, self-hosted role-based access control for web apps: platform-level RBAC grants, custom permissions and HTTP headers that let apps implement their own app-specific RBAC."
+description: "Self-hosted, open-source RBAC for web apps: platform-level access grants, custom permissions and HTTP headers that let apps enforce their own roles."
 summary: "Enable RBAC for applications, define custom permissions and pass user roles to apps through HTTP headers."
 ---
 

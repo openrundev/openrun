@@ -248,6 +248,10 @@ function copyCode(codeId, buttonElem) {
   .persona-card:hover .persona-title { background: linear-gradient(135deg, #00C200, #007700); -webkit-background-clip: text; background-clip: text; color: transparent; }
 </style>
 
+<div class="hx:mt-6 hx:mb-2 hx:max-w-4xl">
+<h2 class="hx:text-2xl hx:font-bold hx:tracking-tight"><a href="{{< ref "solutions" >}}">Who It's For</a></h2>
+</div>
+
 <div class="persona-cards not-prose">
 <a class="persona-card" href="{{< ref "solutions/developers" >}}">
 <span class="persona-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg></span>

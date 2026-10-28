@@ -12,8 +12,14 @@
     {{- if .IsHome -}}
       {{ .Site.Title -}}
     {{ else -}}
-      {{ with .Title }}{{ . }} – {{ end -}}
-      {{ .Site.Params.titleSuffix | default .Site.Title -}}
+      {{- $suffix := .Site.Params.titleSuffix | default .Site.Title -}}
+      {{- /* Skip the suffix when the title already names the product */ -}}
+      {{ if and .Title (strings.Contains .Title $suffix) -}}
+        {{ .Title -}}
+      {{ else -}}
+        {{ with .Title }}{{ . }} – {{ end -}}
+        {{ $suffix -}}
+      {{ end -}}
     {{ end -}}
   </title>
   <meta name="description" content="{{ partial "utils/page-description.html" . }}" />

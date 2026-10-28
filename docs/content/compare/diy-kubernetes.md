@@ -2,7 +2,7 @@
 title: "OpenRun vs DIY on Kubernetes"
 weight: 300
 date: 2026-08-10
-description: "Compare OpenRun with building your own Kubernetes platform from Jenkins, ArgoCD, Knative, ingress controllers and an internal developer portal. One system, no YAML, with SSO and RBAC built in."
+description: "OpenRun vs a DIY Kubernetes platform built from Jenkins, ArgoCD, Knative, ingress and an IDP: one system, no YAML, with SSO and RBAC built in."
 summary: "OpenRun compared with building your own platform from Jenkins, ArgoCD, Knative and an IDP."
 ---
 

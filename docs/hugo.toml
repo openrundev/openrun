@@ -65,38 +65,110 @@ base = "https://github.com/openrundev/openrun/edit/main/docs/content"
 
 [[menu.main]]
 name = "Quick Start"
-url = "/docs/quickstart/"
+pageRef = "/docs/quickstart/"
 identifier = "quickstart"
 weight = 1
 
 [[menu.main]]
 name = "Docs"
-url = "/docs/"
+pageRef = "/docs/"
 identifier = "docs"
 weight = 2
 
 [[menu.main]]
-name = "Features"
-url = "/features/"
-identifier = "features"
+name = "Use Cases"
+identifier = "usecases"
 weight = 3
 
 [[menu.main]]
+name = "Web Apps on a VPS"
+pageRef = "/docs/use-cases/personal/"
+parent = "usecases"
+weight = 2
+
+[[menu.main]]
+name = "Internal Tools for Teams"
+pageRef = "/docs/use-cases/team/"
+parent = "usecases"
+weight = 3
+
+[[menu.main]]
+name = "RBAC for Web Apps"
+pageRef = "/docs/use-cases/apprbac/"
+parent = "usecases"
+weight = 4
+
+[[menu.main]]
+name = "SQLite App Hosting"
+pageRef = "/docs/use-cases/sqliteapps/"
+parent = "usecases"
+weight = 5
+
+[[menu.main]]
+name = "Jenkins and Rundeck Alternative"
+pageRef = "/docs/use-cases/jenkins-rundeck-alternative/"
+parent = "usecases"
+weight = 6
+
+[[menu.main]]
 name = "Compare"
-url = "/compare/"
 identifier = "compare"
 weight = 4
 
 [[menu.main]]
+name = "vs Coolify, CapRover, Kamal, Dokku"
+pageRef = "/compare/coolify-caprover-kamal/"
+parent = "compare"
+weight = 2
+
+[[menu.main]]
+name = "vs Cloud Run, App Runner"
+pageRef = "/compare/cloud-run-app-runner/"
+parent = "compare"
+weight = 3
+
+[[menu.main]]
+name = "vs DIY Kubernetes"
+pageRef = "/compare/diy-kubernetes/"
+parent = "compare"
+weight = 4
+
+[[menu.main]]
 name = "Blog"
-url = "/blog/"
+pageRef = "/blog/"
 identifier = "blog"
 weight = 5
 
 [[menu.main]]
-name = "About"
-url = "/about/"
+name = "More"
+identifier = "more"
 weight = 6
+
+[[menu.main]]
+name = "Features"
+pageRef = "/features/"
+identifier = "features"
+parent = "more"
+weight = 1
+
+[[menu.main]]
+name = "About"
+pageRef = "/about/"
+parent = "more"
+weight = 2
+
+[[menu.main]]
+name = "Who It's For"
+pageRef = "/solutions/"
+identifier = "solutions"
+parent = "more"
+weight = 3
+
+[[menu.main]]
+name = "Console Tour"
+pageRef = "/console-tour/"
+parent = "more"
+weight = 4
 
 [[menu.main]]
 name = "Search"
