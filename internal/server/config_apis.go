@@ -82,7 +82,14 @@ func (s *Server) UpdateRBACDraft(ctx context.Context, draftVersion string,
 		return nil, fmt.Errorf("draft was updated by %s since you loaded it, reload and retry", draft.UpdatedBy)
 	}
 
+	// Early feedback for the console: an edit which changes who holds admin
+	// needs admin:manage. The publish path re-checks the whole draft against
+	// the live config, which is the authoritative check
+	before := rbac.ComputeAdminSurface(&draft.RBAC)
 	if err := mutate(&draft.RBAC); err != nil {
+		return nil, err
+	}
+	if err := s.enforceAdminSurfaceChange(ctx, before, rbac.ComputeAdminSurface(&draft.RBAC)); err != nil {
 		return nil, err
 	}
 
@@ -473,6 +480,26 @@ func (s *Server) DeleteConfigValue(ctx context.Context, section, key string, ver
 func (s *Server) validateRBACGrants(candidate *types.RBACConfig) error {
 	if s.rbacManager.ConfigEnabled() && len(candidate.Grants) == 0 {
 		return fmt.Errorf("rbac.grants: at least one grant is required while RBAC is enforced - an empty grant list would lock every user except admin out of every app and management API")
+	}
+	return nil
+}
+
+// enforceAdminSurfaceChange rejects a change from before to after that
+// alters who holds the admin permission (see rbac.AdminSurface) unless the
+// caller holds admin:manage (or admin). config:update alone must not be a
+// route to admin: without this check a config editor could add themselves
+// to an admin group or grant. Unlike the self-lockout check this is never
+// bypassed by force. Trusted UDS calls are exempt like every other check
+func (s *Server) enforceAdminSurfaceChange(ctx context.Context, before, after *rbac.AdminSurface) error {
+	if !s.rbacManager.APIEnforced(ctx) {
+		return nil
+	}
+	change := before.Diff(after)
+	if change == "" {
+		return nil
+	}
+	if err := s.enforceGlobalPerm(ctx, types.PermissionAdminManage, ""); err != nil {
+		return fmt.Errorf("%s: changing who holds the admin permission requires the admin:manage permission: %w", change, err)
 	}
 	return nil
 }

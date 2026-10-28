@@ -976,6 +976,9 @@ func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.Dynam
 	if err := s.validateRBACGrants(&newConfig.RBAC); err != nil {
 		return nil, err
 	}
+	if err := s.enforceAdminSurfaceChange(ctx, s.rbacManager.AdminSurface(), rbac.ComputeAdminSurface(&newConfig.RBAC)); err != nil {
+		return nil, err
+	}
 	for section := range newConfig.Entries {
 		if _, ok := configSectionType(section); !ok {
 			return nil, fmt.Errorf("unknown config entries section %q, valid sections are: %s "+

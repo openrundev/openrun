@@ -2074,6 +2074,14 @@ const (
 	// grant of the literal permission (or the built-in admin role). Like
 	// approve it is never matched by permission globs
 	PermissionAdmin RBACPermission = "admin"
+	// PermissionAdminManage allows changing who holds the admin permission:
+	// the grants whose roles confer admin, the roles that resolve to admin
+	// and the groups those grants reference (through the group hierarchy),
+	// plus placing a builtin user in such a group. config:update alone does
+	// not cover these changes, otherwise any config editor could add
+	// themselves to an admin group. Holders of admin have it implicitly.
+	// Like admin it is never matched by permission globs or scope globs
+	PermissionAdminManage RBACPermission = "admin:manage"
 	// PermissionApprove allows approving an app's plugin permissions. App
 	// scoped (matched against the grant's target glob) but admin-only:
 	// never implied by app:manage, never matched by permission globs and
@@ -2122,7 +2130,7 @@ var RBACPermissionGroups = []RBACPermissionGroup{
 	{Resource: "apikey", Permissions: []RBACPermission{PermissionApiKeyManageSelf}},
 	{Resource: "server", Permissions: []RBACPermission{PermissionServerStop}},
 	{Resource: "audit", Permissions: []RBACPermission{PermissionAuditRead}},
-	{Resource: "admin", Permissions: []RBACPermission{PermissionAdmin}},
+	{Resource: "admin", Permissions: []RBACPermission{PermissionAdmin, PermissionAdminManage}},
 }
 
 type AuthorizerFunc func(ctx context.Context, permissions []string) (bool, error)

@@ -140,7 +140,7 @@ openrun apikey delete <id>
 
 - The key value is shown **once** at creation and stored only as a hash.
 - `--user` defaults to the caller. Creating a key for another user requires `admin` and is prominently audited.
-- **Scopes are a ceiling, not a grant**: the key can never do more than its user's RBAC grants allow, and scopes only narrow that further. A `*` scope deliberately does **not** cover `secret:reveal`, `binding:reveal`, `app:approve`, `config:update` or `admin` — those must be named literally in `--scopes`, so a key carrying reveal- or admin-class authority is visible as such.
+- **Scopes are a ceiling, not a grant**: the key can never do more than its user's RBAC grants allow, and scopes only narrow that further. A `*` scope deliberately does **not** cover `secret:reveal`, `binding:reveal`, `app:approve`, `config:update`, `admin` or `admin:manage` — those must be named literally in `--scopes`, so a key carrying reveal- or admin-class authority is visible as such.
 - A key created by a remote (credential-authenticated) caller can only be as powerful as the creating credential: scopes and resources must be subsets, and the new key cannot outlive its parent.
 - Expired and revoked credentials are pruned automatically 30 days after they die.
 
@@ -214,7 +214,7 @@ Note on secrets: `secret_create` **is** enabled for MCP by default, which means 
 - **One identity per person, one key per client.** Create keys with `--user builtin:<name>` (or the SSO principal) and a `--desc` naming where it lives. Audit events record the acting user and the credential id, so shared keys destroy attribution.
 - **Prefer `openrun login` for humans.** It stores rotating short-lived tokens in the OS keychain and is revoked with one `openrun logout`. Reserve long-lived API keys for automation.
 - **Keep AI clients read-only until proven.** The MCP defaults (read-only key scopes, read-only consent preset, destructive confirmation, disabled dangerous ops) are the intended starting point; widen deliberately, one capability at a time.
-- **Name dangerous scopes explicitly.** Since `*` never matches `secret:reveal`, `binding:reveal`, `app:approve`, `config:update` or `admin`, any credential carrying that authority shows it in `openrun apikey list` — review for keys with literal dangerous scopes.
+- **Name dangerous scopes explicitly.** Since `*` never matches `secret:reveal`, `binding:reveal`, `app:approve`, `config:update`, `admin` or `admin:manage`, any credential carrying that authority shows it in `openrun apikey list` — review for keys with literal dangerous scopes.
 - **Bind keys to one surface.** The `rest`/`mcp` resource binding stops a key leaked from an MCP client config being replayed against the REST API and vice versa; avoid `--resource all`.
 - **Let keys expire.** Keep the 90 day default, rotate CI keys, and audit `openrun apikey list --all` for stale `never` keys. Deleting a key takes effect immediately.
 - **Use real certificates.** `skip_cert_check` and self-signed certs are for trials; [automatic TLS]({{< ref "networking" >}}) makes real certificates easy. Only list actual TLS-terminating proxies in `security.trusted_proxies`, and bind the plaintext listener to a private address in that setup.

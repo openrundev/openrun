@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -375,6 +376,9 @@ func (s *Server) CreateUpdateUser(ctx context.Context, username string, req type
 		if err := validateUsername(username); err != nil {
 			return false, err
 		}
+		if err := s.enforceAdminGroupChange(ctx, nil, req.Groups); err != nil {
+			return false, err
+		}
 		if req.Password == "" {
 			return false, fmt.Errorf("password is required to create a user")
 		}
@@ -426,6 +430,11 @@ func (s *Server) CreateUpdateUser(ctx context.Context, username string, req type
 			}
 			return false, err
 		}
+		if req.Groups != nil {
+			if err := s.enforceAdminGroupChange(ctx, user.Groups, req.Groups); err != nil {
+				return false, err
+			}
+		}
 		changed, err := applyUserUpdate(user, req)
 		if err != nil {
 			return false, err
@@ -447,6 +456,27 @@ func (s *Server) CreateUpdateUser(ctx context.Context, username string, req type
 	}
 	s.users.changed(username)
 	return true, nil
+}
+
+// enforceAdminGroupChange rejects a builtin user group change which adds the
+// user to, or removes the user from, a group that confers the admin
+// permission under the live RBAC config, unless the caller holds
+// admin:manage (or admin). user:create/user:update alone must not be a route
+// to admin, matching the config update check (enforceAdminSurfaceChange)
+func (s *Server) enforceAdminGroupChange(ctx context.Context, oldGroups, newGroups []string) error {
+	if !s.rbacManager.APIEnforced(ctx) {
+		return nil
+	}
+	oldAdmin := s.rbacManager.AdminGroupsIn(oldGroups)
+	newAdmin := s.rbacManager.AdminGroupsIn(newGroups)
+	if slices.Equal(oldAdmin, newAdmin) {
+		return nil
+	}
+	if err := s.enforceGlobalPerm(ctx, types.PermissionAdminManage, ""); err != nil {
+		return fmt.Errorf("groups %v confer the admin permission: changing a user's membership in them requires the admin:manage permission: %w",
+			slices.Concat(oldAdmin, newAdmin), err)
+	}
+	return nil
 }
 
 // applyUserUpdate applies the request to the row, reporting whether any

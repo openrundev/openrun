@@ -33,6 +33,7 @@ var scopeLiteralOnly = map[types.RBACPermission]bool{
 	types.PermissionBindingReveal: true,
 	types.PermissionApprove:       true,
 	types.PermissionAdmin:         true,
+	types.PermissionAdminManage:   true,
 	types.PermissionConfigUpdate:  true,
 	types.PermissionUserCreate:    true,
 	types.PermissionUserUpdate:    true,

@@ -30,6 +30,7 @@ type RBACManager struct {
 	roles          map[string]*resolvedRole                 // role name to resolved permissions (hierarchy and implications resolved)
 	resolvedGrants []resolvedGrant                          // per grant resolved state, aligned with rbacConfig.Grants
 	hasAdminGrant  bool                                     // whether any grant's roles confer the admin super-user permission
+	adminSurface   *AdminSurface                            // who holds admin under the live config, see ComputeAdminSurface
 	regexCache     map[string]*regexp.Regexp                // cache of compiled regex patterns
 	customPerms    []string                                 // custom permissions are permissions defined by the user. This list does not have the custom: prefix
 	ownerPerms     map[string]map[types.RBACPermission]bool // resource name to permissions granted to the asset owner
@@ -694,10 +695,13 @@ func (h *RBACManager) PrepareRBACConfig(rbacConfig *types.RBACConfig) (func(), e
 		}
 	}
 
+	adminSurface := ComputeAdminSurface(rbacConfig)
+
 	return func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		h.rbacConfig = rbacConfig
+		h.adminSurface = adminSurface
 		h.regexCache = regexCache
 		h.groups = groups
 		h.roles = roles

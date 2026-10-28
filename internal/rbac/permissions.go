@@ -225,6 +225,7 @@ var globalPermissions = map[types.RBACPermission]bool{
 	types.PermissionUserManage:       true,
 	types.PermissionApiKeyManageSelf: true,
 	types.PermissionAdmin:            true,
+	types.PermissionAdminManage:      true,
 }
 
 // globalPermissionNames is the sorted list of global permission names, for
@@ -376,15 +377,15 @@ type resolvedRole struct {
 	globs []string                      // glob pattern entries, matched only on exact miss
 }
 
-// matches reports whether the role grants perm. approve and the admin
-// super-user permission are only ever matched by their literal names, never by
-// glob entries. custom: permissions are matched by glob entries only when the
+// matches reports whether the role grants perm. approve, the admin
+// super-user permission and admin:manage are only ever matched by their
+// literal names, never by glob entries. custom: permissions are matched by glob entries only when the
 // pattern itself has the custom: prefix
 func (r *resolvedRole) matches(perm types.RBACPermission) bool {
 	if r.exact[perm] {
 		return true
 	}
-	if perm == types.PermissionApprove || perm == types.PermissionAdmin {
+	if perm == types.PermissionApprove || perm == types.PermissionAdmin || perm == types.PermissionAdminManage {
 		return false
 	}
 	permStr := string(perm)

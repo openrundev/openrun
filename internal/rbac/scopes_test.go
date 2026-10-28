@@ -41,6 +41,9 @@ func TestScopesAllow(t *testing.T) {
 		{"config glob does not match config update", []string{"config:*"}, types.PermissionConfigUpdate, false},
 		{"literal config update", []string{"config:update"}, types.PermissionConfigUpdate, true},
 		{"config glob still matches config read", []string{"config:*"}, types.PermissionConfigRead, true},
+		{"star does not match admin manage", []string{"*"}, types.PermissionAdminManage, false},
+		{"admin glob does not match admin manage", []string{"admin:*"}, types.PermissionAdminManage, false},
+		{"literal admin manage", []string{"admin:manage"}, types.PermissionAdminManage, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
