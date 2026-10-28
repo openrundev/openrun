@@ -401,7 +401,7 @@ func stripBuiltinAuthEntries(configJson []byte) (out []byte, users map[string]ty
 // (so hashes do not linger there and a restore cannot bring the section
 // back). The unmodified test1/test2 defaults are dropped, not migrated
 func (m *Metadata) migrateBuiltinUsersToTable(ctx context.Context, tx types.Transaction) error {
-	exists, err := m.tableExists(ctx, "builtin_users")
+	exists, err := m.tableExists(ctx, tx, "builtin_users")
 	if err != nil {
 		return err
 	}

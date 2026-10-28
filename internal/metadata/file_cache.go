@@ -88,7 +88,7 @@ func (f *FileCache) VersionUpgrade(config *types.ServerConfig) error {
 		if _, err := tx.ExecContext(ctx, `create table version (version int, last_upgraded datetime)`); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `insert into version values (1, datetime('now'))`); err != nil {
+		if _, err := tx.ExecContext(ctx, `insert into version (version, last_upgraded) values (1, datetime('now'))`); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `create table files (sha text, compression_type text, content blob, create_time datetime, last_accessed datetime, PRIMARY KEY(sha))`); err != nil {

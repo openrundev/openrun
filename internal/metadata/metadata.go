@@ -30,7 +30,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 33
+const CURRENT_DB_VERSION = 34
+
+// pgUpgradeLockKey is the pg_advisory_xact_lock key which serializes
+// VersionUpgrade across the nodes sharing a PostgreSQL metadata database
+const pgUpgradeLockKey = 0x6f72_7570_6772_6465 // "orupgrde"
 
 // ErrAppNotFound is returned when an app entry does not exist in the metadata store.
 var ErrAppNotFound = errors.New("app not found")
@@ -374,38 +378,93 @@ func (m *Metadata) NotifyConfigUpdate() error {
 	return err
 }
 
-func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
-	version := 0
-	row := m.db.QueryRow("SELECT version, last_upgraded FROM version")
-	var dt time.Time
-	row.Scan(&version, &dt) //nolint:errcheck // ignore error if no version is found
+// dbQuerier is the read side shared by *sql.DB and *sql.Tx, so the schema
+// checks run on the connection they are asked about
+type dbQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
 
-	if version < CURRENT_DB_VERSION && !m.config.Metadata.AutoUpgrade {
+// readDBVersion returns the schema version, 0 when the version table does
+// not exist yet (a new database). Any other error is returned: a database
+// which cannot be read must not be treated as new and re-initialized
+func (m *Metadata) readDBVersion(ctx context.Context, q dbQuerier) (int, error) {
+	exists, err := m.tableExists(ctx, q, "version")
+	if err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0, nil
+	}
+	var version int
+	if err := q.QueryRowContext(ctx, "SELECT version FROM version").Scan(&version); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("error reading db version: %w", err)
+	}
+	return version, nil
+}
+
+// checkDBVersion verifies the server can run against the schema version
+func checkDBVersion(config *types.ServerConfig, version int) error {
+	if version < CURRENT_DB_VERSION && !config.Metadata.AutoUpgrade {
 		return fmt.Errorf("DB autoupgrade is disabled, exiting. Server %d, DB %d", CURRENT_DB_VERSION, version)
 	}
-
 	if !config.Metadata.IgnoreHigherVersion && version > CURRENT_DB_VERSION {
 		return fmt.Errorf("DB version is newer than server version, upgrade OpenRun server version. Server %d, DB %d", CURRENT_DB_VERSION, version)
 	}
+	return nil
+}
 
+func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
+	ctx := context.Background()
+	version, err := m.readDBVersion(ctx, m.db)
+	if err != nil {
+		return err
+	}
+	if err := checkDBVersion(config, version); err != nil {
+		return err
+	}
 	if version == CURRENT_DB_VERSION {
 		m.Info().Msg("DB version is current")
 		return nil
 	}
 
-	ctx := context.Background()
 	tx, err := m.BeginTransaction(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	if m.dbType == system.DB_TYPE_POSTGRES {
+		// Nodes sharing one database start together (a rolling deploy, a
+		// replica set): only one may run the upgrade. The transaction level
+		// advisory lock is released with the commit or rollback
+		if _, err := tx.ExecContext(ctx, `select pg_advisory_xact_lock($1)`, int64(pgUpgradeLockKey)); err != nil {
+			return fmt.Errorf("error acquiring db upgrade lock: %w", err)
+		}
+	}
+
+	// Re-read inside the transaction (under the lock on PostgreSQL): another
+	// node may have upgraded the schema while this one waited
+	version, err = m.readDBVersion(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err := checkDBVersion(config, version); err != nil {
+		return err
+	}
+	if version == CURRENT_DB_VERSION {
+		m.Info().Msg("DB version is current, upgraded concurrently")
+		return nil
+	}
+
 	if version < 1 {
 		m.Info().Msg("No version, initializing")
 		if _, err := tx.ExecContext(ctx, `create table version (version int, last_upgraded `+system.MapDataType(m.dbType, "datetime")+")"); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `insert into version values (1,`+system.FuncNow(m.dbType)+")"); err != nil {
+		if _, err := tx.ExecContext(ctx, `insert into version (version, last_upgraded) values (1,`+system.FuncNow(m.dbType)+")"); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `create table apps(id text, path text, domain text, source_url text, is_dev bool, main_app text, user_id text, create_time `+system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", settings json, metadata json, UNIQUE(id), UNIQUE(path, domain))"); err != nil {
@@ -825,7 +884,7 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		// bearer-authenticated (MCP) requests get the same identity headers
 		// as browser sessions. Idempotent: a database created at this
 		// version and re-upgraded (tests reset the version) already has it
-		exists, err := m.columnExists(ctx, "identities", "email")
+		exists, err := m.columnExists(ctx, tx, "identities", "email")
 		if err != nil {
 			return err
 		}
@@ -844,7 +903,7 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		// Async action runs (arch/docs/async-actions.md). Idempotent: a
 		// database created at this version and re-upgraded (tests reset the
 		// version) already has the table
-		exists, err := m.tableExists(ctx, "action_runs")
+		exists, err := m.tableExists(ctx, tx, "action_runs")
 		if err != nil {
 			return err
 		}
@@ -878,7 +937,7 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-				`insert into config values (?, ?, `+system.FuncNow(m.dbType)+", ?)"),
+				`insert into config (version_id, user_id, update_time, config) values (?, ?, `+system.FuncNow(m.dbType)+", ?)"),
 				initial.VersionId, types.ADMIN_USER, string(initialJson)); err != nil {
 				return err
 			}
@@ -895,7 +954,7 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		// MCP tools without the confirmation prompt (apikey create --confirm skip)
 		// Idempotent: a database re-upgraded from an older version (tests
 		// reset the version) already has it
-		exists, err := m.columnExists(ctx, "credentials", "options")
+		exists, err := m.columnExists(ctx, tx, "credentials", "options")
 		if err != nil {
 			return err
 		}
@@ -922,10 +981,71 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 		}
 	}
 
+	if version < 34 {
+		m.Info().Msg("Upgrading to version 34")
+		// The dynamic config table holds one row (the history is in
+		// config_history). A unique index over a constant makes the database
+		// enforce that, so two nodes bootstrapping one database cannot both
+		// insert the initial config. Duplicates left by such a race are
+		// reduced to the newest row first. Idempotent: if not exists
+		if err := m.dedupeConfigRows(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `create unique index if not exists config_singleton on config ((1))`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `update version set version=34, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+// dedupeConfigRows leaves exactly one row in the config table: the newest by
+// update_time, ties broken by version_id (a time-sortable ksuid). The
+// survivor is read back and re-inserted after deleting all rows, so even
+// fully identical duplicates collapse to one
+func (m *Metadata) dedupeConfigRows(ctx context.Context, tx types.Transaction) error {
+	if m.dbType == system.DB_TYPE_POSTGRES {
+		// Nodes of the previous version keep serving during a rolling
+		// upgrade and may write the config. Block writers (reads go on)
+		// until this transaction commits, so no update lands between reading
+		// the survivor and re-inserting it. SQLite needs no lock: a write
+		// committed by another connection after this transaction's first
+		// read makes the delete below fail (SQLITE_BUSY_SNAPSHOT) instead
+		if _, err := tx.ExecContext(ctx, `lock table config in exclusive mode`); err != nil {
+			return fmt.Errorf("error locking config table: %w", err)
+		}
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, `select count(*) from config`).Scan(&count); err != nil {
+		return fmt.Errorf("error counting config rows: %w", err)
+	}
+	if count <= 1 {
+		return nil
+	}
+	var versionId, userId sql.NullString
+	var updateTime any // the driver's native value, re-inserted unchanged
+	var configStr sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`select version_id, user_id, update_time, config from config order by update_time desc, version_id desc limit 1`).
+		Scan(&versionId, &userId, &updateTime, &configStr); err != nil {
+		return fmt.Errorf("error selecting the config row to keep: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `delete from config`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`insert into config (version_id, user_id, update_time, config) values (?, ?, ?, ?)`),
+		versionId, userId, updateTime, configStr); err != nil {
+		return fmt.Errorf("error re-inserting the config row: %w", err)
+	}
+	m.Warn().Msgf("config table had %d rows, kept version %s", count, versionId.String)
 	return nil
 }
 
@@ -1689,9 +1809,14 @@ func (m *Metadata) InitConfig(ctx context.Context, user string, dynamicConfig *t
 	}
 
 	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`insert into config values (?, ?, `+system.FuncNow(m.dbType)+", ?)"),
+		`insert into config (version_id, user_id, update_time, config) values (?, ?, `+system.FuncNow(m.dbType)+", ?)"),
 		dynamicConfig.VersionId, user, string(configJson))
 	if err != nil {
+		if isUniqueViolation(err) {
+			// Another node inserted the initial config between the count
+			// and the insert (the config_singleton index catches it)
+			return ErrConfigAlreadyExists
+		}
 		return fmt.Errorf("error inserting config: %w", err)
 	}
 	err = tx.Commit()
@@ -1871,32 +1996,37 @@ func (m *Metadata) GetConfig() (*types.DynamicConfig, error) {
 	return &config, nil
 }
 
-// columnExists reports whether a table has a column, for idempotent
-// additive migrations. Reads outside the upgrade transaction (a failed
-// statement would abort a PostgreSQL transaction)
-func (m *Metadata) tableExists(ctx context.Context, table string) (bool, error) {
+// tableExists reports whether a table exists, for idempotent additive
+// migrations. It queries through q (the upgrade transaction, so tables the
+// transaction created are seen; catalog reads never abort a PostgreSQL
+// transaction). On PostgreSQL the name is resolved through the search_path
+// (to_regclass), exactly as the unqualified table name in the server's own
+// statements resolves: the table the server would use counts, a same-named
+// table in a schema outside the search_path does not
+func (m *Metadata) tableExists(ctx context.Context, q dbQuerier, table string) (bool, error) {
 	var query string
 	if m.dbType == system.DB_TYPE_POSTGRES {
-		query = `select count(*) from information_schema.tables where table_name = $1`
+		query = `select count(*) from pg_class where oid = to_regclass($1) and relkind in ('r', 'p')`
 	} else {
 		query = `select count(*) from sqlite_master where type = 'table' and name = ?`
 	}
 	var count int
-	if err := m.db.QueryRowContext(ctx, query, table).Scan(&count); err != nil {
+	if err := q.QueryRowContext(ctx, query, table).Scan(&count); err != nil {
 		return false, fmt.Errorf("error checking table %s: %w", table, err)
 	}
 	return count > 0, nil
 }
 
-func (m *Metadata) columnExists(ctx context.Context, table, column string) (bool, error) {
+// columnExists reports whether a table has a column, see tableExists
+func (m *Metadata) columnExists(ctx context.Context, q dbQuerier, table, column string) (bool, error) {
 	var query string
 	if m.dbType == system.DB_TYPE_POSTGRES {
-		query = `select count(*) from information_schema.columns where table_name = $1 and column_name = $2`
+		query = `select count(*) from pg_attribute where attrelid = to_regclass($1) and attname = $2 and attnum > 0 and not attisdropped`
 	} else {
 		query = `select count(*) from pragma_table_info(?) where name = ?`
 	}
 	var count int
-	if err := m.db.QueryRowContext(ctx, query, table, column).Scan(&count); err != nil {
+	if err := q.QueryRowContext(ctx, query, table, column).Scan(&count); err != nil {
 		return false, fmt.Errorf("error checking column %s.%s: %w", table, column, err)
 	}
 	return count > 0, nil
@@ -1935,7 +2065,7 @@ func (m *Metadata) StoreKV(ctx context.Context, key string, value map[string]any
 
 func (m *Metadata) StoreKVBlob(ctx context.Context, key string, value []byte, expireAt *time.Time) error {
 	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`insert into keystore values (?, ?, `+system.FuncNow(m.dbType)+`, ?)`), key, value, toNullTime(expireAt))
+		`insert into keystore (key, value, create_time, delete_at) values (?, ?, `+system.FuncNow(m.dbType)+`, ?)`), key, value, toNullTime(expireAt))
 	if err != nil {
 		return fmt.Errorf("error storing value: %w", err)
 	}
