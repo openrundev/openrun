@@ -65,12 +65,12 @@ func TestSlogBridgeAttrsAndGroups(t *testing.T) {
 }
 
 func TestEffectiveLitestreamLevel(t *testing.T) {
-	c := &LogConfig{Level: "INFO"}
-	if got := c.EffectiveLitestreamLevel(); got != "INFO" {
-		t.Fatalf("default should follow level, got %q", got)
-	}
-	c.LitestreamLogLevel = "WARN"
+	c := &LogConfig{Level: "DEBUG"}
 	if got := c.EffectiveLitestreamLevel(); got != "WARN" {
+		t.Fatalf("default should be WARN regardless of level, got %q", got)
+	}
+	c.LitestreamLogLevel = "INFO"
+	if got := c.EffectiveLitestreamLevel(); got != "INFO" {
 		t.Fatalf("explicit litestream_log_level should win, got %q", got)
 	}
 }

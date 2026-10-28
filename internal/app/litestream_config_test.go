@@ -14,8 +14,8 @@ import (
 
 // TestRenderLitestreamConfigLogging verifies the sidecar litestream.yml gets
 // a logging section with the effective litestream log level, so the
-// container's log volume follows logging.litestream_log_level (or the main
-// logging.level when unset).
+// container's log volume follows logging.litestream_log_level (WARN when
+// unset).
 func TestRenderLitestreamConfigLogging(t *testing.T) {
 	dbs := []litestreamDB{{
 		config:          types.LitestreamConfig{Bucket: "bkt"},

@@ -119,8 +119,7 @@ func (h *ContainerHandler) litestreamDBs() []litestreamDB {
 // "pattern" binding config key) under each binding's directory is discovered
 // and replicated via the directory watcher; litestream's local bookkeeping
 // goes to a dot-directory that the default pattern ignores. logLevel sets the
-// sidecar's own log level (logging.litestream_log_level, defaulting to the
-// server's logging.level).
+// sidecar's own log level (logging.litestream_log_level, WARN by default).
 func renderLitestreamConfig(dbs []litestreamDB, logLevel string) string {
 	var b strings.Builder
 	if logLevel != "" {

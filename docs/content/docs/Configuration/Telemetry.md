@@ -72,7 +72,7 @@ max_size_mb = 50          # size at which a log file is rotated
 console = false           # also write the server log to stderr
 file = true               # write the server log to $OPENRUN_HOME/logs/openrun.json
 access_logging = true     # write one entry per HTTP request to $OPENRUN_HOME/logs/access.log
-litestream_log_level = "" # level for litestream replication logs; empty uses level
+litestream_log_level = "WARN" # level for litestream replication logs, independent of level
 ```
 
 The server log (`logs/openrun.json`) and the access log (`logs/access.log`) are JSON lines. Each access log entry has the `method`, `host`, `url`, `proto`, `remote` (client address), `status`, `bytes`, `duration`, `request_id`, `user_id` and `app_id` fields. The `request_id` matches the request id of the [audit events]({{< ref "docs/applications/audit" >}}) for that request; `user_id` and `app_id` are empty for unauthenticated and non-app requests.

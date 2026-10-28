@@ -1007,7 +1007,8 @@ type LogConfig struct {
 	AccessLogging bool   `toml:"access_logging"`
 	// LitestreamLogLevel is the level for litestream replication logs, both
 	// the embedded metadata replication (written to the openrun logs) and
-	// the app sidecar containers (their own container logs). Empty = Level.
+	// the app sidecar containers (their own container logs). Independent of
+	// Level; empty = DefaultLitestreamLogLevel (WARN).
 	LitestreamLogLevel string `toml:"litestream_log_level"`
 }
 

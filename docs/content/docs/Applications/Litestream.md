@@ -86,7 +86,7 @@ litestream_config = "mainbackup"           # replicate the server's own database
 
 Credentials cannot use the `db` secret provider: metadata replication must be resolvable before the metadata database is opened. All configured entries are validated at server startup.
 
-The verbosity of replication logs (the embedded metadata replication, written to the server log, and the app sidecar containers' own logs) is set with `logging.litestream_log_level`; empty uses the main `logging.level`.
+The verbosity of replication logs (the embedded metadata replication, written to the server log, and the app sidecar containers' own logs) is set with `logging.litestream_log_level`. It defaults to `WARN` independent of the main `logging.level`, since litestream logs every compaction and snapshot at `INFO`; set it to `INFO` or `DEBUG` to see those.
 
 ## Metadata Replication
 

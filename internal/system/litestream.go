@@ -186,8 +186,8 @@ type LitestreamManager struct {
 }
 
 // NewLitestreamManager builds the manager. logLevel is the level for
-// litestream's own logs (logging.litestream_log_level, defaulted to
-// logging.level by the caller); they are written to the openrun log sinks
+// litestream's own logs (logging.litestream_log_level, WARN by default);
+// they are written to the openrun log sinks
 // through the logger's slog bridge.
 func NewLitestreamManager(logger *types.Logger, logLevel string, configName string, config types.LitestreamConfig) (*LitestreamManager, error) {
 	if err := ValidateLitestreamConfig(configName, config); err != nil {

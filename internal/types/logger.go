@@ -45,14 +45,20 @@ func ParseLogLevel(level string) (zerolog.Level, bool) {
 	}
 }
 
+// DefaultLitestreamLogLevel is the level for litestream replication logs
+// when logging.litestream_log_level is unset. Litestream logs every
+// compaction/snapshot at INFO, which is too noisy for the server log.
+const DefaultLitestreamLogLevel = "WARN"
+
 // EffectiveLitestreamLevel is the log level for litestream replication logs
 // (the embedded metadata replication and the app sidecar containers):
-// litestream_log_level when set, else the main level.
+// litestream_log_level when set, else DefaultLitestreamLogLevel. It is
+// independent of the main level.
 func (c *LogConfig) EffectiveLitestreamLevel() string {
 	if c.LitestreamLogLevel != "" {
 		return c.LitestreamLogLevel
 	}
-	return c.Level
+	return DefaultLitestreamLogLevel
 }
 
 func NewLogger(config *LogConfig) *Logger {
