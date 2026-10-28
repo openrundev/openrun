@@ -30,7 +30,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const CURRENT_DB_VERSION = 34
+const CURRENT_DB_VERSION = 35
 
 // pgUpgradeLockKey is the pg_advisory_xact_lock key which serializes
 // VersionUpgrade across the nodes sharing a PostgreSQL metadata database
@@ -296,6 +296,7 @@ func (m *Metadata) Close() {
 	}
 	m.closed = true
 	m.leaderElection.Stop()
+	m.certStorage.Close()
 	if m.pgListenerCancel != nil {
 		m.pgListenerCancel()
 	}
@@ -995,6 +996,32 @@ func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `update version set version=34, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
+			return err
+		}
+	}
+
+	if version < 35 {
+		m.Info().Msg("Upgrading to version 35")
+		// Cert locks carry an owner token so that release and lease renewal
+		// act only on the lock this holder acquired. Existing rows are kept
+		// with the empty default owner: in a rolling deploy an older node may
+		// still be renewing a certificate under one of them, and its lock
+		// stays in force until the older node releases it or its expiry
+		// passes. Idempotent: the tables are created only if missing (if not
+		// exists), the column likewise
+		if err := m.certStorage.createTables(ctx, tx); err != nil {
+			return err
+		}
+		exists, err := m.columnExists(ctx, tx, "cert_locks", "owner")
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if err := m.certStorage.addLockOwnerColumn(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `update version set version=35, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
 			return err
 		}
 	}

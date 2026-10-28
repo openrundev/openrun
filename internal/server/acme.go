@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/caddyserver/certmagic"
-	"github.com/mholt/acmez/v2/acme"
+	"github.com/mholt/acmez/v3/acme"
 	"github.com/openrundev/openrun/internal/types"
 )
 

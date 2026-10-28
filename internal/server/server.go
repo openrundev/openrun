@@ -1657,6 +1657,12 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 			return nil, err
 		}
 		certmagic.Default.Storage = s.db.GetCertStorage() // Use the database backed storage
+		// Route certmagic's logs and certificate events into the OpenRun
+		// logger: by default certmagic logs to stderr, so renewal failures
+		// are invisible in the log files
+		certmagic.Default.Logger = newCertmagicLogger(s.Logger)
+		certmagic.DefaultACME.Logger = certmagic.Default.Logger
+		certmagic.Default.OnEvent = s.logCertmagicEvent
 
 		magicConfig := certmagic.NewDefault()
 		if len(magicConfig.Issuers) > 0 {
