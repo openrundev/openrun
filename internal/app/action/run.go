@@ -280,6 +280,7 @@ func (a *Action) performRun(ctx context.Context, run *types.ActionRun, args star
 		Name:  a.name + ":" + run.Id,
 		Print: func(_ *starlark.Thread, msg string) { recorder.write(msg + "\n") },
 	}
+	system.GuardStarlarkThread(thread)
 	thread.SetLocal(types.TL_CONTEXT, ctx)
 	if a.containerProxyUrl != "" {
 		thread.SetLocal(types.TL_CONTAINER_URL, a.containerProxyUrl)

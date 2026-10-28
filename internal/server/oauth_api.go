@@ -57,8 +57,8 @@ const (
 type oauthState struct {
 	cimdState // Client ID Metadata Document cache (oauth_cimd.go)
 
-	oauthRateMu   sync.Mutex
-	oauthRateHits map[string][]time.Time
+	oauthRateOnce sync.Once
+	oauthRate     *ipRateLimiter
 
 	// staleGroupsAudited dedups the federated_groups_stale audit event to
 	// once per identity per server lifetime
@@ -460,36 +460,15 @@ func (h *Handler) serveOAuth() http.Handler {
 	})
 }
 
+// rateLimiterMaxIPs is the IP count past which a limiter prunes its stale
+// windows (once per window)
+const rateLimiterMaxIPs = 10000
+
 // oauthRateAllow is a fixed-window per-IP limiter for the AS endpoints
 func (s *Server) oauthRateAllow(clientIP string) bool {
-	const window = time.Minute
 	const maxHits = 30
-	now := time.Now()
-	s.oauthRateMu.Lock()
-	defer s.oauthRateMu.Unlock()
-	if s.oauthRateHits == nil {
-		s.oauthRateHits = map[string][]time.Time{}
-	}
-	hits := s.oauthRateHits[clientIP][:0:0]
-	for _, hit := range s.oauthRateHits[clientIP] {
-		if now.Sub(hit) < window {
-			hits = append(hits, hit)
-		}
-	}
-	if len(hits) >= maxHits {
-		s.oauthRateHits[clientIP] = hits
-		return false
-	}
-	s.oauthRateHits[clientIP] = append(hits, now)
-	// Bound the map: drop other IPs' stale windows opportunistically
-	if len(s.oauthRateHits) > 10000 {
-		for ip, ipHits := range s.oauthRateHits {
-			if len(ipHits) == 0 || now.Sub(ipHits[len(ipHits)-1]) > window {
-				delete(s.oauthRateHits, ip)
-			}
-		}
-	}
-	return true
+	s.oauthRateOnce.Do(func() { s.oauthRate = newIPRateLimiter(time.Minute, rateLimiterMaxIPs) })
+	return s.oauthRate.allow(clientIP, maxHits)
 }
 
 // oauthRegister implements RFC 7591 dynamic client registration: public

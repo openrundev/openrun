@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
@@ -79,6 +80,7 @@ func (a *App) Audit() (*types.ApproveResult, error) {
 		Print: func(_ *starlark.Thread, msg string) { a.Info().Msg(msg) },
 		Load:  auditLoader,
 	}
+	system.GuardStarlarkThread(thread)
 	thread.SetLocal(types.TL_APP_URL, a.appUrl)
 
 	err = a.loadSchemaInfo(a.sourceFS)

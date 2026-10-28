@@ -283,6 +283,7 @@ func (a *App) RunJobFunction(ctx context.Context, spec types.JobSpec, runArgs ma
 		Name:  "job:" + spec.Name,
 		Print: func(_ *starlark.Thread, msg string) { a.Info().Str("job", spec.Name).Msg(msg) },
 	}
+	system.GuardStarlarkThread(thread)
 	thread.SetLocal(types.TL_CONTEXT, ctx)
 	thread.SetLocal(types.TL_APP_URL, a.appUrl)
 	if a.containerHandler != nil {

@@ -273,6 +273,19 @@ If `permit` is set, the plugin call is available only to users who have at least
 
 See [secrets]({{< ref "/docs/configuration/secrets/#plugin-access-to-secrets" >}}) for details on specifying the secrets which can be accessed by the plugin call.
 
+## Resource Limits
+
+App code runs in the server process, so the values a request supplies must not be able to make a handler allocate or compute without bound. The following limits apply to Starlark handlers and templates, and a handler which exceeds one fails with an error (a 500 response, or the app's error handler):
+
+- The request body of the html, fragment and api routes is capped by `max_request_body_bytes` (an `[app_config]` setting, 10MB by default); a larger body is refused with 413. Action routes have their own `action.max_request_body_bytes` cap.
+- `int()` refuses a string over 4096 characters (parsing is quadratic in the length).
+- `list`, `tuple`, `set`, `sorted`, `reversed`, `enumerate` and `zip` refuse an iterable of over 16777216 elements of known length, such as `list(range(n))` with a large `n`.
+- A handler recursing over 10000 frames fails.
+- The template functions `until`, `untilStep` and `seq` refuse over 1000000 items, and `repeat`, `indent`, `nindent` and the `rand*` functions an output over 16MB.
+- While the server's memory in use is over `system.memory_high_water_bytes` (0 by default, which uses 90% of the Go memory limit when `GOMEMLIMIT` is set, else no check), running handlers are canceled at their next instruction.
+
+A list or string repeat (`[x] * n`, `"s" * n`) is bounded only by the interpreter's own element count limit, so a count taken from a request should be validated by the handler. The server itself should run with a memory limit (`GOMEMLIMIT`, a container memory limit or `MemoryMax` in the systemd unit) so a single request cannot take down the node.
+
 ## More examples
 
 There is a disk_usage example [here](https://github.com/openrundev/openrun/tree/main/examples) and many in the [apps repo](https://github.com/openrundev/apps). The disk_usage example shows a basic hypermedia flow. The cowbull game has multiple [pages](https://github.com/openrundev/apps/blob/f5566cea6061ec85ea59495efc7b8700f06a4e70/misc/cowbull/app.star#L107), each page with some dynamic behavior. For styling, it uses the [DaisyUI](https://daisyui.com/) component library with Tailwind CSS. These two examples work fine with JavaScript disabled in the browser, falling back to basic HTML without any HTMX extensions.

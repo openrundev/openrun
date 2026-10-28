@@ -97,8 +97,10 @@ const (
 	completeTokenMaxAge = 1 * time.Minute
 
 	// expiredStateRetention is how long a login state row outlives its login
-	// deadline, only to serve the "sign in again" link on the expired page
-	expiredStateRetention = 24 * time.Hour
+	// deadline, only to serve the "sign in again" link on the expired page.
+	// Every anonymous browser navigation to a protected app writes a row, so
+	// the retention bounds the keystore size under a flood of such requests
+	expiredStateRetention = time.Hour
 )
 
 // loginState is a form login state entry loaded from the keystore
@@ -164,6 +166,7 @@ type FormLoginManager struct {
 	db          KVStore
 	adminAuth   *AdminBasicAuth
 	users       *UserManager
+	loginRate   *ipRateLimiter // login start limiter shared with the other login types, wired by NewServer
 	tmpl        *template.Template
 	styleHref   string
 	extraHref   string
@@ -615,6 +618,10 @@ func (s *FormLoginManager) beginLogin(w http.ResponseWriter, r *http.Request, au
 	requestUrl, ok := s.loginRedirectTarget(r)
 	if !ok {
 		return false
+	}
+	if !loginStartAllowed(s.loginRate, s.getConfig(), r) {
+		tooManyLoginStarts(w)
+		return true
 	}
 
 	sessionId, nonce, err := passwd.GenerateSessionNonce()

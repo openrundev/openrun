@@ -100,6 +100,9 @@ type OAuthManager struct {
 	// redirectHostAllowed gates the host of the post-login redirect at the
 	// callback, see completionRedirectAllowed. Wired by NewServer
 	redirectHostAllowed func(host string) bool
+	// loginRate is the login start limiter shared with the other login
+	// types, wired by NewServer
+	loginRate *ipRateLimiter
 
 	// providerMu guards providerConfigs, which is replaced when dynamic
 	// config entries add/change/remove auth providers at runtime
@@ -427,6 +430,10 @@ func (s *OAuthManager) checkAuthInfo(w http.ResponseWriter, r *http.Request, app
 }
 
 func (s *OAuthManager) beginLogin(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
+	if !loginStartAllowed(s.loginRate, s.getConfig(), r) {
+		tooManyLoginStarts(w)
+		return
+	}
 	sessionId, nonce, err := passwd.GenerateSessionNonce()
 	if err != nil {
 		http.Error(w, "error generating session nonce: "+err.Error(), http.StatusInternalServerError)

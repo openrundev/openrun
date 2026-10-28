@@ -48,6 +48,7 @@ func (a *App) loadStarlarkConfig(ctx context.Context, dryRun types.DryRun, opts 
 		Print: func(_ *starlark.Thread, msg string) { a.Info().Msg(msg) },
 		Load:  a.loader,
 	}
+	system.GuardStarlarkThread(thread)
 	thread.SetLocal(types.TL_APP_URL, a.appUrl)
 	// The load runs under the caller's context (an API request, a sync run,
 	// the dev file watcher): when that ends, stop the Starlark thread so a

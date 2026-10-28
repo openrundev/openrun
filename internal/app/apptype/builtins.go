@@ -694,6 +694,70 @@ func CreateConfigBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) func(
 	}
 }
 
+// MaxIntParseChars caps the length of a string passed to int(). Parsing a
+// decimal string is quadratic in its length, and a handler commonly passes a
+// request value to int(): a form value of some MB of digits would otherwise
+// cost tens of seconds of CPU inside the builtin, where a request cancel
+// cannot reach. 4096 characters allows integers of over 13000 bits
+const MaxIntParseChars = 4096
+
+// intBuiltin is the universe int builtin behind a length check on a string
+// argument (the first positional or x= argument)
+func intBuiltin(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var x starlark.Value
+	if len(args) > 0 {
+		x = args[0]
+	} else {
+		for _, kv := range kwargs {
+			if kv[0] == starlark.String("x") {
+				x = kv[1]
+			}
+		}
+	}
+	if s, ok := x.(starlark.String); ok && len(s) > MaxIntParseChars {
+		return nil, fmt.Errorf("int: string of %d characters is too long, at most %d characters allowed", len(s), MaxIntParseChars)
+	}
+	return starlark.Call(thread, starlark.Universe["int"], args, kwargs)
+}
+
+// MaxCollectionElements caps the element count of a collection built by the
+// list, tuple, set, sorted, reversed, enumerate and zip builtins from an
+// iterable of known length: list(range(n)) with n from a request value
+// would otherwise preallocate n elements (16 bytes each) inside the builtin,
+// where a request cancel cannot reach, and the memory high water check runs
+// only between instructions
+const MaxCollectionElements = 1 << 24
+
+// cappedCollectionBuiltin returns the universe builtin of the name behind the
+// element count cap on its iterable arguments
+func cappedCollectionBuiltin(name string) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
+	universe := starlark.Universe[name]
+	check := func(arg starlark.Value) error {
+		if iterable, ok := arg.(starlark.Iterable); ok {
+			if n := starlark.Len(iterable); n > MaxCollectionElements {
+				return fmt.Errorf("%s: %d elements exceeds the limit of %d", name, n, MaxCollectionElements)
+			}
+		}
+		return nil
+	}
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+		for _, arg := range args {
+			if err := check(arg); err != nil {
+				return nil, err
+			}
+		}
+		// sorted accepts the iterable by keyword (sorted(iterable=...));
+		// its other keyword values (key, reverse) are not iterables, so
+		// every keyword value is checked rather than matching names
+		for _, kv := range kwargs {
+			if err := check(kv[1]); err != nil {
+				return nil, err
+			}
+		}
+		return starlark.Call(thread, universe, args, kwargs)
+	}
+}
+
 func CreateBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) starlark.StringDict {
 	once.Do(func() {
 		builtin = starlark.StringDict{
@@ -737,6 +801,13 @@ func CreateBuiltin(nodeConfig types.NodeConfig, allowedEnv []string) starlark.St
 		module := builtin[DEFAULT_MODULE].(*starlarkstruct.Module)
 		for name, fn := range TriggerBuiltins() {
 			module.Members[name] = fn
+		}
+		// Predeclared names shadow the universe: int is the universe builtin
+		// behind a length check on its string argument, the collection
+		// builtins behind a cap on the element count
+		builtin["int"] = starlark.NewBuiltin("int", intBuiltin)
+		for _, name := range []string{"list", "tuple", "set", "sorted", "reversed", "enumerate", "zip"} {
+			builtin[name] = starlark.NewBuiltin(name, cappedCollectionBuiltin(name))
 		}
 	})
 

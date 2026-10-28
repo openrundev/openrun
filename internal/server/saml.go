@@ -74,6 +74,9 @@ type SAMLManager struct {
 	// redirectHostAllowed gates the host of the post-login redirect at the
 	// ACS, see completionRedirectAllowed. Wired by NewServer
 	redirectHostAllowed func(host string) bool
+	// loginRate is the login start limiter shared with the other login
+	// types, wired by NewServer
+	loginRate *ipRateLimiter
 
 	// providerMu guards the provider maps, which are replaced when dynamic
 	// config entries add/change/remove saml providers at runtime
@@ -572,6 +575,10 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 	sp := s.getProvider(providerName)
 	if sp == nil {
 		http.Error(w, fmt.Sprintf("provider %s not found", providerName), http.StatusNotFound)
+		return
+	}
+	if !loginStartAllowed(s.loginRate, s.getConfig(), r) {
+		tooManyLoginStarts(w)
 		return
 	}
 

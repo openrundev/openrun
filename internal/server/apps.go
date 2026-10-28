@@ -224,23 +224,31 @@ func (a *AppStore) Generation() uint64 {
 }
 
 // AddAppIfUnchanged adds the app to the store only if no apps have been
-// removed from the store since the given generation was read. It returns false
-// without adding when the store changed: the DB state the app was built from
-// may have been superseded (e.g. a reload committed in between), so the caller
-// must discard the app and rebuild from a fresh read.
-func (a *AppStore) AddAppIfUnchanged(app *app.App, generation uint64) bool {
+// removed from the store since the given generation was read. It returns
+// false without adding when the store changed: the DB state the app was
+// built from may have been superseded (e.g. a reload committed in between),
+// so the caller must discard the app and rebuild from a fresh read. An app
+// already cached for the path is kept and returned instead of the given one
+// (two loads of the same app raced): the caller must then discard its app
+// and use the returned one, so that a single instance (one container start,
+// one set of background checks) serves the path
+func (a *AppStore) AddAppIfUnchanged(app *app.App, generation uint64) (*app.App, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if a.generation != generation {
-		return false
+		return nil, false
 	}
-	a.appMap[types.CreateAppPathDomain(app.Path, app.Domain)] = app
+	pathDomain := types.CreateAppPathDomain(app.Path, app.Domain)
+	if existing, ok := a.appMap[pathDomain]; ok {
+		return existing, true
+	}
+	a.appMap[pathDomain] = app
 	if a.idleShutdownPaused {
 		app.PauseIdleShutdown()
 	}
 	a.resetAllAppCache()
-	return true
+	return app, true
 }
 
 // PauseIdleShutdown suspends idle-based container shutdown for all cached

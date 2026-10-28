@@ -780,34 +780,28 @@ func (s *Server) GetApp(ctx context.Context, pathDomain types.AppPathDomain, ini
 			return nil, err
 		}
 	}
-	var application *app.App
-	for attempt := 0; ; attempt++ {
-		var err error
-		application, err = s.apps.GetApp(pathDomain)
-		if err == nil {
-			break
-		}
-
-		// App not found in cache, get from DB. The store generation is read
-		// before the DB read: if the store is cleared in between (say a reload
-		// committing), the insert below is rejected and the app is rebuilt
-		// from the now-current DB state, so a stale App is never cached.
-		generation := s.apps.Generation()
-		appEntry, err := s.db.GetAppEntry(ctx, pathDomain)
-		if err != nil {
-			return nil, err
-		}
-
-		application, err = s.setupApp(ctx, appEntry, types.Transaction{})
-		if err != nil {
-			return nil, err
-		}
-		if s.apps.AddAppIfUnchanged(application, generation) {
-			break
-		}
-		application.Close() //nolint:errcheck
-		if attempt >= 2 {
-			return nil, fmt.Errorf("app %s is being updated concurrently, retry the request", pathDomain)
+	application, err := s.apps.GetApp(pathDomain)
+	if err != nil {
+		// Not cached: one load per path at a time. Concurrent requests to an
+		// app after an idle stop, a deploy or a restart (a page load fans out
+		// into parallel asset requests) share the build instead of each
+		// building, caching and initializing their own instance: the extra
+		// instances were never closed, each started its own container checks,
+		// and an orphan's idle check later stopped the container the cached
+		// instance proxied to. The load runs detached from the leader's
+		// request: a client which disconnects must not fail the others
+		loadCtx := context.WithoutCancel(ctx)
+		result := s.appLoads.DoChan(pathDomain.String(), func() (any, error) {
+			return s.loadApp(loadCtx, pathDomain)
+		})
+		select {
+		case res := <-result:
+			if res.Err != nil {
+				return nil, res.Err
+			}
+			application = res.Val.(*app.App)
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
 
@@ -837,6 +831,42 @@ func (s *Server) GetApp(ctx context.Context, pathDomain types.AppPathDomain, ini
 	}
 
 	return application, nil
+}
+
+// loadApp builds the app from its DB entry and caches it, unless the store
+// changed meanwhile (the app is then rebuilt from the current DB state) or a
+// concurrent load cached the app first (that instance is used)
+func (s *Server) loadApp(ctx context.Context, pathDomain types.AppPathDomain) (*app.App, error) {
+	if s.appLoadHook != nil {
+		s.appLoadHook(pathDomain)
+	}
+	for attempt := 0; ; attempt++ {
+		// The store generation is read before the DB read: if the store is
+		// cleared in between (say a reload committing), the insert below is
+		// rejected and the app is rebuilt from the now-current DB state, so a
+		// stale App is never cached
+		generation := s.apps.Generation()
+		appEntry, err := s.db.GetAppEntry(ctx, pathDomain)
+		if err != nil {
+			return nil, err
+		}
+
+		application, err := s.setupApp(ctx, appEntry, types.Transaction{})
+		if err != nil {
+			return nil, err
+		}
+		cached, ok := s.apps.AddAppIfUnchanged(application, generation)
+		if ok {
+			if cached != application {
+				application.Close() //nolint:errcheck
+			}
+			return cached, nil
+		}
+		application.Close() //nolint:errcheck
+		if attempt >= 2 {
+			return nil, fmt.Errorf("app %s is being updated concurrently, retry the request", pathDomain)
+		}
+	}
 }
 
 func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool) (*types.AppDeleteResponse, error) {

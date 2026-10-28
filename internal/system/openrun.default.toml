@@ -138,6 +138,8 @@ session_absolute_max_age = 604800 # max total session lifetime in seconds from l
 session_https_only = true        # session cookie is HTTPS only (restart-only: applied to the shared cookie store at startup)
 disable_login_form = false       # if true, system/builtin auth uses the HTTP Basic challenge for browsers too
                                  # (no HTML login page). Off by default.
+login_start_rate_limit = 60      # login handshakes (form login, OAuth/OIDC, SAML) a client IP may start per minute;
+                                 # 0 disables the limit
 auth_callback_domain = "auth."   # domain serving the system/builtin login page and the OAuth login/consent pages
                                  # of the remote API (CLI/MCP clients); no apps can be created on it.
                                  # A trailing "." is a prefix combined with default_domain (auth.<default_domain>);
@@ -257,6 +259,9 @@ git_operation_timeout_secs = 600    # timeout for each remote git list, clone, f
 container_command = "auto"          # "auto" or "docker" or "podman" or "kubernetes"
 stale_container_cleanup_interval_mins = 5 # stop stale OpenRun containers every N minutes for Docker/Podman. Set <= 0 to disable.
 default_domain = "localhost"        # default domain for apps
+memory_high_water_bytes = 0         # memory in use (bytes) over which running Starlark handlers are canceled, to keep
+                                    # app code from taking the server down; 0 uses 90% of the Go memory limit when
+                                    # GOMEMLIMIT is set, else no check
 stage_at = "domain"                 # "domain", "path", or a domain for staging apps
 default_stage_domain = "stage"      # domain prefix for staging apps when stage_at is "domain"
 root_serve_list_apps = "auto"       # "auto" means serve list_apps app for default domain, "disable" means don't server for any domain,
@@ -349,6 +354,10 @@ secrets = [] # no secrets allowed by default, use [["regex:.*"]] to allow all se
 [app_config]
 # app config can be set at the app level using a metadata config update. For example:
 #  openrun app update conf --promote 'cors.allow_methods="GET, POST"' /myapp
+
+# Request body cap of the Starlark handler routes (html, fragment, api); a larger
+# body is refused with 413. Proxied routes are not capped
+max_request_body_bytes = 10485760
 
 # Action related settings
 action.max_request_body_bytes = 33554432

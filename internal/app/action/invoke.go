@@ -167,6 +167,7 @@ func (a *Action) invoke(ctx context.Context, inv Invocation) (retOutcome *Outcom
 		Name:  a.name,
 		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) },
 	}
+	system.GuardStarlarkThread(thread)
 
 	// Status starts as Failed and is set to Success only after the action
 	// handler runs without error, so that arg errors and panics are not

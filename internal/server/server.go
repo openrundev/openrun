@@ -40,6 +40,7 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/ksuid"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/openrundev/openrun/internal/app/appfs"
 	_ "github.com/openrundev/openrun/internal/app/store" // Register db plugin
@@ -144,6 +145,11 @@ type Server struct {
 	udsServer    *http.Server
 	handler      *Handler
 	apps         *AppStore
+	// appLoads collapses the concurrent loads of an app not in the store
+	// (after an idle stop, a deploy or a restart) into one build: see GetApp
+	appLoads singleflight.Group
+	// appLoadHook, when set, runs at the start of each app load (tests)
+	appLoadHook  func(pathDomain types.AppPathDomain)
 	authHandler  *AdminBasicAuth
 	users        *UserManager
 	oAuthManager *OAuthManager
@@ -407,9 +413,14 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}))
 	server.csrfMiddleware = csrfMiddleware
 
+	// The login start limiter is shared by the login types: a client IP
+	// gets one budget of handshakes per minute, whichever type it starts
+	loginRate := newIPRateLimiter(time.Minute, rateLimiterMaxIPs)
+
 	// Setup OAuth auth
 	server.oAuthManager = NewOAuthManager(l, config, db)
 	server.oAuthManager.getConfig = server.Config
+	server.oAuthManager.loginRate = loginRate
 	var newSessionSecret, newSessionBlockKey []byte
 	if newSessionSecret, err = passwd.GenerateRandomKey(32); err != nil {
 		return nil, err
@@ -430,6 +441,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	// Setup SAML auth
 	server.samlManager = NewSAMLManager(l, config, server.oAuthManager.cookieStore, db)
 	server.samlManager.getConfig = server.Config
+	server.samlManager.loginRate = loginRate
 	if err = server.samlManager.Setup(context.Background()); err != nil {
 		return nil, err
 	}
@@ -443,6 +455,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	server.formLogin.loginRate = loginRate
 	server.warnIfAuthDomainOccupied()
 	server.warnIfFederatedLoginUnavailable()
 	// The completion redirect of every login flow (the OAuth callback, the
@@ -851,6 +864,9 @@ func (s *Server) prepareDynamicConfig(ctx context.Context, config *types.Dynamic
 		if secretsManager != nil {
 			s.secretsManager.Store(secretsManager)
 		}
+		// system.memory_high_water_bytes is dynamic: the thread guard reads
+		// the mark through the system package, so apply it with the config
+		system.SetMemoryHighWater(effective.System.MemoryHighWaterBytes)
 
 		if !reflect.DeepEqual(previous.Api, effective.Api) {
 			// The MCP tool set snapshots [api.mcp] policy at build time:

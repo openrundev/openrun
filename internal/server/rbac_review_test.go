@@ -998,3 +998,36 @@ func seedTestConfig(ctx context.Context, db *metadata.Metadata, config *types.Dy
 	}
 	return db.UpdateConfig(ctx, types.ADMIN_USER, seeded.VersionId, config)
 }
+
+// system.memory_high_water_bytes is a dynamic setting: a dynamic config
+// update applies it to the thread guard, and the static value returns when
+// the setting is removed
+func TestDynamicMemoryHighWaterApplied(t *testing.T) {
+	server, db, trusted := newSyncRBACTestServer(t)
+	defer db.Close()
+	t.Setenv("OPENRUN_HOME", t.TempDir())
+	t.Cleanup(func() { system.SetMemoryHighWater(0) })
+	server.staticConfig.System.MemoryHighWaterBytes = 1 << 30
+	config := &types.DynamicConfig{VersionId: "initial", RBAC: *rbac.DefaultConfig(),
+		Settings: map[string]map[string]any{"system": {"memory_high_water_bytes": int64(2 << 30)}},
+	}
+	if err := seedTestConfig(trusted, db, config); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.updateDynamicConfigCache(trusted, config); err != nil {
+		t.Fatal(err)
+	}
+	if got := system.MemoryHighWater(); got != 2<<30 {
+		t.Fatalf("dynamic memory high water not applied, got %d", got)
+	}
+	if got := server.Config().System.MemoryHighWaterBytes; got != 2<<30 {
+		t.Fatalf("effective config memory high water: got %d", got)
+	}
+	config = &types.DynamicConfig{VersionId: "v2", RBAC: *rbac.DefaultConfig()}
+	if err := server.updateDynamicConfigCache(trusted, config); err != nil {
+		t.Fatal(err)
+	}
+	if got := system.MemoryHighWater(); got != 1<<30 {
+		t.Fatalf("static memory high water not restored, got %d", got)
+	}
+}

@@ -586,6 +586,11 @@ type AppConfig struct {
 	// stable-named root files), e.g. "public, max-age=3600". Empty sends no
 	// Cache-Control header
 	StaticRootCacheControl string `toml:"static_root_cache_control"`
+	// MaxRequestBodyBytes caps the request body of the Starlark handler
+	// routes (html, fragment, api): a larger body is refused with 413.
+	// Proxied routes are not capped. Action routes have their own cap,
+	// action.max_request_body_bytes
+	MaxRequestBodyBytes int64 `toml:"max_request_body_bytes"`
 }
 
 // ActionConfig holds the action settings of an app
@@ -809,6 +814,9 @@ type SecurityConfig struct {
 	// HTTP Basic challenge for browsers too, disabling the HTML login page.
 	// Off by default (browsers get the login page)
 	DisableLoginForm bool `toml:"disable_login_form"`
+	// LoginStartRateLimit is the number of login handshakes (form login,
+	// OAuth/OIDC, SAML) a client IP may start per minute; 0 disables the limit
+	LoginStartRateLimit int `toml:"login_start_rate_limit"`
 
 	// AuthCallbackDomain is the domain that serves the system/builtin login
 	// page and the login/consent pages of the OAuth authorization server
@@ -1135,6 +1143,7 @@ type SystemConfig struct {
 	LeaderElectionLeaseSecs             int      `toml:"leader_election_lease_secs"`              // The lease time for the leader election
 	LeaderElectionHeartbeatIntervalSecs int      `toml:"leader_election_heartbeat_interval_secs"` // The interval for the leader election heartbeat
 	FileWorkers                         int      `toml:"file_workers"`                            // number of parallel workers for file compression during app version creation
+	MemoryHighWaterBytes                int64    `toml:"memory_high_water_bytes"`                 // memory in use over which running Starlark handlers are canceled; 0 derives it from the Go memory limit (GOMEMLIMIT), none set disables the check
 	ListAppsTitle                       string   `toml:"list_apps_title"`                         // the title of the list apps page
 	ShowHostedWith                      bool     `toml:"show_hosted_with"`                        // whether to show "Hosted with OpenRun" in the list apps page
 	FallbackUnknownDomains              bool     `toml:"fallback_unknown_domains"`                // whether to fallback to default domain for unknown domains

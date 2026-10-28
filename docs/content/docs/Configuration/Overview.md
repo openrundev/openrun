@@ -86,6 +86,8 @@ app = ace.app("My App",
 
 When the same property is set in multiple places, the server `[app_config]` value is applied first, then the `app.star` settings, then the app metadata value set with `--conf`.
 
+The request body of the Starlark handler routes (html, fragment and api routes) is capped by `max_request_body_bytes` under `[app_config]`, 10MB by default: a larger body is refused with a 413 status. Proxied routes are not capped, and action routes have their own `action.max_request_body_bytes` cap.
+
 Version retention is also configured under `[app_config]`. By default, OpenRun keeps the current version plus 5 older versions for each app. Older versions are cleaned up automatically after operations which create or promote app versions.
 
 To change the default for all apps, set `fs.retain_versions` in `openrun.toml`:
@@ -212,6 +214,8 @@ git_operation_timeout_secs = 600       # timeout for each remote git operation, 
 max_concurrent_builds = 1              # concurrent container builds
 max_build_wait_secs = 120              # max wait for a build lock
 file_workers = 4                       # parallel workers for file compression during app version creation
+memory_high_water_bytes = 0            # memory in use over which running Starlark handlers are canceled; 0 uses 90% of
+                                       # the Go memory limit when GOMEMLIMIT is set, else no check
 leader_election_lease_secs = 30        # multi-node leader election lease and heartbeat
 leader_election_heartbeat_interval_secs = 10
 allowed_env = ["HOME", "OPENRUN_HOME", "PATH"] # env variables expanded in [node_config] values

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -159,9 +160,17 @@ func starlarkThreadPrint(_ *starlark.Thread, msg string) {
 	fmt.Println(msg)
 }
 
+// defaultMaxRequestBodyBytes is the request body cap of the Starlark handler
+// routes when max_request_body_bytes is not configured
+const defaultMaxRequestBodyBytes int64 = 10 << 20
+
 func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Callable, rtype string) http.HandlerFunc {
 	hasArgs := handler != nil && !strings.HasSuffix(handler.Name(), "_no_args")
 	rtype = strings.ToUpper(rtype)
+	maxBodyBytes := a.AppConfig.MaxRequestBodyBytes
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = defaultMaxRequestBodyBytes
+	}
 
 	// Capture the per-reload app state here at handler creation time: these
 	// closures are rebuilt on every reload (published with the router under
@@ -177,10 +186,17 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 	errorHandler := a.errorHandler
 
 	goHandler := func(w http.ResponseWriter, r *http.Request) {
+		// An explicit cap on what the form parsing below buffers in memory:
+		// without it the only bound is the net/http form size default, and
+		// the client, not the app config, picks the size of the buffer
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		}
 		thread := &starlark.Thread{
 			Name:  a.Path,
 			Print: starlarkThreadPrint,
 		}
+		system.GuardStarlarkThread(thread)
 
 		// Save the request context in the starlark thread local
 		thread.SetLocal(types.TL_CONTEXT, r.Context())
@@ -276,7 +292,15 @@ func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Call
 			// r.PostForm for non-GET). Reuse r.Form for the query instead of
 			// calling r.URL.Query(), which would parse the query string a second
 			// time.
-			r.ParseForm() //nolint:errcheck // ignore error if no form data is passed
+			if err := r.ParseForm(); err != nil {
+				var maxBytesErr *http.MaxBytesError
+				if errors.As(err, &maxBytesErr) {
+					http.Error(w, fmt.Sprintf("request body larger than %d bytes", maxBodyBytes), http.StatusRequestEntityTooLarge)
+					return
+				}
+				// Other errors (no form data, a malformed encoding) leave the
+				// form empty, as before
+			}
 			requestData.Form = r.Form
 			requestData.PostForm = r.PostForm
 			if r.Method == http.MethodGet {

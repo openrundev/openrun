@@ -25,11 +25,11 @@ func TestAppStoreAddAppIfUnchanged(t *testing.T) {
 	store := NewAppStore(testutil.TestLogger(), &Server{Logger: testutil.TestLogger()})
 
 	gen := store.Generation()
-	if !store.AddAppIfUnchanged(testStoreApp("/app1"), gen) {
+	if _, ok := store.AddAppIfUnchanged(testStoreApp("/app1"), gen); !ok {
 		t.Fatal("insert with current generation rejected")
 	}
 	// Adding apps does not invalidate concurrent loads of other apps
-	if !store.AddAppIfUnchanged(testStoreApp("/app2"), gen) {
+	if _, ok := store.AddAppIfUnchanged(testStoreApp("/app2"), gen); !ok {
 		t.Fatal("insert rejected although no apps were removed")
 	}
 
@@ -38,7 +38,7 @@ func TestAppStoreAddAppIfUnchanged(t *testing.T) {
 	if store.Generation() == gen {
 		t.Fatal("clearing an app did not bump the store generation")
 	}
-	if store.AddAppIfUnchanged(testStoreApp("/app3"), gen) {
+	if _, ok := store.AddAppIfUnchanged(testStoreApp("/app3"), gen); ok {
 		t.Fatal("insert with stale generation accepted")
 	}
 	if _, err := store.GetApp(types.CreateAppPathDomain("/app3", "example.com")); err == nil {
