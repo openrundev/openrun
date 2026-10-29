@@ -241,8 +241,8 @@ require (
 	github.com/moby/buildkit v0.31.2
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25
-	github.com/openrundev/openrun/pkg/binding v0.20.5
-	github.com/openrundev/openrun/pkg/plugin v0.20.5
+	github.com/openrundev/openrun/pkg/binding v0.20.6
+	github.com/openrundev/openrun/pkg/plugin v0.20.6
 	github.com/pkg/profile v1.7.0
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/robfig/cron/v3 v3.0.1
