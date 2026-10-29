@@ -830,7 +830,7 @@ type SecurityConfig struct {
 	// when no auth callback domain resolves (or, with a plain http
 	// api.external_url, when the domain is not a *.localhost name)
 	AuthCallbackDomain       string            `toml:"auth_callback_domain"`
-	TrustedProxies           []string          `toml:"trusted_proxies" dynamic:"-"`
+	TrustedProxies           []string          `toml:"trusted_proxies"`
 	CallbackUrl              string            `toml:"callback_url"`
 	DefaultGitAuth           string            `toml:"default_git_auth"`
 	StageEnableWriteAccess   bool              `toml:"stage_enable_write_access"`
@@ -906,7 +906,7 @@ type SecurityConfig struct {
 	// AllowedMounts; symlinks are resolved before the containment check.
 	// Static config only: a config:update holder must not be able to widen
 	// what the remote API can read
-	RemoteDiskReadPaths []string `toml:"remote_disk_read_paths" dynamic:"-"`
+	RemoteDiskReadPaths []string `toml:"remote_disk_read_paths"`
 }
 
 // MetadataConfig is the configuration for the Metadata persistence layer

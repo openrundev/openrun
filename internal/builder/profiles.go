@@ -138,6 +138,16 @@ func parseConfigMount(entry string) (configMount, error) {
 	return mount, nil
 }
 
+// ConfigMountHostPath returns the host path of a "host:container[:ro]"
+// config_files entry
+func ConfigMountHostPath(entry string) (string, error) {
+	mount, err := parseConfigMount(entry)
+	if err != nil {
+		return "", err
+	}
+	return mount.host, nil
+}
+
 var imageNameSanitizer = regexp.MustCompile(`[^a-z0-9_.-]`)
 
 // imageTag returns the local image tag for a profile: the profile name plus a

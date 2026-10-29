@@ -50,8 +50,8 @@ OpenRun includes agent images for `opencode`, `claude`, `codex` and `pi`. A `[bu
 | --- | --- |
 | `env` | Agent environment variables; values support secret references. |
 | `model`, `effort` | Model and reasoning settings, using the agent's supported values. |
-| `config_files` | Host files mounted as `host:container[:ro]`; container paths must be absolute. |
-| `dockerfile` | A custom Dockerfile path on the OpenRun server. |
+| `config_files` | Host files mounted as `host:container[:ro]`; both paths must be absolute. An agent set through the console or the dynamic config can only mount from within `security.allowed_mounts`. |
+| `dockerfile` | A custom Dockerfile path on the OpenRun server. Set through the console or the remote API, it must be under `security.remote_disk_read_paths`. |
 | `command` | A command array that speaks the Agent Client Protocol over standard input/output. |
 | `type` | Optional; must match the agent type inferred from the entry name. |
 

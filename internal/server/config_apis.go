@@ -322,6 +322,9 @@ func (s *Server) SetConfigEntry(ctx context.Context, section, name string, value
 	if err := validateConfigEntry(section, name, values); err != nil {
 		return nil, err
 	}
+	if err := s.checkDynamicEntry(ctx, section, values); err != nil {
+		return nil, err
+	}
 
 	if config.Entries == nil {
 		config.Entries = map[string]map[string]map[string]any{}
@@ -334,6 +337,27 @@ func (s *Server) SetConfigEntry(ctx context.Context, section, name string, value
 		config.VersionId = versionId
 	}
 	return s.UpdateDynamicConfig(ctx, config, false)
+}
+
+// checkDynamicEntry runs the dynamic entry write checks which need the
+// server config or the caller's context. builder_agent entries name server
+// paths: config_files are bind mounted into the agent sandbox (see
+// checkBuilderAgentPaths) and the dockerfile is read from the server's disk
+// (with its content echoed in build errors), so it is subject to the same
+// disk access rule as an app source
+func (s *Server) checkDynamicEntry(ctx context.Context, section string, values map[string]any) error {
+	if section != "builder_agent" {
+		return nil
+	}
+	if err := checkBuilderAgentPaths(values, s.staticConfig.Security.AllowedMounts); err != nil {
+		return err
+	}
+	if dockerfile, _ := values["dockerfile"].(string); dockerfile != "" {
+		if err := s.checkDiskSource(ctx, dockerfile, "builder agent dockerfile"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DeleteConfigEntry removes one dynamic config entry, immediately reverting
@@ -622,20 +646,8 @@ func (s *Server) RestoreConfig(ctx context.Context, historyVersionId string, for
 	if err := s.validateRBACCandidate(ctx, &snapshot.RBAC, force); err != nil {
 		return nil, err
 	}
-	for section, sectionEntries := range snapshot.Entries {
-		for name, values := range sectionEntries {
-			if err := validateConfigEntry(section, name, values); err != nil {
-				return nil, fmt.Errorf("invalid entry in snapshot: %w", err)
-			}
-		}
-	}
-	for section, values := range snapshot.Settings {
-		for key, value := range values {
-			if err := validateConfigValue(section, key, value); err != nil {
-				return nil, fmt.Errorf("invalid setting in snapshot: %w", err)
-			}
-		}
-	}
+	// The entries and settings the restore changes are validated by
+	// UpdateDynamicConfig, like any other full document update
 
 	current := s.GetDynamicConfig()
 	candidate := *snapshot

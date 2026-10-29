@@ -498,8 +498,11 @@ func TestConfigPlaceholderConsistency(t *testing.T) {
 	server.staticConfig.Api.MCP.Auth = []string{"admin"}
 	server.staticConfig.Api.Rest.Auth = []string{"admin"}
 	previous := &types.DynamicConfig{VersionId: "initial", RBAC: *rbac.DefaultConfig(),
-		Entries:  map[string]map[string]map[string]any{"git_auth": {"gh": {"password": "stored-secret", "user_id": "git"}}},
-		Settings: map[string]map[string]any{"system": {"builder_auth_token": "stored-token", "list_apps_title": "original"}},
+		Entries: map[string]map[string]map[string]any{"git_auth": {"gh": {"password": "stored-secret", "user_id": "git"}}},
+		Settings: map[string]map[string]any{
+			"node_config": {"api_token": "stored-token"},
+			"system":      {"list_apps_title": "original"},
+		},
 	}
 	if err := seedTestConfig(trusted, db, previous); err != nil {
 		t.Fatal(err)
@@ -516,12 +519,12 @@ func TestConfigPlaceholderConsistency(t *testing.T) {
 	if values["password"] != RedactedValue || entryResponse.Entries["git_auth"]["gh"]["password"] != RedactedValue {
 		t.Fatal("entry update exposed stored secret in caller map or response")
 	}
-	for _, key := range []string{"builder_auth_token", "list_apps_title"} {
-		response, err := server.SetConfigValue(remote, "system", key, RedactedValue, "")
+	for _, setting := range [][2]string{{"node_config", "api_token"}, {"system", "list_apps_title"}} {
+		response, err := server.SetConfigValue(remote, setting[0], setting[1], RedactedValue, "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if response.Settings["system"]["builder_auth_token"] != RedactedValue {
+		if response.Settings["node_config"]["api_token"] != RedactedValue {
 			t.Fatal("setting response exposed stored token")
 		}
 	}
@@ -529,7 +532,7 @@ func TestConfigPlaceholderConsistency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Entries["git_auth"]["gh"]["password"] != "stored-secret" || stored.Settings["system"]["builder_auth_token"] != "stored-token" {
+	if stored.Entries["git_auth"]["gh"]["password"] != "stored-secret" || stored.Settings["node_config"]["api_token"] != "stored-token" {
 		t.Fatal("placeholder did not preserve credentials")
 	}
 	if stored.Entries["git_auth"]["gh"]["user_id"] != RedactedValue || stored.Settings["system"]["list_apps_title"] != RedactedValue {
@@ -1002,7 +1005,10 @@ func seedTestConfig(ctx context.Context, db *metadata.Metadata, config *types.Dy
 // system.memory_high_water_bytes is a dynamic setting: a dynamic config
 // update applies it to the thread guard, and the static value returns when
 // the setting is removed
-func TestDynamicMemoryHighWaterApplied(t *testing.T) {
+// TestDynamicMemoryHighWaterIgnored verifies a persisted dynamic value for
+// a static-only system setting does not apply: system.memory_high_water_bytes
+// is not in the dynamic config allowlist
+func TestDynamicMemoryHighWaterIgnored(t *testing.T) {
 	server, db, trusted := newSyncRBACTestServer(t)
 	defer db.Close()
 	t.Setenv("OPENRUN_HOME", t.TempDir())
@@ -1017,17 +1023,77 @@ func TestDynamicMemoryHighWaterApplied(t *testing.T) {
 	if err := server.updateDynamicConfigCache(trusted, config); err != nil {
 		t.Fatal(err)
 	}
-	if got := system.MemoryHighWater(); got != 2<<30 {
-		t.Fatalf("dynamic memory high water not applied, got %d", got)
+	if got := system.MemoryHighWater(); got != 1<<30 {
+		t.Fatalf("dynamic memory high water must not apply, got %d", got)
 	}
-	if got := server.Config().System.MemoryHighWaterBytes; got != 2<<30 {
+	if got := server.Config().System.MemoryHighWaterBytes; got != 1<<30 {
 		t.Fatalf("effective config memory high water: got %d", got)
 	}
-	config = &types.DynamicConfig{VersionId: "v2", RBAC: *rbac.DefaultConfig()}
-	if err := server.updateDynamicConfigCache(trusted, config); err != nil {
+	if _, err := server.SetConfigValue(trusted, "system", "memory_high_water_bytes", int64(3<<30), ""); err == nil ||
+		!strings.Contains(err.Error(), "static openrun.toml config") {
+		t.Fatalf("memory_high_water_bytes write must be rejected as static only, got %v", err)
+	}
+}
+
+// TestBuilderAgentEntryPathChecks verifies a dynamic builder_agent entry
+// cannot mount from outside security.allowed_mounts, and its dockerfile is a
+// server disk path subject to the remote disk read rule
+func TestBuilderAgentEntryPathChecks(t *testing.T) {
+	server, db, trusted := newSyncRBACTestServer(t)
+	defer db.Close()
+	t.Setenv("OPENRUN_HOME", t.TempDir())
+	allowed := t.TempDir()
+	readable := t.TempDir()
+	server.staticConfig.Api.MCP.Auth = []string{"admin"}
+	server.staticConfig.Api.Rest.Auth = []string{"admin"}
+	server.staticConfig.Security.AllowedMounts = []string{allowed}
+	server.staticConfig.Security.RemoteDiskReadPaths = []string{readable}
+	initial := &types.DynamicConfig{VersionId: "initial", RBAC: *rbac.DefaultConfig()}
+	if err := seedTestConfig(trusted, db, initial); err != nil {
 		t.Fatal(err)
 	}
-	if got := system.MemoryHighWater(); got != 1<<30 {
-		t.Fatalf("static memory high water not restored, got %d", got)
+	if err := server.updateDynamicConfigCache(trusted, initial); err != nil {
+		t.Fatal(err)
+	}
+	remote := system.WithDiskSourceAccess(trusted, false)
+
+	if _, err := server.SetConfigEntry(remote, "builder_agent", "claude",
+		map[string]any{"config_files": []any{"/etc:/root/etc"}}, ""); err == nil ||
+		!strings.Contains(err.Error(), "security.allowed_mounts") {
+		t.Fatalf("mount outside allowed_mounts accepted: %v", err)
+	}
+	if _, err := server.SetConfigEntry(remote, "builder_agent", "custom_x",
+		map[string]any{"dockerfile": "/etc/passwd", "command": []any{"x"}}, ""); err == nil ||
+		!strings.Contains(err.Error(), "builder agent dockerfile") {
+		t.Fatalf("remote dockerfile outside remote_disk_read_paths accepted: %v", err)
+	}
+	// The full document path applies the same checks to changed entries
+	current := server.GetDynamicConfig()
+	doc, err := copyDynamicConfig(&current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Entries = map[string]map[string]map[string]any{"builder_agent": {"claude": {"config_files": []any{"/:/host"}}}}
+	if _, err := server.UpdateDynamicConfig(remote, doc, false); err == nil ||
+		!strings.Contains(err.Error(), "security.allowed_mounts") {
+		t.Fatalf("update-config mount outside allowed_mounts accepted: %v", err)
+	}
+
+	if _, err := server.SetConfigEntry(remote, "builder_agent", "claude",
+		map[string]any{"config_files": []any{allowed + ":/root/.claude:ro"}}, ""); err != nil {
+		t.Fatalf("mount within allowed_mounts rejected: %v", err)
+	}
+	dockerfile := filepath.Join(readable, "Dockerfile")
+	if err := os.WriteFile(dockerfile, []byte("FROM scratch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.SetConfigEntry(remote, "builder_agent", "custom_x",
+		map[string]any{"dockerfile": dockerfile, "command": []any{"x"}}, ""); err != nil {
+		t.Fatalf("dockerfile under remote_disk_read_paths rejected: %v", err)
+	}
+	// Unix socket callers may name any server path, like app sources
+	if _, err := server.SetConfigEntry(trusted, "builder_agent", "custom_y",
+		map[string]any{"dockerfile": "/srv/agents/Dockerfile", "command": []any{"x"}}, ""); err != nil {
+		t.Fatalf("local dockerfile rejected: %v", err)
 	}
 }

@@ -7,6 +7,15 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Dynamic config updates are limited to an allowlist of the sections and settings the console config pages manage.
+- A `[builder_agent.*]` entry set through the console or the dynamic config can only mount `config_files` from within `security.allowed_mounts`, and its `dockerfile` must be under `security.remote_disk_read_paths` when set over the remote API.
+
+### Fixed
+
+- The config read APIs no longer redact `api.access_token_ttl`, `api.refresh_token_ttl` and `app_config.security.default_secrets_provider`.
+
 ## [v0.20.6] - 2026-10-28
 
 ### Added

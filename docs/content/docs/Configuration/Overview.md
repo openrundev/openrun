@@ -177,10 +177,21 @@ The basic format of this config is
 
 Besides `rbac`, the dynamic config can carry two more sections, which take precedence over the static `openrun.toml` values:
 
-- `entries`: named config entries, mirroring the named-entry sections of `openrun.toml` (`git_auth`, `auth`, `saml`, `builtin_auth`, ...). This is what `openrun user add` and the console config forms write. Dynamic entries shadow a static entry with the same name.
-- `settings`: individual fields of the other sections, as section name to dotted field key, for example `{"security": {"default_git_auth": "mykey"}, "app_config": {"cors.allow_origin": "origin"}, "api": {"rest.enable": true}}`.
+- `entries`: named config entries, mirroring the named-entry sections of `openrun.toml`. This is what the console config forms write. Dynamic entries shadow a static entry with the same name.
+- `settings`: individual fields of the struct sections, as section name to dotted field key, for example `{"security": {"default_git_auth": "mykey"}, "app_config": {"cors.allow_origin": "origin"}, "api": {"rest.enable": true}}`.
 
-The `logging` and `telemetry` sections, `security.trusted_proxies` and every `unsafe_*` flag are static only and are rejected in a dynamic update.
+Only the config the console manages can be set dynamically, since `config:update` is held by operators who are not admin:
+
+| Kind     | Dynamically settable                                                                                                                                                                                                                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| entries  | `git_auth`, `auth`, `saml`, `secret`, `builder_agent`, `builder_profile`, `builder_git`                                                                                                                                                                                                                       |
+| settings | `security`: `app_default_auth_type`, `default_git_auth`                                                                                                                                                                                                                                                       |
+|          | `system`: `default_domain`, `stage_at`, `list_apps_title`, `show_hosted_with`                                                                                                                                                                                                                                 |
+|          | `api`: `external_url`, `access_token_ttl`, `refresh_token_ttl`, `grant_max_ttl`, `federated_identity_ttl`, `pat_default_ttl`, `rest.enable`, `rest.auth`, `rest.enable_apis`, `rest.disable_apis`, `mcp.enable`, `mcp.auth`, `mcp.enable_apis`, `mcp.disable_apis`, `mcp.skip_destructive_confirm`, `app_mcp.enable`, `app_mcp.allowed_auth`, `app_mcp.max_tools`, `app_mcp.list_ttl` |
+|          | `app_builder`: `enabled`, `default_builder_profile`, `preview_path`, `max_sessions`, `session_idle_mins`, `system_prompt`                                                                                                                                                                                     |
+|          | `app_config`, `node_config`: any key                                                                                                                                                                                                                                                                          |
+
+Everything else, including every `unsafe_*` flag, is static `openrun.toml` config only. Setting it dynamically fails with an error naming the keys which can be set. A value persisted by an earlier version for a key which is now static only is ignored (with a warning in the server log); an `update-config` upload may carry such a value unchanged, but cannot change it.
 
 Making a config update will automatically update the `$OPENRUN_HOME/config/dynamic_config.json` file on all instances. The `show-config` command can also show the latest config. The version id is auto-generated with a unique value. Subsequent updates need to pass the current version id, the `update-config` will fail if a stale id is passed in. The `--force` option can be used to overwrite the config. The server keeps the last `metadata.config_history_versions` (default 20) config snapshots.
 

@@ -4,6 +4,9 @@
 package server
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -142,6 +145,20 @@ func TestRedactEntryValues(t *testing.T) {
 	if redacted["user_id"] != "git" {
 		t.Errorf("non-secret field changed: %v", redacted)
 	}
+	// Durations and provider names only mention a secret concept
+	plain := redactEntryValues(map[string]any{
+		"access_token_ttl":                  "1h",
+		"refresh_token_ttl":                 "720h",
+		"security.default_secrets_provider": "asm",
+		"builder_auth_token":                "tok",
+	})
+	if plain["access_token_ttl"] != "1h" || plain["refresh_token_ttl"] != "720h" ||
+		plain["security.default_secrets_provider"] != "asm" {
+		t.Errorf("non-secret ttl/provider fields redacted: %v", plain)
+	}
+	if plain["builder_auth_token"] != RedactedValue {
+		t.Errorf("token field not redacted: %v", plain)
+	}
 	if values["password"] != "supersecret" {
 		t.Error("redaction modified the input map")
 	}
@@ -176,7 +193,7 @@ func TestRedactEntryValues(t *testing.T) {
 
 func TestConfigSettingsSections(t *testing.T) {
 	sections := listConfigSettingsSections()
-	for _, want := range []string{"security", "system", "app_config", "node_config"} {
+	for _, want := range []string{"security", "system", "api", "app_builder", "app_config", "node_config"} {
 		found := false
 		for _, section := range sections {
 			if section == want {
@@ -203,11 +220,24 @@ func TestConfigSettingsSections(t *testing.T) {
 	if isConfigSettingsSection("nosuchsection") {
 		t.Error("unknown section must not be a settings section")
 	}
-	// logging and telemetry are read on hot paths by components which cache
-	// the config at startup, they are static-only
-	for _, section := range []string{"logging", "telemetry"} {
+	// Only the allowlisted sections are dynamically settable
+	for _, section := range []string{"logging", "telemetry", "bindings", "plugin_providers",
+		"http", "https", "metadata", "registry", "builder", "kubernetes", "restart", "permissions"} {
 		if isConfigSettingsSection(section) {
 			t.Errorf("%s must not be dynamically settable", section)
+		}
+		if err := validateConfigValue(section, "x", "v"); err == nil ||
+			!strings.Contains(err.Error(), "static openrun.toml config") {
+			t.Errorf("%s write must be rejected as static only, got %v", section, err)
+		}
+	}
+	for _, section := range []string{"builtin_auth", "client_auth", "forward", "plugin", "litestream"} {
+		if _, ok := configSectionType(section); ok {
+			t.Errorf("%s entries must not be dynamically settable", section)
+		}
+		if err := validateConfigEntry(section, "x", map[string]any{}); err == nil ||
+			!strings.Contains(err.Error(), "static openrun.toml config") {
+			t.Errorf("%s entry write must be rejected as static only, got %v", section, err)
 		}
 	}
 }
@@ -219,7 +249,7 @@ func TestValidateConfigValue(t *testing.T) {
 	if err := validateConfigValue("system", "show_hosted_with", true); err != nil {
 		t.Errorf("valid bool value rejected: %v", err)
 	}
-	if err := validateConfigValue("system", "max_concurrent_builds", 5); err != nil {
+	if err := validateConfigValue("app_builder", "max_sessions", 5); err != nil {
 		t.Errorf("valid int value rejected: %v", err)
 	}
 	// Dotted keys reach into nested app_config structs
@@ -233,14 +263,18 @@ func TestValidateConfigValue(t *testing.T) {
 	if err := validateConfigValue("git_auth", "user_id", "x"); err == nil {
 		t.Error("entry section accepted as settings section")
 	}
-	if err := validateConfigValue("system", "nosuchfield", "x"); err == nil ||
+	if err := validateConfigValue("app_config", "nosuchfield", "x"); err == nil ||
 		!strings.Contains(err.Error(), "unknown config fields") {
 		t.Errorf("unknown field accepted: %v", err)
+	}
+	if err := validateConfigValue("system", "nosuchfield", "x"); err == nil ||
+		!strings.Contains(err.Error(), "static openrun.toml config") {
+		t.Errorf("non allowlisted field accepted: %v", err)
 	}
 	if err := validateConfigValue("app_config", "cors.nosuchfield", "x"); err == nil {
 		t.Error("unknown nested field accepted")
 	}
-	if err := validateConfigValue("system", "max_concurrent_builds", "notanumber"); err == nil {
+	if err := validateConfigValue("app_builder", "max_sessions", "notanumber"); err == nil {
 		t.Error("ill-typed int value accepted")
 	}
 	// Static-only sections are rejected
@@ -280,7 +314,8 @@ func TestMergeDynamicSettings(t *testing.T) {
 	dynamic := &types.DynamicConfig{
 		Settings: map[string]map[string]any{
 			"security": {
-				"default_git_auth":               "dyngit",
+				"default_git_auth": "dyngit",
+				// Not allowlisted: a persisted value is ignored
 				"allowed_container_args.dyn_arg": "2",
 			},
 			"system": {"list_apps_title": "Dynamic title", "show_hosted_with": true},
@@ -314,10 +349,9 @@ func TestMergeDynamicSettings(t *testing.T) {
 	if merged.AppConfig.Container.HealthTimeoutSecs != 42 {
 		t.Errorf("int app_config setting not applied: %d", merged.AppConfig.Container.HealthTimeoutSecs)
 	}
-	// Map-valued fields merge at key granularity with a cloned map
-	if merged.Security.AllowedContainerArgs["dyn_arg"] != "2" ||
+	if _, ok := merged.Security.AllowedContainerArgs["dyn_arg"]; ok ||
 		merged.Security.AllowedContainerArgs["static_arg"] != "1" {
-		t.Errorf("allowed_container_args not merged: %v", merged.Security.AllowedContainerArgs)
+		t.Errorf("static only allowed_container_args merged: %v", merged.Security.AllowedContainerArgs)
 	}
 	// Flat kv sections merge key by key, dotted keys stay literal
 	if merged.NodeConfig["dyn_key"] != int64(7) || merged.NodeConfig["dotted.key"] != "dv" ||
@@ -368,13 +402,27 @@ func TestFlattenConfigValues(t *testing.T) {
 }
 
 // TestStaticOnlySettingKeys verifies the dynamic-config write path rejects
-// static-only fields: any unsafe_* field, and fields tagged dynamic:"-"
+// every field outside the allowlist, in particular the host command, exec,
+// mount and container arg settings, and any unsafe_* field
 func TestStaticOnlySettingKeys(t *testing.T) {
 	staticOnly := [][2]string{
 		{"security", "unsafe_disable_rbac"},
 		{"security", "unsafe_allow_system_plugins_anon"},
-		{"security", "trusted_proxies"}, // dynamic:"-" tag
+		{"security", "trusted_proxies"},
 		{"security", "remote_disk_read_paths"},
+		{"security", "allowed_exec_commands"},
+		{"security", "allowed_exec_env"},
+		{"security", "allowed_mounts"},
+		{"security", "allowed_container_args.--privileged"},
+		{"security", "callback_url"},
+		{"system", "container_command"},
+		{"system", "tailwindcss_command"},
+		{"system", "node_path"},
+		{"system", "builder_auth_token"},
+		{"app_builder", "workspace_dir"},
+		{"api", "cimd_allow_private_hosts"},
+		{"app_config", "unsafe_x"},
+		{"node_config", "unsafe_x"},
 	}
 	for _, pair := range staticOnly {
 		if !staticOnlySettingKey(pair[0], pair[1]) {
@@ -387,10 +435,13 @@ func TestStaticOnlySettingKeys(t *testing.T) {
 	}
 	for _, pair := range [][2]string{
 		{"security", "default_git_auth"},
-		{"security", "allowed_mounts"},
+		{"security", "app_default_auth_type"},
 		{"system", "default_domain"},
-		{"api", "enable"},
+		{"api", "rest.enable"},
 		{"api", "external_url"},
+		{"app_builder", "enabled"},
+		{"app_config", "cors.allow_origin"},
+		{"node_config", "any_key"},
 	} {
 		if staticOnlySettingKey(pair[0], pair[1]) {
 			t.Errorf("%s %s must stay dynamically settable", pair[0], pair[1])
@@ -398,19 +449,196 @@ func TestStaticOnlySettingKeys(t *testing.T) {
 	}
 }
 
+// TestDynamicAllowlistMatchesSchema verifies every allowlisted section and
+// key exists in the config schema, so a renamed field cannot leave a stale
+// allowlist entry behind
+func TestDynamicAllowlistMatchesSchema(t *testing.T) {
+	for section := range dynamicEntrySections {
+		if _, ok := configSectionType(section); !ok {
+			t.Errorf("allowlisted entry section %s is not a named-entry section", section)
+		}
+	}
+	for section, keys := range dynamicSettingKeys {
+		if !isConfigSettingsSection(section) {
+			t.Errorf("allowlisted settings section %s is not a settings section", section)
+		}
+		for key := range keys {
+			fieldType, _ := configSectionField(section)
+			for part := range strings.SplitSeq(key, ".") {
+				field, ok := fieldByTomlTag(fieldType, part)
+				if !ok {
+					t.Errorf("allowlisted key %s %s is not in the config schema", section, key)
+					break
+				}
+				fieldType = field.Type
+			}
+		}
+	}
+}
+
+func fieldByTomlTag(t reflect.Type, tag string) (reflect.StructField, bool) {
+	if t.Kind() != reflect.Struct {
+		return reflect.StructField{}, false
+	}
+	for i := range t.NumField() {
+		if strings.Split(t.Field(i).Tag.Get("toml"), ",")[0] == tag {
+			return t.Field(i), true
+		}
+	}
+	return reflect.StructField{}, false
+}
+
+// noEntryCheck is the validateChangedConfigItems entry check for tests which
+// exercise the context free validation only
+func noEntryCheck(string, map[string]any) error { return nil }
+
+// TestCheckBuilderAgentPaths verifies dynamic builder_agent config_files must
+// mount from within security.allowed_mounts, and path fields cannot be
+// templates resolved after the write-time check
+func TestCheckBuilderAgentPaths(t *testing.T) {
+	root := t.TempDir()
+	allowed := filepath.Join(root, "mounts")
+	if err := os.MkdirAll(filepath.Join(allowed, "claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A link under the allowed root pointing outside does not qualify
+	if err := os.Symlink(outside, filepath.Join(allowed, "link")); err != nil {
+		t.Fatal(err)
+	}
+	mounts := []string{allowed}
+
+	for _, entries := range [][]any{
+		nil,
+		{filepath.Join(allowed, "claude") + ":/root/.claude:ro"},
+		{filepath.Join(allowed, "claude", "auth.json") + ":/root/auth.json"},
+	} {
+		if err := checkBuilderAgentPaths(map[string]any{"config_files": entries}, mounts); err != nil {
+			t.Errorf("allowed config_files %v rejected: %v", entries, err)
+		}
+	}
+	for name, values := range map[string]map[string]any{
+		"outside":          {"config_files": []any{"/:/host"}},
+		"outside dir":      {"config_files": []any{outside + ":/x"}},
+		"traversal":        {"config_files": []any{allowed + "/../outside:/x"}},
+		"link traversal":   {"config_files": []any{filepath.Join(allowed, "link") + "/../x:/x"}},
+		"missing escape":   {"config_files": []any{filepath.Join(outside, "new", "auth.json") + ":/x"}},
+		"symlink escape":   {"config_files": []any{filepath.Join(allowed, "link") + ":/x"}},
+		"relative":         {"config_files": []any{"somevolume:/x"}},
+		"no allowed":       {"config_files": []string{filepath.Join(allowed, "claude") + ":/x"}},
+		"template mount":   {"config_files": []any{`{{secret "p"}}:/x`}},
+		"template docker":  {"dockerfile": `{{secret "p"}}`},
+		"bad mount syntax": {"config_files": []any{filepath.Join(allowed, "claude")}},
+	} {
+		allowedMounts := mounts
+		if name == "no allowed" {
+			allowedMounts = nil
+		}
+		if err := checkBuilderAgentPaths(values, allowedMounts); err == nil {
+			t.Errorf("%s: config %v accepted", name, values)
+		}
+	}
+}
+
+// TestMergeSkipsDisallowedBuilderAgents verifies a persisted dynamic
+// builder_agent entry mounting from outside security.allowed_mounts does not
+// apply, while a valid one does
+func TestMergeSkipsDisallowedBuilderAgents(t *testing.T) {
+	allowed := t.TempDir()
+	static := &types.ServerConfig{}
+	static.Security.AllowedMounts = []string{allowed}
+	dynamic := &types.DynamicConfig{Entries: map[string]map[string]map[string]any{
+		"builder_agent": {
+			"claude":   {"config_files": []any{allowed + ":/root/.claude"}},
+			"opencode": {"config_files": []any{"/:/host"}},
+		},
+	}}
+	effective, err := mergeDynamicConfig(testutil.TestLogger(), static, dynamic, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := effective.BuilderAgent["claude"]; !ok {
+		t.Error("valid dynamic builder agent not merged")
+	}
+	if _, ok := effective.BuilderAgent["opencode"]; ok {
+		t.Error("builder agent mounting / must not apply")
+	}
+	if len(dynamic.Entries["builder_agent"]) != 2 {
+		t.Error("merge modified the dynamic config")
+	}
+}
+
+// TestValidateChangedConfigItems verifies the full document update path
+// rejects new or changed static-only values, while unchanged previously
+// persisted values do not block an update
+func TestValidateChangedConfigItems(t *testing.T) {
+	current := &types.DynamicConfig{
+		Settings: map[string]map[string]any{"system": {"container_command": "docker"}},
+		Entries:  map[string]map[string]map[string]any{"forward": {"f": {"url": "x"}}},
+	}
+	unchanged := &types.DynamicConfig{
+		Settings: map[string]map[string]any{
+			"system": {"container_command": "docker", "default_domain": "example.com"},
+		},
+		Entries: map[string]map[string]map[string]any{
+			"forward":  {"f": {"url": "x"}},
+			"git_auth": {"gh": {"user_id": "git"}},
+		},
+	}
+	if err := validateChangedConfigItems(unchanged, current, noEntryCheck); err != nil {
+		t.Errorf("unchanged persisted values must not block an update: %v", err)
+	}
+
+	for name, candidate := range map[string]*types.DynamicConfig{
+		"changed setting": {Settings: map[string]map[string]any{"system": {"container_command": "/tmp/evil"}}},
+		"new setting":     {Settings: map[string]map[string]any{"system": {"tailwindcss_command": "/tmp/evil"}}},
+		"new section":     {Settings: map[string]map[string]any{"bindings": {"cache_dir": "/tmp"}}},
+		"changed entry":   {Entries: map[string]map[string]map[string]any{"forward": {"f": {"url": "y"}}}},
+		"new entry":       {Entries: map[string]map[string]map[string]any{"plugin": {"p": {"k": "v"}}}},
+	} {
+		if err := validateChangedConfigItems(candidate, current, noEntryCheck); err == nil ||
+			!strings.Contains(err.Error(), "static openrun.toml config") {
+			t.Errorf("%s: static only change must be rejected, got %v", name, err)
+		}
+	}
+	builtin := &types.DynamicConfig{Entries: map[string]map[string]map[string]any{"builtin_auth": {"u": {"password": "x"}}}}
+	if err := validateChangedConfigItems(builtin, current, noEntryCheck); err == nil ||
+		!strings.Contains(err.Error(), "openrun user") {
+		t.Errorf("builtin_auth entry must point at openrun user, got %v", err)
+	}
+}
+
 // TestMergeSkipsStaticOnlySettings verifies a previously persisted value for
 // a static-only field does not apply during the merge
 func TestMergeSkipsStaticOnlySettings(t *testing.T) {
 	static := &types.ServerConfig{}
-	dynamic := &types.DynamicConfig{Settings: map[string]map[string]any{
-		"security": {"unsafe_disable_rbac": true, "default_git_auth": "gh"},
-	}}
+	dynamic := &types.DynamicConfig{
+		Settings: map[string]map[string]any{
+			"security": {"unsafe_disable_rbac": true, "default_git_auth": "gh",
+				"allowed_exec_commands": []any{"/bin/sh"}},
+			"system":   {"container_command": "/tmp/evil"},
+			"bindings": {"cache_dir": "/tmp/evil"},
+		},
+		Entries: map[string]map[string]map[string]any{
+			"forward": {"f": {"auth_url": "http://evil"}},
+		},
+	}
 	effective, err := mergeDynamicConfig(testutil.TestLogger(), static, dynamic, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if effective.Security.UnsafeDisableRBAC {
 		t.Fatal("persisted unsafe_disable_rbac must not apply from dynamic settings")
+	}
+	if len(effective.Security.AllowedExecCommands) != 0 || effective.System.ContainerCommand != "" ||
+		effective.Bindings.CacheDir != "" {
+		t.Fatalf("persisted static only settings must not apply: %+v %+v", effective.Security, effective.System)
+	}
+	if len(effective.Forward) != 0 {
+		t.Fatalf("persisted static only entries must not apply: %v", effective.Forward)
 	}
 	if effective.Security.DefaultGitAuth != "gh" {
 		t.Fatal("regular security settings must still merge")

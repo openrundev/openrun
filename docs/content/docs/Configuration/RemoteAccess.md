@@ -44,7 +44,7 @@ callback_url = "https://openrun.example.com:25223"
 
 For real deployments, configure [automatic TLS certificates]({{< ref "networking" >}}); the default self-signed certificate works for the OpenRun CLI (with `skip_cert_check`) but most MCP clients reject it.
 
-The `[api]` section is also part of the [dynamic config]({{< ref "overview/#dynamic-config" >}}), so the surfaces can be enabled and reconfigured at runtime without a restart (the same transport prerequisites are validated on update).
+The `[api]` surface settings shown in the console (enable, logins, operation overrides, the external url and token lifetimes) are also part of the [dynamic config]({{< ref "overview/#dynamic-config" >}}), so the surfaces can be enabled and reconfigured at runtime without a restart (the same transport prerequisites are validated on update). The `cimd_*` client metadata settings are static config only.
 
 ## Connect the Remote CLI
 

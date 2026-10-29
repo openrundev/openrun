@@ -979,13 +979,6 @@ func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.Dynam
 	if err := s.enforceAdminSurfaceChange(ctx, s.rbacManager.AdminSurface(), rbac.ComputeAdminSurface(&newConfig.RBAC)); err != nil {
 		return nil, err
 	}
-	for section := range newConfig.Entries {
-		if _, ok := configSectionType(section); !ok {
-			return nil, fmt.Errorf("unknown config entries section %q, valid sections are: %s "+
-				"(builtin users are managed with \"openrun user\", not as config entries)",
-				section, strings.Join(listConfigSections(), ", "))
-		}
-	}
 
 	// Copy before replacing redaction markers or assigning a version so
 	// rejected requests and returned read documents never alias live state.
@@ -994,6 +987,13 @@ func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.Dynam
 		return nil, err
 	}
 	if err := restoreRedactedConfigValues(candidate, s.dynamicConfig); err != nil {
+		return nil, err
+	}
+	// Only the allowlisted sections and keys can be changed dynamically
+	checkEntry := func(section string, values map[string]any) error {
+		return s.checkDynamicEntry(ctx, section, values)
+	}
+	if err := validateChangedConfigItems(candidate, s.dynamicConfig, checkEntry); err != nil {
 		return nil, err
 	}
 	candidate.VersionId = "ver_" + ksuid.New().String()

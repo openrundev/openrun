@@ -5,14 +5,20 @@ package server
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/openrundev/openrun/internal/builder"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -22,8 +28,10 @@ import (
 // Entries cover the named-entry map sections ([git_auth.x], [auth.y], ...),
 // settings cover individual fields of the struct sections (security.
 // default_git_auth, system.default_domain, app_config.cors.allow_origin, ...).
-// Everything here is driven by the types.ServerConfig struct tags, so a new
-// toml section or field becomes dynamically configurable without code changes.
+// Schema validation and the merge are driven by the types.ServerConfig struct
+// tags. Which sections and fields can be set dynamically is an explicit
+// allowlist (dynamicEntrySections, dynamicSettingKeys): a new toml section or
+// field is static-config only until it is added there.
 
 // RedactedValue is returned in place of secret field values by the config
 // read APIs. An update which submits this value keeps the stored value, so
@@ -68,7 +76,7 @@ func configSectionField(section string) (reflect.Type, bool) {
 // sections qualify, and not the static-only ones
 func configSectionType(section string) (reflect.Type, bool) {
 	fieldType, ok := configSectionField(section)
-	if !ok || staticOnlySections[section] || !isEntrySectionType(fieldType) {
+	if !ok || !dynamicEntrySections[section] || !isEntrySectionType(fieldType) {
 		return nil, false
 	}
 	return fieldType, true
@@ -76,37 +84,86 @@ func configSectionType(section string) (reflect.Type, bool) {
 
 // listConfigSections returns the names of all dynamically settable sections
 func listConfigSections() []string {
-	t := reflect.TypeFor[types.ServerConfig]()
-	sections := []string{}
-	for i := range t.NumField() {
-		field := t.Field(i)
-		tag := strings.Split(field.Tag.Get("toml"), ",")[0]
-		if field.Anonymous || tag == "" || tag == "-" || staticOnlySections[tag] {
-			continue
-		}
-		if isEntrySectionType(field.Type) {
-			sections = append(sections, tag)
-		}
-	}
-	sort.Strings(sections)
-	return sections
+	return slices.Sorted(maps.Keys(dynamicEntrySections))
 }
 
-// staticOnlySections are sections which cannot be set dynamically: logging
-// and telemetry are read on hot paths by components which cache the config
-// at startup, so a dynamic value would be misleading (and applying it at
-// runtime would put synchronization on those paths); builtin_auth is the
-// deprecated static import source of builtin users, which live in their own
-// table (older dynamic configs carrying builtin_auth entries were migrated
-// at DB version 33)
-var staticOnlySections = map[string]bool{"logging": true, "telemetry": true, "builtin_auth": true}
+// The dynamic config allowlist: only what the console config pages manage
+// can be set through the dynamic config API (config:update is held by
+// operators who are not admin). Everything else in openrun.toml - host
+// commands, exec/mount/container arg allowlists, plugin provider sources,
+// listeners, logging, telemetry, every unsafe_* flag - is static config
+// only, rejected on write and ignored (with a warning) when a previously
+// persisted value is merged. Adding a section or key here makes it settable
+// by config:update holders, so it must be safe for a non-admin to change.
+
+// dynamicEntrySections are the named-entry sections which can be set
+// dynamically, at whole-entry granularity
+var dynamicEntrySections = map[string]bool{
+	"git_auth":        true,
+	"auth":            true,
+	"saml":            true,
+	"secret":          true,
+	"builder_agent":   true,
+	"builder_profile": true,
+	"builder_git":     true,
+}
+
+// dynamicSettingKeys are the struct section fields (dotted keys) which can be
+// set dynamically
+var dynamicSettingKeys = map[string]map[string]bool{
+	"security": {
+		"app_default_auth_type": true,
+		"default_git_auth":      true,
+	},
+	"system": {
+		"default_domain":   true,
+		"stage_at":         true,
+		"list_apps_title":  true,
+		"show_hosted_with": true,
+	},
+	"api": {
+		"external_url":                 true,
+		"access_token_ttl":             true,
+		"refresh_token_ttl":            true,
+		"grant_max_ttl":                true,
+		"federated_identity_ttl":       true,
+		"pat_default_ttl":              true,
+		"rest.enable":                  true,
+		"rest.auth":                    true,
+		"rest.enable_apis":             true,
+		"rest.disable_apis":            true,
+		"mcp.enable":                   true,
+		"mcp.auth":                     true,
+		"mcp.enable_apis":              true,
+		"mcp.disable_apis":             true,
+		"mcp.skip_destructive_confirm": true,
+		"app_mcp.enable":               true,
+		"app_mcp.allowed_auth":         true,
+		"app_mcp.max_tools":            true,
+		"app_mcp.list_ttl":             true,
+	},
+	"app_builder": {
+		"enabled":                 true,
+		"default_builder_profile": true,
+		"preview_path":            true,
+		"max_sessions":            true,
+		"session_idle_mins":       true,
+		"system_prompt":           true,
+	},
+}
+
+// dynamicFreeFormSections are the settings sections where any key can be set
+// dynamically: app_config holds the server wide app defaults, which app
+// updaters can already override per app, and node_config holds free form
+// values apps read with the config() builtin
+var dynamicFreeFormSections = map[string]bool{"app_config": true, "node_config": true}
 
 // isConfigSettingsSection reports whether a section holds settings which can
 // be set dynamically field by field: a struct section of ServerConfig, or a
 // flat key/value map section (node_config). The named-entry map sections are
 // handled through Entries instead
 func isConfigSettingsSection(section string) bool {
-	if staticOnlySections[section] {
+	if dynamicSettingKeys[section] == nil && !dynamicFreeFormSections[section] {
 		return false
 	}
 	fieldType, ok := configSectionField(section)
@@ -116,45 +173,33 @@ func isConfigSettingsSection(section string) bool {
 	return fieldType.Kind() == reflect.Struct || isFlatKVSectionType(fieldType)
 }
 
-// staticOnlySettingKey reports whether a settings field is static-config
-// only: any component of the dotted key whose name starts with "unsafe_"
-// (a security escape hatch must not be settable through the API it weakens),
-// or any field along the path carrying the dynamic:"-" struct tag. Static-
-// only fields are rejected on write and skipped (with a warning) when a
-// previously persisted value is merged
+// staticOnlySettingKey reports whether a field of a dynamically settable
+// section is static-config only: a key not in the section's allowlist, or
+// any component of the dotted key whose name starts with "unsafe_" (a
+// security escape hatch must not be settable through the API it weakens,
+// even in a free form section)
 func staticOnlySettingKey(section, key string) bool {
-	fieldType, ok := configSectionField(section)
-	if !ok {
-		return false
-	}
-	t := fieldType
 	for part := range strings.SplitSeq(key, ".") {
 		if strings.HasPrefix(part, "unsafe_") {
 			return true
 		}
-		if t.Kind() != reflect.Struct {
-			// Flat key/value map sections (node_config) have literal keys
-			return false
-		}
-		next, found := reflect.Type(nil), false
-		for i := range t.NumField() {
-			field := t.Field(i)
-			if strings.Split(field.Tag.Get("toml"), ",")[0] != part {
-				continue
-			}
-			if field.Tag.Get("dynamic") == "-" {
-				return true
-			}
-			next, found = field.Type, true
-			break
-		}
-		if !found {
-			// Unknown field: the schema validation reports it
-			return false
-		}
-		t = next
 	}
-	return false
+	if dynamicFreeFormSections[section] {
+		return false
+	}
+	return !dynamicSettingKeys[section][key]
+}
+
+// staticOnlySectionError returns the error for a dynamic write to a section
+// of openrun.toml which is not dynamically settable, or nil when the section
+// does not exist in the config schema at all
+func staticOnlySectionError(section string) error {
+	if _, ok := configSectionField(section); !ok {
+		return nil
+	}
+	return fmt.Errorf("[%s] can only be set in the static openrun.toml config, not through the dynamic config API. "+
+		"Dynamically settable entry sections are: %s; settings sections are: %s",
+		section, strings.Join(listConfigSections(), ", "), strings.Join(listConfigSettingsSections(), ", "))
 }
 
 // isFlatKVSection reports whether a settings section is a flat key/value map
@@ -167,19 +212,9 @@ func isFlatKVSection(section string) bool {
 // listConfigSettingsSections returns the names of all sections whose fields
 // can be set dynamically
 func listConfigSettingsSections() []string {
-	t := reflect.TypeFor[types.ServerConfig]()
-	sections := []string{}
-	for i := range t.NumField() {
-		field := t.Field(i)
-		tag := strings.Split(field.Tag.Get("toml"), ",")[0]
-		if field.Anonymous || tag == "" || tag == "-" || staticOnlySections[tag] {
-			continue
-		}
-		if field.Type.Kind() == reflect.Struct || isFlatKVSectionType(field.Type) {
-			sections = append(sections, tag)
-		}
-	}
-	sort.Strings(sections)
+	sections := slices.Collect(maps.Keys(dynamicSettingKeys))
+	sections = slices.AppendSeq(sections, maps.Keys(dynamicFreeFormSections))
+	slices.Sort(sections)
 	return sections
 }
 
@@ -257,11 +292,21 @@ func validateConfigValue(section, key string, value any) error {
 		return fmt.Errorf("config key cannot be empty")
 	}
 	if !isConfigSettingsSection(section) {
+		if _, isEntry := configSectionType(section); !isEntry {
+			if err := staticOnlySectionError(section); err != nil {
+				return err
+			}
+		}
 		return fmt.Errorf("unknown config settings section %q, valid sections are: %s",
 			section, strings.Join(listConfigSettingsSections(), ", "))
 	}
 	if staticOnlySettingKey(section, key) {
-		return fmt.Errorf("%s %s can only be set in the static openrun.toml config, not through the dynamic config API", section, key)
+		allowed := "any key except unsafe_* keys"
+		if !dynamicFreeFormSections[section] {
+			allowed = strings.Join(slices.Sorted(maps.Keys(dynamicSettingKeys[section])), ", ")
+		}
+		return fmt.Errorf("%s %s can only be set in the static openrun.toml config, not through the dynamic config API. "+
+			"Dynamically settable %s keys are: %s", section, key, section, allowed)
 	}
 	if value == nil {
 		return fmt.Errorf("config value cannot be empty")
@@ -322,6 +367,11 @@ func validateConfigEntry(section, name string, values map[string]any) error {
 		return fmt.Errorf("config entry name cannot be empty")
 	}
 	if _, ok := configSectionType(section); !ok {
+		if !isConfigSettingsSection(section) {
+			if err := staticOnlySectionError(section); err != nil {
+				return err
+			}
+		}
 		return fmt.Errorf("unknown config section %q, valid sections are: %s",
 			section, strings.Join(listConfigSections(), ", "))
 	}
@@ -360,22 +410,154 @@ func validateConfigEntry(section, name string, values map[string]any) error {
 		if err := validateProfilePublish(mode, target); err != nil {
 			return err
 		}
-		var services []string
-		switch raw := values["services"].(type) {
-		case []any:
-			for _, entry := range raw {
-				if str, ok := entry.(string); ok {
-					services = append(services, str)
-				}
-			}
-		case []string:
-			services = raw
-		}
-		if err := validateProfileServices(services); err != nil {
+		if err := validateProfileServices(configStringList(values["services"])); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// configStringList returns the string items of a list value from an entry
+// document ([]any after the json round trip, []string from Go callers)
+func configStringList(value any) []string {
+	switch raw := value.(type) {
+	case []any:
+		var out []string
+		for _, entry := range raw {
+			if str, ok := entry.(string); ok {
+				out = append(out, str)
+			}
+		}
+		return out
+	case []string:
+		return raw
+	}
+	return nil
+}
+
+// checkBuilderAgentPaths checks the server paths of a dynamic builder_agent
+// entry which do not need the caller's context. config_files host paths are
+// bind mounted into the agent sandbox (which runs as root), so each must be
+// an absolute path within one of the security.allowed_mounts directories,
+// like app container volumes; allowed_mounts is static config only, so a
+// config:update holder cannot widen it. The path fields cannot be templates:
+// a {{secret ...}} resolved at merge time would bypass the write-time checks.
+// The dockerfile path is checked against the caller's disk access by
+// Server.checkDynamicEntry
+func checkBuilderAgentPaths(values map[string]any, allowedMounts []string) error {
+	if dockerfile, _ := values["dockerfile"].(string); strings.Contains(dockerfile, "{{") {
+		return fmt.Errorf("builder agent dockerfile %q cannot be a template", dockerfile)
+	}
+	for _, entry := range configStringList(values["config_files"]) {
+		if strings.Contains(entry, "{{") {
+			return fmt.Errorf("builder agent config_files entry %q cannot be a template", entry)
+		}
+		host, err := builder.ConfigMountHostPath(entry)
+		if err != nil {
+			return err
+		}
+		if !filepath.IsAbs(host) || filepath.Clean(host) != host {
+			// Docker gets the raw path, where a .. after a symlink resolves
+			// against the link target, not lexically as the check would
+			return fmt.Errorf("builder agent config_files host path %q must be a clean absolute path", host)
+		}
+		if !pathWithinRoots(host, allowedMounts) {
+			return fmt.Errorf("builder agent config_files host path %q is not within a security.allowed_mounts directory: "+
+				"add its directory to security.allowed_mounts, or define this agent in the static openrun.toml config", host)
+		}
+	}
+	return nil
+}
+
+// pathWithinRoots reports whether path is inside one of the roots (env
+// expanded). Both sides are made absolute with symlinks resolved, so a link
+// under a root pointing elsewhere does not qualify
+func pathWithinRoots(path string, roots []string) bool {
+	target, err := resolveExistingPrefix(path)
+	if err != nil {
+		return false
+	}
+	for _, root := range roots {
+		cleanRoot, err := system.CleanAbsolutePath(os.ExpandEnv(root))
+		if err != nil {
+			continue
+		}
+		if inside, err := system.PathWithinDir(cleanRoot, target); err == nil && inside {
+			return true
+		}
+	}
+	return false
+}
+
+// validateChangedConfigItems validates the entries and settings of a full
+// dynamic config document (update-config upload, history restore, RBAC
+// publish) which differ from the current config, applying the same checks as
+// the per-item set APIs. Unchanged values are not revalidated: a value
+// persisted before its section or key was made static only is ignored by the
+// merge, and must not block unrelated updates like an RBAC publish.
+// checkEntry runs the context dependent entry checks on changed entries
+func validateChangedConfigItems(candidate, current *types.DynamicConfig,
+	checkEntry func(section string, values map[string]any) error) error {
+	for section, entries := range candidate.Entries {
+		for name, values := range entries {
+			if configValueEqual(values, current.Entries[section][name]) {
+				continue
+			}
+			if section == "builtin_auth" {
+				return fmt.Errorf("entry [%s.%s]: builtin users are managed with \"openrun user\", not as config entries", section, name)
+			}
+			if err := validateConfigEntry(section, name, values); err != nil {
+				return fmt.Errorf("entry [%s.%s]: %w", section, name, err)
+			}
+			if err := checkEntry(section, values); err != nil {
+				return fmt.Errorf("entry [%s.%s]: %w", section, name, err)
+			}
+		}
+	}
+	for section, values := range candidate.Settings {
+		for key, value := range values {
+			if value == nil || configValueEqual(value, current.Settings[section][key]) {
+				continue
+			}
+			if err := validateConfigValue(section, key, value); err != nil {
+				return fmt.Errorf("setting %s %s: %w", section, key, err)
+			}
+		}
+	}
+	return nil
+}
+
+// configValueEqual compares two config document values by their canonical
+// json encoding, so typed and json decoded representations compare equal
+func configValueEqual(a, b any) bool {
+	if b == nil {
+		return false
+	}
+	aJSON, errA := json.Marshal(a, json.Deterministic(true))
+	bJSON, errB := json.Marshal(b, json.Deterministic(true))
+	return errA == nil && errB == nil && bytes.Equal(aJSON, bJSON)
+}
+
+// resolveExistingPrefix makes path absolute and resolves the symlinks of its
+// longest existing prefix, so a file not created yet compares against its
+// resolved root (on macOS /var is a link to /private/var)
+func resolveExistingPrefix(path string) (string, error) {
+	abs, err := system.CleanAbsolutePath(path)
+	if err != nil {
+		return "", err
+	}
+	rest := ""
+	for dir := abs; ; {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(resolved, rest), nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return abs, nil
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+	}
 }
 
 // structEntryValues converts a static config entry struct (GitAuthEntry,
@@ -411,11 +593,16 @@ func flattenConfigValues(values map[string]any, prefix string, out map[string]an
 }
 
 // isSecretConfigField reports whether a field holds a secret which must not
-// be returned by the read APIs. Dotted settings keys check the leaf segment
+// be returned by the read APIs. Dotted settings keys check the leaf segment.
+// Durations (api.access_token_ttl) and provider names (app_config.security.
+// default_secrets_provider) only name a secret concept, they are not secrets
 func isSecretConfigField(fieldName string) bool {
 	fieldName = strings.ToLower(fieldName)
 	if idx := strings.LastIndex(fieldName, "."); idx >= 0 {
 		fieldName = fieldName[idx+1:]
+	}
+	if strings.HasSuffix(fieldName, "_ttl") || strings.HasSuffix(fieldName, "_provider") {
+		return false
 	}
 	return strings.Contains(fieldName, "secret") || strings.Contains(fieldName, "password") ||
 		strings.Contains(fieldName, "token") || fieldName == "private_key"
@@ -671,6 +858,22 @@ func mergeDynamicConfig(logger *types.Logger, static *types.ServerConfig,
 		}
 	}
 
+	if len(entries["builder_agent"]) > 0 {
+		// A previously persisted agent whose mounts are outside the
+		// allowed mounts must not apply. Checked after the secret
+		// evaluation, on the paths the sandbox would mount
+		agents := make(map[string]map[string]any, len(entries["builder_agent"]))
+		for name, values := range entries["builder_agent"] {
+			if err := checkBuilderAgentPaths(values, static.Security.AllowedMounts); err != nil {
+				logger.Warn().Err(err).Msgf("dynamic config entry [builder_agent.%s] ignored", name)
+				continue
+			}
+			agents[name] = values
+		}
+		entries = maps.Clone(entries)
+		entries["builder_agent"] = agents
+	}
+
 	staticVal := reflect.ValueOf(static).Elem()
 	effectiveVal := reflect.ValueOf(&effective).Elem()
 
@@ -699,8 +902,10 @@ func mergeDynamicConfig(logger *types.Logger, static *types.ServerConfig,
 			if len(entries[tag]) == 0 {
 				continue
 			}
-			if staticOnlySections[tag] {
-				logger.Warn().Msgf("dynamic config entries for section %s are not supported, ignored", tag)
+			if _, ok := configSectionType(tag); !ok {
+				// A previously persisted entry for a section which is
+				// not (or no longer) dynamically settable must not apply
+				logger.Warn().Msgf("dynamic config entries for section %s are static config only, ignored", tag)
 				continue
 			}
 
@@ -756,8 +961,8 @@ func mergeDynamicConfig(logger *types.Logger, static *types.ServerConfig,
 					continue
 				}
 				if staticOnlySettingKey(section, key) {
-					// A previously persisted value for a since-made
-					// static-only field must not apply
+					// A previously persisted value for a field which is
+					// not (or no longer) dynamically settable must not apply
 					logger.Warn().Msgf("dynamic config setting %s %s is static config only, ignored", section, key)
 					continue
 				}
