@@ -7,12 +7,13 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.20.6] - 2026-10-28
+
 ### Added
 
 - Builtin users are now accounts in their own `builtin_users` table instead of `[builtin_auth.*]` config entries. `openrun user update` gains `--disable`/`--enable` (a disabled user cannot log in, and its sessions, API keys and scheduled job authority stop) and `--unlock`; `openrun user show <name>` and the `user_get` API/MCP tool report a user's groups, state, creation and last login. After ten consecutive wrong passwords an account is locked for 15 minutes. A password change, disable or delete signs the user out of existing browser sessions immediately, and deleting a user revokes their API keys and OAuth tokens.
 - New RBAC permission `admin:manage`: changing who holds the `admin` permission (the grants and roles that confer it or `admin:manage`, and the membership of the groups those grants reference) through a dynamic config update, and placing a builtin user in such a group, now requires `admin:manage` or `admin` in addition to `config:update` / `user:update`. Previously any `config:update` holder (such as `openrun-operator`) could add themselves to an admin group. `admin:manage` is never matched by role or API key scope globs.
 - New RBAC permissions `user:read`, `user:create`, `user:update`, `user:delete` and `user:manage` govern builtin user management (previously `config:update`/`config:read`). `openrun-operator` includes `user:manage`, `openrun-monitor` includes `user:read`. The write permissions are never matched by API key scope globs, like `config:update`.
-
 - Resource limits on app code driven by request input. A request body on the Starlark handler routes (html, fragment, api) over `max_request_body_bytes` (an `[app_config]` setting, 10MB by default) is refused with 413. `int()` refuses a string over 4096 characters; `list`, `tuple`, `set`, `sorted`, `reversed`, `enumerate` and `zip` refuse an iterable of over 16777216 known elements; a handler recursing over 10000 frames fails. The template functions `until`, `untilStep` and `seq` refuse over 1000000 items, and `repeat`, `indent`, `nindent` and the `rand*` functions an output over 16MB. `system.memory_high_water_bytes` (0 by default, which uses 90% of the Go memory limit when `GOMEMLIMIT` is set) cancels running Starlark handlers while the server's memory in use is over the mark.
 - `security.login_start_rate_limit` (60 by default, 0 disables) caps the login handshakes (form login, OAuth/OIDC, SAML) a client IP may start per minute; further starts get a 429 response. The form login state of an expired login is kept for an hour after its deadline (was a day).
 
@@ -30,6 +31,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Updated certmagic to fix an issue which could cause certificate renewal to fail
 - Concurrent requests to an app not loaded on the node (after an idle stop, a deploy or a restart) share one load. Each request used to build and cache its own instance of the app: the extra instances were never closed, each started its own container checks, in stop-first deploy mode all but one request failed with 503, and an orphaned instance's idle check could stop the container the served instance was proxying to.
 - Metadata DB upgrades are safe to run from several server nodes at once: on PostgreSQL the upgrade takes a transaction-level advisory lock and re-reads the schema version under it.
 - Template globs (`routing.base_templates` and the template locations) of apps served from disk now also match files supplied by the app spec, as the other file reads already did.
