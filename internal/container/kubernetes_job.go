@@ -17,6 +17,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/util/retry"
+
+	"github.com/openrundev/openrun/internal/types"
 )
 
 const jobTTLSecondsAfterFinished = int32(24 * 60 * 60)
@@ -70,15 +73,32 @@ func (k *KubernetesCM) RunJob(ctx context.Context, req JobRunRequest) (int, erro
 		LABEL_PREFIX + JobRunLabel: req.RunId,
 	}
 
-	envVars := make([]core.EnvVar, 0, len(req.Env))
-	for key, value := range req.Env {
-		envVars = append(envVars, core.EnvVar{Name: key, Value: value})
+	// The run env (resolved {{secret}} params, binding credentials) goes in
+	// a Secret the container loads with envFrom, not as literal values in
+	// the Job spec; see createDeployment. The Secret is created first (the
+	// pod needs it) and made owned by the Job once that exists, so the TTL
+	// and the explicit deletes garbage collect it with the Job
+	var envFrom []core.EnvFromSource
+	if len(req.Env) > 0 {
+		secret := &core.Secret{
+			ObjectMeta: meta.ObjectMeta{
+				Name:      envSecretName(name),
+				Namespace: k.appNamespace,
+				Labels:    jobEnvSecretLabels(name, req.AppEntry.Id),
+			},
+			StringData: req.Env,
+		}
+		if _, err := k.clientSet.CoreV1().Secrets(k.appNamespace).Create(ctx, secret, meta.CreateOptions{}); err != nil {
+			return -1, fmt.Errorf("create env secret %s: %w", secret.Name, err)
+		}
+		envFrom = append(envFrom, core.EnvFromSource{SecretRef: &core.SecretEnvSource{
+			LocalObjectReference: core.LocalObjectReference{Name: secret.Name}}})
 	}
 
 	container := core.Container{
 		Name:    "job",
 		Image:   image,
-		Env:     envVars,
+		EnvFrom: envFrom,
 		Command: req.Argv,
 	}
 	if !strings.Contains(image, "@") {
@@ -141,10 +161,21 @@ func (k *KubernetesCM) RunJob(ctx context.Context, req JobRunRequest) (int, erro
 		job.Spec.ActiveDeadlineSeconds = &deadline
 	}
 
-	if _, err := k.clientSet.BatchV1().Jobs(k.appNamespace).Create(ctx, job, meta.CreateOptions{}); err != nil {
+	created, err := k.clientSet.BatchV1().Jobs(k.appNamespace).Create(ctx, job, meta.CreateOptions{})
+	if err != nil {
+		if len(envFrom) > 0 {
+			k.deleteJobEnvSecret(name)
+		}
 		return -1, fmt.Errorf("create job %s: %w", name, err)
 	}
 	k.Info().Msgf("created kubernetes job %s for run %s", name, req.RunId)
+	if len(envFrom) > 0 {
+		if err := k.ownJobEnvSecret(ctx, created); err != nil {
+			// The explicit deletes (RemoveJob, RemoveAppJobs) still remove
+			// the Secret; only the TTL expiry path would leave it behind
+			k.Warn().Err(err).Msgf("env secret of job %s is not owned by the job", name)
+		}
+	}
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -225,13 +256,51 @@ func (k *KubernetesCM) jobPodExitCode(ctx context.Context, name string) (int, bo
 	return -1, false
 }
 
-// RemoveJob deletes the Job and its pods
+// jobEnvSecretLabels are the labels of a job's env Secret: the ownership
+// labels plus the app id, so RemoveAppJobs finds it like the Jobs
+func jobEnvSecretLabels(jobName string, appId types.AppId) map[string]string {
+	labels := ownershipLabels(jobName)
+	labels[LABEL_PREFIX+"app.id"] = TrimLabelValue(string(appId))
+	return labels
+}
+
+// ownJobEnvSecret sets the Job as the owner of its env Secret, so the
+// Secret is garbage collected when the Job is deleted (by its TTL or a
+// delete with propagation)
+func (k *KubernetesCM) ownJobEnvSecret(ctx context.Context, job *batchv1.Job) error {
+	secrets := k.clientSet.CoreV1().Secrets(k.appNamespace)
+	secretName := envSecretName(job.Name)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		secret, err := secrets.Get(ctx, secretName, meta.GetOptions{})
+		if err != nil {
+			return err
+		}
+		secret.OwnerReferences = []meta.OwnerReference{*meta.NewControllerRef(job, batchv1.SchemeGroupVersion.WithKind("Job"))}
+		_, err = secrets.Update(ctx, secret, meta.UpdateOptions{})
+		return err
+	})
+}
+
+// deleteJobEnvSecret removes the env Secret of the named job, if any, with
+// its own short-lived context so a canceled run is cleaned up too
+func (k *KubernetesCM) deleteJobEnvSecret(jobName string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := k.clientSet.CoreV1().Secrets(k.appNamespace).Delete(ctx, envSecretName(jobName), meta.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		k.Warn().Err(err).Msgf("error deleting env secret of job %s", jobName)
+	}
+}
+
+// RemoveJob deletes the Job, its pods and its env Secret
 func (k *KubernetesCM) RemoveJob(ctx context.Context, name ContainerName) error {
 	propagation := meta.DeletePropagationBackground
-	err := k.clientSet.BatchV1().Jobs(k.appNamespace).Delete(ctx, jobObjectName(name), meta.DeleteOptions{PropagationPolicy: &propagation})
+	jobName := jobObjectName(name)
+	err := k.clientSet.BatchV1().Jobs(k.appNamespace).Delete(ctx, jobName, meta.DeleteOptions{PropagationPolicy: &propagation})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete job %s: %w", name, err)
 	}
+	k.deleteJobEnvSecret(jobName)
 	return nil
 }
 
@@ -276,6 +345,23 @@ func (k *KubernetesCM) RemoveAppJobs(ctx context.Context, appId string) error {
 		name := jobs.Items[i].Name
 		if err := k.clientSet.BatchV1().Jobs(k.appNamespace).Delete(ctx, name, meta.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
 			errs = append(errs, fmt.Errorf("delete job %s: %w", name, err))
+		}
+	}
+	// The env Secrets carry the app id too; delete them explicitly rather
+	// than relying on the owner reference garbage collection alone
+	secrets := k.clientSet.CoreV1().Secrets(k.appNamespace)
+	envSecrets, err := secrets.List(ctx, meta.ListOptions{
+		LabelSelector: labels.Set(map[string]string{
+			MANAGED_BY_LABEL: MANAGED_BY_VALUE, LABEL_PREFIX + "app.id": TrimLabelValue(appId)}).String(),
+	})
+	if err != nil {
+		errs = append(errs, fmt.Errorf("list env secrets for app %s: %w", appId, err))
+	} else {
+		for i := range envSecrets.Items {
+			name := envSecrets.Items[i].Name
+			if err := secrets.Delete(ctx, name, meta.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				errs = append(errs, fmt.Errorf("delete env secret %s: %w", name, err))
+			}
 		}
 	}
 	if len(errs) > 0 {

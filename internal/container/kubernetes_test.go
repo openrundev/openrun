@@ -907,6 +907,9 @@ func TestKubernetesCMRunContainerAndIdentityHelpers(t *testing.T) {
 	client := k8sfake.NewSimpleClientset()
 	depPatch := captureDeploymentApply(client)
 	serviceApplyReactor(client)
+	addApplyPatchReactor(client, "secrets", func(name, namespace string) runtime.Object {
+		return &corev1.Secret{ObjectMeta: meta.ObjectMeta{Name: name, Namespace: namespace}}
+	})
 	k := &KubernetesCM{
 		Logger: newTestLogger(), appNamespace: "apps", clientSet: client, appId: "app_fallback",
 		config:    &types.ServerConfig{Registry: types.RegistryConfig{URL: "registry.example", Project: "team"}},

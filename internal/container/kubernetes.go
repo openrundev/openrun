@@ -835,6 +835,25 @@ const VERSION_HASH_LABEL = LABEL_PREFIX + "version.hash"
 // shortHash returns a label/name-safe version suffix, also used for Docker
 // container names and image tags. Keep more than 8 chars so versions with
 // nearby hashes do not collide on the object name.
+// envSecretName is the name of the Secret holding a workload's or job's
+// environment, see applyEnvSecret
+func envSecretName(name string) string {
+	return suffixedKubernetesName(name, "-env")
+}
+
+// applyEnvSecret server-side applies the Secret holding the environment of
+// the named workload, ownership labeled for owner, and returns its name
+func (k *KubernetesCM) applyEnvSecret(ctx context.Context, name, owner string, envMap map[string]string) (string, error) {
+	secretName := envSecretName(name)
+	secretApply := corev1apply.Secret(secretName, k.appNamespace).
+		WithLabels(ownershipLabels(owner)).
+		WithStringData(envMap)
+	if _, err := k.clientSet.CoreV1().Secrets(k.appNamespace).Apply(ctx, secretApply, k.applyOptions(ctx)); err != nil {
+		return "", fmt.Errorf("apply env secret %s: %w", secretName, err)
+	}
+	return secretName, nil
+}
+
 func shortHash(versionHash string) string {
 	h := strings.ToLower(versionHash)
 	if len(h) > 16 {
@@ -924,13 +943,23 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 		}
 	}
 
-	// Convert envMap to Kubernetes EnvVar apply configurations
-	envVars := make([]*corev1apply.EnvVarApplyConfiguration, 0, len(envMap)+len(k.sidecarAddrEnv))
-	for key, value := range envMap {
-		envVars = append(envVars, corev1apply.EnvVar().
-			WithName(key).
-			WithValue(value))
+	// The app env (resolved {{secret}} params, binding credentials) goes in a
+	// Secret the container loads with envFrom, never as literal values in
+	// the Deployment: the pod template is readable by anyone who can read
+	// Deployments or Pods, a Secret needs its own RBAC. Named after the
+	// workload and ownership labeled, so it is snapshotted, restored and
+	// deleted with the version's other Secrets. The sidecar addresses are
+	// plain env
+	var envFrom []*corev1apply.EnvFromSourceApplyConfiguration
+	if len(envMap) > 0 {
+		secretName, err := k.applyEnvSecret(ctx, wlName, wlName, envMap)
+		if err != nil {
+			return "", err
+		}
+		envFrom = append(envFrom, corev1apply.EnvFromSource().
+			WithSecretRef(corev1apply.SecretEnvSource().WithName(secretName)))
 	}
+	envVars := make([]*corev1apply.EnvVarApplyConfiguration, 0, len(k.sidecarAddrEnv))
 	for key, value := range k.sidecarAddrEnv {
 		envVars = append(envVars, corev1apply.EnvVar().
 			WithName(key).
@@ -952,6 +981,7 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 		WithPorts(corev1apply.ContainerPort().
 			WithContainerPort(port).
 			WithProtocol(protocol)).
+		WithEnvFrom(envFrom...).
 		WithEnv(envVars...)
 
 	if isImageSpec && !strings.Contains(image, "@") {
