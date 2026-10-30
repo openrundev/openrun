@@ -32,8 +32,11 @@ def forward_auth():
 
     if "X-Openrun-Perms" not in request.headers:
         return "missing X-Openrun-Perms", 403
-    if not request.headers.get("Authorization", "").startswith("Basic "):
-        return "missing Authorization", 403
+    # The Basic credentials that authenticated the request to OpenRun are
+    # OpenRun's own (the admin password here) and must not reach the forward
+    # auth service; the X-Openrun-* headers carry the identity instead
+    if "Authorization" in request.headers:
+        return "unexpected Authorization", 403
 
     forwarded_uri = request.headers.get("X-Forwarded-Uri", "")
     forwarded_for = request.headers.get("X-Forwarded-For", "")

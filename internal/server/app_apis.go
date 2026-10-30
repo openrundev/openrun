@@ -1112,6 +1112,12 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 				// basic auth against the builtin users table
 				userId, groups, authOk = s.users.authenticate(authHeader)
 			}
+			// The Basic credentials are OpenRun's (the admin password or a
+			// builtin user's password), consumed here. They must not reach the
+			// app handler, a proxied container or a forward auth service, none
+			// of which has any use for them. Other schemes are left in place
+			// since they belong to the app (see above)
+			r.Header.Del("Authorization")
 		} else if userId, groups, authOk = s.formLogin.sessionAuth(w, r, strippedAuthStr); !authOk &&
 			isBrowserNavigation(r) && s.formLogin.enabled() && s.formLogin.canStartFlow(r) {
 			// Cookie-based login must start on the app's configured host, so a
