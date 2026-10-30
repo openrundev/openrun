@@ -103,33 +103,29 @@ Apps are not affected: app containers keep running through the restart. In-place
 
 ## Install On Windows
 
-To install OpenRun using [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/), run:
+OpenRun can be installed on Windows either with the install script or with [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/). The two methods use different home directory conventions, see [switching between install methods](#switching-between-install-methods) before moving from one to the other.
 
-```powershell
-winget install OpenRunDev.OpenRun
-```
+### Install Using Script
 
-Open a new terminal so `openrun` is on the PATH, then run:
-
-```powershell
-openrun server start
-```
-
-If no home or config path is configured and no existing installation is found, the first server start creates `$HOME\openrun\openrun.toml` and generates an admin password. Note down the password printed. When setting a custom `$env:OPENRUN_HOME`, create the directory and initialize the config with `openrun password > "$env:OPENRUN_HOME\openrun.toml"` before starting the server.
-
-Alternatively, install using the install script:
+To install the latest release with the install script, run:
 
 ```powershell
 powershell -Command "irm https://openrun.dev/install.ps1 | iex"
 ```
 
-The app is installed under `$env:OPENRUN_HOME`, defaulting to `$HOME\openrun`, and the script sets the `OPENRUN_HOME` user environment variable and adds the `bin` directory to the user PATH. To install a specific release, set `$v="v0.20.3"` before running the script. Note down the generated password for the admin user. Open a new terminal to get the updated environment values, then run:
+The script installs OpenRun under `$env:OPENRUN_HOME`, defaulting to `$HOME\openrun`: the binary goes in `$env:OPENRUN_HOME\bin` and the config file is `$env:OPENRUN_HOME\openrun.toml`. The script sets the `OPENRUN_HOME` user environment variable to the install directory, adds the `bin` directory to the user PATH and, if no `openrun.toml` is present, creates one with a generated `admin` password. Note down the password printed. To install a specific release, set `$v="v0.20.3"` before running the script. To install to a custom location, set `$env:OPENRUN_HOME` to the desired directory before running the script.
+
+Open a new terminal to get the updated environment values, then run:
 
 ```powershell
 openrun server start
 ```
 
-To run OpenRun as a Windows service, register `openrun server start` with the Windows Service Control Manager from an elevated shell:
+Open https://localhost:25223 to access the app listing UI.
+
+#### Script Service Install
+
+To run a script installed OpenRun as a Windows service, register `openrun server start` with the Windows Service Control Manager from an elevated shell:
 
 ```powershell
 $OpenRunExe = Join-Path $env:OPENRUN_HOME 'bin\openrun.exe'
@@ -140,13 +136,27 @@ sc.exe failure openrun reset= 86400 actions= restart/5000/restart/30000//
 Start-Service openrun
 ```
 
-For winget installs, see [Winget Service Install](#winget-service-install) below. The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`.
+The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`. When started this way, OpenRun reports service status to Windows and handles service stop, shutdown and pre-shutdown requests as graceful server shutdowns.
 
-When started this way, OpenRun reports service status to Windows and handles service stop, shutdown and pre-shutdown requests as graceful server shutdowns.
+### Install Using Winget
+
+To install OpenRun using winget, run:
+
+```powershell
+winget install OpenRunDev.OpenRun
+```
+
+Winget installs the binary under the user's winget packages directory and exposes it through a links shim on the PATH; the winget install does not set `OPENRUN_HOME`. Open a new terminal so `openrun` is on the PATH, then run:
+
+```powershell
+openrun server start
+```
+
+If `OPENRUN_HOME` is not set, no config path is configured and no existing installation is found, the first server start creates the home directory at `$HOME\openrun`, with the config file at `$HOME\openrun\openrun.toml`, and generates an admin password. Note down the password printed. To use a custom home directory, set `$env:OPENRUN_HOME`, create the directory and initialize the config with `openrun password > "$env:OPENRUN_HOME\openrun.toml"` before starting the server.
 
 Open https://localhost:25223 to access the app listing UI.
 
-### Winget Service Install
+#### Winget Service Install
 
 To run OpenRun as a Windows service on a machine where it was installed with winget, the recommended approach is a machine scoped install with the service registered against an explicit config file. From an elevated shell:
 
@@ -154,7 +164,7 @@ To run OpenRun as a Windows service on a machine where it was installed with win
 winget install --scope machine OpenRunDev.OpenRun
 ```
 
-Machine scope installs the binary under `Program Files\WinGet` instead of the installing user's profile, which is preferable for a service. Open a new elevated terminal so `openrun` is on the PATH, then create the config file with a generated admin password:
+Machine scope installs the binary under `Program Files\WinGet` instead of the installing user's profile, which is preferable for a service. Open a new elevated terminal so `openrun` is on the PATH, then create the home directory at `%ProgramData%\openrun` and the config file with a generated admin password:
 
 ```powershell
 $OpenRunHome = Join-Path $env:ProgramData 'openrun'
@@ -183,11 +193,27 @@ Env changes apply to shells opened after the change, not existing ones.
 
 For a default user scoped winget install, keep everything under the user profile instead: run `openrun server start` once interactively to create `$HOME\openrun\openrun.toml` (note down the generated admin password), stop it with Ctrl+C, then register the service with `$OpenRunConfig = Join-Path $HOME 'openrun\openrun.toml'` in the `New-Service` command above. No env variable is needed in this setup: the CLI defaults to the same `$HOME\openrun` home.
 
-In both flows, `(Get-Command openrun.exe).Source` resolves to the winget links shim, which stays valid across `winget upgrade`; after an upgrade, run `sc.exe stop openrun` and `sc.exe start openrun` to switch to the new binary.
+In both flows, `(Get-Command openrun.exe).Source` resolves to the winget links shim, which stays valid across `winget upgrade`; after an upgrade, run `sc.exe stop openrun` and `sc.exe start openrun` to switch to the new binary. The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`.
+
+### Switching Between Install Methods
+
+The install script sets the `OPENRUN_HOME` environment variable, while winget installs rely on it being unset (the CLI then defaults to `$HOME\openrun` or discovers the `%ProgramData%\openrun` service home). When switching from one install method to the other, clear `OPENRUN_HOME` at both the user and the system (machine) level before installing with the other method, otherwise the CLI and server can end up pointing at a stale home directory. From an elevated shell:
+
+```powershell
+[Environment]::SetEnvironmentVariable('OPENRUN_HOME', $null, 'User')
+[Environment]::SetEnvironmentVariable('OPENRUN_HOME', $null, 'Machine')
+```
+
+Then open a new terminal before installing with the other method. Also remove the previous install so that only one `openrun` is found on the PATH:
+
+- Switching from script to winget: remove the script install's `bin` directory (`$env:OPENRUN_HOME\bin`, `$HOME\openrun\bin` by default) from the user PATH, so that the winget links shim is the `openrun` found on the PATH.
+- Switching from winget to script: uninstall the winget package with `winget uninstall OpenRunDev.OpenRun` (add `--scope machine` for a machine scoped install) before running the install script. This removes the winget links shim from the PATH. The install script appends its `bin` directory to the end of the user PATH, so if the shim is left in place it keeps taking precedence and `openrun` continues to resolve to the winget managed binary rather than the one the script installed.
+
+To keep the existing apps and config, move or copy the old home directory contents to the new home directory (for example from `$env:OPENRUN_HOME` to `$HOME\openrun`) before starting the server.
 
 ## Brew Install
 
-To install using [brew](https://brew.sh/), run
+On macOS and Linux, OpenRun can be installed using [brew](https://brew.sh/). Run
 
 ```
 brew tap openrundev/homebrew-openrun
@@ -254,32 +280,31 @@ The service logs will be going to $OPENRUN_HOME/logs. The service will be starte
 
 `openrun server status` reports `ok` when the CLI can connect to the server and `openrun server version` reports the server build version. `openrun server stop` stops the server; add `--wait` to block until the server process has fully exited.
 
-## Load an App
+## Apply a Sample App File
 
-The disk-usage example uses `exec.in` to run `du` and `readlink` on the host. The server allows no host commands by default; list the two in `openrun.toml` and restart the server:
-
-```toml {filename="openrun.toml"}
-[security]
-allowed_exec_commands = ["du", "readlink"]
-```
-
-Each command still needs app-level approval. See [host commands]({{< ref "configuration/security/#host-commands-exec-plugin" >}}). Then create the app with authentication:
+Apps can be installed declaratively from an app declaration file, which lists one or more `app` definitions. The [examples/utils.star](https://github.com/openrundev/openrun/blob/main/examples/utils.star) file in the OpenRun repo is a sample declaration which installs a few utility apps, a proxy app, a static file app and some container based apps (Python and Go). To apply it directly from GitHub, run
 
 ```shell
-openrun app create --dev --auth system "$HOME/openrun_source/openrun/examples/disk_usage" /disk_usage
+openrun apply --approve github.com/openrundev/openrun/examples/utils.star
 ```
 
-To audit and approve the app's security policies, run
+`--approve` approves the plugin permissions requested by the apps. Running the same command again updates the apps to match any changes in the file; apps already present are left as is if their declaration has not changed. To apply only some of the apps from the file, pass an app path glob as the second argument, for example
 
 ```shell
-openrun app approve /disk_usage
+openrun apply --approve github.com/openrundev/openrun/examples/utils.star /utils/bookmarks
 ```
 
-This will create an app at /disk_usage with the example disk_usage app. The disk_usage app allows the user to explore the subfolders which are consuming most disk space.
+installs just the bookmarks app. Open https://localhost:25223/utils/bookmarks to access it. The container based apps in the file need Docker or Podman to be running. See [declarative app management]({{< ref "applications/overview/#declarative-app-management" >}}) for the file format and apply options.
 
-To access the app, go to [https://localhost:25223/disk_usage](https://localhost:25223/disk_usage). Use `admin` as the username and use the password previously generated.
+### Schedule a Sync
 
-The code for the disk usage app is in [GitHub](https://github.com/openrundev/openrun/tree/main/examples/disk_usage/app.star). app.star is the Starlark config and app.go.html is the html template. The other files are generated files and are created during app development.
+Instead of applying manually, OpenRun can sync the declaration file from Git on a schedule, picking up app additions and config changes as they are committed. To create a scheduled sync for the sample file, run
+
+```shell
+openrun sync schedule --approve --promote github.com/openrundev/openrun/examples/utils.star
+```
+
+The sync runs every 15 minutes by default; use `--minutes` to change the frequency. `--promote` promotes the applied changes to prod immediately instead of staging them. Use `openrun sync list` to see the configured syncs, `openrun sync run <id>` to run one immediately and `openrun sync delete <id>` to remove it. See [automated sync]({{< ref "applications/overview/#automated-sync" >}}) for the full set of sync options, including webhook based sync.
 
 ## Install the Console App
 
