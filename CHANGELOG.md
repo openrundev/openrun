@@ -11,6 +11,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Dynamic config updates are limited to an allowlist of the sections and settings the console config pages manage.
 - A `[builder_agent.*]` entry set through the console or the dynamic config can only mount `config_files` from within `security.allowed_mounts`, and its `dockerfile` must be under `security.remote_disk_read_paths` when set over the remote API.
+- Dev mode style and JS library downloads named by app code refuse loopback, private and link-local addresses, refuse https to http redirects and are capped at 128MB. The `daisyui_url` downloads from the server config may still reach an internal mirror.
+- The generated tailwind `input.css` and `tailwind.config.js` refuse style themes, `custom_themes` names, property names and values, and `routing.template_locations` containing `{ } ; @ " ' \` or newlines. `system.tailwindcss_command` is the tailwindcss executable only; arguments (such as `npx tailwindcss`) are no longer passed through.
 
 ### Fixed
 

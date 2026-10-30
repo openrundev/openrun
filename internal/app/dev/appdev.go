@@ -9,18 +9,25 @@ import (
 	"embed"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
+	"golang.org/x/net/idna"
 )
 
 //go:embed index_gen.go.html openrun_gen.go.html
@@ -72,19 +79,136 @@ func NewAppDev(logger *types.Logger, sourceFS *appfs.WritableSourceFs, workFS *a
 const (
 	downloadAttempts = 3
 	downloadTimeout  = 30 * time.Second
+	// downloadMaxBytes caps a downloaded library or stylesheet
+	downloadMaxBytes     = 128 << 20
+	downloadMaxRedirects = 5
 )
+
+// The download transports, package vars so that tests can stub them. Both use
+// the proxy from the server's environment (HTTPS_PROXY, NO_PROXY), set by the
+// operator. appDownloadTransport fetches the urls named by app code (the
+// style library and the js libraries): a direct connection must be to a
+// public address, checked after DNS resolution on every connection including
+// redirect hops; a proxied request is refused when its host is, or resolves
+// here to, a private address, the proxy's egress policy covering the rest.
+// serverDownloadTransport fetches the urls from the server config
+// (daisyui_url), which may name an internal mirror
+var (
+	appDownloadTransport    http.RoundTripper = newAppDownloadTransport(http.ProxyFromEnvironment)
+	serverDownloadTransport http.RoundTripper = newDownloadTransport(http.ProxyFromEnvironment, nil)
+)
+
+func newDownloadTransport(proxy func(*http.Request) (*url.URL, error),
+	control func(network, address string, c syscall.RawConn) error) *http.Transport {
+	dialer := &net.Dialer{Timeout: downloadTimeout, Control: control}
+	return &http.Transport{
+		DialContext:           dialer.DialContext,
+		Proxy:                 proxy,
+		TLSHandshakeTimeout:   downloadTimeout,
+		ResponseHeaderTimeout: downloadTimeout,
+		ForceAttemptHTTP2:     true,
+		IdleConnTimeout:       90 * time.Second,
+	}
+}
+
+// appDownloads routes each request (each redirect hop is a separate request)
+// to one of two transports, so that whether a connection is checked is fixed
+// by the transport making it, not by state shared between requests. direct
+// never uses a proxy and dials public addresses only. proxied dials only the
+// proxy, which may be on a private address: its Proxy function fails a
+// request the proxy does not apply to instead of letting it dial direct
+type appDownloads struct {
+	proxy   func(*http.Request) (*url.URL, error)
+	direct  *http.Transport
+	proxied *http.Transport
+}
+
+func newAppDownloadTransport(proxy func(*http.Request) (*url.URL, error)) *appDownloads {
+	a := &appDownloads{proxy: proxy}
+	a.direct = newDownloadTransport(nil, system.PublicOnlyDialControl("download"))
+	a.proxied = newDownloadTransport(func(req *http.Request) (*url.URL, error) {
+		proxyURL, err := proxy(req)
+		if err == nil && proxyURL == nil {
+			err = fmt.Errorf("download of %s is not proxied", req.URL.Host)
+		}
+		return proxyURL, err
+	}, nil)
+	return a
+}
+
+func (a *appDownloads) RoundTrip(req *http.Request) (*http.Response, error) {
+	proxyURL, err := a.proxy(req)
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL == nil {
+		return a.direct.RoundTrip(req)
+	}
+	// The proxy dials the target, the host is checked here, as the transport
+	// sends it, so a fullwidth １０.１.２.３ is checked as 10.1.2.3
+	if err := system.CheckPublicHost(req.Context(), "download", canonicalHost(req.URL)); err != nil {
+		return nil, err
+	}
+	return a.proxied.RoundTrip(req)
+}
+
+// canonicalHost is u's host as net/http sends it in a proxy CONNECT (its
+// canonicalAddr): a non-ASCII host is mapped through IDNA, so a fullwidth
+// １２７.０.０.１ becomes 127.0.0.1
+func canonicalHost(u *url.URL) string {
+	host := u.Hostname()
+	if !isASCII(host) {
+		if v, err := idna.Lookup.ToASCII(host); err == nil {
+			host = v
+		}
+	}
+	return host
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}
+
+// AllowPrivateDownloadsForTest lets the app download transport reach local
+// test servers, returning the function restoring the guarded transport
+func AllowPrivateDownloadsForTest() func() {
+	old := appDownloadTransport
+	appDownloadTransport = newDownloadTransport(http.ProxyFromEnvironment, nil)
+	return func() { appDownloadTransport = old }
+}
+
+// checkDownloadRedirect follows a few redirects (CDN and GitHub release
+// urls redirect to their storage hosts); each hop is dialed through the
+// same transport, so the public address check applies to it. A downgrade
+// from https to http is refused at any hop. via holds the requests made so
+// far, the original one included, so len(via) is the number of this redirect
+func checkDownloadRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) > downloadMaxRedirects {
+		return fmt.Errorf("stopped after %d redirects", downloadMaxRedirects)
+	}
+	if via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("redirect from https to %s refused", req.URL.Scheme)
+	}
+	return nil
+}
 
 // fetchUrl downloads a url, retrying a transient failure (a connection or
 // TLS handshake error, a timeout, a 5xx or 429 response) a few times with a
 // backoff, so that a brief CDN hiccup does not fail the app load. A 4xx
 // response is returned at once
-func fetchUrl(url string) ([]byte, error) {
+func fetchUrl(transport http.RoundTripper, url string) ([]byte, error) {
+	client := &http.Client{Transport: transport, CheckRedirect: checkDownloadRedirect}
 	var lastErr error
 	for attempt := 1; attempt <= downloadAttempts; attempt++ {
 		if attempt > 1 {
 			time.Sleep(time.Duration(attempt-1) * time.Second)
 		}
-		data, retry, err := fetchUrlOnce(url)
+		data, retry, err := fetchUrlOnce(client, url)
 		if err == nil {
 			return data, nil
 		}
@@ -98,29 +222,31 @@ func fetchUrl(url string) ([]byte, error) {
 
 // fetchUrlOnce is one attempt of fetchUrl; retry reports whether the
 // failure is worth another attempt
-func fetchUrlOnce(url string) (data []byte, retry bool, err error) {
-	// http.DefaultClient (not a private client) so that tests can stub the
-	// transport; the timeout bounds the whole attempt
+func fetchUrlOnce(client *http.Client, url string) (data []byte, retry bool, err error) {
+	// The timeout bounds the whole attempt
 	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, false, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, true, err
+		// A refused address fails the same way on every attempt
+		return nil, !errors.Is(err, system.ErrPrivateAddress), err
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		retry = resp.StatusCode >= http.StatusInternalServerError || resp.StatusCode == http.StatusTooManyRequests
 		return nil, retry, fmt.Errorf("error downloading %s : status %d", url, resp.StatusCode)
 	}
-	var buf bytes.Buffer
-	if _, err = io.Copy(&buf, resp.Body); err != nil {
+	if data, err = io.ReadAll(io.LimitReader(resp.Body, downloadMaxBytes+1)); err != nil {
 		return nil, true, err
 	}
-	return buf.Bytes(), false, nil
+	if len(data) > downloadMaxBytes {
+		return nil, false, fmt.Errorf("error downloading %s : larger than %d bytes", url, downloadMaxBytes)
+	}
+	return data, false, nil
 }
 
 // downloadFile downloads the files from the url, unless it was already loaded for this app in the current
@@ -139,7 +265,8 @@ func (a *AppDev) downloadFile(url string, appFS *appfs.WritableSourceFs, path st
 
 	a.Info().Msgf("Downloading %s into %s", url, path)
 
-	data, err := fetchUrl(url)
+	// The url comes from app code
+	data, err := fetchUrl(appDownloadTransport, url)
 	if err != nil {
 		return err
 	}
@@ -161,7 +288,8 @@ func (a *AppDev) downloadWorkFile(url string, path string) error {
 
 	a.Info().Msgf("Downloading %s into %s", url, path)
 
-	data, err := fetchUrl(url)
+	// The url comes from the server config (daisyui_url)
+	data, err := fetchUrl(serverDownloadTransport, url)
 	if err != nil {
 		return err
 	}

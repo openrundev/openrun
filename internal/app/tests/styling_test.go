@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/app/dev"
@@ -16,6 +17,7 @@ import (
 )
 
 func TestStyleOther(t *testing.T) {
+	t.Cleanup(dev.AllowPrivateDownloadsForTest()) // the test server is on loopback
 	// Create a test server to serve the css file
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "mystyle contents") //nolint:errcheck
@@ -332,4 +334,49 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 
 	_, _, err := CreateDevModeTestApp(logger, fileData)
 	testutil.AssertErrorContains(t, err, "invalid style library config : unknown")
+}
+
+// TestStyleRejectsUnsafeTailwindValues verifies app supplied values written
+// into the generated tailwind input.css cannot break out of their quoted
+// string or block: themes, custom theme names, property names and values,
+// and template locations
+func TestStyleRejectsUnsafeTailwindValues(t *testing.T) {
+	logger := testutil.TestLogger()
+	cases := map[string]string{
+		"theme":             `style=ace.style(library="daisyui", themes=["dark;} @import \"/etc/passwd\""])`,
+		"light":             `style=ace.style(library="daisyui", light="x{")`,
+		"dark newline":      `style=ace.style(library="daisyui", dark="x\n@plugin y")`,
+		"custom name":       `style=ace.style(library="daisyui", custom_themes={"my\"theme": {"color-scheme": "light"}})`,
+		"custom prop":       `style=ace.style(library="daisyui", custom_themes={"mytheme": {"a;b": "light"}})`,
+		"custom value":      `style=ace.style(library="daisyui", custom_themes={"mytheme": {"color-scheme": "light; } @plugin \"/tmp/x.js\" {"}})`,
+		"value backslash":   `style=ace.style(library="daisyui", custom_themes={"mytheme": {"color-scheme": "\\0022"}})`,
+		"value at":          `style=ace.style(library="daisyui", custom_themes={"mytheme": {"color-scheme": "@import"}})`,
+		"value quote":       `style=ace.style(library="daisyui", custom_themes={"mytheme": {"color-scheme": "it's"}})`,
+		"template location": `style=ace.style(library="tailwindcss"), settings={"routing": {"template_locations": ["*.go.html\"; @import \"x"]}}`,
+	}
+	for name, attrs := range cases {
+		fileData := map[string]string{
+			"app.star": fmt.Sprintf(`
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
+				%s)`, attrs),
+		}
+		_, _, err := CreateDevModeTestApp(logger, fileData)
+		if err == nil || !strings.Contains(err.Error(), "cannot contain") {
+			t.Errorf("%s: unsafe value accepted: %v", name, err)
+		}
+	}
+
+	// Usual theme, property and location values stay valid
+	fileData := map[string]string{
+		"app.star": `
+app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
+				style=ace.style(library="daisyui", themes=["dark", "cupcake"], light="mytheme",
+					custom_themes={"mytheme": {"color-scheme": "light", "--color-primary": "oklch(55% 0.3 240)",
+						"--radius-box": "0.5rem"}}),
+				settings={"routing": {"template_locations": ["*.go.html", "templates/*.tmpl"]}})`,
+		"templates/page.tmpl": `{{block "page" .}}page{{end}}`,
+	}
+	if _, _, err := CreateDevModeTestApp(logger, fileData); err != nil {
+		t.Fatalf("valid style rejected: %v", err)
+	}
 }

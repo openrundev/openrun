@@ -142,6 +142,11 @@ func (s *AppStyle) Init(appId types.AppId, appDef *starlarkstruct.Struct) error 
 	themes = append(themes, s.Light, s.Dark)
 	slices.Sort(themes)
 	themes = slices.Compact(themes)
+	for _, theme := range themes {
+		if err := checkTailwindValue("style theme", theme); err != nil {
+			return err
+		}
+	}
 	s.DisableWatcher = disableWatcher
 
 	libType := strings.ToLower(library)
@@ -165,6 +170,22 @@ func (s *AppStyle) Init(appId types.AppId, appDef *starlarkstruct.Struct) error 
 		}
 	}
 
+	return nil
+}
+
+// tailwindUnsafeChars are refused in the app supplied values written into
+// the generated tailwind input.css and tailwind.config.js (theme names,
+// custom theme properties, template locations): each could close the quoted
+// string, block or declaration the value is written into, and inject a
+// directive like @import or @plugin which makes the tailwind CLI read or run
+// arbitrary files
+const tailwindUnsafeChars = "{};@\"'\\\n\r"
+
+// checkTailwindValue refuses a value containing a tailwindUnsafeChars char
+func checkTailwindValue(what, value string) error {
+	if strings.ContainsAny(value, tailwindUnsafeChars) {
+		return fmt.Errorf("invalid %s %q: cannot contain { } ; @ \" ' \\ or newlines", what, value)
+	}
 	return nil
 }
 
@@ -194,6 +215,9 @@ func getCustomThemes(styleDef *starlarkstruct.Struct) ([]CustomTheme, error) {
 			return nil, fmt.Errorf("custom theme %s must be a dict of CSS properties", name.GoString())
 		}
 
+		if err := checkTailwindValue("custom theme name", name.GoString()); err != nil {
+			return nil, err
+		}
 		theme := CustomTheme{Name: name.GoString(), Props: make([][2]string, 0, propsDict.Len())}
 		for _, prop := range propsDict.Items() {
 			propName, ok := prop[0].(starlark.String)
@@ -203,6 +227,13 @@ func getCustomThemes(styleDef *starlarkstruct.Struct) ([]CustomTheme, error) {
 			propValue, ok := prop[1].(starlark.String)
 			if !ok {
 				return nil, fmt.Errorf("custom theme %s property %s value must be a string", theme.Name, propName.GoString())
+			}
+			if err := checkTailwindValue("custom theme "+theme.Name+" property name", propName.GoString()); err != nil {
+				return nil, err
+			}
+			if err := checkTailwindValue("custom theme "+theme.Name+" property "+propName.GoString()+" value",
+				propValue.GoString()); err != nil {
+				return nil, err
 			}
 			theme.Props = append(theme.Props, [2]string{propName.GoString(), propValue.GoString()})
 		}
@@ -290,6 +321,11 @@ func (s *AppStyle) setupTailwindConfig(templateLocations []string, sourceFS *app
 	// embedded fallback stylesheet, which the action pages always load and
 	// which ships in sync with the templates (see
 	// docs/designs/actions-css-layering.md)
+	for _, loc := range templateLocations {
+		if err := checkTailwindValue("template location", loc); err != nil {
+			return err
+		}
+	}
 	var buf strings.Builder
 	templateLocations = append(templateLocations, "base_templates/*.go.html")
 	// Add the template locations to the input list
@@ -463,6 +499,15 @@ func (s *AppStyle) startTailwindWatcher(logger *types.Logger, templateLocations 
 		logger.Warn().Msg("tailwindcss command not configured, skipping tailwindcss watcher")
 		return nil
 	}
+	// The command is the tailwindcss executable only: arguments are not
+	// passed through, every flag of the watcher is generated here. A value
+	// with spaces is accepted only as the path of an executable
+	if strings.ContainsAny(tailwindCmd, " \t") {
+		if _, err := exec.LookPath(tailwindCmd); err != nil {
+			return fmt.Errorf("system.tailwindcss_command %q must be the path of the tailwindcss executable, "+
+				"arguments are not supported", tailwindCmd)
+		}
+	}
 
 	s.watcherMu.Lock()
 	defer s.watcherMu.Unlock()
@@ -480,11 +525,7 @@ func (s *AppStyle) startTailwindWatcher(logger *types.Logger, templateLocations 
 	}
 	s.watcherState = &WatcherState{library: s.library, templateLocations: templateLocations}
 
-	split := strings.Split(tailwindCmd, " ")
 	args := []string{}
-	if len(split) > 1 {
-		args = split[1:]
-	}
 
 	// Since the watcher process creates the file, the unit test framework (in memory filesystem)
 	// can't be used to test the watcher functionality)
@@ -504,7 +545,7 @@ func (s *AppStyle) startTailwindWatcher(logger *types.Logger, templateLocations 
 	}
 	args = append(args, "-i", path.Join(workFS.Root, "style", "input.css"))
 	args = append(args, "-o", targetFile)
-	logger.Info().Str("command", split[0]).Strs("args", args).Msg("Starting tailwindcss watcher")
+	logger.Info().Str("command", tailwindCmd).Strs("args", args).Msg("Starting tailwindcss watcher")
 
 	// Setup stdin/stdout for watcher process
 	if s.watcherStdout != nil {
@@ -516,7 +557,7 @@ func (s *AppStyle) startTailwindWatcher(logger *types.Logger, templateLocations 
 	}
 
 	// Start watcher process, wait async for it to complete
-	watcher := exec.Command(split[0], args...)
+	watcher := exec.Command(tailwindCmd, args...)
 	system.SetProcessGroup(watcher) // // ensure process group
 
 	if legacyTailwind {

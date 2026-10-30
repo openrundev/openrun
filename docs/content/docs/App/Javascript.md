@@ -26,7 +26,7 @@ To directly download a library from a CDN to the static folder, add the URL dire
 libraries=["https://unpkg.com/jquery@3.3.1/dist/jquery.min.js"]
 ```
 
-URL libraries are downloaded into `static/gen/lib`. The HTMX library (`htmx.min.js`) and its SSE extension (`sse.js`) are automatically downloaded into the same folder. The htmx version is set by the `htmx.version` [app setting]({{< ref "docs/develop#app-settings" >}}) (default `4.0.0`); an htmx runtime url listed explicitly in `libraries` pins the version instead.
+URL libraries are downloaded into `static/gen/lib`, from public hosts only: hosts resolving to loopback, private or link-local addresses are refused, at most five redirects are followed (never from https to http) and a download is capped at 128MB. When the server is configured with `HTTPS_PROXY`, a host which is or resolves on the server to such an address is refused before the request is sent to the proxy; the proxy's own egress policy should block internal addresses, since the proxy does its own name lookup. The HTMX library (`htmx.min.js`) and its SSE extension (`sse.js`) are automatically downloaded into the same folder. The htmx version is set by the `htmx.version` [app setting]({{< ref "docs/develop#app-settings" >}}) (default `4.0.0`); an htmx runtime url listed explicitly in `libraries` pins the version instead.
 
 ## JavaScript Modules
 

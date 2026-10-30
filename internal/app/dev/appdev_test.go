@@ -6,12 +6,17 @@ package dev
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/openrundev/openrun/internal/app/appfs"
@@ -42,15 +47,21 @@ func newHtmxTestDev(t *testing.T) *AppDev {
 	return a
 }
 
+// stubDownloads replaces both download transports for the test
+func stubDownloads(t *testing.T, rt http.RoundTripper) {
+	t.Helper()
+	oldApp, oldServer := appDownloadTransport, serverDownloadTransport
+	t.Cleanup(func() { appDownloadTransport, serverDownloadTransport = oldApp, oldServer })
+	appDownloadTransport, serverDownloadTransport = rt, rt
+}
+
 func mockHtmxDownloads(t *testing.T) *[]string {
 	t.Helper()
 	var urls []string
-	old := http.DefaultClient
-	t.Cleanup(func() { http.DefaultClient = old })
-	http.DefaultClient = &http.Client{Transport: htmxRoundTripper(func(r *http.Request) (*http.Response, error) {
+	stubDownloads(t, htmxRoundTripper(func(r *http.Request) (*http.Response, error) {
 		urls = append(urls, r.URL.String())
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("// " + r.URL.String())), Request: r}, nil
-	})}
+	}))
 	return &urls
 }
 
@@ -252,9 +263,6 @@ func TestGeneratedHtmxImport(t *testing.T) {
 // TestFetchUrlRetriesTransientFailures verifies a library download retries
 // a connection failure and a 5xx response, and gives up at once on a 4xx
 func TestFetchUrlRetriesTransientFailures(t *testing.T) {
-	old := http.DefaultClient
-	t.Cleanup(func() { http.DefaultClient = old })
-
 	var calls int
 	responses := []func() (*http.Response, error){
 		func() (*http.Response, error) { return nil, errors.New("tls handshake timeout") },
@@ -265,21 +273,210 @@ func TestFetchUrlRetriesTransientFailures(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("lib"))}, nil
 		},
 	}
-	http.DefaultClient = &http.Client{Transport: htmxRoundTripper(func(r *http.Request) (*http.Response, error) {
+	transport := htmxRoundTripper(func(r *http.Request) (*http.Response, error) {
 		calls++
 		return responses[calls-1]()
-	})}
-	data, err := fetchUrl("https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js")
+	})
+	data, err := fetchUrl(transport, "https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js")
 	if err != nil || string(data) != "lib" || calls != 3 {
 		t.Fatalf("fetch after transient failures: data=%q err=%v calls=%d", data, err, calls)
 	}
 
 	calls = 0
-	http.DefaultClient = &http.Client{Transport: htmxRoundTripper(func(r *http.Request) (*http.Response, error) {
+	transport = htmxRoundTripper(func(r *http.Request) (*http.Response, error) {
 		calls++
 		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(""))}, nil
-	})}
-	if _, err := fetchUrl("https://unpkg.com/htmx.org@nosuch/dist/htmx.min.js"); err == nil || calls != 1 {
+	})
+	if _, err := fetchUrl(transport, "https://unpkg.com/htmx.org@nosuch/dist/htmx.min.js"); err == nil || calls != 1 {
 		t.Fatalf("a 404 must fail at once: err=%v calls=%d", err, calls)
+	}
+}
+
+// TestFetchUrlLimitsSize verifies a download over downloadMaxBytes fails
+// without retrying, instead of being buffered whole
+func TestFetchUrlLimitsSize(t *testing.T) {
+	var calls int
+	transport := htmxRoundTripper(func(r *http.Request) (*http.Response, error) {
+		calls++
+		body := io.LimitReader(zeroReader{}, downloadMaxBytes+10)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body)}, nil
+	})
+	if _, err := fetchUrl(transport, "https://example.com/huge.js"); err == nil ||
+		!strings.Contains(err.Error(), "larger than") || calls != 1 {
+		t.Fatalf("oversized download must fail at once: err=%v calls=%d", err, calls)
+	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+// TestAppDownloadsRefusePrivateHosts verifies the app download transport
+// refuses a loopback target (redirect hops are dialed through the same
+// transport), the server config transport does not, and the redirect policy
+// refuses an https to http downgrade and long chains
+func TestAppDownloadsRefusePrivateHosts(t *testing.T) {
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "internal")
+	}))
+	defer local.Close()
+	if _, err := fetchUrl(appDownloadTransport, local.URL+"/lib.js"); err == nil ||
+		!strings.Contains(err.Error(), "private or local address") {
+		t.Fatalf("loopback download must be refused: %v", err)
+	}
+	// The server transport (daisyui_url from the server config) may reach
+	// an internal mirror
+	if data, err := fetchUrl(serverDownloadTransport, local.URL+"/lib.js"); err != nil || string(data) != "internal" {
+		t.Fatalf("server config download of a local mirror failed: %q %v", data, err)
+	}
+
+	req := func(scheme string) *http.Request { return &http.Request{URL: &url.URL{Scheme: scheme, Host: "x"}} }
+	if err := checkDownloadRedirect(req("http"), []*http.Request{req("https")}); err == nil {
+		t.Error("https to http redirect downgrade allowed")
+	}
+	if err := checkDownloadRedirect(req("https"), []*http.Request{req("https")}); err != nil {
+		t.Errorf("https redirect refused: %v", err)
+	}
+	// The downgrade is checked against the preceding hop, not the original
+	// request: http -> https -> http is refused
+	if err := checkDownloadRedirect(req("http"), []*http.Request{req("http"), req("https")}); err == nil {
+		t.Error("https to http downgrade after an http start allowed")
+	}
+	if err := checkDownloadRedirect(req("https"), []*http.Request{req("http")}); err != nil {
+		t.Errorf("http to https upgrade refused: %v", err)
+	}
+	// via includes the original request: the fifth redirect is allowed,
+	// the sixth is not
+	chain := func(n int) []*http.Request {
+		via := make([]*http.Request, n)
+		for i := range via {
+			via[i] = req("https")
+		}
+		return via
+	}
+	if err := checkDownloadRedirect(req("https"), chain(downloadMaxRedirects)); err != nil {
+		t.Errorf("redirect %d refused: %v", downloadMaxRedirects, err)
+	}
+	if err := checkDownloadRedirect(req("https"), chain(downloadMaxRedirects+1)); err == nil {
+		t.Error("redirect limit not enforced")
+	}
+}
+
+// TestAppDownloadsThroughProxy verifies the app download transport uses the
+// operator's proxy, which may be on a private address, refuses a proxied
+// target which is or resolves to a private address before reaching the
+// proxy, and checks a direct download of the proxy's own address like any
+// other direct download
+func TestAppDownloadsThroughProxy(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.URL.String())
+		mu.Unlock()
+		_, _ = io.WriteString(w, "via proxy")
+	}))
+	defer proxy.Close()
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := newAppDownloadTransport(func(r *http.Request) (*url.URL, error) {
+		if r.URL.Port() == proxyURL.Port() {
+			return nil, nil // like NO_PROXY, or a loopback host the env proxy skips
+		}
+		return proxyURL, nil
+	})
+
+	// A public IP literal, no DNS lookup needed
+	const public = "http://93.184.216.34/lib.js"
+	if data, err := fetchUrl(transport, public); err != nil || string(data) != "via proxy" {
+		t.Fatalf("proxied download failed: %q %v", data, err)
+	}
+	for _, target := range []string{"http://10.1.2.3/lib.js", "http://169.254.169.254/latest/meta-data",
+		"http://[::1]:8080/lib.js", "http://localhost:8080/lib.js",
+		// fullwidth spellings, which the transport normalizes to 10.1.2.3
+		"http://１０.１.２.３/lib.js", "https://１０.１.２.３/admin"} {
+		if _, err := fetchUrl(transport, target); !errors.Is(err, system.ErrPrivateAddress) {
+			t.Errorf("proxied download of %s must be refused: %v", target, err)
+		}
+	}
+	if _, err := fetchUrl(transport, proxy.URL+"/lib.js"); !errors.Is(err, system.ErrPrivateAddress) {
+		t.Errorf("direct download of the proxy address must be refused: %v", err)
+	}
+	// A fullwidth spelling of the proxy host, which the transport normalizes
+	// to the proxy address when dialing
+	fullwidth := "http://１２７.０.０.１:" + proxyURL.Port() + "/admin"
+	if _, err := fetchUrl(transport, fullwidth); !errors.Is(err, system.ErrPrivateAddress) {
+		t.Errorf("direct download of the fullwidth proxy address must be refused: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 || seen[0] != public {
+		t.Errorf("proxy requests: %v", seen)
+	}
+}
+
+// TestAppDownloadsProxyConcurrent verifies direct downloads of the proxy's
+// address, interleaved with proxied downloads which use it, never reach the
+// proxy: whether a dial is checked does not depend on other requests
+func TestAppDownloadsProxyConcurrent(t *testing.T) {
+	var admin atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin" {
+			admin.Add(1)
+		}
+		_, _ = io.WriteString(w, "via proxy")
+	}))
+	defer proxy.Close()
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := newAppDownloadTransport(func(r *http.Request) (*url.URL, error) {
+		if r.URL.Port() == proxyURL.Port() {
+			return nil, nil
+		}
+		return proxyURL, nil
+	})
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 100)
+	for range 50 {
+		wg.Go(func() {
+			if _, err := fetchUrl(transport, "http://93.184.216.34/lib.js"); err != nil {
+				errs <- fmt.Errorf("proxied download: %w", err)
+			}
+		})
+		wg.Go(func() {
+			if _, err := fetchUrl(transport, proxy.URL+"/admin"); !errors.Is(err, system.ErrPrivateAddress) {
+				errs <- fmt.Errorf("direct download of the proxy address not refused: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if n := admin.Load(); n != 0 {
+		t.Errorf("proxy /admin reached %d times", n)
+	}
+}
+
+// TestTailwindCommandNoArgs verifies system.tailwindcss_command is the
+// executable only: a value with arguments is refused instead of passing
+// them through to the watcher
+func TestTailwindCommandNoArgs(t *testing.T) {
+	style := &AppStyle{library: TailwindCSS}
+	for _, command := range []string{"tailwindcss --config /tmp/evil.js", "npx tailwindcss", "tailwindcss\t-i x"} {
+		err := style.startTailwindWatcher(testutil.TestLogger(), nil, nil, nil,
+			&types.SystemConfig{TailwindCSSCommand: command})
+		if err == nil || !strings.Contains(err.Error(), "arguments are not supported") {
+			t.Errorf("%q: command with arguments accepted: %v", command, err)
+		}
 	}
 }

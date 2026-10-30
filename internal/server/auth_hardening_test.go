@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 	saml2 "github.com/russellhaering/gosaml2"
@@ -313,7 +314,7 @@ func TestIsPrivateOrLocalIPRanges(t *testing.T) {
 		"8.8.8.8": false, "0.1.2.3": true, "0.0.0.0": true, "100.64.1.1": true, "169.254.169.254": true,
 		"64:ff9b::7f00:1": true, "64:ff9b::a00:1": true, "64:ff9b::808:808": false, "2001:db8::1": false, "::1": true,
 	} {
-		if got := isPrivateOrLocalIP(net.ParseIP(ip)); got != want {
+		if got := system.IsPrivateOrLocalIP(net.ParseIP(ip)); got != want {
 			t.Errorf("%s: got %v want %v", ip, got, want)
 		}
 	}

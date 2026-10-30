@@ -20,9 +20,11 @@ in the app definition. The fields in the `ace.style` structure are:
 |      light      |   true   |  string  | emerald |            The DaisyUI theme to use in light mode for Actions            |
 |      dark       |   true   |  string  |  night  |            The DaisyUI theme to use in dark mode for Actions             |
 
+Theme names, `custom_themes` names, property names and values, and the `routing.template_locations` patterns are written into the generated tailwind config, so they cannot contain `{`, `}`, `;`, `@`, quotes, a backslash or newlines.
+
 ## Classless CSS
 
-If the library property is a url, it should point to a publicly accessible style file. The style file is downloaded into the `static/gen/css/style.css` file. The file is automatically included as part of the `openrun_gen_import` template.
+If the library property is a url, it should point to a publicly accessible style file. The style file is downloaded into the `static/gen/css/style.css` file. The download refuses hosts resolving to loopback, private or link-local addresses (also when going through `HTTPS_PROXY`, as described for [JavaScript libraries]({{< ref "docs/app/javascript" >}})), follows at most five redirects (never from https to http) and is capped at 128MB. The file is automatically included as part of the `openrun_gen_import` template.
 
 For example,
 
@@ -42,7 +44,7 @@ style=ace.style("tailwindcss")
 
 Tailwind CSS works by scanning the HTML files for class names, generating the corresponding styles and then writing them to a static CSS file. A watcher process is started when an app using Tailwind is loaded in dev mode. The output of the watcher is written to `static/gen/css/style.css` file. This file is automatically included as part of the `openrun_gen_import` template.
 
-To ensure that the tailwind watcher is started, the tailwind CLI needs to be installed manually. The [standalone CLI](https://tailwindcss.com/blog/standalone-cli) is the easiest option: no npm or node_modules setup is required. The npm packages (`npm install -D tailwindcss @tailwindcss/cli daisyui`, with `npx tailwindcss` as the command) also work.
+To ensure that the tailwind watcher is started, the tailwind CLI needs to be installed manually. The [standalone CLI](https://tailwindcss.com/blog/standalone-cli) is the easiest option: no npm or node_modules setup is required. The npm packages (`npm install -D tailwindcss @tailwindcss/cli daisyui`, with the installed `node_modules/.bin/tailwindcss` path as the command) also work.
 
 The OpenRun server config file has the following entries:
 
@@ -53,7 +55,7 @@ tailwind_version = 4
 file_watcher_debounce_millis = 300
 ```
 
-`tailwindcss_command` is the command used to start the watcher. If the standalone version is being used change to
+`tailwindcss_command` is the tailwindcss executable used to start the watcher: a name looked up in the `PATH` or a path. Arguments are not supported, OpenRun generates the watcher flags. If the standalone version is being used change to
 
 ```toml {filename="openrun.toml"}
 [system]

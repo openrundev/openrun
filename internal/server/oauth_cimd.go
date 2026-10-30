@@ -15,8 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/openrundev/openrun/internal/system"
 )
 
 // Client ID Metadata Documents (CIMD, draft-ietf-oauth-client-id-metadata-
@@ -117,28 +118,6 @@ func (s *Server) cimdDomainAllowed(host string) error {
 	return fmt.Errorf("client domain %q is not in api.cimd_allowed_domains", host)
 }
 
-// isPrivateOrLocalIP is the SSRF guard: the AS must never be steered into
-// loopback, private, link-local (incl. cloud metadata 169.254.169.254),
-// carrier-grade NAT, unspecified or multicast addresses by a client id
-func isPrivateOrLocalIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	if ip4 := ip.To4(); ip4 != nil {
-		if ip4[0] == 100 && ip4[1]&0xc0 == 64 {
-			return true // 100.64.0.0/10
-		}
-		if ip4[0] == 0 {
-			return true // 0.0.0.0/8 ("this network", routed to local on some stacks)
-		}
-	} else if nat64 := net.ParseIP("64:ff9b::"); nat64 != nil && ip.Mask(net.CIDRMask(96, 128)).Equal(nat64) {
-		// 64:ff9b::/96 (NAT64) embeds an IPv4 address, which may be private
-		return isPrivateOrLocalIP(net.IPv4(ip[12], ip[13], ip[14], ip[15]))
-	}
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
-}
-
 // cimdHTTPClient builds the fetch client: redirects are refused (a redirect
 // is the classic SSRF pivot, and the draft does not require following
 // them), and the dial control rejects private targets after DNS resolution
@@ -149,18 +128,9 @@ func isPrivateOrLocalIP(ip net.IP) bool {
 // per fetch; the caller closes its idle connections when done
 func (s *Server) cimdHTTPClient() (*http.Client, *http.Transport) {
 	allowPrivate := s.Config().Api.CIMDAllowPrivateHosts
-	dialer := &net.Dialer{
-		Timeout: cimdFetchTimeout,
-		Control: func(network, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return err
-			}
-			if !allowPrivate && isPrivateOrLocalIP(net.ParseIP(host)) {
-				return fmt.Errorf("client metadata host resolves to a private or local address %s", host)
-			}
-			return nil
-		},
+	dialer := &net.Dialer{Timeout: cimdFetchTimeout}
+	if !allowPrivate {
+		dialer.Control = system.PublicOnlyDialControl("client metadata")
 	}
 	transport := &http.Transport{
 		DialContext:           dialer.DialContext,

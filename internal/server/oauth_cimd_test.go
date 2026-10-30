@@ -291,7 +291,7 @@ func TestCIMDHelpers(t *testing.T) {
 		"169.254.169.254": true, "100.64.0.1": true, "0.0.0.0": true, "::1": true, "fe80::1": true,
 		"fd00::1": true, "93.184.216.34": false, "2606:2800:220:1:248:1893:25c8:1946": false,
 	} {
-		testutil.AssertEqualsBool(t, ip, want, isPrivateOrLocalIP(net.ParseIP(ip)))
+		testutil.AssertEqualsBool(t, ip, want, system.IsPrivateOrLocalIP(net.ParseIP(ip)))
 	}
 
 	ttl := func(cc string) time.Duration { return cimdCacheTTL(http.Header{"Cache-Control": {cc}}) }

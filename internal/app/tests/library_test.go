@@ -12,11 +12,13 @@ import (
 	"testing"
 
 	"github.com/openrundev/openrun/internal/app"
+	"github.com/openrundev/openrun/internal/app/dev"
 	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 )
 
 func TestLibraryBasic(t *testing.T) {
+	t.Cleanup(dev.AllowPrivateDownloadsForTest()) // the test server is on loopback
 	// Create a test server to serve the library file
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "myjs contents") //nolint:errcheck
@@ -58,6 +60,7 @@ app = ace.app("testApp", custom_layout=True, routes = [ace.html("/")],
 }
 
 func TestLibraryESM(t *testing.T) {
+	t.Cleanup(dev.AllowPrivateDownloadsForTest()) // the test server is on loopback
 	// ESM setup requires to run esbuild, which does not play well with the test FS.
 	// Test basic flow without actually running esbuild
 	logger := testutil.TestLogger()
