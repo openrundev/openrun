@@ -594,3 +594,225 @@ func TestAppLoginOIDC(t *testing.T) {
 func TestAppLoginSAML(t *testing.T) {
 	appLoginFlow(t, "saml_test", "/samlapp", func(p *page) { p.samlIdPLogin() })
 }
+
+// Background requests reaching an app without a session, while the user
+// is completing the login in another tab, must not start a second login:
+// that overwrote the pre-auth cookie of the login in flight and failed it
+// with "error matching session state" (openrundev/openrun#116). A service
+// worker made it happen on every login: the browser refetches the worker
+// script on each navigation into its scope.
+
+// swappSource builds the test app which registers a service worker: the
+// standard test app plus a worker script served from the app root
+// (static_root), a no-op worker without a fetch handler, so navigations
+// into its scope go to the network as usual while the browser refetches the
+// script (a background request) to check for updates
+func swappSource(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS(testenv.TestappSource())); err != nil {
+		t.Fatal(err)
+	}
+	worker := "self.addEventListener('install', () => self.skipWaiting());\n"
+	if err := os.WriteFile(filepath.Join(dir, "static_root", "sw.js"), []byte(worker), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// incognito returns a browser context of its own (cookies shared by the
+// pages created in it, separate from the other tests)
+func incognito(t *testing.T) *rod.Browser {
+	t.Helper()
+	b, err := browser.Incognito()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// newContextPage opens a page in the given browser context
+func newContextPage(t *testing.T, b *rod.Browser) *page {
+	t.Helper()
+	p, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.Close() }) //nolint:errcheck
+	return &page{Page: p.Timeout(30 * time.Second), t: t}
+}
+
+// evalString runs page script returning a string (promises are awaited)
+func (p *page) evalString(js string) string {
+	p.t.Helper()
+	res, err := p.Eval(js)
+	if err != nil {
+		p.t.Fatalf("eval: %v", err)
+	}
+	return res.Value.Str()
+}
+
+// fetchStatus fetches the url from the page (a cors-mode fetch with the
+// context's cookies) and returns the status, or the error message
+func (p *page) fetchStatus(target string) string {
+	p.t.Helper()
+	return p.evalString(fmt.Sprintf(`() => fetch(%q, {credentials: "include"}).then(r => String(r.status), e => "error: " + e.message)`, target))
+}
+
+// A fetch from a tab without a session gets a plain 401 while a navigation
+// starts the login; the headers of the refusal change nothing in the browser
+func TestAppBackgroundRequestWithoutSession(t *testing.T) {
+	if skipMsg != "" {
+		t.Skip(skipMsg)
+	}
+	if out, err := env.CLI("app", "create", "--approve", "--auth", "oidc_test", testenv.TestappSource(), "/oidcbg"); err != nil {
+		t.Fatalf("creating app: %v\n%s", err, out)
+	}
+	// The refusal, as a browser's fetch sends it
+	req, _ := http.NewRequest(http.MethodGet, serverURL+"/oidcbg/", nil)
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	resp, err := insecure.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("Cache-Control") != "no-store" ||
+		len(resp.Cookies()) != 0 || resp.Header.Get("Location") != "" {
+		t.Fatalf("background request: %d %v", resp.StatusCode, resp.Header)
+	}
+	// A navigation without fetch metadata (plain http deployments) starts
+	// the login on the Accept header
+	req, _ = http.NewRequest(http.MethodGet, serverURL+"/oidcbg/", nil)
+	req.Header.Set("Accept", "text/html,*/*;q=0.8")
+	resp, err = insecure.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusFound || !strings.Contains(resp.Header.Get("Location"), "/_openrun/auth/oidc_test/login?state=") {
+		t.Fatalf("navigation: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+
+	b := incognito(t)
+	other := newContextPage(t, b)
+	other.open(serverURL + "/plainapp")
+	other.mustContain("Test app body")
+	if status := other.fetchStatus(serverURL + "/oidcbg/"); status != "401" {
+		t.Fatalf("fetch without a session: %s, want 401", status)
+	}
+	queueOIDCUser()
+	tab := newContextPage(t, b)
+	tab.open(serverURL + "/oidcbg")
+	tab.waitURLPrefix(serverURL + "/oidcbg")
+	tab.mustContain("Test app body")
+	if status := other.fetchStatus(serverURL + "/oidcbg/"); status != "200" {
+		t.Fatalf("fetch with the session: %s, want 200", status)
+	}
+}
+
+// A poller of a tab whose session expired fires while the user is at the
+// IdP in another tab: the login must still complete
+func TestAppLoginSurvivesBackgroundFetch(t *testing.T) {
+	if skipMsg != "" {
+		t.Skip(skipMsg)
+	}
+	if out, err := env.CLI("app", "create", "--approve", "--auth", "saml_test", testenv.TestappSource(), "/samlbg"); err != nil {
+		t.Fatalf("creating app: %v\n%s", err, out)
+	}
+	b := incognito(t)
+	tab := newContextPage(t, b)
+	tab.open(serverURL + "/samlbg")
+	tab.waitURLPrefix(idpURL + "/sso") // the login is in flight, the pre-auth cookie is set
+
+	other := newContextPage(t, b)
+	other.open(serverURL + "/plainapp")
+	other.mustContain("Test app body")
+	for range 3 {
+		if status := other.fetchStatus(serverURL + "/samlbg/"); status != "401" {
+			t.Fatalf("fetch during the login: %s, want 401", status)
+		}
+	}
+
+	// The tab is in the background since the other page opened; rod's
+	// input waits for an animation frame, which only a foreground page gets
+	if _, err := tab.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	tab.samlIdPLogin()
+	tab.waitURLPrefix(serverURL + "/samlbg")
+	tab.mustContain("Test app body")
+	if status := other.fetchStatus(serverURL + "/samlbg/"); status != "200" {
+		t.Fatalf("fetch after the login: %s, want 200", status)
+	}
+}
+
+// The reported case: a service worker registered by the app. Its script
+// update fetch (which the browser issues on every navigation into the
+// scope, here triggered explicitly) must not start a login, and the login
+// the user completes meanwhile must succeed
+func TestAppLoginSurvivesServiceWorkerUpdate(t *testing.T) {
+	if skipMsg != "" {
+		t.Skip(skipMsg)
+	}
+	if out, err := env.CLI("app", "create", "--approve", "--auth", "saml_test", swappSource(t), "/swapp"); err != nil {
+		t.Fatalf("creating app: %v\n%s", err, out)
+	}
+	b := incognito(t)
+	tab := newContextPage(t, b)
+	tab.open(serverURL + "/swapp")
+	tab.samlIdPLogin()
+	tab.waitURLPrefix(serverURL + "/swapp")
+	tab.mustContain("Test app body")
+
+	// The app registers its worker while signed in
+	registered := tab.evalString(`() => navigator.serviceWorker.register("/swapp/sw.js", {scope: "/swapp/"})
+		.then(reg => reg.scope, e => "error: " + e.name + ": " + e.message)`)
+	if registered != serverURL+"/swapp/" {
+		t.Fatalf("service worker registration: %s", registered)
+	}
+	// The worker is active once installed (skipWaiting)
+	active := tab.evalString(`() => new Promise(resolve => {
+		const deadline = Date.now() + 10000;
+		const check = () => navigator.serviceWorker.getRegistration("/swapp/").then(reg => {
+			if (reg && reg.active) { resolve("active"); }
+			else if (Date.now() > deadline) { resolve("not active: " + JSON.stringify(reg && {installing: !!reg.installing, waiting: !!reg.waiting})); }
+			else { setTimeout(check, 100); }
+		}, e => resolve("error: " + e.message));
+		check();
+	})`)
+	if active != "active" {
+		t.Fatalf("service worker: %s", active)
+	}
+
+	// The session expires (every cookie of the context goes, the IdP's
+	// too, so the login needs the IdP form again); the next visit starts
+	// a login and the user is at the IdP
+	if err := b.SetCookies(nil); err != nil {
+		t.Fatal(err)
+	}
+	tab.open(serverURL + "/swapp")
+	tab.waitURLPrefix(idpURL + "/sso")
+
+	// Meanwhile the worker's script update fetch reaches the app without a
+	// session: refused, so the worker keeps its script and the pre-auth
+	// cookie of the login in flight is untouched
+	other := newContextPage(t, b)
+	other.open(serverURL + "/plainapp")
+	update := `() => navigator.serviceWorker.getRegistration("/swapp/")
+		.then(reg => reg ? reg.update().then(() => "updated", e => "rejected: " + e.name) : "no registration")`
+	if result := other.evalString(update); !strings.HasPrefix(result, "rejected") {
+		t.Fatalf("worker update during the login: %s, want a rejection", result)
+	}
+
+	if _, err := tab.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	tab.samlIdPLogin()
+	tab.waitURLPrefix(serverURL + "/swapp")
+	tab.mustContain("Test app body")
+	// With the session back the update goes through
+	if result := other.evalString(update); result != "updated" {
+		t.Fatalf("worker update after the login: %s", result)
+	}
+}

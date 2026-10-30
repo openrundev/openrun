@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/securecookie"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
 	"github.com/openrundev/openrun/internal/testutil"
@@ -874,5 +875,297 @@ func TestOAuthCallbackRotatesState(t *testing.T) {
 	manager.redirect(w, r)
 	if w.Code == http.StatusFound {
 		t.Fatal("completion token reused")
+	}
+}
+
+// navigationRequest is an app request as a browser sends it for a top level
+// navigation to a potentially trustworthy origin (fetch metadata present)
+func navigationRequest(target string, cookies []*http.Cookie) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, target, nil)
+	r.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	r.Header.Set("Sec-Fetch-Mode", "navigate")
+	r.Header.Set("Sec-Fetch-Dest", "document")
+	r.Header.Set("Sec-Fetch-Site", "none")
+	for _, cookie := range cookies {
+		r.AddCookie(cookie)
+	}
+	return r
+}
+
+// backgroundRequest is an app request a browser sends on its own or from
+// page script: a service worker script update by default, or with the
+// given fetch mode and destination
+func backgroundRequest(target string, cookies []*http.Cookie, metadata ...string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, target, nil)
+	r.Header.Set("Accept", "*/*")
+	r.Header.Set("Sec-Fetch-Mode", "same-origin")
+	r.Header.Set("Sec-Fetch-Dest", "serviceworker")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	if len(metadata) == 2 {
+		r.Header.Set("Sec-Fetch-Mode", metadata[0])
+		r.Header.Set("Sec-Fetch-Dest", metadata[1])
+	}
+	for _, cookie := range cookies {
+		r.AddCookie(cookie)
+	}
+	return r
+}
+
+// assertDeniedLoginStart checks the response of a request that may not
+// start a login: a 401 which changes nothing in the browser or the store
+func assertDeniedLoginStart(t *testing.T, w *httptest.ResponseRecorder, db *InmemoryKVStore, rows int) {
+	t.Helper()
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d, want 401: %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control %q, want no-store", w.Header().Get("Cache-Control"))
+	}
+	for _, name := range []string{"Set-Cookie", "Location", "HX-Redirect"} {
+		if w.Header().Get(name) != "" {
+			t.Fatalf("denied request must not send %s, got %q", name, w.Header().Get(name))
+		}
+	}
+	if len(db.store) != rows {
+		t.Fatalf("denied request changed the keystore: %d rows, was %d", len(db.store), rows)
+	}
+}
+
+// loginStateOf returns the pre-login state row the login redirect names
+func loginStateOf(t *testing.T, db KVStore, location string) (string, map[string]any) {
+	t.Helper()
+	loginURL, err := url.Parse(location)
+	testutil.AssertNoError(t, err)
+	sessionId, err := base64.URLEncoding.DecodeString(loginURL.Query().Get("state"))
+	testutil.AssertNoError(t, err)
+	state, err := db.FetchKV(t.Context(), string(sessionId))
+	testutil.AssertNoError(t, err)
+	return string(sessionId), state
+}
+
+// sessionIDOf decodes the session id the cookie carries
+func sessionIDOf(t *testing.T, manager *OAuthManager, cookie *http.Cookie) string {
+	t.Helper()
+	var id string
+	store, ok := manager.cookieStore.(*KVSessionStore)
+	if !ok {
+		t.Fatalf("cookie store is %T, want the KV session store", manager.cookieStore)
+	}
+	testutil.AssertNoError(t, securecookie.DecodeMulti(cookie.Name, cookie.Value, &id, store.Codecs...))
+	return id
+}
+
+func providerCookie(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie {
+	t.Helper()
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	t.Fatalf("no %s cookie in %v", name, cookies)
+	return nil
+}
+
+// TestOAuthBackgroundRequestKeepsPendingLogin is the sequence of
+// openrundev/openrun#116: while the user is at the IdP, the browser's
+// service worker update fetch (or a poller of a tab whose session expired)
+// reaches the app without a session. It must not start another login,
+// which would overwrite the pre-auth cookie of the login in flight and
+// fail its completion with "error matching session state"
+func TestOAuthBackgroundRequestKeepsPendingLogin(t *testing.T) {
+	manager, db := newOAuthSessionTestManager(t)
+	const appURL = "https://app.example.com/chat/production/"
+
+	// A navigation starts the login
+	w := httptest.NewRecorder()
+	info, err := manager.CheckAuthInfo(w, navigationRequest(appURL, nil), "github")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "user", "", info.UserId)
+	testutil.AssertEqualsInt(t, "login redirect", http.StatusFound, w.Code)
+	testutil.AssertStringContains(t, w.Header().Get("Location"), "/auth/github/login?state=")
+	preAuthCookies := w.Result().Cookies()
+	providerCookie(t, preAuthCookies, genCookieName("github"))
+	stateId, state := loginStateOf(t, db, w.Header().Get("Location"))
+	nonce, _ := state[NONCE_KEY].(string)
+	redirectURL, _ := state[REDIRECT_URL].(string)
+	if nonce == "" || redirectURL != appURL {
+		t.Fatalf("login state %v", state)
+	}
+	rows := len(db.store)
+
+	// Background requests arriving with the pre-auth cookie are refused
+	// without touching it or the login state
+	for _, tc := range []struct {
+		name string
+		r    *http.Request
+	}{
+		{"service worker update", backgroundRequest(appURL+"notify-sw.js", preAuthCookies)},
+		{"fetch poller", backgroundRequest(appURL+"api/status", preAuthCookies, "cors", "empty")},
+		{"event source", backgroundRequest(appURL+"events", preAuthCookies, "cors", "empty")},
+		{"prefetch", func() *http.Request {
+			r := navigationRequest(appURL+"other", preAuthCookies)
+			r.Header.Set("Sec-Purpose", "prefetch;prerender")
+			return r
+		}()},
+		{"non-html client", func() *http.Request {
+			r := httptest.NewRequest(http.MethodGet, appURL+"api/status", nil)
+			r.Header.Set("Accept", "application/json")
+			return r
+		}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			info, err := manager.CheckAuthInfo(w, tc.r, "github")
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqualsString(t, "user", "", info.UserId)
+			assertDeniedLoginStart(t, w, db, rows)
+			kept, err := db.FetchKV(t.Context(), stateId)
+			testutil.AssertNoError(t, err)
+			if kept[NONCE_KEY] != nonce {
+				t.Fatalf("login state changed: %v", kept)
+			}
+		})
+	}
+
+	// The IdP step completes: the callback consumed the pre-login state and
+	// minted the completion token (TestOAuthCallbackRotatesState); the
+	// redirect with the untouched pre-auth cookie completes the login
+	completeId := types.OAUTH_SESSION_KV_PREFIX + "completion-token"
+	expireAt := time.Now().Add(time.Minute)
+	testutil.AssertNoError(t, db.DeleteKV(t.Context(), stateId))
+	testutil.AssertNoError(t, db.StoreKV(t.Context(), completeId, map[string]any{
+		AUTH_KEY: true, PROVIDER_NAME_KEY: "github", REDIRECT_URL: redirectURL, NONCE_KEY: nonce,
+		USER_KEY: "jane", USER_ID_KEY: "subject-1", GROUPS_KEY: []any{"dev"},
+	}, &expireAt))
+	redirectReq := oauthProviderRequest("/auth/github/redirect?state=" + base64.URLEncoding.EncodeToString([]byte(completeId)))
+	for _, cookie := range preAuthCookies {
+		redirectReq.AddCookie(cookie)
+	}
+	w = httptest.NewRecorder()
+	manager.redirect(w, redirectReq)
+	if w.Code != http.StatusFound {
+		t.Fatalf("redirect: %d %s", w.Code, w.Body.String())
+	}
+	testutil.AssertEqualsString(t, "app url", appURL, w.Header().Get("Location"))
+	authedCookies := w.Result().Cookies()
+
+	// Authenticated background requests are served: the classifier only
+	// applies to a request without a usable session
+	w = httptest.NewRecorder()
+	info, err = manager.CheckAuthInfo(w, backgroundRequest(appURL+"notify-sw.js", authedCookies), "github")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "user", "github:jane", info.UserId)
+	if w.Code != http.StatusOK || w.Header().Get("Location") != "" {
+		t.Fatalf("authenticated background request: %d %v", w.Code, w.Header())
+	}
+}
+
+// A session cookie that cannot be used (undecodable, or naming a row that
+// expired) is treated as no session: a navigation starts the login at once
+// under a new session id, without the cookie-clearing self redirect of
+// earlier versions, and a background request gets the 401 without any
+// cookie change
+func TestOAuthUnusableCookieStartsLoginAfresh(t *testing.T) {
+	const appURL = "https://app.example.com/dashboard"
+	cookieName := genCookieName("github")
+	for _, tc := range []struct {
+		name   string
+		cookie func(t *testing.T, manager *OAuthManager, db *InmemoryKVStore) *http.Cookie
+	}{
+		{"undecodable cookie", func(t *testing.T, manager *OAuthManager, db *InmemoryKVStore) *http.Cookie {
+			return &http.Cookie{Name: cookieName, Value: "not-a-valid-cookie-value"}
+		}},
+		{"signed cookie naming a missing row", func(t *testing.T, manager *OAuthManager, db *InmemoryKVStore) *http.Cookie {
+			cookies := oauthNonceCookies(t, manager, "old-nonce", appURL)
+			cookie := providerCookie(t, cookies, cookieName)
+			id := sessionIDOf(t, manager, cookie)
+			testutil.AssertNoError(t, db.DeleteKV(t.Context(), types.HTTP_SESSION_KV_PREFIX+cookieName+":"+id))
+			return cookie
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager, db := newOAuthSessionTestManager(t)
+			stale := tc.cookie(t, manager, db)
+			rows := len(db.store)
+
+			// Background: 401, the stale cookie is left alone
+			w := httptest.NewRecorder()
+			info, err := manager.CheckAuthInfo(w, backgroundRequest(appURL, []*http.Cookie{stale}, "cors", "empty"), "github")
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqualsString(t, "user", "", info.UserId)
+			assertDeniedLoginStart(t, w, db, rows)
+
+			// Navigation: straight into the login, with a fresh session
+			w = httptest.NewRecorder()
+			info, err = manager.CheckAuthInfo(w, navigationRequest(appURL, []*http.Cookie{stale}), "github")
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqualsString(t, "user", "", info.UserId)
+			testutil.AssertEqualsInt(t, "login redirect", http.StatusFound, w.Code)
+			testutil.AssertStringContains(t, w.Header().Get("Location"), "/auth/github/login?state=")
+			set := w.Result().Cookies()
+			if len(set) != 1 {
+				t.Fatalf("want one pre-auth cookie, got %v", set)
+			}
+			fresh := providerCookie(t, set, cookieName)
+			if fresh.MaxAge <= 0 {
+				t.Fatalf("pre-auth cookie must be set, not cleared: %v", fresh)
+			}
+			if id := sessionIDOf(t, manager, fresh); id == "" || (stale.Value != "not-a-valid-cookie-value" && id == sessionIDOf(t, manager, stale)) {
+				t.Fatalf("the login must start under a new session id, got %q", id)
+			}
+			_, state := loginStateOf(t, db, w.Header().Get("Location"))
+			if state[REDIRECT_URL] != appURL {
+				t.Fatalf("login state %v", state)
+			}
+
+			// HTMX: the login redirect goes out as HX-Redirect, not the
+			// earlier self redirect
+			w = httptest.NewRecorder()
+			htmx := backgroundRequest(appURL, []*http.Cookie{stale}, "cors", "empty")
+			htmx.Header.Set("HX-Request", "true")
+			_, err = manager.CheckAuthInfo(w, htmx, "github")
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqualsInt(t, "htmx status", http.StatusOK, w.Code)
+			testutil.AssertStringContains(t, w.Header().Get("HX-Redirect"), "/auth/github/login?state=")
+		})
+	}
+}
+
+// Background requests do not count against the client's login start budget
+// and write no login state
+func TestOAuthBackgroundRequestsSkipLoginBudget(t *testing.T) {
+	manager, db := newOAuthSessionTestManager(t)
+	manager.config.Security.LoginStartRateLimit = 2
+	manager.loginRate = newIPRateLimiter(time.Minute, rateLimiterMaxIPs)
+	const appURL = "https://app.example.com/dashboard"
+	rows := len(db.store)
+	for range 10 {
+		r := backgroundRequest(appURL+"/poll", nil, "cors", "empty")
+		r.RemoteAddr = "10.0.0.1:1234"
+		w := httptest.NewRecorder()
+		_, err := manager.CheckAuthInfo(w, r, "github")
+		testutil.AssertNoError(t, err)
+		assertDeniedLoginStart(t, w, db, rows)
+	}
+	for i := range 2 {
+		r := navigationRequest(appURL, nil)
+		r.RemoteAddr = "10.0.0.1:1234"
+		w := httptest.NewRecorder()
+		_, err := manager.CheckAuthInfo(w, r, "github")
+		testutil.AssertNoError(t, err)
+		if w.Code != http.StatusFound {
+			t.Fatalf("navigation %d after the background requests: %d, want the login redirect", i, w.Code)
+		}
+	}
+	r := navigationRequest(appURL, nil)
+	r.RemoteAddr = "10.0.0.1:1234"
+	w := httptest.NewRecorder()
+	_, err := manager.CheckAuthInfo(w, r, "github")
+	testutil.AssertNoError(t, err)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("third navigation: %d, want 429 (the limit applies to navigations)", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "login") {
+		t.Fatalf("429 body: %s", w.Body.String())
 	}
 }

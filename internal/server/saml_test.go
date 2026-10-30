@@ -4,6 +4,9 @@
 package server
 
 import (
+	"net/url"
+	"time"
+
 	"context"
 	"encoding/base64"
 	"net/http"
@@ -791,10 +794,12 @@ func TestSAMLSessionAuth(t *testing.T) {
 			if tc.htmx {
 				req.Header.Set("HX-Request", "true")
 			}
+			manager.providers = map[string]*saml2.SAMLServiceProvider{"saml_okta": {}, "saml_azure": {}}
 			if tc.corrupt {
+				// An undecodable cookie starts the login directly (no
+				// cookie clearing round trip)
 				req.AddCookie(&http.Cookie{Name: genSAMLCookieName("saml_okta"), Value: "invalid-cookie-value"})
 			} else {
-				manager.providers = map[string]*saml2.SAMLServiceProvider{"saml_okta": {}, "saml_azure": {}}
 				session, err := store.Get(req, genSAMLCookieName("saml_okta"))
 				testutil.AssertNoError(t, err)
 				session.Values[AUTH_KEY], session.Values[PROVIDER_NAME_KEY], session.Values[USER_KEY] = true, "saml_okta", "user@example.com"
@@ -826,5 +831,113 @@ func TestSAMLSessionAuth(t *testing.T) {
 				t.Error("expected HX-Redirect header")
 			}
 		})
+	}
+}
+
+// TestSAMLBackgroundRequestKeepsPendingLogin is openrundev/openrun#116 for
+// the SAML login: a background request reaching the app while the user is
+// at the IdP must not start another login (which would overwrite the
+// pre-auth cookie of the one in flight), and the in-flight login still
+// completes
+func TestSAMLBackgroundRequestKeepsPendingLogin(t *testing.T) {
+	const provider = "saml_okta"
+	const appURL = "https://app.example.com/chat/production/"
+	db := NewInmemoryKVStore()
+	store := NewKVSessionStore(db, []byte("test-key-12345678901234567890123456"))
+	manager := NewSAMLManager(testutil.TestLogger(), &types.ServerConfig{}, store, db)
+	manager.providers = map[string]*saml2.SAMLServiceProvider{provider: {}}
+	manager.providerConfigs = map[string]*types.SAMLConfig{provider: {}}
+	mux := chi.NewRouter()
+	manager.RegisterRoutes(mux)
+
+	// A navigation starts the login (redirect binding to the IdP)
+	w := httptest.NewRecorder()
+	userID, _, err := manager.CheckSAMLAuth(w, navigationRequest(appURL, nil), provider)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "user", "", userID)
+	testutil.AssertEqualsInt(t, "login redirect", http.StatusFound, w.Code)
+	idpURL, err := url.Parse(w.Header().Get("Location"))
+	testutil.AssertNoError(t, err)
+	relay, err := base64.URLEncoding.DecodeString(idpURL.Query().Get("RelayState"))
+	testutil.AssertNoError(t, err)
+	stateId := string(relay)
+	state, err := db.FetchKV(t.Context(), stateId)
+	testutil.AssertNoError(t, err)
+	nonce, _ := state[NONCE_KEY].(string)
+	if nonce == "" || state[REDIRECT_URL] != appURL {
+		t.Fatalf("login state %v", state)
+	}
+	preAuthCookies := w.Result().Cookies()
+	providerCookie(t, preAuthCookies, genSAMLCookieName(provider))
+	rows := len(db.store)
+
+	// Background requests with the pre-auth cookie: refused, nothing changes
+	for _, tc := range []struct {
+		name string
+		r    *http.Request
+	}{
+		{"service worker update", backgroundRequest(appURL+"notify-sw.js", preAuthCookies)},
+		{"fetch poller", backgroundRequest(appURL+"api/status", preAuthCookies, "cors", "empty")},
+		{"undecodable cookie", backgroundRequest(appURL+"api/status",
+			[]*http.Cookie{{Name: genSAMLCookieName(provider), Value: "garbage"}}, "cors", "empty")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			userID, _, err := manager.CheckSAMLAuth(w, tc.r, provider)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqualsString(t, "user", "", userID)
+			assertDeniedLoginStart(t, w, db, rows)
+			kept, err := db.FetchKV(t.Context(), stateId)
+			testutil.AssertNoError(t, err)
+			if kept[NONCE_KEY] != nonce {
+				t.Fatalf("login state changed: %v", kept)
+			}
+		})
+	}
+
+	// The ACS consumed the pre-login relay and minted the completion token
+	// (TestSAMLManager_SignedAssertionReplayAndLogoutValidation); the
+	// redirect with the untouched pre-auth cookie completes the login
+	completeId := types.SAML_SESSION_KV_PREFIX + "completion-token"
+	expireAt := time.Now().Add(time.Minute)
+	testutil.AssertNoError(t, db.DeleteKV(t.Context(), stateId))
+	testutil.AssertNoError(t, db.StoreKV(t.Context(), completeId, map[string]any{
+		AUTH_KEY: true, PROVIDER_NAME_KEY: provider, REDIRECT_URL: appURL, NONCE_KEY: nonce,
+		USER_KEY: "alice@example.com", GROUPS_KEY: []any{"dev"}, SESSION_INDEX_KEY: "idx-1",
+	}, &expireAt))
+	redirectReq := httptest.NewRequest(http.MethodGet, "https://app.example.com"+types.INTERNAL_URL_PREFIX+"/sso/"+provider+
+		"/redirect?relay="+base64.URLEncoding.EncodeToString([]byte(completeId)), nil)
+	for _, cookie := range preAuthCookies {
+		redirectReq.AddCookie(cookie)
+	}
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, redirectReq)
+	if w.Code != http.StatusFound {
+		t.Fatalf("redirect: %d %s", w.Code, w.Body.String())
+	}
+	testutil.AssertEqualsString(t, "app url", appURL, w.Header().Get("Location"))
+	authedCookies := w.Result().Cookies()
+
+	// Authenticated background requests are served
+	w = httptest.NewRecorder()
+	userID, _, err = manager.CheckSAMLAuth(w, backgroundRequest(appURL+"notify-sw.js", authedCookies), provider)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "user", provider+":alice@example.com", userID)
+	if w.Code != http.StatusOK || w.Header().Get("Location") != "" {
+		t.Fatalf("authenticated background request: %d %v", w.Code, w.Header())
+	}
+
+	// A navigation with an unusable cookie goes straight into the login
+	// under a fresh pre-auth session
+	w = httptest.NewRecorder()
+	userID, _, err = manager.CheckSAMLAuth(w, navigationRequest(appURL,
+		[]*http.Cookie{{Name: genSAMLCookieName(provider), Value: "garbage"}}), provider)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "user", "", userID)
+	testutil.AssertEqualsInt(t, "login redirect", http.StatusFound, w.Code)
+	testutil.AssertStringContains(t, w.Header().Get("Location"), "SAMLRequest=")
+	fresh := providerCookie(t, w.Result().Cookies(), genSAMLCookieName(provider))
+	if fresh.MaxAge <= 0 || fresh.Value == "garbage" {
+		t.Fatalf("pre-auth cookie must be set afresh: %v", fresh)
 	}
 }

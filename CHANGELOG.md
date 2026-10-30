@@ -22,6 +22,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - The config read APIs no longer redact `api.access_token_ttl`, `api.refresh_token_ttl` and `app_config.security.default_secrets_provider`.
+- An OAuth/OIDC or SAML login no longer fails with "error matching session state" when a background request (a service worker script update, a `fetch` or `EventSource` poller of a tab whose session expired, a prefetch) reaches the app while the user is at the identity provider ([#116](https://github.com/openrundev/openrun/issues/116)).
 
 ## [v0.20.6] - 2026-10-28
 

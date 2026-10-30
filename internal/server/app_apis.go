@@ -1311,6 +1311,75 @@ func isBrowserNavigation(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
+// canStartLogin reports whether an app request that has no usable session
+// may start an OAuth/OIDC or SAML login handshake. Only a request the user
+// will see the result of (a top level navigation, or an HTMX request, which
+// turns the HX-Redirect into one) should start a login: a login start
+// overwrites the browser's pre-auth cookie, so a background request (a
+// service worker script update, a fetch or EventSource poller from a tab
+// whose session expired) which reached the app while a login was in flight
+// would break the login the user is completing, and such requests could
+// never finish the redirect flow anyway. They also each cost a keystore row
+// and a login start of the client's rate budget.
+//
+// Decision, in order:
+//  1. A speculative load (prefetch, prerender) never starts a login, even
+//     when it is an HTMX request: the user did not ask for it.
+//  2. An HTMX request starts a login (HX-Redirect), as before. htmx pollers
+//     (hx-trigger="every ...") therefore still start logins; they cannot be
+//     told apart from a click.
+//  3. With fetch metadata present (browsers send it to potentially
+//     trustworthy origins, https and localhost), only Sec-Fetch-Mode
+//     "navigate" starts a login.
+//  4. Without fetch metadata (plain http on a LAN address, older clients),
+//     a request accepting HTML starts a login. This is a heuristic: a
+//     background GET that asks for text/html passes it. Any method is
+//     accepted, so a form submission to a page whose session expired
+//     restarts the login the way a navigation with metadata does.
+//
+// The form login keeps its own HTML/HTMX heuristic (isBrowserNavigation),
+// which also decides between the login page and the Basic challenge.
+func canStartLogin(r *http.Request) bool {
+	if isSpeculativeRequest(r) {
+		return false
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		return true
+	}
+	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" {
+		return mode == "navigate"
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
+// isSpeculativeRequest reports whether the request is a speculative load
+// the user did not navigate to: a prefetch or prerender. Chrome sends
+// Sec-Purpose as "prefetch" or "prefetch;prerender" (a ';' separated list,
+// "prefetch;anonymous-client-ip" for the private prefetch proxy); Safari and
+// older Firefox send the legacy Purpose: prefetch, older Firefox X-moz:
+// prefetch
+func isSpeculativeRequest(r *http.Request) bool {
+	for _, value := range r.Header.Values("Sec-Purpose") {
+		for _, token := range strings.Split(value, ";") {
+			switch strings.ToLower(strings.TrimSpace(token)) {
+			case "prefetch", "prerender":
+				return true
+			}
+		}
+	}
+	return strings.EqualFold(r.Header.Get("Purpose"), "prefetch") ||
+		strings.EqualFold(r.Header.Get("X-Moz"), "prefetch")
+}
+
+// denyLoginStart answers an unauthenticated request that may not start a
+// login (canStartLogin): a 401 which changes nothing, no cookie is set or
+// cleared and no login state is written. App code sees a plain 401 on its
+// fetch and can reload the page, which starts the login as a navigation
+func denyLoginStart(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.Error(w, "authentication required, reload the page to sign in", http.StatusUnauthorized)
+}
+
 func sameAppRequestDomain(requestDomain, appDomain string) bool {
 	if strings.EqualFold(requestDomain, appDomain) {
 		return true

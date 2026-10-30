@@ -757,3 +757,101 @@ func TestCompletionRedirectAllowed(t *testing.T) {
 		}
 	}
 }
+
+// The authorization server's consent form is a POST on the login origin. A
+// user whose provider session expired while the consent page was open
+// must be sent back into the provider login when they submit it, as a
+// browser does (a form submission is a navigation: Sec-Fetch-Mode navigate,
+// or Accept text/html where the browser sends no fetch metadata); a
+// submission that looks like neither gets the 401
+func TestOAuthFederatedConsentRestartsExpiredLogin(t *testing.T) {
+	server, ts, client := newFederatedTestServer(t, goth.User{UserID: "sub-7", Email: "gus@example.com"})
+	upstream := newUpstreamRecorder(t)
+	createMCPTestApp(t, server, "/apps/orders", upstream.server.URL, "github", `{"scopes":["orders:read"],"default_scope":"orders:read"}`)
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{Grants: []types.RBACGrant{
+		{Users: []string{"github:gus@example.com"}, Roles: []string{"openrun-user"}, Targets: []string{"/apps/**"}},
+	}}); err != nil {
+		t.Fatalf("rbac: %v", err)
+	}
+	tsURL, _ := url.Parse(ts.URL)
+	login := loginOriginOf(t, ts)
+	form := url.Values{
+		"response_type": {"code"}, "client_id": {"openrun-cli"},
+		"redirect_uri": {"http://127.0.0.1:39999/callback"}, "code_challenge": {strings.Repeat("a", 43)},
+		"code_challenge_method": {"S256"}, "resource": {"https://localhost:" + tsURL.Port() + "/apps/orders"}}
+
+	// Reach the consent page: authorize, provider login, callback, continue
+	_, location := getRedirect(t, client, login+"/_openrun/oauth/authorize?"+form.Encode())
+	loginURL, _ := url.Parse(location)
+	_, location = getRedirect(t, client, ts.URL+"/_openrun/auth/github/callback?state="+url.QueryEscape(loginURL.Query().Get("state")))
+	_, continueURL := getRedirect(t, client, location)
+	authzID := strings.TrimPrefix(continueURL, login+"/_openrun/oauth/authorize/continue?authz=")
+	resp, err := client.Get(continueURL)
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	page := readBody(t, resp)
+	testutil.AssertEqualsInt(t, "consent page", http.StatusOK, resp.StatusCode)
+	nonce := regexp.MustCompile(`name="nonce" value="([^"]+)"`).FindStringSubmatch(page)
+	if nonce == nil {
+		t.Fatalf("consent page: %s", page)
+	}
+	consent := url.Values{"authz": {authzID}, "nonce": {nonce[1]}, "or_scope": {"orders:read"}}
+
+	// The provider session on the login origin becomes unusable (the row
+	// expired, or the cookie no longer decodes)
+	loginOrigin, _ := url.Parse(login)
+	client.Jar.SetCookies(loginOrigin, []*http.Cookie{{Name: genCookieName("github"), Value: "no-longer-valid", Path: "/"}})
+
+	post := func(headers map[string]string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, login+"/_openrun/oauth/authorize/consent", strings.NewReader(consent.Encode()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for name, value := range headers {
+			req.Header.Set(name, value)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("consent: %v", err)
+		}
+		readBody(t, resp)
+		return resp
+	}
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+		restart bool
+	}{
+		{"browser with fetch metadata", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-origin", "Accept": "text/html"}, true},
+		{"browser without fetch metadata", map[string]string{"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"}, true},
+		{"not a navigation", map[string]string{"Accept": "*/*"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := post(tc.headers)
+			if !tc.restart {
+				testutil.AssertEqualsInt(t, "status", http.StatusUnauthorized, resp.StatusCode)
+				if len(resp.Cookies()) != 0 || resp.Header.Get("Location") != "" {
+					t.Fatalf("a refused start must not set cookies or redirect: %v %s", resp.Cookies(), resp.Header.Get("Location"))
+				}
+				return
+			}
+			testutil.AssertEqualsInt(t, "status", http.StatusFound, resp.StatusCode)
+			if !strings.HasPrefix(resp.Header.Get("Location"), ts.URL+"/_openrun/auth/github/login?state=") {
+				t.Fatalf("expected a restart of the provider login, got %s", resp.Header.Get("Location"))
+			}
+			// The restarted login returns to the continue page, under a
+			// fresh pre-auth cookie, and the consent record survives
+			_, state := loginStateOf(t, server.db, resp.Header.Get("Location"))
+			testutil.AssertEqualsString(t, "return url", continueURL, state[REDIRECT_URL].(string))
+			if cookie := providerCookie(t, resp.Cookies(), genCookieName("github")); cookie.MaxAge <= 0 || cookie.Value == "no-longer-valid" {
+				t.Fatalf("pre-auth cookie: %v", cookie)
+			}
+			if stored, err := server.fetchOAuthAuthz(t.Context(), authzID); err != nil || stored == nil {
+				t.Fatalf("consent record must survive the restart: %+v %v", stored, err)
+			}
+		})
+	}
+}

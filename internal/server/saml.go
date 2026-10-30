@@ -190,18 +190,13 @@ func (s *SAMLManager) checkSAMLAuth(w http.ResponseWriter, r *http.Request, appP
 
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {
-		s.Warn().Err(err).Msg("failed to get saml session")
-		if session != nil {
-			// delete the session
-			session.Options.MaxAge = -1
-			session.Save(r, w) //nolint:errcheck
-		}
-
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", requestUrl)
-		} else {
-			http.Redirect(w, r, requestUrl, http.StatusTemporaryRedirect)
-		}
+		// An undecodable cookie, or one naming an expired or missing row:
+		// the request is unauthenticated. The cookie is not cleared here
+		// (a request which may not start a login must not change the
+		// browser's cookies, and a navigation gets a fresh pre-auth
+		// session from login, which replaces it)
+		s.Warn().Err(err).Msg("failed to get saml session, starting login")
+		s.startLogin(w, r, appProvider, requestUrl)
 		return "", nil, nil
 	}
 
@@ -225,7 +220,7 @@ func (s *SAMLManager) checkSAMLAuth(w http.ResponseWriter, r *http.Request, appP
 
 	if redirectCaller {
 		// do the SAML login flow
-		s.login(w, r, appProvider, requestUrl)
+		s.startLogin(w, r, appProvider, requestUrl)
 		return "", nil, nil
 	}
 
@@ -580,6 +575,18 @@ func (s *SAMLManager) metadata(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// startLogin starts the login flow for an app request without a usable
+// session, when the request is one that may start a login (canStartLogin);
+// any other request gets a 401 which changes nothing
+func (s *SAMLManager) startLogin(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
+	if !canStartLogin(r) {
+		s.Debug().Msg("background request without a saml session, not starting login")
+		denyLoginStart(w)
+		return
+	}
+	s.login(w, r, providerName, redirectUrl)
+}
+
 func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
 	sp := s.getProvider(providerName)
 	if sp == nil {
@@ -636,14 +643,8 @@ func (s *SAMLManager) login(w http.ResponseWriter, r *http.Request, providerName
 		return
 	}
 
-	cookieName := genSAMLCookieName(providerName)
-	session, err := s.cookieStore.Get(r, cookieName)
-	if err != nil {
-		http.Error(w, "error getting session: "+err.Error(), http.StatusInternalServerError)
-		if session != nil {
-			session.Options.MaxAge = -1
-			_ = session.Save(r, w)
-		}
+	session, ok := freshPreAuthSession(w, r, s.cookieStore, genSAMLCookieName(providerName))
+	if !ok {
 		return
 	}
 

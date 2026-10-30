@@ -359,18 +359,13 @@ func (s *OAuthManager) checkAuthInfo(w http.ResponseWriter, r *http.Request, app
 
 	session, err := s.cookieStore.Get(r, cookieName)
 	if err != nil {
-		s.Warn().Err(err).Msg("failed to get session")
-		if session != nil {
-			// delete the session
-			session.Options.MaxAge = -1
-			session.Save(r, w) //nolint:errcheck
-		}
-
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", requestUrl)
-		} else {
-			http.Redirect(w, r, requestUrl, http.StatusTemporaryRedirect)
-		}
+		// An undecodable cookie, or one naming an expired or missing row:
+		// the request is unauthenticated. The cookie is not cleared here
+		// (a request which may not start a login must not change the
+		// browser's cookies, and a navigation gets a fresh pre-auth
+		// session from beginLogin, which replaces it)
+		s.Warn().Err(err).Msg("failed to get session, starting login")
+		s.startLogin(w, r, appProvider, requestUrl)
 		return OAuthAuthInfo{}, nil
 	}
 
@@ -393,7 +388,7 @@ func (s *OAuthManager) checkAuthInfo(w http.ResponseWriter, r *http.Request, app
 
 	if redirectCaller {
 		// do the OAuth login flow
-		s.beginLogin(w, r, appProvider, requestUrl)
+		s.startLogin(w, r, appProvider, requestUrl)
 		return OAuthAuthInfo{}, nil
 	}
 
@@ -429,6 +424,18 @@ func (s *OAuthManager) checkAuthInfo(w http.ResponseWriter, r *http.Request, app
 	}, nil
 }
 
+// startLogin starts the login flow for an app request without a usable
+// session, when the request is one that may start a login (canStartLogin);
+// any other request gets a 401 which changes nothing
+func (s *OAuthManager) startLogin(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
+	if !canStartLogin(r) {
+		s.Debug().Msg("background request without a session, not starting login")
+		denyLoginStart(w)
+		return
+	}
+	s.beginLogin(w, r, providerName, redirectUrl)
+}
+
 func (s *OAuthManager) beginLogin(w http.ResponseWriter, r *http.Request, providerName, redirectUrl string) {
 	if !loginStartAllowed(s.loginRate, s.getConfig(), r) {
 		tooManyLoginStarts(w)
@@ -454,14 +461,8 @@ func (s *OAuthManager) beginLogin(w http.ResponseWriter, r *http.Request, provid
 		return
 	}
 
-	cookieName := genCookieName(providerName)
-	session, err := s.cookieStore.Get(r, cookieName)
-	if err != nil {
-		http.Error(w, "error getting session: "+err.Error(), http.StatusInternalServerError)
-		if session != nil {
-			session.Options.MaxAge = -1
-			_ = session.Save(r, w)
-		}
+	session, ok := freshPreAuthSession(w, r, s.cookieStore, genCookieName(providerName))
+	if !ok {
 		return
 	}
 

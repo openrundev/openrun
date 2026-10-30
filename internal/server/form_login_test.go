@@ -654,3 +654,75 @@ func renderContains(manager *FormLoginManager, authType, state, errorMsg, want s
 	manager.render(w, authType, state, errorMsg, "")
 	return strings.Contains(w.Body.String(), want)
 }
+
+func TestCanStartLogin(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		method  string
+		headers map[string]string
+		want    bool
+	}{
+		// Fetch metadata present (https and localhost origins)
+		{"navigation", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Accept": "text/html"}, true},
+		{"form post navigation", "POST", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Accept": "text/html"}, true},
+		{"iframe navigation", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "iframe", "Accept": "text/html"}, true},
+		{"service worker script update", "GET", map[string]string{"Sec-Fetch-Mode": "same-origin", "Sec-Fetch-Dest": "serviceworker", "Accept": "*/*"}, false},
+		{"fetch", "GET", map[string]string{"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty", "Accept": "*/*"}, false},
+		{"fetch asking for html", "GET", map[string]string{"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty", "Accept": "text/html"}, false},
+		{"event source", "GET", map[string]string{"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty", "Accept": "text/event-stream"}, false},
+		{"no-cors script", "GET", map[string]string{"Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "script"}, false},
+		{"websocket", "GET", map[string]string{"Sec-Fetch-Mode": "websocket"}, false},
+		{"fetch post", "POST", map[string]string{"Sec-Fetch-Mode": "cors", "Accept": "text/html"}, false},
+		// HTMX keeps its HX-Redirect behavior, whatever the fetch mode
+		{"htmx", "GET", map[string]string{"HX-Request": "true", "Sec-Fetch-Mode": "cors", "Accept": "*/*"}, true},
+		{"htmx post", "POST", map[string]string{"HX-Request": "true", "Sec-Fetch-Mode": "cors"}, true},
+		{"htmx without metadata", "GET", map[string]string{"HX-Request": "true"}, true},
+		{"hx-request false", "GET", map[string]string{"HX-Request": "false", "Sec-Fetch-Mode": "cors"}, false},
+		// Speculative loads never start a login, before the HTMX rule
+		{"prefetch", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Purpose": "prefetch", "Accept": "text/html"}, false},
+		{"prerender", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Purpose": "prefetch;prerender", "Accept": "text/html"}, false},
+		{"prefetch proxy", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Purpose": "prefetch;anonymous-client-ip"}, false},
+		{"prefetch mixed case", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Purpose": "Prefetch; Prerender"}, false},
+		{"legacy purpose prefetch", "GET", map[string]string{"Purpose": "prefetch", "Accept": "text/html"}, false},
+		{"legacy x-moz prefetch", "GET", map[string]string{"X-Moz": "prefetch", "Accept": "text/html"}, false},
+		{"htmx prefetch", "GET", map[string]string{"HX-Request": "true", "Sec-Purpose": "prefetch"}, false},
+		{"other purpose", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Purpose": "something-else", "Accept": "text/html"}, true},
+		// No fetch metadata (plain http on a LAN address, older clients):
+		// the Accept heuristic, any method
+		{"html without metadata", "GET", map[string]string{"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"}, true},
+		{"html head without metadata", "HEAD", map[string]string{"Accept": "text/html"}, true},
+		{"html form post without metadata", "POST", map[string]string{"Accept": "text/html"}, true},
+		{"background get asking for html without metadata", "GET", map[string]string{"Accept": "text/html"}, true}, // indistinguishable, documented
+		{"any accept without metadata", "GET", map[string]string{"Accept": "*/*"}, false},
+		{"json without metadata", "GET", map[string]string{"Accept": "application/json"}, false},
+		{"event stream without metadata", "GET", map[string]string{"Accept": "text/event-stream"}, false},
+		{"no headers", "GET", nil, false},
+		{"post without accept", "POST", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, "https://app.example.com/page", nil)
+			for name, value := range tc.headers {
+				r.Header.Set(name, value)
+			}
+			if got := canStartLogin(r); got != tc.want {
+				t.Fatalf("canStartLogin = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDenyLoginStart(t *testing.T) {
+	w := httptest.NewRecorder()
+	denyLoginStart(w)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d, want 401", w.Code)
+	}
+	if w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control %q, want no-store", w.Header().Get("Cache-Control"))
+	}
+	for _, name := range []string{"Set-Cookie", "Location", "HX-Redirect", "WWW-Authenticate"} {
+		if w.Header().Get(name) != "" {
+			t.Fatalf("unexpected %s header %q", name, w.Header().Get(name))
+		}
+	}
+}

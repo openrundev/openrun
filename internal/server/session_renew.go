@@ -130,3 +130,25 @@ func renewSession(logger *types.Logger, w http.ResponseWriter, r *http.Request, 
 		logger.Warn().Err(err).Str("cookie", session.Name()).Msg("session renewal failed, keeping the current expiry")
 	}
 }
+
+// freshPreAuthSession returns the session a login start writes its pre-auth
+// values (nonce, redirect) into. A cookie that fails to decode, or one
+// naming an expired or missing keystore row, must not stop a login from
+// starting: the session comes back along with the error (the registry
+// caches it for the request), and is reset to a fresh one, with a new id
+// (a fixated id must not be continued) and no values, keeping the store's
+// cookie options. Returns false after writing the response when the store
+// returned no session at all
+func freshPreAuthSession(w http.ResponseWriter, r *http.Request, store sessions.Store, cookieName string) (*sessions.Session, bool) {
+	session, err := store.Get(r, cookieName)
+	if session == nil {
+		http.Error(w, "error getting session", http.StatusInternalServerError)
+		return nil, false
+	}
+	if err != nil {
+		session.ID = ""
+		session.IsNew = true
+		session.Values = make(map[any]any)
+	}
+	return session, true
+}

@@ -12,8 +12,18 @@ tests:
   oauth0020: ## create app with oauth auth
     command: ../openrun app create --auth=github_test --approve ./disk_usage /oauth1
 
-  oauth0030: # check curl redirect to oauth provider
-    command: curl -sS localhost:${MAIN_HTTP_PORT}/oauth1 | grep -qF "https://localhost:${MAIN_HTTPS_PORT}/_openrun/auth/github_test/login?state=" && echo MATCHED
+  oauth0030: # check curl redirect to oauth provider (a navigation: Accept text/html)
+    command: >-
+      curl -sS -H "Accept: text/html" localhost:${MAIN_HTTP_PORT}/oauth1
+      | grep -qF "https://localhost:${MAIN_HTTPS_PORT}/_openrun/auth/github_test/login?state=" && echo MATCHED
+    stdout: MATCHED
+
+  oauth0030a: # a request which is not a navigation gets 401, no login start, no cookie (runs before oauth0031 removes the auth)
+    command: >-
+      curl -sS -o /dev/null -D - localhost:${MAIN_HTTP_PORT}/oauth1 > headers.txt
+      && grep -q "^HTTP/1.1 401" headers.txt
+      && ! grep -qiE "^(set-cookie|location):" headers.txt
+      && echo MATCHED; rm -f headers.txt
     stdout: MATCHED
 
   oauth0031: # update app to no auth
