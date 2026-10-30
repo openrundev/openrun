@@ -1653,9 +1653,9 @@ func (a *App) userFileHandler(w http.ResponseWriter, r *http.Request) {
 
 	if fileEntry.SingleAccess {
 		if strings.HasPrefix(fileEntry.FilePath, "file://") {
-			err := os.Remove(strings.TrimPrefix(fileEntry.FilePath, "file://"))
+			err := removeServedFile(strings.TrimPrefix(fileEntry.FilePath, "file://"))
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error deleting file %s: %s", fileEntry.FilePath, err)
+				a.Error().Err(err).Msgf("Error deleting served file %s", fileEntry.FilePath)
 			}
 		}
 

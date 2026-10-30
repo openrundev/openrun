@@ -687,3 +687,31 @@ func TestRedactStaticTOMLArrayCredentials(t *testing.T) {
 		t.Fatal("TOML table array lost credential during restore")
 	}
 }
+
+func TestSecretConfigFieldApiKeys(t *testing.T) {
+	secret := []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "builder_agent.claude.env.GEMINI_API_KEY", "ApiKey",
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "acme_eab_mac_key", "GOOGLE_APPLICATION_CREDENTIALS",
+		"private_key", "client_secret", "password", "auth_token"}
+	for _, name := range secret {
+		if !isSecretConfigField(name) {
+			t.Errorf("%s must be redacted", name)
+		}
+	}
+	plain := []string{"api.access_token_ttl", "default_secrets_provider", "key_file_path", "sp_key_file",
+		"client_key_file", "key", "acme_eab_key_id", "model", "MODEL", "effort", "external_url"}
+	for _, name := range plain {
+		if isSecretConfigField(name) {
+			t.Errorf("%s must not be redacted", name)
+		}
+	}
+
+	env := map[string]any{"env": map[string]string{"ANTHROPIC_API_KEY": "sk-ant-literal",
+		"OPENAI_API_KEY": `{{secret_from "env" "OPENAI_API_KEY"}}`, "MODEL": "opus"}}
+	redacted := redactEntryValues(env)["env"].(map[string]any)
+	if redacted["ANTHROPIC_API_KEY"] != RedactedValue {
+		t.Fatal("literal api key leaked")
+	}
+	if redacted["OPENAI_API_KEY"] != `{{secret_from "env" "OPENAI_API_KEY"}}` || redacted["MODEL"] != "opus" {
+		t.Fatalf("template reference or plain env value changed: %v", redacted)
+	}
+}

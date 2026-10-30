@@ -183,7 +183,9 @@ func validateAllowedContainerArg(key, value string, allowedContainerArgs map[str
 
 	if strings.HasPrefix(allowedValue, regexAllowedContainerArgPrefix) {
 		pattern := strings.TrimPrefix(allowedValue, regexAllowedContainerArgPrefix)
-		compiled, err := regexp.Compile(pattern)
+		// The whole value must match: an unanchored regex:team=.+ would also
+		// accept a value with extra text before or after the allowed form
+		compiled, err := regexp.Compile(`\A(?:` + pattern + `)\z`)
 		if err != nil {
 			return fmt.Errorf("invalid allowed container arg %q regex %q: %w", key, pattern, err)
 		}

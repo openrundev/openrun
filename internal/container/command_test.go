@@ -704,3 +704,23 @@ exit 64
 		t.Fatalf("stopped = %v, want %v", stopped, want)
 	}
 }
+
+func TestCommandOptionArgsRegexMatchesWholeValue(t *testing.T) {
+	allowed := map[string]string{"label": "regex:team=.+", "network": "regex:app_net_(dev|prod)"}
+	for _, value := range []string{"x,team=platform", "team=", " team=platform"} {
+		_, err := CommandOptionArgs(CommandOptions{Other: map[string]any{"label": value}}, allowed)
+		if err == nil || !strings.Contains(err.Error(), "is not allowed") {
+			t.Fatalf("label %q: expected not allowed error, got %v", value, err)
+		}
+	}
+	if _, err := CommandOptionArgs(CommandOptions{Other: map[string]any{"network": "host_app_net_dev"}}, allowed); err == nil {
+		t.Fatal("unanchored substring match must be rejected")
+	}
+	got, err := CommandOptionArgs(CommandOptions{Other: map[string]any{"network": "app_net_prod"}}, allowed)
+	if err != nil {
+		t.Fatalf("CommandOptionArgs returned error: %v", err)
+	}
+	if !slices.Equal(got, []string{"--network=app_net_prod"}) {
+		t.Fatalf("CommandOptionArgs = %#v", got)
+	}
+}

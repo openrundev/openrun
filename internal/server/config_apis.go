@@ -622,12 +622,21 @@ func (s *Server) ListConfigHistory(ctx context.Context) ([]types.ConfigHistoryEn
 	return s.db.ListConfigHistory(ctx)
 }
 
-// GetConfigVersion returns one full config snapshot from the history
+// GetConfigVersion returns one full config snapshot from the history. Secret
+// values are redacted like GetConfigResponse; RestoreConfig reads the stored
+// snapshot directly
 func (s *Server) GetConfigVersion(ctx context.Context, versionId string) (*types.DynamicConfig, error) {
 	if err := s.enforceGlobalPerm(ctx, types.PermissionConfigRead, ""); err != nil {
 		return nil, err
 	}
-	return s.db.GetConfigVersion(ctx, versionId)
+	snapshot, err := s.db.GetConfigVersion(ctx, versionId)
+	if err != nil {
+		return nil, err
+	}
+	if s.rbacManager.APIEnforced(ctx) {
+		return redactedDynamicConfig(snapshot)
+	}
+	return snapshot, nil
 }
 
 // RestoreConfig restores the full dynamic config from a history snapshot. The

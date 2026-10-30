@@ -160,28 +160,32 @@ func resolveDirs(allowed []string) ([]string, error) {
 	return ret, nil
 }
 
-func (f *fsModule) checkAccess(filePath string) (bool, error) {
+// checkAccess reports whether filePath, with every symlink resolved, is
+// within one of the allowed directories. The resolved absolute path is
+// returned so callers store and later act on the file that was checked,
+// not on a link an app could repoint afterwards
+func (f *fsModule) checkAccess(filePath string) (string, bool, error) {
 	realPath, err := filepath.EvalSymlinks(filePath)
 	if err != nil {
-		return false, fmt.Errorf("failed to resolve path symlinks: %w", err)
+		return "", false, fmt.Errorf("failed to resolve path symlinks: %w", err)
 	}
 
 	absPath, err := filepath.Abs(realPath)
 	if err != nil {
-		return false, fmt.Errorf("failed to get absolute path: %w", err)
+		return "", false, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
 	for _, dir := range f.accessAllowed {
 		inside, err := system.PathWithinDir(dir, absPath)
 		if err != nil {
-			return false, fmt.Errorf("failed to check path access: %w", err)
+			return "", false, fmt.Errorf("failed to check path access: %w", err)
 		}
 
 		if inside {
-			return true, nil
+			return absPath, true, nil
 		}
 	}
-	return false, nil
+	return absPath, false, nil
 }
 
 func (f *fsModule) Abs(ctx context.Context, call *sdk.Call) (any, error) {
@@ -244,13 +248,16 @@ func (f *fsModule) ServeTmpFile(ctx context.Context, call *sdk.Call) (any, error
 		return nil, err
 	}
 
-	ok, err := f.checkAccess(pathStr)
+	resolvedPath, ok, err := f.checkAccess(pathStr)
 	if err != nil {
 		return nil, fmt.Errorf("error during access check for %s: %w", pathStr, err)
 	}
 	if !ok {
 		return nil, fmt.Errorf("file access denied for %s", pathStr)
 	}
+	// The download and the expiry cleanup delete the file: record the
+	// resolved path which passed the access check
+	pathStr = resolvedPath
 
 	connectString, err := system.GetConnectString(&types.PluginContext{Config: f.settings})
 	if err != nil {

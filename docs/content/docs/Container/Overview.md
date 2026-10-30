@@ -108,7 +108,7 @@ label = "regex:^team=.+$"
 security-opt = "label=disable"
 ```
 
-The map key is the container runtime flag name without the leading `--`. An empty value allows only a valueless flag, such as `--init`. A non-empty value must match exactly unless it starts with `regex:`, in which case OpenRun matches the user-provided value against that regular expression.
+The map key is the container runtime flag name without the leading `--`. An empty value allows only a valueless flag, such as `--init`. A non-empty value must match exactly unless it starts with `regex:`, in which case the user-provided value must match that regular expression in full (it is evaluated as if wrapped in `\A(?:...)\z`, so `regex:team=.+` does not accept `x,team=y`).
 
 {{<callout type="info" >}}
 **Note:** By default there are no limits set for the containers. That allows for full utilization of system resources. To avoid individual apps from utilizing too much of the system resources, CPU/memory limits can be set.

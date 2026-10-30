@@ -594,18 +594,23 @@ func flattenConfigValues(values map[string]any, prefix string, out map[string]an
 
 // isSecretConfigField reports whether a field holds a secret which must not
 // be returned by the read APIs. Dotted settings keys check the leaf segment.
-// Durations (api.access_token_ttl) and provider names (app_config.security.
-// default_secrets_provider) only name a secret concept, they are not secrets
+// Nested map keys (a builder_agent env var name like ANTHROPIC_API_KEY) are
+// checked the same way. Durations (api.access_token_ttl), provider names
+// (app_config.security.default_secrets_provider) and file paths
+// (git_auth.key_file_path) only name a secret concept, they are not secrets
 func isSecretConfigField(fieldName string) bool {
 	fieldName = strings.ToLower(fieldName)
 	if idx := strings.LastIndex(fieldName, "."); idx >= 0 {
 		fieldName = fieldName[idx+1:]
 	}
-	if strings.HasSuffix(fieldName, "_ttl") || strings.HasSuffix(fieldName, "_provider") {
+	if strings.HasSuffix(fieldName, "_ttl") || strings.HasSuffix(fieldName, "_provider") ||
+		strings.HasSuffix(fieldName, "_file") || strings.HasSuffix(fieldName, "_path") {
 		return false
 	}
 	return strings.Contains(fieldName, "secret") || strings.Contains(fieldName, "password") ||
-		strings.Contains(fieldName, "token") || fieldName == "private_key"
+		strings.Contains(fieldName, "token") || strings.Contains(fieldName, "api_key") ||
+		strings.Contains(fieldName, "apikey") || strings.Contains(fieldName, "access_key") ||
+		strings.Contains(fieldName, "credential") || strings.HasSuffix(fieldName, "_key")
 }
 
 // secretTemplateRefRegex matches a value that is exactly one {{secret ...}}

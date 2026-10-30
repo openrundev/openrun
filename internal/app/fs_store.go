@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -125,26 +126,65 @@ func initFileStoreSchema(db *sql.DB, dbType system.DBType) error {
 	return nil
 }
 
+// fileCleanup deletes the expired served files and their rows. Each row is
+// handled on its own: a file already gone or a deletion refused for good
+// (removeServedFile) retires the row, so one bad path cannot hold up the
+// cleanup of every other app's files. A row whose deletion failed otherwise
+// (a transient filesystem error) is kept and retried on the next tick
 func fileCleanup(ctx context.Context) error {
 	expired, err := listExpiredFile(ctx)
 	if err != nil {
 		return fmt.Errorf("error cleaning up expired files %w", err)
 	}
 
+	var errs []error
 	for _, file := range expired {
 		if strings.HasPrefix(file.FilePath, "file://") {
-			err := os.Remove(strings.TrimPrefix(file.FilePath, "file://"))
-			if err != nil && !os.IsNotExist(err) {
-				// A file already deleted from disk should not block the row cleanup
-				return fmt.Errorf("error deleting file %s: %w", file.FilePath, err)
+			err := removeServedFile(strings.TrimPrefix(file.FilePath, "file://"))
+			switch {
+			case err == nil, os.IsNotExist(err):
+			case errors.Is(err, errServedFileRefused):
+				fmt.Fprintf(os.Stderr, "expired file %s left in place: %s\n", file.FilePath, err)
+			default:
+				errs = append(errs, fmt.Errorf("error deleting file %s: %w", file.FilePath, err))
+				continue
 			}
 		}
+		if err := DeleteUserFile(ctx, file.Id); err != nil {
+			errs = append(errs, fmt.Errorf("error deleting expired file entry %s: %w", file.Id, err))
+		}
 	}
-	err = deleteExpiredFiles(ctx)
+	return errors.Join(errs...)
+}
+
+// errServedFileRefused marks a deletion removeServedFile will never perform:
+// the registered path no longer names the file that was checked. Callers
+// retire the metadata row and leave the file in place
+var errServedFileRefused = errors.New("served file deletion refused")
+
+// removeServedFile deletes a file registered with fs.serve_tmp_file once it
+// has been downloaded or has expired. The stored path is the symlink-resolved
+// path which passed the fs.file_access check at registration: if a path
+// component has since become a symlink the file no longer is the one that was
+// checked, so the deletion is refused rather than following the link outside
+// the allowed directories. Only regular files are deleted. A missing file
+// reports os.IsNotExist
+func removeServedFile(filePath string) error {
+	resolved, err := filepath.EvalSymlinks(filePath)
 	if err != nil {
-		return fmt.Errorf("error deleting expired files %w", err)
+		return err
 	}
-	return nil
+	if resolved != filePath {
+		return fmt.Errorf("%w: %s resolves to %s", errServedFileRefused, filePath, resolved)
+	}
+	info, err := os.Lstat(filePath)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: %s is not a regular file", errServedFileRefused, filePath)
+	}
+	return os.Remove(filePath)
 }
 
 func backgroundCleanup(ctx context.Context, cleanupTicker *time.Ticker) {
@@ -265,17 +305,3 @@ func listExpiredFile(ctx context.Context) ([]expiredFile, error) {
 	return expiredFiles, nil
 }
 
-func deleteExpiredFiles(ctx context.Context) error {
-	stmt, err := fsDB.PrepareContext(ctx, system.RebindQuery(fsDBType, `delete from user_files where expire_at < ?`))
-	if err != nil {
-		return fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	_, err = stmt.ExecContext(ctx, time.Now().UTC())
-	if err != nil {
-		return fmt.Errorf("error deleting files: %w", err)
-	}
-
-	return nil
-}
