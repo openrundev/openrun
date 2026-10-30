@@ -43,7 +43,7 @@ func newSAMLTestManager(t *testing.T, usePost bool, keyFile, certFile string) (*
 	}))
 	t.Cleanup(idpServer.Close)
 	config := &types.ServerConfig{
-		Security: types.SecurityConfig{CallbackUrl: "https://sp.example"},
+		Security: types.SecurityConfig{CallbackUrl: "https://sp.example", SSOAllowPrivateHosts: true},
 		SAML: map[string]types.SAMLConfig{"okta": {
 			MetadataURL: idpServer.URL, UsePost: usePost, SPKeyFile: keyFile, SPCertFile: certFile}},
 	}

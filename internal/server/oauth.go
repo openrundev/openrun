@@ -212,7 +212,7 @@ func (s *OAuthManager) buildProvider(providerName string, auth types.AuthConfig,
 		if auth.DiscoveryUrl == "" {
 			return nil, fmt.Errorf("discovery_url is required for OIDC provider")
 		}
-		op, err := newOIDCProvider(key, secret, callbackUrl, auth.DiscoveryUrl, scopes)
+		op, err := newOIDCProvider(key, secret, callbackUrl, auth.DiscoveryUrl, scopes, ssoAllowPrivateHosts(s.config))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OIDC provider: %w", err)
 		}

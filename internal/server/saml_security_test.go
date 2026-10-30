@@ -389,6 +389,7 @@ func TestSAMLManager_XMLComplexityLimit(t *testing.T) {
 	defer metadata.Close()
 	config := &types.ServerConfig{}
 	config.Security.CallbackUrl = "https://sp.example"
+	config.Security.SSOAllowPrivateHosts = true
 	manager := NewSAMLManager(testutil.TestLogger(), config, nil, nil)
 	sp, err := manager.buildSAMLProvider(context.Background(), "saml_audit", types.SAMLConfig{MetadataURL: metadata.URL, UsePost: true}, "https://sp.example")
 	if err != nil {
@@ -451,7 +452,7 @@ func TestSAMLMetadataRequiresIssuer(t *testing.T) {
 			raw := strings.Replace(TestMetadataXML, `entityID="http://www.okta.com/exkvzxe13p1NAy06x697"`, `entityID="`+entityID+`"`, 1)
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(raw)) }))
 			defer ts.Close()
-			manager := NewSAMLManager(testutil.TestLogger(), &types.ServerConfig{}, nil, nil)
+			manager := NewSAMLManager(testutil.TestLogger(), ssoPrivateHostsConfig(), nil, nil)
 			if _, err := manager.buildSAMLProvider(context.Background(), "saml_company", types.SAMLConfig{MetadataURL: ts.URL}, "https://sp.example"); err == nil || !strings.Contains(err.Error(), "entityID") {
 				t.Fatalf("metadata disabled issuer validation: %v", err)
 			}
@@ -463,7 +464,7 @@ func TestSAMLMetadataRequiresIssuer(t *testing.T) {
 	raw := strings.Replace(TestMetadataXML, `entityID="`+entityID+`"`, `entityID="  `+entityID+`  "`, 1)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(raw)) }))
 	defer ts.Close()
-	manager := NewSAMLManager(testutil.TestLogger(), &types.ServerConfig{}, nil, nil)
+	manager := NewSAMLManager(testutil.TestLogger(), ssoPrivateHostsConfig(), nil, nil)
 	sp, err := manager.buildSAMLProvider(context.Background(), "saml_company", types.SAMLConfig{MetadataURL: ts.URL}, "https://sp.example")
 	if err != nil {
 		t.Fatal(err)

@@ -56,7 +56,7 @@ func TestOIDCLoginValidation(t *testing.T) {
 	}))
 	defer ts.Close()
 	issuer = ts.URL
-	adapter, err := (&OAuthManager{}).buildProvider("oidc_company", types.AuthConfig{
+	adapter, err := (&OAuthManager{config: ssoPrivateHostsConfig()}).buildProvider("oidc_company", types.AuthConfig{
 		Key: "client", Secret: "secret", DiscoveryUrl: ts.URL + oidcDiscoveryPath, Scopes: []string{"email"},
 	}, "https://app.example")
 	if err != nil {
@@ -193,7 +193,7 @@ func TestOIDCDiscoveryIssuerMustMatchURL(t *testing.T) {
 	}))
 	defer ts.Close()
 	build := func(discoveryURL string) error {
-		_, err := newOIDCProvider("client", "secret", "https://app.example/cb", discoveryURL, nil)
+		_, err := newOIDCProvider("client", "secret", "https://app.example/cb", discoveryURL, nil, true)
 		return err
 	}
 	issuer = ts.URL

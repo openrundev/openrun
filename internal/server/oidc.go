@@ -47,11 +47,20 @@ type oidcSession struct {
 var _ goth.Provider = (*oidcProvider)(nil)
 var _ goth.Session = (*oidcSession)(nil)
 
-func newOIDCProvider(key, secret, callbackURL, discoveryURL string, scopes []string) (*oidcProvider, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+// oidcFetchTimeout bounds each request to the provider: discovery, JWKS,
+// token exchange and userinfo
+const oidcFetchTimeout = 30 * time.Second
+
+// newOIDCProvider builds the provider from its discovery document. The
+// client used for the discovery fetch is kept for every later call to the
+// provider (JWKS, token, userinfo): with allowPrivate false it refuses
+// private or local targets, since discovery_url is config:update settable
+// and the document names the other endpoints
+func newOIDCProvider(key, secret, callbackURL, discoveryURL string, scopes []string, allowPrivate bool) (*oidcProvider, error) {
+	client := ssoHTTPClient("OIDC provider", allowPrivate, oidcFetchTimeout)
 	resp, err := client.Get(discoveryURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("OIDC discovery: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {

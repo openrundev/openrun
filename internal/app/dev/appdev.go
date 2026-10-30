@@ -21,13 +21,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
-	"golang.org/x/net/idna"
 )
 
 //go:embed index_gen.go.html openrun_gen.go.html
@@ -146,32 +144,10 @@ func (a *appDownloads) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	// The proxy dials the target, the host is checked here, as the transport
 	// sends it, so a fullwidth １０.１.２.３ is checked as 10.1.2.3
-	if err := system.CheckPublicHost(req.Context(), "download", canonicalHost(req.URL)); err != nil {
+	if err := system.CheckPublicHost(req.Context(), "download", system.CanonicalHost(req.URL)); err != nil {
 		return nil, err
 	}
 	return a.proxied.RoundTrip(req)
-}
-
-// canonicalHost is u's host as net/http sends it in a proxy CONNECT (its
-// canonicalAddr): a non-ASCII host is mapped through IDNA, so a fullwidth
-// １２７.０.０.１ becomes 127.0.0.1
-func canonicalHost(u *url.URL) string {
-	host := u.Hostname()
-	if !isASCII(host) {
-		if v, err := idna.Lookup.ToASCII(host); err == nil {
-			host = v
-		}
-	}
-	return host
-}
-
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= utf8.RuneSelf {
-			return false
-		}
-	}
-	return true
 }
 
 // AllowPrivateDownloadsForTest lets the app download transport reach local

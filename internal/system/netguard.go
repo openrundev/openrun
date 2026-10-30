@@ -8,7 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/url"
 	"syscall"
+	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 )
 
 // ErrPrivateAddress is wrapped by the errors refusing a fetch of a private or
@@ -78,4 +83,86 @@ func CheckPublicHost(ctx context.Context, what, host string) error {
 		}
 	}
 	return nil
+}
+
+// PublicOnlyTransport routes each request (each redirect hop is a separate
+// request) to one of two transports, so that whether a connection is checked
+// is fixed by the transport making it, not by state shared between requests.
+// direct never uses a proxy and dials public addresses only. proxied dials
+// only the proxy, which may be on a private address: its Proxy function
+// fails a request the proxy does not apply to instead of letting it dial
+// direct, and the target host is checked before the request is handed to it
+type PublicOnlyTransport struct {
+	what    string
+	proxy   func(*http.Request) (*url.URL, error)
+	direct  *http.Transport
+	proxied *http.Transport
+}
+
+// NewPublicOnlyTransport returns a transport refusing private or local
+// targets. what names the fetch in errors. proxy is the proxy policy
+// (http.ProxyFromEnvironment, or nil for direct connections only).
+// newTransport builds a transport with the caller's timeouts from the proxy
+// function and dial control it must use; it is called once per inner
+// transport. CloseIdleConnections releases both
+func NewPublicOnlyTransport(what string, proxy func(*http.Request) (*url.URL, error),
+	newTransport func(proxy func(*http.Request) (*url.URL, error),
+		control func(network, address string, c syscall.RawConn) error) *http.Transport) *PublicOnlyTransport {
+	if proxy == nil {
+		proxy = func(*http.Request) (*url.URL, error) { return nil, nil }
+	}
+	t := &PublicOnlyTransport{what: what, proxy: proxy}
+	t.direct = newTransport(nil, PublicOnlyDialControl(what))
+	t.proxied = newTransport(func(req *http.Request) (*url.URL, error) {
+		proxyURL, err := proxy(req)
+		if err == nil && proxyURL == nil {
+			err = fmt.Errorf("%s fetch of %s is not proxied", what, req.URL.Host)
+		}
+		return proxyURL, err
+	}, nil)
+	return t
+}
+
+func (t *PublicOnlyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	proxyURL, err := t.proxy(req)
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL == nil {
+		return t.direct.RoundTrip(req)
+	}
+	// The proxy dials the target, the host is checked here, as the transport
+	// sends it, so a fullwidth １０.１.２.３ is checked as 10.1.2.3
+	if err := CheckPublicHost(req.Context(), t.what, CanonicalHost(req.URL)); err != nil {
+		return nil, err
+	}
+	return t.proxied.RoundTrip(req)
+}
+
+// CloseIdleConnections closes the idle connections of both inner transports
+func (t *PublicOnlyTransport) CloseIdleConnections() {
+	t.direct.CloseIdleConnections()
+	t.proxied.CloseIdleConnections()
+}
+
+// CanonicalHost is u's host as net/http sends it in a proxy CONNECT (its
+// canonicalAddr): a non-ASCII host is mapped through IDNA, so a fullwidth
+// １２７.０.０.１ becomes 127.0.0.1
+func CanonicalHost(u *url.URL) string {
+	host := u.Hostname()
+	if !isASCII(host) {
+		if v, err := idna.Lookup.ToASCII(host); err == nil {
+			host = v
+		}
+	}
+	return host
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }

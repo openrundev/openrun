@@ -147,6 +147,9 @@ auth_callback_domain = "auth."   # domain serving the system/builtin login page 
                                  # only the system/builtin page; OAuth/OIDC and SAML logins of the remote API
                                  # are refused without this domain.
 trusted_proxies = []             # CIDR ranges or IPs allowed to supply forwarded client IP headers
+sso_allow_private_hosts = false  # allow the OIDC discovery/JWKS/token/userinfo endpoints and the SAML IdP
+                                 # metadata url to be on private/loopback addresses (an internal or local IdP).
+                                 # Static config only
 app_default_auth_type = "none" # default auth type for apps, "system" or "none" or custom auth
 auth_required = false          # require authentication for all apps. This is verified during app access, not during metadata updates
                                # If this is set to true, the app access will be denied if the app is not authenticated.

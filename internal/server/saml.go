@@ -384,8 +384,16 @@ func validateIdPEndpoint(location string) error {
 	return nil
 }
 
+// samlMetadataTimeout bounds the IdP metadata fetch
+const samlMetadataTimeout = 60 * time.Second
+
+// fetchAndParseIDPMetadata fetches the IdP metadata document. The url is
+// config:update settable, so the fetch refuses private or local targets
+// unless security.sso_allow_private_hosts is set, and a non-200 response's
+// body is not echoed into the error (which reaches the config update
+// response), so the fetch cannot read an internal service for the caller
 func (s *SAMLManager) fetchAndParseIDPMetadata(ctx context.Context, url string) (*idpConfig, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, samlMetadataTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -393,14 +401,15 @@ func (s *SAMLManager) fetchAndParseIDPMetadata(ctx context.Context, url string) 
 		return nil, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := ssoHTTPClient("SAML metadata", ssoAllowPrivateHosts(s.config), samlMetadataTimeout)
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GET metadata: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return nil, fmt.Errorf("GET metadata: status %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("GET metadata: status %d", resp.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxIdPMetadataBytes+1))
 	if err != nil {

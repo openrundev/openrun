@@ -110,7 +110,8 @@ func setupAndRun(m *testing.M) (int, error) {
 	env, err = testenv.Start(httpPort, testenv.Options{
 		HTTPSPort: httpsPort,
 		SecurityExtra: fmt.Sprintf(`callback_url = "%s"
-auth_callback_domain = "%s"`, serverURL, loginDomain),
+auth_callback_domain = "%s"
+sso_allow_private_hosts = true`, serverURL, loginDomain),
 		SystemExtra: `default_domain = "localhost"`,
 		ExtraConfig: fmt.Sprintf(`[api]
 external_url = "%s"

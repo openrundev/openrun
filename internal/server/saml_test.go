@@ -231,7 +231,8 @@ func TestSAMLManager_Routes_Metadata(t *testing.T) {
 	logger := testutil.TestLogger()
 	config := &types.ServerConfig{
 		Security: types.SecurityConfig{
-			CallbackUrl: "http://example.com",
+			CallbackUrl:          "http://example.com",
+			SSOAllowPrivateHosts: true,
 		},
 		SAML: map[string]types.SAMLConfig{
 			"okta": {

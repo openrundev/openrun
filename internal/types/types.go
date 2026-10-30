@@ -829,7 +829,15 @@ type SecurityConfig struct {
 	// federated (OAuth/OIDC, SAML) logins of the remote API are refused
 	// when no auth callback domain resolves (or, with a plain http
 	// api.external_url, when the domain is not a *.localhost name)
-	AuthCallbackDomain       string            `toml:"auth_callback_domain"`
+	AuthCallbackDomain string `toml:"auth_callback_domain"`
+	// SSOAllowPrivateHosts permits the OIDC discovery document, JWKS, token
+	// and userinfo endpoints and the SAML IdP metadata url to be on
+	// private, loopback or link-local addresses (an IdP on the same network,
+	// or a local one in development). Off by default: [auth.*] and [saml.*]
+	// entries can be set dynamically by config:update holders, and the
+	// server must not be steered into fetching internal services for them.
+	// Static config only
+	SSOAllowPrivateHosts     bool              `toml:"sso_allow_private_hosts"`
 	TrustedProxies           []string          `toml:"trusted_proxies"`
 	CallbackUrl              string            `toml:"callback_url"`
 	DefaultGitAuth           string            `toml:"default_git_auth"`
