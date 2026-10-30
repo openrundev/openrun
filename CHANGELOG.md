@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.20.7] - 2026-10-30
+
 ### Security
 
 - Dynamic config updates are limited to an allowlist of the sections and settings the console config pages manage.
