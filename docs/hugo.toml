@@ -134,6 +134,12 @@ parent = "compare"
 weight = 4
 
 [[menu.main]]
+name = "vs Retool, Appsmith, Budibase"
+pageRef = "/compare/retool-appsmith-budibase/"
+parent = "compare"
+weight = 5
+
+[[menu.main]]
 name = "Blog"
 pageRef = "/blog/"
 identifier = "blog"

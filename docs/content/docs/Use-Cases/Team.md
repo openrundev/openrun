@@ -7,6 +7,8 @@ summary: "Run secure internal web apps for teams on infrastructure controlled by
 
 OpenRun provides a self-hosted PaaS-style workflow for internal tools without moving application code or data to a proprietary deployment service. Teams can deploy web apps to a private server or Kubernetes cluster with GitOps, SSO, RBAC and audit logging built in.
 
+Teams replacing a low-code builder can build [code-first internal tools]({{< ref "blog/code-first-internal-tools" >}}) with any AI coding tool; see [OpenRun vs Retool, Appsmith and Budibase]({{< ref "compare/retool-appsmith-budibase" >}}).
+
 ## Scenario
 
 This use-case documents the scenario where you want to:

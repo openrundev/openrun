@@ -1,0 +1,63 @@
+{{- /* Local override of the Hextra v0.13.0 feature-card: a card without
+     `link` renders as a <div> instead of an <a>, so the subtitle can hold its
+     own links (an <a> nested in an <a> is invalid HTML and breaks the card). */ -}}
+{{- /*
+A shortcode for displaying a feature card.
+
+@param {string} title The title of the card.
+@param {string} subtitle The subtitle of the card.
+@param {string} class The class of the card.
+@param {string} image The image of the card.
+@param {string} imageClass The class of the image.
+@param {string} style The style of the card.
+@param {string} icon The icon of the card.
+@param {string} link The link of the card.
+
+@example {{< hextra/feature-card title="Feature Card" subtitle="This is a feature card." >}}
+*/ -}}
+
+{{- $title := .Get "title" -}}
+{{- $subtitle := .Get "subtitle" -}}
+{{- $class := .Get "class" -}}
+{{- $image := .Get "image" -}}
+{{- $imageClass := .Get "imageClass" -}}
+{{- $style := .Get "style" -}}
+{{- $icon := .Get "icon" -}}
+{{- $link := .Get "link" -}}
+
+{{- $external := hasPrefix $link "http" -}}
+{{- $href := cond (strings.HasPrefix $link "/") ($link | relURL) $link -}}
+
+{{- if hasPrefix $image "/" -}}
+  {{- $image = relURL (strings.TrimPrefix "/" $image) -}}
+{{- end -}}
+
+{{- $cardClass := printf "%s hextra-feature-card not-prose hx:block hx:relative hx:overflow-hidden hx:rounded-3xl hx:border hx:border-gray-200 hx:hover:border-gray-300 hx:dark:border-neutral-800 hx:dark:hover:border-neutral-700 hx:before:pointer-events-none hx:before:absolute hx:before:inset-0 hx:before:bg-glass-gradient" $class -}}
+
+{{- if $link }}
+<a
+  href="{{ $href }}" {{ with $external }} target="_blank" rel="noreferrer"{{ end }}
+  {{ with $style }}style="{{ . | safeCSS }}"{{ end }}
+  class="{{ $cardClass }}"
+>
+{{- else }}
+<div
+  {{ with $style }}style="{{ . | safeCSS }}"{{ end }}
+  class="{{ $cardClass }}"
+>
+{{- end }}
+  <div class="hx:relative hx:w-full hx:p-6">
+    <h3 class="hx:text-2xl hx:font-medium hx:leading-6 hx:mb-2 hx:flex hx:items-center">
+      {{ with $icon -}}
+        <span class="hx:pr-2">
+          {{- partial "utils/icon.html" (dict "name" . "attributes" "height=1.5rem") -}}
+        </span>
+      {{ end -}}
+      <span>{{ $title }}</span>
+    </h3>
+    <p class="hx:text-gray-500 hx:dark:text-gray-400 hx:text-sm hx:leading-6">{{ $subtitle | markdownify }}</p>
+  </div>
+  {{- with $image -}}
+    <img src="{{ . }}" class="hx:absolute hx:max-w-none {{ $imageClass }}" alt="{{ $title }}" />
+  {{- end -}}
+{{ if $link }}</a>{{ else }}</div>{{ end }}

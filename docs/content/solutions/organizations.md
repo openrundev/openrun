@@ -33,7 +33,7 @@ Setting `auth_required = true` at the server level ensures no app can be served 
 
 Enterprise low-code platforms like Retool bundle hosting, authentication and access control, which is a large part of why teams pay for them. The other part was UI building: hand-writing an internal tool used to take longer than assembling one in a low-code editor. AI code generation changes that. An AI assistant can generate a complete Streamlit, Gradio or Hypermedia based app from a prompt, and the result is regular code that any developer or AI tool can read, review and extend, instead of an app definition locked inside a proprietary editor.
 
-What code-first apps were missing is the platform around them, and that is what OpenRun provides: SSO, RBAC, audit logs, TLS and GitOps deployment for every app. AI-generated apps live in Git like any other code, so the same pull request review and OpenRun sync pipeline deploys them, and future AI-assisted changes flow through the same path. The [management console]({{< ref "console-tour" >}}) also includes an AI app builder for generating and publishing apps directly.
+What [code-first internal tools]({{< ref "blog/code-first-internal-tools" >}}) were missing is the platform around them, and that is what OpenRun provides: SSO, RBAC, audit logs, TLS and GitOps deployment for every app. AI-generated apps live in Git like any other code, so the same pull request review and OpenRun sync pipeline deploys them, and future AI-assisted changes flow through the same path. The [management console]({{< ref "console-tour" >}}) also includes an AI app builder for generating and publishing apps directly.
 
 The benefits of moving from Retool to this model:
 
@@ -41,6 +41,8 @@ The benefits of moving from Retool to this model:
 - Apps are portable code in your Git repos, not definitions tied to a vendor platform
 - App code and business data stay on your infrastructure instead of a vendor cloud
 - Any framework and any AI coding tool can be used, now and as tools change
+
+See [OpenRun vs Retool, Appsmith and Budibase]({{< ref "compare/retool-appsmith-budibase" >}}) for a detailed comparison.
 
 ## Cost Model
 

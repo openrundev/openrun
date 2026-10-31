@@ -99,3 +99,10 @@ html.dark .theme-image-light {
 html.dark .theme-image-dark {
   display: block;
 }
+
+/* Links inside a feature card subtitle (cards without a `link` render as a
+   div, see layouts/shortcodes/hextra/feature-card.html) */
+.openrun-feature-card p a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
