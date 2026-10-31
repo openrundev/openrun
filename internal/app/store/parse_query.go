@@ -51,9 +51,8 @@ func postgresSortFieldMapper(field string) (string, error) {
 		return field, nil
 	}
 
-	if strings.Contains(field, "'") {
-		// Protect against sql injection, even though this is the column name rather than value
-		return "", fmt.Errorf("field path cannot contain ': %s", field)
+	if err := checkFieldPath(field); err != nil {
+		return "", err
 	}
 
 	// Use jsonb semantics for Postgres sorting so numeric fields are ordered numerically.
@@ -72,6 +71,24 @@ func postgresIndexFieldMapper(field string) (string, error) {
 	return fmt.Sprintf("(%s)", mappedField), nil
 }
 
+// checkFieldPath validates a field name which is written into a SQL string
+// literal (the json key). Field names can come from end user input through
+// app code. A quote would end the literal; a backslash ends it on a
+// PostgreSQL server with standard_conforming_strings off; a "?" would be
+// rewritten to a numbered placeholder by the PostgreSQL rebind; control
+// characters have no use in a key
+func checkFieldPath(field string) error {
+	if field == "" {
+		return fmt.Errorf("field path cannot be empty")
+	}
+	for _, r := range field {
+		if r == '\'' || r == '\\' || r == '?' || r < ' ' || r == 0x7f {
+			return fmt.Errorf("field path cannot contain %c: %s", r, field)
+		}
+	}
+	return nil
+}
+
 func jsonFieldMapper(field string) (string, error) {
 	if RESERVED_FIELDS[field] {
 		if field == JSON_FIELD {
@@ -80,9 +97,8 @@ func jsonFieldMapper(field string) (string, error) {
 		return field, nil
 	}
 
-	if strings.Contains(field, "'") {
-		// Protect against sql injection, even though this is the column name rather than value
-		return "", fmt.Errorf("field path cannot contain ': %s", field)
+	if err := checkFieldPath(field); err != nil {
+		return "", err
 	}
 
 	v := fmt.Sprintf("_json ->> '%s'", field)

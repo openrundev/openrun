@@ -723,7 +723,8 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 	}
 	ai, err := sp.RetrieveAssertionInfo(b64Response)
 	if err != nil {
-		http.Error(w, "assertion invalid: "+err.Error(), http.StatusUnauthorized)
+		s.Warn().Err(err).Msg("SAML assertion invalid")
+		http.Error(w, "assertion invalid", http.StatusUnauthorized)
 		return
 	}
 
@@ -789,7 +790,8 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 	}
 	stateMap, err := s.db.FetchKV(r.Context(), sessionId)
 	if err != nil {
-		http.Error(w, "error fetching KV state: "+err.Error(), http.StatusInternalServerError)
+		s.Error().Err(err).Msg("error fetching login state")
+		http.Error(w, "error fetching login state", http.StatusInternalServerError)
 		return
 	}
 
@@ -820,7 +822,8 @@ func (s *SAMLManager) acs(w http.ResponseWriter, r *http.Request) {
 	}
 	response, err := sp.ValidateEncodedResponse(b64Response)
 	if err != nil {
-		http.Error(w, "response invalid: "+err.Error(), http.StatusUnauthorized)
+		s.Warn().Err(err).Msg("SAML response invalid")
+		http.Error(w, "response invalid", http.StatusUnauthorized)
 		return
 	}
 	if response.InResponseTo != expectedRequestID {
@@ -933,7 +936,8 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 	// in the cookie and then redirect to original url
 	stateMap, err := s.db.FetchKV(r.Context(), sessionId)
 	if err != nil {
-		http.Error(w, "error fetching state: "+err.Error(), http.StatusInternalServerError)
+		s.Error().Err(err).Msg("error fetching login state")
+		http.Error(w, "error fetching login state", http.StatusInternalServerError)
 		return
 	}
 

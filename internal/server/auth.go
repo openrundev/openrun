@@ -123,9 +123,11 @@ func (a *AdminBasicAuth) authenticate(authHeader string) bool {
 	}
 
 	if subtle.ConstantTimeCompare([]byte(adminUser), []byte(user)) != 1 {
-		// Same delay as a wrong password, so the response time does not
+		// Same cost as a wrong password (the bcrypt compare is run against
+		// the configured hash and discarded), so the response time does not
 		// tell a wrong username from a wrong password
 		a.Warn().Msg("Admin username does not match")
+		bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(pass)) //nolint:errcheck
 		time.Sleep(100 * time.Millisecond)
 		return false
 	}

@@ -313,7 +313,7 @@ func buildImageCommand(ctx context.Context, logger *types.Logger, config *types.
 	args = append(args, ".")
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 
-	logger.Debug().Msgf("Running command: %s", cmd.String())
+	logger.Debug().Msgf("Running command: %s", strings.Join(RedactEnvArgs(args), " "))
 	cmd.Dir = sourceUrl
 	output, err := cmd.CombinedOutput()
 	if err != nil {

@@ -122,7 +122,7 @@ func runHealthChecks(ctx context.Context, checks []func(ctx context.Context)) {
 // cached for healthCacheTTL, keyed on the service's update time so a config
 // edit invalidates immediately.
 func (s *Server) ServicesHealth(ctx context.Context) ([]ServiceHealthResult, error) {
-	services, err := s.ListServices(ctx, "", "")
+	services, err := s.listVisibleServices(ctx, "", "")
 	if err != nil {
 		return nil, err
 	}

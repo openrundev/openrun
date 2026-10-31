@@ -50,7 +50,7 @@ func GenerateSelfSignedCertificate(certPath, keyPath string, validityDuration ti
 		return err
 	}
 
-	keyFile, err := os.Create(keyPath)
+	keyFile, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}

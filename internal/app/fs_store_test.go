@@ -243,3 +243,51 @@ func TestFileCleanupRetiresRefusedRowsAndContinues(t *testing.T) {
 		t.Fatalf("unexpired row must remain: %v", err)
 	}
 }
+
+// A served file replaced by a symlink after registration is not followed:
+// the download would otherwise read any file the server can read
+func TestOpenServedFileRefusesSymlink(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := filepath.Join(dir, "report.txt")
+	if err := os.WriteFile(served, []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := openServedFile(served)
+	if err != nil {
+		t.Fatalf("regular file refused: %v", err)
+	}
+	_ = file.Close()
+
+	secret := filepath.Join(dir, "secret.key")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(served); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, served); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := openServedFile(served); err == nil {
+		_ = file.Close()
+		t.Fatal("symlinked served file was opened")
+	} else if !errors.Is(err, errServedFileRefused) {
+		t.Fatalf("unexpected error %v", err)
+	}
+}
+
+func TestCheckNoParentSegments(t *testing.T) {
+	for _, p := range []string{"/data", "/data/sub", "/data/..hidden", "relative/dir"} {
+		if err := checkNoParentSegments(p); err != nil {
+			t.Errorf("path %q rejected: %v", p, err)
+		}
+	}
+	for _, p := range []string{"/data/../etc", "..", "/data/..", "a/../../b"} {
+		if err := checkNoParentSegments(p); err == nil {
+			t.Errorf("path %q accepted", p)
+		}
+	}
+}

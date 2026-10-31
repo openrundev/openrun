@@ -726,3 +726,74 @@ func TestDenyLoginStart(t *testing.T) {
 		}
 	}
 }
+
+// Failed password checks on the login form count against the client IP:
+// once security.login_failure_rate_limit is reached, further submits from
+// that IP are refused with 429 without the password being checked (even a
+// correct one), while another IP can still log in
+func TestFormLoginFailureRateLimited(t *testing.T) {
+	db := NewInmemoryKVStore()
+	store := NewKVSessionStore(db,
+		[]byte("test-session-key-32bytes-long!!!"),
+		[]byte("test-session-block-32bytes-key!!"),
+	)
+	store.Options.Secure = false
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &types.ServerConfig{}
+	cfg.AdminUser = "admin"
+	cfg.Security.AdminPasswordBcrypt = string(hash)
+	cfg.Security.AuthCallbackDomain = "auth."
+	cfg.System.DefaultDomain = "localhost"
+	cfg.Security.LoginFailureRateLimit = 2
+
+	logger := types.NewLogger(&types.LogConfig{Level: "WARN"})
+	manager, err := NewFormLoginManager(logger, func() *types.ServerConfig { return cfg },
+		store, db, NewAdminBasicAuth(logger, cfg), nil, false)
+	if err != nil {
+		t.Fatalf("NewFormLoginManager failed: %v", err)
+	}
+	manager.loginFailRate = newIPRateLimiter(time.Minute, rateLimiterMaxIPs)
+
+	submit := func(remoteAddr, password string) *httptest.ResponseRecorder {
+		beginRec := httptest.NewRecorder()
+		begin := httptest.NewRequest("GET", "http://localhost:25222/app1", nil)
+		begin.RemoteAddr = remoteAddr
+		if !manager.beginLogin(beginRec, begin, "system") {
+			t.Fatal("beginLogin did not start the flow")
+		}
+		loginURL, err := url.Parse(beginRec.Result().Header.Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		form := url.Values{}
+		form.Set("state", loginURL.Query().Get("state"))
+		form.Set("system-username", "admin")
+		form.Set("system-password", password)
+		req := httptest.NewRequest("POST", "http://auth.localhost:25222"+formLoginPath+"/system",
+			strings.NewReader(form.Encode()))
+		req.RemoteAddr = remoteAddr
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("authtype", "system")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		rec := httptest.NewRecorder()
+		manager.loginSubmit(rec, req)
+		return rec
+	}
+
+	for i := range 2 {
+		if rec := submit("192.0.2.10:1000", "wrong"); rec.Code == http.StatusTooManyRequests || rec.Code == http.StatusFound {
+			t.Fatalf("failed submit %d: status %d", i, rec.Code)
+		}
+	}
+	if rec := submit("192.0.2.10:1000", "secret"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("submit after the failure limit: status %d, want 429", rec.Code)
+	}
+	if rec := submit("192.0.2.11:1000", "secret"); rec.Code != http.StatusFound {
+		t.Fatalf("submit from another IP: status %d, want 302", rec.Code)
+	}
+}

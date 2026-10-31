@@ -405,7 +405,13 @@ func newResource(ctx context.Context, config *types.ServerConfig) (*resource.Res
 	res, err := resource.New(ctx,
 		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
-		resource.WithProcess(),
+		// Not WithProcess: it includes the full command line and the process
+		// owner, sending any secret passed as an argument to the collector
+		resource.WithProcessPID(),
+		resource.WithProcessExecutableName(),
+		resource.WithProcessRuntimeName(),
+		resource.WithProcessRuntimeVersion(),
+		resource.WithProcessRuntimeDescription(),
 		resource.WithAttributes(attrs...),
 	)
 	if err != nil {

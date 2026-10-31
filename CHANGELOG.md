@@ -7,6 +7,22 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Failed admin and builtin user password checks are limited per client IP by the new `security.login_failure_rate_limit` (default 100 per minute), across HTTP Basic, the login form and the OAuth authorization server password page. A wrong admin username now costs the same bcrypt check as a wrong password.
+- The `fs.serve_tmp_file` download refuses a registered path which has since become a symlink, and checks the opened file is the one that was checked. An app could otherwise replace a served file with a link to any file the server can read. The download file name is now encoded with `mime.FormatMediaType`.
+- `fs.list` and `fs.find` refuse a path with a `..` element, so a permission argument pattern such as `regex:^/data/` cannot be bypassed with `/data/../etc`.
+- OAuth dynamic client registration is limited to 10 registrations per client IP per hour, and when the 200 client quota is full, registrations which never completed an authorization within an hour are pruned first. `client_name` is capped at 200 bytes and `redirect_uris` at 20 entries.
+- The `azuread` and `microsoftonline` OAuth providers, including named instances such as `azuread_corp`, take the user email from the `userPrincipalName` (bound to a domain the tenant verified) instead of the free-text `mail` attribute, so a user of another tenant cannot log in as an address of this organisation. A guest (`#EXT#`) principal gets no email identity and is identified by its principal name.
+- Client certificate auth verifies the certificate for the client auth key usage. A certificate with only the `clientAuth` extended key usage is now accepted, and a server certificate from the same CA is refused.
+- The webhook endpoint returns the same 401 response for an unknown app, a webhook which is not enabled and a bad credential, and refuses a request without credentials before loading the app. The failure detail is in the audit log.
+- For callers without `service:update` on a service, service listings redact secret-named config values, show a connection url only as its scheme, username, host and path (the query is replaced by a marker), and redact any other value with connection string syntax entirely. Sync listings no longer return the webhook secret.
+- Image references for apps, sidecars and jobs, and container ids passed to the container APIs, cannot start with `-` or contain whitespace, since they are positional arguments of the container command.
+- `--build-arg` values (which can hold resolved secrets) are redacted in the debug log of image builds. A delegated build context is capped at 4 GiB decompressed (an archive reaching the cap is refused, not truncated) and 200000 entries, and extracted files keep no setuid bits and no group or other write access.
+- Store filter and sort field names cannot contain a backslash, `?` or control characters, in addition to a quote. The audit log query binds app ids as parameters. A sqlite binding `path` is limited to letters, digits and `_ . - /`.
+- OAuth and SAML login errors no longer return the identity provider's or the database's error text to the client; it is logged. The OAuth provider login start is covered by `security.login_start_rate_limit`. The form login always starts a fresh pre-auth session.
+- The HTTP listeners set a 20 second `ReadHeaderTimeout`. The self-signed certificate key is written with mode 0600. The OpenTelemetry resource no longer includes the server's command line or process owner.
+
 ## [v0.20.7] - 2026-10-30
 
 ### Security

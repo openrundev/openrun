@@ -46,6 +46,17 @@ const (
 	oauthCLIClientId    = "openrun-cli" // pre-registered public client for openrun login
 	oauthCodeTTL        = 2 * time.Minute
 	oauthMaxClients     = 200 // DCR quota
+	// oauthRegisterPerIPHour bounds dynamic client registrations per client
+	// IP per hour, so one source cannot fill the quota (MCP clients register
+	// once and reuse the client id)
+	oauthRegisterPerIPHour = 10
+	// oauthUnusedClientAge is the age after which a registered client that
+	// no credential has ever referenced is pruned when the quota is full: a
+	// registration which never completed an authorization within this time
+	// is abandoned (or was created only to consume the quota)
+	oauthUnusedClientAge = time.Hour
+	oauthMaxClientName   = 200
+	oauthMaxRedirectUris = 20
 )
 
 // oauthState is the in-process AS state. Pending authorization codes are
@@ -57,8 +68,10 @@ const (
 type oauthState struct {
 	cimdState // Client ID Metadata Document cache (oauth_cimd.go)
 
-	oauthRateOnce sync.Once
-	oauthRate     *ipRateLimiter
+	oauthRateOnce     sync.Once
+	oauthRate         *ipRateLimiter
+	oauthRegisterOnce sync.Once
+	oauthRegisterRate *ipRateLimiter
 
 	// staleGroupsAudited dedups the federated_groups_stale audit event to
 	// once per identity per server lifetime
@@ -488,6 +501,16 @@ func (h *Handler) oauthRegister(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uris is required")
 		return
 	}
+	if len(req.RedirectUris) > oauthMaxRedirectUris {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri",
+			fmt.Sprintf("at most %d redirect_uris can be registered", oauthMaxRedirectUris))
+		return
+	}
+	if len(req.ClientName) > oauthMaxClientName {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata",
+			fmt.Sprintf("client_name cannot exceed %d bytes", oauthMaxClientName))
+		return
+	}
 	for _, uri := range req.RedirectUris {
 		parsed, err := url.Parse(uri)
 		valid := err == nil && parsed.Fragment == "" && (parsed.Scheme == "https" ||
@@ -498,18 +521,30 @@ func (h *Handler) oauthRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	h.server.oauthRegisterOnce.Do(func() { h.server.oauthRegisterRate = newIPRateLimiter(time.Hour, rateLimiterMaxIPs) })
+	if !h.server.oauthRegisterRate.allow(system.GetClientIP(r, h.server.Config().Security.TrustedProxies), oauthRegisterPerIPHour) {
+		writeOAuthError(w, http.StatusTooManyRequests, "slow_down", "too many client registrations, retry later")
+		return
+	}
 	count, err := h.server.db.CountOAuthClients(r.Context())
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
 	if count >= oauthMaxClients {
-		// Free quota slots held by stale registrations no live credential
-		// references before refusing, so abandoned DCR clients cannot
-		// permanently consume the quota
-		pruned, pruneErr := h.server.db.PruneUnusedOAuthClients(r.Context(), time.Now().Add(-30*24*time.Hour).UTC())
+		// Free quota slots before refusing, so registrations cannot
+		// permanently consume the quota: first clients which no credential
+		// ever referenced and that are older than oauthUnusedClientAge, then
+		// stale registrations no live credential references
+		pruned, pruneErr := h.server.db.PruneNeverUsedOAuthClients(r.Context(), time.Now().Add(-oauthUnusedClientAge).UTC())
 		if pruneErr != nil {
-			h.Error().Err(pruneErr).Msg("error pruning oauth clients")
+			h.Error().Err(pruneErr).Msg("error pruning never used oauth clients")
+		}
+		if pruned == 0 {
+			pruned, pruneErr = h.server.db.PruneUnusedOAuthClients(r.Context(), time.Now().Add(-30*24*time.Hour).UTC())
+			if pruneErr != nil {
+				h.Error().Err(pruneErr).Msg("error pruning oauth clients")
+			}
 		}
 		if pruned == 0 {
 			writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "client registration limit reached")
@@ -743,8 +778,13 @@ func (h *Handler) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		h.renderOAuthLogin(w, r, get, msg)
 		return
 	}
+	if !passwordCheckAllowed(h.server.loginFailRate, h.server.Config(), r) {
+		tooManyPasswordFailures(w)
+		return
+	}
 	principal, groups, err := h.server.oauthAuthenticateUser(res, get("or_username"), get("or_password"))
 	if err != nil {
+		recordPasswordFailure(h.server.loginFailRate, h.server.Config(), r)
 		h.server.insertAuthFailureEvent(r, "oauth_authorize", err.Error())
 		h.renderOAuthLogin(w, r, get, err.Error())
 		return

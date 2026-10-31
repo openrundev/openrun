@@ -439,7 +439,10 @@ func TestSAMLManager_RejectsEmptyEncryptedAssertion(t *testing.T) {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, req)
-			if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "encrypted data is smaller") {
+			// The validation detail is logged, the anonymous caller gets a
+			// generic message
+			if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "assertion invalid") ||
+				strings.Contains(w.Body.String(), "encrypted data") {
 				t.Fatalf("malformed ciphertext should return an error without panicking: %d %s", w.Code, w.Body.String())
 			}
 		})

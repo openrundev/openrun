@@ -94,6 +94,10 @@ func TestMappedQueries(t *testing.T) {
 func TestMappedError(t *testing.T) {
 	ParseMappedErrorTest(t, map[string]any{"_json": 30}, "querying _json directly is not supporte")
 	ParseMappedErrorTest(t, map[string]any{"abc'def": 30}, "field path cannot contain ': abc")
+	// A backslash ends the literal with standard_conforming_strings off, and
+	// a "?" would be rewritten by the PostgreSQL placeholder rebind
+	ParseMappedErrorTest(t, map[string]any{`abc\`: 30}, `field path cannot contain \: abc`)
+	ParseMappedErrorTest(t, map[string]any{"abc?": 30}, "field path cannot contain ?: abc")
 }
 
 func TestPostgresMappedQueryStringifyParams(t *testing.T) {

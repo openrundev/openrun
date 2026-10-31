@@ -400,21 +400,26 @@ func (c *openrunPlugin) ListAuditEvents(ctx context.Context, call *sdk.Call) (an
 	query.WriteString("select rid, app_id, create_time, user_id, event_type, operation, target, status, detail from audit ")
 
 	filterConditions := []string{}
+	var appIdParams []any
 	appGlobStr := strings.TrimSpace(appGlob)
 	if appGlobStr != "" {
 		appInfo, err := c.server.ParseGlob(appGlobStr)
 		if err != nil {
 			return nil, err
 		}
-		appIds := []string{}
+		appIds := make([]any, 0, len(appInfo))
 		for _, app := range appInfo {
-			appIds = append(appIds, "'"+string(app.Id)+"'")
+			appIds = append(appIds, string(app.Id))
 		}
-
-		filterConditions = append(filterConditions, fmt.Sprintf("app_id in (%s)", strings.Join(appIds, ",")))
+		appIdParams = appIds
+		if len(appIds) == 0 {
+			filterConditions = append(filterConditions, "1 = 0")
+		} else {
+			filterConditions = append(filterConditions, "app_id in ("+strings.TrimSuffix(strings.Repeat("?, ", len(appIds)), ", ")+")")
+		}
 	}
 
-	queryParams := []any{}
+	queryParams := appIdParams
 	userIdStr := strings.TrimSpace(userId)
 	if userIdStr != "" {
 		filterConditions = append(filterConditions, "user_id = ?")

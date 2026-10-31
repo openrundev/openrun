@@ -609,9 +609,22 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 		return
 	}
 
+	// Unauthenticated callers must not learn which apps exist or have a
+	// webhook enabled: an unknown app, a webhook which is not enabled and a
+	// bad credential all get the same response. A request without any
+	// credential is refused before the app is loaded
+	webhookAuthFailed := func(msg string) {
+		h.server.insertAuthFailureEvent(r, fmt.Sprintf("webhook_%s", webhookType), msg)
+		http.Error(w, "webhook authentication failed", http.StatusUnauthorized)
+	}
+	if r.Header.Get("Authorization") == "" && r.Header.Get("X-Hub-Signature-256") == "" {
+		webhookAuthFailed("No auth header and no signature found")
+		return
+	}
+
 	app, err := h.server.GetApp(r.Context(), appPathDomain, false)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		webhookAuthFailed("app not found: " + appPathDomain.String())
 		return
 	}
 
@@ -635,15 +648,13 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request, webhook
 	}
 
 	if appToken == "" {
-		http.Error(w, fmt.Sprintf("%s webhook is not enabled for app", webhookType), http.StatusBadRequest)
+		webhookAuthFailed(fmt.Sprintf("%s webhook is not enabled for app", webhookType))
 		return
 	}
 
 	operation := fmt.Sprintf("webhook_%s", webhookType)
-	authFailure := func(msg string) {
-		h.server.insertAuthFailureEvent(r, operation, msg)
-		http.Error(w, msg, http.StatusUnauthorized)
-	}
+	// The detail is audited, the response is the same for every failure
+	authFailure := webhookAuthFailed
 
 	// Authenticate the request
 	authHeader := r.Header.Get("Authorization")

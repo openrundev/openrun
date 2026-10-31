@@ -140,6 +140,9 @@ disable_login_form = false       # if true, system/builtin auth uses the HTTP Ba
                                  # (no HTML login page). Off by default.
 login_start_rate_limit = 60      # login handshakes (form login, OAuth/OIDC, SAML) a client IP may start per minute;
                                  # 0 disables the limit
+login_failure_rate_limit = 100   # failed password checks (admin password or builtin user, over HTTP Basic, the login
+                                 # form and the OAuth authorization server) a client IP may incur per minute before
+                                 # further password checks from that IP are refused; 0 disables the limit
 auth_callback_domain = "auth."   # domain serving the system/builtin login page and the OAuth login/consent pages
                                  # of the remote API (CLI/MCP clients); no apps can be created on it.
                                  # A trailing "." is a prefix combined with default_domain (auth.<default_domain>);

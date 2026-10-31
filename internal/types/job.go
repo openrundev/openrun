@@ -169,6 +169,11 @@ func (s JobSpec) Validate() error {
 	if s.Image != "" && s.ImageRef() == "" {
 		return fmt.Errorf("job %s: image reference is empty", s.Name)
 	}
+	if s.Image != "" {
+		if err := ValidateImageRef(s.ImageRef()); err != nil {
+			return fmt.Errorf("job %s: %w", s.Name, err)
+		}
+	}
 	hasCommand := len(s.Command) > 0 || len(s.Args) > 0
 	if hasCommand && s.Run != "" {
 		return fmt.Errorf("job %s: set either command or run, not both", s.Name)

@@ -102,6 +102,25 @@ func (s SidecarSpec) String() string {
 	return string(data)
 }
 
+// ValidateImageRef rejects an image reference which cannot be a valid
+// reference and would be misread on a container command line: the image is a
+// positional argument of "docker run", with the container command and its
+// args after it, so a reference starting with "-" would be parsed as a flag
+func ValidateImageRef(ref string) error {
+	if ref == "" {
+		return fmt.Errorf("image reference is empty")
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid image reference %q: cannot start with '-'", ref)
+	}
+	for _, r := range ref {
+		if r <= ' ' || r == 0x7f {
+			return fmt.Errorf("invalid image reference %q: cannot contain whitespace or control characters", ref)
+		}
+	}
+	return nil
+}
+
 // Validate checks the definition time constraints of a sidecar spec.
 func (s SidecarSpec) Validate() error {
 	if !sidecarNameRegex.MatchString(s.Name) {
@@ -112,6 +131,11 @@ func (s SidecarSpec) Validate() error {
 	}
 	if s.Image != "" && strings.TrimPrefix(s.Image, CONTAINER_SOURCE_IMAGE_PREFIX) == "" {
 		return fmt.Errorf("sidecar %s: image reference is empty", s.Name)
+	}
+	if s.Image != "" {
+		if err := ValidateImageRef(strings.TrimPrefix(s.Image, CONTAINER_SOURCE_IMAGE_PREFIX)); err != nil {
+			return fmt.Errorf("sidecar %s: %w", s.Name, err)
+		}
 	}
 	if s.IsAppImage() && len(s.Command) == 0 {
 		// The image default command is the app's web server, which would bind

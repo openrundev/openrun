@@ -8,6 +8,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -253,7 +254,7 @@ func delegateBuild(ctx context.Context, logger *types.Logger, config *types.Serv
 	args = append(args, ".")
 	cmd := exec.CommandContext(ctx, config.System.ContainerCommand, args...)
 
-	logger.Debug().Msgf("Running command: %s %s", config.System.ContainerCommand, cmd.String())
+	logger.Debug().Msgf("Running command: %s %s", config.System.ContainerCommand, strings.Join(RedactEnvArgs(args), " "))
 	cmd.Dir = destDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -300,6 +301,64 @@ func pushToRemoteRegistry(ctx context.Context, logger *types.Logger, config *typ
 	return nil
 }
 
+var (
+	// maxDelegateExtractBytes bounds the decompressed size of a delegated
+	// build context (a variable for tests)
+	maxDelegateExtractBytes int64 = 4 << 30 // 4 GiB
+)
+
+// maxDelegateExtractEntries bounds the entry count of the archive
+const maxDelegateExtractEntries = 200_000
+
+// errArchiveTooLarge is returned once a capReader's budget is used up and
+// more data follows
+var errArchiveTooLarge = errors.New("tar archive exceeds the decompressed size limit")
+
+// capReader reads at most remaining bytes from r. Unlike io.LimitReader it
+// does not report EOF at the cap: when more data follows the budget it
+// returns errArchiveTooLarge, so the consumer cannot mistake a truncated
+// stream for a complete one. EOF is passed on only when r itself ends
+type capReader struct {
+	r         io.Reader
+	remaining int64
+}
+
+func (c *capReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if c.remaining <= 0 {
+		var probe [1]byte
+		for {
+			n, err := c.r.Read(probe[:])
+			if n > 0 {
+				return 0, errArchiveTooLarge
+			}
+			if err != nil {
+				return 0, err
+			}
+		}
+	}
+	if int64(len(p)) > c.remaining {
+		p = p[:c.remaining]
+	}
+	n, err := c.r.Read(p)
+	c.remaining -= int64(n)
+	return n, err
+}
+
+// extractedFileMode keeps only the permission bits of an archive entry mode,
+// with no setuid/setgid/sticky bits and no group or other write access; an
+// entry without permissions gets the default. ownerMode is always added: the
+// server must be able to read, traverse and clean up what it extracted
+func extractedFileMode(mode int64, defaultMode, ownerMode os.FileMode) os.FileMode {
+	perm := os.FileMode(mode) & 0o755
+	if perm == 0 {
+		return defaultMode
+	}
+	return perm | ownerMode
+}
+
 // extractTarGzToTemp extracts the given .tar.gz file into a new temp directory.
 // It returns the temp directory path on success.
 func extractTarGzToTemp(tarGzPath string) (string, error) {
@@ -331,7 +390,12 @@ func extractTarGzToTemp(tarGzPath string) (string, error) {
 		}
 	}()
 
-	tr := tar.NewReader(gzr)
+	// The upload size is capped by the API, the decompressed size (headers
+	// included) is capped here so a small compressed upload cannot fill the
+	// disk. Reaching the cap is an error, never an end of archive: a limit
+	// falling between two entries must not silently drop the rest
+	tr := tar.NewReader(&capReader{r: gzr, remaining: maxDelegateExtractBytes})
+	entries := 0
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -344,6 +408,10 @@ func extractTarGzToTemp(tarGzPath string) (string, error) {
 			continue
 		}
 
+		entries++
+		if entries > maxDelegateExtractEntries {
+			return "", fmt.Errorf("tar archive has more than %d entries", maxDelegateExtractEntries)
+		}
 		targetPath, err := system.PathInDir(destDir, hdr.Name)
 		if err != nil {
 			return "", fmt.Errorf("invalid tar entry path %q: %w", hdr.Name, err)
@@ -351,7 +419,7 @@ func extractTarGzToTemp(tarGzPath string) (string, error) {
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(targetPath, os.FileMode(hdr.Mode)); err != nil {
+			if err := os.MkdirAll(targetPath, extractedFileMode(hdr.Mode, 0o755, 0o700)); err != nil {
 				return "", fmt.Errorf("mkdir %s: %w", targetPath, err)
 			}
 
@@ -361,7 +429,7 @@ func extractTarGzToTemp(tarGzPath string) (string, error) {
 				return "", fmt.Errorf("mkdir for file %s: %w", targetPath, err)
 			}
 
-			out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, extractedFileMode(hdr.Mode, 0o644, 0o600))
 			if err != nil {
 				return "", fmt.Errorf("create file %s: %w", targetPath, err)
 			}

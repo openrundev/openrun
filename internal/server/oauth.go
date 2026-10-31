@@ -103,6 +103,9 @@ type OAuthManager struct {
 	// loginRate is the login start limiter shared with the other login
 	// types, wired by NewServer
 	loginRate *ipRateLimiter
+	// providerStartRate applies the login start limit to the provider login
+	// step, wired by NewServer
+	providerStartRate *ipRateLimiter
 
 	// providerMu guards providerConfigs, which is replaced when dynamic
 	// config entries add/change/remove auth providers at runtime
@@ -284,7 +287,15 @@ func (s *OAuthManager) RegisterRoutes(csrfMiddleware *http.CrossOriginProtection
 	mux.Get(types.INTERNAL_URL_PREFIX+"/auth/{provider}/login", func(w http.ResponseWriter, r *http.Request) {
 		// Start the provider login only for a pending login state created by
 		// beginLogin: gothic stores a session row per start, which an
-		// unauthenticated caller must not be able to allocate at will
+		// unauthenticated caller must not be able to allocate at will. The
+		// state stays pending until the callback, so replaying this url
+		// (without the gothic cookie) would still store a row per hit: the
+		// login start limit applies here as well, with its own budget so a
+		// normal login (which also passed beginLogin) is not counted twice
+		if !loginStartAllowed(s.providerStartRate, s.getConfig(), r) {
+			tooManyLoginStarts(w)
+			return
+		}
 		if !s.pendingLoginState(r) {
 			http.Error(w, "error matching session state, start the login again", http.StatusBadRequest)
 			return
@@ -524,14 +535,17 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 
 	user, err := gothic.CompleteUserAuth(w, r)
 	if err != nil {
+		// The provider's error can echo its token endpoint response: logged,
+		// not returned to the anonymous caller
 		s.Warn().Err(err).Msg("failed to complete user auth")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "login with the identity provider failed", http.StatusInternalServerError)
 		return
 	}
 
 	stateMap, err := s.db.FetchKV(r.Context(), string(sessionId))
 	if err != nil {
-		http.Error(w, "error fetching KV state: "+err.Error(), http.StatusInternalServerError)
+		s.Error().Err(err).Msg("error fetching login state")
+		http.Error(w, "error fetching login state", http.StatusInternalServerError)
 		return
 	}
 
@@ -579,7 +593,9 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 	// identified by subject, which an operator with email-keyed grants
 	// would otherwise only see as access denied
 	email := ""
-	if emailVerifiedClaim(user.RawData) {
+	if azureEmail, isAzure := azureVerifiedEmail(providerName, user); isAzure {
+		email = azureEmail
+	} else if emailVerifiedClaim(user.RawData) {
 		email = user.Email
 	}
 	if email != "" {
@@ -742,6 +758,36 @@ func emailVerifiedClaim(raw map[string]any) bool {
 	}
 }
 
+// azureVerifiedEmail returns the email identity for the azuread and
+// microsoftonline providers, and false for any other provider. Both read the
+// Graph "mail" attribute, which is free text set by the tenant admin and is
+// not verified against domain ownership: with a multi-tenant app registration,
+// a user of another tenant whose mail is set to an address of this
+// organisation would otherwise log in as that address and match its grants.
+// The userPrincipalName is bound to a domain the tenant has verified, so the
+// email is taken from it when it is an address: a mail attribute that differs
+// from it is not trusted. A guest (B2B) principal name (user_domain#EXT#@tenant)
+// gives no email: its local part is free text, so the address it encodes is
+// not verified either. Such a user is identified by the principal name
+func azureVerifiedEmail(providerName string, user goth.User) (string, bool) {
+	var upn string
+	// Named instances (azuread_corp) are the same provider type, split the
+	// way buildProvider does
+	providerType, _, _ := strings.Cut(providerName, PROVIDER_NAME_DELIMITER)
+	switch providerType {
+	case "azuread":
+		upn = user.UserID // the azuread provider reports the principal name as the user id
+	case "microsoftonline":
+		upn, _ = user.RawData["userPrincipalName"].(string)
+	default:
+		return "", false
+	}
+	if strings.Contains(strings.ToUpper(upn), "#EXT#") || !strings.Contains(upn, "@") {
+		return "", true
+	}
+	return upn, true
+}
+
 func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	if state == "" {
@@ -780,7 +826,8 @@ func (s *OAuthManager) redirect(w http.ResponseWriter, r *http.Request) {
 	// in the cookie and then redirect to original url
 	stateMap, err := s.db.FetchKV(r.Context(), sessionId)
 	if err != nil {
-		http.Error(w, "error fetching state: "+err.Error(), http.StatusInternalServerError)
+		s.Error().Err(err).Msg("error fetching login state")
+		http.Error(w, "error fetching login state", http.StatusInternalServerError)
 		return
 	}
 

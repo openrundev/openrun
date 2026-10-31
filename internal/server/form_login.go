@@ -167,15 +167,18 @@ type FormLoginManager struct {
 	adminAuth   *AdminBasicAuth
 	users       *UserManager
 	loginRate   *ipRateLimiter // login start limiter shared with the other login types, wired by NewServer
-	tmpl        *template.Template
-	styleHref   string
-	extraHref   string
-	styleEtag   string
-	extraEtag   string
-	fontsCSS    []byte
-	fontsHref   string
-	fontsEtag   string
-	fontEtags   map[string]string
+	// loginFailRate is the failed password check limiter shared with the
+	// other password surfaces, wired by NewServer
+	loginFailRate *ipRateLimiter
+	tmpl          *template.Template
+	styleHref     string
+	extraHref     string
+	styleEtag     string
+	extraEtag     string
+	fontsCSS      []byte
+	fontsHref     string
+	fontsEtag     string
+	fontEtags     map[string]string
 
 	// redirectHostAllowed gates the host of the post-login redirect at the
 	// form submit, see completionRedirectAllowed. Wired by NewServer
@@ -641,15 +644,15 @@ func (s *FormLoginManager) beginLogin(w http.ResponseWriter, r *http.Request, au
 	}
 	expireAt := loginStateExpiry(deadline)
 	if err := s.db.StoreKV(r.Context(), sessionId, stateMap, &expireAt); err != nil {
-		http.Error(w, "error storing state: "+err.Error(), http.StatusInternalServerError)
+		s.Error().Err(err).Msg("error storing login state")
+		http.Error(w, "error storing state", http.StatusInternalServerError)
 		return true
 	}
 
-	// A stale/undecodable cookie returns an error along with a fresh session;
-	// continue with the fresh session in that case
-	session, _ := s.cookieStore.Get(r, genCookieName(authType))
-	if session == nil {
-		http.Error(w, "error getting session", http.StatusInternalServerError)
+	// A stale/undecodable cookie must not keep its id: the pre-auth session
+	// is created fresh so the row is never recreated under a caller-known id
+	session, ok := freshPreAuthSession(w, r, s.cookieStore, genCookieName(authType))
+	if !ok {
 		return true
 	}
 	session.Values[AUTH_KEY] = false
@@ -767,6 +770,10 @@ func (s *FormLoginManager) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	// Verify through the same code paths as basic auth, keeping their success
 	// caching and failure throttling
 	authHeader := "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
+	if !passwordCheckAllowed(s.loginFailRate, s.getConfig(), r) {
+		tooManyPasswordFailures(w)
+		return
+	}
 	authOk := false
 	if authType == string(types.AppAuthnSystem) {
 		authOk = s.adminAuth.authenticate(authHeader)
@@ -774,6 +781,7 @@ func (s *FormLoginManager) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		_, _, authOk = s.users.authenticate(authHeader)
 	}
 	if !authOk {
+		recordPasswordFailure(s.loginFailRate, s.getConfig(), r)
 		s.render(w, authType, state, "Invalid username or password", "")
 		return
 	}

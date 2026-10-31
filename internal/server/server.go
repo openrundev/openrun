@@ -195,6 +195,7 @@ type Server struct {
 	effectiveConfig  atomic.Pointer[types.ServerConfig]
 	rbacManager      *rbac.RBACManager
 	csrfMiddleware   *http.CrossOriginProtection
+	loginFailRate    *ipRateLimiter // failed password check limiter, see passwordCheckAllowed
 	mcpServerState
 	aggMCPState
 	actionLists  sync.Map // types.AppId -> *actionListEntry: app versions without DefinitionActions metadata, see appActionList
@@ -416,11 +417,15 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	// The login start limiter is shared by the login types: a client IP
 	// gets one budget of handshakes per minute, whichever type it starts
 	loginRate := newIPRateLimiter(time.Minute, rateLimiterMaxIPs)
+	// Failed password checks share one per-IP budget across HTTP Basic, the
+	// login form and the OAuth authorization server password page
+	server.loginFailRate = newIPRateLimiter(time.Minute, rateLimiterMaxIPs)
 
 	// Setup OAuth auth
 	server.oAuthManager = NewOAuthManager(l, config, db)
 	server.oAuthManager.getConfig = server.Config
 	server.oAuthManager.loginRate = loginRate
+	server.oAuthManager.providerStartRate = newIPRateLimiter(time.Minute, rateLimiterMaxIPs)
 	var newSessionSecret, newSessionBlockKey []byte
 	if newSessionSecret, err = passwd.GenerateRandomKey(32); err != nil {
 		return nil, err
@@ -456,6 +461,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		return nil, err
 	}
 	server.formLogin.loginRate = loginRate
+	server.formLogin.loginFailRate = server.loginFailRate
 	server.warnIfAuthDomainOccupied()
 	server.warnIfFederatedLoginUnavailable()
 	// The completion redirect of every login flow (the OAuth callback, the
@@ -958,6 +964,11 @@ func (s *Server) updateDynamicConfigCache(ctx context.Context, newConfig *types.
 	return nil
 }
 
+// serverReadHeaderTimeout bounds the time a client has to send the request
+// headers. ReadTimeout stays long for large uploads; without this a client
+// trickling headers holds a connection for the full ReadTimeout
+const serverReadHeaderTimeout = 20 * time.Second
+
 func (s *Server) UpdateDynamicConfig(ctx context.Context, newConfig *types.DynamicConfig, force bool) (*types.DynamicConfig, error) {
 	// config:update is admin equivalent: the dynamic config includes the RBAC config
 	if err := s.enforceGlobalPerm(ctx, types.PermissionConfigUpdate, ""); err != nil {
@@ -1370,10 +1381,11 @@ func (s *Server) Start() error {
 		udsListener = s.connTracker.wrap(socket)
 
 		s.udsServer = &http.Server{
-			WriteTimeout: 180 * time.Second,
-			ReadTimeout:  180 * time.Second,
-			IdleTimeout:  30 * time.Second,
-			ConnState:    s.connTracker.connState,
+			WriteTimeout:      180 * time.Second,
+			ReadTimeout:       180 * time.Second,
+			ReadHeaderTimeout: serverReadHeaderTimeout,
+			IdleTimeout:       30 * time.Second,
+			ConnState:         s.connTracker.connState,
 			Handler: telemetry.WrapServerHandler(udsHandler.router, telemetry.ServerHandlerOption{
 				Operation: "openrun.uds",
 				Public:    false, // UDS is admin-only, peer is authenticated by file permissions
@@ -1396,10 +1408,11 @@ func (s *Server) Start() error {
 		httpListener = s.connTracker.wrap(rawListener)
 
 		s.httpServer = &http.Server{
-			WriteTimeout: 180 * time.Second,
-			ReadTimeout:  180 * time.Second,
-			IdleTimeout:  30 * time.Second,
-			ConnState:    s.connTracker.connState,
+			WriteTimeout:      180 * time.Second,
+			ReadTimeout:       180 * time.Second,
+			ReadHeaderTimeout: serverReadHeaderTimeout,
+			IdleTimeout:       30 * time.Second,
+			ConnState:         s.connTracker.connState,
 			Handler: telemetry.WrapServerHandler(s.handler.router, telemetry.ServerHandlerOption{
 				Operation: "openrun.http",
 				Public:    true, // public HTTP listener; do not extract incoming traceparent
@@ -1721,10 +1734,11 @@ func (s *Server) setupHTTPSServer() (*http.Server, error) {
 	errorLog := log.New(rateLimitedWriter, "", log.LstdFlags)
 
 	server := &http.Server{
-		WriteTimeout: 180 * time.Second,
-		ReadTimeout:  180 * time.Second,
-		IdleTimeout:  30 * time.Second,
-		ConnState:    s.connTracker.connState,
+		WriteTimeout:      180 * time.Second,
+		ReadTimeout:       180 * time.Second,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		IdleTimeout:       30 * time.Second,
+		ConnState:         s.connTracker.connState,
 		Handler: telemetry.WrapServerHandler(s.handler.router, telemetry.ServerHandlerOption{
 			Operation: "openrun.https",
 			Public:    true, // public HTTPS listener; do not extract incoming traceparent

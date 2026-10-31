@@ -172,6 +172,9 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	if strings.HasPrefix(containerFile, types.CONTAINER_SOURCE_IMAGE_PREFIX) {
 		// Using an image
 		image = containerFile[len(types.CONTAINER_SOURCE_IMAGE_PREFIX):]
+		if err := types.ValidateImageRef(image); err != nil {
+			return nil, err
+		}
 	} else {
 		// Using a container file
 		data, err := sourceFS.ReadFile(containerFile)

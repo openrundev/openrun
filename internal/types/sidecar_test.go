@@ -117,3 +117,19 @@ func TestSidecarImageAllowed(t *testing.T) {
 		t.Error("non matching image allowed")
 	}
 }
+
+func TestValidateImageRef(t *testing.T) {
+	for _, ref := range []string{"nginx", "ghcr.io/org/app:1.2", "registry:5000/a/b@sha256:abc"} {
+		if err := ValidateImageRef(ref); err != nil {
+			t.Errorf("valid ref %q rejected: %v", ref, err)
+		}
+	}
+	for _, ref := range []string{"", "-v", "--privileged", "nginx latest", "nginx\n"} {
+		if err := ValidateImageRef(ref); err == nil {
+			t.Errorf("invalid ref %q accepted", ref)
+		}
+	}
+	if err := (SidecarSpec{Name: "side", Image: CONTAINER_SOURCE_IMAGE_PREFIX + "--privileged"}).Validate(); err == nil {
+		t.Error("sidecar with a flag-like image accepted")
+	}
+}

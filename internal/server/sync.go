@@ -303,6 +303,9 @@ func (s *Server) ListSyncEntries(ctx context.Context) (*types.SyncListResponse, 
 
 	for _, e := range entries {
 		e.Metadata.WebhookUrl = "" // TODO: Set the actual webhook URL
+		// The webhook secret is returned once, by the create response; a
+		// listing (sync:read or ownership) must not reveal it
+		e.Metadata.WebhookSecret = ""
 	}
 
 	ret := types.SyncListResponse{

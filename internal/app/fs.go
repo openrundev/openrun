@@ -197,10 +197,26 @@ func (f *fsModule) Abs(ctx context.Context, call *sdk.Call) (any, error) {
 	return filepath.Abs(path)
 }
 
+// checkNoParentSegments rejects a path with a ".." element. Permission
+// argument patterns are matched against the path string as passed: without
+// this check a permission restricted to "regex:^/data/" would also admit
+// "/data/../etc", which the file system resolves outside /data
+func checkNoParentSegments(path string) error {
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == filepath.Separator }) {
+		if part == ".." {
+			return fmt.Errorf("path %q cannot contain a '..' element", path)
+		}
+	}
+	return nil
+}
+
 func (f *fsModule) List(ctx context.Context, call *sdk.Call) (any, error) {
 	var path string
 	var recursiveSize, ignoreError bool
 	if err := sdk.UnpackArgs("list", call, "path", &path, "recursive_size?", &recursiveSize, "ignore_errors?", &ignoreError); err != nil {
+		return nil, err
+	}
+	if err := checkNoParentSegments(path); err != nil {
 		return nil, err
 	}
 
@@ -213,6 +229,9 @@ func (f *fsModule) Find(ctx context.Context, call *sdk.Call) (any, error) {
 	var ignoreError bool
 
 	if err := sdk.UnpackArgs("find", call, "path", &path, "name?", &nameGlob, "limit?", &limit, "min_size?", &minSize, "ignore_errors?", &ignoreError); err != nil {
+		return nil, err
+	}
+	if err := checkNoParentSegments(path); err != nil {
 		return nil, err
 	}
 

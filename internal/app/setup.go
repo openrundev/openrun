@@ -9,11 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
 	"path"
 	"regexp"
 	"slices"
@@ -1630,15 +1630,16 @@ func (a *App) userFileHandler(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(fileEntry.FilePath, "file://"):
 		filePath := fileEntry.FilePath[len("file://"):]
-		file, err := os.Open(filePath)
+		file, err := openServedFile(filePath)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			a.Warn().Err(err).Str("file_id", fileID).Msg("served file not opened")
+			http.Error(w, "404 Not Found", http.StatusNotFound)
 			return
 		}
 		defer file.Close() //nolint:errcheck
 
 		w.Header().Set("Content-Type", fileEntry.MimeType)
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileEntry.FileName))
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileEntry.FileName}))
 
 		// Copy the file content to the response writer
 		// This streams the content and uses chunked transfer encoding

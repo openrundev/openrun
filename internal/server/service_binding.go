@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/container"
@@ -251,7 +253,92 @@ func (s *Server) DeleteService(ctx context.Context, name, serviceType string, dr
 	return tx.Commit()
 }
 
+// ListServices returns the services the caller holds service:read on. The
+// service config is the admin connection config of the service (often a url
+// with the admin password, unless it uses a {{secret}} reference): for a
+// caller without service:update on a service, secret-named keys and url
+// passwords are redacted
 func (s *Server) ListServices(ctx context.Context, serviceType, name string) ([]*types.Service, error) {
+	services, err := s.listVisibleServices(ctx, serviceType, name)
+	if err != nil {
+		return nil, err
+	}
+	if !s.rbacManager.APIEnforced(ctx) {
+		return services, nil
+	}
+	out := make([]*types.Service, 0, len(services))
+	for _, service := range services {
+		canUpdate, err := s.rbacManager.AuthorizeResourceAPI(ctx, types.PermissionServiceUpdate,
+			serviceRBACId(service.ServiceType, service.Name), service.CreatedBy)
+		if err != nil {
+			return nil, err
+		}
+		if canUpdate {
+			out = append(out, service)
+			continue
+		}
+		redacted := *service
+		redacted.Config = redactServiceConfig(service.Config)
+		out = append(out, &redacted)
+	}
+	return out, nil
+}
+
+// redactServiceConfig returns a copy of a service config with secret-named
+// values and url passwords replaced by RedactedValue. {{secret}} references
+// are not sensitive and are kept
+func redactServiceConfig(config map[string]string) map[string]string {
+	if config == nil {
+		return nil
+	}
+	out := make(map[string]string, len(config))
+	for key, value := range config {
+		switch {
+		case value == "" || isSecretTemplateRef(value):
+			out[key] = value
+		case isSecretConfigField(key):
+			out[key] = RedactedValue
+		default:
+			out[key] = redactConnectionPassword(value)
+		}
+	}
+	return out
+}
+
+// redactConnectionPassword returns a connection config value with anything
+// that can carry a password removed, conservatively. Drivers accept
+// passwords in many places: url userinfo, query parameters (percent encoded
+// names included, and query host/user parameters with an empty url host),
+// keyword/value strings with quoting rules of their own, and MySQL style
+// user:password@host DSNs. Rather than parsing each grammar, only what is
+// known to be safe is kept:
+//   - a hierarchical url is rebuilt from its scheme, username, host and path;
+//     the query (if any) is replaced by a redaction marker and the fragment
+//     is dropped
+//   - any other value with connection string syntax (= @ ; & ? or
+//     whitespace) is redacted entirely
+//   - plain values (a host name, a host:port, a number) are kept
+func redactConnectionPassword(value string) string {
+	if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" && parsed.Opaque == "" {
+		safe := url.URL{Scheme: parsed.Scheme, Host: parsed.Host, Path: parsed.Path}
+		if parsed.User != nil && parsed.User.Username() != "" {
+			safe.User = url.User(parsed.User.Username())
+		}
+		out := safe.String()
+		if parsed.RawQuery != "" || parsed.ForceQuery {
+			out += "?" + RedactedValue
+		}
+		return out
+	}
+	if strings.ContainsAny(value, "=@;&?") || strings.IndexFunc(value, unicode.IsSpace) >= 0 {
+		return RedactedValue
+	}
+	return value
+}
+
+// listVisibleServices returns the services the caller holds service:read
+// on, with their full config, for server side use (health checks)
+func (s *Server) listVisibleServices(ctx context.Context, serviceType, name string) ([]*types.Service, error) {
 	tx, err := s.db.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err

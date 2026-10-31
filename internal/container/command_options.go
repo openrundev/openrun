@@ -127,6 +127,14 @@ func RedactEnvArgs(args []string) []string {
 			redacted[i] = "--env=" + redactEnvAssignment(strings.TrimPrefix(redacted[i], "--env="))
 		case strings.HasPrefix(redacted[i], "-e="):
 			redacted[i] = "-e=" + redactEnvAssignment(strings.TrimPrefix(redacted[i], "-e="))
+		case redacted[i] == "--build-arg":
+			// Build args carry resolved {{secret}} values as often as env does
+			if i+1 < len(redacted) {
+				redacted[i+1] = redactEnvAssignment(redacted[i+1])
+				i++
+			}
+		case strings.HasPrefix(redacted[i], "--build-arg="):
+			redacted[i] = "--build-arg=" + redactEnvAssignment(strings.TrimPrefix(redacted[i], "--build-arg="))
 		}
 	}
 

@@ -395,6 +395,62 @@ func TestExtractTarGzToTemp(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects an archive over the size limit at an entry boundary", func(t *testing.T) {
+		body := strings.Repeat("x", 512) // one tar block: header + body is 1024 bytes
+		tarPath := filepath.Join(t.TempDir(), "context.tar.gz")
+		if err := writeTarGz(tarPath, []testTarEntry{
+			{name: "a.txt", body: body, typ: tar.TypeReg, mode: 0o644},
+			{name: "b.txt", body: body, typ: tar.TypeReg, mode: 0o644},
+		}); err != nil {
+			t.Fatalf("write tar.gz: %v", err)
+		}
+		saved := maxDelegateExtractBytes
+		t.Cleanup(func() { maxDelegateExtractBytes = saved })
+
+		// The limit falls exactly after the first entry: the second must not
+		// be silently dropped as if the archive had ended
+		maxDelegateExtractBytes = 1024
+		if destDir, err := extractTarGzToTemp(tarPath); err == nil {
+			_ = os.RemoveAll(destDir)
+			t.Fatal("archive over the limit accepted")
+		} else if !errors.Is(err, errArchiveTooLarge) {
+			t.Fatalf("error = %v, want errArchiveTooLarge", err)
+		}
+
+		// Two entries plus the two zero end blocks fit exactly
+		maxDelegateExtractBytes = 3 * 1024
+		destDir, err := extractTarGzToTemp(tarPath)
+		if err != nil {
+			t.Fatalf("archive within the limit refused: %v", err)
+		}
+		defer os.RemoveAll(destDir) // nolint:errcheck
+		if _, err := os.Stat(filepath.Join(destDir, "b.txt")); err != nil {
+			t.Fatalf("last entry missing: %v", err)
+		}
+	})
+
+	t.Run("drops setuid and group or other write bits", func(t *testing.T) {
+		tarPath := filepath.Join(t.TempDir(), "context.tar.gz")
+		if err := writeTarGz(tarPath, []testTarEntry{
+			{name: "bin", typ: tar.TypeDir, mode: 0o777},
+			{name: "bin/tool", body: "x", typ: tar.TypeReg, mode: 0o4777},
+		}); err != nil {
+			t.Fatalf("write tar.gz: %v", err)
+		}
+		destDir, err := extractTarGzToTemp(tarPath)
+		if err != nil {
+			t.Fatalf("extractTarGzToTemp returned error: %v", err)
+		}
+		defer os.RemoveAll(destDir) // nolint:errcheck
+		info, err := os.Stat(filepath.Join(destDir, "bin", "tool"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode()&(os.ModeSetuid|0o022) != 0 {
+			t.Fatalf("extracted mode %v keeps setuid or group/other write", info.Mode())
+		}
+	})
+
 	t.Run("rejects traversal paths", func(t *testing.T) {
 		for _, name := range []string{
 			"../evil.txt",

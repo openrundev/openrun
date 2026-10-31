@@ -817,6 +817,12 @@ type SecurityConfig struct {
 	// LoginStartRateLimit is the number of login handshakes (form login,
 	// OAuth/OIDC, SAML) a client IP may start per minute; 0 disables the limit
 	LoginStartRateLimit int `toml:"login_start_rate_limit"`
+	// LoginFailureRateLimit is the number of failed password checks (admin
+	// password or builtin user, over HTTP Basic, the login form and the OAuth
+	// authorization server) a client IP may incur per minute before further
+	// password checks from that IP are refused for the rest of the minute;
+	// 0 disables the limit
+	LoginFailureRateLimit int `toml:"login_failure_rate_limit"`
 
 	// AuthCallbackDomain is the domain that serves the system/builtin login
 	// page and the login/consent pages of the OAuth authorization server

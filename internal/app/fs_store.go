@@ -187,6 +187,40 @@ func removeServedFile(filePath string) error {
 	return os.Remove(filePath)
 }
 
+// openServedFile opens a file registered with fs.serve_tmp_file for
+// download. Like removeServedFile, the stored path is the symlink-resolved
+// path which passed the fs.file_access check at registration: if a path
+// component has since become a symlink (the app could replace the file with
+// a link to any file the server can read) it is refused, and only a regular
+// file is served. The file is opened and then checked to be the same file
+// that was checked, so a swap between the check and the open is caught
+func openServedFile(filePath string) (*os.File, error) {
+	resolved, err := filepath.EvalSymlinks(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if resolved != filePath {
+		return nil, fmt.Errorf("%w: %s resolves to %s", errServedFileRefused, filePath, resolved)
+	}
+	info, err := os.Lstat(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is not a regular file", errServedFileRefused, filePath)
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		_ = file.Close()
+		return nil, fmt.Errorf("%w: %s changed while being opened", errServedFileRefused, filePath)
+	}
+	return file, nil
+}
+
 func backgroundCleanup(ctx context.Context, cleanupTicker *time.Ticker) {
 	defer cleanupTicker.Stop()
 	// Errors are logged and cleanup is retried on the next tick
@@ -304,4 +338,3 @@ func listExpiredFile(ctx context.Context) ([]expiredFile, error) {
 	}
 	return expiredFiles, nil
 }
-

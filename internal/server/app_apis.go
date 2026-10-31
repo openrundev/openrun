@@ -1103,6 +1103,10 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 		// schemes (e.g. an app-owned Bearer token on a downstream call) must
 		// fall through to the form session so they can reach the app
 		if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Basic ") {
+			if !passwordCheckAllowed(s.loginFailRate, s.Config(), r) {
+				tooManyPasswordFailures(w)
+				return
+			}
 			if strippedAuth == types.AppAuthnSystem {
 				if s.authHandler.authenticate(authHeader) {
 					userId = types.ADMIN_USER // not using the actual user id, just a admin placeholder
@@ -1111,6 +1115,9 @@ func (s *Server) authenticateAndServeApp(w http.ResponseWriter, r *http.Request,
 			} else {
 				// basic auth against the builtin users table
 				userId, groups, authOk = s.users.authenticate(authHeader)
+			}
+			if !authOk {
+				recordPasswordFailure(s.loginFailRate, s.Config(), r)
 			}
 			// The Basic credentials are OpenRun's (the admin password or a
 			// builtin user's password), consumed here. They must not reach the
@@ -1545,6 +1552,10 @@ func (s *Server) verifyClientCerts(r *http.Request, authName string) error {
 	opts := x509.VerifyOptions{
 		Roots:         clientConfig.RootCAs,
 		Intermediates: x509.NewCertPool(),
+		// The default key usage check is server auth: a client certificate
+		// issued with the usual clientAuth-only extended key usage would be
+		// refused, while a server certificate from the same CA would pass
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 
 	for _, cert := range r.TLS.PeerCertificates[1:] {

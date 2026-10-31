@@ -288,19 +288,22 @@ tests:
     stderr: 405 Method Not Allowed
   reload_webhook120:
     command: curl -v -XPOST http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2
-    stdout: No auth header and no signature found
+    stdout: webhook authentication failed
   reload_webhook130:
     command: 'curl -v -XPOST -H "Authorization: Basic abc" http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2'
-    stdout: Authorization header with bearer token is required
+    stdout: webhook authentication failed
   reload_webhook140:
     command: 'curl -v -XPOST -H "Authorization: Bearer abc" http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2'
-    stdout: Invalid bearer token
+    stdout: webhook authentication failed
   reload_webhook150:
     command: 'curl -v -XPOST -H "X-Hub-Signature-256: abc" http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2'
-    stdout: "invalid signature header"
+    stdout: webhook authentication failed
   reload_webhook160:
     command: "curl -v -XPOST -d'{}' -H 'X-Hub-Signature-256: sha256=abc' http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Freload_git2"
-    stdout: "invalid payload, signature match failed"
+    stdout: webhook authentication failed
+  reload_webhook170: # an unknown app gets the same response as a bad credential
+    command: 'curl -v -XPOST -H "Authorization: Bearer abc" http://localhost:${MAIN_HTTP_PORT}/_openrun_webhook/reload?appPath=%2Fno_such_app'
+    stdout: webhook authentication failed
   # commander does not support output capture to get the token, so there are no success tests currently
 
   reload_cleanup: # Cleanup

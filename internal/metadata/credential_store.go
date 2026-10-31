@@ -437,6 +437,20 @@ func (m *Metadata) PruneUnusedOAuthClients(ctx context.Context, olderThan time.T
 	return result.RowsAffected()
 }
 
+// PruneNeverUsedOAuthClients deletes registered clients older than the
+// cutoff that no credential (live, revoked or expired) references: clients
+// which never completed an authorization
+func (m *Metadata) PruneNeverUsedOAuthClients(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
+		`delete from oauth_clients where create_time < ? and id not in`+
+			` (select distinct oauth_client_id from credentials where oauth_client_id != '')`),
+		olderThan)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 // ObserveFederatedIdentity persists groups from a verified interactive login.
 // Concurrent first logins converge on the principal's existing identity; group
 // refreshes must not replace its id, credentials, or disabled status.

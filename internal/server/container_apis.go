@@ -9,9 +9,11 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -396,6 +398,11 @@ func (s *Server) enforceContainerReadEntry(ctx context.Context, appEntry *types.
 // cannot be mapped to an app (unknown id, builder sandbox) needs
 // container:read
 func (s *Server) enforceContainerRead(ctx context.Context, id string) error {
+	if !containerIdRegex.MatchString(id) {
+		// The id is a positional argument of docker/podman inspect, logs,
+		// start and stop: one starting with "-" would be read as a flag
+		return types.CreateRequestError(fmt.Sprintf("invalid container id %q", id), http.StatusBadRequest)
+	}
 	if !s.rbacManager.APIEnforced(ctx) {
 		return nil
 	}
@@ -412,6 +419,10 @@ func (s *Server) enforceContainerRead(ctx context.Context, id string) error {
 	}
 	return s.enforceAppPermEntry(ctx, types.PermissionReadDetail, appEntry)
 }
+
+// containerIdRegex matches a docker/podman container id or name, and a
+// kubernetes pod name
+var containerIdRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$`)
 
 // containerAppEntry resolves the app a managed container belongs to, from
 // its app id label (docker/podman) or pod labels (kubernetes). nil when the

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -104,6 +105,9 @@ func (b *SqliteServiceBinding) CloseService(ctx context.Context) error {
 	return nil
 }
 
+// sqliteDirRegex limits a sqlite binding path to plain path characters
+var sqliteDirRegex = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
+
 // SqliteBindingDir resolves the in-container data directory for a sqlite
 // binding from its binding config: the "path" key when set (validated as an
 // absolute clean path), SqliteDefaultDir otherwise.
@@ -113,8 +117,10 @@ func SqliteBindingDir(bindingConfig map[string]string) (string, error) {
 		return SqliteDefaultDir, nil
 	}
 	dir = strings.TrimSuffix(dir, "/")
-	if dir == "" || !path.IsAbs(dir) || path.Clean(dir) != dir {
-		return "", fmt.Errorf("invalid sqlite binding path %q: must be an absolute clean path like /mydata",
+	// The directory is written into the litestream config of the
+	// replication sidecar: only path characters which need no quoting there
+	if dir == "" || !path.IsAbs(dir) || path.Clean(dir) != dir || !sqliteDirRegex.MatchString(dir) {
+		return "", fmt.Errorf("invalid sqlite binding path %q: must be an absolute clean path like /mydata, using letters, digits and _ . - /",
 			bindingConfig[SqliteBindingConfigPath])
 	}
 	return dir, nil
